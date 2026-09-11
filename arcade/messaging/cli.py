@@ -354,6 +354,10 @@ def cmd_scan(args) -> int:
         identity = _identity(args)
 
     with _rpc(args, params) as rpc:
+        if args.from_height is not None:
+            store.set_meta(f"identity_height:{params.name}", str(args.from_height))
+            store.rewind(params.name, args.from_height)
+            print(f"scanning from height {args.from_height:,}")
         scanner = Scanner(rpc, params, store, identity)
         def progress(height, end):
             print(f"  ...{height:,} / {end:,}", end="\r", file=sys.stderr)
@@ -479,6 +483,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("scan", help="scan the chain for messages and key announcements")
     s.add_argument("--batch", type=int, default=2000, help="blocks per pass")
+    s.add_argument("--from-height", type=int,
+                   help="start scanning here, ignoring any saved position. Use this "
+                        "for an imported identity whose messages predate this install.")
     s.add_argument("--follow", action="store_true", help="keep scanning to the tip")
     s.add_argument("--no-decrypt", action="store_true", help="collect only; do not try to open")
     s.set_defaults(func=cmd_scan)

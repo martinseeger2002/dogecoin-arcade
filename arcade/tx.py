@@ -240,12 +240,12 @@ def extract(
     different and much more interesting situation.
     """
     outputs = _parsed_outputs(tx, params)
-    encoding_class = detect_class(outputs, params.marker_address)
+    encoding_class = detect_class(outputs, params.marker)
     if encoding_class is EncodingClass.NONE:
         return None
 
     sender, value_in = determine_sender(tx, encoding_class, lookup)
-    reference = determine_reference(outputs, sender, params.marker_address)
+    reference = determine_reference(outputs, sender, params.marker)
     payload = extract_payload(outputs, encoding_class, sender)
 
     value_out = sum(output.value for output in outputs)

@@ -166,14 +166,13 @@ class MessageSender:
 
     def _class_b_outputs(self, sender_address: str, payload: bytes) -> list[tuple[int, bytes]]:
         """Marker output plus obfuscated multisig outputs carrying the payload."""
-        if self.params.marker_address is None:
-            raise SendError("no marker address configured for this network")
-
         pubkey = self._pubkey_for(sender_address)
         anydata = AnyData(data=payload).encode()
         groups = encode_class_b(sender_address, pubkey, anydata)
 
-        outputs = [(OUTPUT_VALUE, p2pkh_script(self.params.marker_address))]
+        # Derived from a fixed phrase, so every installation agrees without
+        # configuration. See config.MARKER_SEED.
+        outputs = [(OUTPUT_VALUE, p2pkh_script(self.params.marker))]
         for group in groups:
             outputs.append((OUTPUT_VALUE, multisig_script(list(group.keys), group.required)))
         return outputs

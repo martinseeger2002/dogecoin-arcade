@@ -30,6 +30,23 @@ FIRST_PROPERTY_ID_MAIN = 3
 FIRST_PROPERTY_ID_TEST = 0x80000001
 
 
+#: The phrase the Class B marker address is derived from.
+#:
+#: Class B needs a well-known output that identifies a transaction as ours,
+#: exactly as Omni requires an output to its Exodus address. Ours must have **no
+#: private key**, because it carries no value and nobody should be able to sweep
+#: the dust sent to it.
+#:
+#: Taking hash160 of a PHRASE rather than of a public key guarantees that: to
+#: spend from the address one would have to find a public key whose hash160
+#: equals this value, which is a preimage attack on RIPEMD160(SHA256(x)).
+#:
+#: It is a fixed string so that every installation derives the same address
+#: independently, with nothing to configure and nothing to get wrong. It is
+#: CONSENSUS-CRITICAL: changing it splits the network.
+MARKER_SEED = b"DogecoinArcade Class B marker v1"
+
+
 @dataclass(frozen=True)
 class Params:
     """Chain parameters for one Pepecoin network."""
@@ -57,8 +74,20 @@ class Params:
     # other meaning -- burn-to-mint was dropped in D-007, so it is purely a
     # marker and never a value sink.
     #
-    # None means "not yet chosen"; mainnet's is derived and fixed before launch.
+    # Overrides the derived marker. Only for tests and regtest harnesses; real
+    # networks use derive_marker_address() so every installation agrees.
     marker_address: str | None = None
+
+    @property
+    def marker(self) -> str:
+        """The Class B marker address for this network.
+
+        Derived, not configured: two installations that disagree here would not
+        recognise each other's transactions at all.
+        """
+        if self.marker_address:
+            return self.marker_address
+        return derive_marker_address(self)
 
 
 # nRPCPort / nDefaultPort verified in source: pepecoin/src/chainparamsbase.cpp:35,48,62
@@ -304,6 +333,17 @@ def verify_connected_chain(rpc, params: "Params") -> None:
             f"(expected chain {expected!r}). Refusing to continue -- check --datadir "
             f"and --conf."
         )
+
+
+def derive_marker_address(params: "Params") -> str:
+    """The marker address for `params`, from MARKER_SEED.
+
+    Same hash160 on every chain; only the version byte differs, so the address
+    string looks different on mainnet, testnet and regtest while the underlying
+    script is the same shape everywhere.
+    """
+    from .script import b58check_encode, hash160
+    return b58check_encode(params.pubkeyhash_version, hash160(MARKER_SEED))
 
 
 def network_from_env(default: str = "regtest") -> Params:

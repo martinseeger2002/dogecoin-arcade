@@ -71,11 +71,29 @@ class Scanner:
 
     # --- reorg safety ---------------------------------------------------------
 
+    def start_height(self) -> int:
+        """Where a scan with no prior cursor should begin.
+
+        Not block 0. A message can only be addressed to a key that existed when
+        it was written, so nothing before an identity was created can possibly be
+        for it. Starting at the identity's creation height is therefore both
+        correct and the difference between scanning a few hundred blocks and 1.5
+        million.
+
+        Falls back to the activation height when the creation height is unknown
+        -- an imported identity, say, whose messages may genuinely predate this
+        installation.
+        """
+        recorded = self.store.get_meta(f"identity_height:{self.params.name}")
+        if recorded is not None:
+            return max(int(recorded), self.params.activation_height or 0)
+        return max(self.params.activation_height or 0, 0)
+
     def _resolve_fork(self, result: ScanResult) -> int:
         """Return the height to resume from, unwinding if our view is stale."""
         cursor = self.store.scan_cursor(self.params.name)
         if cursor is None:
-            return max(self.params.activation_height or 0, 0)
+            return self.start_height()
 
         height, stored_hash = cursor
         try:

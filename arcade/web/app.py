@@ -245,6 +245,17 @@ def create_app(state: AppState) -> FastAPI:
             identity = Identity.generate()
             save_identity(state.key_path, identity, passphrase)
             state.identity = identity
+            # Remember where the chain was. Nothing written before this instant
+            # can be addressed to a key that did not yet exist, so scanning need
+            # never look further back -- the difference between a few hundred
+            # blocks and every block ever mined.
+            try:
+                with state.messaging.rpc() as rpc:
+                    height = rpc.get_block_count()
+                with state.store() as store:
+                    store.set_meta(f"identity_height:{state.messaging.network}", str(height))
+            except Exception:
+                pass   # only an optimisation; a missing value just scans further back
             if remember:
                 try:
                     vault.remember(state.home, state.messaging.network, passphrase)
