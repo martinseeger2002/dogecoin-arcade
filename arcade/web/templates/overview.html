@@ -46,6 +46,7 @@
           stronger than anything most people would invent.</span>
       </div>
       <input type="hidden" name="passphrase" id="phrase-value" value="{{ suggested }}">
+      <input type="hidden" name="mode" id="mode-generated" value="generated">
       <label style="display:flex;gap:9px;align-items:flex-start;font-size:.9rem;color:var(--fg)">
         <input type="checkbox" name="remember" value="yes" checked style="width:auto;margin-top:3px">
         <span><strong>Save it on this computer</strong> so I am not asked for it
@@ -65,6 +66,7 @@
     </div>
 
     <div id="chosen" hidden>
+      <input type="hidden" name="mode" id="mode-chosen" value="chosen" disabled>
       <div class="field"><label>Passphrase</label>
         <input type="password" name="passphrase" id="own-phrase" autocomplete="new-password" disabled></div>
       <div class="field"><label>Confirm</label>
@@ -98,6 +100,8 @@
     document.getElementById('phrase-value').disabled = own;
     document.getElementById('own-phrase').disabled = !own;
     document.getElementById('own-confirm').disabled = !own;
+    document.getElementById('mode-generated').disabled = own;
+    document.getElementById('mode-chosen').disabled = !own;
     document.querySelector('input[name=saved]').required = !own;
   }
   function copyPhrase(){ copyOf('phrase', event); }
@@ -140,6 +144,72 @@
   <p class="muted" style="margin-top:10px;font-size:.87rem">
     Read this aloud to a correspondent to verify their key out of band. An on-chain
     announcement proves control of an address — never who someone is.</p>
+
+  <div style="border-top:1px solid var(--line);margin-top:16px;padding-top:14px">
+    <label>Your contact code</label>
+    <div class="phrase" style="font-size:.9rem" id="contact">{{ contact_code }}</div>
+    <div class="row" style="margin:9px 0 4px">
+      <button type="button" class="ghost" onclick="copyOf('contact', event)">Copy</button>
+      <span class="muted" style="font-size:.84rem">Send this to anyone who wants to
+        message you, by any means at all. They paste it into Compose and can write
+        to you straight away, with nothing published on the chain.</span>
+    </div>
+  </div>
+
+  <div style="border-top:1px solid var(--line);margin-top:16px;padding-top:14px">
+    {% if state.passphrase_remembered %}
+      <div class="row">
+        <span style="flex:1;font-size:.9rem">Your passphrase is saved on this computer.</span>
+        <form method="post" action="/reveal">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <button class="ghost" type="submit">Show it</button></form>
+        <form method="post" action="/forget"
+              onsubmit="return confirm('Remove the saved passphrase? You will need your written copy from now on.')">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <button class="ghost" type="submit">Remove</button></form>
+      </div>
+      <p class="muted" style="font-size:.82rem;margin:10px 0 0">
+        Anyone who can log in to this computer can see it and read your messages.
+        The saved copy is tied to this machine, so it is useless if copied elsewhere.</p>
+    {% else %}
+      <p style="font-size:.9rem;margin:0">Your passphrase is not saved on this computer,
+        so you will be asked for it after every restart.</p>
+    {% endif %}
+
+    <details style="margin-top:14px">
+      <summary class="muted" style="cursor:pointer;font-size:.88rem">Change or reset my passphrase</summary>
+      <form method="post" action="/change-passphrase" style="margin:14px 0 0">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        {% if not state.passphrase_remembered %}
+        <div class="field"><label>Current passphrase</label>
+          <input type="password" name="current" autocomplete="current-password"></div>
+        {% endif %}
+        <div class="field"><label>New passphrase</label>
+          <input type="password" name="new" autocomplete="new-password"></div>
+        <div class="field"><label>Confirm</label>
+          <input type="password" name="confirm" autocomplete="new-password"></div>
+        <button type="submit">Change it</button>
+      </form>
+
+      <div class="note" style="margin-top:18px">
+        <strong>Forgotten it, and it was not saved here?</strong> Then nobody can
+        open this identity, including us: the key is encrypted with that
+        passphrase, so there is nothing left to re-encrypt. The only way forward
+        is a new identity. You would lose access to messages already sent to the
+        old one, and would need to give people your new contact code.
+        <form method="post" action="/reset-identity" style="margin-top:12px">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <label style="display:flex;gap:9px;align-items:flex-start;font-size:.88rem;color:var(--fg)">
+            <input type="checkbox" name="understand" value="yes" style="width:auto;margin-top:3px" required>
+            <span>I understand I will lose access to messages sent to my current identity.</span>
+          </label>
+          <button class="danger" type="submit" style="margin-top:11px">Start over with a new identity</button>
+        </form>
+        <p class="muted" style="font-size:.82rem;margin:9px 0 0">
+          The old key file is kept, not deleted, in case the passphrase turns up later.</p>
+      </div>
+    </details>
+  </div>
 {% else %}
   <p>Identity is locked.</p>
   <form method="post" action="/unlock">

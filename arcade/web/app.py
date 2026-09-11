@@ -66,7 +66,8 @@ def create_app(state: AppState) -> FastAPI:
             "ledger_net": state.ledger.label,
         }
         base.update(context)
-        return TEMPLATES.TemplateResponse(template, base)
+        # Request first: the older (name, context) signature is deprecated.
+        return TEMPLATES.TemplateResponse(request, template, base)
 
     def check_csrf(token: str) -> None:
         import secrets as _s
@@ -216,18 +217,21 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/keygen")
     def keygen(request: Request, passphrase: str = Form(""), confirm: str = Form(""),
-               saved: str = Form(""), remember: str = Form(""), csrf_token: str = Form("")):
+               saved: str = Form(""), remember: str = Form(""), mode: str = Form("chosen"),
+               csrf_token: str = Form("")):
         try:
             check_csrf(csrf_token)
             passphrase = passphrase.strip()
             if not passphrase:
                 raise KeyError_("a passphrase is required")
 
-            # A generated passphrase needs no confirmation field -- it was shown
-            # on screen. It needs the opposite: an acknowledgement that it has
-            # been written down, because nothing can recover it afterwards.
-            generated = passphrase_bits(passphrase) >= 60 and "-" in passphrase
-            if generated:
+            # Which path the user took comes from the form, not from inspecting
+            # the passphrase. Inferring it from entropy was wrong: the
+            # conservative estimate for a chosen passphrase caps at exactly 60,
+            # so any self-chosen passphrase of 30-odd characters containing a
+            # hyphen was misread as generated and then demanded a checkbox the
+            # chosen-passphrase form does not show. There was no way out of it.
+            if mode == "generated":
                 if not saved:
                     raise KeyError_(
                         "tick the box to confirm you have saved the passphrase -- "
@@ -448,7 +452,7 @@ def create_app(state: AppState) -> FastAPI:
     def scan(request: Request, csrf_token: str = Form("")):
         try:
             check_csrf(csrf_token)
-            with state.rpc() as rpc, state.store() as store:
+            with state.messaging.rpc() as rpc, state.store() as store:
                 scanner = Scanner(rpc, state.messaging.params, store, identity=state.identity)
                 result = scanner.scan(max_blocks=5000)
                 state.flash(f"Scanned {result}", "ok")

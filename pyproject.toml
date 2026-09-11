@@ -36,4 +36,12 @@ packages = ["arcade", "arcade.messaging", "arcade.web"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-filterwarnings = ["error"]
+filterwarnings = [
+    # Warnings are errors: a DeprecationWarning in our own code is a bug we want
+    # to see now rather than when it becomes a removal.
+    "error",
+    # Starlette's TestClient imports a deprecated anyio alias at module level.
+    # Third-party and unfixable from here; ignored specifically rather than by
+    # weakening the rule above.
+    "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
+]
