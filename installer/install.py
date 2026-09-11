@@ -630,6 +630,73 @@ def install_services_macos(main_dir: Path, test_dir: Path, coin) -> list[str]:
     return installed
 
 
+ARCADE_WEB_UNIT = """\
+[Unit]
+Description=DogecoinArcade web interface
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={binary}
+Restart=always
+RestartSec=10
+
+# AF_NETLINK is needed by libraries that enumerate interfaces; omitting it is
+# what crash-looped the node units twice during development.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
+"""
+
+
+def install_web_service(venv: Path, system: str) -> bool:
+    """Register the web interface so it starts at login.
+
+    Omitted from the first version, which meant a completed install left nothing
+    listening on :8420 and no indication why -- found on a second machine, where
+    the interface simply was not there.
+    """
+    binary = venv / ("Scripts/arcade-web.exe" if system == "Windows" else "bin/arcade-web")
+    if not binary.exists():
+        warn(f"{binary} not found; skipping the web service")
+        return False
+
+    if system == "Linux" and shutil.which("systemctl"):
+        unit_dir = Path.home() / ".config/systemd/user"
+        unit_dir.mkdir(parents=True, exist_ok=True)
+        (unit_dir / "arcade-web.service").write_text(ARCADE_WEB_UNIT.format(binary=binary))
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
+        subprocess.run(["systemctl", "--user", "enable", "--now", "arcade-web.service"],
+                       check=False)
+        info("registered arcade-web (starts at login)")
+        return True
+
+    if system == "Darwin":
+        agents = Path.home() / "Library/LaunchAgents"
+        agents.mkdir(parents=True, exist_ok=True)
+        plist = agents / "com.dogecoinarcade.web.plist"
+        plist.write_text(LAUNCHD_PLIST.format(
+            label="web", binary=binary, datadir=Path.home() / ".dogecoinarcade", extra=""))
+        subprocess.run(["launchctl", "unload", str(plist)], capture_output=True, check=False)
+        subprocess.run(["launchctl", "load", str(plist)], capture_output=True, check=False)
+        info("registered the web interface as a launchd agent")
+        return True
+
+    if system == "Windows":
+        command = (f'schtasks /Create /F /TN "DogecoinArcade\\web" /SC ONLOGON '
+                   f'/TR "\'{binary}\'" /RL LIMITED')
+        if subprocess.run(command, shell=True, capture_output=True).returncode == 0:
+            info("registered the web interface as a logon task")
+            return True
+
+    warn(f"could not register the web interface; start it yourself: {binary}")
+    return False
+
+
 def install_services(system: str, target: Path, main_dir: Path, test_dir: Path, coin) -> list[str]:
     """Register both nodes so they start on login. Returns what was installed."""
     if system == "Darwin":
@@ -963,6 +1030,8 @@ def main(argv: list[str] | None = None) -> int:
 
         n += 1
         step(n, total, "Finishing up")
+        if not args.dry_run and not args.no_services:
+            install_web_service(venv, system)
         if not args.dry_run:
             launcher = write_launcher(venv, target, system)
         else:
