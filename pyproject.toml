@@ -1,0 +1,19 @@
+[project]
+name = "ribbit"
+version = "0.0.1"
+description = "A sidecar Omni-style meta-layer for Pepecoin"
+requires-python = ">=3.12"
+
+# Pinned exactly, per the project ground rules. Ribbit's dependency surface is
+# deliberately tiny: an HTTP client, a ZMQ binding, and a test runner.
+dependencies = [
+    "requests==2.32.3",
+    "pyzmq==26.2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.4"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error"]
