@@ -2,7 +2,7 @@
 name = "dogecoin-arcade"
 version = "0.0.1"
 description = "A sidecar Omni-style meta-layer for Dogecoin-family chains"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 
 # Pinned exactly, per the project ground rules. Arcade's dependency surface is
 # deliberately tiny: an HTTP client, a ZMQ binding, and a test runner.
@@ -24,6 +24,15 @@ dev = ["pytest==8.3.4"]
 [project.scripts]
 arcade-msg = "arcade.messaging.cli:main"
 arcade-web = "arcade.web.__main__:main"
+dogecoinarcade-update = "arcade.update:main"
+
+[tool.setuptools]
+# Only `arcade` is a package. Without this, setuptools sees installer/ as a
+# second top-level package and refuses to build at all.
+packages = ["arcade", "arcade.messaging", "arcade.web"]
+
+[tool.setuptools.package-data]
+"arcade.web" = ["templates/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

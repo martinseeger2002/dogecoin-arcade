@@ -17,8 +17,12 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from ..config import MainnetRefused, WrongChain
+from ..messaging import vault
 from ..messaging.envelope import build_key_announcement
-from ..messaging.keys import Identity, KeyError_, fingerprint_of, save_identity
+from ..messaging.keys import (
+    Identity, KeyError_, fingerprint_of, generate_passphrase, passphrase_bits,
+    save_identity,
+)
 from ..messaging.miner import Miner, MiningError
 from ..messaging.scanner import Scanner
 from ..messaging.sender import MessageSender, SendError, plan_message
@@ -88,21 +92,57 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request):
+        # Offer a generated passphrase when there is no identity yet. Generated
+        # is the default because the usual failure is a weak chosen one, and this
+        # key has no recovery path at all.
+        suggested = generate_passphrase() if not state.has_key else None
         stats = {}
         if state.store_path.exists():
             with state.store() as store:
                 stats = store.stats()
-        return render(request, "overview.html",
+        return render(request, "overview.html", suggested=suggested,
                       messaging=messaging_status(), ledger=ledger_status(), stats=stats)
 
     # --- identity -------------------------------------------------------------
 
     @app.post("/unlock")
-    def unlock(request: Request, passphrase: str = Form(""), csrf_token: str = Form("")):
+    def unlock(request: Request, passphrase: str = Form(""), remember: str = Form(""),
+               csrf_token: str = Form("")):
         try:
             check_csrf(csrf_token)
-            state.unlock(passphrase)
+            state.unlock(passphrase, remember=bool(remember))
         except (KeyError_, ValueError) as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse("/", status_code=303)
+
+    @app.post("/reveal")
+    def reveal(request: Request, csrf_token: str = Form("")):
+        """Show the remembered passphrase. The retrieval path."""
+        try:
+            check_csrf(csrf_token)
+            passphrase = state.reveal_passphrase()
+            if passphrase:
+                state.flash(f"Your passphrase is:  {passphrase}", "reveal")
+            else:
+                state.flash(
+                    "This passphrase is not saved on this computer. If you have "
+                    "lost it, it cannot be recovered.", "err")
+        except ValueError as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse("/", status_code=303)
+
+    @app.post("/forget")
+    def forget(request: Request, csrf_token: str = Form("")):
+        try:
+            check_csrf(csrf_token)
+            if vault.forget(state.home, state.messaging.network):
+                state.flash(
+                    "Removed from this computer's credential store. You will be "
+                    "asked for the passphrase from now on -- make sure you have it.",
+                    "ok")
+            else:
+                state.flash("It was not saved on this computer.", "info")
+        except ValueError as exc:
             state.flash(str(exc), "err")
         return RedirectResponse("/", status_code=303)
 
@@ -117,16 +157,42 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/keygen")
     def keygen(request: Request, passphrase: str = Form(""), confirm: str = Form(""),
-               csrf_token: str = Form("")):
+               saved: str = Form(""), remember: str = Form(""), csrf_token: str = Form("")):
         try:
             check_csrf(csrf_token)
-            if passphrase != confirm:
-                raise KeyError_("passphrases do not match")
-            if len(passphrase) < 8:
-                raise KeyError_("use at least 8 characters: this key is long-lived")
+            passphrase = passphrase.strip()
+            if not passphrase:
+                raise KeyError_("a passphrase is required")
+
+            # A generated passphrase needs no confirmation field -- it was shown
+            # on screen. It needs the opposite: an acknowledgement that it has
+            # been written down, because nothing can recover it afterwards.
+            generated = passphrase_bits(passphrase) >= 60 and "-" in passphrase
+            if generated:
+                if not saved:
+                    raise KeyError_(
+                        "tick the box to confirm you have saved the passphrase -- "
+                        "it cannot be shown again"
+                    )
+            else:
+                if passphrase != confirm:
+                    raise KeyError_("passphrases do not match")
+                if len(passphrase) < 8:
+                    raise KeyError_("use at least 8 characters: this key is long-lived")
             identity = Identity.generate()
             save_identity(state.key_path, identity, passphrase)
             state.identity = identity
+            if remember:
+                try:
+                    vault.remember(state.home, state.messaging.network, passphrase)
+                    state.flash(
+                        "Identity created, and the passphrase is saved on this "
+                        "computer so you will not be asked for it again. You can "
+                        "view it any time from this page.", "ok")
+                except RuntimeError as exc:
+                    state.flash(
+                        f"Identity created, but the passphrase could not be saved: {exc}. "
+                        "Keep your written copy.", "err")
         except (KeyError_, ValueError) as exc:
             state.flash(str(exc), "err")
         return RedirectResponse("/", status_code=303)

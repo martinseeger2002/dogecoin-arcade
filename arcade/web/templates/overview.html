@@ -29,7 +29,86 @@
     {% else %}<div class="v">—</div>{% endif %}</div>
   <div class="stat"><div class="k">Identity</div>
     <div class="v" style="font-size:1rem">
-      {% if not state.has_key %}none{% elif state.unlocked %}unlocked{% else %}locked{% endif %}</div>
+      {% if not state.has_key %}
+  <p>You need an identity before you can send or receive messages. It is an X25519
+     keypair, kept separate from any wallet key and encrypted on disk.</p>
+
+  <form method="post" action="/keygen" id="keygen">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+
+    <div id="generated">
+      <label>Your passphrase</label>
+      <div class="phrase" id="phrase">{{ suggested }}</div>
+      <div class="row" style="margin:10px 0 14px">
+        <button type="button" class="ghost" onclick="copyPhrase()">Copy</button>
+        <button type="button" class="ghost" onclick="location.reload()">Generate another</button>
+        <span class="muted" style="font-size:.82rem">Six random words &mdash; far
+          stronger than anything most people would invent.</span>
+      </div>
+      <input type="hidden" name="passphrase" id="phrase-value" value="{{ suggested }}">
+      <label style="display:flex;gap:9px;align-items:flex-start;font-size:.9rem;color:var(--fg)">
+        <input type="checkbox" name="remember" value="yes" checked style="width:auto;margin-top:3px">
+        <span><strong>Save it on this computer</strong> so I am not asked for it
+              again, and can look it up here later.</span>
+      </label>
+      <label style="display:flex;gap:9px;align-items:flex-start;font-size:.9rem;color:var(--fg);margin-top:9px">
+        <input type="checkbox" name="saved" value="yes" style="width:auto;margin-top:3px" required>
+        <span>I have also written it down somewhere safe, in case this computer
+              is lost.</span>
+      </label>
+      <div class="row" style="margin-top:14px">
+        <button type="submit">Create identity</button>
+        <a href="#" class="muted" style="font-size:.87rem"
+           onclick="showOwn(true);return false">
+          I would rather choose my own</a>
+      </div>
+    </div>
+
+    <div id="chosen" hidden>
+      <div class="field"><label>Passphrase</label>
+        <input type="password" name="passphrase" id="own-phrase" autocomplete="new-password" disabled></div>
+      <div class="field"><label>Confirm</label>
+        <input type="password" name="confirm" id="own-confirm" autocomplete="new-password" disabled></div>
+      <div class="row">
+        <button type="submit">Create identity</button>
+        <a href="#" class="muted" style="font-size:.87rem"
+           onclick="showOwn(false);return false">
+          Use a generated one instead</a>
+      </div>
+      <p class="muted" style="font-size:.85rem;margin-top:10px">
+        A passphrase you invent is usually far weaker than six random words.
+        Use a password manager if you go this way.</p>
+    </div>
+  </form>
+
+  <div class="note" style="margin-top:16px">
+    <strong>There is no recovery.</strong> Lose this passphrase and every message
+    ever sent to this identity becomes permanently unreadable &mdash; nobody can
+    restore it. Saving it on this computer means anyone who can log in here can
+    read your messages.
+  </div>
+
+  <script>
+  // Disabled inputs are not submitted. Toggling `disabled` alongside `hidden` is
+  // what stops the unused half of the form from sending an empty passphrase that
+  // overrides the one in use -- which it did.
+  function showOwn(own){
+    document.getElementById('generated').hidden = own;
+    document.getElementById('chosen').hidden = !own;
+    document.getElementById('phrase-value').disabled = own;
+    document.getElementById('own-phrase').disabled = !own;
+    document.getElementById('own-confirm').disabled = !own;
+    document.querySelector('input[name=saved]').required = !own;
+  }
+  function copyPhrase(){
+    const t = document.getElementById('phrase').textContent.trim();
+    navigator.clipboard.writeText(t).then(function(){
+      const b = event.target; const old = b.textContent;
+      b.textContent = 'Copied'; setTimeout(function(){ b.textContent = old; }, 1400);
+    });
+  }
+  </script>
+{% elif state.unlocked %}unlocked{% else %}locked{% endif %}</div>
     <div class="n">{% if state.unlocked %}<span class="fp">{{ state.identity.fingerprint }}</span>{% endif %}</div></div>
 </div>
 
@@ -62,10 +141,16 @@
     announcement proves control of an address — never who someone is.</p>
 {% else %}
   <p>Identity is locked.</p>
-  <form method="post" action="/unlock" class="row">
+  <form method="post" action="/unlock">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
-    <div style="flex:1"><input type="password" name="passphrase" placeholder="Passphrase" autocomplete="current-password"></div>
-    <button type="submit">Unlock</button>
+    <div class="row">
+      <div style="flex:1"><input type="password" name="passphrase" placeholder="Passphrase" autocomplete="current-password" autofocus></div>
+      <button type="submit">Unlock</button>
+    </div>
+    <label style="display:flex;gap:9px;align-items:center;font-size:.88rem;margin-top:11px;color:var(--fg)">
+      <input type="checkbox" name="remember" value="yes" checked style="width:auto">
+      <span>Save it on this computer so I am not asked again</span>
+    </label>
   </form>
 {% endif %}
 </div>

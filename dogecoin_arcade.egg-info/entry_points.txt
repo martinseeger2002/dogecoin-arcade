@@ -1,3 +1,0 @@
-[console_scripts]
-arcade-msg = arcade.messaging.cli:main
-arcade-web = arcade.web.__main__:main

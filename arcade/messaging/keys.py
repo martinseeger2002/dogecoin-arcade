@@ -13,7 +13,9 @@ Nothing in this module ever touches a wallet or a private spending key.
 from __future__ import annotations
 
 import hashlib
+import math
 import os
+import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +24,10 @@ import nacl.public
 import nacl.secret
 import nacl.utils
 from nacl.exceptions import CryptoError
+
+from .wordlist import WORDS
+
+_WORD_SET = frozenset(WORDS)
 
 MAGIC = b"ARCK"
 VERSION = 1
@@ -79,6 +85,43 @@ class Identity:
 
     def __repr__(self) -> str:  # never let a secret key reach a log or traceback
         return f"Identity(fingerprint={self.fingerprint!r}, secret=<redacted>)"
+
+
+#: Six words from a 1296-word list is ~62 bits. Combined with Argon2id at
+#: roughly 1.3 s per guess, brute force takes on the order of 10^11 years, so
+#: more words would buy nothing a user would notice.
+PASSPHRASE_WORDS = 6
+
+
+def generate_passphrase(words: int = PASSPHRASE_WORDS) -> str:
+    """A strong passphrase the user can actually write down.
+
+    Generated rather than chosen because the common failure is a weak
+    human-chosen passphrase, and this key has no recovery path. `secrets` is used
+    rather than `random`: the latter is seeded predictably and is not fit for
+    anything anyone could want to guess.
+
+    The result is shown to the user **once** and never stored. Saving it beside
+    the key file would leave the lock and its key in the same drawer, which is
+    the whole thing the encryption at rest exists to prevent.
+    """
+    if words < 4:
+        raise KeyError_("a generated passphrase needs at least four words")
+    return "-".join(secrets.choice(WORDS) for _ in range(words))
+
+
+def passphrase_bits(passphrase: str) -> float:
+    """Rough entropy estimate, for telling the user where they stand.
+
+    Only meaningful for passphrases in the generated format; a human-chosen one
+    is estimated conservatively, since there is no way to know how predictable it
+    really is.
+    """
+    parts = passphrase.split("-")
+    if len(parts) >= 4 and all(p in _WORD_SET for p in parts):
+        return len(parts) * math.log2(len(WORDS))
+    # Conservative: assume roughly two bits per character for human-chosen text.
+    return min(len(passphrase) * 2.0, 60.0)
 
 
 def fingerprint_of(public_bytes: bytes) -> str:

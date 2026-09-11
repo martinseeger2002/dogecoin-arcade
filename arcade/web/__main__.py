@@ -95,6 +95,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {context.label:8s} {context.network:10s} NOT FOUND -- "
                   f"the {context.role} sections will explain why")
 
+    # If the passphrase was saved, unlock at startup rather than making the user
+    # do it on every launch. That is the entire point of saving it.
+    if state.try_auto_unlock():
+        print(f"  identity {state.identity.fingerprint} unlocked from saved credentials")
+
     print(f"DogecoinArcade  ->  http://{args.host}:{args.port}")
     uvicorn.run(create_app(state), host=args.host, port=args.port, log_level="warning")
     return 0

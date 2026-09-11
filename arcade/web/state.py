@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import NETWORKS, Params, load_rpc_credentials, verify_connected_chain
+from ..messaging import vault
 from ..messaging.keys import Identity, load_identity
 from ..messaging.store import MessageStore
 from ..rpc import RpcClient
@@ -149,9 +150,39 @@ class AppState:
     def store(self) -> MessageStore:
         return MessageStore(self.store_path)
 
-    def unlock(self, passphrase: str) -> None:
+    def unlock(self, passphrase: str, remember: bool = False) -> None:
         with self._lock:
             self.identity = load_identity(self.key_path, passphrase)
+        if remember:
+            vault.remember(self.home, self.messaging.network, passphrase)
+
+    def try_auto_unlock(self) -> bool:
+        """Unlock from the OS credential store, if the user asked us to remember.
+
+        Called once at startup. A stored passphrase that no longer opens the key
+        is discarded rather than kept: it is stale, and leaving it there would
+        mean a confusing failure on every launch.
+        """
+        if self.unlocked or not self.has_key:
+            return False
+        passphrase = vault.recall(self.home, self.messaging.network)
+        if not passphrase:
+            return False
+        try:
+            with self._lock:
+                self.identity = load_identity(self.key_path, passphrase)
+            return True
+        except Exception:
+            vault.forget(self.home, self.messaging.network)
+            return False
+
+    @property
+    def passphrase_remembered(self) -> bool:
+        return vault.is_remembered(self.home, self.messaging.network)
+
+    def reveal_passphrase(self) -> str | None:
+        """The stored passphrase, for showing the user on request."""
+        return vault.recall(self.home, self.messaging.network)
 
     def lock(self) -> None:
         with self._lock:
