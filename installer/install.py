@@ -381,6 +381,49 @@ def install_core_macos(archive: Path, workdir: Path, coin) -> Path:
         subprocess.run([hdiutil, "detach", str(mount), "-quiet"], check=False)
 
 
+def install_binary(source: Path, destination: Path) -> None:
+    """Replace a binary that may currently be running.
+
+    Writing directly over a running executable fails with "Text file busy"
+    (ETXTBSY) on Linux, which is exactly what happens when the installer is run a
+    second time while the node it installed is up -- the ordinary upgrade case.
+
+    Copying beside it and renaming avoids the problem entirely: rename replaces
+    the directory entry, and the running process keeps its own inode until it
+    exits. It is also atomic, so an interrupted install cannot leave a truncated
+    binary behind.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging = destination.with_name(destination.name + ".new")
+    shutil.copy2(source, staging)
+    staging.chmod(0o755)
+    try:
+        os.replace(staging, destination)
+    except OSError as exc:
+        staging.unlink(missing_ok=True)
+        fail(f"could not replace {destination}: {exc}")
+
+
+def restart_running_nodes(coin) -> list[str]:
+    """Restart any node services we installed, so the new binary takes effect.
+
+    Without this an upgrade appears to succeed while the old binary keeps
+    running, which is worse than failing: the version on disk and the version in
+    memory disagree, silently.
+    """
+    if not shutil.which("systemctl"):
+        return []
+    restarted = []
+    for label in ("mainnet", "testnet"):
+        unit = f"{coin.binaries[0]}-{label}.service"
+        active = subprocess.run(["systemctl", "--user", "is-active", unit],
+                                capture_output=True, text=True).stdout.strip()
+        if active == "active":
+            subprocess.run(["systemctl", "--user", "restart", unit], check=False)
+            restarted.append(unit)
+    return restarted
+
+
 def install_core(archive: Path, target: Path, system: str, coin) -> None:
     if system == "Darwin":
         install_core_macos(archive, archive.parent, coin)
@@ -413,8 +456,7 @@ def install_core(archive: Path, target: Path, system: str, coin) -> None:
         source = extracted / "bin" / f"{name}{suffix}"
         if not source.exists():
             fail(f"{source} is missing from the archive")
-        shutil.copy2(source, target / f"{name}{suffix}")
-        (target / f"{name}{suffix}").chmod(0o755)
+        install_binary(source, target / f"{name}{suffix}")
     info(f"installed {', '.join(coin.binaries)} to {target}")
 
 
@@ -898,6 +940,8 @@ def main(argv: list[str] | None = None) -> int:
                         info(f"would install {', '.join(coin.binaries)} to {target}")
                     else:
                         install_core(archive, target, system, coin)
+                        for unit in restart_running_nodes(coin):
+                            info(f"restarted {unit} to pick up the new binary")
 
             n += 1
             step(n, total, f"Writing {coin.name} configuration")
