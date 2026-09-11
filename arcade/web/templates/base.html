@@ -96,6 +96,30 @@ nav a.on .tag{background:rgba(255,255,255,.25);color:inherit}
 .unread{font-weight:650}
 .note{border-left:3px solid var(--accent);padding:10px 14px;background:var(--panel);
   border-radius:0 8px 8px 0;font-size:.9rem;margin-bottom:14px}
+
+/* address book */
+.two{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
+@media(max-width:640px){.two{grid-template-columns:1fr}}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
+.card{border:1px solid var(--line);border-radius:10px;padding:15px 16px;background:var(--panel)}
+.card.editing{border-color:var(--accent);box-shadow:0 0 0 3px rgba(120,110,255,.12)}
+.card h3{font-size:1.02rem}
+dl.addrs{display:grid;grid-template-columns:auto 1fr;gap:7px 10px;margin:12px 0 0;align-items:center}
+dl.addrs dt{margin:0}
+dl.addrs dd{margin:0;min-width:0}
+code.addr{font-size:.78rem;word-break:break-all;cursor:pointer;padding:2px 5px;
+  border-radius:4px;background:var(--code);display:inline-block;line-height:1.35}
+code.addr:hover{background:var(--line)}
+code.addr.copied{background:var(--ok,#1f9d55);color:#fff}
+.card .notes{font-size:.87rem;color:var(--muted);margin:12px 0 0;white-space:pre-wrap}
+a.btn{display:inline-block;padding:6px 11px;border:1px solid var(--line);border-radius:6px;
+  font-size:.86rem;color:var(--fg);background:transparent}
+a.btn:hover{background:var(--code);text-decoration:none}
+.panel.empty{text-align:center;padding:34px 20px}
+.panel.empty p{margin:0 0 8px}
+textarea{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:7px;
+  background:var(--panel);color:var(--fg);font:inherit;font-size:.92rem;resize:vertical}
+input.mono{font-family:var(--mono,ui-monospace,monospace);font-size:.85rem}
 </style>
 </head>
 <body>

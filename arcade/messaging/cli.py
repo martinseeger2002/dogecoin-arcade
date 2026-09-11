@@ -31,6 +31,7 @@ from ..config import (
     verify_connected_chain,
 )
 from ..rpc import RpcClient
+from .derive import derive_identity
 from .envelope import build_key_announcement
 from .keys import Identity, KeyError_, fingerprint_of, load_identity, save_identity
 from .miner import COINBASE_MATURITY, DEFAULT_TARGET_COINS, Miner, MiningError
@@ -96,8 +97,33 @@ def _passphrase(confirm: bool = False) -> str:
     return first
 
 
+#: The wallet account the identity address is filed under. Must match
+#: `AppState.IDENTITY_ACCOUNT`, or the CLI and the web interface would derive two
+#: different identities from the same wallet.
+IDENTITY_ACCOUNT = "arcade-identity"
+
+
 def _identity(args) -> Identity:
-    return load_identity(_key_path(args), _passphrase())
+    """The messaging identity, derived from the node's wallet.
+
+    No passphrase: the identity comes from a wallet address, so restoring
+    wallet.dat restores it. A key file from before this change is still honoured
+    if one is present, so existing installations keep working.
+    """
+    # A key file is used only when asked for by name. A leftover one from before
+    # identities were wallet-derived must not be picked up silently: the web
+    # interface derives from the wallet, and the two halves of the application
+    # answering to different identities would be worse than either choice.
+    path = Path(args.key).expanduser() if getattr(args, "key", None) else None
+    if path:
+        return load_identity(path, _passphrase())
+    with _rpc(args, _params(args)) as rpc:
+        addresses = rpc.call("getaddressesbyaccount", IDENTITY_ACCOUNT) or []
+        # Deterministic, because `getaccountaddress` hands back a fresh address
+        # once the current one is used -- which would change identity silently.
+        address = sorted(addresses)[0] if addresses else \
+            rpc.call("getaccountaddress", IDENTITY_ACCOUNT)
+        return derive_identity(rpc, address)
 
 
 def _when(ts: int) -> str:
@@ -441,6 +467,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--network", default="test", choices=sorted(MESSAGING_NETWORKS),
                    help="which testnet (default: test)")
     p.add_argument("--home", default=str(DEFAULT_HOME), help="key and database directory")
+    p.add_argument("--key", default=None,
+                   help="use a passphrase-protected key file instead of deriving "
+                        "the identity from the wallet (for keys made before "
+                        "identities came from the wallet)")
     p.add_argument("--conf", help="path to a node config holding rpcuser/rpcpassword")
     p.add_argument("--datadir", help="node datadir, to read its .cookie")
     p.add_argument("--marker", help="Class B marker address for this network")

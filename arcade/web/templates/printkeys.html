@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Private keys · {{ chain.label }}{% endblock %}
+{% block body %}
+<div class="printpage">
+  <h1>{{ chain.label }} private keys</h1>
+  <p class="sub">DogecoinArcade &middot; {{ chain.network }} &middot; printed {{ when(None) }}</p>
+
+  <div class="note danger-note">
+    <strong>Anyone holding this paper can spend these coins.</strong> There is no
+    password on it and no way to undo a theft. Keep it somewhere you would keep
+    cash. Do not photograph it, and do not store it on a computer.
+  </div>
+
+  <div class="row noprint" style="margin:16px 0">
+    <button type="button" onclick="window.print()">Print this page</button>
+    <span class="muted" style="font-size:.86rem">This page exists only in this tab.
+      Closing it is enough &mdash; nothing was written to disk.</span>
+  </div>
+
+  <table class="keys">
+    <tr><th>Address</th><th>Private key</th><th>Received</th></tr>
+    {% for k in keys %}
+    <tr>
+      <td class="mono">{{ k.address }}</td>
+      <td class="mono key">{{ k.private_key }}</td>
+      <td>{{ k.balance }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  <p class="muted" style="font-size:.84rem;margin-top:18px">
+    {{ keys|length }} key{{ '' if keys|length == 1 else 's' }}. Restoring from
+    these means importing each one; a copy of <code>wallet.dat</code> is easier
+    and keeps your labels and history too.
+  </p>
+</div>
+<style>
+.printpage .note.danger-note{border-color:var(--bad);background:color-mix(in srgb,var(--bad) 8%,transparent)}
+table.keys{width:100%;border-collapse:collapse;margin-top:8px}
+table.keys th{text-align:left;font-size:.8rem;color:var(--muted);padding:6px 8px}
+table.keys td{padding:7px 8px;border-top:1px solid var(--line);font-size:.78rem;word-break:break-all;vertical-align:top}
+table.keys td.key{font-weight:600}
+@media print{
+  nav,header,.noprint{display:none!important}
+  body{background:#fff;color:#000}
+  .printpage .note.danger-note{border:2px solid #000;background:#fff;color:#000}
+  table.keys td{border-top:1px solid #999}
+  a[href]:after{content:""}
+}
+</style>
+{% endblock %}

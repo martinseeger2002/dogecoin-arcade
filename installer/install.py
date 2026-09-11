@@ -180,6 +180,37 @@ def fail(text: str) -> None:
     raise InstallError(text)
 
 
+def choose_chain() -> list:
+    """Ask which chain to install a node for.
+
+    Asked rather than assumed, because the two chains are entirely separate
+    networks and installing the wrong one leaves a user with a node that can
+    never see their coins. `--coin` skips this for scripted installs.
+    """
+    print()
+    print("  Which chain do you want to use?")
+    print()
+    print("    1) Pepecoin   -- the default")
+    print("    2) Dogecoin")
+    print("    3) Both       -- two nodes, one application")
+    print()
+    print("  The application is identical on either. You can add the other later")
+    print("  by running this installer again.")
+    print()
+    while True:
+        try:
+            answer = input("  Choose 1, 2 or 3 [1]: ").strip().lower()
+        except EOFError:
+            answer = ""
+        if answer in ("", "1", "p", "pep", "pepe", "pepecoin"):
+            return [PEPECOIN]
+        if answer in ("2", "d", "doge", "dogecoin"):
+            return [DOGECOIN]
+        if answer in ("3", "b", "both"):
+            return [PEPECOIN, DOGECOIN]
+        print("  Please answer 1, 2 or 3.")
+
+
 # --- platform -----------------------------------------------------------------
 
 def detect(coin) -> tuple[str, str, str]:
@@ -555,8 +586,11 @@ Wants=network-online.target
 # would race against the PID file.
 Type=simple
 ExecStart={binary} -datadir={datadir}
-Restart=on-failure
-RestartSec=30
+# `always`, not `on-failure`: a clean shutdown is how the application swaps a
+# restored wallet.dat into place, and the node has to come back afterwards.
+# An explicit `systemctl stop` is still honoured -- systemd does not fight that.
+Restart=always
+RestartSec=5
 TimeoutStopSec=600
 
 # Runs as you, so the 0600 .cookie it writes is readable by the application.
@@ -940,9 +974,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-services", action="store_true", help="do not register services")
     parser.add_argument("--no-browser", action="store_true", help="do not open a browser")
     parser.add_argument(
-        "--coin", choices=["pepecoin", "dogecoin", "both"], default="pepecoin",
-        help="which chain to install a node for (default: pepecoin). The protocol "
-             "is identical on both, so 'both' simply installs two nodes.",
+        "--coin", choices=["pepecoin", "dogecoin", "both"], default=None,
+        help="which chain to install a node for. Omit it and the installer asks. "
+             "The protocol is identical on both, so 'both' installs two nodes.",
     )
     args = parser.parse_args(argv)
 
@@ -958,7 +992,14 @@ def main(argv: list[str] | None = None) -> int:
     print("DogecoinArcade installer")
     print("=" * 58)
 
-    coins = list(COINS.values()) if args.coin == "both" else [COINS[args.coin]]
+    # Ask, unless told on the command line or running somewhere nobody can answer
+    # (a pipe, a CI job), where the historical default stands.
+    if args.coin:
+        coins = list(COINS.values()) if args.coin == "both" else [COINS[args.coin]]
+    elif args.skip_core or not sys.stdin.isatty():
+        coins = [PEPECOIN]
+    else:
+        coins = choose_chain()
     per_coin = 0 if args.skip_core else 2
     total = 3 + len(coins) * (per_coin + 2)
     n = 0

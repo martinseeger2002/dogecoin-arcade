@@ -62,7 +62,7 @@
            placeholder="paste a contact code, or pick someone below">
     {% if keys %}
     <datalist id="known">
-      {% for k in keys %}<option value="{{ k['address'] }}">{{ k['fingerprint'] }}</option>{% endfor %}
+      {% for k in keys %}<option value="{{ k['address'] }}">{{ k['address'] }}</option>{% endfor %}
     </datalist>
     {% endif %}
     <p class="muted" style="font-size:.84rem;margin:7px 0 0">

@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Messages · DogecoinArcade{% endblock %}
+{% block body %}
+
+{% if not state.unlocked %}
+  <h1>Messages</h1>
+  <p class="sub">Set up an identity on the <a href="/">Overview</a> page first.</p>
+{% else %}
+
+<div class="msgr">
+  <aside class="threads">
+    <div class="threads-head">
+      <strong>Conversations</strong>
+      <button type="button" class="ghost small" onclick="document.getElementById('newconv').hidden=false">New</button>
+    </div>
+
+    <form method="post" action="/messages/start" id="newconv" class="newconv" {% if not request.query_params.get('new') %}hidden{% endif %}>
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <label>Their contact code</label>
+      <input name="code" class="mono" spellcheck="false"
+             placeholder="Their address, or their contact code" required>
+      <label style="margin-top:8px">Name them (optional)</label>
+      <input name="name" placeholder="e.g. a test machine">
+      <div class="row" style="margin-top:9px">
+        <button type="submit" class="small">Start</button>
+        <button type="button" class="ghost small" onclick="document.getElementById('newconv').hidden=true">Cancel</button>
+      </div>
+      <p class="muted" style="font-size:.78rem;margin:9px 0 0">
+        Ask them for the code shown on their Overview page. Nothing needs to be
+        published on the chain.</p>
+    </form>
+
+    {% if not threads %}
+      <p class="muted empty">No conversations yet. Press <strong>New</strong> and
+         paste someone's contact code.</p>
+    {% endif %}
+    {% for t in threads %}
+      <a class="thread {{ 'on' if peer and peer.pubkey == t.pubkey }}" href="/messages/{{ t.pubkey.hex() }}">
+        <div class="thread-top">
+          <span class="who">{{ t.name or t.address or 'Unnamed contact' }}</span>
+          {% if t.unread %}<span class="badge">{{ t.unread }}</span>{% endif %}
+        </div>
+        <div class="thread-preview">{{ 'You: ' if t.outgoing }}{{ t.preview[:64].decode('utf-8', 'replace') }}</div>
+        <div class="thread-when">{{ when(t.last) }}</div>
+      </a>
+    {% endfor %}
+  </aside>
+
+  <section class="convo">
+  {% if not peer %}
+    <div class="nothing">
+      <p>Select a conversation, or start one with someone's contact code.</p>
+      <p class="muted" style="font-size:.88rem">Your own code is on the
+        <a href="/">Overview</a> page — send it to whoever wants to reach you.</p>
+    </div>
+  {% else %}
+    <header class="convo-head">
+      <div>
+        <div class="convo-name">{{ peer.name or peer.address or 'Unnamed contact' }}</div>
+        {% if peer.name and peer.address %}<div class="convo-sub">{{ peer.address }}</div>{% endif %}
+      </div>
+      <form method="post" action="/messages/{{ peer.hex }}/name" class="row">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <input name="name" value="{{ peer.name or '' }}" placeholder="name them" class="small-input">
+        <button class="ghost small" type="submit">Save</button>
+      </form>
+      <a class="ghost small btn" href="{{ '/contacts?edit=' ~ peer.contact_id if peer.contact_id else '/contacts' }}"
+         title="Their addresses and your notes">Address book</a>
+    </header>
+
+    {% if error %}<div class="msg err" style="margin:14px 16px 0">{{ error }}</div>{% endif %}
+
+    <div class="bubbles" id="bubbles">
+      {% if not thread %}
+        <p class="muted nothing" style="padding:30px 0">
+          No messages yet. Write the first one below.</p>
+      {% endif %}
+      {% for m in thread %}
+        <div class="bubble-row {{ 'mine' if m.mine else 'theirs' }}">
+          <div class="bubble">
+            <div class="text">{{ m.body.decode('utf-8', 'replace') }}</div>
+            <div class="stamp">
+              {{ when(m.when) }}
+              {% if m.mine %}· {{ 'confirmed' if m.get('confirmed') else 'sent' }}{% endif %}
+              {% if m.height %}· block {{ "{:,}".format(m.height) }}{% endif %}
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+
+    {% if prepared %}
+      {% set fee = prepared|sum(attribute='fee_sats') / 100000000 %}
+      <div class="confirm">
+        <strong>Send this?</strong>
+        {{ prepared|length }} transaction{{ '' if prepared|length == 1 else 's' }},
+        fee {{ "%.8f"|format(fee) }}{% if plan %}, {{ plan.multisig_outputs }} outputs{% endif %}.
+        It becomes permanent once broadcast.
+        <form method="post" action="/messages/{{ peer.hex }}/send" style="margin-top:10px">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <input type="hidden" name="body" value="{{ draft }}">
+          <input type="hidden" name="confirmed" value="yes">
+          <div class="row">
+            <button type="submit" class="small">Send it</button>
+            <a class="muted" href="/messages/{{ peer.hex }}" style="font-size:.87rem">Cancel</a>
+          </div>
+        </form>
+      </div>
+    {% endif %}
+
+    <form method="post" action="/messages/{{ peer.hex }}/send" class="composer">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <textarea name="body" rows="2" placeholder="Write a message…"
+                onkeydown="if(event.key==='Enter'&&(event.metaKey||event.ctrlKey))this.form.submit()">{{ draft or '' }}</textarea>
+      <button type="submit">Review</button>
+    </form>
+    <p class="muted composer-note">
+      Encrypted to {{ peer.name or 'them' }} only. Costs a transaction fee and is
+      permanent once sent. Ctrl+Enter to review.</p>
+  {% endif %}
+  </section>
+</div>
+
+<script>
+  var b = document.getElementById('bubbles');
+  if (b) b.scrollTop = b.scrollHeight;
+</script>
+{% endif %}
+{% endblock %}

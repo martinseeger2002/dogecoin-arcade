@@ -11,8 +11,6 @@
   <table>
     <tr><td class="muted" style="width:140px;border:0">From address</td>
         <td class="mono" style="border:0">{{ message.sender_addr }}</td></tr>
-    <tr><td class="muted" style="border:0">Sender key</td>
-        <td class="fp" style="border:0">{{ fingerprint_of(message.sender_pubkey) }}</td></tr>
     <tr><td class="muted" style="border:0">Transaction</td>
         <td class="mono" style="font-size:.78rem;border:0;word-break:break-all">{{ message.first_txid }}</td></tr>
   </table>
@@ -26,9 +24,10 @@
 {% endif %}
 
 <div class="note">
-  The sender key above was <strong>authenticated</strong> — the message could only
-  have been produced by someone holding its secret half. That is not the same as
-  knowing who they are; only an out-of-band fingerprint check establishes that.
+  This message was <strong>authenticated</strong> — it could only have been
+  written by someone holding the secret half of that address's key. That is not
+  the same as knowing who they are; only confirming the address with the person
+  directly does that.
 </div>
 <p><a href="/inbox">&larr; Inbox</a></p>
 {% endif %}

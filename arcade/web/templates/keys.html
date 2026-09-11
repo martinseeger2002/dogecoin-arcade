@@ -28,7 +28,7 @@
 <div class="panel">
 {% if state.unlocked %}
   <div class="row">
-    <div style="flex:1"><div class="fp" style="font-size:1.05rem">{{ state.identity.fingerprint }}</div></div>
+    <div style="flex:1"><div class="mono" style="font-size:.95rem">{{ state.derived_address or 'ready' }}</div></div>
     <form method="post" action="/publish-key">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <button type="submit">Publish on chain</button>
@@ -37,7 +37,7 @@
   <p class="muted" style="margin-top:10px;font-size:.87rem">
     A 38-byte OP_RETURN, so it costs far less than a message.</p>
 {% else %}
-  <p class="muted">Unlock your identity to publish it.</p>
+  <p class="muted">Waiting for the testnet node. Nothing to do.</p>
 {% endif %}
 </div>
 
@@ -47,18 +47,17 @@
 {% else %}
 <div class="panel">
 <table>
-  <tr><th>Address</th><th>Fingerprint</th><th>Height</th></tr>
+  <tr><th>Address</th><th>Published at</th></tr>
   {% for k in keys %}
   <tr><td class="mono" style="font-size:.8rem">{{ k['address'] }}</td>
-      <td class="fp">{{ k['fingerprint'] }}</td>
-      <td>{{ "{:,}".format(k['height']) }}</td></tr>
+      <td>block {{ "{:,}".format(k['height']) }}</td></tr>
   {% endfor %}
 </table>
 </div>
 <div class="note">
   An announcement proves that whoever controlled that address at that block
-  published that key. It proves nothing about identity — check the fingerprint
-  by some other channel before trusting it.
+  published that key. It proves nothing about who they are — confirm the address
+  with the person directly before trusting it.
 </div>
 {% endif %}
 {% endblock %}

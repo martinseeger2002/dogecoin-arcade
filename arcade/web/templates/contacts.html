@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Address book · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Address book</h1>
+<p class="sub">Who is who, and where to pay them. Stored only on this computer.</p>
+
+<div class="panel" style="margin-bottom:18px">
+  <form method="post" action="/contacts/save">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    {% if editing %}<input type="hidden" name="contact_id" value="{{ editing['id'] }}">{% endif %}
+    <h3 style="margin:0 0 14px">{{ "Edit " ~ editing['name'] if editing else "Add someone" }}</h3>
+
+    <div class="field"><label>Name</label>
+      <input name="name" value="{{ editing['name'] if editing else '' }}"
+             placeholder="What you call them" autofocus required></div>
+
+    <div class="two">
+      <div class="field"><label>Testnet address <span class="tag testnet">test</span></label>
+        <input name="testnet_address" class="mono" spellcheck="false"
+               value="{{ editing['testnet_address'] if editing else '' }}"
+               placeholder="Test coins — no real value"></div>
+      <div class="field"><label>Mainnet address <span class="tag mainnet">main</span></label>
+        <input name="mainnet_address" class="mono" spellcheck="false"
+               value="{{ editing['mainnet_address'] if editing else '' }}"
+               placeholder="Real coins — check this one twice"></div>
+    </div>
+
+    {% if not editing %}
+    <div class="field"><label>Contact code <span class="muted" style="font-weight:400">— optional</span></label>
+      <input name="code" class="mono" spellcheck="false" placeholder="arcade:test:…">
+      <p class="muted" style="font-size:.82rem;margin:6px 0 0">
+        Add it and you can message them straight from here. It can only be set when
+        the entry is created, because it <em>is</em> their identity.</p></div>
+    {% endif %}
+
+    <div class="field"><label>Notes</label>
+      <textarea name="notes" rows="3" placeholder="How you know them, what they are for, anything worth remembering."
+        >{{ editing['notes'] if editing else '' }}</textarea></div>
+
+    <div class="row">
+      <button type="submit">{{ "Save changes" if editing else "Add to address book" }}</button>
+      {% if editing %}<a href="/contacts" class="muted" style="font-size:.88rem">Cancel</a>{% endif %}
+    </div>
+  </form>
+</div>
+
+{% if people %}
+<div class="cards">
+  {% for p in people %}
+  <div class="card{{ ' editing' if editing and editing['id'] == p['id'] }}">
+    <div class="row" style="align-items:baseline">
+      <h3 style="flex:1;margin:0">{{ p['name'] or "Unnamed" }}</h3>
+      {% if p['hex'] %}<span class="pill ok" title="You can message this contact">messaging</span>{% endif %}
+    </div>
+
+    <dl class="addrs">
+      <dt><span class="tag testnet">test</span></dt>
+      <dd>{% if p['testnet_address'] %}<code class="addr" onclick="copyAddr(this)"
+            title="Click to copy">{{ p['testnet_address'] }}</code>{% else %}<span class="muted">—</span>{% endif %}</dd>
+      <dt><span class="tag mainnet">main</span></dt>
+      <dd>{% if p['mainnet_address'] %}<code class="addr" onclick="copyAddr(this)"
+            title="Click to copy">{{ p['mainnet_address'] }}</code>{% else %}<span class="muted">—</span>{% endif %}</dd>
+    </dl>
+
+    {% if p['notes'] %}<p class="notes">{{ p['notes'] }}</p>{% endif %}
+
+    <div class="row" style="margin-top:12px;gap:6px">
+      {% if p['hex'] %}
+        <a class="ghost btn" href="/messages/{{ p['hex'] }}">Message</a>
+      {% endif %}
+      <a class="ghost btn" href="/contacts?edit={{ p['id'] }}">Edit</a>
+      <form method="post" action="/contacts/{{ p['id'] }}/delete" style="margin-left:auto"
+            onsubmit="return confirm('Remove {{ p['name']|e }} from the address book? Messages already received are kept.')">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <button class="ghost" type="submit">Remove</button></form>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="panel empty">
+  <p>The address book is empty.</p>
+  <p class="muted">Add the people you message or pay, so you are choosing a name
+     rather than checking a string of characters each time.</p>
+</div>
+{% endif %}
+
+<div class="note" style="margin-top:20px">
+  This book never leaves this computer. It is not published, not on any chain, and
+  not visible to anyone you message &mdash; but anyone who can log in here can read it.
+</div>
+
+<script>
+function copyAddr(el){
+  navigator.clipboard.writeText(el.textContent.trim()).then(function(){
+    el.classList.add('copied');
+    setTimeout(function(){ el.classList.remove('copied'); }, 1200);
+  });
+}
+</script>
+{% endblock %}

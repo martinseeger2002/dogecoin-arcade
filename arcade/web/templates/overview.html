@@ -16,9 +16,9 @@
   <div class="stat"><div class="k">Messages</div>
     <div class="v">{{ stats.get('messages', 0) }}</div>
     <div class="n">{{ stats.get('unread', 0) }} unread</div></div>
-  <div class="stat"><div class="k">Known keys</div>
+  <div class="stat"><div class="k">Known contacts</div>
     <div class="v">{{ stats.get('keys', 0) }}</div>
-    <div class="n">{{ stats.get('candidates', 0) }} payloads seen</div></div>
+    <div class="n"><a href="/contacts">address book</a></div></div>
   <div class="stat"><div class="k">Spendable (test)</div>
     {% if messaging.online and messaging.funding %}
       <div class="v">{{ "{:,.2f}".format(messaging.funding.spendable) }}</div>
@@ -27,211 +27,81 @@
         {% elif messaging.funding.pending %}<span class="pill warn">{{ messaging.funding.blocks_to_maturity }} blocks</span>
         {% else %}<span class="pill bad">no coins</span>{% endif %}</div>
     {% else %}<div class="v">—</div>{% endif %}</div>
-  <div class="stat"><div class="k">Identity</div>
-    <div class="v" style="font-size:1rem">
-      {% if not state.has_key %}
-  <p>You need an identity before you can send or receive messages. It is an X25519
-     keypair, kept separate from any wallet key and encrypted on disk.</p>
-
-  <form method="post" action="/keygen" id="keygen">
-    <input type="hidden" name="csrf_token" value="{{ csrf }}">
-
-    <div id="generated">
-      <label>Your passphrase</label>
-      <div class="phrase" id="phrase">{{ suggested }}</div>
-      <div class="row" style="margin:10px 0 14px">
-        <button type="button" class="ghost" onclick="copyPhrase()">Copy</button>
-        <button type="button" class="ghost" onclick="location.reload()">Generate another</button>
-        <span class="muted" style="font-size:.82rem">Six random words &mdash; far
-          stronger than anything most people would invent.</span>
-      </div>
-      <input type="hidden" name="passphrase" id="phrase-value" value="{{ suggested }}">
-      <input type="hidden" name="mode" id="mode-generated" value="generated">
-      <label style="display:flex;gap:9px;align-items:flex-start;font-size:.9rem;color:var(--fg)">
-        <input type="checkbox" name="remember" value="yes" checked style="width:auto;margin-top:3px">
-        <span><strong>Save it on this computer</strong> so I am not asked for it
-              again, and can look it up here later.</span>
-      </label>
-      <label style="display:flex;gap:9px;align-items:flex-start;font-size:.9rem;color:var(--fg);margin-top:9px">
-        <input type="checkbox" name="saved" value="yes" style="width:auto;margin-top:3px" required>
-        <span>I have also written it down somewhere safe, in case this computer
-              is lost.</span>
-      </label>
-      <div class="row" style="margin-top:14px">
-        <button type="submit">Create identity</button>
-        <a href="#" class="muted" style="font-size:.87rem"
-           onclick="showOwn(true);return false">
-          I would rather choose my own</a>
-      </div>
-    </div>
-
-    <div id="chosen" hidden>
-      <input type="hidden" name="mode" id="mode-chosen" value="chosen" disabled>
-      <div class="field"><label>Passphrase</label>
-        <input type="password" name="passphrase" id="own-phrase" autocomplete="new-password" disabled></div>
-      <div class="field"><label>Confirm</label>
-        <input type="password" name="confirm" id="own-confirm" autocomplete="new-password" disabled></div>
-      <div class="row">
-        <button type="submit">Create identity</button>
-        <a href="#" class="muted" style="font-size:.87rem"
-           onclick="showOwn(false);return false">
-          Use a generated one instead</a>
-      </div>
-      <p class="muted" style="font-size:.85rem;margin-top:10px">
-        A passphrase you invent is usually far weaker than six random words.
-        Use a password manager if you go this way.</p>
-    </div>
-  </form>
-
-  <div class="note" style="margin-top:16px">
-    <strong>There is no recovery.</strong> Lose this passphrase and every message
-    ever sent to this identity becomes permanently unreadable &mdash; nobody can
-    restore it. Saving it on this computer means anyone who can log in here can
-    read your messages.
-  </div>
-
-  <script>
-  // Disabled inputs are not submitted. Toggling `disabled` alongside `hidden` is
-  // what stops the unused half of the form from sending an empty passphrase that
-  // overrides the one in use -- which it did.
-  function showOwn(own){
-    document.getElementById('generated').hidden = own;
-    document.getElementById('chosen').hidden = !own;
-    document.getElementById('phrase-value').disabled = own;
-    document.getElementById('own-phrase').disabled = !own;
-    document.getElementById('own-confirm').disabled = !own;
-    document.getElementById('mode-generated').disabled = own;
-    document.getElementById('mode-chosen').disabled = !own;
-    document.querySelector('input[name=saved]').required = !own;
-  }
-  function copyPhrase(){ copyOf('phrase', event); }
-  function copyOf(id, ev){
-    const t = document.getElementById(id).textContent.trim();
-    navigator.clipboard.writeText(t).then(function(){
-      const b = ev.target, old = b.textContent;
-      b.textContent = 'Copied'; setTimeout(function(){ b.textContent = old; }, 1400);
-    });
-  }
-  </script>
-{% elif state.unlocked %}unlocked{% else %}locked{% endif %}</div>
-    <div class="n">{% if state.unlocked %}<span class="fp">{{ state.identity.fingerprint }}</span>{% endif %}</div></div>
+  <div class="stat"><div class="k">Messaging</div>
+    <div class="v" style="font-size:1rem">{{ "ready" if state.unlocked else "not ready" }}</div>
+    <div class="n">{% if state.unlocked %}nothing to set up{% else %}waiting for the node{% endif %}</div></div>
 </div>
 
-<h2>Identity <span class="tag testnet">test</span></h2>
+<h2>Your messaging address <span class="tag testnet">test</span></h2>
 <div class="panel">
-{% if not state.has_key %}
-  <p>No messaging identity yet. It is an X25519 keypair, kept separate from any
-     wallet key and encrypted at rest with Argon2id.</p>
-  <form method="post" action="/keygen">
-    <input type="hidden" name="csrf_token" value="{{ csrf }}">
-    <div class="field"><label>Passphrase</label><input type="password" name="passphrase" autocomplete="new-password"></div>
-    <div class="field"><label>Confirm</label><input type="password" name="confirm" autocomplete="new-password"></div>
-    <button type="submit">Create identity</button>
-  </form>
-  <p class="muted" style="margin-top:12px;font-size:.87rem">
-    There is no recovery. Lose the passphrase and every message ever sent to this
-    identity becomes permanently unreadable.</p>
-{% elif state.unlocked %}
-  <div class="row">
-    <div style="flex:1">
-      <div class="muted" style="font-size:.8rem">Fingerprint</div>
-      <div class="fp" style="font-size:1.1rem">{{ state.identity.fingerprint }}</div>
-    </div>
-    <form method="post" action="/lock">
-      <input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="ghost" type="submit">Lock</button>
-    </form>
-  </div>
-  <p class="muted" style="margin-top:10px;font-size:.87rem">
-    Read this aloud to a correspondent to verify their key out of band. An on-chain
-    announcement proves control of an address — never who someone is.</p>
-
-  <div style="border-top:1px solid var(--line);margin-top:16px;padding-top:14px">
-    <label>Your contact code</label>
-    <div class="phrase" style="font-size:.9rem" id="contact">{{ contact_code }}</div>
-    <div class="row" style="margin:9px 0 4px">
-      <button type="button" class="ghost" onclick="copyOf('contact', event)">Copy</button>
-      <span class="muted" style="font-size:.84rem">Send this to anyone who wants to
-        message you, by any means at all. They paste it into Compose and can write
-        to you straight away, with nothing published on the chain.</span>
-    </div>
+{% if state.unlocked %}
+  <p>This is how people reach you. Give it to anyone who wants to message you, by
+     any means at all — it is just an address.</p>
+  <div class="phrase" style="font-size:.95rem" id="myaddr">{{ my_address }}</div>
+  <div class="row" style="margin:10px 0 0">
+    <button type="button" class="ghost" onclick="copyOf('myaddr', event)">Copy my address</button>
+    <a class="ghost btn" href="/contacts">Address book</a>
+    <a class="ghost btn" href="/backup">Back up my wallet</a>
   </div>
 
-  <div style="border-top:1px solid var(--line);margin-top:16px;padding-top:14px">
-    {% if state.passphrase_remembered %}
-      <div class="row">
-        <span style="flex:1;font-size:.9rem">Your passphrase is saved on this computer.</span>
-        <form method="post" action="/reveal">
-          <input type="hidden" name="csrf_token" value="{{ csrf }}">
-          <button class="ghost" type="submit">Show it</button></form>
-        <form method="post" action="/forget"
-              onsubmit="return confirm('Remove the saved passphrase? You will need your written copy from now on.')">
-          <input type="hidden" name="csrf_token" value="{{ csrf }}">
-          <button class="ghost" type="submit">Remove</button></form>
-      </div>
-      <p class="muted" style="font-size:.82rem;margin:10px 0 0">
-        Anyone who can log in to this computer can see it and read your messages.
-        The saved copy is tied to this machine, so it is useless if copied elsewhere.</p>
-    {% else %}
-      <p style="font-size:.9rem;margin:0">Your passphrase is not saved on this computer,
-        so you will be asked for it after every restart.</p>
-    {% endif %}
+  {% if not announced %}
+  <div class="msg info" style="margin-top:14px">
+    Your address is not published on the chain yet, so someone who has only your
+    address has nothing to encrypt to. Either
+    <a href="/keys">publish it once</a> — it costs a few test coins and then your
+    address works on its own — or send the full contact code below instead.
+  </div>
+  {% endif %}
 
-    <details style="margin-top:14px">
-      <summary class="muted" style="cursor:pointer;font-size:.88rem">Change or reset my passphrase</summary>
-      <form method="post" action="/change-passphrase" style="margin:14px 0 0">
-        <input type="hidden" name="csrf_token" value="{{ csrf }}">
-        {% if not state.passphrase_remembered %}
-        <div class="field"><label>Current passphrase</label>
-          <input type="password" name="current" autocomplete="current-password"></div>
-        {% endif %}
-        <div class="field"><label>New passphrase</label>
-          <input type="password" name="new" autocomplete="new-password"></div>
-        <div class="field"><label>Confirm</label>
-          <input type="password" name="confirm" autocomplete="new-password"></div>
-        <button type="submit">Change it</button>
-      </form>
+  <details style="margin-top:16px">
+    <summary class="muted" style="cursor:pointer;font-size:.88rem">Full contact code</summary>
+    <p class="muted" style="font-size:.87rem;margin:10px 0 8px">
+      Contains your address <em>and</em> your public key, so someone can write to
+      you before your key has been seen on the chain. Longer, but works immediately.</p>
+    <div class="phrase" style="font-size:.82rem" id="contact">{{ contact_code }}</div>
+    <button type="button" class="ghost" style="margin-top:9px"
+            onclick="copyOf('contact', event)">Copy</button>
+  </details>
 
-      <div class="note" style="margin-top:18px">
-        <strong>Forgotten it, and it was not saved here?</strong> Then nobody can
-        open this identity, including us: the key is encrypted with that
-        passphrase, so there is nothing left to re-encrypt. The only way forward
-        is a new identity. You would lose access to messages already sent to the
-        old one, and would need to give people your new contact code.
-        <form method="post" action="/reset-identity" style="margin-top:12px">
-          <input type="hidden" name="csrf_token" value="{{ csrf }}">
-          <label style="display:flex;gap:9px;align-items:flex-start;font-size:.88rem;color:var(--fg)">
-            <input type="checkbox" name="understand" value="yes" style="width:auto;margin-top:3px" required>
-            <span>I understand I will lose access to messages sent to my current identity.</span>
-          </label>
-          <button class="danger" type="submit" style="margin-top:11px">Start over with a new identity</button>
-        </form>
-        <p class="muted" style="font-size:.82rem;margin:9px 0 0">
-          The old key file is kept, not deleted, in case the passphrase turns up later.</p>
-      </div>
-    </details>
+  <div class="note" style="margin-top:16px">
+    <strong>Your wallet is your identity.</strong> There is no passphrase and
+    nothing to write down. Back up <code>wallet.dat</code> and everything comes
+    back with it — your coins and your messages both.
+    <a href="/backup">Back it up now</a>.
   </div>
 {% else %}
-  <p>Identity is locked.</p>
-  <form method="post" action="/unlock">
+  <p>Messaging sets itself up the moment the testnet node is reachable. There is
+     nothing to choose and nothing to write down &mdash; your identity comes from
+     your wallet, so <code>wallet.dat</code> is the only thing you ever need to keep.</p>
+  <form method="post" action="/setup-identity">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
-    <div class="row">
-      <div style="flex:1"><input type="password" name="passphrase" placeholder="Passphrase" autocomplete="current-password" autofocus></div>
-      <button type="submit">Unlock</button>
-    </div>
-    <label style="display:flex;gap:9px;align-items:center;font-size:.88rem;margin-top:11px;color:var(--fg)">
-      <input type="checkbox" name="remember" value="yes" checked style="width:auto">
-      <span>Save it on this computer so I am not asked again</span>
-    </label>
+    <button type="submit" {{ 'disabled' if not messaging.online }}>Set up messaging</button>
   </form>
+  {% if not messaging.online %}
+  <p class="muted" style="margin-top:11px;font-size:.88rem">
+    The testnet node is not answering yet. It usually starts within a minute of a
+    reboot; this page will offer the button as soon as it does.</p>
+  {% endif %}
+</div>
 {% endif %}
 </div>
 
 <h2>Scan <span class="tag testnet">test</span></h2>
 <div class="panel row">
   <form method="post" action="/scan"><input type="hidden" name="csrf_token" value="{{ csrf }}">
-    <button type="submit" {{ 'disabled' if not messaging.online }}>Scan for messages</button></form>
+    <button type="submit" {{ 'disabled' if not messaging.online }}>Check for new messages</button></form>
   <span class="muted" style="font-size:.88rem">
-    Trial decryption: about 227&nbsp;µs per payload, and it never announces who you
-    are — which is the point.</span>
+    Messages are found by trying to open every candidate — which is why nobody can
+    tell that any of them were meant for you.</span>
 </div>
+
+<script>
+function copyOf(id, ev){
+  const t = document.getElementById(id).textContent.trim();
+  navigator.clipboard.writeText(t).then(function(){
+    const b = ev.target, old = b.textContent;
+    b.textContent = 'Copied'; setTimeout(function(){ b.textContent = old; }, 1400);
+  });
+}
+</script>
 {% endblock %}

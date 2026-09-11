@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Backup · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Backup</h1>
+<p class="sub">Your wallet is the only thing you need to keep. This is how you keep it.</p>
+
+<div class="note" style="margin-bottom:20px">
+  <strong>There is nothing else.</strong> No passphrase, no key file, nothing to
+  write down. Your messaging identity is worked out from your wallet, so a copy of
+  <code>wallet.dat</code> brings back your coins <em>and</em> your conversations.
+  Keep a copy somewhere that is not this computer.
+</div>
+
+{% for c in chains %}
+<h2>{{ c.label }}
+  <span class="tag {{ 'mainnet' if c.is_mainnet else 'testnet' }}">{{ 'main' if c.is_mainnet else 'test' }}</span></h2>
+<div class="panel">
+  {% if not c.online %}
+    <p class="muted">This node is not answering, so its wallet cannot be backed up
+      right now.{% if c.problem %} <span style="font-size:.85rem">{{ c.problem }}</span>{% endif %}</p>
+  {% else %}
+    <div class="grid" style="margin-bottom:16px">
+      <div class="stat"><div class="k">Balance</div>
+        <div class="v">{{ "{:,.2f}".format(c.wallet.get('balance', 0)|float) }}</div></div>
+      <div class="stat"><div class="k">Addresses</div>
+        <div class="v">{{ c.wallet.get('addresses', 0) }}</div></div>
+      <div class="stat"><div class="k">Transactions</div>
+        <div class="v">{{ c.wallet.get('txcount', 0) }}</div></div>
+    </div>
+    {% if c.wallet_file %}
+    <p class="muted" style="font-size:.84rem;margin:0 0 16px">
+      Wallet file: <code>{{ c.wallet_file }}</code></p>
+    {% endif %}
+
+    <h3>Save a copy</h3>
+    <form method="post" action="/backup/{{ c.which }}/save">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <div class="row">
+        <div style="flex:1"><input name="folder" value="{{ default_dir }}"
+               class="mono" spellcheck="false"></div>
+        <button type="submit">Save a copy now</button>
+      </div>
+      <p class="muted" style="font-size:.84rem;margin:9px 0 0">
+        The node writes the copy itself, so it is safe to do while it is running.
+        Copy the result to a USB stick or another machine &mdash; a backup on the
+        same computer does not survive that computer.</p>
+    </form>
+
+    <div style="border-top:1px solid var(--line);margin-top:20px;padding-top:16px">
+      <h3>Print your private keys</h3>
+      <form method="post" action="/backup/{{ c.which }}/print" target="_blank">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <label style="display:flex;gap:9px;align-items:flex-start;font-size:.89rem;color:var(--fg)">
+          <input type="checkbox" name="understand" value="yes" style="width:auto;margin-top:3px" required>
+          <span>I understand that anyone holding these keys can spend
+            {% if c.is_mainnet %}<strong>my real coins</strong>{% else %}these test coins{% endif %}.</span>
+        </label>
+        <button type="submit" class="{{ 'danger' if c.is_mainnet }}" style="margin-top:11px">
+          Show them on a printable page</button>
+      </form>
+      <p class="muted" style="font-size:.84rem;margin:10px 0 0">
+        Opens in a new tab, ready to print. Nothing is saved to disk.
+        {% if c.is_mainnet %}Paper in a safe place is a genuinely good backup;
+        a screenshot in your photos is not.{% endif %}</p>
+    </div>
+
+    <div style="border-top:1px solid var(--line);margin-top:20px;padding-top:16px">
+      <h3>Import a private key</h3>
+      {% if c.job %}
+        <div class="msg {{ 'err' if c.job.error else ('ok' if c.job.done else 'info') }}">
+          {% if c.job.error %}Import failed: {{ c.job.error }}
+          {% elif c.job.done %}Imported{% if c.job.address %} {{ c.job.address }}{% endif %}.
+            Any coins it holds are in your balance now.
+          {% else %}Still importing &mdash; {{ c.job.elapsed }}s so far. The node is
+            re-reading the chain and will not answer until it finishes.
+            <a href="/backup">Check again</a>.{% endif %}
+        </div>
+      {% endif %}
+      <form method="post" action="/backup/{{ c.which }}/import-key">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <div class="field"><label>Private key</label>
+          <input name="key" class="mono" spellcheck="false" autocomplete="off"
+                 placeholder="One key, no spaces"></div>
+        <div class="field"><label>Label <span class="muted" style="font-weight:400">— optional</span></label>
+          <input name="label" placeholder="e.g. old paper wallet"></div>
+        <button type="submit">Import this key</button>
+        <p class="muted" style="font-size:.84rem;margin:10px 0 0">
+          Adds the key to this wallet and searches the chain for its coins. That
+          search takes a few minutes, during which this node is busy.</p>
+      </form>
+    </div>
+
+    <details style="margin-top:20px">
+      <summary class="muted" style="cursor:pointer;font-size:.9rem">
+        Restore a whole wallet.dat &mdash; replaces the wallet in use</summary>
+      <div style="padding-top:14px">
+        <div class="note">
+          <strong>This replaces the wallet this node is using.</strong> The one in
+          place now is copied to your backups folder first, and the node is
+          stopped and restarted to do it. Use this to move to another computer or
+          to recover after a reinstall &mdash; not to merge two wallets. To bring
+          one key across, import the key above instead.
+        </div>
+        <form method="post" action="/backup/{{ c.which }}/restore" style="margin-top:14px"
+              onsubmit="return confirm('Replace the {{ c.label|lower }} wallet now? The node will restart.')">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <div class="field"><label>Path to the wallet.dat you want to use</label>
+            <input name="source" class="mono" spellcheck="false"
+                   placeholder="{{ default_dir }}/wallet-2026-01-01-120000.dat"></div>
+          <label style="display:flex;gap:9px;align-items:flex-start;font-size:.89rem;color:var(--fg)">
+            <input type="checkbox" name="understand" value="yes" style="width:auto;margin-top:3px" required>
+            <span>I want to replace the wallet this node is using.</span>
+          </label>
+          <button type="submit" class="danger" style="margin-top:11px">Restore this wallet</button>
+        </form>
+      </div>
+    </details>
+  {% endif %}
+</div>
+{% endfor %}
+{% endblock %}

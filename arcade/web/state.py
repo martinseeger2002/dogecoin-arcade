@@ -26,8 +26,8 @@ from pathlib import Path
 from typing import Any
 
 from ..config import NETWORKS, Params, load_rpc_credentials, verify_connected_chain
-from ..messaging import vault
-from ..messaging.keys import Identity, load_identity
+from ..messaging.derive import DerivationError, derive_identity
+from ..messaging.keys import Identity
 from ..messaging.store import MessageStore
 from ..rpc import RpcClient
 
@@ -150,39 +150,114 @@ class AppState:
     def store(self) -> MessageStore:
         return MessageStore(self.store_path)
 
-    def unlock(self, passphrase: str, remember: bool = False) -> None:
-        with self._lock:
-            self.identity = load_identity(self.key_path, passphrase)
-        if remember:
-            vault.remember(self.home, self.messaging.network, passphrase)
+    # --- identity, derived from the wallet ------------------------------------
+    #
+    # There is no passphrase and no key file. The messaging identity is derived
+    # from one wallet address, and that address is filed in the wallet under a
+    # fixed account name, so the wallet *is* the backup: restore wallet.dat and
+    # the same identity comes back on its own. Nothing else needs keeping.
 
-    def try_auto_unlock(self) -> bool:
-        """Unlock from the OS credential store, if the user asked us to remember.
+    #: The account the identity address is filed under. Accounts live inside
+    #: wallet.dat, which is what makes a restore self-sufficient.
+    IDENTITY_ACCOUNT = "arcade-identity"
 
-        Called once at startup. A stored passphrase that no longer opens the key
-        is discarded rather than kept: it is stale, and leaving it there would
-        mean a confusing failure on every launch.
+    def identity_address(self, rpc: RpcClient) -> str:
+        """The address this identity is derived from, creating it if needed.
+
+        Prefers an address already recorded for this installation, so upgrading
+        never silently changes identity and orphans existing conversations.
         """
-        if self.unlocked or not self.has_key:
-            return False
-        passphrase = vault.recall(self.home, self.messaging.network)
-        if not passphrase:
-            return False
+        recorded = self.derived_address
+        if recorded:
+            # File an older identity under the account too, so a future restore
+            # from wallet.dat alone can still find it.
+            try:
+                rpc.call("setaccount", recorded, self.IDENTITY_ACCOUNT)
+            except Exception:
+                pass
+            return recorded
+
+        # `getaccountaddress` hands back a *new* address as soon as the current
+        # one has been used, so calling it every time would silently change
+        # identity and orphan every message ever received. Take the account's
+        # existing addresses and pick one deterministically instead; only fall
+        # through to creating one when the account is genuinely empty.
         try:
-            with self._lock:
-                self.identity = load_identity(self.key_path, passphrase)
-            return True
+            existing = rpc.call("getaddressesbyaccount", self.IDENTITY_ACCOUNT) or []
         except Exception:
-            vault.forget(self.home, self.messaging.network)
-            return False
+            existing = []
+        if existing:
+            return sorted(existing)[0]
+        return rpc.call("getaccountaddress", self.IDENTITY_ACCOUNT)
+
+    def ensure_identity(self) -> Identity:
+        """Derive the messaging identity, setting it up on first use.
+
+        Called wherever an identity is needed. Nothing is asked of the user: if
+        the node is up and has a wallet, this succeeds.
+        """
+        if self.identity is not None:
+            return self.identity
+        with self.messaging.rpc() as rpc:
+            return self.use_derived_identity(self.identity_address(rpc))
+
 
     @property
-    def passphrase_remembered(self) -> bool:
-        return vault.is_remembered(self.home, self.messaging.network)
+    def derived_address(self) -> str | None:
+        """The wallet address this identity is derived from, if it is."""
+        if not self.store_path.exists():
+            return None
+        with self.store() as store:
+            return store.get_meta(f"identity_address:{self.messaging.network}")
 
-    def reveal_passphrase(self) -> str | None:
-        """The stored passphrase, for showing the user on request."""
-        return vault.recall(self.home, self.messaging.network)
+    def use_derived_identity(self, address: str) -> Identity:
+        """Adopt the identity that belongs to `address`, and remember which.
+
+        No key file and no passphrase: the identity is reproduced from the wallet
+        whenever it is needed, so the wallet's backup is the identity's backup.
+        """
+        with self.messaging.rpc() as rpc:
+            identity = derive_identity(rpc, address)
+            try:
+                rpc.call("setaccount", address, self.IDENTITY_ACCOUNT)
+            except Exception:
+                pass
+        with self.store() as store:
+            store.set_meta(f"identity_address:{self.messaging.network}", address)
+            if store.get_meta(f"identity_height:{self.messaging.network}") is None:
+                try:
+                    with self.messaging.rpc() as rpc:
+                        store.set_meta(f"identity_height:{self.messaging.network}",
+                                       str(rpc.get_block_count()))
+                except Exception:
+                    pass
+        with self._lock:
+            self.identity = identity
+        return identity
+
+    def forget_derived_identity(self) -> None:
+        if self.store_path.exists():
+            with self.store() as store:
+                store.set_meta(f"identity_address:{self.messaging.network}", "")
+        self.lock()
+
+    @property
+    def has_identity(self) -> bool:
+        return self.identity is not None or bool(self.derived_address)
+
+    def try_auto_unlock(self) -> bool:
+        """Bring the identity up at startup. Requires nothing from the user.
+
+        Failure here is not an error state to show anyone: it just means the node
+        is not up yet, and the next attempt will succeed.
+        """
+        if self.unlocked:
+            return False
+        try:
+            self.ensure_identity()
+            return True
+        except Exception:
+            return False
 
     def lock(self) -> None:
         with self._lock:

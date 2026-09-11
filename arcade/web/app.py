@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import html
+import os
 from pathlib import Path
 from typing import Any
 
@@ -16,14 +17,13 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from .. import wallet as walletlib
-from ..config import MainnetRefused, WrongChain
-from ..messaging import contact, vault
+from .. import backup, wallet as walletlib
+from ..config import NETWORKS, MainnetRefused, WrongChain
+from ..messaging import contact
+from ..script import b58check_decode
+from ..messaging.derive import DerivationError, derive_identity
 from ..messaging.envelope import build_key_announcement
-from ..messaging.keys import (
-    Identity, KeyError_, change_passphrase, fingerprint_of, generate_passphrase,
-    passphrase_bits, save_identity,
-)
+from ..messaging.keys import fingerprint_of
 from ..messaging.miner import Miner, MiningError
 from ..messaging.scanner import Scanner
 from ..messaging.sender import MessageSender, SendError, plan_message
@@ -38,8 +38,9 @@ TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 #: is one misclick from a bad day (D-012).
 NAV = [
     ("/",             "Overview",     None,        True),
-    ("/inbox",        "Inbox",        "testnet",   True),
-    ("/compose",      "Compose",      "testnet",   True),
+    ("/messages",     "Messages",     "testnet",   True),
+    ("/contacts",     "Address book", None,        True),
+    ("/backup",       "Backup",       None,        True),
     ("/keys",         "Keys",         "testnet",   True),
     ("/wallet",       "Wallets",      None,        True),
     ("/tokens",       "Tokens",       "mainnet",   False),
@@ -94,182 +95,169 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request):
-        # Offer a generated passphrase when there is no identity yet. Generated
-        # is the default because the usual failure is a weak chosen one, and this
-        # key has no recovery path at all.
-        suggested = generate_passphrase() if not state.has_key else None
         stats = {}
         if state.store_path.exists():
             with state.store() as store:
                 stats = store.stats()
-        code = None
+        # Set the identity up silently on first visit. There is nothing to ask:
+        # it comes from the wallet, so if the node is up it simply works.
+        if not state.unlocked:
+            try:
+                state.ensure_identity()
+            except Exception:
+                pass
+        code, announced = None, True
         if state.unlocked:
             code = contact.encode(state.messaging.network, state.identity.public_bytes)
-        return render(request, "overview.html", suggested=suggested, contact_code=code,
+            # Until the key is on the chain, handing someone the address alone is
+            # not enough -- they have nothing to encrypt to. Worth saying, since
+            # the failure otherwise lands on the other person.
+            if state.store_path.exists() and state.derived_address:
+                with state.store() as store:
+                    announced = store.key_for(state.derived_address) is not None
+        return render(request, "overview.html", contact_code=code, announced=announced,
+                      my_address=state.derived_address,
                       messaging=messaging_status(), ledger=ledger_status(), stats=stats)
 
     # --- identity -------------------------------------------------------------
+    # No passphrase, no key file, nothing to write down. The identity is derived
+    # from one wallet address, filed in the wallet under a fixed account, so
+    # restoring wallet.dat restores the identity along with the coins.
 
-    @app.post("/unlock")
-    def unlock(request: Request, passphrase: str = Form(""), remember: str = Form(""),
-               csrf_token: str = Form("")):
+    @app.post("/setup-identity")
+    def setup_identity(request: Request, csrf_token: str = Form("")):
         try:
             check_csrf(csrf_token)
-            state.unlock(passphrase, remember=bool(remember))
-        except (KeyError_, ValueError) as exc:
+            state.ensure_identity()
+            state.flash("You are ready to send and receive messages.", "ok")
+        except (DerivationError, ValueError) as exc:
             state.flash(str(exc), "err")
+        except Exception as exc:
+            state.flash(f"Could not reach the testnet node: {exc}", "err")
         return RedirectResponse("/", status_code=303)
 
-    @app.post("/reveal")
-    def reveal(request: Request, csrf_token: str = Form("")):
-        """Show the remembered passphrase. The retrieval path."""
-        try:
-            check_csrf(csrf_token)
-            passphrase = state.reveal_passphrase()
-            if passphrase:
-                state.flash(f"Your passphrase is:  {passphrase}", "reveal")
-            else:
-                state.flash(
-                    "This passphrase is not saved on this computer. If you have "
-                    "lost it, it cannot be recovered.", "err")
-        except ValueError as exc:
-            state.flash(str(exc), "err")
-        return RedirectResponse("/", status_code=303)
+    # --- messenger ------------------------------------------------------------
 
-    @app.post("/forget")
-    def forget(request: Request, csrf_token: str = Form("")):
-        try:
-            check_csrf(csrf_token)
-            if vault.forget(state.home, state.messaging.network):
-                state.flash(
-                    "Removed from this computer's credential store. You will be "
-                    "asked for the passphrase from now on -- make sure you have it.",
-                    "ok")
-            else:
-                state.flash("It was not saved on this computer.", "info")
-        except ValueError as exc:
-            state.flash(str(exc), "err")
-        return RedirectResponse("/", status_code=303)
+    @app.get("/messages", response_class=HTMLResponse)
+    def messages(request: Request):
+        threads = []
+        if state.store_path.exists() and state.unlocked:
+            with state.store() as store:
+                threads = store.conversations(state.identity.fingerprint)
+        return render(request, "messages.html", threads=threads, thread=None,
+                      peer=None, when=_when, fingerprint_of=fingerprint_of)
 
-    @app.post("/change-passphrase")
-    def change_pass(request: Request, current: str = Form(""), new: str = Form(""),
-                    confirm: str = Form(""), csrf_token: str = Form("")):
-        try:
-            check_csrf(csrf_token)
-            # If it is saved on this machine, the user does not need to know it.
-            if not current:
-                current = state.reveal_passphrase() or ""
-            if not current:
-                raise KeyError_(
-                    "enter your current passphrase. It is not saved on this "
-                    "computer, so it cannot be filled in for you."
-                )
-            new = new.strip()
-            if new != confirm:
-                raise KeyError_("the new passphrases do not match")
-            identity = change_passphrase(state.key_path, current, new)
-            state.identity = identity
-            if state.passphrase_remembered:
-                vault.remember(state.home, state.messaging.network, new)
-            state.flash("Passphrase changed.", "ok")
-        except (KeyError_, ValueError) as exc:
-            state.flash(str(exc), "err")
-        return RedirectResponse("/", status_code=303)
-
-    @app.post("/reset-identity")
-    def reset_identity(request: Request, understand: str = Form(""),
-                       csrf_token: str = Form("")):
-        """Discard the identity and start again.
-
-        The only route available when a passphrase is forgotten and was never
-        saved: the secret key is encrypted with it, so there is nothing to
-        recover. This does not "reset" anything -- it abandons one identity and
-        makes another, and the interface says so before doing it.
-        """
-        try:
-            check_csrf(csrf_token)
-            if understand != "yes":
-                raise ValueError("tick the box to confirm you understand what is lost")
-            if state.key_path.exists():
-                # Keep the old key rather than deleting it: the passphrase may
-                # yet turn up, and deleting it would make that useless.
-                import time
-                archive = state.key_path.with_name(
-                    f"{state.key_path.stem}.old-{int(time.time())}.key")
-                state.key_path.replace(archive)
-                vault.forget(state.home, state.messaging.network)
-                state.lock()
-                state.flash(
-                    f"The old identity has been set aside as {archive.name} in case "
-                    "the passphrase turns up. Create a new one below.", "ok")
-        except (KeyError_, ValueError) as exc:
-            state.flash(str(exc), "err")
-        return RedirectResponse("/", status_code=303)
-
-    @app.post("/lock")
-    def lock(request: Request, csrf_token: str = Form("")):
-        try:
-            check_csrf(csrf_token)
-            state.lock()
-        except ValueError as exc:
-            state.flash(str(exc), "err")
-        return RedirectResponse("/", status_code=303)
-
-    @app.post("/keygen")
-    def keygen(request: Request, passphrase: str = Form(""), confirm: str = Form(""),
-               saved: str = Form(""), remember: str = Form(""), mode: str = Form("chosen"),
-               csrf_token: str = Form("")):
-        try:
-            check_csrf(csrf_token)
-            passphrase = passphrase.strip()
-            if not passphrase:
-                raise KeyError_("a passphrase is required")
-
-            # Which path the user took comes from the form, not from inspecting
-            # the passphrase. Inferring it from entropy was wrong: the
-            # conservative estimate for a chosen passphrase caps at exactly 60,
-            # so any self-chosen passphrase of 30-odd characters containing a
-            # hyphen was misread as generated and then demanded a checkbox the
-            # chosen-passphrase form does not show. There was no way out of it.
-            if mode == "generated":
-                if not saved:
-                    raise KeyError_(
-                        "tick the box to confirm you have saved the passphrase -- "
-                        "it cannot be shown again"
-                    )
-            else:
-                if passphrase != confirm:
-                    raise KeyError_("passphrases do not match")
-                if len(passphrase) < 8:
-                    raise KeyError_("use at least 8 characters: this key is long-lived")
-            identity = Identity.generate()
-            save_identity(state.key_path, identity, passphrase)
-            state.identity = identity
-            # Remember where the chain was. Nothing written before this instant
-            # can be addressed to a key that did not yet exist, so scanning need
-            # never look further back -- the difference between a few hundred
-            # blocks and every block ever mined.
+    @app.get("/messages/{peer_hex}", response_class=HTMLResponse)
+    def conversation(request: Request, peer_hex: str):
+        threads, items, peer = [], [], None
+        if state.store_path.exists() and state.unlocked:
             try:
-                with state.messaging.rpc() as rpc:
-                    height = rpc.get_block_count()
-                with state.store() as store:
-                    store.set_meta(f"identity_height:{state.messaging.network}", str(height))
-            except Exception:
-                pass   # only an optimisation; a missing value just scans further back
-            if remember:
-                try:
-                    vault.remember(state.home, state.messaging.network, passphrase)
-                    state.flash(
-                        "Identity created, and the passphrase is saved on this "
-                        "computer so you will not be asked for it again. You can "
-                        "view it any time from this page.", "ok")
-                except RuntimeError as exc:
-                    state.flash(
-                        f"Identity created, but the passphrase could not be saved: {exc}. "
-                        "Keep your written copy.", "err")
-        except (KeyError_, ValueError) as exc:
+                peer_key = bytes.fromhex(peer_hex)
+            except ValueError:
+                return RedirectResponse("/messages", status_code=303)
+            with state.store() as store:
+                threads = store.conversations(state.identity.fingerprint)
+                items = store.thread(state.identity.fingerprint, peer_key)
+                store.mark_thread_read(state.identity.fingerprint, peer_key)
+                peer = {
+                    "pubkey": peer_key,
+                    "hex": peer_hex,
+                    "name": store.contact_name(peer_key),
+                    "fingerprint": fingerprint_of(peer_key),
+                    "code": contact.encode(state.messaging.network, peer_key),
+                    "contact_id": (lambda r: r["id"] if r else None)(
+                        store.contact_by_key(peer_key)),
+                }
+                for t in threads:
+                    if t["pubkey"] == peer_key:
+                        peer["address"] = t.get("address", "")
+        return render(request, "messages.html", threads=threads, thread=items,
+                      peer=peer, when=_when, fingerprint_of=fingerprint_of)
+
+    @app.post("/messages/start")
+    def start_conversation(request: Request, code: str = Form(""), name: str = Form(""),
+                           csrf_token: str = Form("")):
+        """Begin a conversation from an address or a contact code."""
+        try:
+            check_csrf(csrf_token)
+            peer_key = _resolve_recipient(state, code)
+            # When they gave an address, keep it: it is how the user will think
+            # of this person, and it is what the address book wants.
+            typed = code.strip()
+            address = "" if typed.lower().startswith(f"{contact.PREFIX}:") else typed
+            with state.store() as store:
+                if name.strip() or address:
+                    store.name_contact(peer_key, name.strip(), address)
+            return RedirectResponse(f"/messages/{peer_key.hex()}", status_code=303)
+        except Exception as exc:
             state.flash(str(exc), "err")
-        return RedirectResponse("/", status_code=303)
+            return RedirectResponse("/messages", status_code=303)
+
+    @app.post("/messages/{peer_hex}/name")
+    def rename_contact(request: Request, peer_hex: str, name: str = Form(""),
+                       csrf_token: str = Form("")):
+        try:
+            check_csrf(csrf_token)
+            with state.store() as store:
+                store.name_contact(bytes.fromhex(peer_hex), name.strip())
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse(f"/messages/{peer_hex}", status_code=303)
+
+    @app.post("/messages/{peer_hex}/send", response_class=HTMLResponse)
+    def send_in_thread(request: Request, peer_hex: str, body: str = Form(""),
+                       confirmed: str = Form(""), csrf_token: str = Form("")):
+        """Send within a conversation.
+
+        Still two steps: the decoded transaction and its cost are shown before
+        anything is broadcast. Messages cost real fees even on testnet, and the
+        transaction is permanent either way.
+        """
+        prepared = None
+        plan = None
+        error = None
+        try:
+            check_csrf(csrf_token)
+            if not state.unlocked:
+                raise ValueError("unlock your identity first")
+            peer_key = bytes.fromhex(peer_hex)
+            if not body.strip():
+                raise ValueError("nothing to send")
+
+            plan = plan_message(state.identity, peer_key, body.encode())
+            with state.messaging.rpc() as rpc:
+                funding = Miner(rpc, state.messaging.params).status()
+                if not funding.funded:
+                    raise ValueError(f"cannot send: {funding.describe()}")
+                sender = MessageSender(rpc, state.messaging.params)
+                address = _funded_address(rpc, state)
+                prepared = [sender.prepare(address, p) for p in plan.chunk_payloads]
+                if confirmed == "yes":
+                    txids = [sender.broadcast(p) for p in prepared]
+                    # Keep our own plaintext: the sealed box is to the recipient,
+                    # so we could never read this back off the chain ourselves.
+                    with state.store() as store:
+                        store.add_sent(txids[0], peer_key, "",
+                                       state.identity.fingerprint, body.encode())
+                    state.flash(f"Sent in {len(txids)} transaction(s).", "ok")
+                    return RedirectResponse(f"/messages/{peer_hex}", status_code=303)
+        except Exception as exc:
+            error = str(exc)
+
+        threads, items, peer = [], [], None
+        if state.unlocked and state.store_path.exists():
+            with state.store() as store:
+                threads = store.conversations(state.identity.fingerprint)
+                items = store.thread(state.identity.fingerprint, bytes.fromhex(peer_hex))
+                peer = {"pubkey": bytes.fromhex(peer_hex), "hex": peer_hex,
+                        "name": store.contact_name(bytes.fromhex(peer_hex)),
+                        "contact_id": (lambda r: r["id"] if r else None)(
+                            store.contact_by_key(bytes.fromhex(peer_hex))),
+                        "fingerprint": fingerprint_of(bytes.fromhex(peer_hex)),
+                        "code": contact.encode(state.messaging.network, bytes.fromhex(peer_hex))}
+        return render(request, "messages.html", threads=threads, thread=items, peer=peer,
+                      when=_when, fingerprint_of=fingerprint_of, prepared=prepared,
+                      plan=plan, draft=body, error=error)
 
     # --- inbox ----------------------------------------------------------------
 
@@ -369,6 +357,216 @@ def create_app(state: AppState) -> FastAPI:
                       broadcast=broadcast_txids)
 
     # --- keys -----------------------------------------------------------------
+
+    # --- address book ---------------------------------------------------------
+    # Purely local. Nothing here is published, and nothing here is derivable from
+    # the chain by anyone else: it is the user's own note of who is who. It works
+    # while the identity is locked, because it holds no secrets.
+
+    @app.get("/contacts", response_class=HTMLResponse)
+    def contacts_page(request: Request, edit: int | None = None):
+        people, editing = [], None
+        if state.store_path.exists():
+            with state.store() as store:
+                people = [_contact_view(row) for row in store.contacts()]
+                if edit:
+                    row = store.contact_by_id(edit)
+                    editing = _contact_view(row) if row else None
+        return render(request, "contacts.html", people=people, editing=editing)
+
+    @app.post("/contacts/save")
+    def save_contact(request: Request, name: str = Form(""),
+                     testnet_address: str = Form(""), mainnet_address: str = Form(""),
+                     notes: str = Form(""), code: str = Form(""),
+                     contact_id: str = Form(""), csrf_token: str = Form("")):
+        try:
+            check_csrf(csrf_token)
+        except ValueError as exc:
+            state.flash(str(exc), "err")
+            return RedirectResponse("/contacts", status_code=303)
+        name = name.strip()
+        testnet_address = testnet_address.strip()
+        mainnet_address = mainnet_address.strip()
+        if not name:
+            state.flash("Give the contact a name.", "err")
+            return RedirectResponse("/contacts", status_code=303)
+
+        # Reject an address that belongs to the wrong chain now, rather than
+        # letting it sit in the book until someone pays it.
+        for label, value, want_mainnet in (
+            ("Testnet", testnet_address, False), ("Mainnet", mainnet_address, True)
+        ):
+            if value:
+                problem = _check_address(value, mainnet=want_mainnet)
+                if problem:
+                    state.flash(f"{label} address: {problem}", "err")
+                    return RedirectResponse("/contacts", status_code=303)
+
+        pubkey = None
+        if code.strip():
+            try:
+                network, pubkey = contact.decode(code.strip())
+            except Exception as exc:
+                state.flash(f"Contact code: {exc}", "err")
+                return RedirectResponse("/contacts", status_code=303)
+            if network != state.messaging.network:
+                state.flash(
+                    f"That contact code is for {network}, but the Messenger runs "
+                    f"on {state.messaging.network}.", "err")
+                return RedirectResponse("/contacts", status_code=303)
+
+        with state.store() as store:
+            store.save_contact(
+                contact_id=int(contact_id) if contact_id.strip().isdigit() else None,
+                pubkey=pubkey, name=name, testnet_address=testnet_address,
+                mainnet_address=mainnet_address, notes=notes.strip())
+        state.flash(f"Saved {name}.", "ok")
+        return RedirectResponse("/contacts", status_code=303)
+
+    @app.post("/contacts/{contact_id}/delete")
+    def delete_contact(request: Request, contact_id: int, csrf_token: str = Form("")):
+        try:
+            check_csrf(csrf_token)
+        except ValueError as exc:
+            state.flash(str(exc), "err")
+            return RedirectResponse("/contacts", status_code=303)
+        with state.store() as store:
+            row = store.contact_by_id(contact_id)
+            store.delete_contact(contact_id)
+        state.flash(f"Removed {row['name'] if row else 'the contact'}.", "ok")
+        return RedirectResponse("/contacts", status_code=303)
+
+    # --- backup and restore ---------------------------------------------------
+    # The whole security model in one page: the wallet is the only thing a user
+    # has to keep, so backing it up, printing it, and putting it back have to be
+    # things they can actually do. Both chains, because both hold something.
+
+    #: Running key imports, per chain. Imports rescan the chain, which blocks the
+    #: node's RPC for minutes, so they run on a thread and are reported here.
+    imports: dict[str, Any] = {}
+
+    def _chain_for(which: str):
+        chain = state.ledger if which == "ledger" else state.messaging
+        if which not in ("ledger", "messaging"):
+            raise ValueError("unknown chain")
+        return chain
+
+    def _chain_cards() -> list[dict[str, Any]]:
+        cards = []
+        for which, chain in (("messaging", state.messaging), ("ledger", state.ledger)):
+            card: dict[str, Any] = {
+                "which": which, "label": chain.label, "network": chain.network,
+                "is_mainnet": chain.is_mainnet, "online": False, "wallet": None,
+                "wallet_file": None, "job": imports.get(which),
+            }
+            try:
+                with chain.rpc() as rpc:
+                    card["wallet"] = backup.wallet_summary(rpc)
+                    card["online"] = True
+                if chain.datadir:
+                    path = backup.wallet_path(chain.datadir, chain.network)
+                    card["wallet_file"] = str(path)
+                    card["wallet_readable"] = os.access(path, os.R_OK)
+            except Exception as exc:
+                card["problem"] = str(exc)
+            cards.append(card)
+        return cards
+
+    @app.get("/backup", response_class=HTMLResponse)
+    def backup_page(request: Request):
+        return render(request, "backup.html", chains=_chain_cards(),
+                      default_dir=str(backup.default_backup_dir()))
+
+    @app.post("/backup/{which}/save")
+    def backup_save(request: Request, which: str, folder: str = Form(""),
+                    csrf_token: str = Form("")):
+        try:
+            check_csrf(csrf_token)
+            chain = _chain_for(which)
+            target = Path(folder.strip()).expanduser() if folder.strip() \
+                else backup.default_backup_dir()
+            with chain.rpc() as rpc:
+                written = backup.backup_wallet(rpc, target, datadir=chain.datadir,
+                                               network=chain.network)
+            state.flash(f"Saved a copy of the {chain.label.lower()} wallet to {written}. "
+                        f"Keep it somewhere other than this computer.", "ok")
+        except (backup.BackupError, ValueError) as exc:
+            state.flash(str(exc), "err")
+        except Exception as exc:
+            state.flash(f"Could not back up: {exc}", "err")
+        return RedirectResponse("/backup", status_code=303)
+
+    @app.post("/backup/{which}/print", response_class=HTMLResponse)
+    def backup_print(request: Request, which: str, understand: str = Form(""),
+                     csrf_token: str = Form("")):
+        """Render every private key once, for printing. Never written to disk."""
+        try:
+            check_csrf(csrf_token)
+            if understand != "yes":
+                raise ValueError("tick the box first -- these keys spend your coins")
+            chain = _chain_for(which)
+            with chain.rpc() as rpc:
+                keys = backup.private_keys(rpc)
+            return render(request, "printkeys.html", keys=keys, chain=chain,
+                          when=_when)
+        except (backup.BackupError, ValueError) as exc:
+            state.flash(str(exc), "err")
+        except Exception as exc:
+            state.flash(f"Could not read the keys: {exc}", "err")
+        return RedirectResponse("/backup", status_code=303)
+
+    @app.post("/backup/{which}/import-key")
+    def backup_import_key(request: Request, which: str, key: str = Form(""),
+                          label: str = Form("imported"), csrf_token: str = Form("")):
+        try:
+            check_csrf(csrf_token)
+            chain = _chain_for(which)
+            running = imports.get(which)
+            if running and not running.done:
+                raise ValueError("an import is already running on this chain -- "
+                                 "wait for it to finish")
+            imports[which] = backup.import_private_key(
+                chain.rpc, key, label.strip() or "imported")
+            state.flash(
+                "Importing. The node has to re-read the chain to find this key's "
+                "coins, which takes a few minutes and makes it unresponsive in the "
+                "meantime. This page will say when it is done.", "ok")
+        except (backup.BackupError, ValueError) as exc:
+            state.flash(str(exc), "err")
+        except Exception as exc:
+            state.flash(f"Could not import: {exc}", "err")
+        return RedirectResponse("/backup", status_code=303)
+
+    @app.post("/backup/{which}/restore")
+    def backup_restore(request: Request, which: str, source: str = Form(""),
+                       understand: str = Form(""), csrf_token: str = Form("")):
+        try:
+            check_csrf(csrf_token)
+            if understand != "yes":
+                raise ValueError(
+                    "tick the box to confirm you want to replace the wallet that "
+                    "is in use")
+            chain = _chain_for(which)
+            if not chain.datadir:
+                raise ValueError(
+                    "this application does not know where that node keeps its "
+                    "files, so it cannot put a wallet there")
+            result = backup.restore_wallet(chain.rpc, Path(source.strip()),
+                                           chain.datadir, chain.network)
+            came_back = backup.wait_for_node(chain.rpc, timeout=180)
+            state.lock()      # the identity belongs to the old wallet
+            previous = result["previous_saved_to"]
+            state.flash(
+                f"Restored. "
+                + (f"The wallet that was there is saved as {previous}. " if previous else "")
+                + ("The node has restarted and is using it now."
+                   if came_back else
+                   "The node is still starting -- give it a minute."), "ok")
+        except (backup.BackupError, ValueError) as exc:
+            state.flash(str(exc), "err")
+        except Exception as exc:
+            state.flash(f"Could not restore: {exc}", "err")
+        return RedirectResponse("/backup", status_code=303)
 
     @app.get("/keys", response_class=HTMLResponse)
     def keys_page(request: Request):
@@ -576,5 +774,49 @@ def _funded_address(rpc, state) -> str:
     return best
 
 
-def _when(ts: int) -> str:
-    return dt.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+def _contact_view(row: Any) -> dict[str, Any]:
+    """Flatten an address book row for the template.
+
+    The pubkey is bytes, and templates should not be doing hex conversion or
+    fingerprinting; both are done once, here.
+    """
+    key = bytes(row["pubkey"]) if row["pubkey"] else None
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "testnet_address": row["testnet_address"],
+        "mainnet_address": row["mainnet_address"],
+        "notes": row["notes"],
+        "hex": key.hex() if key else "",
+        "fingerprint": fingerprint_of(key) if key else "",
+    }
+
+
+def _check_address(address: str, *, mainnet: bool) -> str | None:
+    """Return a human-readable complaint about `address`, or None if it is fine.
+
+    An address carries its chain in the version byte, so a mainnet address pasted
+    into the testnet field is detectable -- and worth detecting, because the two
+    look similar enough to confuse and the consequences differ enormously.
+    """
+    wanted = [p for p in NETWORKS.values() if p.name.endswith("main") == mainnet]
+    try:
+        version, payload = b58check_decode(address)
+    except Exception:
+        return "that does not look like an address (the checksum does not match)."
+    if len(payload) != 20:
+        return "that is not a 20-byte address."
+    if any(version in (p.pubkeyhash_version, p.scripthash_version) for p in wanted):
+        return None
+    other = [p.name for p in NETWORKS.values()
+             if version in (p.pubkeyhash_version, p.scripthash_version)]
+    if other:
+        return (f"that is a {other[0]} address, not a "
+                f"{'mainnet' if mainnet else 'testnet'} one.")
+    return f"unrecognised address version {version}."
+
+
+def _when(ts: int | None = None) -> str:
+    """A timestamp, or now when called with nothing."""
+    moment = dt.datetime.now() if ts is None else dt.datetime.fromtimestamp(ts)
+    return moment.strftime("%Y-%m-%d %H:%M")

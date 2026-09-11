@@ -1,7 +1,7 @@
 """Smoke tests for every web route.
 
 These exist because two bugs reached the user that a single request to each route
-would have caught: a missing `vault` import (NameError on identity creation) and
+would have caught: a missing import (NameError on identity creation) and
 a `state.rpc()` call left behind by the dual-chain refactor (every scan failed).
 
 Both were one-line mistakes in code that was never executed by anything. The
@@ -40,7 +40,7 @@ def client(app_state):
     return TestClient(create_app(app_state)), app_state
 
 
-GET_ROUTES = ["/", "/inbox", "/compose", "/keys", "/wallet",
+GET_ROUTES = ["/", "/inbox", "/compose", "/contacts", "/backup", "/keys", "/wallet",
               "/tokens", "/nfts", "/exchange", "/inscriptions"]
 
 
@@ -67,17 +67,12 @@ def test_offline_node_is_explained_not_hidden(client):
 # --- CSRF ---------------------------------------------------------------------
 
 POST_ROUTES = [
-    ("/unlock", {"passphrase": "x"}),
-    ("/lock", {}),
-    ("/keygen", {"passphrase": "x" * 12, "confirm": "x" * 12}),
+    ("/setup-identity", {}),
     ("/scan", {}),
     ("/fund", {}),
-    ("/reveal", {}),
-    ("/forget", {}),
-    ("/change-passphrase", {"new": "a", "confirm": "a"}),
-    ("/reset-identity", {"understand": "yes"}),
     ("/wallet/receive", {"which": "messaging"}),
     ("/publish-key", {}),
+    ("/contacts/save", {"name": "Forged"}),
 ]
 
 
@@ -87,149 +82,56 @@ def test_state_changing_routes_require_a_csrf_token(client, path, data):
     app, state = client
     response = app.post(path, data=data, follow_redirects=False)
     assert response.status_code in (200, 303), response.status_code
-    # Nothing may have happened: no identity created, nothing unlocked.
+    # Nothing may have happened.
     assert not state.unlocked
-    assert not state.key_path.exists()
 
 
 def test_wrong_csrf_token_is_rejected(client):
     app, state = client
-    app.post("/keygen", data={"csrf_token": "wrong", "passphrase": "x" * 12,
-                              "confirm": "x" * 12}, follow_redirects=False)
-    assert not state.key_path.exists()
+    app.post("/setup-identity", data={"csrf_token": "wrong"}, follow_redirects=False)
+    assert not state.unlocked
 
 
-# --- identity lifecycle -------------------------------------------------------
+# --- identity: derived from the wallet, never from a passphrase ---------------
+#
+# The passphrase is gone, along with the key file, the credential store and the
+# recovery problem that came with them. What remains must be tested for what it
+# no longer does as much as for what it does.
 
 
-def test_identity_can_be_created_and_is_unlocked(client):
-    """The path that broke with a NameError once already."""
-    app, state = client
-    response = app.post("/keygen", data={
-        "csrf_token": state.csrf_token, "mode": "chosen",
-        "passphrase": "correct-horse-battery-staple-here",
-        "confirm": "correct-horse-battery-staple-here",
-    }, follow_redirects=False)
-    assert response.status_code == 303
-    assert state.key_path.exists()
-    assert state.unlocked
-    assert oct(state.key_path.stat().st_mode)[-3:] == "600"
+def test_no_page_ever_asks_for_a_passphrase(client):
+    """There is nothing to invent, type or write down.
 
-
-def test_a_chosen_passphrase_with_hyphens_is_not_mistaken_for_generated(client):
-    """The bug this file was written to catch a second time.
-
-    "generated" used to be inferred from entropy, and the conservative estimate
-    for a chosen passphrase caps at exactly the threshold -- so any self-chosen
-    passphrase of 30-odd characters containing a hyphen demanded a checkbox that
-    its own form never displayed. There was no way for the user to proceed.
+    Saying "no passphrase" is fine and is the point; *asking* for one is not, so
+    this looks for the asking -- a password box or a prompt -- rather than the
+    word, which the reassuring copy legitimately uses.
     """
+    prompts = ("your passphrase", "enter a passphrase", "confirm passphrase",
+               "a passphrase is required", "new passphrase", "current passphrase")
+    for path in GET_ROUTES:
+        body = client[0].get(path).text.lower()
+        assert 'type="password"' not in body, f"{path} still has a password box"
+        for prompt in prompts:
+            assert prompt not in body, f"{path} still prompts: {prompt!r}"
+
+
+def test_no_page_shows_a_fingerprint(client):
+    """Users get names and addresses. A hex fingerprint means nothing to them."""
+    for path in GET_ROUTES:
+        assert "fingerprint" not in client[0].get(path).text.lower(), path
+
+
+def test_setup_without_a_node_says_so_rather_than_failing(client):
     app, state = client
-    phrase = "correct-horse-battery-staple-here"
-    assert len(phrase) > 30 and "-" in phrase
-    app.post("/keygen", data={"csrf_token": state.csrf_token, "mode": "chosen",
-                              "passphrase": phrase, "confirm": phrase},
-             follow_redirects=False)
-    assert state.key_path.exists(), "a chosen passphrase must be accepted"
+    response = app.post("/setup-identity", data={"csrf_token": state.csrf_token},
+                        follow_redirects=False)
+    assert response.status_code == 303
+    assert state.notice and "no attribute" not in state.notice
 
 
-def test_generated_passphrase_needs_the_saved_acknowledgement(client):
-    """Six words with no confirmation that they were written down must not pass."""
-    app, state = client
-    from arcade.messaging.keys import generate_passphrase
-    app.post("/keygen", data={"csrf_token": state.csrf_token, "mode": "generated",
-                              "passphrase": generate_passphrase()},
-             follow_redirects=False)
-    assert not state.key_path.exists()
-
-
-def test_contact_code_is_offered_once_unlocked(client):
-    app, state = client
-    app.post("/keygen", data={"csrf_token": state.csrf_token, "mode": "chosen",
-                              "passphrase": "a-long-enough-passphrase",
-                              "confirm": "a-long-enough-passphrase"},
-             follow_redirects=False)
-    body = app.get("/").text
-    assert "arcade:regtest:" in body, "the contact code should be shown"
-
-
-def test_lock_and_unlock_round_trip(client):
-    app, state = client
-    phrase = "another-perfectly-fine-passphrase"
-    app.post("/keygen", data={"csrf_token": state.csrf_token, "mode": "chosen",
-                              "passphrase": phrase, "confirm": phrase},
-             follow_redirects=False)
-    fingerprint = state.identity.fingerprint
-
-    app.post("/lock", data={"csrf_token": state.csrf_token}, follow_redirects=False)
-    assert not state.unlocked
-
-    app.post("/unlock", data={"csrf_token": state.csrf_token, "passphrase": phrase},
-             follow_redirects=False)
-    assert state.unlocked
-    assert state.identity.fingerprint == fingerprint
-
-
-def test_wrong_passphrase_does_not_unlock(client):
-    app, state = client
-    app.post("/keygen", data={"csrf_token": state.csrf_token, "mode": "chosen",
-                              "passphrase": "the-right-one-here",
-                              "confirm": "the-right-one-here"}, follow_redirects=False)
-    app.post("/lock", data={"csrf_token": state.csrf_token}, follow_redirects=False)
-    app.post("/unlock", data={"csrf_token": state.csrf_token, "passphrase": "wrong"},
-             follow_redirects=False)
-    assert not state.unlocked
-
-
-def test_passphrase_can_be_saved_and_retrieved(client):
-    app, state = client
-    phrase = "saved-on-this-computer-please"
-    app.post("/keygen", data={"csrf_token": state.csrf_token, "mode": "chosen", "passphrase": phrase,
-                              "confirm": phrase, "remember": "yes"},
-             follow_redirects=False)
-    assert state.passphrase_remembered
-    assert state.reveal_passphrase() == phrase
-
-    app.post("/forget", data={"csrf_token": state.csrf_token}, follow_redirects=False)
-    assert not state.passphrase_remembered
-
-
-def test_passphrase_can_be_changed(client):
-    app, state = client
-    app.post("/keygen", data={"csrf_token": state.csrf_token, "passphrase": "old-one-here",
-                              "confirm": "old-one-here"}, follow_redirects=False)
-    before = state.identity.fingerprint
-    app.post("/change-passphrase", data={"csrf_token": state.csrf_token,
-                                         "current": "old-one-here",
-                                         "new": "the-new-one-here",
-                                         "confirm": "the-new-one-here"},
-             follow_redirects=False)
-    app.post("/lock", data={"csrf_token": state.csrf_token}, follow_redirects=False)
-    app.post("/unlock", data={"csrf_token": state.csrf_token,
-                              "passphrase": "the-new-one-here"}, follow_redirects=False)
-    assert state.unlocked and state.identity.fingerprint == before
-
-
-def test_reset_archives_the_old_key_rather_than_deleting_it(client):
-    """A forgotten passphrase may still turn up; destroying the key forecloses that."""
-    app, state = client
-    app.post("/keygen", data={"csrf_token": state.csrf_token, "passphrase": "forgotten-soon",
-                              "confirm": "forgotten-soon"}, follow_redirects=False)
-    app.post("/reset-identity", data={"csrf_token": state.csrf_token, "understand": "yes"},
-             follow_redirects=False)
-    assert not state.key_path.exists()
-    assert list(state.home.glob("*.old-*.key")), "the old key should be archived"
-
-
-def test_reset_requires_the_acknowledgement(client):
-    app, state = client
-    app.post("/keygen", data={"csrf_token": state.csrf_token, "passphrase": "still-here-ok",
-                              "confirm": "still-here-ok"}, follow_redirects=False)
-    app.post("/reset-identity", data={"csrf_token": state.csrf_token}, follow_redirects=False)
-    assert state.key_path.exists(), "an unticked box must not discard the identity"
-
-
-# --- routes that need a node --------------------------------------------------
+def test_the_overview_explains_that_the_wallet_is_the_backup(client):
+    body = client[0].get("/").text
+    assert "wallet.dat" in body
 
 
 def test_scan_reports_a_failure_rather_than_raising(client):
@@ -256,3 +158,154 @@ def test_unbuilt_sections_say_so(client):
     for path, milestone in (("/exchange", "M3"), ("/nfts", "M4"), ("/inscriptions", "M5")):
         body = client[0].get(path).text
         assert "Not built yet" in body and milestone in body
+
+
+# --- address book -------------------------------------------------------------
+# Local-only data, so these tests need no node and no identity -- which is also
+# the point: the address book must work before anything else is set up.
+
+TEST_ADDRESS = "nqW8nXSzigaSx1wTTTtUkMLYkbrYNJLRhz"
+MAIN_ADDRESS = "PognhfhGxiSNPrYLQYUaT5bMsVbgumzc6i"
+
+
+def _save(app, state, **fields):
+    fields["csrf_token"] = state.csrf_token
+    return app.post("/contacts/save", data=fields, follow_redirects=False)
+
+
+def test_address_book_starts_empty_and_says_so(client):
+    assert "address book is empty" in client[0].get("/contacts").text
+
+
+def test_address_book_round_trip(client):
+    app, state = client
+    assert _save(app, state, name="A test machine", testnet_address=TEST_ADDRESS,
+                 mainnet_address=MAIN_ADDRESS, notes="Other room.").status_code == 303
+    body = app.get("/contacts").text
+    assert "A test machine" in body and TEST_ADDRESS in body
+    assert MAIN_ADDRESS in body and "Other room." in body
+
+
+def test_a_mainnet_address_is_refused_in_the_testnet_field(client):
+    """The two look alike and the consequences do not. Catch it at entry."""
+    app, state = client
+    _save(app, state, name="Wrong chain", testnet_address=MAIN_ADDRESS)
+    assert "not a testnet one" in (state.notice or "")
+    with state.store() as store:
+        assert store.contacts() == []
+
+
+def test_a_testnet_address_is_refused_in_the_mainnet_field(client):
+    app, state = client
+    _save(app, state, name="Wrong chain", mainnet_address=TEST_ADDRESS)
+    assert "not a mainnet one" in (state.notice or "")
+
+
+def test_a_mistyped_address_is_refused(client):
+    app, state = client
+    _save(app, state, name="Typo", mainnet_address="PoNOTAREALADDRESS")
+    assert "checksum" in (state.notice or "")
+
+
+def test_a_contact_needs_a_name(client):
+    app, state = client
+    _save(app, state, mainnet_address=MAIN_ADDRESS)
+    assert "name" in (state.notice or "").lower()
+
+
+def test_a_broken_contact_code_does_not_500(client):
+    app, state = client
+    response = _save(app, state, name="Truncated", code="arcade:regtest:zzz:zz")
+    assert response.status_code == 303
+    assert "Contact code" in (state.notice or "")
+
+
+def test_editing_a_contact_updates_rather_than_duplicating(client):
+    app, state = client
+    _save(app, state, name="Before", mainnet_address=MAIN_ADDRESS)
+    with state.store() as store:
+        (row,) = store.contacts()
+    assert 'value="Before"' in app.get(f"/contacts?edit={row['id']}").text
+    _save(app, state, contact_id=str(row["id"]), name="After", notes="changed")
+    with state.store() as store:
+        rows = store.contacts()
+    assert len(rows) == 1 and rows[0]["name"] == "After"
+
+
+def test_deleting_a_contact_removes_it(client):
+    app, state = client
+    _save(app, state, name="Temporary", mainnet_address=MAIN_ADDRESS)
+    with state.store() as store:
+        (row,) = store.contacts()
+    app.post(f"/contacts/{row['id']}/delete",
+             data={"csrf_token": state.csrf_token}, follow_redirects=False)
+    with state.store() as store:
+        assert store.contacts() == []
+
+
+def test_the_address_book_rejects_a_stale_form(client):
+    app, state = client
+    response = app.post("/contacts/save", data={"name": "Forged", "csrf_token": "wrong"},
+                        follow_redirects=False)
+    assert response.status_code == 303
+    with state.store() as store:
+        assert store.contacts() == []
+
+
+# --- backup and restore -------------------------------------------------------
+# No node here, so these test the refusals and the wording -- which is most of
+# what matters. The operations themselves are verified against a live node.
+
+
+BACKUP_POSTS = [
+    ("/backup/messaging/save", {}),
+    ("/backup/messaging/print", {"understand": "yes"}),
+    ("/backup/messaging/import-key", {"key": "x"}),
+    ("/backup/messaging/restore", {"source": "/tmp/nope.dat", "understand": "yes"}),
+]
+
+
+@pytest.mark.parametrize("path,data", BACKUP_POSTS, ids=[p for p, _ in BACKUP_POSTS])
+def test_backup_actions_fail_cleanly_without_a_node(client, path, data):
+    app, state = client
+    data = dict(data, csrf_token=state.csrf_token)
+    response = app.post(path, data=data, follow_redirects=False)
+    assert response.status_code in (200, 303)
+    assert "no attribute" not in (state.notice or ""), state.notice
+
+
+@pytest.mark.parametrize("path,data", BACKUP_POSTS, ids=[p for p, _ in BACKUP_POSTS])
+def test_backup_actions_require_a_csrf_token(client, path, data):
+    app, state = client
+    response = app.post(path, data=data, follow_redirects=False)
+    assert response.status_code in (200, 303)
+
+
+def test_printing_keys_requires_the_acknowledgement(client):
+    """These keys spend coins. Nobody reaches that page by a stray click."""
+    app, state = client
+    app.post("/backup/messaging/print", data={"csrf_token": state.csrf_token},
+             follow_redirects=False)
+    assert "tick the box" in (state.notice or "")
+
+
+def test_restoring_requires_the_acknowledgement(client):
+    app, state = client
+    app.post("/backup/messaging/restore",
+             data={"csrf_token": state.csrf_token, "source": "/tmp/x.dat"},
+             follow_redirects=False)
+    assert "tick the box" in (state.notice or "")
+
+
+def test_the_backup_page_says_the_wallet_is_the_only_thing_to_keep(client):
+    body = client[0].get("/backup").text
+    assert "wallet.dat" in body
+    assert "no passphrase" in body.lower() or "No passphrase" in body
+
+
+def test_a_backup_of_an_unknown_chain_is_refused(client):
+    app, state = client
+    response = app.post("/backup/nonsense/save",
+                        data={"csrf_token": state.csrf_token}, follow_redirects=False)
+    assert response.status_code == 303
+    assert state.notice
