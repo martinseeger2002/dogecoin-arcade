@@ -80,9 +80,19 @@ SUPPORT = {
     ("Linux", "arm64"):   "untested",
     ("Linux", "armv7l"):  "untested",
     ("Windows", "AMD64"): "untested",
-    ("Darwin", "x86_64"): "unsupported",
-    ("Darwin", "arm64"):  "unsupported",
+    ("Darwin", "x86_64"): "untested",
+    ("Darwin", "arm64"):  "untested",
 }
+
+#: macOS ships no daemon. Verified by listing the v1.1.0 .dmg: it contains
+#: exactly one executable, Pepecoin-Qt.app/Contents/MacOS/Pepecoin-Qt, and no
+#: pepecoind, pepecoin-cli or pepecoin-tx.
+#:
+#: That is workable rather than fatal: Pepecoin-Qt IS a full node and serves the
+#: same JSON-RPC interface when given -server=1. On macOS the application talks
+#: to the Qt wallet instead of a headless daemon. The only real cost is that the
+#: node has a window.
+MACOS_APP = "Pepecoin-Qt.app"
 
 ASSETS = {
     ("Linux", "x86_64"):  f"pepecoin-{VERSION}-x86_64-linux-gnu.tar.gz",
@@ -130,13 +140,6 @@ def detect() -> tuple[str, str, str]:
         )
 
     support = SUPPORT.get((system, machine), "untested")
-    if support == "unsupported":
-        fail(
-            f"{system}/{machine} is not supported yet.\n"
-            "      Pepecoin Core ships macOS only as an unsigned .dmg, which this\n"
-            "      installer cannot mount or extract. Install Pepecoin Core by hand,\n"
-            "      then run this again with --skip-core."
-        )
     if support == "untested":
         warn(f"{system}/{machine} has not been tested. It should work; tell us if it does not.")
     return system, machine, asset
@@ -286,7 +289,50 @@ def fetch_core(workdir: Path, asset: str) -> Path:
 BINARIES = ["pepecoind", "pepecoin-cli", "pepecoin-tx"]
 
 
+def install_core_macos(archive: Path, workdir: Path) -> Path:
+    """Mount the .dmg, copy the app to /Applications, unmount.
+
+    The macOS release contains no daemon -- only Pepecoin-Qt.app -- so that is
+    what gets installed. Pepecoin-Qt serves the same RPC interface as pepecoind
+    when run with -server=1, which is all the application needs.
+    """
+    hdiutil = shutil.which("hdiutil")
+    if not hdiutil:
+        fail("hdiutil not found; this does not look like macOS")
+
+    mount = workdir / "mnt"
+    mount.mkdir(exist_ok=True)
+    result = subprocess.run(
+        [hdiutil, "attach", str(archive), "-nobrowse", "-readonly", "-mountpoint", str(mount)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        fail(f"could not mount the disk image: {result.stderr.strip()}")
+
+    try:
+        source = mount / MACOS_APP
+        if not source.exists():
+            fail(f"{MACOS_APP} is not in the disk image")
+        destination = Path("/Applications") / MACOS_APP
+        if destination.exists():
+            info(f"{destination} already exists; replacing it")
+            shutil.rmtree(destination)
+        shutil.copytree(source, destination, symlinks=True)
+        info(f"installed {destination}")
+        # Unsigned build: without this, Gatekeeper refuses to launch it and the
+        # user sees "damaged and can't be opened", which is misleading.
+        subprocess.run(["xattr", "-dr", "com.apple.quarantine", str(destination)], check=False)
+        info("cleared the quarantine attribute (the build is unsigned)")
+        return destination
+    finally:
+        subprocess.run([hdiutil, "detach", str(mount), "-quiet"], check=False)
+
+
 def install_core(archive: Path, target: Path, system: str) -> None:
+    if system == "Darwin":
+        install_core_macos(archive, archive.parent)
+        return
+
     target.mkdir(parents=True, exist_ok=True)
     workdir = archive.parent
 
@@ -317,6 +363,36 @@ def install_core(archive: Path, target: Path, system: str) -> None:
         shutil.copy2(source, target / f"{name}{suffix}")
         (target / f"{name}{suffix}").chmod(0o755)
     info(f"installed {', '.join(BINARIES)} to {target}")
+
+
+WINDOWS_TASK = (
+    'schtasks /Create /F /TN "DogecoinArcade\\pepecoin-{label}" /SC ONLOGON '
+    '/TR "\'{binary}\' -datadir=\'{datadir}\'" /RL LIMITED'
+)
+
+
+def install_services_windows(target: Path, main_dir: Path, test_dir: Path) -> list[str]:
+    """Register both nodes as logon Scheduled Tasks.
+
+    Windows has no systemd. A Scheduled Task set to ONLOGON is the closest
+    equivalent that needs no service wrapper and no administrator rights.
+    """
+    binary = target / "pepecoind.exe"
+    if not binary.exists():
+        warn(f"{binary} not found; skipping service registration")
+        return []
+
+    installed = []
+    for label, datadir in (("mainnet", main_dir), ("testnet", test_dir)):
+        command = WINDOWS_TASK.format(label=label, binary=binary, datadir=datadir)
+        result = subprocess.run(command, shell=True, capture_output=True, text=True)
+        if result.returncode == 0:
+            installed.append(label)
+            info(f"registered logon task for {label}")
+        else:
+            warn(f"could not register the {label} task: {result.stdout.strip() or result.stderr.strip()}")
+            warn(f"  start it yourself: {binary} -datadir={datadir}")
+    return installed
 
 
 MAINNET_CONF = """\
@@ -412,8 +488,67 @@ WantedBy=default.target
 """
 
 
+LAUNCHD_PLIST = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.dogecoinarcade.pepecoin-{label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{binary}</string>
+    <string>-datadir={datadir}</string>
+    <string>-server=1</string>
+    {extra}
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardErrorPath</key><string>{datadir}/launchd.err.log</string>
+</dict>
+</plist>
+"""
+
+
+def install_services_macos(main_dir: Path, test_dir: Path) -> list[str]:
+    """Register launchd agents for both nodes.
+
+    macOS has no daemon build, so these run Pepecoin-Qt with -server=1. It is a
+    GUI application, so each agent opens a window -- unavoidable until upstream
+    ships pepecoind for macOS.
+    """
+    binary = Path("/Applications") / MACOS_APP / "Contents/MacOS/Pepecoin-Qt"
+    if not binary.exists():
+        warn(f"{binary} not found; skipping service registration")
+        return []
+
+    agents = Path.home() / "Library/LaunchAgents"
+    agents.mkdir(parents=True, exist_ok=True)
+    installed = []
+    for label, datadir, extra in (
+        ("mainnet", main_dir, ""),
+        ("testnet", test_dir, "<string>-testnet=1</string>"),
+    ):
+        plist = agents / f"com.dogecoinarcade.pepecoin-{label}.plist"
+        plist.write_text(
+            LAUNCHD_PLIST.format(label=label, binary=binary, datadir=datadir, extra=extra)
+        )
+        subprocess.run(["launchctl", "unload", str(plist)], capture_output=True, check=False)
+        subprocess.run(["launchctl", "load", str(plist)], capture_output=True, check=False)
+        installed.append(plist.name)
+        info(f"wrote {plist}")
+    warn("macOS has no headless build, so each node opens a Pepecoin-Qt window.")
+    return installed
+
+
 def install_services(system: str, target: Path, main_dir: Path, test_dir: Path) -> list[str]:
     """Register both nodes so they start on login. Returns what was installed."""
+    if system == "Darwin":
+        return install_services_macos(main_dir, test_dir)
+
+    if system == "Windows":
+        return install_services_windows(target, main_dir, test_dir)
+
     if system != "Linux" or not shutil.which("systemctl"):
         warn("no systemd here; start the nodes yourself:")
         warn(f"  {target}/pepecoind -datadir={main_dir}")

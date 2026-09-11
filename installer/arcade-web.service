@@ -1,0 +1,39 @@
+[Unit]
+Description=DogecoinArcade web interface
+Documentation=https://dogecoinarcade.com
+# Start after both nodes, but do not REQUIRE them: the interface is designed to
+# explain a node being down, which is more useful than refusing to start.
+After=network-online.target pepecoind.service pepecoind-testnet.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/you/dogecoin-arcade/.venv/bin/arcade-web --port 8420
+WorkingDirectory=/home/you/dogecoin-arcade
+
+Restart=always
+RestartSec=10
+
+User=robin
+Group=robin
+
+# --- Hardening ---
+# ProtectHome is OFF: the identity key, the message database and the testnet
+# node's cookie all live under /home/you.
+ProtectHome=false
+PrivateTmp=true
+ProtectSystem=full
+NoNewPrivileges=true
+PrivateDevices=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+# Loopback only, but AF_NETLINK is still needed by libraries that enumerate
+# interfaces -- the same trap that crash-looped the node units.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
