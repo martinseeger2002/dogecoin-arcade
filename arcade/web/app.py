@@ -16,12 +16,13 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from .. import wallet as walletlib
 from ..config import MainnetRefused, WrongChain
-from ..messaging import vault
+from ..messaging import contact, vault
 from ..messaging.envelope import build_key_announcement
 from ..messaging.keys import (
-    Identity, KeyError_, fingerprint_of, generate_passphrase, passphrase_bits,
-    save_identity,
+    Identity, KeyError_, change_passphrase, fingerprint_of, generate_passphrase,
+    passphrase_bits, save_identity,
 )
 from ..messaging.miner import Miner, MiningError
 from ..messaging.scanner import Scanner
@@ -100,7 +101,10 @@ def create_app(state: AppState) -> FastAPI:
         if state.store_path.exists():
             with state.store() as store:
                 stats = store.stats()
-        return render(request, "overview.html", suggested=suggested,
+        code = None
+        if state.unlocked:
+            code = contact.encode(state.messaging.network, state.identity.public_bytes)
+        return render(request, "overview.html", suggested=suggested, contact_code=code,
                       messaging=messaging_status(), ledger=ledger_status(), stats=stats)
 
     # --- identity -------------------------------------------------------------
@@ -143,6 +147,61 @@ def create_app(state: AppState) -> FastAPI:
             else:
                 state.flash("It was not saved on this computer.", "info")
         except ValueError as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse("/", status_code=303)
+
+    @app.post("/change-passphrase")
+    def change_pass(request: Request, current: str = Form(""), new: str = Form(""),
+                    confirm: str = Form(""), csrf_token: str = Form("")):
+        try:
+            check_csrf(csrf_token)
+            # If it is saved on this machine, the user does not need to know it.
+            if not current:
+                current = state.reveal_passphrase() or ""
+            if not current:
+                raise KeyError_(
+                    "enter your current passphrase. It is not saved on this "
+                    "computer, so it cannot be filled in for you."
+                )
+            new = new.strip()
+            if new != confirm:
+                raise KeyError_("the new passphrases do not match")
+            identity = change_passphrase(state.key_path, current, new)
+            state.identity = identity
+            if state.passphrase_remembered:
+                vault.remember(state.home, state.messaging.network, new)
+            state.flash("Passphrase changed.", "ok")
+        except (KeyError_, ValueError) as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse("/", status_code=303)
+
+    @app.post("/reset-identity")
+    def reset_identity(request: Request, understand: str = Form(""),
+                       csrf_token: str = Form("")):
+        """Discard the identity and start again.
+
+        The only route available when a passphrase is forgotten and was never
+        saved: the secret key is encrypted with it, so there is nothing to
+        recover. This does not "reset" anything -- it abandons one identity and
+        makes another, and the interface says so before doing it.
+        """
+        try:
+            check_csrf(csrf_token)
+            if understand != "yes":
+                raise ValueError("tick the box to confirm you understand what is lost")
+            if state.key_path.exists():
+                # Keep the old key rather than deleting it: the passphrase may
+                # yet turn up, and deleting it would make that useless.
+                import time
+                archive = state.key_path.with_name(
+                    f"{state.key_path.stem}.old-{int(time.time())}.key")
+                state.key_path.replace(archive)
+                vault.forget(state.home, state.messaging.network)
+                state.lock()
+                state.flash(
+                    f"The old identity has been set aside as {archive.name} in case "
+                    "the passphrase turns up. Create a new one below.", "ok")
+        except (KeyError_, ValueError) as exc:
             state.flash(str(exc), "err")
         return RedirectResponse("/", status_code=303)
 
@@ -249,10 +308,8 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError("nothing to send")
             with state.store() as store:
                 keys = store.all_keys()
-                row = store.key_for(recipient)
-            if row is None:
-                raise ValueError(f"no announced key for {recipient}; scan first")
-            plan = plan_message(state.identity, bytes(row["pubkey"]), body.encode())
+            recipient_key = _resolve_recipient(state, recipient)
+            plan = plan_message(state.identity, recipient_key, body.encode())
         except Exception as exc:
             error = str(exc)
         return render(request, "compose.html", keys=keys, plan=plan, error=error,
@@ -274,12 +331,8 @@ def create_app(state: AppState) -> FastAPI:
             check_csrf(csrf_token)
             if not state.unlocked:
                 raise ValueError("unlock your identity first")
-            with state.store() as store:
-                row = store.key_for(recipient)
-            if row is None:
-                raise ValueError(f"no announced key for {recipient}")
-
-            plan = plan_message(state.identity, bytes(row["pubkey"]), body.encode())
+            recipient_key = _resolve_recipient(state, recipient)
+            plan = plan_message(state.identity, recipient_key, body.encode())
             with state.messaging.rpc() as rpc:
                 funding = Miner(rpc, state.messaging.params).status()
                 if not funding.funded:
@@ -338,10 +391,58 @@ def create_app(state: AppState) -> FastAPI:
 
     # --- wallet ---------------------------------------------------------------
 
+    def _context(which: str):
+        if which not in ("messaging", "ledger"):
+            raise ValueError("unknown wallet")
+        return state.messaging if which == "messaging" else state.ledger
+
     @app.get("/wallet", response_class=HTMLResponse)
     def wallet(request: Request):
-        return render(request, "wallet.html",
-                      messaging=messaging_status(), ledger=ledger_status())
+        return render(request, "wallet.html", messaging=messaging_status(),
+                      ledger=ledger_status(), prepared=None, which=None)
+
+    @app.post("/wallet/receive")
+    def wallet_receive(request: Request, which: str = Form(""), csrf_token: str = Form("")):
+        try:
+            check_csrf(csrf_token)
+            ctx = _context(which)
+            with ctx.rpc() as rpc:
+                address = walletlib.receive_address(rpc, "DogecoinArcade")
+            state.flash(f"{ctx.label} receiving address:  {address}", "reveal")
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse("/wallet", status_code=303)
+
+    @app.post("/wallet/send", response_class=HTMLResponse)
+    def wallet_send(request: Request, which: str = Form(""), destination: str = Form(""),
+                    amount: str = Form(""), confirmed: str = Form(""),
+                    csrf_token: str = Form("")):
+        """Prepare, then broadcast only on a second explicit submission.
+
+        The two-step is not decoration. On mainnet these are real coins, and the
+        decoded transaction with its fee is the last point at which a mistyped
+        address or a misplaced decimal can be caught.
+        """
+        error = None
+        prepared = None
+        txid = None
+        try:
+            check_csrf(csrf_token)
+            ctx = _context(which)
+            sats = walletlib.parse_amount(amount)
+            with ctx.rpc() as rpc:
+                prepared = walletlib.prepare_send(rpc, destination.strip(), sats)
+                if confirmed == "yes":
+                    txid = walletlib.broadcast(rpc, prepared)
+                    state.flash(f"Sent. Transaction {txid}", "ok")
+        except Exception as exc:
+            error = str(exc)
+
+        if txid:
+            return RedirectResponse("/wallet", status_code=303)
+        return render(request, "wallet.html", messaging=messaging_status(),
+                      ledger=ledger_status(), prepared=prepared, which=which,
+                      error=error, destination=destination, amount=amount)
 
     @app.post("/scan")
     def scan(request: Request, csrf_token: str = Form("")):
@@ -411,6 +512,37 @@ def create_app(state: AppState) -> FastAPI:
         return _unbuilt(request, "/inscriptions")
 
     return app
+
+
+def _resolve_recipient(state, recipient: str) -> bytes:
+    """Turn whatever the user typed into a public key.
+
+    Accepts a contact code as well as an address with an on-chain announcement.
+    Without the first, nobody could send a first message: publishing a key needs
+    coins, coins need mining, and mining needs four hours -- so a new network
+    would have no way to get started at all.
+    """
+    recipient = (recipient or "").strip()
+    if not recipient:
+        raise ValueError("choose a recipient, or paste their contact code")
+
+    if recipient.lower().startswith(f"{contact.PREFIX}:"):
+        network, public_bytes = contact.decode(recipient)
+        if network != state.messaging.network:
+            raise ValueError(
+                f"that contact code is for {network}, but the Messenger is on "
+                f"{state.messaging.network}"
+            )
+        return public_bytes
+
+    with state.store() as store:
+        row = store.key_for(recipient)
+    if row is None:
+        raise ValueError(
+            f"no announced key for {recipient}. Either scan the chain, or ask "
+            "them for their contact code and paste that instead."
+        )
+    return bytes(row["pubkey"])
 
 
 def _funded_address(rpc, state) -> str:

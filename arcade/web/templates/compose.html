@@ -58,16 +58,20 @@
   <input type="hidden" name="csrf_token" value="{{ csrf }}">
   <div class="field">
     <label>Recipient</label>
+    <input name="recipient" value="{{ recipient or '' }}" list="known"
+           placeholder="paste a contact code, or pick someone below">
     {% if keys %}
-    <select name="recipient">
-      {% for k in keys %}
-      <option value="{{ k['address'] }}" {{ 'selected' if k['address'] == recipient }}>
-        {{ k['address'] }} — {{ k['fingerprint'] }}</option>
-      {% endfor %}
-    </select>
-    {% else %}
-    <input name="recipient" value="{{ recipient or '' }}" placeholder="no keys known — scan first">
+    <datalist id="known">
+      {% for k in keys %}<option value="{{ k['address'] }}">{{ k['fingerprint'] }}</option>{% endfor %}
+    </datalist>
     {% endif %}
+    <p class="muted" style="font-size:.84rem;margin:7px 0 0">
+      {% if keys %}
+        {{ keys|length }} key{{ '' if keys|length == 1 else 's' }} found on the chain, or
+      {% endif %}
+      paste a contact code that starts with <code>arcade:</code> &mdash; that works
+      immediately, with nothing published.
+    </p>
   </div>
   <div class="field">
     <label>Message</label>

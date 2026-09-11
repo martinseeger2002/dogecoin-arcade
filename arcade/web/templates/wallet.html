@@ -5,55 +5,110 @@
 <h1>Wallets</h1>
 <p class="sub">One per chain. Testnet coins pay message fees; mainnet coins are real.</p>
 
+{% if error %}<div class="msg err">{{ error }}</div>{% endif %}
+
+{% if prepared %}
+  {% set mainnet = which == 'ledger' %}
+  <h2>Confirm before sending</h2>
+  <div class="panel" {% if mainnet %}style="border-color:var(--bad);border-width:2px"{% endif %}>
+    {% if mainnet %}
+      <p style="color:var(--bad);font-weight:600;margin-top:0">
+        This is mainnet. These are real coins and this cannot be undone.</p>
+    {% endif %}
+    <table>
+      <tr><td class="muted" style="width:120px">To</td>
+          <td class="mono" style="word-break:break-all">{{ prepared.destination }}</td></tr>
+      <tr><td class="muted">Amount</td>
+          <td style="font-size:1.15rem;font-weight:600">{{ "%.8f"|format(prepared.amount) }}</td></tr>
+      <tr><td class="muted">Fee</td><td>{{ "%.8f"|format(prepared.fee) }}</td></tr>
+      <tr><td class="muted">Total</td><td><strong>{{ "%.8f"|format(prepared.total) }}</strong></td></tr>
+      <tr><td class="muted">Change back</td><td>{{ "%.8f"|format(prepared.change_sats / 100000000) }}</td></tr>
+      <tr><td class="muted">Size</td><td>{{ "{:,}".format(prepared.size) }} bytes</td></tr>
+      <tr><td class="muted">txid</td>
+          <td class="mono" style="font-size:.78rem;word-break:break-all">{{ prepared.txid }}</td></tr>
+    </table>
+    <form method="post" action="/wallet/send" style="margin-top:14px">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="which" value="{{ which }}">
+      <input type="hidden" name="destination" value="{{ prepared.destination }}">
+      <input type="hidden" name="amount" value="{{ amount }}">
+      <input type="hidden" name="confirmed" value="yes">
+      <div class="row">
+        <button type="submit" {% if mainnet %}class="danger"{% endif %}>
+          {{ 'Send real coins' if mainnet else 'Send' }}</button>
+        <a class="muted" href="/wallet">Cancel</a>
+      </div>
+    </form>
+  </div>
+{% endif %}
+
 <div class="chainbar">
   {{ chains.card(state.messaging, messaging, "Fees for encrypted messages.", None) }}
-  {{ chains.card(state.ledger, ledger, "Tokens, NFTs and PEP transactions.",
-                 "Wallet disabled on this node — read-only." if not ledger.wallet else "Holds real value.") }}
+  {{ chains.card(state.ledger, ledger, "Tokens, NFTs and coins.",
+                 "Wallet disabled on this node." if not ledger.wallet else "Holds real value.") }}
 </div>
 
-<h2>Testnet funding <span class="tag testnet">test</span></h2>
+{% macro panel(which, ctx, status, tag) %}
+<h2>{{ ctx.label }} <span class="tag {{ tag }}">{{ 'test' if tag == 'testnet' else 'main' }}</span></h2>
 <div class="panel">
-{% if not messaging.online %}
-  <p class="muted">{{ messaging.error }}</p>
-{% elif messaging.funding %}
-  <p>{{ messaging.funding.describe() }}</p>
-  {% if not messaging.funding.funded and not messaging.funding.pending %}
-    <p class="muted" style="font-size:.9rem">
-      One block pays 10,000&nbsp;PEP, and the largest possible message costs about
-      0.147&nbsp;PEP in fees — so a single block covers roughly 68,000 of them.
-      This mines <strong>one block and stops</strong>: a bootstrap, not a service.
-      It uses one CPU core for a few minutes.</p>
+  {% if not status.online %}
+    <p class="muted">{{ status.error }}</p>
+  {% elif not status.wallet %}
+    <p>This node runs with <code>disablewallet=1</code>, so it can read the chain
+       but cannot hold or send coins.</p>
+  {% else %}
+    <div class="grid" style="margin-bottom:16px">
+      <div class="stat"><div class="k">Spendable</div>
+        <div class="v">{{ "{:,.4f}".format(status.wallet.balance) }}</div></div>
+      {% if status.wallet.immature %}
+      <div class="stat"><div class="k">Maturing</div>
+        <div class="v">{{ "{:,.4f}".format(status.wallet.immature) }}</div>
+        <div class="n">needs 240 blocks</div></div>
+      {% endif %}
+    </div>
+
+    <div class="row" style="margin-bottom:16px">
+      <form method="post" action="/wallet/receive">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <input type="hidden" name="which" value="{{ which }}">
+        <button class="ghost" type="submit">Show a receiving address</button>
+      </form>
+      <span class="muted" style="font-size:.84rem">A fresh one each time, so
+        payments are not linked together on the chain.</span>
+    </div>
+
+    <form method="post" action="/wallet/send">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="which" value="{{ which }}">
+      <div class="field"><label>Send to</label>
+        <input name="destination" placeholder="address on {{ ctx.label|lower }}"></div>
+      <div class="field"><label>Amount</label>
+        <input name="amount" placeholder="0.00000000" inputmode="decimal"></div>
+      <button type="submit" {% if tag == 'mainnet' %}class="danger"{% endif %}>
+        {{ 'Review real payment' if tag == 'mainnet' else 'Review payment' }}</button>
+      {% if tag == 'mainnet' %}
+      <p class="muted" style="font-size:.84rem;margin:10px 0 0">
+        You will see the decoded transaction and its fee before anything is sent.</p>
+      {% endif %}
+    </form>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{{ panel('messaging', state.messaging, messaging, 'testnet') }}
+
+{% if messaging.online and messaging.funding and not messaging.funding.funded %}
+<div class="panel" style="margin-top:-8px">
+  <p style="margin:0 0 8px">{{ messaging.funding.describe() }}</p>
+  {% if not messaging.funding.pending %}
+    <p class="muted" style="font-size:.88rem">One block pays 10,000 PEP, enough for
+      roughly 68,000 of the largest possible messages. This mines one block and stops.</p>
     <form method="post" action="/fund">
       <input type="hidden" name="csrf_token" value="{{ csrf }}"><button type="submit">Mine one block</button>
     </form>
-  {% elif messaging.funding.pending %}
-    <p class="muted" style="font-size:.9rem">
-      Mining more would not help: maturity is measured in chain height, not in
-      blocks you mined.</p>
   {% endif %}
-{% endif %}
 </div>
+{% endif %}
 
-<h2>Mainnet <span class="tag mainnet">main</span></h2>
-<div class="panel">
-{% if not ledger.online %}
-  <p class="muted">{{ ledger.error }}</p>
-{% elif not ledger.wallet %}
-  <p>This node runs with <code>disablewallet=1</code>, so it can read the chain but
-     cannot sign or spend.</p>
-  <p class="muted" style="font-size:.9rem">
-    That was deliberate in Phase 0: a node with no wallet cannot be made to spend.
-    Tokens, NFTs and PEP transactions need signing, so a wallet has to be enabled
-    here before those sections can do anything but display.</p>
-{% else %}
-  <div class="kv"><span class="k">Balance</span><span class="v">{{ "{:,.8f}".format(ledger.wallet.balance) }} PEP</span></div>
-  {% if ledger.wallet.immature %}
-  <div class="kv"><span class="k">Maturing</span><span class="v">{{ "{:,.8f}".format(ledger.wallet.immature) }} PEP</span></div>
-  {% endif %}
-  <div class="note" style="margin-top:14px">
-    This wallet holds <strong>real value</strong>. Back up <code>wallet.dat</code>,
-    and encrypt it if you have not.
-  </div>
-{% endif %}
-</div>
+{{ panel('ledger', state.ledger, ledger, 'mainnet') }}
 {% endblock %}

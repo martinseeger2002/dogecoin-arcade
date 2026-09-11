@@ -224,6 +224,34 @@ def save_identity(
         os.close(fd)
 
 
+def change_passphrase(
+    path: Path, old_passphrase: str, new_passphrase: str,
+    ops: int = DEFAULT_OPS, mem: int = DEFAULT_MEM,
+) -> Identity:
+    """Re-encrypt an existing identity under a new passphrase.
+
+    This requires the old one. There is no way around that: the secret key is
+    encrypted with it, so without it there is nothing to re-encrypt. A forgotten
+    passphrase that was never saved cannot be replaced -- only the identity can.
+
+    The new file is written to a temporary path and renamed over the old one, so
+    an interruption cannot leave a key file that opens with neither passphrase.
+    """
+    identity = load_identity(path, old_passphrase)
+    if not new_passphrase:
+        raise KeyError_("the new passphrase must not be empty")
+
+    blob = encrypt_identity(identity, new_passphrase, ops, mem)
+    staging = path.with_name(path.name + ".new")
+    fd = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(fd, blob)
+    finally:
+        os.close(fd)
+    os.replace(staging, path)
+    return identity
+
+
 def load_identity(path: Path, passphrase: str) -> Identity:
     path = Path(path)
     if not path.exists():

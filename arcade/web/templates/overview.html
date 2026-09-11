@@ -100,10 +100,11 @@
     document.getElementById('own-confirm').disabled = !own;
     document.querySelector('input[name=saved]').required = !own;
   }
-  function copyPhrase(){
-    const t = document.getElementById('phrase').textContent.trim();
+  function copyPhrase(){ copyOf('phrase', event); }
+  function copyOf(id, ev){
+    const t = document.getElementById(id).textContent.trim();
     navigator.clipboard.writeText(t).then(function(){
-      const b = event.target; const old = b.textContent;
+      const b = ev.target, old = b.textContent;
       b.textContent = 'Copied'; setTimeout(function(){ b.textContent = old; }, 1400);
     });
   }
