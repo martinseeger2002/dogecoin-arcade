@@ -887,6 +887,60 @@ def write_launcher(venv: Path, target: Path, system: str) -> Path:
 
 # --- update -------------------------------------------------------------------
 
+
+def migrate_node_units(dry_run: bool = False) -> list[str]:
+    """Bring already-installed node units up to `Restart=always`.
+
+    Units written before this change say `Restart=on-failure`, which means a
+    clean shutdown is final. That breaks restoring a wallet: the application
+    stops the node through its own `stop` RPC -- a clean exit, needing no
+    privileges -- and relies on systemd to bring it back.
+
+    Both layouts are checked. The installer writes *user* units under
+    ~/.config/systemd/user, but a node set up by hand may be a system unit under
+    /etc/systemd/system, and editing that needs privileges this may not have.
+    Reported honestly rather than attempted and half-done. Found on a test machine,
+    where the published fix named a path that does not exist on a normal install.
+    """
+    if not shutil.which("systemctl"):
+        return []
+
+    changed: list[str] = []
+    scopes = [
+        (Path.home() / ".config/systemd/user", ["--user"]),
+        (Path("/etc/systemd/system"), []),
+    ]
+    for unit_dir, scope in scopes:
+        if not unit_dir.is_dir():
+            continue
+        reload_needed = False
+        for unit in sorted(unit_dir.glob("*coind*.service")):
+            try:
+                text = unit.read_text()
+            except OSError:
+                continue
+            if "Restart=on-failure" not in text:
+                continue
+            if dry_run:
+                info(f"would set Restart=always in {unit}")
+                changed.append(str(unit))
+                continue
+            updated = text.replace("Restart=on-failure", "Restart=always")
+            updated = updated.replace("RestartSec=30", "RestartSec=5")
+            try:
+                unit.write_text(updated)
+            except PermissionError:
+                warn(f"{unit} needs Restart=always but is not writable by you.")
+                warn(f"  sudo sed -i 's/^Restart=on-failure$/Restart=always/' {unit}")
+                warn(f"  sudo systemctl daemon-reload")
+                continue
+            changed.append(str(unit))
+            reload_needed = True
+        if reload_needed and not dry_run:
+            subprocess.run(["systemctl", *scope, "daemon-reload"], check=False)
+    return changed
+
+
 def do_update(dry_run: bool) -> int:
     """Fetch the latest code and reinstall, leaving data and keys alone.
 
@@ -905,7 +959,7 @@ def do_update(dry_run: bool) -> int:
     if not git:
         fail("git is required to update. Install it, or re-run the installer.")
 
-    step(1, 3, "Fetching the latest code")
+    step(1, 4, "Fetching the latest code")
     if dry_run:
         info(f"would fetch {REPO_URL} into {checkout}")
     elif checkout.exists():
@@ -929,7 +983,7 @@ def do_update(dry_run: bool) -> int:
             fail(f"could not clone {REPO_URL}: {result.stderr.strip()}")
         info(f"cloned into {checkout}")
 
-    step(2, 3, "Reinstalling the application")
+    step(2, 4, "Reinstalling the application")
     if dry_run:
         info("would pip install the new code into the existing environment")
     else:
@@ -942,7 +996,15 @@ def do_update(dry_run: bool) -> int:
             fail(f"reinstall failed:\n{result.stderr[-1200:]}")
         info("installed")
 
-    step(3, 3, "Restarting the interface")
+    step(3, 4, "Bringing node services up to date")
+    migrated = migrate_node_units(dry_run)
+    if migrated:
+        for unit in migrated:
+            info(f"Restart=always: {Path(unit).name}")
+    else:
+        info("node services already correct")
+
+    step(4, 4, "Restarting the interface")
     if dry_run:
         info("would restart arcade-web if it is running as a service")
     elif shutil.which("systemctl"):
