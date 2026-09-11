@@ -25,12 +25,15 @@ from ..config import (
     MainnetRefused,
     Params,
     RpcCredentials,
+    WrongChain,
     load_rpc_credentials,
     require_messaging_network,
+    verify_connected_chain,
 )
 from ..rpc import RpcClient
 from .envelope import build_key_announcement
 from .keys import Identity, KeyError_, fingerprint_of, load_identity, save_identity
+from .miner import COINBASE_MATURITY, DEFAULT_TARGET_COINS, Miner, MiningError
 from .scanner import Scanner
 from .sender import MessageSender, SendError, plan_message
 from .store import MessageStore
@@ -67,7 +70,12 @@ def _rpc(args, params: Params) -> RpcClient:
     datadir = Path(args.datadir).expanduser() if args.datadir else None
     creds = load_rpc_credentials(params, conf_path=Path(args.conf).expanduser()
                                  if args.conf else None, datadir=datadir)
-    return RpcClient(creds)
+    client = RpcClient(creds)
+    # Confirm we reached the node we meant to. require_messaging_network checks
+    # intent; this checks reality. Without it, a stray user config can silently
+    # point every command at a different chain -- which it did.
+    verify_connected_chain(client, params)
+    return client
 
 
 def _passphrase(confirm: bool = False) -> str:
@@ -111,9 +119,81 @@ def cmd_keygen(args) -> int:
     print(f"created {path} (mode 0600)")
     print(f"fingerprint  {identity.fingerprint}")
     print()
+
+    # Funding cannot be done at send time: a coinbase needs 240 blocks to
+    # mature, so waiting until coins are needed means waiting four hours with a
+    # message already typed. Raise it here, at the one moment it is not urgent.
+    if not args.no_fund:
+        try:
+            params = _params(args)
+            with _rpc(args, params) as rpc:
+                status = Miner(rpc, params).status()
+            if not status.funded and not status.pending:
+                print("This wallet has no coins yet, and coins take ~4 hours to mature")
+                print("after mining -- so it is worth starting now rather than when you")
+                print("first want to send something.")
+                print()
+                print("  arcade-msg fund")
+                print()
+            else:
+                print(f"wallet: {status.describe()}")
+                print()
+        except Exception:
+            pass          # funding advice is a convenience; never block keygen on it
+
     print("Publish it with:  arcade-msg publish-key")
     print("Read the fingerprint aloud to your correspondent to verify it out of band;")
     print("an on-chain announcement proves control of an address, not who someone is.")
+    return 0
+
+
+def cmd_fund(args) -> int:
+    """One-shot bootstrap: mine a block so this wallet can pay message fees."""
+    params = _params(args)
+    with _rpc(args, params) as rpc:
+        miner = Miner(rpc, params)
+        status = miner.status()
+
+        if status.funded:
+            print(f"already funded: {status.describe()}")
+            return 0
+
+        if status.pending:
+            print(status.describe())
+            print()
+            print("Mining more would not help: maturity is measured in chain height,")
+            print("not in blocks you mined. Wait, and the chain will get there on its own.")
+            return 0
+
+        address = args.address or rpc.call("getnewaddress")
+        print("This wallet has no coins, so it cannot pay transaction fees.")
+        print()
+        print(f"  One block pays 10,000 PEP. The largest possible message costs about")
+        print(f"  0.147 PEP in fees, so a single block covers roughly 68,000 of them.")
+        print(f"  This mines ONE block and stops -- it is a bootstrap, not a service.")
+        print()
+        print(f"  It will use one CPU core, typically for a few minutes.")
+        print(f"  Coins then need {COINBASE_MATURITY} blocks (~4 hours) to become spendable.")
+        print(f"  Rewards go to {address}")
+        print()
+        if not args.yes:
+            if input("Start mining? [y/N] ").strip().lower() not in ("y", "yes"):
+                return 1
+
+        def progress(attempt, message):
+            print(f"  [{attempt}] {message}", file=sys.stderr)
+
+        try:
+            status = miner.bootstrap(address, on_attempt=progress)
+        except MiningError as exc:
+            print(f"mining failed: {exc}", file=sys.stderr)
+            return 1
+
+        print()
+        print(status.describe())
+        if status.pending:
+            print()
+            print("Come back in about four hours, or run `arcade-msg fund` to check.")
     return 0
 
 
@@ -206,6 +286,18 @@ def cmd_send(args) -> int:
         print()
 
     with _rpc(args, params) as rpc:
+        status = Miner(rpc, params).status()
+        if not status.funded:
+            print(f"cannot send: {status.describe()}", file=sys.stderr)
+            if status.pending:
+                print("Those coins are mined but still ripening; nothing to do but wait.",
+                      file=sys.stderr)
+            else:
+                print("Run `arcade-msg fund` to mine a block. Note that coins then need",
+                      file=sys.stderr)
+                print(f"{COINBASE_MATURITY} blocks (~4 hours) to mature.", file=sys.stderr)
+            return 1
+
         sender = MessageSender(rpc, params)
         address = args.address or rpc.call("getnewaddress")
         sent = []
@@ -351,7 +443,14 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
 
     s = sub.add_parser("keygen", help="create a messaging identity")
+    s.add_argument("--no-fund", action="store_true",
+                   help="skip the funding check and advice")
     s.set_defaults(func=cmd_keygen)
+
+    s = sub.add_parser("fund", help="mine one block so this wallet can pay fees")
+    s.add_argument("--address", help="mine rewards to this address")
+    s.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    s.set_defaults(func=cmd_fund)
 
     s = sub.add_parser("export-key", help="export the encrypted key file")
     s.add_argument("--out", help="write to this path instead of stdout")
@@ -404,6 +503,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.func(args)
     except MainnetRefused as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 2
+    except WrongChain as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 2
     except (KeyError_, SendError) as exc:

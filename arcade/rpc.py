@@ -108,6 +108,12 @@ class RpcClient:
 
         # The node answers 500 with a valid JSON-RPC error body for things like
         # "block not found", so parse before deciding the request failed.
+        if response.status_code == 401:
+            raise RpcTransportError(
+                f"authentication rejected by the node at {self._creds.url}. The "
+                f"credentials are probably for a different node -- check --datadir "
+                f"and --conf point at the same network."
+            )
         try:
             return response.json()
         except ValueError as exc:

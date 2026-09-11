@@ -239,6 +239,20 @@ def load_rpc_credentials(
     Raises ConfigError with an actionable message if neither works, because a
     silent fallback to the wrong network is far worse than a hard failure.
     """
+    # An explicitly supplied datadir wins. Otherwise a generic user config --
+    # which on this machine points at MAINNET -- silently overrides the network
+    # the caller asked for, and every subsequent call goes to the wrong node.
+    if datadir is not None:
+        sub = params.datadir_subdir
+        cookie = (datadir / sub / ".cookie") if sub else (datadir / ".cookie")
+        try:
+            user, _, password = cookie.read_text().partition(":")
+            return RpcCredentials(
+                host="127.0.0.1", port=params.rpc_port, user=user, password=password
+            )
+        except OSError:
+            pass      # fall through to the config file
+
     conf_path = conf_path or Path.home() / ".pepecoin" / "pepecoin.conf"
 
     if conf_path.exists():
@@ -246,26 +260,50 @@ def load_rpc_credentials(
         user = conf.get("rpcuser")
         password = conf.get("rpcpassword")
         if user and password:
+            # The port comes from the requested network unless the config names
+            # one explicitly for THAT network. A bare `rpcport` in a user config
+            # is for whichever node that config serves, which need not be ours.
+            port = int(conf.get(f"{params.name}.rpcport", params.rpc_port))
             return RpcCredentials(
                 host=conf.get("rpcconnect", "127.0.0.1"),
-                port=int(conf.get("rpcport", params.rpc_port)),
+                port=port,
                 user=user,
                 password=password,
             )
 
-    if datadir is not None:
-        cookie = datadir / params.datadir_subdir / ".cookie" if params.datadir_subdir else datadir / ".cookie"
-        try:
-            user, _, password = cookie.read_text().partition(":")
-        except OSError as exc:
-            raise ConfigError(
-                f"no rpcuser/rpcpassword in {conf_path} and cookie {cookie} is unreadable: {exc}"
-            ) from exc
-        return RpcCredentials(host="127.0.0.1", port=params.rpc_port, user=user, password=password)
-
     raise ConfigError(
         f"no RPC credentials: {conf_path} has no rpcuser/rpcpassword and no datadir was given"
     )
+
+
+#: What each network calls itself in getblockchaininfo's "chain" field.
+CHAIN_NAMES = {
+    "main": "main", "test": "test", "regtest": "regtest",
+    "doge-main": "main", "doge-test": "test", "doge-regtest": "regtest",
+}
+
+
+class WrongChain(Exception):
+    """The connected node is not on the chain we asked for."""
+
+
+def verify_connected_chain(rpc, params: "Params") -> None:
+    """Confirm the node we reached is actually on the expected chain.
+
+    `require_messaging_network` checks the params object -- our *intent*. It
+    cannot tell that credentials resolved to a different node than intended,
+    which is exactly what happens when a stray user config points elsewhere.
+    This checks what we are actually talking to, which is the property that
+    matters before anything is signed or broadcast.
+    """
+    actual = rpc.call("getblockchaininfo").get("chain")
+    expected = CHAIN_NAMES.get(params.name)
+    if actual != expected:
+        raise WrongChain(
+            f"connected to a node on chain {actual!r}, but {params.name!r} was requested "
+            f"(expected chain {expected!r}). Refusing to continue -- check --datadir "
+            f"and --conf."
+        )
 
 
 def network_from_env(default: str = "regtest") -> Params:
