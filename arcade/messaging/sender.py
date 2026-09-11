@@ -12,8 +12,10 @@ The flow follows the brief exactly, and the confirmation step is not optional:
 
 from __future__ import annotations
 
+import time
+
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from ..config import Params, require_messaging_network
 from ..encoding import MAX_CLASS_B_PAYLOAD, encode_class_b, encode_class_c, max_class_c_payload
@@ -90,6 +92,10 @@ class MessagePlan:
     est_fee_sats: int = 0
     est_dust_sats: int = 0
     chunk_payloads: list[bytes] = field(default_factory=list)
+    #: Set only for a chunked message. Identifies the chain, and is what makes a
+    #: partial send resumable: re-sealing the same text produces a different id,
+    #: so the remaining chunks have to be the ones sealed originally.
+    msg_id: bytes | None = None
 
     @property
     def est_total_coins(self) -> float:
@@ -128,7 +134,17 @@ def plan_message(
         sender, recipient_public, Header(type=TYPE_CHUNK, msg_id=msg_id), message
     )
     capacity = MAX_CLASS_B_PAYLOAD - 4 - 18          # AnyData header + chunk header
-    pieces = [body[i : i + capacity] for i in range(0, len(body), capacity)]
+
+    # Split evenly rather than greedily. Filling each chunk to capacity in turn
+    # made a message one byte over the ceiling into a 14.8 KB transaction
+    # followed by a 796-byte one -- a test machine measured exactly that. The first
+    # transaction is then always the largest possible, and it is the one most
+    # likely to meet a relay or mempool limit. Dust tracks the total payload
+    # rather than the number of transactions, so evening the split halves the
+    # worst-case transaction size and costs nothing.
+    count = -(-len(body) // capacity)
+    even = -(-len(body) // count)
+    pieces = [body[i : i + even] for i in range(0, len(body), even)]
 
     payloads = []
     total = len(pieces)
@@ -145,6 +161,7 @@ def plan_message(
     outs_each = -(-(-(-capacity // 30)) // 2)
     size_each = 148 + outs_each * 113 + 34 + 34 + 10
     return MessagePlan(
+        msg_id=msg_id,
         payload_bytes=len(body), transactions=total, chunked=True,
         packets=-(-len(body) // 30), multisig_outputs=outs_each * total,
         est_size=size_each * total,
@@ -192,7 +209,8 @@ class MessageSender:
             )
         return bytes.fromhex(pubkey_hex)
 
-    def _select_inputs(self, address: str, target: int) -> list[tuple[str, int]]:
+    def _select_inputs(self, address: str, target: int,
+                       minconf: int = 1) -> list[tuple[str, int]]:
         """Pick outputs belonging to `address` worth at least `target`.
 
         Class B seeds its obfuscation keystream with the SENDER address, and the
@@ -201,7 +219,7 @@ class MessageSender:
         the computed sender then differs from the one we seeded with, and the
         message is **permanently unreadable by anyone**. So we choose the inputs.
         """
-        unspent = self.rpc.call("listunspent", 1, 9_999_999, [address])
+        unspent = self.rpc.call("listunspent", minconf, 9_999_999, [address])
         chosen: list[tuple[str, int]] = []
         total = 0
         for utxo in sorted(unspent, key=lambda u: -float(u["amount"])):
@@ -244,6 +262,96 @@ class MessageSender:
         name = max(totals, key=lambda k: totals[k])
         return (name, totals[name]) if totals[name] >= target else None
 
+    def send_all(self, sender_address: str, payloads: list[bytes],
+                 on_progress: Callable[[str, int, int], None] | None = None,
+                 approve: Callable[[int, int, PreparedTx], bool] | None = None,
+                 on_broadcast: Callable[[int, int, str], None] | None = None,
+                 confirm_timeout: float = 3600.0,
+                 ) -> list[str]:
+        """Send every chunk of one message, in order, waiting between them.
+
+        Each transaction after the first spends the change of the one before, so
+        they must be built and broadcast one at a time: chunk N+1's input does
+        not exist until chunk N is broadcast. Both front ends got this wrong in
+        different ways -- the CLI looped with no pause and could not see the
+        change it had just made, and the web interface built every chunk up front,
+        which would have had two transactions spending the same output.
+
+        Why this waits for a confirmation rather than spending unconfirmed change
+        ---------------------------------------------------------------------
+        Spending 0-conf change would be faster and works for short messages, but
+        it fails outright past about six chunks. A Class B chunk is roughly
+        14.8 KB, and `DEFAULT_ANCESTOR_SIZE_LIMIT` is 101 KB
+        (dogecoin/src/validation.h:76), so a seventh unconfirmed link is rejected
+        by the node -- not merely at risk of eviction, but refused. An approach
+        that works up to six chunks and then breaks is worse than one that is
+        uniformly slow, because a partial send is permanently unreadable: the
+        chunks already on chain cannot be taken back, and nothing can complete
+        the message later.
+
+        Input selection itself still allows unconfirmed coins, so sending two
+        separate messages in a row does not make the second wait on the first's
+        change. It is only *within* a message that the wait is required.
+        """
+        txids: list[str] = []
+        total = len(payloads)
+        for index, payload in enumerate(payloads, 1):
+            if index > 1:
+                if on_progress is not None:
+                    on_progress(f"waiting for transaction {index - 1} of {total} to "
+                                f"confirm before sending {index}", index, total)
+                try:
+                    self._await_confirmation(txids[-1], confirm_timeout)
+                except Exception as exc:
+                    raise PartialSend(
+                        f"{exc} {len(txids)} of {total} are already on the chain "
+                        f"and cannot be taken back. An incomplete message can "
+                        f"never be read by anyone.", txids, total) from None
+
+            try:
+                prepared = self.prepare(sender_address, payload, minconf=0)
+            except Exception as exc:
+                if txids:
+                    raise PartialSend(
+                        f"could not build transaction {index} of {total}: {exc} "
+                        f"{len(txids)} of {total} are already on the chain and "
+                        f"cannot be taken back. An incomplete message can never "
+                        f"be read by anyone.", txids, total) from None
+                raise
+
+            if approve is not None and not approve(index, total, prepared):
+                if txids:
+                    raise PartialSend(
+                        f"stopped after {len(txids)} of {total}. Those are on the "
+                        f"chain already and the message can never be read.",
+                        txids, total)
+                return []
+
+            txid = self.broadcast(prepared)
+            txids.append(txid)
+            # Reported before the next wait begins, so a caller can write the
+            # progress down before anything else can fail.
+            if on_broadcast is not None:
+                on_broadcast(index, total, txid)
+            if on_progress is not None:
+                on_progress(f"broadcast {index} of {total}: {txid}", index, total)
+        return txids
+
+    def _await_confirmation(self, txid: str, timeout: float) -> None:
+        """Block until `txid` has a confirmation, or say why it did not."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                raw = self.rpc.call("getrawtransaction", txid, 1)
+                if int(raw.get("confirmations") or 0) >= 1:
+                    return
+            except Exception:
+                pass          # not indexed yet; it is in the mempool
+            time.sleep(5.0)
+        raise SendError(
+            f"transaction {txid} had no confirmation after "
+            f"{int(timeout / 60)} minutes.")
+
     def _verify_sender(self, decoded: dict[str, Any], expected: str) -> None:
         """Confirm the funded transaction really resolves to the seeded sender.
 
@@ -275,8 +383,14 @@ class MessageSender:
                 f"message nobody could read. Fund {expected} directly and retry."
             )
 
-    def prepare(self, sender_address: str, payload: bytes, class_c: bool = False) -> PreparedTx:
-        """Build, fund and sign one transaction. Does NOT broadcast."""
+    def prepare(self, sender_address: str, payload: bytes, class_c: bool = False,
+                minconf: int = 1) -> PreparedTx:
+        """Build, fund and sign one transaction. Does NOT broadcast.
+
+        `minconf=0` lets this spend change that is still unconfirmed, which is
+        required to continue a chunk chain and wrong anywhere else -- see
+        `send_all`.
+        """
         if class_c:
             # Wrap in AnyData exactly as the Class B path does. The carrier
             # differs; the payload format must not, or the scanner cannot read
@@ -298,7 +412,7 @@ class MessageSender:
             inputs: list[tuple[str, int]] = []
         else:
             needed = sum(value for value, _ in outputs) + COIN     # outputs + fee headroom
-            inputs = self._select_inputs(sender_address, needed)
+            inputs = self._select_inputs(sender_address, needed, minconf=minconf)
 
         raw = build_raw_tx(inputs, outputs)
 
@@ -333,6 +447,19 @@ class MessageSender:
     def broadcast(self, prepared: PreparedTx) -> str:
         """Send. Callers MUST have shown `prepared` to the user and got approval."""
         return str(self.rpc.call("sendrawtransaction", prepared.hex))
+
+
+class PartialSend(SendError):
+    """Some chunks are on chain and the rest cannot be sent.
+
+    Carries what was broadcast, because at this point the message is unreadable
+    by anyone and the only useful thing left is to say so precisely.
+    """
+
+    def __init__(self, message: str, txids: list[str], total: int):
+        super().__init__(message)
+        self.txids = txids
+        self.total = total
 
 
 def funded_address(rpc) -> str:

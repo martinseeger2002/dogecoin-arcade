@@ -36,7 +36,9 @@ from .envelope import build_key_announcement
 from .keys import Identity, KeyError_, fingerprint_of, load_identity, save_identity
 from .miner import COINBASE_MATURITY, DEFAULT_TARGET_COINS, Miner, MiningError
 from .scanner import Scanner
-from .sender import MessageSender, SendError, funded_address, plan_message
+from .sender import (
+    MessageSender, PartialSend, SendError, funded_address, plan_message,
+)
 from .store import MessageStore
 
 DEFAULT_HOME = Path.home() / ".dogecoinarcade"
@@ -291,6 +293,24 @@ def cmd_send(args) -> int:
     identity = _identity(args)
     store = _store(args)
 
+    # An unfinished chunked send has to be dealt with before starting another.
+    # Its remaining chunks were sealed against a message id this run would not
+    # reproduce, so a new send cannot complete it -- it would leave the old one
+    # on the chain forever, unreadable.
+    pending = store.pending_sends()
+    if pending and not args.resume:
+        record = pending[0]
+        print(f"there is an unfinished message: {record['sent_count']} of "
+              f"{record['total']} transactions are on the chain.", file=sys.stderr)
+        print("Run `arcade-msg send --resume` to finish it. Starting a new message "
+              "would leave it stranded and unreadable.", file=sys.stderr)
+        return 1
+    if args.resume:
+        if not pending:
+            print("there is no unfinished message to resume.", file=sys.stderr)
+            return 1
+        return _resume_send(args, params, store, pending[0])
+
     recipient = _resolve_recipient(args, store)
     body = Path(args.file).expanduser().read_bytes() if args.file else args.message.encode()
     if not body:
@@ -328,21 +348,82 @@ def cmd_send(args) -> int:
 
         sender = MessageSender(rpc, params)
         address = args.address or funded_address(rpc)
-        sent = []
-        for index, payload in enumerate(plan.chunk_payloads, 1):
-            prepared = sender.prepare(address, payload)
-            if plan.transactions > 1:
-                print(f"--- transaction {index} of {plan.transactions} ---")
+
+        def approve(index, total, prepared):
+            if total > 1:
+                print(f"--- transaction {index} of {total} ---")
             print(prepared.summary())
-            if not _confirm(args, prepared):
-                if sent:
-                    print(f"\nSTOPPED after {len(sent)} of {plan.transactions}.", file=sys.stderr)
-                    print("The message is incomplete on-chain and cannot be read.", file=sys.stderr)
-                    return 1          # a half-sent message really is a failure
-                return 0 if args.dry_run else 1
-            sent.append(sender.broadcast(prepared))
-            print(f"broadcast {sent[-1]}\n")
+            return _confirm(args, prepared)
+
+        def progress(text, index, total):
+            print(f"  {text}", flush=True)
+
+        def broadcast_done(index, total, txid):
+            # Written down before anything else can fail, so an interruption
+            # leaves something that can be finished rather than an orphan.
+            store.record_pending_progress(plan.msg_id, txid)
+
+        if plan.chunked and not args.dry_run:
+            store.begin_pending_send(plan.msg_id, recipient, address, body,
+                                     plan.chunk_payloads)
+        try:
+            sent = sender.send_all(address, plan.chunk_payloads,
+                                   on_progress=progress, approve=approve,
+                                   on_broadcast=broadcast_done)
+            if plan.chunked and sent:
+                store.finish_pending_send(plan.msg_id)
+        except PartialSend as exc:
+            print(f"\n{exc}", file=sys.stderr)
+            for index, txid in enumerate(exc.txids, 1):
+                print(f"  {index} of {exc.total}: {txid}", file=sys.stderr)
+            print("\nRun `arcade-msg send --resume` to finish it.", file=sys.stderr)
+            return 1
+    if not sent:
+        return 0 if args.dry_run else 1
     print(f"sent in {len(sent)} transaction(s)")
+    return 0
+
+
+def _resume_send(args, params, store: MessageStore, record: dict) -> int:
+    """Finish a chunked send that stopped part way.
+
+    The sealed chunks were written down before the first broadcast, so the rest
+    can go out unchanged under the same message id. Re-sealing would produce a
+    different id and strand what is already on the chain.
+    """
+    remaining = record["chunks"][record["sent_count"]:]
+    print(f"Resuming: {record['sent_count']} of {record['total']} already sent, "
+          f"{len(remaining)} to go")
+    print(f"  from address  {record['sender_address']}")
+    print()
+
+    with _rpc(args, params) as rpc:
+        sender = MessageSender(rpc, params)
+
+        def approve(index, total, prepared):
+            print(f"--- transaction {record['sent_count'] + index} of "
+                  f"{record['total']} ---")
+            print(prepared.summary())
+            return _confirm(args, prepared)
+
+        def progress(text, index, total):
+            print(f"  {text}", flush=True)
+
+        def broadcast_done(index, total, txid):
+            store.record_pending_progress(record["msg_id"], txid)
+
+        try:
+            sent = sender.send_all(record["sender_address"], remaining,
+                                   on_progress=progress, approve=approve,
+                                   on_broadcast=broadcast_done)
+        except PartialSend as exc:
+            print(f"\n{exc}", file=sys.stderr)
+            return 1
+
+    if not sent:
+        return 0 if args.dry_run else 1
+    store.finish_pending_send(record["msg_id"])
+    print(f"message complete in {record['total']} transaction(s)")
     return 0
 
 
@@ -514,6 +595,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     s.add_argument("--dry-run", action="store_true")
     s.set_defaults(func=cmd_send)
+    s.add_argument("--resume", action="store_true",
+                   help="finish a chunked message that stopped part way")
 
     s = sub.add_parser("scan", help="scan the chain for messages and key announcements")
     s.add_argument("--batch", type=int, default=2000, help="blocks per pass")

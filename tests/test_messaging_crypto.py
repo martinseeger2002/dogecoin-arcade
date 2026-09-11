@@ -357,3 +357,74 @@ def test_the_documented_ceiling_is_the_real_one(alice, bob):
 
     assert plan_message(alice, bob.public_bytes, b"x" * 7512).transactions == 1
     assert plan_message(alice, bob.public_bytes, b"x" * 7513).transactions > 1
+
+
+# --- chunked sends survive an interruption ------------------------------------
+# a test machine broadcast chunk 1 of 2, then chunk 2 failed to build, and the result was
+# 0.148 PEP spent on a transaction that can never be read by anyone: a partial
+# message is permanently unreadable, and nothing recorded enough to finish it.
+# Re-sending is not a fix -- re-sealing produces a different message id, so a
+# fresh attempt strands the first one rather than completing it.
+
+
+def test_a_chunked_plan_carries_its_message_id(alice, bob):
+    """Without it, nothing can identify the chain to resume."""
+    from arcade.messaging.sender import plan_message
+
+    plan = plan_message(alice, bob.public_bytes, b"x" * 9000)
+    assert plan.chunked and plan.msg_id
+
+
+def test_a_single_transaction_plan_has_no_message_id(alice, bob):
+    from arcade.messaging.sender import plan_message
+
+    assert plan_message(alice, bob.public_bytes, b"short").msg_id is None
+
+
+def test_chunks_are_split_evenly_rather_than_greedily(alice, bob):
+    """Filling each chunk in turn made the first transaction the largest possible.
+
+    a test machine measured 14,783 bytes then 796. The first is the one most likely to meet
+    a relay or mempool limit, and dust tracks the total payload rather than the
+    transaction count, so evening the split costs nothing.
+    """
+    from arcade.messaging.sender import plan_message
+
+    sizes = [len(c) for c in plan_message(alice, bob.public_bytes, b"x" * 7751).chunk_payloads]
+    assert len(sizes) == 2
+    assert max(sizes) - min(sizes) <= 1, sizes
+
+
+def test_an_interrupted_send_can_be_resumed_with_the_original_chunks(alice, bob):
+    """The sealed chunks must come back byte-identical, or the chain is dead."""
+    import tempfile
+    from pathlib import Path
+    from arcade.messaging.sender import plan_message
+    from arcade.messaging.store import MessageStore
+
+    plan = plan_message(alice, bob.public_bytes, b"x" * 9000)
+    with tempfile.TemporaryDirectory() as directory:
+        store = MessageStore(Path(directory) / "m.sqlite")
+        store.begin_pending_send(plan.msg_id, bob.public_bytes, "nSender",
+                                 b"x" * 9000, plan.chunk_payloads)
+        store.record_pending_progress(plan.msg_id, "txid-of-chunk-1")
+
+        (record,) = store.pending_sends()
+        assert record["sent_count"] == 1
+        assert record["chunks"] == plan.chunk_payloads
+        assert record["chunks"][1:] == plan.chunk_payloads[1:]
+
+
+def test_a_finished_send_leaves_nothing_pending(alice, bob):
+    import tempfile
+    from pathlib import Path
+    from arcade.messaging.sender import plan_message
+    from arcade.messaging.store import MessageStore
+
+    plan = plan_message(alice, bob.public_bytes, b"x" * 9000)
+    with tempfile.TemporaryDirectory() as directory:
+        store = MessageStore(Path(directory) / "m.sqlite")
+        store.begin_pending_send(plan.msg_id, bob.public_bytes, "nSender",
+                                 b"x" * 9000, plan.chunk_payloads)
+        store.finish_pending_send(plan.msg_id)
+        assert store.pending_sends() == []

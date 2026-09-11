@@ -91,6 +91,26 @@ CREATE INDEX IF NOT EXISTS sent_peer ON sent(recipient_key);
 -- A contact is keyed by messaging public key when there is one, because that is
 -- the identity. An entry may exist with no key at all -- somebody you only ever
 -- send coins to -- so the key is nullable and a synthetic id is the primary key.
+-- A chunked send in progress.
+--
+-- A message too long for one transaction is sent as a chain, and a chain that
+-- stops half way is permanently unreadable: what is on the chain cannot be taken
+-- back, and the rest cannot be rebuilt later, because re-sealing the same text
+-- produces a different message id. So the sealed chunks are written down BEFORE
+-- the first broadcast and the progress after each one, which turns an
+-- interrupted send into something that can be finished rather than an orphan.
+CREATE TABLE IF NOT EXISTS pending_send (
+    msg_id         BLOB PRIMARY KEY,
+    recipient_key  BLOB NOT NULL,
+    sender_address TEXT NOT NULL,
+    body           BLOB NOT NULL,
+    chunks         BLOB NOT NULL,
+    total          INTEGER NOT NULL,
+    sent_count     INTEGER NOT NULL DEFAULT 0,
+    txids          TEXT NOT NULL DEFAULT '',
+    created        INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS contact (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     pubkey          BLOB UNIQUE,
@@ -127,6 +147,24 @@ class StoredMessage:
     complete: bool
     read_at: int | None
     first_txid: str
+
+
+def _pack_chunks(chunks: list[bytes]) -> bytes:
+    """Length-prefixed concatenation. Chunks are opaque sealed bytes."""
+    out = bytearray()
+    for chunk in chunks:
+        out += len(chunk).to_bytes(4, "big") + chunk
+    return bytes(out)
+
+
+def _unpack_chunks(blob: bytes) -> list[bytes]:
+    chunks, offset = [], 0
+    while offset + 4 <= len(blob):
+        size = int.from_bytes(blob[offset:offset + 4], "big")
+        offset += 4
+        chunks.append(blob[offset:offset + size])
+        offset += size
+    return chunks
 
 
 class MessageStore:
@@ -349,6 +387,52 @@ class MessageStore:
         )
 
     # --- sent messages --------------------------------------------------------
+
+    # --- chunked sends in progress --------------------------------------------
+
+    def begin_pending_send(self, msg_id: bytes, recipient_key: bytes,
+                           sender_address: str, body: bytes,
+                           chunks: list[bytes]) -> None:
+        """Record a chunked send before any of it is broadcast."""
+        self.conn.execute(
+            "INSERT OR REPLACE INTO pending_send"
+            "(msg_id,recipient_key,sender_address,body,chunks,total,sent_count,"
+            "txids,created) VALUES(?,?,?,?,?,?,0,'',?)",
+            (msg_id, recipient_key, sender_address, body, _pack_chunks(chunks),
+             len(chunks), int(time.time())),
+        )
+
+    def record_pending_progress(self, msg_id: bytes, txid: str) -> None:
+        """Note one more chunk away. Called immediately after each broadcast."""
+        row = self.conn.execute(
+            "SELECT txids FROM pending_send WHERE msg_id=?", (msg_id,)).fetchone()
+        if row is None:
+            return
+        txids = [t for t in row["txids"].split(",") if t] + [txid]
+        self.conn.execute(
+            "UPDATE pending_send SET sent_count=?, txids=? WHERE msg_id=?",
+            (len(txids), ",".join(txids), msg_id),
+        )
+
+    def finish_pending_send(self, msg_id: bytes) -> None:
+        self.conn.execute("DELETE FROM pending_send WHERE msg_id=?", (msg_id,))
+
+    def pending_sends(self) -> list[dict[str, Any]]:
+        """Unfinished chunked sends, oldest first."""
+        out = []
+        for row in self.conn.execute("SELECT * FROM pending_send ORDER BY created"):
+            out.append({
+                "msg_id": bytes(row["msg_id"]),
+                "recipient_key": bytes(row["recipient_key"]),
+                "sender_address": row["sender_address"],
+                "body": bytes(row["body"]),
+                "chunks": _unpack_chunks(bytes(row["chunks"])),
+                "total": row["total"],
+                "sent_count": row["sent_count"],
+                "txids": [t for t in row["txids"].split(",") if t],
+                "created": row["created"],
+            })
+        return out
 
     def add_sent(self, txid: str, recipient_key: bytes, recipient_addr: str,
                  sender_fp: str, body: bytes) -> None:

@@ -235,9 +235,14 @@ def create_app(state: AppState) -> FastAPI:
                     raise ValueError(f"cannot send: {funding.describe()}")
                 sender = MessageSender(rpc, state.messaging.params)
                 address = funded_address(rpc)
-                prepared = [sender.prepare(address, p) for p in plan.chunk_payloads]
+                # Only the first chunk is built for the preview. The rest cannot
+                # be: each one spends the change of the one before it, so its
+                # input does not exist until that one is broadcast. Building them
+                # all up front -- which this did -- produced transactions that
+                # spent the same output twice.
+                prepared = [sender.prepare(address, plan.chunk_payloads[0])]
                 if confirmed == "yes":
-                    txids = [sender.broadcast(p) for p in prepared]
+                    txids = sender.send_all(address, plan.chunk_payloads)
                     # Keep our own plaintext: the sealed box is to the recipient,
                     # so we could never read this back off the chain ourselves.
                     with state.store() as store:
