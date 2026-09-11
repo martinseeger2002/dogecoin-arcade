@@ -163,3 +163,99 @@ def test_a_profile_arriving_by_message_reaches_the_address_book(tmp_path):
     row = store.contact_by_key(key)
     assert row["name"] == "the operator"
     assert row["mainnet_address"] == "PTheirMain"
+
+
+# --- every byte value survives every container --------------------------------
+# a test machine's check, and the right one: the wire is binary-clean, so the risk is not
+# the chain but anywhere the bytes pass through a text-only container on the way
+# to disk or to a browser. A file is guaranteed to contain bytes that are not
+# valid UTF-8, and the resume path is the one nobody exercises twice.
+
+ALL_BYTES = bytes(range(256)) * 8          # every value, and not valid UTF-8
+
+
+def test_every_byte_value_survives_the_body_format():
+    got = C.parse(C.build("binary", C.Attachment("all.bin", "application/octet-stream",
+                                                 ALL_BYTES)))
+    assert got.attachment.data == ALL_BYTES
+
+
+def test_every_byte_value_survives_the_attachment_table(tmp_path):
+    """A TEXT column would mangle this; the column must be BLOB."""
+    store = _store(tmp_path)
+    message_id = store.add_message(None, "tx", "tx", 1, 0, "nS", b"\x0c" * 32,
+                                   "me", b"see attached")
+    store.add_attachment(message_id, "all.bin", "application/octet-stream", ALL_BYTES)
+
+    assert bytes(store.attachment_for(message_id)["data"]) == ALL_BYTES
+
+
+def test_every_byte_value_survives_a_store_reopen(tmp_path):
+    """Written by one connection, read by another -- as a resume really does."""
+    from arcade.messaging.store import MessageStore
+
+    store = _store(tmp_path)
+    message_id = store.add_message(None, "tx", "tx", 1, 0, "nS", b"\x0c" * 32,
+                                   "me", ALL_BYTES)
+    store.add_attachment(message_id, "all.bin", "application/octet-stream", ALL_BYTES)
+    store.close()
+
+    reopened = MessageStore(tmp_path / "m.sqlite")
+    assert bytes(reopened.attachment_for(message_id)["data"]) == ALL_BYTES
+    row = reopened.conn.execute("SELECT body FROM message WHERE id=?",
+                                (message_id,)).fetchone()
+    assert bytes(row["body"]) == ALL_BYTES
+
+
+def test_every_byte_value_survives_the_resume_path(tmp_path):
+    """The path nobody tests twice: sealed chunks out to disk and back.
+
+    If the chunks were serialised through JSON or str() this would corrupt
+    silently, and only on resume.
+    """
+    from arcade.messaging.keys import Identity
+    from arcade.messaging.sender import plan_message
+    from arcade.messaging.store import MessageStore
+
+    alice, bob = Identity.generate(), Identity.generate()
+    body = C.build("big binary", C.Attachment("all.bin", "application/octet-stream",
+                                              ALL_BYTES * 6))
+    plan = plan_message(alice, bob.public_bytes, body)
+    assert plan.chunked, "the fixture must be large enough to chunk"
+
+    store = _store(tmp_path)
+    store.begin_pending_send(plan.msg_id, bob.public_bytes, "nSender", body,
+                             plan.chunk_payloads)
+    store.record_pending_progress(plan.msg_id, "txid-1")
+    store.close()
+
+    reopened = MessageStore(tmp_path / "m.sqlite")
+    (record,) = reopened.pending_sends()
+    assert record["chunks"] == plan.chunk_payloads
+    assert record["body"] == body
+
+
+def test_a_binary_attachment_round_trips_through_encryption_and_chunking():
+    """Send, chunk, reassemble, decrypt, unpack -- the whole path, all 256 values."""
+    from arcade.messaging.envelope import Header, TYPE_CHUNK, open_ciphertext
+    from arcade.messaging.keys import Identity
+    from arcade.messaging.sender import plan_message
+
+    alice, bob = Identity.generate(), Identity.generate()
+    original = ALL_BYTES * 6
+    body = C.build("photo", C.Attachment("all.bin", "image/png", original))
+    plan = plan_message(alice, bob.public_bytes, body)
+    assert plan.chunked
+
+    # Reassemble the way the scanner does: strip each chunk header, join, open.
+    pieces = []
+    for payload in plan.chunk_payloads:
+        header = Header.decode(payload)
+        pieces.append(payload[header.length:][:header.clen])
+    _, plaintext = open_ciphertext(
+        bob, Header(type=TYPE_CHUNK, msg_id=plan.msg_id), b"".join(pieces))
+
+    got = C.parse(plaintext)
+    assert got.attachment.data == original
+    assert got.attachment.content_type == "image/png"
+    assert got.text == "photo"

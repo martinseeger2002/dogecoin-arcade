@@ -309,3 +309,45 @@ def test_a_backup_of_an_unknown_chain_is_refused(client):
                         data={"csrf_token": state.csrf_token}, follow_redirects=False)
     assert response.status_code == 303
     assert state.notice
+
+
+def test_a_binary_attachment_downloads_byte_identically(client):
+    """The last text-only container on the path: the HTTP response itself."""
+    app, state = client
+    payload = bytes(range(256)) * 8
+    with state.store() as store:
+        message_id = store.add_message(None, "tx", "tx", 1, 0, "nS", b"\x0d" * 32,
+                                       "me", b"see attached")
+        store.add_attachment(message_id, "all.bin", "application/octet-stream", payload)
+
+    response = app.get(f"/messages/attachment/{message_id}")
+
+    assert response.status_code == 200
+    assert response.content == payload
+    assert response.headers["content-type"] == "application/octet-stream"
+    assert 'filename="all.bin"' in response.headers["content-disposition"]
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+def test_a_downloaded_file_is_never_served_as_html(client):
+    """A filename chosen by a stranger must not come back as script.
+
+    This origin holds the wallet, so a file served inline as text/html would be
+    running in it.
+    """
+    app, state = client
+    with state.store() as store:
+        message_id = store.add_message(None, "tx", "tx", 1, 0, "nS", b"\x0e" * 32,
+                                       "me", b"x")
+        store.add_attachment(message_id, "evil.html", "text/html",
+                             b"<script>alert(1)</script>")
+
+    response = app.get(f"/messages/attachment/{message_id}")
+
+    assert response.headers["content-type"] == "application/octet-stream"
+    assert "attachment;" in response.headers["content-disposition"]
+
+
+def test_a_missing_attachment_does_not_500(client):
+    response = client[0].get("/messages/attachment/99999", follow_redirects=False)
+    assert response.status_code == 303
