@@ -26,7 +26,9 @@ from ..messaging.envelope import build_key_announcement
 from ..messaging.keys import fingerprint_of
 from ..messaging.miner import Miner, MiningError
 from ..messaging.scanner import Scanner
-from ..messaging.sender import MessageSender, SendError, plan_message
+from ..messaging.sender import (
+    MessageSender, SendError, funded_address, plan_message,
+)
 from .state import AppState
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -219,7 +221,9 @@ def create_app(state: AppState) -> FastAPI:
         try:
             check_csrf(csrf_token)
             if not state.unlocked:
-                raise ValueError("unlock your identity first")
+                # Nothing for the user to do but wait for the node; there is no
+                # passphrase to enter any more.
+                state.ensure_identity()
             peer_key = bytes.fromhex(peer_hex)
             if not body.strip():
                 raise ValueError("nothing to send")
@@ -230,7 +234,7 @@ def create_app(state: AppState) -> FastAPI:
                 if not funding.funded:
                     raise ValueError(f"cannot send: {funding.describe()}")
                 sender = MessageSender(rpc, state.messaging.params)
-                address = _funded_address(rpc, state)
+                address = funded_address(rpc)
                 prepared = [sender.prepare(address, p) for p in plan.chunk_payloads]
                 if confirmed == "yes":
                     txids = [sender.broadcast(p) for p in prepared]
@@ -306,7 +310,9 @@ def create_app(state: AppState) -> FastAPI:
         try:
             check_csrf(csrf_token)
             if not state.unlocked:
-                raise ValueError("unlock your identity first")
+                # Nothing for the user to do but wait for the node; there is no
+                # passphrase to enter any more.
+                state.ensure_identity()
             if not body:
                 raise ValueError("nothing to send")
             with state.store() as store:
@@ -333,7 +339,9 @@ def create_app(state: AppState) -> FastAPI:
         try:
             check_csrf(csrf_token)
             if not state.unlocked:
-                raise ValueError("unlock your identity first")
+                # Nothing for the user to do but wait for the node; there is no
+                # passphrase to enter any more.
+                state.ensure_identity()
             recipient_key = _resolve_recipient(state, recipient)
             plan = plan_message(state.identity, recipient_key, body.encode())
             with state.messaging.rpc() as rpc:
@@ -341,7 +349,7 @@ def create_app(state: AppState) -> FastAPI:
                 if not funding.funded:
                     raise ValueError(f"cannot send: {funding.describe()}")
                 sender = MessageSender(rpc, state.messaging.params)
-                address = _funded_address(rpc, state)
+                address = funded_address(rpc)
                 prepared = [sender.prepare(address, p) for p in plan.chunk_payloads]
                 if confirmed == "yes":
                     broadcast_txids = [sender.broadcast(p) for p in prepared]
@@ -458,6 +466,7 @@ def create_app(state: AppState) -> FastAPI:
                 "which": which, "label": chain.label, "network": chain.network,
                 "is_mainnet": chain.is_mainnet, "online": False, "wallet": None,
                 "wallet_file": None, "job": imports.get(which),
+                "wallets": [], "can_switch": False,
             }
             try:
                 with chain.rpc() as rpc:
@@ -467,6 +476,8 @@ def create_app(state: AppState) -> FastAPI:
                     path = backup.wallet_path(chain.datadir, chain.network)
                     card["wallet_file"] = str(path)
                     card["wallet_readable"] = os.access(path, os.R_OK)
+                    card["wallets"] = backup.list_wallets(chain.datadir, chain.network)
+                    card["can_switch"] = os.access(path.parent, os.W_OK)
             except Exception as exc:
                 card["problem"] = str(exc)
             cards.append(card)
@@ -568,6 +579,79 @@ def create_app(state: AppState) -> FastAPI:
             state.flash(f"Could not restore: {exc}", "err")
         return RedirectResponse("/backup", status_code=303)
 
+    # --- several wallets ------------------------------------------------------
+    # One wallet file is in place at a time; the rest wait in the library. Every
+    # switch stops the node, so every one of these restarts it.
+
+    @app.post("/backup/{which}/wallet/new")
+    def wallet_new(request: Request, which: str, name: str = Form(""),
+                   csrf_token: str = Form("")):
+        try:
+            check_csrf(csrf_token)
+            chain = _chain_for(which)
+            if not chain.datadir:
+                raise ValueError("this application does not know where that node "
+                                 "keeps its files")
+            result = backup.create_wallet(chain.rpc, chain.datadir, chain.network,
+                                          name)
+            came_back = backup.wait_for_node(chain.rpc, timeout=180)
+            state.lock()
+            state.flash(
+                f"Now using a new empty wallet called {result['created']}. Your "
+                f"previous wallet is kept and can be switched back to at any time. "
+                + ("The node has restarted." if came_back
+                   else "The node is still starting -- give it a minute."), "ok")
+        except (backup.BackupError, ValueError) as exc:
+            state.flash(str(exc), "err")
+        except Exception as exc:
+            state.flash(f"Could not create a wallet: {exc}", "err")
+        return RedirectResponse("/backup", status_code=303)
+
+    @app.post("/backup/{which}/wallet/switch")
+    def wallet_switch(request: Request, which: str, name: str = Form(""),
+                      csrf_token: str = Form("")):
+        try:
+            check_csrf(csrf_token)
+            chain = _chain_for(which)
+            if not chain.datadir:
+                raise ValueError("this application does not know where that node "
+                                 "keeps its files")
+            result = backup.switch_wallet(chain.rpc, chain.datadir, chain.network,
+                                          name)
+            came_back = backup.wait_for_node(chain.rpc, timeout=180)
+            # A different wallet is a different identity. Holding on to the old
+            # one would mean reading and writing as somebody this wallet is not.
+            state.lock()
+            state.flash(
+                f"Now using {result['now_using']}. "
+                + ("The node has restarted." if came_back
+                   else "The node is still starting -- give it a minute."), "ok")
+        except (backup.BackupError, ValueError) as exc:
+            state.flash(str(exc), "err")
+        except Exception as exc:
+            state.flash(f"Could not switch wallets: {exc}", "err")
+        return RedirectResponse("/backup", status_code=303)
+
+    @app.post("/backup/{which}/wallet/remove")
+    def wallet_remove(request: Request, which: str, name: str = Form(""),
+                      csrf_token: str = Form("")):
+        try:
+            check_csrf(csrf_token)
+            chain = _chain_for(which)
+            if not chain.datadir:
+                raise ValueError("this application does not know where that node "
+                                 "keeps its files")
+            result = backup.remove_wallet(chain.datadir, chain.network, name)
+            state.flash(
+                f"Removed {result['removed']} from the list. The file itself was "
+                f"moved to {result['moved_to']}, not deleted -- a wallet can hold "
+                f"coins nothing else records.", "ok")
+        except (backup.BackupError, ValueError) as exc:
+            state.flash(str(exc), "err")
+        except Exception as exc:
+            state.flash(f"Could not remove that wallet: {exc}", "err")
+        return RedirectResponse("/backup", status_code=303)
+
     @app.get("/keys", response_class=HTMLResponse)
     def keys_page(request: Request):
         keys = []
@@ -584,13 +668,15 @@ def create_app(state: AppState) -> FastAPI:
         try:
             check_csrf(csrf_token)
             if not state.unlocked:
-                raise ValueError("unlock your identity first")
+                # Nothing for the user to do but wait for the node; there is no
+                # passphrase to enter any more.
+                state.ensure_identity()
             payload = build_key_announcement(state.identity.public_bytes)
             with state.messaging.rpc() as rpc:
                 if not Miner(rpc, state.messaging.params).status().funded:
                     raise ValueError("no spendable coins yet -- see Wallet")
                 sender = MessageSender(rpc, state.messaging.params)
-                prepared = sender.prepare(_funded_address(rpc, state), payload, class_c=True)
+                prepared = sender.prepare(funded_address(rpc), payload, class_c=True)
                 if confirmed == "yes":
                     txid = sender.broadcast(prepared)
         except Exception as exc:
@@ -756,22 +842,6 @@ def _resolve_recipient(state, recipient: str) -> bytes:
             "them for their contact code and paste that instead."
         )
     return bytes(row["pubkey"])
-
-
-def _funded_address(rpc, state) -> str:
-    """Pick an address holding spendable coins.
-
-    Class B seeds its obfuscation with the sender address and the sender is
-    "largest input by sum", so the address must genuinely hold the inputs --
-    picking an arbitrary wallet address would produce an unreadable message.
-    """
-    best, best_value = None, 0.0
-    for utxo in rpc.call("listunspent", 1, 9_999_999):
-        if float(utxo["amount"]) > best_value:
-            best, best_value = utxo["address"], float(utxo["amount"])
-    if best is None:
-        raise SendError("no spendable outputs; see Wallet")
-    return best
 
 
 def _contact_view(row: Any) -> dict[str, Any]:

@@ -96,9 +96,15 @@ def derive_identity(rpc: RpcClient, address: str) -> Identity:
                 "wallet owns."
             ) from None
         if "passphrase" in message.lower() or "locked" in message.lower():
+            # An encrypted wallet is the one case where a passphrase still
+            # exists: the node's own, which is the user's choice and nothing to
+            # do with messaging. Worth saying plainly, because otherwise this
+            # looks like the passphrase that was removed coming back.
             raise DerivationError(
-                "the wallet is locked. Unlock it first: "
-                "pepecoin-cli walletpassphrase \"<passphrase>\" 600"
+                "this wallet is encrypted and locked, so the node will not sign "
+                "with it. Messaging needs the wallet unlocked -- run "
+                "`walletpassphrase \"<your wallet passphrase>\" 600` against this "
+                "node, using its own command-line tool."
             ) from None
         raise DerivationError(f"could not sign with {address}: {exc}") from None
 
@@ -111,6 +117,89 @@ def derive_identity(rpc: RpcClient, address: str) -> Identity:
         raise DerivationError(f"signature is only {len(raw)} bytes; expected 65")
 
     return Identity.from_secret_bytes(_hkdf_sha256(raw, HKDF_INFO))
+
+
+#: The wallet account the identity address is filed under. Accounts live inside
+#: wallet.dat, which is what lets a restore find the address again with no help
+#: from any local database.
+IDENTITY_ACCOUNT = "arcade-identity"
+
+#: Where the chosen address is pinned, per network.
+ADDRESS_META = "identity_address:{network}"
+
+
+def resolve_identity_address(rpc: RpcClient, store, network: str) -> str:
+    """The address this installation derives its identity from. Pinned, not computed.
+
+    One implementation, used by both the web interface and the CLI, because two
+    that computed it separately did diverge: the CLI recomputed the choice on
+    every call while the web pinned it, so the same wallet could answer as two
+    different people depending on which half you asked.
+
+    The choice is made once and recorded. It is *not* recomputed afterwards,
+    because the inputs are not stable:
+
+    - `getaccountaddress` returns a **fresh** address as soon as the current one
+      has been used, so calling it again can add an address to the account.
+    - "Sort and take the first" is then not stable either: a newly added address
+      that sorts earlier silently becomes the identity. a test machine caught this happening
+      between two commands with no user action at all -- the same silent-change
+      bug the sorting was introduced to prevent, wearing a different hat.
+
+    So sorting survives only as the tiebreak on first setup, where the set really
+    is fixed, and everything after that reads the pin.
+    """
+    key = ADDRESS_META.format(network=network)
+    pinned = store.get_meta(key)
+    if pinned:
+        # Trust the pin, but not blindly: a wallet restored from a different
+        # backup may not hold this address at all, and deriving from an address
+        # the wallet cannot sign for fails confusingly deeper in.
+        if _wallet_can_sign(rpc, pinned):
+            _file_under_account(rpc, pinned)
+            return pinned
+        raise DerivationError(
+            f"the identity address {pinned} is not in this wallet. If you have "
+            f"restored a different wallet, this installation's messages belong to "
+            f"the old one; if you have restored the right wallet, wait for it to "
+            f"finish loading and try again."
+        )
+
+    # Deliberately not wrapped in `except Exception: pass`. It was, and that is
+    # a great deal of consequence for a swallowed error: one transient RPC
+    # failure here would fall through to `getaccountaddress` and silently mint a
+    # *new* identity, orphaning every message the old one ever received. Failing
+    # is the safe outcome; the next attempt succeeds and nothing was created.
+    try:
+        existing = rpc.call("getaddressesbyaccount", IDENTITY_ACCOUNT) or []
+    except Exception as exc:
+        raise DerivationError(
+            f"could not read the wallet's identity account: {exc}. Nothing has "
+            f"been changed -- try again once the node is responding."
+        ) from None
+
+    address = sorted(existing)[0] if existing else \
+        rpc.call("getaccountaddress", IDENTITY_ACCOUNT)
+
+    _file_under_account(rpc, address)
+    store.set_meta(key, address)
+    return address
+
+
+def _file_under_account(rpc: RpcClient, address: str) -> None:
+    """Keep the address in the account, so wallet.dat alone can find it again."""
+    try:
+        rpc.call("setaccount", address, IDENTITY_ACCOUNT)
+    except Exception:
+        pass          # cosmetic: the pin in the store is what this run relies on
+
+
+def _wallet_can_sign(rpc: RpcClient, address: str) -> bool:
+    try:
+        info = rpc.call("validateaddress", address) or {}
+    except Exception:
+        return False
+    return bool(info.get("ismine"))
 
 
 def verify_derivation(rpc: RpcClient, address: str, expected: Identity) -> bool:

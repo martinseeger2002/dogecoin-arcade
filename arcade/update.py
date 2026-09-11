@@ -4,10 +4,17 @@
     dogecoinarcade-update --check    # only report whether an update exists
     dogecoinarcade-update --dry-run  # show what would happen
 
-Deliberately touches **only the code**. Not the identity key, not the message
-database, not the chain data, not the node configuration. An update command that
-could destroy someone's key would be worse than having no update command, since
-there is no recovery path for that key.
+Touches the code and the service definitions, and nothing else. Not the wallet,
+not the message database, not the chain data, not any node's configuration file.
+An update that could lose someone's wallet would be worse than having no update
+command at all, since the wallet is now the only thing they keep.
+
+Service definitions are included because leaving them stale broke a feature
+silently: units written before `Restart=always` cannot bring a node back after a
+wallet restore, and nothing tells the user why. The migration itself lives in
+`installer/install.py` and is called from the freshly pulled checkout, so there
+is exactly one implementation rather than two that can drift -- they already did
+drift once, and this command was the half that was missed.
 
 The repository is served over plain HTTP from the site, so this needs no
 account, no key and no forge -- just git.
@@ -108,6 +115,16 @@ def update(dry_run: bool = False) -> int:
             raise UpdateError(f"reinstall failed:\n{result.stderr[-1200:]}")
         print("  installed")
 
+    print("Updating service definitions")
+    if dry_run:
+        print("  would bring node units up to Restart=always")
+    else:
+        migrated = _migrate_node_units(checkout)
+        for unit in migrated:
+            print(f"  Restart=always: {Path(unit).name}")
+        if not migrated:
+            print("  already correct")
+
     print("Restarting the interface")
     if dry_run:
         print("  would restart arcade-web")
@@ -122,8 +139,38 @@ def update(dry_run: bool = False) -> int:
         print("  restart the interface yourself to pick up the new version")
 
     print()
-    print("Updated. Your identity key, messages and chain data were not touched.")
+    print("Updated. Your wallet, messages and chain data were not touched.")
     return 0
+
+
+def _migrate_node_units(checkout: Path) -> list[str]:
+    """Run the installer's unit migration from the code just pulled.
+
+    Loaded from the checkout rather than reimplemented here. The installer has to
+    stay standalone -- it is downloaded and run on its own, before this package
+    exists -- so it cannot import from `arcade`, and the dependency has to point
+    this way round. Calling into the pulled copy also means the migration is
+    always the current one, not whatever shipped with the installed version.
+    """
+    script = checkout / "installer" / "install.py"
+    if not script.is_file():
+        return []
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_arcade_installer", script)
+        if spec is None or spec.loader is None:
+            return []
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        migrate = getattr(module, "migrate_node_units", None)
+        if migrate is None:
+            return []          # a checkout from before the migration existed
+        return list(migrate())
+    except Exception as exc:
+        # Never fail an update over this: the code is already installed and
+        # working, and a stale unit is a missing improvement, not a breakage.
+        print(f"  could not update service definitions: {exc}")
+        return []
 
 
 def main(argv: list[str] | None = None) -> int:

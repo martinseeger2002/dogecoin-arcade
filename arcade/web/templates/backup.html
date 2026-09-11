@@ -32,6 +32,50 @@
       Wallet file: <code>{{ c.wallet_file }}</code></p>
     {% endif %}
 
+    <h3>Wallets</h3>
+    <table class="wallets">
+      {% for w in c.wallets %}
+      <tr class="{{ 'active' if w.active }}">
+        <td><strong>{{ w.name }}</strong>
+          {% if w.active %}<span class="pill ok">in use</span>{% endif %}</td>
+        <td class="muted" style="font-size:.82rem">
+          {{ "{:,}".format(w.size) }} bytes</td>
+        <td style="text-align:right">
+          {% if not w.active and c.can_switch %}
+          <form method="post" action="/backup/{{ c.which }}/wallet/switch" style="display:inline"
+                onsubmit="return confirm('Switch to {{ w.name }}? The node restarts, and {{ c.label|lower }} will use that wallet from then on.')">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}">
+            <input type="hidden" name="name" value="{{ w.name }}">
+            <button class="ghost small" type="submit">Use this one</button></form>
+          <form method="post" action="/backup/{{ c.which }}/wallet/remove" style="display:inline"
+                onsubmit="return confirm('Remove {{ w.name }} from the list? The file is moved aside, not deleted.')">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}">
+            <input type="hidden" name="name" value="{{ w.name }}">
+            <button class="ghost small" type="submit">Remove</button></form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% if c.can_switch %}
+    <form method="post" action="/backup/{{ c.which }}/wallet/new" style="margin-top:12px"
+          onsubmit="return confirm('Start using a new empty wallet? Your current one is kept and you can switch back.')">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <div class="row">
+        <div style="flex:1"><input name="name" placeholder="Name for a new wallet, e.g. savings"></div>
+        <button type="submit">Make a new wallet</button>
+      </div>
+      <p class="muted" style="font-size:.84rem;margin:9px 0 0">
+        One wallet is in use at a time; the rest wait here. Switching restarts the
+        node, which takes a few seconds. Removing a wallet moves the file aside
+        rather than deleting it &mdash; a wallet can hold coins nothing else records.</p>
+    </form>
+    {% else %}
+    <p class="muted" style="font-size:.85rem">
+      Wallets cannot be switched here: this node's files belong to another user.</p>
+    {% endif %}
+
+    <div style="border-top:1px solid var(--line);margin-top:20px;padding-top:16px"></div>
     <h3>Save a copy</h3>
     <form method="post" action="/backup/{{ c.which }}/save">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">

@@ -90,3 +90,64 @@ def test_unrelated_units_are_not_touched(fake_home):
 
     assert install.migrate_node_units() == []
     assert other.read_text() == OLD_UNIT
+
+
+# --- the second entry point ---------------------------------------------------
+# `dogecoinarcade-update` is arcade.update:main, a different code path from
+# `install.py --update`. The unit migration was added to one and not the other,
+# so the published command did nothing -- a test machine found it after updating. These
+# exist so the two cannot drift apart again unnoticed.
+
+
+def _checkout_with_installer(tmp_path):
+    """A checkout laid out the way a real one is, holding the real installer."""
+    import shutil
+    checkout = tmp_path / "src"
+    (checkout / "installer").mkdir(parents=True)
+    shutil.copy2(pathlib.Path(__file__).resolve().parent.parent / "installer/install.py",
+                 checkout / "installer" / "install.py")
+    return checkout
+
+
+def test_the_update_command_migrates_units_too(fake_home):
+    """The bug: `dogecoinarcade-update` left every unit untouched."""
+    from arcade.update import _migrate_node_units
+
+    tmp_path, units = fake_home
+    unit = units / "pepecoind-testnet.service"
+    unit.write_text(OLD_UNIT)
+
+    changed = _migrate_node_units(_checkout_with_installer(tmp_path))
+
+    assert str(unit) in changed
+    assert "Restart=always" in unit.read_text()
+
+
+def test_an_old_checkout_does_not_break_the_update(fake_home):
+    """Updating from before the migration existed must still succeed."""
+    from arcade.update import _migrate_node_units
+
+    tmp_path, _ = fake_home
+    old = tmp_path / "old"
+    (old / "installer").mkdir(parents=True)
+    (old / "installer" / "install.py").write_text("VERSION = 1\n")
+
+    assert _migrate_node_units(old) == []
+
+
+def test_a_missing_installer_does_not_break_the_update(fake_home):
+    from arcade.update import _migrate_node_units
+
+    tmp_path, _ = fake_home
+    assert _migrate_node_units(tmp_path / "nothing-here") == []
+
+
+def test_both_update_paths_use_one_implementation(fake_home):
+    """Two copies drifted once. There must not be a second one to drift."""
+    import arcade.update as update
+
+    source = pathlib.Path(update.__file__).read_text()
+    assert "Restart=on-failure" not in source, (
+        "arcade/update.py has grown its own copy of the migration; it should "
+        "call the installer's instead"
+    )

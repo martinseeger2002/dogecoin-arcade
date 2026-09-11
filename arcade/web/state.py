@@ -26,7 +26,9 @@ from pathlib import Path
 from typing import Any
 
 from ..config import NETWORKS, Params, load_rpc_credentials, verify_connected_chain
-from ..messaging.derive import DerivationError, derive_identity
+from ..messaging.derive import (
+    DerivationError, derive_identity, resolve_identity_address,
+)
 from ..messaging.keys import Identity
 from ..messaging.store import MessageStore
 from ..rpc import RpcClient
@@ -157,38 +159,16 @@ class AppState:
     # fixed account name, so the wallet *is* the backup: restore wallet.dat and
     # the same identity comes back on its own. Nothing else needs keeping.
 
-    #: The account the identity address is filed under. Accounts live inside
-    #: wallet.dat, which is what makes a restore self-sufficient.
-    IDENTITY_ACCOUNT = "arcade-identity"
-
     def identity_address(self, rpc: RpcClient) -> str:
-        """The address this identity is derived from, creating it if needed.
+        """The address this identity is derived from, choosing one on first use.
 
-        Prefers an address already recorded for this installation, so upgrading
-        never silently changes identity and orphans existing conversations.
+        Delegates to `resolve_identity_address`, which the CLI uses too. They had
+        separate implementations and diverged: the pin lived here, the CLI never
+        read it, and the same wallet answered as two different people depending
+        on which half you asked.
         """
-        recorded = self.derived_address
-        if recorded:
-            # File an older identity under the account too, so a future restore
-            # from wallet.dat alone can still find it.
-            try:
-                rpc.call("setaccount", recorded, self.IDENTITY_ACCOUNT)
-            except Exception:
-                pass
-            return recorded
-
-        # `getaccountaddress` hands back a *new* address as soon as the current
-        # one has been used, so calling it every time would silently change
-        # identity and orphan every message ever received. Take the account's
-        # existing addresses and pick one deterministically instead; only fall
-        # through to creating one when the account is genuinely empty.
-        try:
-            existing = rpc.call("getaddressesbyaccount", self.IDENTITY_ACCOUNT) or []
-        except Exception:
-            existing = []
-        if existing:
-            return sorted(existing)[0]
-        return rpc.call("getaccountaddress", self.IDENTITY_ACCOUNT)
+        with self.store() as store:
+            return resolve_identity_address(rpc, store, self.messaging.network)
 
     def ensure_identity(self) -> Identity:
         """Derive the messaging identity, setting it up on first use.
@@ -204,7 +184,7 @@ class AppState:
 
     @property
     def derived_address(self) -> str | None:
-        """The wallet address this identity is derived from, if it is."""
+        """The pinned address this identity is derived from, if one is set."""
         if not self.store_path.exists():
             return None
         with self.store() as store:
@@ -218,10 +198,6 @@ class AppState:
         """
         with self.messaging.rpc() as rpc:
             identity = derive_identity(rpc, address)
-            try:
-                rpc.call("setaccount", address, self.IDENTITY_ACCOUNT)
-            except Exception:
-                pass
         with self.store() as store:
             store.set_meta(f"identity_address:{self.messaging.network}", address)
             if store.get_meta(f"identity_height:{self.messaging.network}") is None:

@@ -31,12 +31,12 @@ from ..config import (
     verify_connected_chain,
 )
 from ..rpc import RpcClient
-from .derive import derive_identity
+from .derive import derive_identity, resolve_identity_address
 from .envelope import build_key_announcement
 from .keys import Identity, KeyError_, fingerprint_of, load_identity, save_identity
 from .miner import COINBASE_MATURITY, DEFAULT_TARGET_COINS, Miner, MiningError
 from .scanner import Scanner
-from .sender import MessageSender, SendError, plan_message
+from .sender import MessageSender, SendError, funded_address, plan_message
 from .store import MessageStore
 
 DEFAULT_HOME = Path.home() / ".dogecoinarcade"
@@ -97,18 +97,16 @@ def _passphrase(confirm: bool = False) -> str:
     return first
 
 
-#: The wallet account the identity address is filed under. Must match
-#: `AppState.IDENTITY_ACCOUNT`, or the CLI and the web interface would derive two
-#: different identities from the same wallet.
-IDENTITY_ACCOUNT = "arcade-identity"
-
-
 def _identity(args) -> Identity:
     """The messaging identity, derived from the node's wallet.
 
     No passphrase: the identity comes from a wallet address, so restoring
-    wallet.dat restores it. A key file from before this change is still honoured
-    if one is present, so existing installations keep working.
+    wallet.dat restores it.
+
+    A key file from before identities were wallet-derived is used only when named
+    explicitly with `--key`. Never implicitly: the web interface derives from the
+    wallet, and a leftover key file picked up here would have the two halves of
+    the application answering as different people.
     """
     # A key file is used only when asked for by name. A leftover one from before
     # identities were wallet-derived must not be picked up silently: the web
@@ -117,12 +115,12 @@ def _identity(args) -> Identity:
     path = Path(args.key).expanduser() if getattr(args, "key", None) else None
     if path:
         return load_identity(path, _passphrase())
-    with _rpc(args, _params(args)) as rpc:
-        addresses = rpc.call("getaddressesbyaccount", IDENTITY_ACCOUNT) or []
-        # Deterministic, because `getaccountaddress` hands back a fresh address
-        # once the current one is used -- which would change identity silently.
-        address = sorted(addresses)[0] if addresses else \
-            rpc.call("getaccountaddress", IDENTITY_ACCOUNT)
+    params = _params(args)
+    # The pin lives in the store, which is the one thing this and the web
+    # interface share. Recomputing the choice here instead -- which this did --
+    # let the same wallet answer as two different people at the same moment.
+    with _rpc(args, params) as rpc, _store(args) as store:
+        address = resolve_identity_address(rpc, store, params.name)
         return derive_identity(rpc, address)
 
 
@@ -278,7 +276,11 @@ def cmd_publish_key(args) -> int:
         print(f"  payload       {len(payload)} bytes (Class C, OP_RETURN)")
         print(prepared.summary())
         if not _confirm(args, prepared):
-            return 1
+            # A dry run did exactly what it was asked, so it succeeded. Returning
+            # 1 reported "the user did not confirm" as a failure, and any script
+            # running a dry run as a preflight saw one. 1 is for a real failure
+            # or a declined prompt.
+            return 0 if args.dry_run else 1
         txid = sender.broadcast(prepared)
         print(f"broadcast {txid}")
     return 0
@@ -325,7 +327,7 @@ def cmd_send(args) -> int:
             return 1
 
         sender = MessageSender(rpc, params)
-        address = args.address or rpc.call("getnewaddress")
+        address = args.address or funded_address(rpc)
         sent = []
         for index, payload in enumerate(plan.chunk_payloads, 1):
             prepared = sender.prepare(address, payload)
@@ -336,7 +338,8 @@ def cmd_send(args) -> int:
                 if sent:
                     print(f"\nSTOPPED after {len(sent)} of {plan.transactions}.", file=sys.stderr)
                     print("The message is incomplete on-chain and cannot be read.", file=sys.stderr)
-                return 1
+                    return 1          # a half-sent message really is a failure
+                return 0 if args.dry_run else 1
             sent.append(sender.broadcast(prepared))
             print(f"broadcast {sent[-1]}\n")
     print(f"sent in {len(sent)} transaction(s)")
@@ -370,6 +373,7 @@ def _confirm(args, prepared) -> bool:
         return False
     answer = input("Broadcast this transaction? [y/N] ").strip().lower()
     return answer in ("y", "yes")
+
 
 
 def cmd_scan(args) -> int:

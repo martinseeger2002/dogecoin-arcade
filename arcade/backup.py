@@ -42,7 +42,9 @@ refusing one.
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
 import threading
 import time
@@ -380,3 +382,195 @@ def wait_for_node(rpc_factory, timeout: float = 180.0) -> bool:
         except Exception:
             time.sleep(1.0)
     return False
+
+
+# --- several wallets ----------------------------------------------------------
+#
+# These nodes predate multiwallet RPC: no createwallet, no loadwallet, no
+# listwallets. One wallet file per process, chosen at startup with `-wallet=`.
+# So "several wallets" means several files with one of them in place, and
+# switching means stopping the node, swapping the file, and letting systemd start
+# it again -- the same machinery a restore uses.
+#
+# The active file keeps the default name `wallet.dat` rather than being selected
+# with `-wallet=`. That is deliberate: it means switching never has to edit a
+# service definition, so it works on installations whose units this application
+# did not write and cannot change.
+
+#: Where the inactive wallets live, inside the node's own data directory so they
+#: share its permissions and are covered by whatever backs that up.
+LIBRARY_DIR = "arcade-wallets"
+
+#: Name of the wallet an installation starts with, before anyone makes a second.
+DEFAULT_WALLET = "main"
+
+_NAME_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _-]{0,40}$")
+
+
+@dataclass
+class WalletEntry:
+    name: str
+    active: bool
+    size: int = 0
+    modified: int = 0
+    path: Path | None = None
+
+
+def wallet_library(datadir: Path, network: str) -> Path:
+    return wallet_path(datadir, network).parent / LIBRARY_DIR
+
+
+def _manifest_path(datadir: Path, network: str) -> Path:
+    return wallet_library(datadir, network) / "active.json"
+
+
+def active_wallet_name(datadir: Path, network: str) -> str:
+    """Which wallet is in place. Recorded, because the file itself cannot say."""
+    try:
+        data = json.loads(_manifest_path(datadir, network).read_text())
+        name = data.get("active")
+        return name if isinstance(name, str) and name else DEFAULT_WALLET
+    except Exception:
+        return DEFAULT_WALLET
+
+
+def _set_active(datadir: Path, network: str, name: str) -> None:
+    library = wallet_library(datadir, network)
+    library.mkdir(parents=True, exist_ok=True)
+    _manifest_path(datadir, network).write_text(json.dumps({"active": name}, indent=2))
+
+
+def check_wallet_name(name: str, datadir: Path, network: str,
+                      *, must_be_new: bool = True) -> str:
+    name = (name or "").strip()
+    if not _NAME_OK.match(name):
+        raise BackupError(
+            "a wallet name may use letters, numbers, spaces, hyphens and "
+            "underscores, must start with a letter or number, and can be at most "
+            "41 characters.")
+    if must_be_new:
+        taken = {entry.name.lower() for entry in list_wallets(datadir, network)}
+        if name.lower() in taken:
+            raise BackupError(f"there is already a wallet called {name!r}.")
+    return name
+
+
+def list_wallets(datadir: Path, network: str) -> list[WalletEntry]:
+    """Every wallet this installation knows about, active one first.
+
+    The active wallet is listed from the manifest even when no file for it sits
+    in the library, because while it is in use it lives at wallet.dat instead.
+    """
+    active = active_wallet_name(datadir, network)
+    live = wallet_path(datadir, network)
+    entries: list[WalletEntry] = []
+
+    stat = live.stat() if live.is_file() else None
+    entries.append(WalletEntry(
+        name=active, active=True,
+        size=stat.st_size if stat else 0,
+        modified=int(stat.st_mtime) if stat else 0,
+        path=live if stat else None,
+    ))
+
+    library = wallet_library(datadir, network)
+    if library.is_dir():
+        for candidate in sorted(library.glob("*.dat")):
+            name = candidate.stem
+            if name.lower() == active.lower():
+                continue        # the stale copy of the one currently in use
+            info = candidate.stat()
+            entries.append(WalletEntry(name=name, active=False, size=info.st_size,
+                                       modified=int(info.st_mtime), path=candidate))
+    return entries
+
+
+def _park_active_wallet(datadir: Path, network: str) -> Path | None:
+    """Move the wallet currently in place into the library under its own name."""
+    live = wallet_path(datadir, network)
+    if not live.is_file():
+        return None
+    library = wallet_library(datadir, network)
+    library.mkdir(parents=True, exist_ok=True)
+    parked = library / f"{active_wallet_name(datadir, network)}.dat"
+    shutil.copy2(live, parked)
+    return parked
+
+
+def create_wallet(rpc_factory, datadir: Path, network: str, name: str) -> dict[str, Any]:
+    """Start using a brand new, empty wallet, keeping the current one.
+
+    The node makes the new file itself on startup, which is the only way to get a
+    wallet these nodes will accept: there is no createwallet RPC to ask for one.
+    """
+    name = check_wallet_name(name, datadir, network)
+    live = wallet_path(datadir, network)
+    if not live.parent.is_dir():
+        raise BackupError(f"{live.parent} does not exist -- is this the right node?")
+    if not os.access(live.parent, os.W_OK):
+        raise BackupError(
+            f"{live.parent} is not writable by this application, so wallets "
+            f"cannot be switched here. That node runs as a different user.")
+
+    _stop_node(rpc_factory, timeout=120.0)
+    parked = _park_active_wallet(datadir, network)
+    if live.exists():
+        live.unlink()                      # the node creates a fresh one on start
+    _set_active(datadir, network, name)
+    return {"created": name, "previous_saved_to": str(parked) if parked else None}
+
+
+def switch_wallet(rpc_factory, datadir: Path, network: str, name: str) -> dict[str, Any]:
+    """Put a different wallet in place. The current one is kept, never discarded."""
+    library = wallet_library(datadir, network)
+    source = library / f"{name}.dat"
+    if not source.is_file():
+        raise BackupError(f"there is no wallet called {name!r} here.")
+    if name.lower() == active_wallet_name(datadir, network).lower():
+        raise BackupError(f"{name} is already the wallet in use.")
+
+    live = wallet_path(datadir, network)
+    if not os.access(live.parent, os.W_OK):
+        raise BackupError(
+            f"{live.parent} is not writable by this application, so wallets "
+            f"cannot be switched here. That node runs as a different user.")
+
+    _stop_node(rpc_factory, timeout=120.0)
+    parked = _park_active_wallet(datadir, network)
+
+    staged = live.with_name(f"wallet.dat.incoming-{os.getpid()}")
+    try:
+        shutil.copy2(source, staged)
+        os.replace(staged, live)           # atomic: the node never sees half a file
+    except Exception as exc:
+        staged.unlink(missing_ok=True)
+        raise BackupError(f"could not put {name} in place: {exc}") from exc
+    finally:
+        staged.unlink(missing_ok=True)
+
+    _set_active(datadir, network, name)
+    return {"now_using": name, "previous_saved_to": str(parked) if parked else None}
+
+
+def remove_wallet(datadir: Path, network: str, name: str) -> dict[str, Any]:
+    """Take a wallet out of the list. Moved aside, never deleted.
+
+    A wallet file may hold coins that nothing else records, and there is no way
+    to check without loading it into a node. Unlinking it on a user's say-so
+    would make "remove" and "lose everything in it" the same gesture, so this
+    moves the file to a dated folder and says where it went. Deleting for real
+    stays a decision made with a file manager, deliberately.
+    """
+    if name.lower() == active_wallet_name(datadir, network).lower():
+        raise BackupError(
+            f"{name} is the wallet in use. Switch to another one first, then "
+            f"remove this.")
+    source = wallet_library(datadir, network) / f"{name}.dat"
+    if not source.is_file():
+        raise BackupError(f"there is no wallet called {name!r} here.")
+
+    removed_dir = wallet_library(datadir, network) / "removed"
+    removed_dir.mkdir(parents=True, exist_ok=True)
+    destination = removed_dir / f"{name}-{time.strftime('%Y-%m-%d-%H%M%S')}.dat"
+    shutil.move(str(source), destination)
+    return {"removed": name, "moved_to": str(destination)}

@@ -320,3 +320,40 @@ def test_lying_about_the_length_is_rejected(alice, bob):
     payload[6:8] = (9999).to_bytes(2, "big")      # claim far more than is present
     with pytest.raises(EnvelopeError, match="claims"):
         open_message(bob, bytes(payload))
+
+
+# --- the real chunking threshold ----------------------------------------------
+# The chunk tests above pass an explicit small capacity, so they exercise the
+# machinery but say nothing about where `plan_message` actually divides. a test machine
+# nearly ran a cross-machine chunk test against a size that does not chunk at
+# all, which would have reported the chunk path as working without ever entering
+# it. These pin the boundary itself.
+
+
+def test_plan_message_does_not_chunk_just_below_the_limit(alice, bob):
+    from arcade.encoding import MAX_CLASS_B_PAYLOAD
+    from arcade.messaging.sender import plan_message
+
+    ceiling = MAX_CLASS_B_PAYLOAD - 4 - 134        # AnyData header + sealed overhead
+    plan = plan_message(alice, bob.public_bytes, b"x" * ceiling)
+    assert plan.transactions == 1
+
+
+def test_plan_message_chunks_just_above_the_limit(alice, bob):
+    from arcade.encoding import MAX_CLASS_B_PAYLOAD
+    from arcade.messaging.sender import plan_message
+
+    ceiling = MAX_CLASS_B_PAYLOAD - 4 - 134
+    plan = plan_message(alice, bob.public_bytes, b"x" * (ceiling + 1))
+    assert plan.transactions > 1, (
+        "one byte over the ceiling must divide; a test that sends less than this "
+        "is not testing chunking"
+    )
+
+
+def test_the_documented_ceiling_is_the_real_one(alice, bob):
+    """7,512 is what the compose box and the design document both promise."""
+    from arcade.messaging.sender import plan_message
+
+    assert plan_message(alice, bob.public_bytes, b"x" * 7512).transactions == 1
+    assert plan_message(alice, bob.public_bytes, b"x" * 7513).transactions > 1

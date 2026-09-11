@@ -209,11 +209,40 @@ class MessageSender:
             total += int(round(float(utxo["amount"]) * COIN))
             if total >= target:
                 return chosen
+        # Name an address that can actually pay. Saying "fund that address" to
+        # someone whose wallet holds a thousand coins points them at the one
+        # action that is not the problem -- the coins are simply somewhere else,
+        # and the single-address rule above is why that matters. listunspent
+        # already has what is needed to say something useful.
+        alternative = self._largest_funded_address(target, excluding=address)
+        if alternative:
+            name, held = alternative
+            raise SendError(
+                f"{address} holds {total / COIN:.8f}, which is short of the "
+                f"{target / COIN:.8f} this transaction needs. Your coins are on a "
+                f"different address: {name} holds {held / COIN:.8f}. Use that one."
+            )
         raise SendError(
-            f"{address} holds {total / COIN:.8f}, which is short of the "
-            f"{target / COIN:.8f} this transaction needs. Fund that address, or "
-            f"pass --address for one that is funded."
+            f"no single address in this wallet holds the {target / COIN:.8f} this "
+            f"transaction needs. Inputs must all come from one address, because "
+            f"the sender address is what the message is encoded against, so a "
+            f"balance spread thinly across many addresses cannot be used as it "
+            f"stands. Consolidate some coins onto one address first."
         )
+
+    def _largest_funded_address(self, target: int,
+                                excluding: str | None = None) -> tuple[str, int] | None:
+        """The address holding the most spendable value, if it can meet `target`."""
+        totals: dict[str, int] = {}
+        for utxo in self.rpc.call("listunspent", 1, 9_999_999) or []:
+            name = utxo.get("address")
+            if not name or name == excluding:
+                continue
+            totals[name] = totals.get(name, 0) + int(round(float(utxo["amount"]) * COIN))
+        if not totals:
+            return None
+        name = max(totals, key=lambda k: totals[k])
+        return (name, totals[name]) if totals[name] >= target else None
 
     def _verify_sender(self, decoded: dict[str, Any], expected: str) -> None:
         """Confirm the funded transaction really resolves to the seeded sender.
@@ -304,3 +333,28 @@ class MessageSender:
     def broadcast(self, prepared: PreparedTx) -> str:
         """Send. Callers MUST have shown `prepared` to the user and got approval."""
         return str(self.rpc.call("sendrawtransaction", prepared.hex))
+
+
+def funded_address(rpc) -> str:
+    """An address in this wallet that actually holds spendable coins.
+
+    Not `getnewaddress`. A fresh address holds nothing by definition, so using
+    one produces "that address holds 0.00000000, fund it" while the wallet is
+    full -- pointing the user at the one action that is not the problem. a test machine hit
+    exactly that with 999.99 PEP available.
+
+    It also has to be an address the inputs really come from: Class B seeds its
+    obfuscation with the sender, and the sender is "largest input by sum", so an
+    arbitrary wallet address would produce a message nobody can read.
+    """
+    best, best_value = None, 0.0
+    for utxo in rpc.call("listunspent", 1, 9_999_999) or []:
+        amount = float(utxo.get("amount", 0))
+        if amount > best_value:
+            best, best_value = utxo.get("address"), amount
+    if best is None:
+        raise SendError(
+            "this wallet has no spendable coins yet. Mine a block to fund it, "
+            "then wait for the coins to mature."
+        )
+    return best

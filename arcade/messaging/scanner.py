@@ -72,13 +72,21 @@ class Scanner:
     # --- reorg safety ---------------------------------------------------------
 
     def start_height(self) -> int:
-        """Where a scan with no prior cursor should begin.
+        """The earliest height worth scanning. A floor, not merely a default.
 
         Not block 0. A message can only be addressed to a key that existed when
         it was written, so nothing before an identity was created can possibly be
         for it. Starting at the identity's creation height is therefore both
         correct and the difference between scanning a few hundred blocks and 1.5
         million.
+
+        It is applied as a floor on resume as well, which it was not before. A
+        store carrying a cursor from the old scan-from-zero behaviour -- or a new
+        identity in an old store -- would otherwise crawl up from the genesis
+        block 5,000 at a time, finding nothing, for hundreds of scans. That is
+        what it did: a cursor at height 24,999 against a tip of 1,482,779, with
+        the user pressing "check for new messages" and being told, truthfully and
+        uselessly, "5000 blocks, 0 candidates".
 
         Falls back to the activation height when the creation height is unknown
         -- an imported identity, say, whose messages may genuinely predate this
@@ -91,18 +99,26 @@ class Scanner:
 
     def _resolve_fork(self, result: ScanResult) -> int:
         """Return the height to resume from, unwinding if our view is stale."""
+        floor = self.start_height()
         cursor = self.store.scan_cursor(self.params.name)
         if cursor is None:
-            return self.start_height()
+            return floor
 
         height, stored_hash = cursor
+        if height + 1 < floor:
+            # The cursor is below anything that could concern us. Skipping
+            # forward is safe precisely because nothing in the skipped range can
+            # be addressed to this identity.
+            log.info("skipping scan from %d to %d: identity did not exist before then",
+                     height + 1, floor)
+            return floor
         try:
             current = self.rpc.get_block_hash(height)
         except Exception:
             current = None
 
         if current == stored_hash:
-            return height + 1
+            return max(height + 1, floor)
 
         # Our cursor block is gone or replaced: walk back to the last agreement.
         probe = height
@@ -121,7 +137,7 @@ class Scanner:
         result.reorg_depth = height - probe
         self.store.rewind(self.params.name, probe + 1)
         log.warning("reorg: rewound messaging store to height %d", probe)
-        return probe + 1
+        return max(probe + 1, floor)
 
     # --- scanning -------------------------------------------------------------
 

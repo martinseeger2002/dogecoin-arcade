@@ -145,8 +145,36 @@ class MessageStore:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.executescript(SCHEMA)
+        self._migrate()
         if self.get_meta("schema_version") is None:
             self.set_meta("schema_version", str(SCHEMA_VERSION))
+
+    #: Columns added to existing tables after the first release, as
+    #: (table, column, definition). `CREATE TABLE IF NOT EXISTS` does nothing to
+    #: a table that already exists, so a store made before a column was added
+    #: keeps the old shape and fails at the first write -- which it did, on a
+    #: live installation, the moment the address book gained `updated`.
+    MIGRATIONS = (
+        ("contact", "testnet_address", "TEXT NOT NULL DEFAULT ''"),
+        ("contact", "mainnet_address", "TEXT NOT NULL DEFAULT ''"),
+        ("contact", "notes", "TEXT NOT NULL DEFAULT ''"),
+        ("contact", "updated", "INTEGER NOT NULL DEFAULT 0"),
+    )
+
+    def _migrate(self) -> None:
+        """Add columns missing from a store created by an earlier version.
+
+        Additive only: no column is dropped, renamed or retyped, and no row is
+        rewritten. An upgrade must never be able to lose a message.
+        """
+        for table, column, definition in self.MIGRATIONS:
+            existing = {row["name"] for row in
+                        self.conn.execute(f"PRAGMA table_info({table})")}
+            if not existing:
+                continue                 # table not created yet; SCHEMA handles it
+            if column not in existing:
+                self.conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def close(self) -> None:
         self.conn.close()
@@ -276,6 +304,14 @@ class MessageStore:
             (msg_id, first_txid, last_txid, height, block_time, sender_addr,
              sender_pubkey, recipient_fp, body, 1 if complete else 0),
         )
+        # Everything needed to reply arrives with the message: the sender's key
+        # comes from inside the sealed box, their address from the transaction.
+        # Recording it here means a reply needs no contact code, no announcement
+        # and no second channel -- receiving from somebody is itself the
+        # introduction. Done in `add_message` rather than in the scanner so no
+        # future caller can deliver a message and forget the reply information.
+        if sender_pubkey:
+            self.name_contact(sender_pubkey, "", sender_addr or "")
         return cur.lastrowid or 0
 
     def inbox(self, recipient_fp: str | None = None, limit: int = 50,
