@@ -196,6 +196,15 @@ class Scanner:
 
         for row in self.store.unopened_candidates():
             body = bytes(row["payload"])
+
+            # Branch on the type BEFORE attempting to open. A single chunk holds
+            # only part of a ciphertext, so open_message can never succeed on one
+            # -- trying it first made reassembly unreachable.
+            if row["msg_type"] == TYPE_CHUNK:
+                opened += self._try_assemble(row, me)
+                self.store.mark_opened(row["txid"])
+                continue
+
             try:
                 sender_pk, plaintext, header = open_message(self.identity, body)
             except EnvelopeError as exc:
@@ -204,19 +213,15 @@ class Scanner:
                 self.store.mark_opened(row["txid"])
                 continue
 
-            if header.type == TYPE_SINGLE:
-                self.store.add_message(
-                    None, row["txid"], row["txid"], row["height"], row["block_time"],
-                    row["sender_addr"], sender_pk, me, plaintext, complete=True,
-                )
-                opened += 1
-            else:
-                opened += self._try_assemble(row, sender_pk, me)
-
+            self.store.add_message(
+                None, row["txid"], row["txid"], row["height"], row["block_time"],
+                row["sender_addr"], sender_pk, me, plaintext, complete=True,
+            )
+            opened += 1
             self.store.mark_opened(row["txid"])
         return opened
 
-    def _try_assemble(self, row: Any, sender_pk: bytes, me: str) -> int:
+    def _try_assemble(self, row: Any, me: str) -> int:
         """Reassemble a chunked message if every link is present.
 
         Completion is self-describing: the final chunk carries countdown 0, and
@@ -238,17 +243,26 @@ class Scanner:
 
         ordered = sorted(chunks, key=lambda c: -c["countdown"])
         header = Header(type=TYPE_CHUNK, msg_id=msg_id)
-        # Strip each chunk's own framing and rejoin the ciphertext it carried.
-        joined = b"".join(bytes(c["payload"])[header.length :] for c in ordered)
+        # Strip each chunk's framing and take exactly the ciphertext it declares,
+        # discarding any Class B padding beneath it.
+        joined = b""
+        for chunk in ordered:
+            raw = bytes(chunk["payload"])
+            try:
+                chunk_header = Header.decode(raw)
+            except EnvelopeError:
+                return 0
+            body = raw[chunk_header.length :]
+            joined += body[: chunk_header.clen] if chunk_header.clen else body
 
         try:
-            sender_pk2, plaintext = open_ciphertext(self.identity, header, joined)
+            sender_pk, plaintext = open_ciphertext(self.identity, header, joined)
         except EnvelopeError:
-            return 0
+            return 0      # not ours, or not yet complete
 
         self.store.add_message(
             msg_id, ordered[0]["txid"], ordered[-1]["txid"], ordered[-1]["height"],
-            ordered[-1]["block_time"], ordered[0]["sender_addr"], sender_pk2, me,
+            ordered[-1]["block_time"], ordered[0]["sender_addr"], sender_pk, me,
             plaintext, complete=True,
         )
         for chunk in chunks:

@@ -32,7 +32,25 @@ class RegtestNode:
     Use as a context manager; the datadir is removed on exit.
     """
 
-    def __init__(self, binary: str = "pepecoind", cli: str = "pepecoin-cli"):
+    def __init__(
+        self,
+        binary: str = "pepecoind",
+        cli: str = "pepecoin-cli",
+        require_standard: bool = False,
+        extra_args: tuple[str, ...] = (),
+        allow_peers: bool = False,
+    ):
+        # require_standard=True passes -acceptnonstdtxn=0, which makes regtest
+        # enforce MAINNET standardness rules. That is the only way to prove a
+        # transaction would actually relay on mainnet: testnet and regtest both
+        # default to fRequireStandard=false (chainparams.cpp:309,408), so they
+        # happily accept transactions mainnet would reject.
+        self.require_standard = require_standard
+        self.extra_args = tuple(extra_args)
+        # Isolated by default: a test node must never reach a real network.
+        # allow_peers=True opens listening so two local nodes can be joined with
+        # connect_to(), which is how message propagation is tested.
+        self.allow_peers = allow_peers
         resolved = shutil.which(binary)
         if resolved is None:
             raise RuntimeError(f"{binary!r} not found on PATH")
@@ -70,11 +88,12 @@ class RegtestNode:
                 f"-rpcport={self.rpc_port}",
                 f"-port={self.p2p_port}",
                 "-server=1",
-                "-listen=0",
-                "-connect=0",          # never talk to anyone
+                *(("-listen=1",) if self.allow_peers else ("-listen=0", "-connect=0")),
                 "-dnsseed=0",
                 "-fallbackfee=0.01",
                 "-txindex=1",
+                *(("-acceptnonstdtxn=0",) if self.require_standard else ()),
+                *self.extra_args,
                 f"-zmqpubhashblock=tcp://127.0.0.1:{self.zmq_hashblock_port}",
                 f"-zmqpubrawblock=tcp://127.0.0.1:{self.zmq_rawblock_port}",
                 f"-zmqpubrawtx=tcp://127.0.0.1:{self.zmq_rawtx_port}",
@@ -122,6 +141,27 @@ class RegtestNode:
         except Exception:
             address = self.rpc.call("getnewaddress")
             return list(self.rpc.call("generatetoaddress", count, address))
+
+    def connect_to(self, other: "RegtestNode", timeout: float = 30.0) -> None:
+        """Peer with another local node and wait until the link is up."""
+        self.rpc.call("addnode", f"127.0.0.1:{other.p2p_port}", "onetry")
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.rpc.call("getconnectioncount") > 0:
+                return
+            time.sleep(0.3)
+        raise RuntimeError("nodes did not connect")
+
+    def sync_with(self, other: "RegtestNode", timeout: float = 60.0) -> None:
+        """Block until both nodes agree on the tip."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.rpc.get_block_count() == other.rpc.get_block_count():
+                return
+            time.sleep(0.3)
+        raise RuntimeError(
+            f"nodes did not converge: {self.rpc.get_block_count()} vs {other.rpc.get_block_count()}"
+        )
 
     def invalidate(self, block_hash: str) -> None:
         """Force a reorg by marking a block invalid."""

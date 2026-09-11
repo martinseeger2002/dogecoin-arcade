@@ -22,6 +22,7 @@ Three properties this buys, none of which the simpler options give together:
 
 from __future__ import annotations
 
+import dataclasses
 import os
 from dataclasses import dataclass
 
@@ -37,10 +38,21 @@ TYPE_SINGLE = 1       # a whole message in one transaction
 TYPE_CHUNK = 2        # one link of a chained multi-transaction message
 TYPE_KEY_ANNOUNCE = 3 # an X25519 public key announcement
 
-HEADER_SINGLE_LEN = 6      # magic4 + version1 + type1
-HEADER_CHUNK_LEN = 16          # + msg_id8 + countdown2
-HEADER_BOUND_CHUNK_LEN = 14    # the same, minus the per-chunk countdown
-KEY_ANNOUNCE_LEN = 38      # header6 + pubkey32
+# Cleartext header lengths. Both message types carry `clen`, the exact number of
+# ciphertext bytes in this payload.
+#
+# `clen` is NOT optional bookkeeping. Class B pads its final packet with NULs to a
+# 30-byte boundary and Omni does not strip that padding (omnicore.cpp:1263), so a
+# payload arrives with up to 29 bytes the sender never wrote. Without an explicit
+# length the sealed box sees trailing garbage and rejects the message outright.
+# Stripping trailing NULs instead would be worse: ciphertext legitimately ends in
+# NUL about 1 time in 256.
+HEADER_SINGLE_LEN = 8          # magic4 + version1 + type1 + clen2
+HEADER_CHUNK_LEN = 18          # + msg_id8 + countdown2
+HEADER_BOUND_SINGLE_LEN = 6    # magic4 + version1 + type1
+HEADER_BOUND_CHUNK_LEN = 14    # + msg_id8
+KEY_ANNOUNCE_HEADER_LEN = 6    # announcements are fixed-size and need no clen
+KEY_ANNOUNCE_LEN = 38          # header6 + pubkey32
 
 SEALED_OVERHEAD = 48
 SENDER_KEY_LEN = 32
@@ -67,12 +79,18 @@ class Header:
     type: int
     msg_id: bytes = b""          # 8 bytes, chunked messages only
     countdown: int = 0           # 0 marks the FINAL chunk (Doginals convention)
+    clen: int = 0                # exact ciphertext length carried in this payload
 
     def encode(self) -> bytes:
         """The full cleartext header, as it appears on chain."""
+        if self.type == TYPE_KEY_ANNOUNCE:
+            return self.bound_bytes()
+        if self.clen > 0xFFFF:
+            raise EnvelopeError(f"ciphertext length {self.clen} exceeds a uint16")
+        head = self.bound_bytes() + self.clen.to_bytes(2, "big")
         if self.type == TYPE_CHUNK:
-            return self.bound_bytes() + self.countdown.to_bytes(2, "big")
-        return self.bound_bytes()
+            head += self.countdown.to_bytes(2, "big")
+        return head
 
     def bound_bytes(self) -> bytes:
         """The part of the header that is authenticated inside the ciphertext.
@@ -99,16 +117,18 @@ class Header:
     @property
     def length(self) -> int:
         """Length of the full cleartext header on chain."""
+        if self.type == TYPE_KEY_ANNOUNCE:
+            return KEY_ANNOUNCE_HEADER_LEN
         return HEADER_CHUNK_LEN if self.type == TYPE_CHUNK else HEADER_SINGLE_LEN
 
     @property
     def bound_length(self) -> int:
         """Length of the authenticated copy carried inside the ciphertext."""
-        return HEADER_BOUND_CHUNK_LEN if self.type == TYPE_CHUNK else HEADER_SINGLE_LEN
+        return HEADER_BOUND_CHUNK_LEN if self.type == TYPE_CHUNK else HEADER_BOUND_SINGLE_LEN
 
     @classmethod
     def decode(cls, payload: bytes) -> "Header":
-        if len(payload) < HEADER_SINGLE_LEN:
+        if len(payload) < HEADER_BOUND_SINGLE_LEN:
             raise EnvelopeError("payload too short to contain a header")
         if payload[:4] != MAGIC:
             raise EnvelopeError("not a DogecoinArcade message (bad magic)")
@@ -121,16 +141,21 @@ class Header:
             return cls(
                 type=msg_type,
                 msg_id=payload[6:14],
-                countdown=int.from_bytes(payload[14:16], "big"),
+                clen=int.from_bytes(payload[14:16], "big"),
+                countdown=int.from_bytes(payload[16:18], "big"),
             )
-        if msg_type not in (TYPE_SINGLE, TYPE_KEY_ANNOUNCE):
+        if msg_type == TYPE_SINGLE:
+            if len(payload) < HEADER_SINGLE_LEN:
+                raise EnvelopeError("payload too short to contain a header")
+            return cls(type=msg_type, clen=int.from_bytes(payload[6:8], "big"))
+        if msg_type != TYPE_KEY_ANNOUNCE:
             raise EnvelopeError(f"unknown message type {msg_type}")
         return cls(type=msg_type)
 
 
 def is_message_payload(payload: bytes) -> bool:
     """Cheap pre-filter before attempting anything expensive."""
-    return len(payload) >= HEADER_SINGLE_LEN and payload[:4] == MAGIC
+    return len(payload) >= HEADER_BOUND_SINGLE_LEN and payload[:4] == MAGIC
 
 
 # --- key announcements --------------------------------------------------------
@@ -147,9 +172,13 @@ def parse_key_announcement(payload: bytes) -> bytes:
     header = Header.decode(payload)
     if header.type != TYPE_KEY_ANNOUNCE:
         raise EnvelopeError("not a key announcement")
-    if len(payload) != KEY_ANNOUNCE_LEN:
-        raise EnvelopeError(f"key announcement must be {KEY_ANNOUNCE_LEN} bytes, got {len(payload)}")
-    return payload[HEADER_SINGLE_LEN:]
+    if len(payload) < KEY_ANNOUNCE_LEN:
+        raise EnvelopeError(
+            f"key announcement must be at least {KEY_ANNOUNCE_LEN} bytes, got {len(payload)}"
+        )
+    # Trailing bytes beyond the key are tolerated: an announcement carried by
+    # Class B would arrive NUL-padded to a 30-byte boundary.
+    return payload[KEY_ANNOUNCE_HEADER_LEN : KEY_ANNOUNCE_HEADER_LEN + 32]
 
 
 # --- sealing and opening ------------------------------------------------------
@@ -185,7 +214,10 @@ def seal_message(
     sender: Identity, recipient_public: bytes, header: Header, message: bytes
 ) -> bytes:
     """Produce a complete single-transaction payload: `header || ciphertext`."""
-    return header.encode() + seal_ciphertext(sender, recipient_public, header, message)
+    blob = seal_ciphertext(sender, recipient_public, header, message)
+    # The header records the exact ciphertext length, so a reader can discard the
+    # Class B padding that will be appended beneath it.
+    return dataclasses.replace(header, clen=len(blob)).encode() + blob
 
 
 def open_ciphertext(
@@ -232,7 +264,14 @@ def open_message(recipient: Identity, payload: bytes) -> tuple[bytes, bytes, Hea
     if header.type not in (TYPE_SINGLE, TYPE_CHUNK):
         raise EnvelopeError(f"type {header.type} is not an encrypted message")
 
-    sender_public, message = open_ciphertext(recipient, header, payload[header.length :])
+    blob = payload[header.length :]
+    if header.clen:
+        if header.clen > len(blob):
+            raise EnvelopeError(
+                f"header claims {header.clen} ciphertext bytes but only {len(blob)} are present"
+            )
+        blob = blob[: header.clen]     # discard Class B padding
+    sender_public, message = open_ciphertext(recipient, header, blob)
     return sender_public, message, header
 
 

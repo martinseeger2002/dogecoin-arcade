@@ -63,10 +63,14 @@ def test_encrypt_decrypt_round_trip(alice, bob, size):
     assert header.type == TYPE_SINGLE
 
 
-def test_overhead_is_132_bytes(alice, bob):
-    """The figure the whole sizing model rests on."""
+def test_overhead_is_134_bytes(alice, bob):
+    """The figure the whole sizing model rests on.
+
+    134 = 48 sealed box + 32 sender key + 40 crypto_box + 6 authenticated header
+    copy + 8 cleartext header (which now carries the 2-byte ciphertext length).
+    """
     payload = seal_message(alice, bob.public_bytes, Header(type=TYPE_SINGLE), b"x" * 100)
-    assert len(payload) - 100 == 132
+    assert len(payload) - 100 == 134
 
 
 def test_binary_content_survives(alice, bob):
@@ -134,7 +138,7 @@ def test_truncated_payload_is_rejected(alice, bob):
 def test_foreign_payload_is_not_mistaken_for_ours():
     assert not is_message_payload(b"ord" + b"\x01\x02")
     assert not is_message_payload(b"")
-    assert is_message_payload(b"arcm" + b"\x01\x01")
+    assert is_message_payload(b"arcm" + b"\x01\x01\x00\x10")
 
 
 def test_unknown_version_is_rejected():
@@ -214,10 +218,16 @@ def test_key_announcement_round_trip(alice):
     assert parse_key_announcement(blob) == alice.public_bytes
 
 
-def test_key_announcement_rejects_wrong_length(alice):
+def test_key_announcement_rejects_a_truncated_payload(alice):
     blob = build_key_announcement(alice.public_bytes)
     with pytest.raises(EnvelopeError):
-        parse_key_announcement(blob + b"\x00")
+        parse_key_announcement(blob[:-4])
+
+
+def test_key_announcement_tolerates_class_b_padding(alice):
+    """An announcement carried by Class B arrives NUL-padded to a 30-byte boundary."""
+    blob = build_key_announcement(alice.public_bytes)
+    assert parse_key_announcement(blob + b"\x00" * 22) == alice.public_bytes
 
 
 def test_fingerprint_is_stable_and_formatted(alice):
@@ -289,3 +299,24 @@ def test_save_refuses_to_overwrite(tmp_path, alice):
 def test_identity_repr_hides_the_secret(alice):
     assert "redacted" in repr(alice)
     assert bytes(alice.secret).hex() not in repr(alice)
+
+
+def test_class_b_padding_is_discarded(alice, bob):
+    """Class B pads to a 30-byte boundary; the declared length must survive it.
+
+    This is the bug the integration tests caught: without an explicit ciphertext
+    length the sealed box sees trailing NULs it never wrote and rejects the whole
+    message. Stripping trailing NULs instead would be worse -- ciphertext ends in
+    NUL roughly one time in 256.
+    """
+    payload = seal_message(alice, bob.public_bytes, Header(type=TYPE_SINGLE), b"padded")
+    for pad in (0, 1, 3, 17, 29):
+        _, got, _ = open_message(bob, payload + b"\x00" * pad)
+        assert got == b"padded", f"failed with {pad} bytes of padding"
+
+
+def test_lying_about_the_length_is_rejected(alice, bob):
+    payload = bytearray(seal_message(alice, bob.public_bytes, Header(type=TYPE_SINGLE), b"x" * 50))
+    payload[6:8] = (9999).to_bytes(2, "big")      # claim far more than is present
+    with pytest.raises(EnvelopeError, match="claims"):
+        open_message(bob, bytes(payload))
