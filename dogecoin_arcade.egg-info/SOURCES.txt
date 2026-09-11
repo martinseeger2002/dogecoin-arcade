@@ -19,9 +19,14 @@ arcade/messaging/__init__.py
 arcade/messaging/cli.py
 arcade/messaging/envelope.py
 arcade/messaging/keys.py
+arcade/messaging/miner.py
 arcade/messaging/scanner.py
 arcade/messaging/sender.py
 arcade/messaging/store.py
+arcade/web/__init__.py
+arcade/web/__main__.py
+arcade/web/app.py
+arcade/web/state.py
 dogecoin_arcade.egg-info/PKG-INFO
 dogecoin_arcade.egg-info/SOURCES.txt
 dogecoin_arcade.egg-info/dependency_links.txt
@@ -32,8 +37,11 @@ tests/test_chain.py
 tests/test_consensushash.py
 tests/test_encoding.py
 tests/test_end_to_end.py
+tests/test_messaging_crypto.py
+tests/test_messaging_integration.py
 tests/test_payload.py
 tests/test_payload_vectors.py
+tests/test_standardness.py
 tests/test_state.py
 tests/test_undo.py
 tests/test_zmq.py

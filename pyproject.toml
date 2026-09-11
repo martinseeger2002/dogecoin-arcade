@@ -12,11 +12,18 @@ dependencies = [
     "pynacl==1.5.0",
 ]
 
+[project.optional-dependencies]
+web = [
+    "fastapi==0.115.6",
+    "uvicorn==0.34.0",
+    "jinja2==3.1.5",
+    "python-multipart==0.0.20",
+]
+dev = ["pytest==8.3.4"]
+
 [project.scripts]
 arcade-msg = "arcade.messaging.cli:main"
-
-[project.optional-dependencies]
-dev = ["pytest==8.3.4"]
+arcade-web = "arcade.web.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

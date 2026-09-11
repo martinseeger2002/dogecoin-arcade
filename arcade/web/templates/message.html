@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Message · DogecoinArcade{% endblock %}
+{% block body %}
+{% if not message %}
+  <h1>Not found</h1><p class="sub">No message with that id.</p>
+{% else %}
+<h1>Message</h1>
+<p class="sub">{{ when(message.block_time) }} · block {{ "{:,}".format(message.height) }}</p>
+
+<div class="panel">
+  <table>
+    <tr><td class="muted" style="width:140px;border:0">From address</td>
+        <td class="mono" style="border:0">{{ message.sender_addr }}</td></tr>
+    <tr><td class="muted" style="border:0">Sender key</td>
+        <td class="fp" style="border:0">{{ fingerprint_of(message.sender_pubkey) }}</td></tr>
+    <tr><td class="muted" style="border:0">Transaction</td>
+        <td class="mono" style="font-size:.78rem;border:0;word-break:break-all">{{ message.first_txid }}</td></tr>
+  </table>
+</div>
+
+<h2>Content</h2>
+{% if body_text is not none %}
+  <pre>{{ body_text }}</pre>
+{% else %}
+  <div class="panel"><p class="muted">{{ "{:,}".format(message.body|length) }} bytes of binary content, not displayed.</p></div>
+{% endif %}
+
+<div class="note">
+  The sender key above was <strong>authenticated</strong> — the message could only
+  have been produced by someone holding its secret half. That is not the same as
+  knowing who they are; only an out-of-band fingerprint check establishes that.
+</div>
+<p><a href="/inbox">&larr; Inbox</a></p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% import "_chains.html" as chains %}
+{% block title %}Wallets · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Wallets</h1>
+<p class="sub">One per chain. Testnet coins pay message fees; mainnet coins are real.</p>
+
+<div class="chainbar">
+  {{ chains.card(state.messaging, messaging, "Fees for encrypted messages.", None) }}
+  {{ chains.card(state.ledger, ledger, "Tokens, NFTs and PEP transactions.",
+                 "Wallet disabled on this node — read-only." if not ledger.wallet else "Holds real value.") }}
+</div>
+
+<h2>Testnet funding <span class="tag testnet">test</span></h2>
+<div class="panel">
+{% if not messaging.online %}
+  <p class="muted">{{ messaging.error }}</p>
+{% elif messaging.funding %}
+  <p>{{ messaging.funding.describe() }}</p>
+  {% if not messaging.funding.funded and not messaging.funding.pending %}
+    <p class="muted" style="font-size:.9rem">
+      One block pays 10,000&nbsp;PEP, and the largest possible message costs about
+      0.147&nbsp;PEP in fees — so a single block covers roughly 68,000 of them.
+      This mines <strong>one block and stops</strong>: a bootstrap, not a service.
+      It uses one CPU core for a few minutes.</p>
+    <form method="post" action="/fund">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}"><button type="submit">Mine one block</button>
+    </form>
+  {% elif messaging.funding.pending %}
+    <p class="muted" style="font-size:.9rem">
+      Mining more would not help: maturity is measured in chain height, not in
+      blocks you mined.</p>
+  {% endif %}
+{% endif %}
+</div>
+
+<h2>Mainnet <span class="tag mainnet">main</span></h2>
+<div class="panel">
+{% if not ledger.online %}
+  <p class="muted">{{ ledger.error }}</p>
+{% elif not ledger.wallet %}
+  <p>This node runs with <code>disablewallet=1</code>, so it can read the chain but
+     cannot sign or spend.</p>
+  <p class="muted" style="font-size:.9rem">
+    That was deliberate in Phase 0: a node with no wallet cannot be made to spend.
+    Tokens, NFTs and PEP transactions need signing, so a wallet has to be enabled
+    here before those sections can do anything but display.</p>
+{% else %}
+  <div class="kv"><span class="k">Balance</span><span class="v">{{ "{:,.8f}".format(ledger.wallet.balance) }} PEP</span></div>
+  {% if ledger.wallet.immature %}
+  <div class="kv"><span class="k">Maturing</span><span class="v">{{ "{:,.8f}".format(ledger.wallet.immature) }} PEP</span></div>
+  {% endif %}
+  <div class="note" style="margin-top:14px">
+    This wallet holds <strong>real value</strong>. Back up <code>wallet.dat</code>,
+    and encrypt it if you have not.
+  </div>
+{% endif %}
+</div>
+{% endblock %}

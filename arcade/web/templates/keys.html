@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Keys · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Keys</h1>
+<p class="sub">Public keys announced on chain.</p>
+
+{% if error %}<div class="msg err">{{ error }}</div>{% endif %}
+{% if txid %}<div class="msg ok"><strong>Published.</strong>
+  <span class="mono" style="font-size:.8rem;word-break:break-all">{{ txid }}</span></div>{% endif %}
+
+{% if prepared and not txid %}
+<h2>Confirm before broadcast</h2>
+<div class="panel">
+  <table>
+    <tr><td class="muted" style="width:110px;border:0">txid</td><td class="mono" style="font-size:.78rem;border:0;word-break:break-all">{{ prepared.txid }}</td></tr>
+    <tr><td class="muted" style="border:0">size</td><td style="border:0">{{ "{:,}".format(prepared.size) }} bytes</td></tr>
+    <tr><td class="muted" style="border:0">fee</td><td style="border:0">{{ "%.8f"|format(prepared.fee_sats / 100000000) }}</td></tr>
+  </table>
+  <form method="post" action="/publish-key" style="margin-top:12px">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="confirmed" value="yes">
+    <div class="row"><button type="submit">Broadcast</button><a class="muted" href="/keys">Cancel</a></div>
+  </form>
+</div>
+{% endif %}
+
+<h2>Your key</h2>
+<div class="panel">
+{% if state.unlocked %}
+  <div class="row">
+    <div style="flex:1"><div class="fp" style="font-size:1.05rem">{{ state.identity.fingerprint }}</div></div>
+    <form method="post" action="/publish-key">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <button type="submit">Publish on chain</button>
+    </form>
+  </div>
+  <p class="muted" style="margin-top:10px;font-size:.87rem">
+    A 38-byte OP_RETURN, so it costs far less than a message.</p>
+{% else %}
+  <p class="muted">Unlock your identity to publish it.</p>
+{% endif %}
+</div>
+
+<h2>Known keys</h2>
+{% if not keys %}
+  <div class="panel"><p class="muted">None seen yet. Scan the chain from the Overview page.</p></div>
+{% else %}
+<div class="panel">
+<table>
+  <tr><th>Address</th><th>Fingerprint</th><th>Height</th></tr>
+  {% for k in keys %}
+  <tr><td class="mono" style="font-size:.8rem">{{ k['address'] }}</td>
+      <td class="fp">{{ k['fingerprint'] }}</td>
+      <td>{{ "{:,}".format(k['height']) }}</td></tr>
+  {% endfor %}
+</table>
+</div>
+<div class="note">
+  An announcement proves that whoever controlled that address at that block
+  published that key. It proves nothing about identity — check the fingerprint
+  by some other channel before trusting it.
+</div>
+{% endif %}
+{% endblock %}

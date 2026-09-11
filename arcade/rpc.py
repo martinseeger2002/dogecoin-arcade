@@ -103,6 +103,18 @@ class RpcClient:
     def _post(self, payload: Any) -> Any:
         try:
             response = self._session.post(self._creds.url, json=payload, timeout=self._timeout)
+        except requests.ConnectionError as exc:
+            # The common case by far: no node listening. The urllib3 chain
+            # underneath is long and tells a user nothing they can act on.
+            raise RpcTransportError(
+                f"nothing listening on {self._creds.host}:{self._creds.port} "
+                f"-- is the node running?"
+            ) from exc
+        except requests.Timeout as exc:
+            raise RpcTransportError(
+                f"{self._creds.host}:{self._creds.port} did not respond in "
+                f"{self._timeout:.0f}s -- the node may still be starting"
+            ) from exc
         except requests.RequestException as exc:
             raise RpcTransportError(f"cannot reach pepecoind at {self._creds.url}: {exc}") from exc
 

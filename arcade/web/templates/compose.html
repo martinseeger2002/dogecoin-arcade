@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Compose · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Compose</h1>
+<p class="sub">Encrypted to the recipient's announced key. Nothing is broadcast without your confirmation.</p>
+
+{% if error %}<div class="msg err">{{ error }}</div>{% endif %}
+
+{% if broadcast %}
+  <div class="msg ok"><strong>Sent</strong> in {{ broadcast|length }} transaction{{ '' if broadcast|length == 1 else 's' }}.
+    {% for t in broadcast %}<div class="mono" style="font-size:.78rem;word-break:break-all">{{ t }}</div>{% endfor %}
+  </div>
+{% endif %}
+
+{% if prepared and not broadcast %}
+  <h2>Confirm before broadcast</h2>
+  {% set total_fee = prepared|sum(attribute='fee_sats') %}
+  <div class="panel">
+    <p>{{ prepared|length }} transaction{{ '' if prepared|length == 1 else 's' }},
+       total fee <strong>{{ "%.8f"|format(total_fee / 100000000) }}</strong>.</p>
+    {% for p in prepared %}
+    <table style="margin-bottom:10px">
+      <tr><th colspan="2">Transaction {{ loop.index }}</th></tr>
+      <tr><td class="muted" style="width:110px">txid</td><td class="mono" style="font-size:.78rem;word-break:break-all">{{ p.txid }}</td></tr>
+      <tr><td class="muted">size</td><td>{{ "{:,}".format(p.size) }} bytes</td></tr>
+      <tr><td class="muted">outputs</td><td>{{ p.outputs }}</td></tr>
+      <tr><td class="muted">fee</td><td>{{ "%.8f"|format(p.fee_sats / 100000000) }}</td></tr>
+    </table>
+    {% endfor %}
+    {% if prepared|length > 1 %}
+    <div class="note">This message needs more than one transaction. If you stop
+      part-way, the fragment stays on chain permanently and can never be read.</div>
+    {% endif %}
+    <form method="post" action="/send">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="recipient" value="{{ recipient }}">
+      <input type="hidden" name="body" value="{{ body }}">
+      <input type="hidden" name="confirmed" value="yes">
+      <div class="row">
+        <button type="submit">Broadcast</button>
+        <a class="muted" href="/compose">Cancel</a>
+      </div>
+    </form>
+  </div>
+{% endif %}
+
+{% if plan %}
+  <div class="msg info">
+    <strong>{{ "{:,}".format(plan.payload_bytes) }} bytes</strong> on chain
+    ({{ plan.payload_bytes - body|length }} bytes of encryption overhead),
+    {{ plan.transactions }} transaction{{ '' if plan.transactions == 1 else 's' }},
+    about {{ "%.4f"|format(plan.est_total_coins) }} in fees and dust.
+    <span class="muted">Most of the dust is recoverable — each output stays spendable by you.</span>
+  </div>
+{% endif %}
+
+<form method="post" action="/send" class="panel">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <div class="field">
+    <label>Recipient</label>
+    {% if keys %}
+    <select name="recipient">
+      {% for k in keys %}
+      <option value="{{ k['address'] }}" {{ 'selected' if k['address'] == recipient }}>
+        {{ k['address'] }} — {{ k['fingerprint'] }}</option>
+      {% endfor %}
+    </select>
+    {% else %}
+    <input name="recipient" value="{{ recipient or '' }}" placeholder="no keys known — scan first">
+    {% endif %}
+  </div>
+  <div class="field">
+    <label>Message</label>
+    <textarea name="body" placeholder="Up to 7,512 characters fit in a single transaction.">{{ body or '' }}</textarea>
+  </div>
+  <div class="row">
+    <button type="submit" {{ 'disabled' if not state.unlocked }}>Prepare</button>
+    <button class="ghost" type="submit" formaction="/compose" {{ 'disabled' if not state.unlocked }}>Estimate cost</button>
+    {% if not state.unlocked %}<span class="muted">Unlock your identity first.</span>{% endif %}
+  </div>
+</form>
+{% endblock %}

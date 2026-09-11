@@ -1,0 +1,33 @@
+{% macro card(ctx, status, role, note) %}
+<div class="chaincard">
+  <h3>{{ ctx.label }}
+    {% if status.online %}
+      {% if status.synced %}<span class="pill ok">synced</span>
+      {% else %}<span class="pill warn">syncing</span>{% endif %}
+    {% else %}<span class="pill bad">offline</span>{% endif %}
+  </h3>
+  <p class="role">{{ role }}</p>
+  {% if status.online %}
+    <div class="kv"><span class="k">Height</span><span class="v">{{ "{:,}".format(status.blocks) }}</span></div>
+    {% if not status.synced %}
+    <div class="kv"><span class="k">Behind</span><span class="v">{{ "{:,}".format(status.headers - status.blocks) }}</span></div>
+    {% endif %}
+    <div class="kv"><span class="k">Peers</span><span class="v">{{ status.peers }}</span></div>
+    {% if status.wallet %}
+      <div class="kv"><span class="k">Balance</span><span class="v">{{ "{:,.2f}".format(status.wallet.balance) }}</span></div>
+      {% if status.wallet.immature %}
+      <div class="kv"><span class="k">Maturing</span><span class="v">{{ "{:,.2f}".format(status.wallet.immature) }}</span></div>
+      {% endif %}
+    {% else %}
+      <div class="kv"><span class="k">Wallet</span><span class="v"><span class="pill warn">read-only</span></span></div>
+    {% endif %}
+  {% else %}
+    <pre style="font-size:.78rem;margin:4px 0 0;white-space:pre-wrap;background:transparent;
+                border:0;padding:0;color:var(--muted)">{{ status.error }}</pre>
+    <p class="muted" style="font-size:.8rem;margin:8px 0 0">
+      Start the node, or pass <code>--{{ 'msg' if ctx.role == 'messaging' else 'ledger' }}-datadir</code>.
+    </p>
+  {% endif %}
+  {% if note %}<p class="muted" style="font-size:.8rem;margin:10px 0 0">{{ note }}</p>{% endif %}
+</div>
+{% endmacro %}

@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% import "_chains.html" as chains %}
+{% block title %}Overview · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Overview</h1>
+<p class="sub">Two chains, permanently: messages on testnet, value on mainnet.</p>
+
+<div class="chainbar">
+  {{ chains.card(state.messaging, messaging, "Messenger — messages are conversational, and testnet chains get reset.",
+                 None) }}
+  {{ chains.card(state.ledger, ledger, "Tokens, NFTs and PEP — assets belong on a chain nobody resets.",
+                 "Read-only until a wallet is enabled here." if not ledger.wallet else None) }}
+</div>
+
+<div class="grid">
+  <div class="stat"><div class="k">Messages</div>
+    <div class="v">{{ stats.get('messages', 0) }}</div>
+    <div class="n">{{ stats.get('unread', 0) }} unread</div></div>
+  <div class="stat"><div class="k">Known keys</div>
+    <div class="v">{{ stats.get('keys', 0) }}</div>
+    <div class="n">{{ stats.get('candidates', 0) }} payloads seen</div></div>
+  <div class="stat"><div class="k">Spendable (test)</div>
+    {% if messaging.online and messaging.funding %}
+      <div class="v">{{ "{:,.2f}".format(messaging.funding.spendable) }}</div>
+      <div class="n">
+        {% if messaging.funding.funded %}<span class="pill ok">ready</span>
+        {% elif messaging.funding.pending %}<span class="pill warn">{{ messaging.funding.blocks_to_maturity }} blocks</span>
+        {% else %}<span class="pill bad">no coins</span>{% endif %}</div>
+    {% else %}<div class="v">—</div>{% endif %}</div>
+  <div class="stat"><div class="k">Identity</div>
+    <div class="v" style="font-size:1rem">
+      {% if not state.has_key %}none{% elif state.unlocked %}unlocked{% else %}locked{% endif %}</div>
+    <div class="n">{% if state.unlocked %}<span class="fp">{{ state.identity.fingerprint }}</span>{% endif %}</div></div>
+</div>
+
+<h2>Identity <span class="tag testnet">test</span></h2>
+<div class="panel">
+{% if not state.has_key %}
+  <p>No messaging identity yet. It is an X25519 keypair, kept separate from any
+     wallet key and encrypted at rest with Argon2id.</p>
+  <form method="post" action="/keygen">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <div class="field"><label>Passphrase</label><input type="password" name="passphrase" autocomplete="new-password"></div>
+    <div class="field"><label>Confirm</label><input type="password" name="confirm" autocomplete="new-password"></div>
+    <button type="submit">Create identity</button>
+  </form>
+  <p class="muted" style="margin-top:12px;font-size:.87rem">
+    There is no recovery. Lose the passphrase and every message ever sent to this
+    identity becomes permanently unreadable.</p>
+{% elif state.unlocked %}
+  <div class="row">
+    <div style="flex:1">
+      <div class="muted" style="font-size:.8rem">Fingerprint</div>
+      <div class="fp" style="font-size:1.1rem">{{ state.identity.fingerprint }}</div>
+    </div>
+    <form method="post" action="/lock">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}"><button class="ghost" type="submit">Lock</button>
+    </form>
+  </div>
+  <p class="muted" style="margin-top:10px;font-size:.87rem">
+    Read this aloud to a correspondent to verify their key out of band. An on-chain
+    announcement proves control of an address — never who someone is.</p>
+{% else %}
+  <p>Identity is locked.</p>
+  <form method="post" action="/unlock" class="row">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <div style="flex:1"><input type="password" name="passphrase" placeholder="Passphrase" autocomplete="current-password"></div>
+    <button type="submit">Unlock</button>
+  </form>
+{% endif %}
+</div>
+
+<h2>Scan <span class="tag testnet">test</span></h2>
+<div class="panel row">
+  <form method="post" action="/scan"><input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <button type="submit" {{ 'disabled' if not messaging.online }}>Scan for messages</button></form>
+  <span class="muted" style="font-size:.88rem">
+    Trial decryption: about 227&nbsp;µs per payload, and it never announces who you
+    are — which is the point.</span>
+</div>
+{% endblock %}

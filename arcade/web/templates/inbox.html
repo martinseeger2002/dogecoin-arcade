@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Inbox · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Inbox</h1>
+<p class="sub">Messages addressed to your identity.</p>
+
+{% if not state.unlocked %}
+  <div class="msg info">Unlock your identity on the <a href="/">Overview</a> page to see messages.</div>
+{% elif not messages %}
+  <div class="panel">
+    <p>Nothing yet.</p>
+    <p class="muted" style="font-size:.9rem">Messages are found by trial decryption,
+      so run a scan from the Overview page after new blocks arrive.</p>
+  </div>
+{% else %}
+<div class="panel">
+<table>
+  <tr><th>When</th><th>From</th><th>Size</th><th></th></tr>
+  {% for m in messages %}
+  <tr>
+    <td class="{{ 'unread' if not m.read_at }}">{{ when(m.block_time) }}</td>
+    <td class="mono" style="font-size:.8rem">{{ m.sender_addr }}</td>
+    <td>{{ "{:,}".format(m.body|length) }} B</td>
+    <td><a href="/message/{{ m.id }}">{{ 'Read' if not m.read_at else 'View' }}</a></td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+{% endblock %}

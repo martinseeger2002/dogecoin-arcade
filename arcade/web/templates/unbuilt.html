@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% import "_chains.html" as chains %}
+{% block title %}{{ section }} · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>{{ section }} <span class="tag mainnet">main</span></h1>
+<p class="sub">Not built yet — milestone {{ milestone }}.</p>
+<div class="panel">
+  <p>{{ detail }}</p>
+  <p class="muted" style="font-size:.9rem;margin-bottom:0">
+    Listed rather than hidden, so the shape of the finished application stays
+    visible. The engine behind it does not exist, so there is nothing to show.</p>
+</div>
+{% if ledger and not ledger.wallet %}
+<div class="note">
+  Note that even once this is built, the mainnet node currently runs
+  <code>disablewallet=1</code> and cannot sign. It would display state but not
+  transact until a wallet is enabled there.
+</div>
+{% endif %}
+{% endblock %}
