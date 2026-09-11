@@ -5,8 +5,8 @@ independent implementations that agree on state produce the same hash; if they
 disagree, the hash tells you *that* they disagree, and the per-section digests
 below help narrow down *where*.
 
-This matters more for Ribbit than it does for Omni. Omni had a reference node to
-compare against from day one. Ribbit has none (docs/DECISIONS.md D-002), so this
+This matters more for Arcade than it does for Omni. Omni had a reference node to
+compare against from day one. Arcade has none (docs/DECISIONS.md D-002), so this
 hash is the mechanism by which a future second implementation -- ours or someone
 else's, which is why the spec is public (D-006) -- can ever prove us right or
 wrong.
@@ -138,9 +138,9 @@ def metadex_records(db: Database) -> list[str]:
 
 
 def crowdsale_records(db: Database) -> list[str]:
-    """Always empty in Ribbit.
+    """Always empty in Arcade.
 
-    Omni hashes open crowdsales here (consensushash.cpp:232-248). Ribbit dropped
+    Omni hashes open crowdsales here (consensushash.cpp:232-248). Arcade dropped
     crowdsales (D-008), so this section contributes nothing -- and because an
     empty section writes no bytes, re-adding crowdsales later would not change
     the hash of any state that has none. Kept deliberately for that reason.

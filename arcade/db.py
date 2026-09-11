@@ -39,7 +39,7 @@ def register_journalled_table(name: str, pk_columns: tuple[str, ...]) -> None:
 
 
 SCHEMA = """
--- Blocks Ribbit has processed. This is our view of the chain, which may lag or
+-- Blocks Arcade has processed. This is our view of the chain, which may lag or
 -- briefly disagree with the node during a reorg.
 CREATE TABLE IF NOT EXISTS block (
     height       INTEGER PRIMARY KEY,

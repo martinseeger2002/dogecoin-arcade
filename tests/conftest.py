@@ -2,8 +2,8 @@ import sqlite3
 
 import pytest
 
-from ribbit.db import Database, StateDB, register_journalled_table
-from ribbit.regtest import RegtestNode
+from arcade.db import Database, StateDB, register_journalled_table
+from arcade.regtest import RegtestNode
 
 # A toy state table, used to prove the undo journal works without waiting for the
 # real protocol tables that arrive in M2.
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS balance (
 
 @pytest.fixture
 def db(tmp_path):
-    database = Database(tmp_path / "ribbit.sqlite")
+    database = Database(tmp_path / "arcade.sqlite")
     database.conn.executescript(BALANCE_SCHEMA)
     register_journalled_table("balance", ("address", "property_id"))
     yield database

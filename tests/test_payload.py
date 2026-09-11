@@ -4,7 +4,7 @@ import random
 
 import pytest
 
-from ribbit import payload as P
+from arcade import payload as P
 
 # Every registered type with a factory that fills its fields from a seed, so a
 # single loop can exercise all of them rather than hand-writing 26 near-identical
@@ -64,7 +64,7 @@ FACTORIES = {
 @pytest.mark.parametrize("cls", list(FACTORIES), ids=lambda c: c.__name__)
 def test_round_trip_over_many_random_values(cls):
     """encode -> decode -> encode must be a fixed point for every type."""
-    rng = random.Random(f"ribbit-{cls.__name__}")
+    rng = random.Random(f"arcade-{cls.__name__}")
     for _ in range(200):
         message = FACTORIES[cls](rng.randrange)
         raw = message.encode()

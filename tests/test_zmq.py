@@ -2,7 +2,7 @@
 
 import pytest
 
-from ribbit.zmq_listener import TOPIC_HASH_BLOCK, TOPIC_RAW_BLOCK, ZmqListener
+from arcade.zmq_listener import TOPIC_HASH_BLOCK, TOPIC_RAW_BLOCK, ZmqListener
 
 
 @pytest.fixture

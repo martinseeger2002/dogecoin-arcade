@@ -5,7 +5,7 @@ Omni can carry a payload in two shapes:
   **Class C** -- a single OP_RETURN output holding `marker || payload`. Simple and
   cheap, but capped by the node's datacarrier limit: 80 usable bytes on Pepecoin
   (MAX_OP_RETURN_RELAY = 83, pepecoin/src/script/standard.h:30), so 76 bytes of
-  payload after Ribbit's 4-byte marker.
+  payload after Arcade's 4-byte marker.
 
   **Class B** -- the payload is split into 30-byte chunks, each disguised as a
   public key inside a 1-of-3 bare multisig output. Far higher capacity (255
@@ -241,7 +241,7 @@ def decode_class_b(sender: str, multisig_keys: list[list[bytes]]) -> bytes:
     the payload": a Class B AnyData will carry up to 29 trailing NUL bytes that
     the sender never wrote. Stripping them here would be worse -- it would
     silently destroy real trailing NULs in a file chunk. The fix belongs one layer
-    up: Ribbit's v2 inscription header carries an explicit content length, so the
+    up: Arcade's v2 inscription header carries an explicit content length, so the
     reader knows exactly where the data ends. Length-delimited message types
     (everything except 200) are unaffected, since they stop reading at their own
     final field.

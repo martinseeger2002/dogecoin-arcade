@@ -2,18 +2,18 @@
 
 Every expected hex string here was lifted verbatim from
 `omnicore/src/omnicore/test/create_payload_tests.cpp` and
-`obfuscation_tests.cpp`. This is the closest thing Ribbit has to a reference
+`obfuscation_tests.cpp`. This is the closest thing Arcade has to a reference
 oracle: if these pass, our wire format is byte-identical to the implementation
 that has been running on Bitcoin since 2013.
 
-The marker differs (`rbit` vs `omni`) but the marker is not part of the payload,
+The marker differs (`arcd` vs `omni`) but the marker is not part of the payload,
 so these vectors apply unchanged.
 """
 
 import pytest
 
-from ribbit import payload as P
-from ribbit.encoding import prepare_obfuscated_hashes
+from arcade import payload as P
+from arcade.encoding import prepare_obfuscated_hashes
 
 # --- obfuscation: omnicore/src/omnicore/test/obfuscation_tests.cpp ------------
 

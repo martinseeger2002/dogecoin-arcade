@@ -38,7 +38,7 @@ class RegtestNode:
             raise RuntimeError(f"{binary!r} not found on PATH")
         self.binary = resolved
         self.cli = shutil.which(cli) or cli
-        self.datadir = Path(tempfile.mkdtemp(prefix="ribbit-regtest-"))
+        self.datadir = Path(tempfile.mkdtemp(prefix="arcade-regtest-"))
         self.rpc_port = _free_port()
         self.p2p_port = _free_port()
         self.zmq_hashblock_port = _free_port()

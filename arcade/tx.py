@@ -1,16 +1,16 @@
-"""Extracting a Ribbit transaction from a chain transaction.
+"""Extracting a Arcade transaction from a chain transaction.
 
 Four things must be determined, in order:
 
   1. **encoding class** -- C (OP_RETURN) or B (marker output + bare multisig)
   2. **sender**        -- differs by class, and Class B needs it to deobfuscate
   3. **reference**     -- the recipient, where the message type has one
-  4. **payload**       -- the raw bytes handed to `ribbit.payload.decode`
+  4. **payload**       -- the raw bytes handed to `arcade.payload.decode`
 
-Rules mirror omnicore/src/omnicore/omnicore.cpp:758-1195. Where Ribbit diverges
+Rules mirror omnicore/src/omnicore/omnicore.cpp:758-1195. Where Arcade diverges
 it is called out in a comment; the only intended divergence in this module is
 that **Class A is not implemented at all** -- it is Omni's 2013 legacy encoding,
-never used on Pepecoin because Ribbit starts at its own activation height.
+never used on Pepecoin because Arcade starts at its own activation height.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ class PrevOut:
 
 
 @dataclass(frozen=True)
-class RibbitTransaction:
+class ArcadeTransaction:
     """A decoded protocol-carrying transaction, before any state logic runs."""
 
     txid: str
@@ -58,7 +58,7 @@ class RibbitTransaction:
 
     def __repr__(self) -> str:
         return (
-            f"RibbitTransaction(txid={self.txid[:12]}..., height={self.block_height}, "
+            f"ArcadeTransaction(txid={self.txid[:12]}..., height={self.block_height}, "
             f"class={self.encoding_class.value}, sender={self.sender}, "
             f"reference={self.reference}, payload={len(self.payload)}B)"
         )
@@ -231,10 +231,10 @@ def extract(
     position: int,
     params: Params,
     lookup: PrevOutLookup,
-) -> RibbitTransaction | None:
-    """Decode one transaction, or return None if it carries no Ribbit payload.
+) -> ArcadeTransaction | None:
+    """Decode one transaction, or return None if it carries no Arcade payload.
 
-    Returning None for a non-Ribbit transaction is correct and expected -- the
+    Returning None for a non-Arcade transaction is correct and expected -- the
     overwhelming majority of chain transactions are not ours. Raising TxError
     means the transaction *looked* like ours and could not be read, which is a
     different and much more interesting situation.
@@ -249,7 +249,7 @@ def extract(
     payload = extract_payload(outputs, encoding_class, sender)
 
     value_out = sum(output.value for output in outputs)
-    return RibbitTransaction(
+    return ArcadeTransaction(
         txid=tx["txid"],
         block_height=block_height,
         position=position,

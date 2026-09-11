@@ -1,6 +1,6 @@
 """Following the chain: connecting blocks, and surviving reorgs.
 
-The follower keeps Ribbit's view of the chain in step with the node's. Two things
+The follower keeps Arcade's view of the chain in step with the node's. Two things
 can happen on each pass:
 
   * the node has blocks we have not seen  -> connect them, in order

@@ -1,6 +1,6 @@
 """Minimal JSON-RPC client for pepecoind.
 
-Deliberately small: Ribbit only needs to read blocks and, much later, hand a
+Deliberately small: Arcade only needs to read blocks and, much later, hand a
 finished transaction to the node for funding, signing and broadcast.
 
 Batching matters. A naive one-call-per-transaction loop is the difference between

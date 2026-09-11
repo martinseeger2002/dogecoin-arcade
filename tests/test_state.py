@@ -2,11 +2,11 @@
 
 import pytest
 
-from ribbit import payload as P
-from ribbit.config import REGTEST
-from ribbit.db import Database, StateDB
-from ribbit.state import Engine, install_schema
-from ribbit.tx import EncodingClass, RibbitTransaction
+from arcade import payload as P
+from arcade.config import REGTEST
+from arcade.db import Database, StateDB
+from arcade.state import Engine, install_schema
+from arcade.tx import EncodingClass, ArcadeTransaction
 
 ALICE = "mkHS9ne12qx9pS9VojpwU5xtRd4T7X7ZUt"
 BOB = "mzBc4XEFSdzCDcTxAgf6EZXgsZWpztRhef"
@@ -22,7 +22,7 @@ def engine(tmp_path):
 
 
 def make_tx(sender=ALICE, reference=BOB, payload=b"", height=1, position=0, txid=None):
-    return RibbitTransaction(
+    return ArcadeTransaction(
         txid=txid or f"tx{height:04d}{position:02d}" + "0" * 58,
         block_height=height,
         position=position,
@@ -224,7 +224,7 @@ def test_invalid_transactions_are_recorded_not_discarded(engine):
     with state.block_context(1, "h1", "h0", 60, 1, 0):
         eng.process(make_tx(payload=P.SimpleSend(property_id=99, amount=1).encode()))
 
-    row = eng.state.db.conn.execute("SELECT * FROM ribbit_tx").fetchone()
+    row = eng.state.db.conn.execute("SELECT * FROM arcade_tx").fetchone()
     assert row["valid"] == 0
     assert "does not exist" in row["invalid_reason"]
     assert row["message_type"] == 0

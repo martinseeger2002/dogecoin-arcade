@@ -26,7 +26,7 @@ from .config import (
     Params,
 )
 from .db import Database, StateDB, register_journalled_table
-from .tx import RibbitTransaction
+from .tx import ArcadeTransaction
 
 # Omni's MAX_INT_8_BYTES -- amounts are signed 64-bit on the wire despite being
 # carried in a uint64 field.
@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS activation (
 -- Every protocol-carrying transaction seen, valid or not. Invalid ones are kept
 -- deliberately: "this did nothing, and here is why" is consensus-relevant and
 -- the first thing anyone asks when two implementations disagree.
-CREATE TABLE IF NOT EXISTS ribbit_tx (
+CREATE TABLE IF NOT EXISTS arcade_tx (
     txid           TEXT    PRIMARY KEY,
     block_height   INTEGER NOT NULL,
     position       INTEGER NOT NULL,
@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS ribbit_tx (
     invalid_reason TEXT
 );
 
-CREATE INDEX IF NOT EXISTS ribbit_tx_block_idx ON ribbit_tx(block_height, position);
+CREATE INDEX IF NOT EXISTS ribbit_tx_block_idx ON arcade_tx(block_height, position);
 CREATE INDEX IF NOT EXISTS balance_property_idx ON balance(property_id);
 """
 
@@ -110,7 +110,7 @@ def install_schema(db: Database) -> None:
     register_journalled_table("property", ("property_id",))
     register_journalled_table("balance", ("address", "property_id"))
     register_journalled_table("activation", ("feature_id",))
-    register_journalled_table("ribbit_tx", ("txid",))
+    register_journalled_table("arcade_tx", ("txid",))
 
 
 class InvalidTransaction(Exception):
@@ -132,7 +132,7 @@ class Result:
 
 
 class Engine:
-    """Applies Ribbit messages to protocol state."""
+    """Applies Arcade messages to protocol state."""
 
     def __init__(self, state: StateDB, params: Params):
         self.state = state
@@ -193,8 +193,8 @@ class Engine:
     def next_property_id(self, ecosystem: int) -> int:
         """The next free property id in `ecosystem`.
 
-        Ribbit reserves ids 1 and 2 permanently (config.RESERVED_PROPERTY_IDS):
-        Omni uses them for OMNI and TOMNI, and Ribbit has no base token (D-007),
+        Arcade reserves ids 1 and 2 permanently (config.RESERVED_PROPERTY_IDS):
+        Omni uses them for OMNI and TOMNI, and Arcade has no base token (D-007),
         so main-ecosystem properties start at 3.
         """
         floor = FIRST_PROPERTY_ID_MAIN if ecosystem == ECOSYSTEM_MAIN else FIRST_PROPERTY_ID_TEST
@@ -210,7 +210,7 @@ class Engine:
 
     # --- entry point ----------------------------------------------------------
 
-    def process(self, rtx: RibbitTransaction) -> Result:
+    def process(self, rtx: ArcadeTransaction) -> Result:
         """Decode and apply one transaction.
 
         An unsupported message type propagates out of here and stops the indexer.
@@ -228,7 +228,7 @@ class Engine:
             result.reason = str(exc)
 
         self.state.insert(
-            "ribbit_tx",
+            "arcade_tx",
             {
                 "txid": rtx.txid,
                 "block_height": rtx.block_height,
@@ -245,7 +245,7 @@ class Engine:
         )
         return result
 
-    def _apply(self, rtx: RibbitTransaction, message: P.Message) -> None:
+    def _apply(self, rtx: ArcadeTransaction, message: P.Message) -> None:
         handler = {
             P.SimpleSend: self._simple_send,
             P.SendAll: self._send_all,
@@ -265,7 +265,7 @@ class Engine:
 
     # --- type 0 ---------------------------------------------------------------
 
-    def _simple_send(self, rtx: RibbitTransaction, msg: P.SimpleSend) -> None:
+    def _simple_send(self, rtx: ArcadeTransaction, msg: P.SimpleSend) -> None:
         """Type 0. tx.cpp:logicMath_SimpleSend"""
         if rtx.reference is None:
             raise InvalidTransaction("simple send has no reference (recipient) address")
@@ -292,7 +292,7 @@ class Engine:
 
     # --- type 4 ---------------------------------------------------------------
 
-    def _send_all(self, rtx: RibbitTransaction, msg: P.SendAll) -> None:
+    def _send_all(self, rtx: ArcadeTransaction, msg: P.SendAll) -> None:
         """Type 4. Moves every non-zero balance in one ecosystem."""
         if rtx.reference is None:
             raise InvalidTransaction("send all has no reference (recipient) address")
@@ -327,7 +327,7 @@ class Engine:
             raise InvalidTransaction("property name must not be empty")
 
     def _create_property(
-        self, rtx: RibbitTransaction, msg: Any, managed: bool, total: int
+        self, rtx: ArcadeTransaction, msg: Any, managed: bool, total: int
     ) -> int:
         property_id = self.next_property_id(msg.ecosystem)
         self.state.insert(
@@ -350,7 +350,7 @@ class Engine:
         )
         return property_id
 
-    def _issuance_fixed(self, rtx: RibbitTransaction, msg: P.IssuanceFixed) -> None:
+    def _issuance_fixed(self, rtx: ArcadeTransaction, msg: P.IssuanceFixed) -> None:
         """Type 50. Entire supply is credited to the issuer at creation."""
         self._validate_issuance(msg)
         if not 0 < msg.amount <= MAX_AMOUNT:
@@ -359,17 +359,17 @@ class Engine:
         property_id = self._create_property(rtx, msg, managed=False, total=msg.amount)
         self.credit(rtx.sender, property_id, msg.amount)
 
-    def _issuance_managed(self, rtx: RibbitTransaction, msg: P.IssuanceManaged) -> None:
+    def _issuance_managed(self, rtx: ArcadeTransaction, msg: P.IssuanceManaged) -> None:
         """Type 54. No supply at creation; tokens arrive via grants (type 55)."""
         self._validate_issuance(msg)
         self._create_property(rtx, msg, managed=True, total=0)
 
     # --- system messages ------------------------------------------------------
 
-    def _activate_feature(self, rtx: RibbitTransaction, msg: P.ActivateFeature) -> None:
+    def _activate_feature(self, rtx: ArcadeTransaction, msg: P.ActivateFeature) -> None:
         """Type 65534.
 
-        Ribbit accepts activations only from a configured authority address. Omni
+        Arcade accepts activations only from a configured authority address. Omni
         does the same (rules.cpp checks against a hard-coded list); allowing any
         address to activate features would let anyone change consensus.
         """
@@ -398,7 +398,7 @@ class Engine:
         else:
             self.state.insert("activation", row)
 
-    def _deactivate_feature(self, rtx: RibbitTransaction, msg: P.DeactivateFeature) -> None:
+    def _deactivate_feature(self, rtx: ArcadeTransaction, msg: P.DeactivateFeature) -> None:
         """Type 65533."""
         authority = getattr(self.params, "activation_authority", None)
         if authority is not None and rtx.sender != authority:
@@ -411,6 +411,6 @@ class Engine:
             raise InvalidTransaction(f"feature {msg.feature_id} was never activated")
         self.state.update("activation", {"feature_id": msg.feature_id}, {"active": 0})
 
-    def _alert(self, rtx: RibbitTransaction, msg: P.Alert) -> None:
-        """Type 65535. Alerts carry no state; they are recorded in ribbit_tx only."""
+    def _alert(self, rtx: ArcadeTransaction, msg: P.Alert) -> None:
+        """Type 65535. Alerts carry no state; they are recorded in arcade_tx only."""
         return None

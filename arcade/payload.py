@@ -20,7 +20,7 @@ Strings are NUL-terminated and truncated to 255 bytes, except:
 
 Scope
 -----
-Only the transaction types Ribbit implements are registered (docs/DECISIONS.md
+Only the transaction types Arcade implements are registered (docs/DECISIONS.md
 D-008). Decoding an out-of-scope or unknown type raises `UnknownMessageType`
 rather than returning a partial result -- hard rule #2: never skip silently.
 """
@@ -40,7 +40,7 @@ class PayloadError(Exception):
 
 
 class OutOfScopeMessageType(PayloadError):
-    """A real Omni type that Ribbit deliberately does not implement.
+    """A real Omni type that Arcade deliberately does not implement.
 
     Distinguished from UnknownMessageType so operators can tell "we chose not to
     support this" from "we have never heard of this". Both still stop the
@@ -51,7 +51,7 @@ class OutOfScopeMessageType(PayloadError):
         self.message_type = message_type
         self.version = version
         super().__init__(
-            f"Omni message type {message_type} ({reason}) is out of scope for Ribbit"
+            f"Omni message type {message_type} ({reason}) is out of scope for Arcade"
         )
 
 
@@ -60,7 +60,7 @@ def _out_of_scope(message_type: int, version: int, reason: str) -> "OutOfScopeMe
 
 
 class UnknownMessageType(PayloadError):
-    """A transaction type Ribbit does not implement.
+    """A transaction type Arcade does not implement.
 
     Raised rather than ignored. An indexer that skips an unrecognised type
     silently diverges from every other implementation, with no symptom until
@@ -172,7 +172,7 @@ def decode(payload: bytes) -> Message:
     """Decode a payload into a Message, or raise.
 
     Raises PayloadError for anything malformed and UnknownMessageType for types
-    outside Ribbit's scope.
+    outside Arcade's scope.
     """
     if len(payload) < 4:
         raise PayloadError(f"payload too short: {len(payload)} byte(s), need at least 4")

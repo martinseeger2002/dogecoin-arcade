@@ -1,7 +1,7 @@
 """The block handler: chain transactions in, protocol state out.
 
 Plugs into `ChainFollower` from M0. For each block it walks the transactions in
-order, extracts any that carry a Ribbit payload, and applies them.
+order, extracts any that carry a Arcade payload, and applies them.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from .db import StateDB
 from .rpc import RpcClient
 from .script import parse_output
 from .state import Engine
-from .tx import PrevOut, RibbitTransaction, TxError, extract
+from .tx import PrevOut, ArcadeTransaction, TxError, extract
 
 log = logging.getLogger(__name__)
 
@@ -80,8 +80,8 @@ class PrevOutCache:
         return result
 
 
-class RibbitHandler:
-    """BlockHandler that decodes and applies Ribbit transactions."""
+class ArcadeHandler:
+    """BlockHandler that decodes and applies Arcade transactions."""
 
     def __init__(self, rpc: RpcClient, params: Params):
         self.params = params

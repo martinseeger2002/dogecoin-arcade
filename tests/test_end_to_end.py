@@ -1,4 +1,4 @@
-"""End-to-end: real Ribbit transactions on a real regtest chain.
+"""End-to-end: real Arcade transactions on a real regtest chain.
 
 This is the test that actually proves M2. Everything else exercises the pieces in
 isolation with hand-written inputs; here a transaction is built, signed by the
@@ -11,13 +11,13 @@ import dataclasses
 
 import pytest
 
-from ribbit import payload as P
-from ribbit.chain import ChainFollower
-from ribbit.consensushash import consensus_hash
-from ribbit.db import Database
-from ribbit.encoding import encode_class_b, encode_class_c
-from ribbit.indexer import RibbitHandler
-from ribbit.state import Engine, install_schema
+from arcade import payload as P
+from arcade.chain import ChainFollower
+from arcade.consensushash import consensus_hash
+from arcade.db import Database
+from arcade.encoding import encode_class_b, encode_class_c
+from arcade.indexer import ArcadeHandler
+from arcade.state import Engine, install_schema
 from txbuilder import build_raw_tx, multisig_script, op_return_script, p2pkh_script, sign_and_send
 
 DUST = 1_000_000        # 0.01 PEP, comfortably over the 0.001 hard dust limit
@@ -50,7 +50,7 @@ def indexed(tmp_path, chain):
     )
     db = Database(tmp_path / "e2e.sqlite")
     install_schema(db)
-    handler = RibbitHandler(node.rpc, params)
+    handler = ArcadeHandler(node.rpc, params)
     follower = ChainFollower(node.rpc, db, params, handler=handler)
     yield node, alice, bob, params, follower, handler
     db.close()
@@ -77,7 +77,7 @@ def utxo_for(node, address, minimum=0):
 
 
 def send_class_c(node, sender, payload, recipient=None, change_to=None):
-    """Build, sign and broadcast a Class C (OP_RETURN) Ribbit transaction."""
+    """Build, sign and broadcast a Class C (OP_RETURN) Arcade transaction."""
     txid, vout, value = utxo_for(node, sender, minimum=FEE + DUST * 3)
     outputs = [(0, op_return_script(encode_class_c(payload)))]
     if recipient:
@@ -132,7 +132,7 @@ def test_sender_is_the_first_input_for_class_c(indexed):
     follower.sync_once()
 
     row = follower.db.conn.execute(
-        "SELECT * FROM ribbit_tx WHERE txid = ?", (txid,)
+        "SELECT * FROM arcade_tx WHERE txid = ?", (txid,)
     ).fetchone()
     assert row is not None, "transaction was not indexed"
     assert row["sender"] == alice
@@ -192,7 +192,7 @@ def test_class_b_round_trip_end_to_end(indexed):
     node.generate(1)
     follower.sync_once()
 
-    row = follower.db.conn.execute("SELECT * FROM ribbit_tx WHERE txid = ?", (sent,)).fetchone()
+    row = follower.db.conn.execute("SELECT * FROM arcade_tx WHERE txid = ?", (sent,)).fetchone()
     assert row is not None, "Class B transaction was not indexed"
     assert row["encoding_class"] == "B", "should have been detected as Class B"
     assert row["sender"] == alice, "Class B sender is largest-input-by-sum"

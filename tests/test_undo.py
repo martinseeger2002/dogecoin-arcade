@@ -2,7 +2,7 @@
 
 import pytest
 
-from ribbit.db import StateError
+from arcade.db import StateError
 
 
 def balances(db):

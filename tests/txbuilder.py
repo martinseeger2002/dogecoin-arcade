@@ -1,14 +1,14 @@
 """A minimal raw-transaction builder, for tests only.
 
 The real builder lands in M7, where it must also handle fee estimation, change
-and PSBT. This is the smallest thing that can put a genuine Ribbit transaction on
+and PSBT. This is the smallest thing that can put a genuine Arcade transaction on
 a regtest chain so the indexer can be tested against real blocks rather than
 hand-written JSON.
 """
 
 from __future__ import annotations
 
-from ribbit.script import OP_CHECKMULTISIG, OP_RETURN, b58check_decode
+from arcade.script import OP_CHECKMULTISIG, OP_RETURN, b58check_decode
 
 
 def varint(n: int) -> bytes:

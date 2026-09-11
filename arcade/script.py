@@ -1,7 +1,7 @@
 """Bitcoin-family script and address handling.
 
-Only what Ribbit needs: recognising the handful of output types Omni cares about,
-extracting destinations, and base58check encoding. Ribbit never builds spending
+Only what Arcade needs: recognising the handful of output types Omni cares about,
+extracting destinations, and base58check encoding. Arcade never builds spending
 scripts and never touches private keys.
 """
 

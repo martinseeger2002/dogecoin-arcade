@@ -4,9 +4,9 @@ import random
 
 import pytest
 
-from ribbit import payload as P
-from ribbit.config import MARKER
-from ribbit.encoding import (
+from arcade import payload as P
+from arcade.config import MARKER
+from arcade.encoding import (
     MAX_CLASS_B_PAYLOAD,
     PACKET_DATA,
     ClassBOutput,

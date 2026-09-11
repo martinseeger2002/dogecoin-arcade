@@ -13,19 +13,19 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-# The Ribbit Class C marker. Prepended to the payload inside an OP_RETURN, exactly
+# The DogecoinArcade Class C marker. Prepended to the payload inside an OP_RETURN, exactly
 # as Omni prepends b"omni". Chosen in docs/DECISIONS.md D-005.
 #
 # CONSENSUS-CRITICAL: changing this after launch splits state.
-MARKER = b"rbit"
+MARKER = b"arcd"
 
 # Property IDs 1 and 2 are permanently reserved and never assigned, mirroring
 # Omni's OMNI_PROPERTY_MSC / OMNI_PROPERTY_TMSC slots (omnicore.h:123-124) which
-# Ribbit deliberately leaves empty -- there is no base token (D-007).
+# Arcade deliberately leaves empty -- there is no base token (D-007).
 RESERVED_PROPERTY_IDS = (1, 2)
 FIRST_PROPERTY_ID_MAIN = 3
 
-# Omni's test-ecosystem property IDs start at 0x80000001. Ribbit keeps both
+# Omni's test-ecosystem property IDs start at 0x80000001. Arcade keeps both
 # ecosystems (D-006), and they never mix (tx.cpp:1666).
 FIRST_PROPERTY_ID_TEST = 0x80000001
 
@@ -38,7 +38,7 @@ class Params:
     rpc_port: int
     p2p_port: int
 
-    # Height at which Ribbit starts interpreting transactions. Blocks below this
+    # Height at which Arcade starts interpreting transactions. Blocks below this
     # are never parsed for payloads. None means "not yet chosen" -- mainnet's
     # value is set at launch (D-004), so until then mainnet cannot be indexed.
     activation_height: int | None
@@ -53,7 +53,7 @@ class Params:
     scripthash_version: int = 22
 
     # The Class B marker address: every Class B transaction must pay it, exactly
-    # as Omni requires an output to Exodus (omnicore.cpp:81). Ribbit gives it NO
+    # as Omni requires an output to Exodus (omnicore.cpp:81). Arcade gives it NO
     # other meaning -- burn-to-mint was dropped in D-007, so it is purely a
     # marker and never a value sink.
     #
@@ -94,7 +94,83 @@ REGTEST = Params(
     scripthash_version=196,
 )
 
-NETWORKS = {p.name: p for p in (MAINNET, TESTNET, REGTEST)}
+# --- Dogecoin -----------------------------------------------------------------
+#
+# Pepecoin is a Dogecoin fork, and every constant that matters to this protocol
+# is IDENTICAL between them -- same values, same source line numbers:
+#
+#   MAX_OP_RETURN_RELAY = 83            script/standard.h:30   (both)
+#   DEFAULT_PERMIT_BAREMULTISIG = true  validation.h:143       (both)
+#   x-of-3 bare multisig standard       policy/policy.cpp:41   (both)
+#   RECOMMENDED_MIN_TX_FEE = COIN/100   policy/policy.h:23     (both)
+#   hard dust limit = DUST/10           policy/policy.h:81     (both)
+#   scriptSig limit 1650                policy/policy.cpp:86   (both)
+#   block spacing 60s                   chainparams.cpp        (both)
+#
+# So supporting Dogecoin costs exactly these three objects and no code changes.
+# Verified in source at /home/you/reference/dogecoin (1.14.99).
+
+DOGE_MAINNET = Params(
+    name="doge-main",
+    rpc_port=22555,          # chainparamsbase.cpp:35
+    p2p_port=22556,          # chainparams.cpp
+    activation_height=None,  # chosen at launch, as with Pepecoin
+    datadir_subdir="",
+    pubkeyhash_version=30,   # addresses start with "D"
+    scripthash_version=22,
+    marker_address=None,
+)
+
+DOGE_TESTNET = Params(
+    name="doge-test",
+    rpc_port=44555,          # chainparamsbase.cpp:48
+    p2p_port=44556,
+    activation_height=0,
+    datadir_subdir="testnet3",
+    pubkeyhash_version=113,
+    scripthash_version=196,
+)
+
+DOGE_REGTEST = Params(
+    name="doge-regtest",
+    rpc_port=18332,
+    p2p_port=18444,
+    activation_height=0,
+    datadir_subdir="regtest",
+    pubkeyhash_version=111,
+    scripthash_version=196,
+)
+
+# WARNING: Dogecoin testnet and Pepecoin testnet share PUBKEY_ADDRESS version
+# 113 and SCRIPT_ADDRESS version 196, so a testnet address is indistinguishable
+# between the two chains. Never infer the chain from an address -- record it
+# explicitly alongside any key announcement or message.
+
+NETWORKS = {
+    p.name: p
+    for p in (MAINNET, TESTNET, REGTEST, DOGE_MAINNET, DOGE_TESTNET, DOGE_REGTEST)
+}
+
+#: Networks on which the Messenger may operate. Testnet only, permanently
+#: (docs/DECISIONS.md D-010). Enforced in code, not configuration.
+MESSAGING_NETWORKS = frozenset({TESTNET.name, REGTEST.name, DOGE_TESTNET.name, DOGE_REGTEST.name})
+
+
+class MainnetRefused(Exception):
+    """Raised when a messaging operation is pointed at a mainnet chain."""
+
+
+def require_messaging_network(params: "Params") -> None:
+    """Refuse to run messaging against mainnet.
+
+    D-010 makes the Messenger testnet-only as a product rule, so this is a hard
+    check in code rather than a configuration switch someone can flip.
+    """
+    if params.name not in MESSAGING_NETWORKS:
+        raise MainnetRefused(
+            f"the Messenger is testnet-only (D-010); refusing to operate on {params.name!r}. "
+            f"Allowed: {sorted(MESSAGING_NETWORKS)}"
+        )
 
 
 class ConfigError(Exception):
@@ -131,7 +207,7 @@ def read_node_conf(path: Path) -> dict[str, str]:
 class RpcCredentials:
     """How to reach pepecoind's JSON-RPC interface.
 
-    Ribbit never stores a password itself. Credentials are read at run time from
+    Arcade never stores a password itself. Credentials are read at run time from
     the user's own pepecoin.conf (mode 0600) or from a cookie file written by the
     daemon. Nothing is ever written back.
     """
@@ -193,12 +269,12 @@ def load_rpc_credentials(
 
 
 def network_from_env(default: str = "regtest") -> Params:
-    """Select a network from RIBBIT_NETWORK, defaulting to regtest.
+    """Select a network from ARCADE_NETWORK, defaulting to regtest.
 
     Defaulting to regtest is deliberate: a mistake should hit a throwaway chain,
     never mainnet.
     """
-    name = os.environ.get("RIBBIT_NETWORK", default)
+    name = os.environ.get("ARCADE_NETWORK", default)
     if name not in NETWORKS:
         raise ConfigError(f"unknown network {name!r}; expected one of {sorted(NETWORKS)}")
     return NETWORKS[name]

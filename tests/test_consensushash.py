@@ -2,15 +2,15 @@
 
 import pytest
 
-from ribbit.config import REGTEST
-from ribbit.consensushash import (
+from arcade.config import REGTEST
+from arcade.consensushash import (
     balance_records,
     consensus_breakdown,
     consensus_hash,
     property_records,
 )
-from ribbit.db import Database, StateDB
-from ribbit.state import Engine, install_schema
+from arcade.db import Database, StateDB
+from arcade.state import Engine, install_schema
 
 
 @pytest.fixture
@@ -108,14 +108,14 @@ def test_reserve_buckets_are_part_of_the_hash(eng):
 
 def test_properties_section_hashes_id_and_issuer_only(eng):
     state, engine = eng
-    from ribbit import payload as P
-    from ribbit.tx import EncodingClass, RibbitTransaction
+    from arcade import payload as P
+    from arcade.tx import EncodingClass, ArcadeTransaction
 
     msg = P.IssuanceFixed(
         ecosystem=1, property_type=2, previous_property_id=0,
         category="cat", subcategory="sub", name="Name", url="u", data="d", amount=5,
     )
-    rtx = RibbitTransaction(
+    rtx = ArcadeTransaction(
         txid="a" * 64, block_height=1, position=0, encoding_class=EncodingClass.C,
         sender="issuerAddr", reference="other", payload=msg.encode(), fee=0,
     )

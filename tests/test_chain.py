@@ -8,8 +8,8 @@ until someone compares consensus hashes much later.
 
 import pytest
 
-from ribbit.chain import ChainFollower, ReorgTooDeep
-from ribbit.db import Database, StateDB, register_journalled_table
+from arcade.chain import ChainFollower, ReorgTooDeep
+from arcade.db import Database, StateDB, register_journalled_table
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS seen_block (
