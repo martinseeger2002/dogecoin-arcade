@@ -22,6 +22,7 @@ from ..config import Params, require_messaging_network
 from ..indexer import PrevOutCache
 from ..rpc import RpcClient
 from ..tx import TxError, extract
+from . import content
 from .envelope import (
     EnvelopeError,
     Header,
@@ -247,13 +248,40 @@ class Scanner:
                 self.store.mark_opened(row["txid"])
                 continue
 
-            self.store.add_message(
+            self._store_message(
                 None, row["txid"], row["txid"], row["height"], row["block_time"],
-                row["sender_addr"], sender_pk, me, plaintext, complete=True,
+                row["sender_addr"], sender_pk, me, plaintext,
             )
             opened += 1
             self.store.mark_opened(row["txid"])
         return opened
+
+    def _store_message(self, msg_id, first_txid, last_txid, height, block_time,
+                       sender_addr, sender_pk, me, plaintext) -> int:
+        """Store a decrypted message, unpacking whatever the body carries.
+
+        Both decryption paths -- a single transaction and a reassembled chain --
+        arrive here, so an attachment or a profile cannot be handled on one and
+        forgotten on the other.
+        """
+        parsed = content.parse(plaintext)
+        message_id = self.store.add_message(
+            msg_id, first_txid, last_txid, height, block_time, sender_addr,
+            sender_pk, me, parsed.text.encode() if not parsed.plain else plaintext,
+            complete=True,
+        )
+        if parsed.attachment is not None and message_id:
+            self.store.add_attachment(
+                message_id, parsed.attachment.name,
+                parsed.attachment.content_type, parsed.attachment.data)
+        if parsed.profile is not None:
+            # What a sender says about themselves, filling blanks only. It is
+            # unverified: anyone can claim any name and any address, and the
+            # interface says so where it is shown.
+            self.store.apply_profile(
+                sender_pk, parsed.profile.name, parsed.profile.testnet_address,
+                parsed.profile.mainnet_address)
+        return message_id
 
     def _try_assemble(self, row: Any, me: str) -> int:
         """Reassemble a chunked message if every link is present.
@@ -294,10 +322,10 @@ class Scanner:
         except EnvelopeError:
             return 0      # not ours, or not yet complete
 
-        self.store.add_message(
+        self._store_message(
             msg_id, ordered[0]["txid"], ordered[-1]["txid"], ordered[-1]["height"],
             ordered[-1]["block_time"], ordered[0]["sender_addr"], sender_pk, me,
-            plaintext, complete=True,
+            plaintext,
         )
         for chunk in chunks:
             self.store.mark_opened(chunk["txid"])

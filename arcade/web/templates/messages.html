@@ -37,7 +37,7 @@
     {% for t in threads %}
       <a class="thread {{ 'on' if peer and peer.pubkey == t.pubkey }}" href="/messages/{{ t.pubkey.hex() }}">
         <div class="thread-top">
-          <span class="who">{{ t.name or t.address or 'Unnamed contact' }}</span>
+          <span class="who {{ 'unnamed' if not t.name }}">{{ t.name or t.address or 'Unknown sender' }}</span>
           {% if t.unread %}<span class="badge">{{ t.unread }}</span>{% endif %}
         </div>
         <div class="thread-preview">{{ 'You: ' if t.outgoing }}{{ t.preview[:64].decode('utf-8', 'replace') }}</div>
@@ -78,7 +78,16 @@
       {% for m in thread %}
         <div class="bubble-row {{ 'mine' if m.mine else 'theirs' }}">
           <div class="bubble">
-            <div class="text">{{ m.body.decode('utf-8', 'replace') }}</div>
+            {% if m.body %}<div class="text">{{ m.body.decode('utf-8', 'replace') }}</div>{% endif %}
+            {% if m.file %}
+            <a class="file" href="/messages/attachment/{{ m.file.id }}">
+              <span class="file-icon">📄</span>
+              <span class="file-meta">
+                <strong>{{ m.file.name }}</strong>
+                <span class="muted">{{ "{:,}".format(m.file.size) }} bytes · save</span>
+              </span>
+            </a>
+            {% endif %}
             <div class="stamp">
               {{ when(m.when) }}
               {% if m.mine %}· {{ 'confirmed' if m.get('confirmed') else 'sent' }}{% endif %}
@@ -113,6 +122,10 @@
           <input type="hidden" name="csrf_token" value="{{ csrf }}">
           <input type="hidden" name="body" value="{{ draft }}">
           <input type="hidden" name="confirmed" value="yes">
+          <input type="hidden" name="attached_b64" value="{{ attached_b64 or '' }}">
+          <input type="hidden" name="attached_name" value="{{ attached_name or '' }}">
+          <input type="hidden" name="attached_type" value="{{ attached_type or '' }}">
+          <input type="hidden" name="share_profile" value="{{ share_profile or '' }}">
           <div class="row">
             <button type="submit" class="small">Send it</button>
             <a class="muted" href="/messages/{{ peer.hex }}" style="font-size:.87rem">Cancel</a>
@@ -121,12 +134,33 @@
       </div>
     {% endif %}
 
-    <form method="post" action="/messages/{{ peer.hex }}/send" class="composer">
+    <form method="post" action="/messages/{{ peer.hex }}/send" class="composer"
+          enctype="multipart/form-data">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <textarea name="body" rows="2" placeholder="Write a message…"
                 onkeydown="if(event.key==='Enter'&&(event.metaKey||event.ctrlKey))this.form.submit()">{{ draft or '' }}</textarea>
+      <label class="attach" title="Send a file">
+        <input type="file" name="attachment" onchange="showPick(this)" hidden>
+        <span id="clip">📎</span>
+      </label>
       <button type="submit">Review</button>
+      {% if is_new_contact %}
+      <label class="introduce">
+        <input type="checkbox" name="share_profile" value="yes" checked>
+        <span>Introduce myself</span>
+      </label>
+      {% endif %}
     </form>
+    <p class="muted composer-note" id="picked" hidden></p>
+    {% if is_new_contact %}
+    <p class="muted composer-note">
+      <strong>Introduce myself</strong> sends {{ profile_name or 'your name' }} and
+      your addresses with this first message, so they know who is writing. It
+      links this identity to your mainnet address for them &mdash; untick it to
+      stay anonymous.
+      {% if not profile_name %}<a href="/contacts">Set your name</a>.{% endif %}
+    </p>
+    {% endif %}
     <p class="muted composer-note">
       Encrypted to {{ peer.name or 'them' }} only. Costs a transaction fee and is
       permanent once sent. Ctrl+Enter to review.</p>
@@ -135,6 +169,17 @@
 </div>
 
 <script>
+function showPick(input){
+  var note = document.getElementById('picked');
+  var file = input.files && input.files[0];
+  if (!file) { note.hidden = true; return; }
+  note.hidden = false;
+  note.innerHTML = '<strong>' + file.name + '</strong> — ' +
+    file.size.toLocaleString() + ' bytes will be written to the chain. ' +
+    'Every byte is paid for in outputs that can never be spent again.';
+  document.getElementById('clip').textContent = '📎•';
+}
+
   var b = document.getElementById('bubbles');
   if (b) b.scrollTop = b.scrollHeight;
 </script>

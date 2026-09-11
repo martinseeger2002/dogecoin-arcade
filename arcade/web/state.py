@@ -217,6 +217,20 @@ class AppState:
                 store.set_meta(f"identity_address:{self.messaging.network}", "")
         self.lock()
 
+    # --- how the user introduces themselves ------------------------------------
+
+    @property
+    def profile_name(self) -> str:
+        """The name sent to a new correspondent. Empty until the user sets one."""
+        if not self.store_path.exists():
+            return ""
+        with self.store() as store:
+            return store.get_meta("profile_name") or ""
+
+    def set_profile_name(self, name: str) -> None:
+        with self.store() as store:
+            store.set_meta("profile_name", (name or "").strip()[:80])
+
     @property
     def has_identity(self) -> bool:
         return self.identity is not None or bool(self.derived_address)

@@ -384,7 +384,7 @@ class MessageSender:
             )
 
     def prepare(self, sender_address: str, payload: bytes, class_c: bool = False,
-                minconf: int = 1) -> PreparedTx:
+                minconf: int = 1, change_address: str | None = None) -> PreparedTx:
         """Build, fund and sign one transaction. Does NOT broadcast.
 
         `minconf=0` lets this spend change that is still unconfirmed, which is
@@ -406,13 +406,19 @@ class MessageSender:
         else:
             outputs = self._class_b_outputs(sender_address, payload)
 
-        # Choose our own inputs for Class B so the sender cannot drift; Class C
-        # does not obfuscate, so the wallet may fund it however it likes.
-        if class_c:
-            inputs: list[tuple[str, int]] = []
-        else:
-            needed = sum(value for value, _ in outputs) + COIN     # outputs + fee headroom
-            inputs = self._select_inputs(sender_address, needed, minconf=minconf)
+        # Choose our own inputs on BOTH carriers.
+        #
+        # Class B has to, because it seeds its obfuscation with the sender and
+        # the sender is "largest input by sum". Class C does not obfuscate, so
+        # this used to let the wallet fund it freely -- and that was a mistake
+        # with a long tail. A key announcement is the one transaction whose
+        # *sender* is the whole point: it is what binds the key to an address,
+        # and readers find it by that address. Funding it from wherever meant the
+        # announcement was filed under whichever address happened to hold the
+        # largest input, which is never the address the user was told to share.
+        # a test machine measured all three being different at once.
+        needed = sum(value for value, _ in outputs) + COIN         # outputs + fee headroom
+        inputs = self._select_inputs(sender_address, needed, minconf=minconf)
 
         raw = build_raw_tx(inputs, outputs)
 
@@ -423,7 +429,9 @@ class MessageSender:
         # message then either fails outright or silently resolves to a different
         # sender. It also keeps the messaging identity's funds in one place.
         # (fundrawtransaction options, rpcwallet.cpp:2791.)
-        funded = self.rpc.call("fundrawtransaction", raw, {"changeAddress": sender_address})
+        funded = self.rpc.call(
+            "fundrawtransaction", raw,
+            {"changeAddress": change_address or sender_address})
         if not funded or "hex" not in funded:
             raise SendError("fundrawtransaction failed; is the wallet funded?")
         fee_sats = int(round(float(funded.get("fee", 0)) * COIN))
@@ -462,8 +470,12 @@ class PartialSend(SendError):
         self.total = total
 
 
-def funded_address(rpc) -> str:
+def funded_address(rpc, prefer: str | None = None, need: int = COIN) -> str:
     """An address in this wallet that actually holds spendable coins.
+
+    `prefer` is tried first -- the messaging identity address, in practice. Using
+    it whenever it can pay is what makes a message's sender attribution match the
+    address the user was told to hand out, since attribution follows the inputs.
 
     Not `getnewaddress`. A fresh address holds nothing by definition, so using
     one produces "that address holds 0.00000000, fund it" while the wallet is
@@ -474,11 +486,21 @@ def funded_address(rpc) -> str:
     obfuscation with the sender, and the sender is "largest input by sum", so an
     arbitrary wallet address would produce a message nobody can read.
     """
-    best, best_value = None, 0.0
-    for utxo in rpc.call("listunspent", 1, 9_999_999) or []:
-        amount = float(utxo.get("amount", 0))
-        if amount > best_value:
-            best, best_value = utxo.get("address"), amount
+    totals: dict[str, float] = {}
+    for utxo in rpc.call("listunspent", 0, 9_999_999) or []:
+        name = utxo.get("address")
+        if name:
+            totals[name] = totals.get(name, 0.0) + float(utxo.get("amount", 0))
+    # The preference only wins if it can actually pay. `need` defaults to a
+    # coin, which covers a short message; anything larger falls back to the
+    # address that holds the most and reports clearly if that is short too.
+    # Without this guard the preference was unconditional and happily returned an
+    # address holding nothing -- which is the bug it existed to prevent.
+    preferred_total = totals.get(prefer or "", 0.0) * COIN
+    if prefer and preferred_total > 0 and preferred_total >= need:
+        return prefer
+    best = max(totals, key=lambda k: totals[k]) if totals else None
+    best_value = totals.get(best, 0.0) if best else 0.0
     if best is None:
         raise SendError(
             "this wallet has no spendable coins yet. Mine a block to fund it, "

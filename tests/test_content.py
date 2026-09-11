@@ -1,0 +1,165 @@
+"""Files and profiles carried inside a message.
+
+This layer lives inside the sealed box, so the filename and the sender's claimed
+name are encrypted along with the text and invisible on the chain. It needed no
+wire format change, which is why chunking, scanning and reassembly are untouched.
+"""
+
+import pytest
+
+from arcade.messaging import content as C
+
+
+def test_plain_text_is_byte_identical_to_what_it_always_was(alice=None):
+    """Backward compatibility is not a nice-to-have here: messages are permanent."""
+    assert C.build("hello") == b"hello"
+
+
+def test_a_message_from_before_this_existed_still_reads():
+    parsed = C.parse(b"sent last week, before attachments")
+    assert parsed.plain
+    assert parsed.text == "sent last week, before attachments"
+
+
+def test_a_file_round_trips():
+    blob = bytes(range(256)) * 4
+    body = C.build("here it is", C.Attachment("photo.png", "image/png", blob))
+    got = C.parse(body)
+    assert got.text == "here it is"
+    assert got.attachment.data == blob
+    assert got.attachment.name == "photo.png"
+    assert got.attachment.content_type == "image/png"
+
+
+def test_a_file_with_no_text_round_trips():
+    got = C.parse(C.build("", C.Attachment("a.bin", "application/octet-stream", b"\x00\x01")))
+    assert got.text == ""
+    assert got.attachment.data == b"\x00\x01"
+
+
+def test_a_profile_round_trips():
+    body = C.build("offer attached", profile=C.Profile("the operator", "nTest", "PMain"))
+    got = C.parse(body)
+    assert got.profile.name == "the operator"
+    assert got.profile.testnet_address == "nTest"
+    assert got.profile.mainnet_address == "PMain"
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("../../etc/passwd", "passwd"),
+    ("..\\..\\windows\\system32\\cmd.exe", "cmd.exe"),
+    ("/absolute/path.txt", "path.txt"),
+    ("", "attachment"),
+    ("...", "attachment"),
+    ('bad"quote.txt', "badquote.txt"),
+])
+def test_a_sender_cannot_choose_a_dangerous_filename(name, expected):
+    """The sender picks this string and the receiver may save it."""
+    assert C._safe_name(name) == expected
+
+
+def test_a_dangerous_filename_is_cleaned_on_the_way_out_too():
+    body = C.build("", C.Attachment("../../../evil.sh", "text/plain", b"rm -rf /"))
+    assert C.parse(body).attachment.name == "evil.sh"
+
+
+@pytest.mark.parametrize("body", [
+    b"\x01ARCB",
+    b"\x01ARCB\x01",
+    b"\x01ARCB\x01\xff\xffnot json at all",
+    b"\x01ARCB\x09" + b"\x00\x02" + b"{}",       # unknown version
+    b"\x01ARCB\x01\x00\x02[]",                    # json, but not an object
+])
+def test_malformed_bodies_never_raise(body):
+    """These bytes came from somebody else. A bad one must not lose the message."""
+    parsed = C.parse(body)
+    assert isinstance(parsed.text, str)
+
+
+def test_a_truncated_file_gives_short_bytes_rather_than_an_exception():
+    body = C.build("", C.Attachment("x.bin", "application/octet-stream", b"y" * 100))
+    parsed = C.parse(body[:-40])
+    assert len(parsed.attachment.data) == 60
+
+
+def test_an_oversized_file_is_refused_with_the_reason():
+    with pytest.raises(C.ContentError) as caught:
+        C.build("", C.Attachment("huge.bin", "application/octet-stream",
+                                 b"x" * (C.MAX_FILE_BYTES + 1)))
+    assert "never be spent again" in str(caught.value)
+
+
+def test_an_empty_file_is_refused():
+    with pytest.raises(C.ContentError):
+        C.build("", C.Attachment("empty.bin", "application/octet-stream", b""))
+
+
+def test_overhead_is_small_relative_to_the_file():
+    """Raw bytes, not base64: a third more payload would be a third more dust."""
+    blob = b"z" * 10_000
+    body = C.build("", C.Attachment("big.bin", "application/octet-stream", blob))
+    assert len(body) - len(blob) < 120
+
+
+# --- what a first message tells the recipient ---------------------------------
+
+
+def _store(tmp_path):
+    from arcade.messaging.store import MessageStore
+    return MessageStore(tmp_path / "m.sqlite")
+
+
+def test_receiving_a_message_fills_in_the_address_book(tmp_path):
+    """Receiving from somebody is itself the introduction."""
+    store = _store(tmp_path)
+    key = b"\x0a" * 32
+    store.add_message(None, "tx", "tx", 1, 0, "nTheirAddress", key, "me", b"hello")
+
+    row = store.contact_by_key(key)
+    assert row["testnet_address"] == "nTheirAddress"
+
+
+def test_a_name_the_user_typed_is_never_overwritten(tmp_path):
+    """The value of a local name is precisely that nobody else chose it."""
+    store = _store(tmp_path)
+    key = b"\x0a" * 32
+    store.apply_profile(key, "Claimed Name", "nClaimed", "PClaimed")
+    row = store.contact_by_key(key)
+    store.save_contact(contact_id=row["id"], name="What I Call Them",
+                       testnet_address="nIChoseThis", mainnet_address="PIChoseThis")
+
+    store.apply_profile(key, "Someone Else Entirely", "nOther", "POther")
+
+    row = store.contact_by_key(key)
+    assert row["name"] == "What I Call Them"
+    assert row["testnet_address"] == "nIChoseThis"
+    assert row["mainnet_address"] == "PIChoseThis"
+
+
+def test_a_profile_fills_blanks_only(tmp_path):
+    store = _store(tmp_path)
+    key = b"\x0a" * 32
+    store.apply_profile(key, "", "nFromProfile", "")
+    store.apply_profile(key, "Later Name", "nDifferent", "PFromProfile")
+
+    row = store.contact_by_key(key)
+    assert row["testnet_address"] == "nFromProfile"    # already set, kept
+    assert row["name"] == "Later Name"                 # was blank, filled
+    assert row["mainnet_address"] == "PFromProfile"    # was blank, filled
+
+
+def test_a_profile_arriving_by_message_reaches_the_address_book(tmp_path):
+    """End to end through the body format, as the scanner does it."""
+    store = _store(tmp_path)
+    key = b"\x0b" * 32
+    body = C.build("Offer on your NFT",
+                   profile=C.Profile("the operator", "nTheirTest", "PTheirMain"))
+    parsed = C.parse(body)
+    store.add_message(None, "tx", "tx", 1, 0, "nTheirTest", key, "me",
+                      parsed.text.encode())
+    store.apply_profile(key, parsed.profile.name, parsed.profile.testnet_address,
+                        parsed.profile.mainnet_address)
+
+    row = store.contact_by_key(key)
+    assert row["name"] == "the operator"
+    assert row["mainnet_address"] == "PTheirMain"

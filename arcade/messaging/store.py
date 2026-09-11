@@ -14,7 +14,24 @@ from pathlib import Path
 
 SCHEMA_VERSION = 1
 
-SCHEMA = """
+#: The address book, defined once: `SCHEMA` includes it and the migration that
+#: rebuilds an older table reuses it.
+CONTACT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS contact (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    pubkey          BLOB UNIQUE,
+    name            TEXT NOT NULL DEFAULT '',
+    address         TEXT NOT NULL DEFAULT '',
+    testnet_address TEXT NOT NULL DEFAULT '',
+    mainnet_address TEXT NOT NULL DEFAULT '',
+    notes           TEXT NOT NULL DEFAULT '',
+    added           INTEGER NOT NULL,
+    updated         INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS contact_name ON contact(name);
+"""
+
+SCHEMA = CONTACT_SCHEMA + """
 -- X25519 public keys announced on-chain, keyed by the announcing address.
 -- An address may announce more than once (rotation); we keep every one, because
 -- knowing that a key CHANGED and when is exactly what a user needs to notice.
@@ -99,6 +116,19 @@ CREATE INDEX IF NOT EXISTS sent_peer ON sent(recipient_key);
 -- produces a different message id. So the sealed chunks are written down BEFORE
 -- the first broadcast and the progress after each one, which turns an
 -- interrupted send into something that can be finished rather than an orphan.
+-- A file carried inside a message.
+--
+-- Kept apart from `message.body` so the conversation view can list a thread
+-- without reading megabytes of attachment data it is not going to show.
+CREATE TABLE IF NOT EXISTS attachment (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id   INTEGER NOT NULL,
+    name         TEXT NOT NULL DEFAULT '',
+    content_type TEXT NOT NULL DEFAULT '',
+    data         BLOB NOT NULL,
+    UNIQUE (message_id)
+);
+
 CREATE TABLE IF NOT EXISTS pending_send (
     msg_id         BLOB PRIMARY KEY,
     recipient_key  BLOB NOT NULL,
@@ -111,18 +141,9 @@ CREATE TABLE IF NOT EXISTS pending_send (
     created        INTEGER NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS contact (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    pubkey          BLOB UNIQUE,
-    name            TEXT NOT NULL DEFAULT '',
-    address         TEXT NOT NULL DEFAULT '',
-    testnet_address TEXT NOT NULL DEFAULT '',
-    mainnet_address TEXT NOT NULL DEFAULT '',
-    notes           TEXT NOT NULL DEFAULT '',
-    added           INTEGER NOT NULL,
-    updated         INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS contact_name ON contact(name);
+-- (defined once in CONTACT_SCHEMA below, so the migration that rebuilds
+-- this table cannot drift from the schema that creates it)
+
 
 -- Resumable scanning: one cursor per network.
 CREATE TABLE IF NOT EXISTS scan_state (
@@ -200,11 +221,12 @@ class MessageStore:
     )
 
     def _migrate(self) -> None:
-        """Add columns missing from a store created by an earlier version.
+        """Bring a store created by an earlier version up to the current shape.
 
-        Additive only: no column is dropped, renamed or retyped, and no row is
-        rewritten. An upgrade must never be able to lose a message.
+        Additive only: no column is dropped and no data is discarded. An upgrade
+        must never be able to lose a message.
         """
+        self._rebuild_contact_if_keyless()
         for table, column, definition in self.MIGRATIONS:
             existing = {row["name"] for row in
                         self.conn.execute(f"PRAGMA table_info({table})")}
@@ -213,6 +235,39 @@ class MessageStore:
             if column not in existing:
                 self.conn.execute(
                     f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def _rebuild_contact_if_keyless(self) -> None:
+        """Give the address book its `id` column, copying every row across.
+
+        The original table was keyed by pubkey alone. The address book needs a
+        synthetic id, because an entry may have no messaging key at all --
+        somebody you only ever pay. SQLite cannot add a primary key with ALTER
+        TABLE, so the table is rebuilt and the rows carried over.
+
+        Found when a real message arrived: `contact_by_key(...)["id"]` raised
+        IndexError on a store older than the address book, and the page 500'd.
+        """
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(contact)")}
+        if not columns or "id" in columns:
+            return
+
+        carried = [c for c in ("pubkey", "name", "address", "added") if c in columns]
+        joined = ",".join(carried)
+        self.conn.execute("BEGIN")
+        try:
+            self.conn.execute("ALTER TABLE contact RENAME TO contact_old")
+            # Statement by statement, not executescript: that commits implicitly
+            # and would end the transaction this rebuild depends on.
+            for statement in CONTACT_SCHEMA.split(";"):
+                if statement.strip():
+                    self.conn.execute(statement)
+            self.conn.execute(
+                f"INSERT INTO contact({joined}) SELECT {joined} FROM contact_old")
+            self.conn.execute("DROP TABLE contact_old")
+            self.conn.execute("COMMIT")
+        except Exception:
+            self.conn.execute("ROLLBACK")
+            raise
 
     def close(self) -> None:
         self.conn.close()
@@ -388,6 +443,48 @@ class MessageStore:
 
     # --- sent messages --------------------------------------------------------
 
+    def add_attachment(self, message_id: int, name: str, content_type: str,
+                       data: bytes) -> None:
+        self.conn.execute(
+            "INSERT OR IGNORE INTO attachment(message_id,name,content_type,data) "
+            "VALUES(?,?,?,?)", (message_id, name, content_type, data))
+
+    def attachment_for(self, message_id: int) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM attachment WHERE message_id=?", (message_id,)).fetchone()
+
+    def attachment_summary(self, message_id: int) -> sqlite3.Row | None:
+        """Name, type and size without pulling the bytes into memory."""
+        return self.conn.execute(
+            "SELECT id, name, content_type, LENGTH(data) AS size FROM attachment "
+            "WHERE message_id=?", (message_id,)).fetchone()
+
+    def apply_profile(self, pubkey: bytes, name: str = "", testnet_address: str = "",
+                      mainnet_address: str = "") -> None:
+        """Fill in an address book entry from what a sender said about themselves.
+
+        Only fills blanks. A name the user typed themselves always wins over one
+        a stranger asserted, because the whole value of the local name is that
+        nobody else chose it.
+        """
+        now = int(time.time())
+        existing = self.contact_by_key(pubkey)
+        if existing is None:
+            self.conn.execute(
+                "INSERT INTO contact(pubkey,name,testnet_address,mainnet_address,"
+                "added,updated) VALUES(?,?,?,?,?,?)",
+                (pubkey, name, testnet_address, mainnet_address, now, now))
+            return
+        self.conn.execute(
+            "UPDATE contact SET "
+            "name=CASE WHEN contact.name='' THEN ? ELSE contact.name END, "
+            "testnet_address=CASE WHEN contact.testnet_address='' THEN ? "
+            "  ELSE contact.testnet_address END, "
+            "mainnet_address=CASE WHEN contact.mainnet_address='' THEN ? "
+            "  ELSE contact.mainnet_address END, "
+            "updated=? WHERE id=?",
+            (name, testnet_address, mainnet_address, now, existing["id"]))
+
     # --- chunked sends in progress --------------------------------------------
 
     def begin_pending_send(self, msg_id: bytes, recipient_key: bytes,
@@ -452,11 +549,18 @@ class MessageStore:
         self.conn.execute(
             # An empty value means "not supplied", never "clear it". Starting a
             # conversation from an address must not wipe a name set earlier.
-            "INSERT INTO contact(pubkey,name,address,added,updated) VALUES(?,?,?,?,?) "
+            # `testnet_address` is filled as well as `address`, because messaging
+            # is testnet by construction (D-010) and the address book displays
+            # the per-chain columns. Filling only the legacy one meant a contact
+            # created by receiving a message showed no address at all.
+            "INSERT INTO contact(pubkey,name,address,testnet_address,added,updated) "
+            "VALUES(?,?,?,?,?,?) "
             "ON CONFLICT(pubkey) DO UPDATE SET updated=excluded.updated, "
             "name=CASE WHEN excluded.name != '' THEN excluded.name ELSE contact.name END, "
-            "address=CASE WHEN excluded.address != '' THEN excluded.address ELSE contact.address END",
-            (pubkey, name, address, now, now),
+            "address=CASE WHEN excluded.address != '' THEN excluded.address ELSE contact.address END, "
+            "testnet_address=CASE WHEN contact.testnet_address='' THEN excluded.testnet_address "
+            "  ELSE contact.testnet_address END",
+            (pubkey, name, address, address, now, now),
         )
 
     def save_contact(self, *, contact_id: int | None = None, pubkey: bytes | None = None,

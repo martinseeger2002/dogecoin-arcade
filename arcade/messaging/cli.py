@@ -270,8 +270,16 @@ def cmd_publish_key(args) -> int:
 
     with _rpc(args, params) as rpc:
         sender = MessageSender(rpc, params)
-        address = args.address or rpc.call("getnewaddress")
-        prepared = sender.prepare(address, payload, class_c=True)
+        # Announce FROM the identity address whenever it can pay. The
+        # announcement binds a key to whichever address the transaction resolves
+        # to, and readers look it up by the address the user handed out -- so
+        # funding it from anywhere else files it under an address nobody can
+        # guess. `getnewaddress` was the worst possible choice: guaranteed empty,
+        # and it dragged the change to a brand new address every time.
+        home = resolve_identity_address(rpc, _store(args), params.name)
+        address = args.address or funded_address(rpc, prefer=home)
+        prepared = sender.prepare(address, payload, class_c=True,
+                                  change_address=home)
 
         print(f"Key announcement for  {identity.fingerprint}")
         print(f"  from address  {address}")
@@ -347,7 +355,8 @@ def cmd_send(args) -> int:
             return 1
 
         sender = MessageSender(rpc, params)
-        address = args.address or funded_address(rpc)
+        home = resolve_identity_address(rpc, store, params.name)
+        address = args.address or funded_address(rpc, prefer=home)
 
         def approve(index, total, prepared):
             if total > 1:

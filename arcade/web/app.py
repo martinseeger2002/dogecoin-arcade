@@ -7,19 +7,20 @@ that pretends otherwise would be worse than one that says so.
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import html
 import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from .. import backup, wallet as walletlib
 from ..config import NETWORKS, MainnetRefused, WrongChain
-from ..messaging import contact
+from ..messaging import contact, content
 from ..script import b58check_decode
 from ..messaging.derive import DerivationError, derive_identity
 from ..messaging.envelope import build_key_announcement
@@ -159,7 +160,8 @@ def create_app(state: AppState) -> FastAPI:
                 return RedirectResponse("/messages", status_code=303)
             with state.store() as store:
                 threads = store.conversations(state.identity.fingerprint)
-                items = store.thread(state.identity.fingerprint, peer_key)
+                items = _with_attachments(store,
+                    store.thread(state.identity.fingerprint, peer_key))
                 store.mark_thread_read(state.identity.fingerprint, peer_key)
                 peer = {
                     "pubkey": peer_key,
@@ -174,7 +176,9 @@ def create_app(state: AppState) -> FastAPI:
                     if t["pubkey"] == peer_key:
                         peer["address"] = t.get("address", "")
         return render(request, "messages.html", threads=threads, thread=items,
-                      peer=peer, when=_when, fingerprint_of=fingerprint_of)
+                      peer=peer, when=_when, fingerprint_of=fingerprint_of,
+                      is_new_contact=bool(peer) and not items,
+                      profile_name=state.profile_name)
 
     @app.post("/messages/start")
     def start_conversation(request: Request, code: str = Form(""), name: str = Form(""),
@@ -207,8 +211,13 @@ def create_app(state: AppState) -> FastAPI:
         return RedirectResponse(f"/messages/{peer_hex}", status_code=303)
 
     @app.post("/messages/{peer_hex}/send", response_class=HTMLResponse)
-    def send_in_thread(request: Request, peer_hex: str, body: str = Form(""),
-                       confirmed: str = Form(""), csrf_token: str = Form("")):
+    async def send_in_thread(request: Request, peer_hex: str, body: str = Form(""),
+                             confirmed: str = Form(""), csrf_token: str = Form(""),
+                             share_profile: str = Form(""),
+                             attachment: UploadFile | None = File(None),
+                             attached_name: str = Form(""),
+                             attached_type: str = Form(""),
+                             attached_b64: str = Form("")):
         """Send within a conversation.
 
         Still two steps: the decoded transaction and its cost are shown before
@@ -218,6 +227,7 @@ def create_app(state: AppState) -> FastAPI:
         prepared = None
         plan = None
         error = None
+        file_bytes, file_name, file_type = b"", attached_name, attached_type
         try:
             check_csrf(csrf_token)
             if not state.unlocked:
@@ -225,16 +235,35 @@ def create_app(state: AppState) -> FastAPI:
                 # passphrase to enter any more.
                 state.ensure_identity()
             peer_key = bytes.fromhex(peer_hex)
-            if not body.strip():
-                raise ValueError("nothing to send")
 
-            plan = plan_message(state.identity, peer_key, body.encode())
+            # The file survives the confirm step as base64 in a hidden field,
+            # because the preview and the send are two separate requests and the
+            # browser will not resend a file input on the second.
+            file_bytes, file_name, file_type = b"", attached_name, attached_type
+            if attachment is not None and attachment.filename:
+                file_bytes = await attachment.read()
+                file_name = attachment.filename
+                file_type = attachment.content_type or "application/octet-stream"
+            elif attached_b64:
+                file_bytes = base64.b64decode(attached_b64)
+
+            if not body.strip() and not file_bytes:
+                raise ValueError("write something, or choose a file to send")
+
+            payload_body = content.build(
+                text=body,
+                attachment=content.Attachment(file_name, file_type, file_bytes)
+                if file_bytes else None,
+                profile=_profile_for_state(state, peer_key)
+                if share_profile == "yes" else None,
+            )
+            plan = plan_message(state.identity, peer_key, payload_body)
             with state.messaging.rpc() as rpc:
                 funding = Miner(rpc, state.messaging.params).status()
                 if not funding.funded:
                     raise ValueError(f"cannot send: {funding.describe()}")
                 sender = MessageSender(rpc, state.messaging.params)
-                address = funded_address(rpc)
+                address = funded_address(rpc, prefer=state.derived_address)
                 # Only the first chunk is built for the preview. The rest cannot
                 # be: each one spends the change of the one before it, so its
                 # input does not exist until that one is broadcast. Building them
@@ -247,7 +276,8 @@ def create_app(state: AppState) -> FastAPI:
                     # so we could never read this back off the chain ourselves.
                     with state.store() as store:
                         store.add_sent(txids[0], peer_key, "",
-                                       state.identity.fingerprint, body.encode())
+                                       state.identity.fingerprint,
+                                       (body or f"[sent {file_name}]").encode())
                     state.flash(f"Sent in {len(txids)} transaction(s).", "ok")
                     return RedirectResponse(f"/messages/{peer_hex}", status_code=303)
         except Exception as exc:
@@ -257,7 +287,8 @@ def create_app(state: AppState) -> FastAPI:
         if state.unlocked and state.store_path.exists():
             with state.store() as store:
                 threads = store.conversations(state.identity.fingerprint)
-                items = store.thread(state.identity.fingerprint, bytes.fromhex(peer_hex))
+                items = _with_attachments(store,
+                    store.thread(state.identity.fingerprint, bytes.fromhex(peer_hex)))
                 peer = {"pubkey": bytes.fromhex(peer_hex), "hex": peer_hex,
                         "name": store.contact_name(bytes.fromhex(peer_hex)),
                         "contact_id": (lambda r: r["id"] if r else None)(
@@ -266,7 +297,11 @@ def create_app(state: AppState) -> FastAPI:
                         "code": contact.encode(state.messaging.network, bytes.fromhex(peer_hex))}
         return render(request, "messages.html", threads=threads, thread=items, peer=peer,
                       when=_when, fingerprint_of=fingerprint_of, prepared=prepared,
-                      plan=plan, draft=body, error=error)
+                      plan=plan, draft=body, error=error,
+                      is_new_contact=not items, profile_name=state.profile_name,
+                      attached_b64=base64.b64encode(file_bytes).decode() if file_bytes else "",
+                      attached_name=file_name, attached_type=file_type,
+                      share_profile=share_profile)
 
     # --- inbox ----------------------------------------------------------------
 
@@ -354,7 +389,7 @@ def create_app(state: AppState) -> FastAPI:
                 if not funding.funded:
                     raise ValueError(f"cannot send: {funding.describe()}")
                 sender = MessageSender(rpc, state.messaging.params)
-                address = funded_address(rpc)
+                address = funded_address(rpc, prefer=state.derived_address)
                 prepared = [sender.prepare(address, p) for p in plan.chunk_payloads]
                 if confirmed == "yes":
                     broadcast_txids = [sender.broadcast(p) for p in prepared]
@@ -657,6 +692,39 @@ def create_app(state: AppState) -> FastAPI:
             state.flash(f"Could not remove that wallet: {exc}", "err")
         return RedirectResponse("/backup", status_code=303)
 
+    @app.get("/messages/attachment/{message_id}")
+    def download_attachment(request: Request, message_id: int):
+        """Hand back a file somebody sent. Never rendered inline.
+
+        `Content-Disposition: attachment` with a fixed octet-stream type, so a
+        file named by a stranger cannot be served back as HTML or script into
+        this origin -- which is where the wallet lives.
+        """
+        with state.store() as store:
+            row = store.attachment_for(message_id)
+        if row is None:
+            state.flash("That file is not here.", "err")
+            return RedirectResponse("/messages", status_code=303)
+        name = _safe_filename(row["name"])
+        return Response(
+            content=bytes(row["data"]),
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{name}"',
+                     "X-Content-Type-Options": "nosniff"},
+        )
+
+    @app.post("/profile")
+    def set_profile(request: Request, name: str = Form(""), csrf_token: str = Form("")):
+        try:
+            check_csrf(csrf_token)
+            state.set_profile_name(name)
+            state.flash(
+                f"New contacts will see you as {name.strip()}." if name.strip()
+                else "Your name will no longer be sent to new contacts.", "ok")
+        except ValueError as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse("/contacts", status_code=303)
+
     @app.get("/keys", response_class=HTMLResponse)
     def keys_page(request: Request):
         keys = []
@@ -681,7 +749,10 @@ def create_app(state: AppState) -> FastAPI:
                 if not Miner(rpc, state.messaging.params).status().funded:
                     raise ValueError("no spendable coins yet -- see Wallet")
                 sender = MessageSender(rpc, state.messaging.params)
-                prepared = sender.prepare(funded_address(rpc), payload, class_c=True)
+                home = state.derived_address
+                prepared = sender.prepare(
+                    funded_address(rpc, prefer=home), payload, class_c=True,
+                    change_address=home)
                 if confirmed == "yes":
                     txid = sender.broadcast(prepared)
         except Exception as exc:
@@ -847,6 +918,52 @@ def _resolve_recipient(state, recipient: str) -> bytes:
             "them for their contact code and paste that instead."
         )
     return bytes(row["pubkey"])
+
+
+def _profile_for_state(state, peer_key: bytes) -> "content.Profile | None":
+    """What to tell a new correspondent about ourselves, or None.
+
+    Sent only to somebody we have not written to before, so it introduces rather
+    than repeats. It is a real disclosure -- it ties this messaging identity to a
+    mainnet address for whoever receives it -- so the interface shows exactly
+    what will be sent and lets it be turned off.
+    """
+    with state.store() as store:
+        if store.thread(state.identity.fingerprint, peer_key):
+            return None            # already talking; they have it already
+    name = state.profile_name or ""
+    testnet = state.derived_address or ""
+    mainnet = ""
+    try:
+        with state.ledger.rpc() as rpc:
+            mainnet = rpc.call("getaccountaddress", "arcade-identity") or ""
+    except Exception:
+        mainnet = ""
+    profile = content.Profile(name=name, testnet_address=testnet,
+                              mainnet_address=mainnet)
+    return None if profile.is_empty() else profile
+
+
+def _with_attachments(store, rows: list) -> list:
+    """Attach file summaries to thread rows, without loading the file bytes."""
+    out = []
+    for row in rows:
+        item = dict(row)
+        message_id = item.get("id")
+        if message_id and not item.get("mine"):
+            summary = store.attachment_summary(message_id)
+            if summary is not None:
+                item["file"] = {"id": message_id, "name": summary["name"],
+                                "type": summary["content_type"],
+                                "size": summary["size"]}
+        out.append(item)
+    return out
+
+
+def _safe_filename(name: str) -> str:
+    """A filename safe to put in a header a browser will act on."""
+    cleaned = "".join(c for c in (name or "") if c.isprintable() and c not in '"\\/')
+    return cleaned.strip() or "attachment"
 
 
 def _contact_view(row: Any) -> dict[str, Any]:

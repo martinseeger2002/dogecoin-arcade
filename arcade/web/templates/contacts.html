@@ -5,6 +5,23 @@
 <p class="sub">Who is who, and where to pay them. Stored only on this computer.</p>
 
 <div class="panel" style="margin-bottom:18px">
+  <form method="post" action="/profile">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <h3 style="margin:0 0 12px">How you introduce yourself</h3>
+    <div class="row">
+      <div style="flex:1"><input name="name" value="{{ state.profile_name }}"
+             placeholder="Your name, as new contacts will see it"></div>
+      <button type="submit">Save</button>
+    </div>
+    <p class="muted" style="font-size:.84rem;margin:9px 0 0">
+      Sent with your <em>first</em> message to someone new, along with your
+      addresses, so they know who is writing before deciding whether to deal with
+      you. Not sent afterwards, and you can untick it on any message.
+      It ties this identity to your mainnet address for whoever receives it.</p>
+  </form>
+</div>
+
+<div class="panel" style="margin-bottom:18px">
   <form method="post" action="/contacts/save">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
     {% if editing %}<input type="hidden" name="contact_id" value="{{ editing['id'] }}">{% endif %}

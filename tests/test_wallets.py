@@ -229,3 +229,45 @@ def test_migration_is_idempotent(tmp_path):
     store = MessageStore(path)
     columns = [row["name"] for row in store.conn.execute("PRAGMA table_info(contact)")]
     assert len(columns) == len(set(columns))
+
+
+def test_a_contact_table_with_no_id_is_rebuilt(tmp_path):
+    """The original table was keyed by pubkey alone and had no `id`.
+
+    SQLite cannot add a primary key with ALTER TABLE, so the column-adding
+    migration could not help and every address book read raised IndexError on an
+    older store. Found when a real message arrived and the page 500'd.
+    """
+    import sqlite3
+    from arcade.messaging.store import MessageStore
+
+    path = tmp_path / "keyless.sqlite"
+    connection = sqlite3.connect(path)
+    connection.executescript(OLD_SCHEMA)
+    connection.commit()
+    connection.close()
+
+    store = MessageStore(path)
+    columns = [row["name"] for row in store.conn.execute("PRAGMA table_info(contact)")]
+    assert "id" in columns
+    (row,) = store.contacts()
+    assert row["name"] == "Old Friend"
+    assert row["address"] == "nOldAddress"
+    assert store.contact_by_key(b"\x01\x02")["id"] == row["id"]
+
+
+def test_rebuilding_the_contact_table_is_idempotent(tmp_path):
+    import sqlite3
+    from arcade.messaging.store import MessageStore
+
+    path = tmp_path / "keyless.sqlite"
+    connection = sqlite3.connect(path)
+    connection.executescript(OLD_SCHEMA)
+    connection.commit()
+    connection.close()
+
+    MessageStore(path).close()
+    store = MessageStore(path)
+    assert len(store.contacts()) == 1
+    assert not store.conn.execute(
+        "SELECT name FROM sqlite_master WHERE name='contact_old'").fetchone()
