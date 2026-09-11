@@ -1,0 +1,291 @@
+"""Encryption, key storage, and chunk integrity.
+
+These are the unit tests the brief asks for in Step 4, written alongside the
+implementation rather than after it.
+"""
+
+import pytest
+
+from arcade.messaging.envelope import (
+    EnvelopeError,
+    Header,
+    TYPE_CHUNK,
+    TYPE_KEY_ANNOUNCE,
+    TYPE_SINGLE,
+    build_key_announcement,
+    is_message_payload,
+    open_ciphertext,
+    open_message,
+    seal_ciphertext,
+    parse_key_announcement,
+    seal_message,
+)
+from arcade.messaging.keys import (
+    Identity,
+    KeyError_,
+    decrypt_identity,
+    encrypt_identity,
+    fingerprint_of,
+    load_identity,
+    save_identity,
+)
+import nacl.bindings as sodium
+
+# Cheapest Argon2id settings: these tests exercise correctness, not cost, and
+# MODERATE would add ~1.3 s per call.
+FAST = dict(
+    ops=sodium.crypto_pwhash_argon2id_OPSLIMIT_MIN,
+    mem=sodium.crypto_pwhash_argon2id_MEMLIMIT_MIN,
+)
+
+
+@pytest.fixture
+def alice():
+    return Identity.generate()
+
+
+@pytest.fixture
+def bob():
+    return Identity.generate()
+
+
+# --- round trip ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("size", [1, 10, 100, 1000, 7000])
+def test_encrypt_decrypt_round_trip(alice, bob, size):
+    message = bytes(range(256)) * (size // 256 + 1)
+    message = message[:size]
+    payload = seal_message(alice, bob.public_bytes, Header(type=TYPE_SINGLE), message)
+    sender, got, header = open_message(bob, payload)
+    assert got == message
+    assert sender == alice.public_bytes
+    assert header.type == TYPE_SINGLE
+
+
+def test_overhead_is_132_bytes(alice, bob):
+    """The figure the whole sizing model rests on."""
+    payload = seal_message(alice, bob.public_bytes, Header(type=TYPE_SINGLE), b"x" * 100)
+    assert len(payload) - 100 == 132
+
+
+def test_binary_content_survives(alice, bob):
+    blob = bytes(range(256)) + b"\x00" * 40 + b"\xff" * 10
+    payload = seal_message(alice, bob.public_bytes, Header(type=TYPE_SINGLE), blob)
+    _, got, _ = open_message(bob, payload)
+    assert got == blob, "trailing NULs must survive; they are real content"
+
+
+def test_two_sealings_of_the_same_message_differ(alice, bob):
+    """Fresh ephemeral key and nonce per call: no deterministic ciphertext."""
+    a = seal_message(alice, bob.public_bytes, Header(type=TYPE_SINGLE), b"same")
+    b = seal_message(alice, bob.public_bytes, Header(type=TYPE_SINGLE), b"same")
+    assert a != b
+
+
+# --- failure modes ------------------------------------------------------------
+
+
+def test_wrong_recipient_cannot_decrypt(alice, bob):
+    mallory = Identity.generate()
+    payload = seal_message(alice, bob.public_bytes, Header(type=TYPE_SINGLE), b"secret")
+    with pytest.raises(EnvelopeError, match="not addressed to us"):
+        open_message(mallory, payload)
+
+
+@pytest.mark.parametrize("offset", [10, 50, 100, -1])
+def test_flipped_ciphertext_bit_is_rejected(alice, bob, offset):
+    payload = bytearray(seal_message(alice, bob.public_bytes, Header(type=TYPE_SINGLE), b"x" * 80))
+    payload[offset] ^= 0x01
+    with pytest.raises(EnvelopeError):
+        open_message(bob, bytes(payload))
+
+
+def test_tampered_header_is_rejected(alice, bob):
+    """The cleartext header is readable before decryption, so it must be bound."""
+    payload = seal_message(alice, bob.public_bytes, Header(type=TYPE_SINGLE), b"hello")
+    tampered = Header(type=TYPE_CHUNK, msg_id=b"12345678").encode() + payload[6:]
+    with pytest.raises(EnvelopeError):
+        open_message(bob, tampered)
+
+
+def test_forged_sender_identity_is_rejected(alice, bob):
+    """Claiming someone else's key must fail, or authentication means nothing."""
+    import nacl.public
+
+    mallory = Identity.generate()
+    head = Header(type=TYPE_SINGLE).encode()
+    inner = nacl.public.Box(mallory.secret, nacl.public.PublicKey(bob.public_bytes)).encrypt(
+        head + b"pretending to be alice"
+    )
+    forged = head + nacl.public.SealedBox(nacl.public.PublicKey(bob.public_bytes)).encrypt(
+        alice.public_bytes + bytes(inner)       # claims alice, sealed by mallory
+    )
+    with pytest.raises(EnvelopeError, match="forged sender"):
+        open_message(bob, forged)
+
+
+def test_truncated_payload_is_rejected(alice, bob):
+    payload = seal_message(alice, bob.public_bytes, Header(type=TYPE_SINGLE), b"x" * 50)
+    with pytest.raises(EnvelopeError):
+        open_message(bob, payload[:-10])
+
+
+def test_foreign_payload_is_not_mistaken_for_ours():
+    assert not is_message_payload(b"ord" + b"\x01\x02")
+    assert not is_message_payload(b"")
+    assert is_message_payload(b"arcm" + b"\x01\x01")
+
+
+def test_unknown_version_is_rejected():
+    with pytest.raises(EnvelopeError, match="version"):
+        Header.decode(b"arcm" + bytes([99, TYPE_SINGLE]))
+
+
+# --- chunk integrity ----------------------------------------------------------
+
+
+def make_chunks(alice, bob, message, capacity):
+    """Mirror what sender.plan_message does: seal once, then split the ciphertext."""
+    msg_id = b"\x01" * 8
+    header = Header(type=TYPE_CHUNK, msg_id=msg_id)
+    body = seal_ciphertext(alice, bob.public_bytes, header, message)
+    pieces = [body[i : i + capacity] for i in range(0, len(body), capacity)]
+    total = len(pieces)
+    return msg_id, [
+        (Header(type=TYPE_CHUNK, msg_id=msg_id, countdown=total - i - 1), piece)
+        for i, piece in enumerate(pieces)
+    ]
+
+
+def reassemble(chunks):
+    return b"".join(piece for _, piece in chunks)
+
+
+def open_chunks(bob, msg_id, chunks):
+    return open_ciphertext(bob, Header(type=TYPE_CHUNK, msg_id=msg_id), reassemble(chunks))
+
+
+def test_chunks_reassemble_in_order(alice, bob):
+    msg = b"the quick brown fox jumps over the lazy dog " * 20
+    msg_id, chunks = make_chunks(alice, bob, msg, 200)
+    assert len(chunks) > 1
+    _, got = open_chunks(bob, msg_id, chunks)
+    assert got == msg
+
+
+def test_final_chunk_carries_countdown_zero(alice, bob):
+    _, chunks = make_chunks(alice, bob, b"y" * 900, 200)
+    assert chunks[-1][0].countdown == 0, "completion must be self-describing"
+    assert [c[0].countdown for c in chunks] == list(range(len(chunks) - 1, -1, -1))
+
+
+def test_missing_chunk_is_detected(alice, bob):
+    msg_id, chunks = make_chunks(alice, bob, b"z" * 900, 200)
+    countdowns = [c[0].countdown for c in chunks]
+    del chunks[1]
+    remaining = [c[0].countdown for c in chunks]
+    assert 0 in remaining, "the final chunk is still present"
+    assert len(set(remaining)) != max(remaining) + 1, "the gap must be detectable by countdown"
+    with pytest.raises(EnvelopeError):
+        open_chunks(bob, msg_id, chunks)
+
+
+def test_reordered_chunks_are_detected(alice, bob):
+    msg_id, chunks = make_chunks(alice, bob, b"w" * 900, 200)
+    swapped = [chunks[1], chunks[0]] + chunks[2:]
+    with pytest.raises(EnvelopeError):
+        open_chunks(bob, msg_id, swapped)
+
+
+def test_duplicated_chunk_is_detected(alice, bob):
+    msg_id, chunks = make_chunks(alice, bob, b"v" * 900, 200)
+    duped = [chunks[0], chunks[0]] + chunks[1:]
+    with pytest.raises(EnvelopeError):
+        open_chunks(bob, msg_id, duped)
+
+
+# --- key announcements --------------------------------------------------------
+
+
+def test_key_announcement_round_trip(alice):
+    blob = build_key_announcement(alice.public_bytes)
+    assert len(blob) == 38, "must fit Class C's 72-byte capacity"
+    assert parse_key_announcement(blob) == alice.public_bytes
+
+
+def test_key_announcement_rejects_wrong_length(alice):
+    blob = build_key_announcement(alice.public_bytes)
+    with pytest.raises(EnvelopeError):
+        parse_key_announcement(blob + b"\x00")
+
+
+def test_fingerprint_is_stable_and_formatted(alice):
+    fp = alice.fingerprint
+    assert fp == fingerprint_of(alice.public_bytes)
+    assert len(fp.replace(" ", "")) == 16
+    assert fp.count(" ") == 3
+
+
+def test_different_keys_give_different_fingerprints(alice, bob):
+    assert alice.fingerprint != bob.fingerprint
+
+
+# --- key file at rest ---------------------------------------------------------
+
+
+def test_key_file_round_trip(alice):
+    blob = encrypt_identity(alice, "a decent passphrase", **FAST)
+    assert len(blob) == 102
+    assert decrypt_identity(blob, "a decent passphrase").public_bytes == alice.public_bytes
+
+
+def test_secret_key_never_appears_in_the_file(alice):
+    blob = encrypt_identity(alice, "passphrase", **FAST)
+    assert bytes(alice.secret) not in blob, "the secret key must not be stored in the clear"
+
+
+def test_wrong_passphrase_fails(alice):
+    blob = encrypt_identity(alice, "right", **FAST)
+    with pytest.raises(KeyError_, match="wrong passphrase"):
+        decrypt_identity(blob, "wrong")
+
+
+def test_corrupt_key_file_is_indistinguishable_from_a_wrong_passphrase(alice):
+    """The error text must not work as an oracle."""
+    blob = bytearray(encrypt_identity(alice, "right", **FAST))
+    blob[60] ^= 0xFF
+    with pytest.raises(KeyError_, match="wrong passphrase, or the key file is corrupt"):
+        decrypt_identity(bytes(blob), "right")
+
+
+def test_kdf_parameters_are_stored_not_assumed(alice):
+    """Raising the cost later must not orphan existing key files."""
+    blob = encrypt_identity(alice, "pw", **FAST)
+    assert int.from_bytes(blob[6:10], "big") == FAST["ops"]
+    assert int.from_bytes(blob[10:14], "big") == FAST["mem"]
+    assert decrypt_identity(blob, "pw").public_bytes == alice.public_bytes
+
+
+def test_empty_passphrase_is_refused(alice):
+    with pytest.raises(KeyError_, match="empty passphrase"):
+        encrypt_identity(alice, "", **FAST)
+
+
+def test_saved_key_file_is_0600(tmp_path, alice):
+    path = tmp_path / "id.key"
+    save_identity(path, alice, "pw", **FAST)
+    assert oct(path.stat().st_mode)[-3:] == "600"
+    assert load_identity(path, "pw").public_bytes == alice.public_bytes
+
+
+def test_save_refuses_to_overwrite(tmp_path, alice):
+    path = tmp_path / "id.key"
+    save_identity(path, alice, "pw", **FAST)
+    with pytest.raises(KeyError_, match="already exists"):
+        save_identity(path, Identity.generate(), "pw", **FAST)
+
+
+def test_identity_repr_hides_the_secret(alice):
+    assert "redacted" in repr(alice)
+    assert bytes(alice.secret).hex() not in repr(alice)
