@@ -602,3 +602,163 @@ def test_the_conversation_can_scroll(client):
     body = client[0].get("/messages").text
     assert "overflow-y:auto" in body
     assert "min-height:0" in body
+
+
+# --- sending should feel like sending -----------------------------------------
+# A plain testnet message has nothing to weigh up: the coins are free, it is one
+# transaction, and it is irreversible the moment it is broadcast either way. A
+# review step there only makes sending feel like filing paperwork. A file is
+# genuinely different -- it costs dust that can never be spent again, and a
+# chunked send waits a block between transactions, so it can take minutes.
+
+
+def test_a_plain_message_needs_no_confirmation(monkeypatch, client):
+    """One keystroke, not two clicks."""
+    app, state = client
+    sent = {}
+
+    class FakeSender:
+        def __init__(self, *a, **k):
+            pass
+
+        def prepare(self, *a, **k):
+            return type("P", (), {"fee_sats": 1000, "txid": "tx"})()
+
+        def broadcast(self, prepared):
+            sent["txid"] = "tx-broadcast"
+            return "tx-broadcast"
+
+        def send_all(self, address, payloads, **k):
+            return [self.broadcast(None)]
+
+    monkeypatch.setattr("arcade.web.app.MessageSender", FakeSender)
+    monkeypatch.setattr("arcade.web.app.funded_address", lambda *a, **k: "nAddr")
+    monkeypatch.setattr("arcade.web.app.Miner",
+                        lambda *a, **k: type("M", (), {
+                            "status": lambda self: type("S", (), {"funded": True})()})())
+
+    class FakeRpc:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(type(state.messaging), "rpc", lambda self: FakeRpc())
+    state.ensure_identity = lambda: None
+    from arcade.messaging.keys import Identity
+    state.identity = Identity.generate()
+
+    peer = ("aa" * 32)
+    response = app.post(f"/messages/{peer}/send",
+                        data={"csrf_token": state.csrf_token, "body": "hello"},
+                        follow_redirects=False)
+
+    assert response.status_code == 303, "a plain message should just go"
+    assert sent.get("txid"), "it should have been broadcast without a second step"
+
+
+def test_the_time_estimate_comes_from_the_chain_not_a_constant():
+    """Pepecoin testnet aims at a minute and does not hit it.
+
+    Over thirty real blocks the median gap was 35 seconds, the mean 49 and the
+    worst 373, so an estimate built on the nominal target would be confidently
+    wrong in both directions.
+    """
+    from arcade.messaging.sender import estimate_send_seconds
+
+    typical, slow = estimate_send_seconds(6, 33.0, 73.0)
+    assert typical == 165          # five waits, not six
+    assert slow == 365
+
+
+def test_one_transaction_takes_no_waiting():
+    from arcade.messaging.sender import estimate_send_seconds
+
+    assert estimate_send_seconds(1, 60.0, 180.0) == (0, 0)
+
+
+@pytest.mark.parametrize("seconds,expected", [
+    (0, "under a minute"), (30, "under a minute"), (90, "about 2 minutes"),
+    (600, "about 10 minutes"), (5400, "about 1.5 hours"),
+])
+def test_durations_are_described_coarsely(seconds, expected):
+    from arcade.messaging.sender import describe_duration
+
+    assert describe_duration(seconds) == expected
+
+
+def test_the_address_selector_and_the_input_selector_agree():
+    """They disagreed, and the send failed naming the address it had just picked.
+
+    `funded_address` counted unconfirmed change as spendable; `prepare` did not.
+    So an address chosen as funded was then reported as holding 0.00000000.
+    """
+    from arcade.messaging.sender import SPENDABLE_MINCONF, MessageSender
+    import inspect
+
+    assert SPENDABLE_MINCONF == 0
+    for name in ("prepare", "_select_inputs"):
+        default = inspect.signature(getattr(MessageSender, name)).parameters["minconf"].default
+        assert default == SPENDABLE_MINCONF, f"{name} uses a different minconf"
+
+
+def test_a_named_contact_is_not_asked_to_be_named_again(client, monkeypatch):
+    """The save field answers a question the address book has already answered."""
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    peer_key = b"\x60" * 32
+    state.identity = Identity.generate()
+    with state.store() as store:
+        store.add_message(None, "tx", "tx", 1, 0, "nThem", peer_key,
+                          state.identity.fingerprint, b"hello")
+        store.save_contact(pubkey=peer_key, name="Alice")
+
+    body = app.get(f"/messages/{peer_key.hex()}").text
+    assert 'placeholder="name them"' not in body
+    assert "Address book" in body
+
+
+def test_an_unnamed_contact_can_still_be_named_from_the_thread(client):
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    peer_key = b"\x61" * 32
+    state.identity = Identity.generate()
+    with state.store() as store:
+        store.add_message(None, "tx", "tx", 1, 0, "nThem", peer_key,
+                          state.identity.fingerprint, b"hello")
+
+    body = app.get(f"/messages/{peer_key.hex()}").text
+    assert 'placeholder="name them"' in body
+    assert "Add to address book" in body
+
+
+def test_a_published_name_travels_with_its_address(client):
+    """The name is read from the announcement, not from the address book.
+
+    Looking it up in the address book could only ever find names for people
+    already in it -- which is exactly who this list leaves out.
+    """
+    app, state = client
+    with state.store() as store:
+        store.add_key_announcement("tx1", "nTheirAddress", b"\x72" * 32, "aa",
+                                   500, 1000, stated=True, name="alice")
+
+    body = app.get("/contacts").text
+    assert "alice" in body
+    assert "nTheirAddress" in body
+
+
+def test_adding_a_published_contact_keeps_their_name(client):
+    app, state = client
+    with state.store() as store:
+        store.add_key_announcement("tx1", "nTheirAddress", b"\x73" * 32, "aa",
+                                   500, 1000, stated=True, name="bob")
+
+    app.post("/contacts/add-published",
+             data={"csrf_token": state.csrf_token, "pubkey": "73" * 32,
+                   "address": "nTheirAddress", "name": "bob"},
+             follow_redirects=False)
+
+    with state.store() as store:
+        (row,) = store.contacts()
+    assert row["name"] == "bob"
+    assert row["testnet_address"] == "nTheirAddress"

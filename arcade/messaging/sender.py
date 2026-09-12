@@ -25,6 +25,18 @@ from ..rpc import RpcClient
 from ..txbuild import build_raw_tx, multisig_script, op_return_script, p2pkh_script
 
 log = logging.getLogger(__name__)
+
+#: What counts as spendable when building a message.
+#:
+#: Zero, deliberately and consistently. `funded_address` has to see unconfirmed
+#: change or it reports an address as empty moments after that address received
+#: the change from your last send; `send_all` has to spend it to continue a chunk
+#: chain. The two used different values for a while and disagreed about what was
+#: available -- the address selector picked an address the input selector then
+#: called empty, and the send failed with "holds 0.00000000" naming the very
+#: address it had just chosen.
+SPENDABLE_MINCONF = 0
+
 from .envelope import (
     Header, TYPE_CHUNK, TYPE_SINGLE, new_message_id, seal_ciphertext, seal_message,
 )
@@ -228,7 +240,7 @@ class MessageSender:
         return bytes.fromhex(pubkey_hex)
 
     def _select_inputs(self, address: str, target: int,
-                       minconf: int = 1) -> list[tuple[str, int]]:
+                       minconf: int = SPENDABLE_MINCONF) -> list[tuple[str, int]]:
         """Pick outputs belonging to `address` worth at least `target`.
 
         Class B seeds its obfuscation keystream with the SENDER address, and the
@@ -327,7 +339,7 @@ class MessageSender:
                         f"never be read by anyone.", txids, total) from None
 
             try:
-                prepared = self.prepare(sender_address, payload, minconf=0)
+                prepared = self.prepare(sender_address, payload)
             except Exception as exc:
                 if txids:
                     raise PartialSend(
@@ -402,7 +414,8 @@ class MessageSender:
             )
 
     def prepare(self, sender_address: str, payload: bytes, class_c: bool = False,
-                minconf: int = 1, change_address: str | None = None) -> PreparedTx:
+                minconf: int = SPENDABLE_MINCONF,
+                change_address: str | None = None) -> PreparedTx:
         """Build, fund and sign one transaction. Does NOT broadcast.
 
         `minconf=0` lets this spend change that is still unconfirmed, which is
@@ -547,3 +560,54 @@ def record_sent(store, txid: str, recipient_key: bytes, sender_fp: str,
         store.add_sent(txid, recipient_key, recipient_addr, sender_fp, body)
     except Exception:                      # pragma: no cover - storage only
         log.warning("could not record sent message %s locally", txid, exc_info=True)
+
+
+def recent_block_seconds(rpc, samples: int = 25) -> tuple[float, float]:
+    """(typical, slow) gap between recent blocks, in seconds.
+
+    Measured from the chain rather than assumed from its target, because the two
+    differ a great deal. Pepecoin testnet aims at a minute; over the last thirty
+    blocks the median gap was 35 seconds, the mean 49, and the worst 373. An
+    estimate built on the nominal figure would be confidently wrong in both
+    directions.
+
+    Returns the median and roughly the 90th percentile, so a caller can say
+    "about this long, sometimes rather more" instead of pretending to a
+    precision the chain does not have.
+    """
+    try:
+        tip = rpc.get_block_count()
+        times = []
+        for height in range(max(0, tip - samples), tip + 1):
+            times.append(rpc.get_block(rpc.get_block_hash(height)).get("time", 0))
+        gaps = sorted(b - a for a, b in zip(times, times[1:]) if b > a)
+    except Exception:
+        gaps = []
+    if not gaps:
+        return 60.0, 180.0          # the target, as a last resort
+    median = gaps[len(gaps) // 2]
+    slow = gaps[min(len(gaps) - 1, int(len(gaps) * 0.9))]
+    return float(median), float(max(slow, median))
+
+
+def estimate_send_seconds(transactions: int, typical: float, slow: float
+                          ) -> tuple[int, int]:
+    """How long sending `transactions` linked transactions will take.
+
+    Only the waits BETWEEN chunks cost time: broadcasting is immediate, and the
+    last chunk does not wait for anything. So a single transaction is instant,
+    and each additional one costs about one block.
+    """
+    waits = max(0, transactions - 1)
+    return int(waits * typical), int(waits * slow)
+
+
+def describe_duration(seconds: int) -> str:
+    """A duration a person can act on. Deliberately coarse."""
+    if seconds < 45:
+        return "under a minute"
+    minutes = round(seconds / 60)
+    if minutes < 60:
+        return f"about {minutes} minute{'' if minutes == 1 else 's'}"
+    hours = seconds / 3600
+    return f"about {hours:.1f} hours"

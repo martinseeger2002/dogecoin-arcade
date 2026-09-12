@@ -31,7 +31,8 @@ from ..messaging.keys import fingerprint_of
 from ..messaging.miner import Miner, MiningError
 from ..messaging.scanner import Scanner
 from ..messaging.sender import (
-    MessageSender, SendError, funded_address, plan_message, record_sent,
+    MessageSender, SendError, describe_duration, estimate_send_seconds,
+    funded_address, plan_message, record_sent, recent_block_seconds,
 )
 from .state import AppState
 
@@ -301,7 +302,20 @@ def create_app(state: AppState) -> FastAPI:
                 # all up front -- which this did -- produced transactions that
                 # spent the same output twice.
                 prepared = [sender.prepare(address, plan.chunk_payloads[0])]
-                if confirmed == "yes":
+
+                # A plain message on testnet goes straight out. There is nothing
+                # to weigh up: the coins are free, it is one transaction, and it
+                # is gone the instant it is broadcast either way -- a review step
+                # only makes sending feel like filing paperwork.
+                #
+                # A file is different and keeps its confirmation: it costs dust
+                # that can never be spent again, and a chunked send waits a block
+                # between transactions, so it can take minutes. Both of those are
+                # worth knowing BEFORE rather than discovering after.
+                immediate = (not file_bytes
+                             and plan.transactions == 1
+                             and not state.messaging.is_mainnet)
+                if immediate or confirmed == "yes":
                     txids = sender.send_all(address, plan.chunk_payloads)
                     # Keep our own plaintext: the sealed box is to the recipient,
                     # so we could never read this back off the chain ourselves.
@@ -328,9 +342,24 @@ def create_app(state: AppState) -> FastAPI:
                             store.contact_by_key(bytes.fromhex(peer_hex))),
                         "fingerprint": fingerprint_of(bytes.fromhex(peer_hex)),
                         "code": contact.encode(state.messaging.network, bytes.fromhex(peer_hex))}
+        # What the confirmation needs to say about a file: how long, and why.
+        timing = None
+        if plan is not None and file_bytes:
+            try:
+                with state.messaging.rpc() as rpc:
+                    typical, slow = recent_block_seconds(rpc)
+            except Exception:
+                typical, slow = 60.0, 180.0
+            quick, patient = estimate_send_seconds(plan.transactions, typical, slow)
+            timing = {
+                "transactions": plan.transactions,
+                "typical": describe_duration(quick),
+                "slow": describe_duration(patient),
+                "waits": plan.transactions > 1,
+            }
         return render(request, "messages.html", threads=threads, thread=items, peer=peer,
                       when=_when, fingerprint_of=fingerprint_of, prepared=prepared,
-                      plan=plan, draft=body, error=error,
+                      plan=plan, draft=body, error=error, timing=timing,
                       is_new_contact=not items, profile_name=state.profile_name,
                       attached_b64=base64.b64encode(file_bytes).decode() if file_bytes else "",
                       attached_name=file_name, attached_type=file_type,
@@ -469,16 +498,17 @@ def create_app(state: AppState) -> FastAPI:
                     key = bytes(row["pubkey"])
                     if not row["stated"] and key in stated_keys:
                         continue      # an inferred address the key has replaced
-                    # A name published alongside the key, if there was one. It
-                    # lands in `contact` via apply_profile when scanned, so a
-                    # contact may exist with a name and nothing else.
-                    claimed = store.contact_by_key(key)
                     published.append({
                         "address": row["address"],
                         "hex": key.hex(),
                         "height": row["height"],
                         "when": row["block_time"],
-                        "name": claimed["name"] if claimed else "",
+                        # The name as published, read from the announcement
+                        # itself rather than from a contact row. Looking it up in
+                        # the address book could only ever find names for people
+                        # already in it, which is precisely who this list leaves
+                        # out.
+                        "name": row["name"] or "",
                     })
         return render(request, "contacts.html", people=people, editing=editing,
                       published=published, when=_when,

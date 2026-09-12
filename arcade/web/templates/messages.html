@@ -59,13 +59,18 @@
         <div class="convo-name">{{ peer.name or peer.address or 'Unnamed contact' }}</div>
         {% if peer.name and peer.address %}<div class="convo-sub">{{ peer.address }}</div>{% endif %}
       </div>
+      {# Naming is offered only while there is nothing to show. Once somebody is
+         in the address book the field is answering a question that has been
+         answered, and the way to change it is the address book itself. #}
+      {% if not peer.name %}
       <form method="post" action="/messages/{{ peer.hex }}/name" class="row">
         <input type="hidden" name="csrf_token" value="{{ csrf }}">
-        <input name="name" value="{{ peer.name or '' }}" placeholder="name them" class="small-input">
+        <input name="name" placeholder="name them" class="small-input">
         <button class="ghost small" type="submit">Save</button>
       </form>
+      {% endif %}
       <a class="ghost small btn" href="{{ '/contacts?edit=' ~ peer.contact_id if peer.contact_id else '/contacts' }}"
-         title="Their addresses and your notes">Address book</a>
+         title="Their addresses and your notes">{{ 'Address book' if peer.name else 'Add to address book' }}</a>
     </header>
 
     {% if error %}<div class="msg err" style="margin:14px 16px 0">{{ error }}</div>{% endif %}
@@ -119,18 +124,29 @@
       {% set count = plan.transactions if plan else 1 %}
       {% set fee = prepared[0].fee_sats * count / 100000000 %}
       <div class="confirm">
-        <strong>Send this?</strong>
-        {{ count }} transaction{{ '' if count == 1 else 's' }},
-        {{ 'fee' if count == 1 else 'about' }} {{ "%.8f"|format(fee) }}{% if plan %},
-        {{ plan.multisig_outputs }} outputs{% endif %}.
-        It becomes permanent once broadcast.
+        {% if attached_name %}
+          <strong>Send {{ attached_name }}?</strong>
+          {% if timing and timing.waits %}
+            This takes <strong>{{ timing.typical }}</strong>, sometimes
+            {{ timing.slow }}: it goes as {{ count }} linked transactions and each
+            one waits for the previous to confirm.
+          {% else %}
+            One transaction, so it goes straight away.
+          {% endif %}
+          About {{ "%.4f"|format(fee) }} in fees and
+          {{ plan.multisig_outputs if plan else '' }} outputs &mdash; most of that
+          is <strong>dust that can never be spent again</strong>, because a file
+          is carried in the outputs themselves.
+        {% else %}
+          <strong>Send this?</strong>
+          {{ count }} transaction{{ '' if count == 1 else 's' }},
+          fee {{ "%.8f"|format(fee) }}. It becomes permanent once broadcast.
+        {% endif %}
         {% if count > 1 %}
         <div class="note" style="margin:10px 0 0">
-          <strong>A long message is sent as {{ count }} linked transactions.</strong>
-          Each one pays for its own outputs, so most of the cost above is dust
-          rather than fees. If sending stops part way, what is already on the
-          chain cannot be taken back and the message can never be read by anyone
-          &mdash; there is no way to finish it later.
+          If sending stops part way, what is already on the chain cannot be taken
+          back and the message can never be read by anyone. Leave this page open
+          until it finishes.
         </div>
         {% endif %}
         <form method="post" action="/messages/{{ peer.hex }}/send" style="margin-top:10px">
@@ -152,13 +168,14 @@
     <form method="post" action="/messages/{{ peer.hex }}/send" class="composer"
           enctype="multipart/form-data">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
-      <textarea name="body" rows="2" placeholder="Write a message…"
-                onkeydown="if(event.key==='Enter'&&(event.metaKey||event.ctrlKey))this.form.submit()">{{ draft or '' }}</textarea>
+      <textarea name="body" rows="1" placeholder="Write a message…"
+                oninput="grow(this)"
+                onkeydown="sendOnEnter(event, this)">{{ draft or '' }}</textarea>
       <label class="attach" title="Send a file">
         <input type="file" name="attachment" onchange="showPick(this)" hidden>
         <span id="clip">📎</span>
       </label>
-      <button type="submit">Review</button>
+      <button type="submit">Send</button>
       {% if is_new_contact %}
       <label class="introduce">
         <input type="checkbox" name="share_profile" value="yes" checked>
@@ -192,6 +209,20 @@
 </div>
 
 <script>
+// Enter sends. Shift+Enter starts a new line, which is what every messenger
+// does and what a one-line box implies. Sending is not a decision that needs a
+// second click here: a testnet message costs free coins, goes as one
+// transaction, and is on the chain the moment it is broadcast either way.
+function sendOnEnter(event, box){
+  if (event.key !== 'Enter' || event.shiftKey) return;
+  event.preventDefault();
+  if (box.value.trim()) box.form.submit();
+}
+function grow(box){
+  box.style.height = 'auto';
+  box.style.height = Math.min(box.scrollHeight, 160) + 'px';
+}
+
 function showPick(input){
   var note = document.getElementById('picked');
   var file = input.files && input.files[0];
