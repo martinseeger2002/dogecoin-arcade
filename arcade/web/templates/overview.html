@@ -111,8 +111,19 @@ function copyOf(id, ev){
   <div class="note">
     <strong>The chain is not affected.</strong> Those transactions are permanent,
     and anyone they were addressed to can still read them &mdash; this clears only
-    what is remembered here. Your <strong>address book</strong> and your
-    <strong>wallet</strong> are left alone.
+    what is remembered here. Your <strong>address book</strong>, your
+    <strong>wallet</strong> and your own <strong>published key</strong> are left
+    alone.
+  </div>
+  <div class="note">
+    <strong>What is cleared is discarded, not just forgotten.</strong> The new
+    starting point is later than the messages you are clearing, so nothing on
+    this version will read that far back again and a later scan will not bring
+    them back. The transactions themselves stay on the chain for ever, and
+    anyone holding their ids can still read them.
+    <br><br>
+    Publishing your key is safe either way: that is checked against the chain
+    before anything is spent, so a cleared list can never cost you a second fee.
   </div>
   <form method="post" action="/reset-history"
         onsubmit="return confirm('Forget everything scanned so far?')">

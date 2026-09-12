@@ -586,3 +586,78 @@ def repair_announcement_names(rpc, params, store) -> int:
 
     store.set_meta("announcement_repair", REPAIR_GENERATION)
     return repaired
+
+
+def find_own_announcements(rpc, params, pubkey: bytes, limit: int = 400):
+    """Look on the CHAIN for an announcement of `pubkey` we already published.
+
+    Returns every match as (txid, address, height, block_time, stated, name),
+    oldest first, or an empty list.
+
+    ALL of them, not just one: recovering only the earliest puts back the
+    12-byte truncation ("Big Chief En") and leaves the full name that replaced
+    it missing, which is the bug the name ranking exists to settle. Handing the
+    store every announcement lets that ranking pick, exactly as a scan would.
+
+    This exists because the Keys page decided whether to offer "Publish on
+    chain" purely from the local store, and the store can be wrong in the one
+    direction that costs money. A reset that dropped the announcement rows left
+    the page saying "None seen yet" and inviting a second publication of
+    something already permanent -- and because the rows sat below the new
+    starting block, no rescan on this version could ever put them back.
+
+    Our own announcement is always in our own wallet's history, whatever the
+    scanner's floor says, so `listtransactions` finds it without touching the
+    scan cursor and without reading anything that is not ours.
+    """
+    from ..indexer import PrevOutCache
+    from ..tx import extract
+    from .envelope import parse_key_announcement, parse_announced_identity
+
+    try:
+        entries = rpc.call("listtransactions", "*", limit, 0, True) or []
+    except Exception:
+        return None
+
+    # The scanner's own resolver, rather than a hand-rolled one: sender
+    # determination needs a PrevOut with a parsed output TYPE, not just an
+    # address and a value, and reimplementing that got it wrong on the first
+    # attempt.
+    prevouts = PrevOutCache(rpc, params)
+    seen: set[str] = set()
+    found: list[tuple] = []
+    for entry in reversed(entries):          # newest first
+        txid = entry.get("txid")
+        if not txid or txid in seen:
+            continue
+        seen.add(txid)
+        try:
+            raw = rpc.call("getrawtransaction", txid, True)
+            height = 0
+            if raw.get("blockhash"):
+                height = int(rpc.call("getblock", raw["blockhash"])["height"])
+            atx = extract(raw, height, 0, params, prevouts.lookup)
+            if atx is None:
+                continue
+            # The payload is AnyData-wrapped on the wire; decoding the header
+            # straight off it fails with "bad magic". Same unwrap the block
+            # scanner does, for the same reason.
+            message = P.decode(atx.payload)
+            if not isinstance(message, P.AnyData):
+                continue
+            body = message.data
+            header = Header.decode(body)
+            if header.type != TYPE_KEY_ANNOUNCE:
+                continue
+            if parse_key_announcement(body) != pubkey:
+                continue
+        except Exception:
+            continue
+        claimed_hash, claimed_name = parse_announced_identity(body)
+        address = atx.sender
+        if claimed_hash:
+            address = b58check_encode(params.pubkeyhash_version, claimed_hash)
+        found.append((txid, address, height, int(raw.get("blocktime") or 0),
+                      bool(claimed_hash), claimed_name))
+    found.sort(key=lambda row: (row[2] or 1 << 62))
+    return found

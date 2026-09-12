@@ -2105,3 +2105,35 @@ def test_both_confirm_screens_quote_dust_from_a_real_field(client):
     assert "dust = prepared.dust_sats * count" in sender, (
         "send_cost() must scale the dust by the transaction count"
     )
+
+
+def test_publishing_asks_the_chain_before_it_spends(monkeypatch, client):
+    """The store can be wrong in the one direction that costs money.
+
+    a test machine cleared its store and the Keys page went from three announcements to
+    "None seen yet", with a live Publish on chain form -- for a key already
+    published in blocks below the new starting point, where no rescan on this
+    version could ever find it again. The only routes left were paying a second
+    fee for a permanent record, or re-adding rows by hand.
+
+    So the decision is taken from the CHAIN, not the list. And it refuses
+    WITHOUT writing the rows back: restoring them would undo the reset the user
+    asked for -- those are the very transactions they cleared.
+    """
+    import inspect
+
+    from arcade.web import app as webapp
+
+    source = inspect.getsource(webapp.create_app)
+    publish = source[source.index("def publish_key("):]
+    publish = publish[:publish.index("\n    @app.")]
+
+    assert "find_own_announcements(" in publish, (
+        "publishing decides from the local list again"
+    )
+    spend = publish.index("sender.broadcast(")
+    check = publish.index("find_own_announcements(")
+    assert check < spend, "the chain is asked AFTER the money is spent"
+    assert "add_key_announcement" not in publish, (
+        "refusing is enough; writing the rows back undoes the user's reset"
+    )

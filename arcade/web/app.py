@@ -36,7 +36,7 @@ from ..messaging.envelope import (
 )
 from ..messaging.keys import fingerprint_of
 from ..messaging.miner import Miner, MiningError
-from ..messaging.scanner import Scanner
+from ..messaging.scanner import Scanner, find_own_announcements
 from ..messaging.sender import (
     MessageSender, SendError, describe_duration, estimate_readable_seconds,
     send_cost,
@@ -1676,6 +1676,34 @@ def create_app(state: AppState) -> FastAPI:
             # half a name, permanently, for the cheaper fee.
             single_output = announcement_fits_one_output(payload)
             with state.messaging.rpc() as rpc:
+                # Ask the CHAIN, not the store, whether this key is already
+                # published. The store can be wrong in the one direction that
+                # costs money: a reset dropped the announcement rows, the page
+                # said "None seen yet" and offered to publish again -- for
+                # something already permanent, and sitting below the new
+                # starting block where no rescan could ever find it.
+                existing = find_own_announcements(
+                    rpc, state.messaging.params, state.identity.public_bytes)
+                if existing:
+                    # Refuse, and do NOT write the rows back. Restoring them
+                    # would undo a reset the user asked for -- these are the
+                    # very transactions they cleared. Knowing the announcement
+                    # exists is what saves the fee; storing it again is a
+                    # separate thing they did not ask for.
+                    latest = existing[-1]
+                    where = (f"in block {latest[2]:,}" if latest[2]
+                             else "and waiting for a block")
+                    raise ValueError(
+                        f"this key is already published {where}, as {latest[0]}. "
+                        f"{len(existing)} announcement"
+                        f"{'' if len(existing) == 1 else 's'} for this key "
+                        f"{'is' if len(existing) == 1 else 'are'} already on the "
+                        f"chain, so there is nothing to pay for. It is not listed "
+                        f"below because this installation starts at a later block "
+                        f"-- that is the starting point doing its job, not a key "
+                        f"gone missing. Publishing again would cost a second fee "
+                        f"for a record that is already permanent."
+                    )
                 if not Miner(rpc, state.messaging.params).status().funded:
                     raise ValueError("no spendable coins yet -- see Wallet")
                 sender = MessageSender(rpc, state.messaging.params)
@@ -1777,9 +1805,15 @@ def create_app(state: AppState) -> FastAPI:
                 with state.messaging.rpc() as rpc:
                     start = rpc.get_block_count()
             with state.store() as store:
+                # No `if state.unlocked` here. The store keeps everything below
+                # the new floor regardless, because that is what cannot be
+                # recovered; this only adds the identity's own key when it is
+                # known, and must never be the thing standing between a user and
+                # their published announcement.
                 counts = store.reset_history(
                     state.messaging.network, start,
-                    keep_key=state.identity.public_bytes if state.unlocked else None)
+                    keep_key=(state.identity.public_bytes
+                              if state.identity is not None else None))
             state.clear_progress()
             removed = sum(counts.values())
             state.flash(

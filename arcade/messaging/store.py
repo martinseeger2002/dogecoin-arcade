@@ -412,10 +412,15 @@ class MessageStore:
         typed rather than scanned, so losing it would be losing work rather than
         losing test data.
         """
-        # Your own announcement survives. It is on the chain permanently, below
-        # the new starting point, so it would never be rescanned -- and the Keys
-        # page would then offer to publish again, paying a second fee for
-        # something already published. a test machine hit exactly that.
+        # Your own announcement survives; everything else goes, including
+        # other people's. A reset is for clearing test traffic, and retaining
+        # announcements from below the new floor simply brought that traffic
+        # back under another name -- the point of the reset is a clean slate.
+        #
+        # Keeping your own is NOT what stops a second publication being paid
+        # for. `publish_key` asks the chain before it spends, so an empty list
+        # here cannot cost anything; this only spares you a page that has
+        # forgotten something you can see on a block explorer.
         own = []
         if keep_key:
             own = list(self.conn.execute(
