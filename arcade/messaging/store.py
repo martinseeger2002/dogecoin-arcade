@@ -129,6 +129,26 @@ CREATE TABLE IF NOT EXISTS attachment (
     UNIQUE (message_id)
 );
 
+-- Public group posts. NOT encrypted: every row here was readable by anyone with
+-- a node the moment it was mined, and is stored in the clear because that is
+-- what it already is. Kept per network, because the same channel name on
+-- testnet and on mainnet is two different rooms with two different costs.
+CREATE TABLE IF NOT EXISTS group_post (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    network    TEXT NOT NULL,
+    channel    TEXT NOT NULL,
+    txid       TEXT NOT NULL,
+    height     INTEGER NOT NULL,
+    block_time INTEGER NOT NULL,
+    sender     TEXT NOT NULL DEFAULT '',
+    nickname   TEXT NOT NULL DEFAULT '',
+    text       TEXT NOT NULL DEFAULT '',
+    mine       INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (network, txid)
+);
+CREATE INDEX IF NOT EXISTS group_post_channel
+    ON group_post(network, channel, block_time DESC);
+
 CREATE TABLE IF NOT EXISTS pending_send (
     msg_id         BLOB PRIMARY KEY,
     recipient_key  BLOB NOT NULL,
@@ -484,6 +504,48 @@ class MessageStore:
             "  ELSE contact.mainnet_address END, "
             "updated=? WHERE id=?",
             (name, testnet_address, mainnet_address, now, existing["id"]))
+
+    # --- public group posts ---------------------------------------------------
+
+    def add_group_post(self, network: str, channel: str, txid: str, height: int,
+                       block_time: int, sender: str, nickname: str, text: str,
+                       mine: bool = False) -> int:
+        # A post this machine made is recorded optimistically at broadcast, with
+        # height 0, so it appears straight away. The scan then sees the same txid
+        # on chain. INSERT OR IGNORE kept the optimistic row and the real height
+        # never landed, so a post read "pending" forever. Upsert the confirmation
+        # instead, and never let a rescan overwrite `mine` -- the chain cannot
+        # tell us that, only we know it.
+        cur = self.conn.execute(
+            "INSERT INTO group_post"
+            "(network,channel,txid,height,block_time,sender,nickname,text,mine) "
+            "VALUES(?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(network,txid) DO UPDATE SET "
+            "  height=CASE WHEN excluded.height > 0 THEN excluded.height "
+            "              ELSE group_post.height END, "
+            "  block_time=CASE WHEN excluded.height > 0 THEN excluded.block_time "
+            "              ELSE group_post.block_time END, "
+            "  sender=CASE WHEN excluded.sender != '' THEN excluded.sender "
+            "              ELSE group_post.sender END, "
+            "  mine=MAX(group_post.mine, excluded.mine)",
+            (network, channel, txid, height, block_time, sender, nickname, text,
+             1 if mine else 0))
+        return cur.lastrowid or 0
+
+    def group_posts(self, network: str, channel: str,
+                    limit: int = 200) -> list[sqlite3.Row]:
+        """Posts in one channel, oldest first, so a conversation reads downward."""
+        rows = list(self.conn.execute(
+            "SELECT * FROM group_post WHERE network=? AND channel=? "
+            "ORDER BY block_time DESC, id DESC LIMIT ?", (network, channel, limit)))
+        return list(reversed(rows))
+
+    def group_channels(self, network: str) -> list[sqlite3.Row]:
+        """Channels seen on this network, most recently active first."""
+        return list(self.conn.execute(
+            "SELECT channel, COUNT(*) AS posts, MAX(block_time) AS last "
+            "FROM group_post WHERE network=? GROUP BY channel ORDER BY last DESC",
+            (network,)))
 
     # --- chunked sends in progress --------------------------------------------
 

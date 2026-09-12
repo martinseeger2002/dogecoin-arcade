@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}Public · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Public channels</h1>
+<p class="sub">Anyone can read these. That is the point of them.</p>
+
+<div class="note warn-note" style="margin-bottom:18px">
+  <strong>Nothing here is encrypted.</strong> Every post is written on the chain
+  in plain text, readable by anyone with a node, for as long as the chain exists.
+  There is no way to delete one. The Messenger is the private half of this
+  application; this is the public half, and they behave very differently.
+</div>
+
+<div class="row" style="gap:8px;margin-bottom:16px">
+  <a class="chainpick {{ 'on' if which == 'messaging' }}"
+     href="/groups?which=messaging&channel={{ channel }}">
+    Testnet <span class="tag testnet">test</span>
+    <em>free coins, nothing at stake</em></a>
+  <a class="chainpick {{ 'on' if which == 'ledger' }}"
+     href="/groups?which=ledger&channel={{ channel }}">
+    Mainnet <span class="tag mainnet">main</span>
+    <em>real coins, permanent</em></a>
+</div>
+
+<div class="msg-layout">
+  <aside class="threads">
+    <form method="get" action="/groups" class="newthread">
+      <input type="hidden" name="which" value="{{ which }}">
+      <div class="row">
+        <div style="flex:1"><input name="channel" value="{{ channel }}"
+               placeholder="channel name" maxlength="24"></div>
+        <button type="submit" class="small">Go</button>
+      </div>
+      <p class="muted" style="font-size:.8rem;margin:8px 0 0">
+        A channel is just a name. Anyone using the same name is in the same room
+        &mdash; there is no list of members and no way to keep anyone out.</p>
+    </form>
+
+    {% if not channels %}
+      <p class="muted empty">No channels seen yet. Scan from the Overview page,
+         or post to start one.</p>
+    {% endif %}
+    {% for c in channels %}
+      <a class="thread {{ 'on' if c.channel == channel }}"
+         href="/groups?which={{ which }}&channel={{ c.channel }}">
+        <div class="thread-top"><span class="who">#{{ c.channel }}</span></div>
+        <div class="thread-when">{{ c.posts }} post{{ '' if c.posts == 1 else 's' }}
+          · {{ when(c.last) }}</div>
+      </a>
+    {% endfor %}
+  </aside>
+
+  <section class="convo">
+    <header class="convo-head">
+      <div>
+        <div class="convo-name">#{{ channel }}</div>
+        <div class="convo-sub">{{ chain.label }} ·
+          {% if balance is not none %}{{ "{:,.4f}".format(balance) }} spendable
+          {% else %}node not answering{% endif %}</div>
+      </div>
+    </header>
+
+    {% if error %}<div class="msg err" style="margin:14px 16px 0">{{ error }}</div>{% endif %}
+
+    <div class="bubbles" id="bubbles">
+      {% if not posts %}
+        <p class="muted empty">Nothing in #{{ channel }} yet on {{ chain.label|lower }}.</p>
+      {% endif %}
+      {% for p in posts %}
+        <div class="bubble-row {{ 'mine' if p.mine else 'theirs' }}">
+          <div class="bubble">
+            <div class="poster">{{ p.nickname or p.sender or 'anonymous' }}</div>
+            <div class="text">{{ p.text }}</div>
+            <div class="stamp">
+              {{ when(p.block_time) }}
+              {% if p.height %}· block {{ "{:,}".format(p.height) }}{% else %}· pending{% endif %}
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+
+    {% if prepared %}
+      <div class="confirm">
+        {% if chain.is_mainnet %}
+        <strong class="danger-text">This spends real coins.</strong>
+        {% else %}<strong>Post this?</strong>{% endif %}
+        Fee {{ "%.8f"|format(prepared.fee_sats / 100000000) }},
+        one OP_RETURN output and no dust.
+        {% if chain.is_mainnet %}
+        <div class="note" style="margin:10px 0 0">
+          Posting to mainnet writes <em>{{ draft }}</em> onto the Pepecoin chain
+          permanently, in plain text, under your name. It cannot be edited or
+          removed, and it costs real coins to do. Testnet behaves identically and
+          costs nothing &mdash; use it if you are trying this out.
+        </div>
+        {% endif %}
+        <form method="post" action="/groups/post" style="margin-top:10px">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <input type="hidden" name="which" value="{{ which }}">
+          <input type="hidden" name="channel" value="{{ channel }}">
+          <input type="hidden" name="text" value="{{ draft }}">
+          <input type="hidden" name="confirmed" value="yes">
+          <div class="row">
+            <button type="submit" class="small {{ 'danger' if chain.is_mainnet }}">
+              {{ 'Post to mainnet' if chain.is_mainnet else 'Post it' }}</button>
+            <a class="muted" href="/groups?which={{ which }}&channel={{ channel }}"
+               style="font-size:.87rem">Cancel</a>
+          </div>
+        </form>
+      </div>
+    {% endif %}
+
+    <form method="post" action="/groups/post" class="composer">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="which" value="{{ which }}">
+      <input type="hidden" name="channel" value="{{ channel }}">
+      <textarea name="text" rows="2" maxlength="{{ room }}" id="post"
+                oninput="countLeft(this)"
+                placeholder="Say something in public…">{{ draft or '' }}</textarea>
+      <button type="submit">Review</button>
+    </form>
+    <p class="muted composer-note">
+      <span id="left">{{ room }}</span> characters left. A post is one OP_RETURN
+      output, which is why it is short and why it costs a fee and no dust.
+      {% if nickname %}Posting as <strong>{{ nickname }}</strong>.
+      {% else %}<a href="/contacts">Set a name</a> to sign your posts.{% endif %}
+    </p>
+  </section>
+</div>
+
+<script>
+function countLeft(el){
+  var max = {{ room }};
+  var used = new TextEncoder().encode(el.value).length;
+  var left = document.getElementById('left');
+  left.textContent = max - used;
+  left.style.color = (max - used) < 0 ? 'var(--bad)' : '';
+}
+var b = document.getElementById('bubbles'); if (b) b.scrollTop = b.scrollHeight;
+</script>
+{% endblock %}

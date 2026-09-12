@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import time
 import html
 import os
 from pathlib import Path
@@ -20,7 +21,7 @@ from fastapi.templating import Jinja2Templates
 
 from .. import backup, wallet as walletlib
 from ..config import NETWORKS, MainnetRefused, WrongChain
-from ..messaging import contact, content
+from ..messaging import contact, content, group
 from ..script import b58check_decode
 from ..messaging.derive import DerivationError, derive_identity
 from ..messaging.envelope import build_key_announcement
@@ -43,6 +44,7 @@ NAV = [
     ("/",             "Overview",     None,        True),
     ("/messages",     "Messages",     "testnet",   True),
     ("/contacts",     "Address book", None,        True),
+    ("/groups",       "Public",       None,        True),
     ("/backup",       "Backup",       None,        True),
     ("/keys",         "Keys",         "testnet",   True),
     ("/wallet",       "Wallets",      None,        True),
@@ -724,6 +726,80 @@ def create_app(state: AppState) -> FastAPI:
         except ValueError as exc:
             state.flash(str(exc), "err")
         return RedirectResponse("/contacts", status_code=303)
+
+    # --- public group posts ---------------------------------------------------
+    # The one part of this application that is NOT encrypted, and the interface
+    # says so on every screen where a post can be written. Runs on both chains:
+    # D-010 keeps the *Messenger* on testnet permanently, but a public post
+    # carries no key material and reveals nothing that publishing it does not
+    # already reveal, so mainnet is a cost decision rather than a safety one.
+
+    @app.get("/groups", response_class=HTMLResponse)
+    def groups(request: Request, which: str = "messaging", channel: str = ""):
+        chain = state.ledger if which == "ledger" else state.messaging
+        channel = (channel or group.DEFAULT_CHANNEL).strip() or group.DEFAULT_CHANNEL
+        posts, channels, balance = [], [], None
+        if state.store_path.exists():
+            with state.store() as store:
+                posts = store.group_posts(chain.network, channel)
+                channels = store.group_channels(chain.network)
+        try:
+            with chain.rpc() as rpc:
+                balance = float(rpc.call("getbalance") or 0)
+        except Exception:
+            balance = None
+        return render(request, "groups.html", which=which, chain=chain,
+                      channel=channel, posts=posts, channels=channels,
+                      balance=balance, when=_when,
+                      room=group.max_text_bytes(channel, state.profile_name),
+                      nickname=state.profile_name)
+
+    @app.post("/groups/post", response_class=HTMLResponse)
+    def group_post_send(request: Request, which: str = Form("messaging"),
+                        channel: str = Form(""), text: str = Form(""),
+                        confirmed: str = Form(""), csrf_token: str = Form("")):
+        chain = state.ledger if which == "ledger" else state.messaging
+        channel = (channel or group.DEFAULT_CHANNEL).strip() or group.DEFAULT_CHANNEL
+        prepared, error = None, None
+        try:
+            check_csrf(csrf_token)
+            payload = group.build(group.GroupPost(
+                channel=channel, nickname=state.profile_name, text=text))
+            with chain.rpc() as rpc:
+                # public_only=True is the narrow exception to D-010. Nothing
+                # encrypted passes it; see MessageSender.__init__.
+                sender = MessageSender(rpc, chain.params, public_only=True)
+                address = funded_address(rpc, mainnet=chain.is_mainnet)
+                prepared = sender.prepare(address, payload, class_c=True,
+                                          change_address=address)
+                if confirmed == "yes":
+                    txid = sender.broadcast(prepared)
+                    with state.store() as store:
+                        store.add_group_post(
+                            chain.network, channel, txid, 0, int(time.time()),
+                            address, state.profile_name, text, mine=True)
+                    state.flash(
+                        f"Posted to #{channel}. It is public and permanent.", "ok")
+                    return RedirectResponse(
+                        f"/groups?which={which}&channel={channel}", status_code=303)
+        except Exception as exc:
+            error = str(exc)
+
+        posts, channels, balance = [], [], None
+        if state.store_path.exists():
+            with state.store() as store:
+                posts = store.group_posts(chain.network, channel)
+                channels = store.group_channels(chain.network)
+        try:
+            with chain.rpc() as rpc:
+                balance = float(rpc.call("getbalance") or 0)
+        except Exception:
+            balance = None
+        return render(request, "groups.html", which=which, chain=chain,
+                      channel=channel, posts=posts, channels=channels,
+                      balance=balance, when=_when, prepared=prepared, error=error,
+                      draft=text, room=group.max_text_bytes(channel, state.profile_name),
+                      nickname=state.profile_name)
 
     @app.get("/keys", response_class=HTMLResponse)
     def keys_page(request: Request):

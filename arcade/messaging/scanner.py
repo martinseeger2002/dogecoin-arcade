@@ -22,7 +22,7 @@ from ..config import Params, require_messaging_network
 from ..indexer import PrevOutCache
 from ..rpc import RpcClient
 from ..tx import TxError, extract
-from . import content
+from . import content, group
 from .envelope import (
     EnvelopeError,
     Header,
@@ -46,6 +46,7 @@ class ScanResult:
     candidates: int = 0
     announcements: int = 0
     opened: int = 0
+    group_posts: int = 0
     reorg_depth: int = 0
     errors: list[str] = field(default_factory=list)
 
@@ -55,6 +56,9 @@ class ScanResult:
             parts.append(f"rewound {self.reorg_depth}")
         parts += [f"{self.candidates} candidates", f"{self.announcements} keys",
                   f"{self.opened} decrypted"]
+        if self.group_posts:
+            parts.append(f"{self.group_posts} public "
+                         f"post{'' if self.group_posts == 1 else 's'}")
         return ", ".join(parts)
 
 
@@ -185,6 +189,24 @@ class Scanner:
 
             body = message.data
             if not is_message_payload(body):
+                continue
+
+            # Public posts are read here and now. There is nothing to decrypt and
+            # no identity required, which is the whole difference: a node with no
+            # key at all still sees every group post on the chain.
+            if group.is_group_payload(body):
+                try:
+                    post = group.parse(body)
+                except EnvelopeError:
+                    continue
+                self.store.add_group_post(
+                    self.params.name, post.channel, atx.txid, height, block_time,
+                    atx.sender, post.nickname, post.text,
+                    mine=(self.identity is not None
+                          and atx.sender == self.store.get_meta(
+                              f"identity_address:{self.params.name}")),
+                )
+                result.group_posts += 1
                 continue
 
             try:

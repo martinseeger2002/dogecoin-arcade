@@ -174,10 +174,25 @@ def plan_message(
 class MessageSender:
     """Builds and broadcasts message transactions through a node's wallet."""
 
-    def __init__(self, rpc: RpcClient, params: Params):
-        require_messaging_network(params)     # D-010, enforced here as well as in the CLI
+    def __init__(self, rpc: RpcClient, params: Params, *, public_only: bool = False):
+        """`public_only` is the single, narrow exception to D-010.
+
+        Encrypted messaging is testnet-only, permanently, and that guard stays
+        exactly where it was. A **public group post** is a different thing: it
+        carries no key material, is not sealed to anybody, and reveals nothing
+        that publishing it does not already reveal -- so it may run on mainnet,
+        where it spends real coins.
+
+        The flag is deliberately opt-in and named for what it permits rather than
+        what it disables, so a call site that wants mainnet has to say out loud
+        that it is sending something public. Nothing in the encrypted path passes
+        it, and a test asserts that.
+        """
+        if not public_only:
+            require_messaging_network(params)  # D-010, enforced here and in the CLI
         self.rpc = rpc
         self.params = params
+        self.public_only = public_only
 
     # --- building -------------------------------------------------------------
 
@@ -470,7 +485,8 @@ class PartialSend(SendError):
         self.total = total
 
 
-def funded_address(rpc, prefer: str | None = None, need: int = COIN) -> str:
+def funded_address(rpc, prefer: str | None = None, need: int = COIN,
+                   mainnet: bool = False) -> str:
     """An address in this wallet that actually holds spendable coins.
 
     `prefer` is tried first -- the messaging identity address, in practice. Using
@@ -503,6 +519,9 @@ def funded_address(rpc, prefer: str | None = None, need: int = COIN) -> str:
     best_value = totals.get(best, 0.0) if best else 0.0
     if best is None:
         raise SendError(
+            "this wallet has no coins to spend. Send some to a receiving address "
+            "from the Wallets page first."
+            if mainnet else
             "this wallet has no spendable coins yet. Mine a block to fund it, "
             "then wait for the coins to mature."
         )

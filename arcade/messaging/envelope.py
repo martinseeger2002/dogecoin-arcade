@@ -37,6 +37,7 @@ VERSION = 1
 TYPE_SINGLE = 1       # a whole message in one transaction
 TYPE_CHUNK = 2        # one link of a chained multi-transaction message
 TYPE_KEY_ANNOUNCE = 3 # an X25519 public key announcement
+TYPE_GROUP = 4        # a public group post -- NOT encrypted, readable by anyone
 
 # Cleartext header lengths. Both message types carry `clen`, the exact number of
 # ciphertext bytes in this payload.
@@ -53,6 +54,7 @@ HEADER_BOUND_SINGLE_LEN = 6    # magic4 + version1 + type1
 HEADER_BOUND_CHUNK_LEN = 14    # + msg_id8
 KEY_ANNOUNCE_HEADER_LEN = 6    # announcements are fixed-size and need no clen
 KEY_ANNOUNCE_LEN = 38          # header6 + pubkey32
+GROUP_HEADER_LEN = 6           # public, so no clen: nothing is sealed to unpad
 
 SEALED_OVERHEAD = 48
 SENDER_KEY_LEN = 32
@@ -83,7 +85,11 @@ class Header:
 
     def encode(self) -> bytes:
         """The full cleartext header, as it appears on chain."""
-        if self.type == TYPE_KEY_ANNOUNCE:
+        if self.type in (TYPE_KEY_ANNOUNCE, TYPE_GROUP):
+            # Neither carries `clen`. It exists to undo Class B's NUL padding
+            # before opening a sealed box, and nothing here is sealed: an
+            # announcement is fixed-length and a group post is plain text, where
+            # a trailing NUL is never meaningful.
             return self.bound_bytes()
         if self.clen > 0xFFFF:
             raise EnvelopeError(f"ciphertext length {self.clen} exceeds a uint16")
@@ -119,6 +125,8 @@ class Header:
         """Length of the full cleartext header on chain."""
         if self.type == TYPE_KEY_ANNOUNCE:
             return KEY_ANNOUNCE_HEADER_LEN
+        if self.type == TYPE_GROUP:
+            return GROUP_HEADER_LEN
         return HEADER_CHUNK_LEN if self.type == TYPE_CHUNK else HEADER_SINGLE_LEN
 
     @property
@@ -148,7 +156,7 @@ class Header:
             if len(payload) < HEADER_SINGLE_LEN:
                 raise EnvelopeError("payload too short to contain a header")
             return cls(type=msg_type, clen=int.from_bytes(payload[6:8], "big"))
-        if msg_type != TYPE_KEY_ANNOUNCE:
+        if msg_type not in (TYPE_KEY_ANNOUNCE, TYPE_GROUP):
             raise EnvelopeError(f"unknown message type {msg_type}")
         return cls(type=msg_type)
 
