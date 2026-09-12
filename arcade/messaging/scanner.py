@@ -525,3 +525,64 @@ class Scanner:
         for chunk in chunks:
             self.store.mark_opened(chunk["txid"])
         return True
+
+
+#: Bumped when a parsing fix means stored rows are worth re-reading. Recorded in
+#: the store so the repair runs once rather than on every launch.
+REPAIR_GENERATION = "1"
+
+
+def repair_announcement_names(rpc, params, store) -> int:
+    """Re-read stored announcements and correct names an older parser cut.
+
+    Why this is needed at all, rather than a rescan: the fix for truncated names
+    reaches only announcements read AFTER it. A reader who scanned earlier holds
+    the cut version, their scan cursor is long past that block, and nothing will
+    ever take them back to it -- so "Big Chief Energy" was on the chain in full,
+    parseable in full, and shown as "Big Chief En" for ever. a test machine measured
+    exactly that, including a rewound rescan that re-read the announcement and
+    still could not replace the stored row.
+
+    Most people will never rewind a cursor, so the repair has to come to them.
+    The txid of every announcement is already stored, and `getrawtransaction`
+    serves any transaction with txindex, so each one can be fetched and re-parsed
+    directly without touching the cursor.
+
+    Runs once per repair generation and reports how many rows it corrected.
+    """
+    if store.get_meta("announcement_repair") == REPAIR_GENERATION:
+        return 0
+
+    from ..indexer import PrevOutCache
+    from ..payload import PayloadError, decode as decode_payload
+    from .envelope import parse_announced_identity, parse_key_announcement
+
+    rows = list(store.conn.execute(
+        "SELECT txid, name, pubkey, address FROM key_announcement"))
+    cache = PrevOutCache(rpc, params)
+    repaired = 0
+    for row in rows:
+        try:
+            raw = rpc.call("getrawtransaction", row["txid"], 1)
+            atx = extract(raw, 0, 0, params, cache.lookup)
+            if atx is None:
+                continue
+            message = decode_payload(atx.payload)
+            parse_key_announcement(message.data)          # confirms the shape
+            _, name = parse_announced_identity(message.data)
+        except (TxError, EnvelopeError, PayloadError, Exception):
+            continue
+        if name and len(name) > len(row["name"] or ""):
+            store.conn.execute(
+                "UPDATE key_announcement SET name=? WHERE txid=?",
+                (name, row["txid"]))
+            # And carry it into the address book, which is where anybody
+            # actually reads a name. Repairing only the announcement row would
+            # leave the cut version on screen.
+            store.apply_profile(bytes(row["pubkey"]), name, row["address"], "",
+                                source="announce")
+            repaired += 1
+            log.info("repaired announcement name for %s: %r", row["txid"][:12], name)
+
+    store.set_meta("announcement_repair", REPAIR_GENERATION)
+    return repaired

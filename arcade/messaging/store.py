@@ -274,6 +274,19 @@ class MessageStore:
         ("contact", "name_source", "TEXT NOT NULL DEFAULT ''"),
     )
 
+    #: Backfills run after the columns exist. A column added with a default is
+    #: not neutral: the default becomes a claim about every existing row, and
+    #: getting that claim wrong is how a scanned name ended up recorded as one
+    #: the user had typed -- and therefore unrepairable for ever.
+    BACKFILLS = (
+        # Every name that existed before provenance was recorded came from
+        # scanning an announcement, since nothing else wrote one. Saying so
+        # restores the precedence the ranking was designed to give.
+        ("contact", "name_source",
+         "UPDATE contact SET name_source='announce' "
+         "WHERE name != '' AND name_source = ''"),
+    )
+
     def _migrate(self) -> None:
         """Bring a store created by an earlier version up to the current shape.
 
@@ -281,6 +294,7 @@ class MessageStore:
         must never be able to lose a message.
         """
         self._rebuild_contact_if_keyless()
+        added: set[tuple[str, str]] = set()
         for table, column, definition in self.MIGRATIONS:
             existing = {row["name"] for row in
                         self.conn.execute(f"PRAGMA table_info({table})")}
@@ -289,6 +303,16 @@ class MessageStore:
             if column not in existing:
                 self.conn.execute(
                     f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                added.add((table, column))
+
+        for table, column, statement in self.BACKFILLS:
+            # Run whenever the claim may be wrong, not only on the upgrade that
+            # added the column: a store migrated by the broken version is
+            # already carrying the wrong value and would never be revisited.
+            try:
+                self.conn.execute(statement)
+            except Exception:
+                continue
 
     def _rebuild_contact_if_keyless(self) -> None:
         """Give the address book its `id` column, copying every row across.
@@ -449,9 +473,16 @@ class MessageStore:
         two live rows for one key under two addresses.
         """
         self.conn.execute(
-            "INSERT OR IGNORE INTO key_announcement"
+            "INSERT INTO key_announcement"
             "(txid,address,pubkey,fingerprint,height,block_time,seen_at,stated,name) "
-            "VALUES(?,?,?,?,?,?,?,?,?)",
+            "VALUES(?,?,?,?,?,?,?,?,?) "
+            # A longer name replaces a shorter one, so a rescan repairs a name an
+            # older parser had cut. INSERT OR IGNORE meant the truncation was
+            # permanent in the reader's store however often it was rescanned.
+            "ON CONFLICT(txid) DO UPDATE SET "
+            "  name=CASE WHEN LENGTH(excluded.name) > LENGTH(key_announcement.name) "
+            "            THEN excluded.name ELSE key_announcement.name END, "
+            "  stated=MAX(key_announcement.stated, excluded.stated)",
             (txid, address, pubkey, fingerprint, height, block_time,
              int(time.time()), 1 if stated else 0, name),
         )
@@ -657,7 +688,16 @@ class MessageStore:
     #: Which claimed name beats which. A name the user typed always wins; a name
     #: from a message beats one from an announcement, because an announcement is
     #: capped at 12 bytes and is therefore often a truncation of the real one.
-    NAME_RANK = {"": 3, "profile": 2, "announce": 1}
+    #: 'typed' is explicit on purpose. It used to be '', which is also SQLite's
+    #: natural default for a NOT NULL TEXT column -- so a migration that added
+    #: the column backfilled every scanned name as "typed by hand", pinning it at
+    #: the one rank nothing can beat. a test machine proved it on a copy of its live store:
+    #: "Big Chief En" was unrepairable for ever, by any rescan or republish.
+    #:
+    #: Anything unrecognised ranks LOWEST rather than highest, so a row whose
+    #: provenance is unknown can still be corrected.
+    NAME_RANK = {"typed": 3, "profile": 2, "announce": 1}
+    UNKNOWN_NAME_RANK = 0
 
     def apply_profile(self, pubkey: bytes, name: str = "", testnet_address: str = "",
                       mainnet_address: str = "", source: str = "profile") -> None:
@@ -682,8 +722,16 @@ class MessageStore:
         if name:
             current = existing["name"]
             current_rank = self.NAME_RANK.get(
-                existing["name_source"] if current else "announce", 0)
-            if not current or self.NAME_RANK.get(source, 0) > current_rank:
+                existing["name_source"], self.UNKNOWN_NAME_RANK) if current else -1
+            incoming_rank = self.NAME_RANK.get(source, self.UNKNOWN_NAME_RANK)
+            # A higher rank always wins. At EQUAL rank a longer name wins too,
+            # because that is the same claimant correcting itself -- an
+            # announcement re-read with a fixed parser says "Big Chief Energy"
+            # where it once said "Big Chief En", and refusing it on the grounds
+            # of equal rank would leave the reader with the cut version for ever.
+            if (not current
+                    or incoming_rank > current_rank
+                    or (incoming_rank == current_rank and len(name) > len(current))):
                 self.conn.execute(
                     "UPDATE contact SET name=?, name_source=?, updated=? WHERE id=?",
                     (name, source, now, existing["id"]))
@@ -891,9 +939,10 @@ class MessageStore:
         now = int(time.time())
         if contact_id:
             self.conn.execute(
-                "UPDATE contact SET name=?, testnet_address=?, mainnet_address=?, "
-                "notes=?, updated=? WHERE id=?",
-                (name, testnet_address, mainnet_address, notes, now, contact_id),
+                "UPDATE contact SET name=?, name_source=?, testnet_address=?, "
+                "mainnet_address=?, notes=?, updated=? WHERE id=?",
+                (name, "typed" if name else "", testnet_address, mainnet_address,
+                 notes, now, contact_id),
             )
             return contact_id
 

@@ -67,6 +67,14 @@ def create_app(state: AppState) -> FastAPI:
     app = FastAPI(title="DogecoinArcade", docs_url=None, redoc_url=None)
 
     def render(request: Request, template: str, **context: Any) -> HTMLResponse:
+        """Render a page, never from a cache.
+
+        `no-store` because these pages carry live state -- a send in flight, a
+        balance, an unread count -- and a browser re-serving an old one on a back
+        navigation shows a message that has since gone or a send that has since
+        finished. A page painted mid-send and restored from cache was part of how
+        an interface got stuck looking busy against an idle server.
+        """
         notice, notice_kind = state.take_notice()
         base = {
             "request": request,
@@ -81,7 +89,14 @@ def create_app(state: AppState) -> FastAPI:
         }
         base.update(context)
         # Request first: the older (name, context) signature is deprecated.
-        return TEMPLATES.TemplateResponse(request, template, base)
+        response = TEMPLATES.TemplateResponse(request, template, base)
+        # Never from a cache. These pages carry live state -- a send in flight,
+        # a balance, an unread count -- and a browser re-serving an old one on a
+        # back navigation shows a send that has since finished or a message that
+        # has since gone. A page painted mid-send and restored from cache was
+        # part of how an interface got stuck looking busy against an idle server.
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
+        return response
 
     def check_csrf(token: str) -> None:
         """Reject a request whose form token does not match this process's.

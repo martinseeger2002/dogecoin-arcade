@@ -1334,3 +1334,28 @@ def test_the_public_composer_recovers_too(client):
     body = client[0].get("/groups?channel=main").text
     assert "function resetPoster" in body
     assert "did not reach the application" in body
+
+
+def test_pages_are_never_served_from_a_cache(client):
+    """They carry live state: a send in flight, a balance, an unread count.
+
+    A browser re-serving an old page on a back navigation shows a send that has
+    since finished -- part of how an interface got stuck looking busy against an
+    idle server.
+    """
+    for path in ("/", "/messages", "/contacts", "/groups"):
+        header = client[0].get(path).headers.get("cache-control", "")
+        assert "no-store" in header, f"{path} may be cached"
+
+
+def test_media_may_still_be_cached(client):
+    """An attachment's bytes do not change, and refetching them is expensive."""
+    app, state = client
+    payload = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+    with state.store() as store:
+        message_id = store.add_message(None, "tx", "tx", 1, 0, "nS", b"\xe0" * 32,
+                                       "me", b"x")
+        store.add_attachment(message_id, "a.png", "image/png", payload)
+
+    header = app.get(f"/messages/media/{message_id}").headers.get("cache-control", "")
+    assert "no-store" not in header

@@ -344,3 +344,130 @@ def test_you_are_never_offered_as_someone_to_meet(tmp_path):
     found = [bytes(r["pubkey"]) for r in store.unknown_published_keys(exclude=mine)]
     assert found == [theirs]
 
+
+
+# --- a fix must reach data already stored -------------------------------------
+# a test machine proved this on a copy of its live store: "Big Chief En" was unrepairable
+# for ever. The precedence logic was right; the migration's default was not.
+
+
+def _legacy_store(tmp_path, name="Big Chief En"):
+    """A store whose contact was scanned before provenance was recorded."""
+    import sqlite3
+    path = tmp_path / "legacy.sqlite"
+    connection = sqlite3.connect(path)
+    connection.executescript("""
+        CREATE TABLE contact (id INTEGER PRIMARY KEY AUTOINCREMENT,
+          pubkey BLOB UNIQUE, name TEXT NOT NULL DEFAULT '',
+          address TEXT NOT NULL DEFAULT '', added INTEGER NOT NULL,
+          updated INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    """)
+    connection.execute("INSERT INTO contact(pubkey,name,added) VALUES (X'0102',?,1)",
+                       (name,))
+    connection.commit()
+    connection.close()
+    from arcade.messaging.store import MessageStore
+    return MessageStore(path)
+
+
+def test_a_scanned_name_is_not_recorded_as_one_the_user_typed(tmp_path):
+    """The default became a claim about every existing row, and it was false.
+
+    '' meant "typed by hand" and is also SQLite's natural default for a NOT NULL
+    TEXT column, so adding the column backfilled every scanned name as typed --
+    pinning it at the one rank nothing can beat.
+    """
+    store = _legacy_store(tmp_path)
+    assert store.contact_by_key(b"\x01\x02")["name_source"] == "announce"
+
+
+def test_a_truncated_name_can_still_be_repaired(tmp_path):
+    store = _legacy_store(tmp_path)
+    store.apply_profile(b"\x01\x02", "Big Chief Energy", "", "", source="profile")
+    assert store.contact_by_key(b"\x01\x02")["name"] == "Big Chief Energy"
+
+
+def test_a_name_of_unknown_provenance_ranks_lowest(tmp_path):
+    """Unrecognised must not mean unbeatable. That was the whole bug."""
+    from arcade.messaging.store import MessageStore
+
+    store = _legacy_store(tmp_path)
+    store.conn.execute("UPDATE contact SET name_source='something odd'")
+    store.apply_profile(b"\x01\x02", "Big Chief Energy", "", "", source="profile")
+    assert store.contact_by_key(b"\x01\x02")["name"] == "Big Chief Energy"
+
+
+def test_a_name_the_user_types_is_recorded_as_typed(tmp_path):
+    store = _legacy_store(tmp_path)
+    row = store.contact_by_key(b"\x01\x02")
+    store.save_contact(contact_id=row["id"], name="What I call them")
+
+    assert store.contact_by_key(b"\x01\x02")["name_source"] == "typed"
+    store.apply_profile(b"\x01\x02", "Anything Else", "", "", source="profile")
+    assert store.contact_by_key(b"\x01\x02")["name"] == "What I call them"
+
+
+def test_a_rescan_repairs_a_name_an_older_parser_cut(tmp_path):
+    """Second instance of the same stickiness: INSERT OR IGNORE.
+
+    A name truncated by an older parser stayed truncated in the reader's store
+    however often it was rescanned.
+    """
+    store = _legacy_store(tmp_path)
+    key = b"\x01\x02"
+    store.add_key_announcement("tx", "nA", key, "ff", 1, 1, stated=True,
+                               name="Big Chief En")
+    store.add_key_announcement("tx", "nA", key, "ff", 1, 1, stated=True,
+                               name="Big Chief Energy")
+
+    (row,) = store.conn.execute("SELECT name FROM key_announcement").fetchall()
+    assert row["name"] == "Big Chief Energy"
+
+
+def test_a_rescan_does_not_replace_a_name_with_a_shorter_one(tmp_path):
+    store = _legacy_store(tmp_path)
+    key = b"\x01\x02"
+    store.add_key_announcement("tx", "nA", key, "ff", 1, 1, name="Big Chief Energy")
+    store.add_key_announcement("tx", "nA", key, "ff", 1, 1, name="Big Chief En")
+
+    (row,) = store.conn.execute("SELECT name FROM key_announcement").fetchall()
+    assert row["name"] == "Big Chief Energy"
+
+
+def test_the_same_source_may_correct_itself(tmp_path):
+    """An announcement re-read with a fixed parser says more than it did.
+
+    Refusing it on equal rank would leave the reader with the cut version for
+    ever, which is the whole failure this was meant to end.
+    """
+    store = _legacy_store(tmp_path)
+    key = b"\x01\x02"
+    store.apply_profile(key, "Big Chief En", "", "", source="announce")
+    store.apply_profile(key, "Big Chief Energy", "", "", source="announce")
+
+    assert store.contact_by_key(key)["name"] == "Big Chief Energy"
+
+
+def test_the_same_source_cannot_shorten_a_name(tmp_path):
+    store = _legacy_store(tmp_path)
+    key = b"\x01\x02"
+    store.apply_profile(key, "Big Chief Energy", "", "", source="announce")
+    store.apply_profile(key, "Big Chief En", "", "", source="announce")
+
+    assert store.contact_by_key(key)["name"] == "Big Chief Energy"
+
+
+def test_the_repair_runs_once_per_generation(tmp_path):
+    """It needs the node, so it must not run on every launch."""
+    from arcade.messaging.scanner import REPAIR_GENERATION, repair_announcement_names
+    from arcade.config import NETWORKS
+
+    store = _legacy_store(tmp_path)
+    store.set_meta("announcement_repair", REPAIR_GENERATION)
+
+    class Forbidden:
+        def call(self, *args, **kwargs):
+            raise AssertionError("must not touch the node when already repaired")
+
+    assert repair_announcement_names(Forbidden(), NETWORKS["regtest"], store) == 0
