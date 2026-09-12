@@ -833,7 +833,7 @@ def create_app(state: AppState) -> FastAPI:
                               attached_b64: str = Form("")):
         chain = state.ledger if which == "ledger" else state.messaging
         channel = (channel or group.DEFAULT_CHANNEL).strip() or group.DEFAULT_CHANNEL
-        prepared, error = None, None
+        prepared, error, plan = None, None, None
         file_bytes, file_name, file_type = b"", attached_name, attached_type
         try:
             check_csrf(csrf_token)
@@ -892,7 +892,7 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "groups.html", which=which, chain=chain,
                       channel=channel, posts=posts, channels=channels,
                       balance=balance, when=_when, prepared=prepared, error=error,
-                      draft=text, room=group.max_text_bytes(channel, state.profile_name),
+                      plan=plan, draft=text, room=group.max_text_bytes(channel, state.profile_name),
                       nickname=state.profile_name,
                       attached_b64=base64.b64encode(file_bytes).decode() if file_bytes else "",
                       attached_name=file_name, attached_type=file_type)

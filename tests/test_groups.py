@@ -152,11 +152,12 @@ def test_the_same_channel_on_two_chains_is_two_rooms(store):
     assert [r["text"] for r in store.group_posts("main", "main")] == ["on mainnet"]
 
 
-def test_posts_read_downward_in_time(store):
+def test_the_newest_post_comes_first(store):
+    """A feed, not a conversation: you drop in, and the unseen thing is newest."""
     for index, when in enumerate([300, 100, 200]):
         store.add_group_post("test", "main", f"tx{index}", 1, when, "nA", "", str(when))
 
-    assert [r["text"] for r in store.group_posts("test", "main")] == ["100", "200", "300"]
+    assert [r["text"] for r in store.group_posts("test", "main")] == ["300", "200", "100"]
 
 
 def test_rescanning_does_not_duplicate_posts(store):
@@ -319,3 +320,121 @@ def test_a_lone_final_chunk_is_not_treated_as_complete(tmp_path):
     assert len(store.group_chunks("regtest", msg_id)) == 1, (
         "an incomplete chain must be kept, not discarded"
     )
+
+
+# --- the feed ------------------------------------------------------------------
+# The public channel reads as a feed rather than a conversation: composer at the
+# top, newest first, images shown without a click, audio and video as players
+# that wait to be started.
+
+
+@pytest.fixture
+def feed_client(tmp_path):
+    from pathlib import Path
+    from fastapi.testclient import TestClient
+    from arcade.web.app import create_app
+    from arcade.web.state import AppState, ChainContext
+
+    state = AppState(
+        home=tmp_path,
+        messaging=ChainContext(network="regtest", role="messaging", label="Testnet",
+                               datadir=Path("/nonexistent")),
+        ledger=ChainContext(network="main", role="ledger", label="Mainnet",
+                            datadir=Path("/nonexistent")),
+    )
+    return TestClient(create_app(state)), state
+
+
+def _post(state, channel, text, when, **file):
+    with state.store() as store:
+        store.add_group_post("regtest", channel, f"tx{when}", 1, when, "nA",
+                             "somebody", text, **file)
+
+
+def test_the_composer_comes_before_the_feed(feed_client):
+    """What you post drops down into the feed underneath it."""
+    app, state = feed_client
+    _post(state, "main", "a post", 100)
+
+    body = app.get("/groups?channel=main").text
+    assert body.index('id="postform"') < body.index('class="card post')
+
+
+def test_the_newest_post_is_rendered_first(feed_client):
+    import re
+
+    app, state = feed_client
+    _post(state, "main", "first thing", 100)
+    _post(state, "main", "second thing", 200)
+
+    body = app.get("/groups?channel=main").text
+    # Match the rendered posts, not the whole document: a bare substring search
+    # finds "older" inside the composer's own placeholder text.
+    rendered = re.findall(r'class="post-text">([^<]+)', body)
+    assert rendered == ["second thing", "first thing"]
+
+
+def test_an_image_is_shown_without_a_click(feed_client):
+    app, state = feed_client
+    _post(state, "main", "look", 100, file_name="a.png", file_type="image/png",
+          file_data=b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+
+    body = app.get("/groups?channel=main").text
+    assert '<img class="post-media"' in body
+
+
+def test_audio_is_a_player_that_waits_to_be_started(feed_client):
+    app, state = feed_client
+    _post(state, "main", "listen", 100, file_name="a.wav", file_type="audio/wav",
+          file_data=b"RIFF\x00\x00\x00\x00WAVEfmt " + b"\x00" * 32)
+
+    body = app.get("/groups?channel=main").text
+    assert 'audio class="post-media" controls' in body
+    assert 'preload="none"' in body
+
+
+def test_video_is_a_player_that_waits_to_be_started(feed_client):
+    app, state = feed_client
+    _post(state, "main", "watch", 100, file_name="a.mp4", file_type="video/mp4",
+          file_data=b"\x00\x00\x00\x20ftypisom" + b"\x00" * 64)
+
+    body = app.get("/groups?channel=main").text
+    assert 'video class="post-media" controls' in body
+    assert 'preload="metadata"' in body
+
+
+def test_an_unsafe_file_gets_no_player_at_all(feed_client):
+    """A feed that rendered whatever it was handed would be the whole problem."""
+    app, state = feed_client
+    _post(state, "main", "careful", 100, file_name="x.svg", file_type="image/svg+xml",
+          file_data=b"<svg onload='alert(1)'></svg>" + b" " * 40)
+
+    body = app.get("/groups?channel=main").text
+    # The class name also appears in the stylesheet, so look for the elements.
+    for element in ('<img class="post-media"', '<video class="post-media"',
+                    '<audio class="post-media"'):
+        assert element not in body
+    assert "x.svg" in body, "it should still be offered as a download"
+
+
+def test_starting_a_channel_needs_no_creation_step(feed_client):
+    """A channel is a name. Posting to an unused one starts it."""
+    app, state = feed_client
+
+    body = app.get("/groups?channel=brand-new").text
+    assert "#brand-new" in body
+    assert "is empty" in body
+
+    _post(state, "brand-new", "first ever", 100)
+    assert "first ever" in app.get("/groups?channel=brand-new").text
+
+
+def test_the_channel_control_is_above_the_feed(feed_client):
+    """It was at the bottom, labelled 'Go to channel', which hid that you can
+    invent one."""
+    app, state = feed_client
+    _post(state, "main", "a post", 100)
+
+    body = app.get("/groups?channel=main").text
+    assert body.index('class="card chanbar"') < body.index('id="postform"')
+    assert "a new one starts it" in body

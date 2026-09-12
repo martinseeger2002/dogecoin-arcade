@@ -160,6 +160,51 @@ a.chainpick.on{border-color:var(--accent);box-shadow:0 0 0 2px rgba(120,110,255,
 .media img,img.media{display:block;max-width:100%;height:auto;border-radius:8px}
 audio.media{width:100%;min-width:220px}
 video.media{width:100%;max-height:420px;background:#000;border-radius:8px}
+
+/* public feed */
+.feed{max-width:620px;margin:0 auto}
+.feedhead{display:flex;align-items:flex-start;gap:14px;margin-bottom:16px}
+.feedhead h1{margin:0}
+.feedhead .sub{margin:4px 0 0}
+.chainpills{margin-left:auto;display:flex;gap:6px;flex:none}
+.pillpick{padding:5px 12px;border:1px solid var(--line);border-radius:999px;
+  font-size:.82rem;color:var(--muted);text-decoration:none}
+.pillpick:hover{background:var(--code);text-decoration:none}
+.pillpick.on{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.pillpick.main.on{background:var(--bad);border-color:var(--bad);color:#fff}
+.feed .card{border:1px solid var(--line);border-radius:12px;background:var(--panel);
+  padding:16px 18px;margin-bottom:14px}
+.composer-card textarea{width:100%;resize:vertical;font-size:.97rem}
+.composer-foot{display:flex;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap}
+.composer-foot .grow{flex:1}
+.composer-foot .as{font-size:.82rem}
+.composer-card .counter{font-size:.8rem;margin:8px 0 0}
+.composer-foot label.attach{padding:0;opacity:.7;font-size:1rem;gap:5px}
+.attach-label{font-size:.84rem}
+.picked{font-size:.83rem;margin:9px 0 0}
+.feednote{font-size:.8rem;margin:12px 0 0;padding-top:11px;border-top:1px solid var(--line)}
+.confirm-card{border-color:var(--accent);box-shadow:0 0 0 3px rgba(120,110,255,.1)}
+.empty-card p{margin:0 0 6px}
+.post{padding:15px 18px}
+.post.mine{border-left:3px solid var(--accent)}
+.post-head{display:flex;align-items:baseline;gap:10px;margin-bottom:8px}
+.post-head .poster{font-weight:700;font-size:.92rem}
+.post-head .when{font-size:.78rem;margin-left:auto;white-space:nowrap}
+.pending{color:var(--warn,#b8860b)}
+.post-text{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+.post-media{display:block;width:100%;margin-top:11px;border-radius:9px}
+img.post-media{height:auto;background:var(--code)}
+video.post-media{max-height:460px;background:#000}
+audio.post-media{height:40px}
+.post-file{display:inline-block;margin-top:9px;font-size:.79rem;color:var(--muted)}
+.chanlist{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
+.chanchip{padding:4px 11px;border:1px solid var(--line);border-radius:999px;
+  font-size:.83rem;color:var(--fg);text-decoration:none}
+.chanchip:hover{background:var(--code);text-decoration:none}
+.chanchip.on{border-color:var(--accent);color:var(--accent)}
+
+.chanbar{padding:14px 18px}
+.chanbar .chanlist{margin-top:10px}
 </style>
 </head>
 <body>
