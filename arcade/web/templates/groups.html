@@ -147,15 +147,20 @@
         and one more first to split the wallet if it does not already have
         enough separate outputs &mdash; those coins come straight back as
         change, so the split costs only its own fee{% endif %}.
+        {# prepared is the FIRST transaction only; the rest spend its change and
+           cannot be built yet. This rendered its figures unscaled, so a
+           two-chunk post was offered at 0.85856 against the 1.71712 it cost --
+           the fee understated as well as the dust. `cost` is scaled by
+           send_cost(), shared with the messenger. #}
         {% if plan and not plan.class_c %}
-          Costs <strong>{{ "%.5f"|format(prepared.total_coins) }}</strong> in total
-          &mdash; {{ "%.5f"|format(prepared.fee_coins) }} fee plus
-          {{ "%.5f"|format(prepared.dust_coins) }} in
+          Costs <strong>{{ "%.5f"|format(cost.total if cost else 0) }}</strong>
+          in total &mdash; {{ "%.5f"|format(cost.fee if cost else 0) }} in
+          fees plus {{ "%.5f"|format(cost.dust if cost else 0) }} in
           <strong>dust that can never be spent again</strong>, because the post
           is carried in the outputs themselves.
         {% else %}
-          Costs <strong>{{ "%.5f"|format(prepared.total_coins) }}</strong> &mdash;
-          one OP_RETURN output and no dust.
+          Costs <strong>{{ "%.5f"|format(cost.total if cost else 0) }}</strong>
+          &mdash; one OP_RETURN output and no dust.
         {% endif %}
         {% if timing and timing.readable and plan and plan.transactions > 1 %}
         <div class="note" style="margin:10px 0 0">

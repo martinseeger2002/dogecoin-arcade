@@ -350,3 +350,96 @@ def test_class_c_has_no_dust():
     prepared = PreparedTx(hex="", txid="", decoded={}, fee_sats=56_800,
                           size=250, outputs=2, dust_sats=0)
     assert prepared.total_sats == prepared.fee_sats
+
+
+# --- one definition of what a send costs --------------------------------------
+#
+# Only the FIRST transaction of a chunked send is ever prepared; the rest spend
+# its change and cannot be built until it is broadcast. So its fee and dust have
+# to be multiplied by the chunk count -- and the two composers did that
+# differently. messages.html scaled both figures in Jinja; groups.html rendered
+# the single prepared transaction unscaled, so a post was offered at exactly
+# 1/count of its price, the FEE understated as well as the dust. a test machine caught it
+# against a transaction it had already paid for, which is stronger evidence than
+# posting another one and costs nothing.
+#
+# Cost is the fourth thing the two composers have disagreed about in a day,
+# after the identity pin, funded_address and chunk sequencing. Hence one
+# function, and a test shaped the way a test machine suggested: assert a two-chunk send
+# costs about twice a one-chunk one, because asserting "a positive dust figure"
+# passes on the understated number.
+
+
+def _prepared(fee_sats, dust_sats):
+    from arcade.messaging.sender import PreparedTx
+
+    return PreparedTx(hex="", txid="", decoded={}, fee_sats=fee_sats,
+                      size=8855, outputs=80, dust_sats=dust_sats)
+
+
+def test_a_chunked_send_costs_its_chunk_count():
+    from arcade.messaging.sender import send_cost
+
+    one = send_cost(_prepared(8_856_000, 77_000_000), 1)
+    two = send_cost(_prepared(8_856_000, 77_000_000), 2)
+
+    assert two["total"] == pytest.approx(one["total"] * 2), (
+        "a two-chunk send costs twice a one-chunk one; rendering the single "
+        "prepared transaction unscaled is what halved a post's quoted price"
+    )
+    assert two["fee"] == pytest.approx(one["fee"] * 2), (
+        "the fee is per transaction too, not just the dust"
+    )
+    assert two["dust"] == pytest.approx(one["dust"] * 2)
+    assert two["transactions"] == 2
+
+
+def test_the_quoted_cost_matches_a_post_actually_paid_for():
+    """Ground truth: a test machine's two-chunk public post on testnet.
+
+    It paid 1.71712 in total. The screen offered 0.85856.
+    """
+    from arcade.messaging.sender import send_cost
+
+    quoted = send_cost(_prepared(8_856_000, 77_000_000), 2)
+    assert quoted["total"] == pytest.approx(1.71712, abs=0.0001)
+
+
+def test_a_single_transaction_send_is_not_scaled_away():
+    from arcade.messaging.sender import send_cost
+
+    cost = send_cost(_prepared(568_000, 4_000_000), 1)
+    assert cost["total"] == pytest.approx(0.04568, abs=1e-9), (
+        "this is a test machine's test-1 transaction, which it paid 0.04568 for"
+    )
+    # A count of zero must not zero the cost; something is always being sent.
+    assert send_cost(_prepared(568_000, 4_000_000), 0)["total"] == cost["total"]
+
+
+def test_no_template_quotes_a_single_transaction_as_the_price():
+    """The bug was a template reading PER-TRANSACTION figures off `prepared`.
+
+    A first version of this test only banned the literal 100000000, and passed
+    with the bug restored -- `prepared.total_coins` divides by COIN in Python,
+    so no satoshi conversion appears in the template at all. What has to be
+    banned is reading the prepared transaction's own cost, because `prepared` is
+    the FIRST chunk and the rest are not built yet.
+    """
+    import pathlib
+
+    per_transaction = ("prepared.total_coins", "prepared.fee_coins",
+                       "prepared.dust_coins", "prepared.fee_sats",
+                       "prepared.dust_sats", "prepared[0].fee_sats",
+                       "prepared[0].dust_sats", "prepared[0].fee_coins")
+
+    for name in ("messages.html", "groups.html"):
+        source = (pathlib.Path("arcade/web/templates") / name).read_text()
+        for attr in per_transaction:
+            assert attr not in source, (
+                f"{name} quotes {attr}, which is ONE chunk's cost. A chunked "
+                f"send pays that per transaction -- go through send_cost()"
+            )
+        assert "100000000" not in source, (
+            f"{name} is converting satoshis itself again"
+        )
+        assert "cost." in source, f"{name} should read the shared cost"

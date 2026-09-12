@@ -815,6 +815,30 @@ def estimate_send_seconds(transactions: int, typical: float, slow: float,
     return int(waits * typical), int(waits * slow)
 
 
+def send_cost(prepared: PreparedTx, transactions: int = 1) -> dict[str, float]:
+    """What a whole message or post costs, scaled from its first transaction.
+
+    Only the FIRST transaction of a chunked send is ever prepared -- the rest
+    spend its change, so they cannot be built until it is broadcast. Its fee and
+    dust therefore have to be multiplied by the chunk count, and the two
+    composers did that differently: messages.html scaled both figures in Jinja,
+    groups.html rendered the single prepared transaction unscaled. So the public
+    screen understated a post's cost by exactly the transaction count -- a test machine's
+    two-chunk post was offered at 0.85856 against the 1.71712 it paid, the fee
+    understated as well as the dust.
+
+    This exists so there is one definition. Cost is the fourth thing the two
+    composers have disagreed about in a day, after the identity pin,
+    funded_address and chunk sequencing, and each of those was found only
+    because one machine behaved differently from the other.
+    """
+    count = max(1, transactions)
+    fee = prepared.fee_sats * count / COIN
+    dust = prepared.dust_sats * count / COIN
+    return {"fee": fee, "dust": dust, "total": fee + dust,
+            "transactions": count}
+
+
 def estimate_readable_seconds(transactions: int, typical: float) -> int:
     """How long until every chunk is CONFIRMED, not merely broadcast.
 

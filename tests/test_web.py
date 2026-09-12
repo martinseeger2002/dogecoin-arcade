@@ -1711,7 +1711,10 @@ def test_the_confirm_screen_quotes_the_total_not_one_component():
     """
     root = pathlib.Path("arcade/web/templates")
     groups = (root / "groups.html").read_text()
-    assert "prepared.total_coins" in groups, (
+    # Through `cost`, not `prepared`: see
+    # test_no_template_quotes_a_single_transaction_as_the_price. `prepared` is
+    # the first chunk, so quoting it understated a post by its chunk count.
+    assert "cost.total" in groups, (
         "the confirm screen still quotes a component rather than the total"
     )
     assert "on top of the fee" in groups, (
@@ -2083,12 +2086,16 @@ def test_both_confirm_screens_quote_dust_from_a_real_field(client):
     """
     groups = pathlib.Path("arcade/web/templates/groups.html").read_text()
     messages = pathlib.Path("arcade/web/templates/messages.html").read_text()
-    assert "prepared.dust_coins" in groups
-    assert "prepared[0].dust_sats" in messages
+    assert "cost.dust" in groups
+    assert "cost.dust" in messages
 
     sender = pathlib.Path("arcade/messaging/sender.py").read_text()
     body = sender[sender.index("    def prepare("):]
     body = body[:body.index("\n    def ", 1)]
     assert "dust_sats=" in body, (
         "prepare() must set dust_sats or both screens quote zero"
+    )
+    # And the value has to survive the scaling, or the screens quote one chunk.
+    assert "dust = prepared.dust_sats * count" in sender, (
+        "send_cost() must scale the dust by the transaction count"
     )

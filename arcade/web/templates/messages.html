@@ -158,13 +158,14 @@
       {# Only the first chunk exists yet -- the rest spend its change -- so the
          cost of a multi-transaction message is estimated from the first. #}
       {% set count = plan.transactions if plan else 1 %}
-      {% set fee = prepared[0].fee_sats * count / 100000000 %}
-      {# The fee alone was quoted here while the dust went unmentioned as a
-         number, and for a file the dust IS the cost -- a test machine was shown
-         "fee 0.17940000" for a send that moved 1.74. Scaled from the first
-         chunk, since only that one is built; the rest spend its change. #}
-      {% set dust = prepared[0].dust_sats * count / 100000000 %}
-      {% set total = fee + dust %}
+      {# No arithmetic here. Both composers used to scale the first chunk's
+         figures themselves and they did it differently -- this one multiplied
+         by the count, the public one did not, so a post was offered at half
+         its price. `cost` comes from send_cost(), which is the single
+         definition both routes call. #}
+      {% set fee = cost.fee if cost else 0 %}
+      {% set dust = cost.dust if cost else 0 %}
+      {% set total = cost.total if cost else 0 %}
       <div class="confirm">
         {% if attached_name %}
           <strong>Send {{ attached_name }}?</strong>

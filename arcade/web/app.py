@@ -39,6 +39,7 @@ from ..messaging.miner import Miner, MiningError
 from ..messaging.scanner import Scanner
 from ..messaging.sender import (
     MessageSender, SendError, describe_duration, estimate_readable_seconds,
+    send_cost,
     estimate_send_seconds,
     funded_address, plan_message, record_sent, recent_block_seconds,
 )
@@ -682,6 +683,8 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "messages.html", threads=threads, thread=items, peer=peer,
                       when=_when, fingerprint_of=fingerprint_of, prepared=prepared,
                       plan=plan, draft=body, error=error, timing=timing,
+                      cost=(send_cost(prepared[0], plan.transactions)
+                            if prepared and plan else None),
                       is_new_contact=not items, profile_name=state.profile_name,
                       attached_b64=base64.b64encode(file_bytes).decode() if file_bytes else "",
                       attached_name=file_name, attached_type=file_type,
@@ -1425,7 +1428,7 @@ def create_app(state: AppState) -> FastAPI:
                       balance=balance, when=_when,
                       room=group.max_text_bytes(channel, state.profile_name),
                       nickname=state.profile_name, unfinished=unfinished,
-                      timing=_post_timing(chain, None))
+                      timing=_post_timing(chain, None), cost=None)
 
     @app.get("/groups/media/{post_id}")
     def group_media(request: Request, post_id: int, download: int = 0):
@@ -1578,7 +1581,9 @@ def create_app(state: AppState) -> FastAPI:
                       attached_b64=base64.b64encode(file_bytes).decode() if file_bytes else "",
                       attached_name=file_name, attached_type=file_type,
                       unfinished=unfinished,
-                      timing=_post_timing(chain, plan))
+                      timing=_post_timing(chain, plan),
+                      cost=(send_cost(prepared, plan.transactions)
+                            if prepared and plan else None))
 
     @app.post("/contacts/scan")
     def contacts_scan(request: Request, csrf_token: str = Form("")):
