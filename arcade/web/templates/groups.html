@@ -148,7 +148,8 @@
       <input type="hidden" name="which" value="{{ which }}">
       <input type="hidden" name="channel" value="{{ channel }}">
       <label class="attach" title="Attach a file">
-        <input type="file" name="attachment" onchange="showPick(this)" hidden>
+        <input type="file" name="attachment" id="attachment"
+               onchange="showPick(this)" hidden>
         <span id="clip">📎</span>
       </label>
       <textarea name="text" rows="1" maxlength="{{ room }}" id="post"
@@ -157,7 +158,10 @@
                 placeholder="Say something in #{{ channel }}…">{{ draft or '' }}</textarea>
       <button type="submit">Post</button>
     </form>
-    <p class="muted composer-note" id="picked" hidden></p>
+    <p class="muted composer-note" id="picked" hidden>
+      <span id="picked-text"></span>
+      <button type="button" class="ghost small" onclick="clearPick()">Remove</button>
+    </p>
     <p class="muted composer-note">
       <span id="left">{{ room }}</span> characters left &mdash; a text post is a
       single cheap output, which is what keeps it short.
@@ -218,6 +222,11 @@ function grow(box){
 }
 // Same arithmetic as the private composer: a chunk carries 7,628 payload bytes
 // and a multisig output carries two 30-byte packets.
+function clearPick(){
+  var input = document.getElementById('attachment');
+  input.value = '';
+  showPick(input);
+}
 function showPick(input){
   var note = document.getElementById('picked');
   var file = input.files && input.files[0];
@@ -232,7 +241,7 @@ function showPick(input){
   var outputs = Math.ceil(file.size / 60) + chunks;
   note.hidden = false;
   note.className = 'muted composer-note' + (chunks > 40 ? ' costly' : '');
-  note.innerHTML = '<strong>' + file.name + '</strong> — ' +
+  document.getElementById('picked-text').innerHTML = '<strong>' + file.name + '</strong> — ' +
     (file.size / 1024).toFixed(0) + ' KB, posted as ' + chunks +
     ' transaction' + (chunks === 1 ? '' : 's') + ' costing about ' +
     outputs * 0.01 + ' in dust that can never be spent again.';

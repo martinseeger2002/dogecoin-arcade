@@ -212,7 +212,8 @@
                 oninput="grow(this)"
                 onkeydown="sendOnEnter(event, this)">{{ draft or '' }}</textarea>
       <label class="attach" title="Send a file">
-        <input type="file" name="attachment" onchange="showPick(this)" hidden>
+        <input type="file" name="attachment" id="attachment"
+               onchange="showPick(this)" hidden>
         <span id="clip">📎</span>
       </label>
       <button type="submit">Send</button>
@@ -223,7 +224,10 @@
       </label>
       {% endif %}
     </form>
-    <p class="muted composer-note" id="picked" hidden></p>
+    <p class="muted composer-note" id="picked" hidden>
+      <span id="picked-text"></span>
+      <button type="button" class="ghost small" onclick="clearPick()">Remove</button>
+    </p>
     {% if is_new_contact %}
     <p class="msg info" id="sending" hidden style="margin:0 16px 10px"></p>
     <p class="muted composer-note" style="padding-bottom:2px">
@@ -245,7 +249,7 @@
       not by you either. They have their copy; this is yours.</p>
     <p class="muted composer-note">
       Encrypted to {{ peer.name or 'them' }} only. Costs a transaction fee and is
-      permanent once sent. Ctrl+Enter to review.</p>
+      permanent once sent. Enter sends; Shift+Enter starts a new line.</p>
   {% endif %}
   </section>
 </div>
@@ -358,6 +362,15 @@ function estimateFile(bytes){
   return {chunks: chunks, outputs: outputs, coins: outputs * dustEach,
           blocks: Math.max(1, blocks)};
 }
+function clearPick(){
+  // There was no way to unpick a file. One chosen and then abandoned stayed
+  // attached to whatever was typed next, so pressing Enter to send a sentence
+  // produced a file error instead -- with nothing on screen explaining why.
+  var input = document.getElementById('attachment');
+  input.value = '';
+  showPick(input);
+  document.getElementById('post') && document.getElementById('post').focus();
+}
 function showPick(input){
   var note = document.getElementById('picked');
   var file = input.files && input.files[0];
@@ -366,7 +379,7 @@ function showPick(input){
   var mins = Math.round(e.blocks * 35 / 60);
   note.hidden = false;
   note.className = 'muted picked' + (e.chunks > 40 ? ' costly' : '');
-  note.innerHTML = '<strong>' + file.name + '</strong> — ' +
+  document.getElementById('picked-text').innerHTML = '<strong>' + file.name + '</strong> — ' +
     (file.size / 1024).toFixed(0) + ' KB, sent as <strong>' +
     e.chunks.toLocaleString() + '</strong> transaction' + (e.chunks === 1 ? '' : 's') +
     ' costing about <strong>' + e.coins.toLocaleString(undefined,

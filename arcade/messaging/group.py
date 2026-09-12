@@ -217,9 +217,12 @@ def build(post: GroupPost) -> bytes:
             raise GroupError("the text of a post is limited to 65,535 bytes.")
         if len(post.file_data) > MAX_FILE_BYTES:
             raise GroupError(
-                f"that file is {len(post.file_data) / 1_048_576:.1f} MB and the "
-                f"limit is {MAX_FILE_BYTES // 1_048_576} MB. Every byte is paid "
-                f"for in transaction outputs that can never be spent again.")
+                f"that file is {len(post.file_data) / 1_048_576:.1f} MB and a "
+                f"public post is limited to {MAX_FILE_BYTES // 1_048_576} MB -- "
+                f"lower than a private message, deliberately: a post cannot be "
+                f"taken back, everyone can read it, and every byte is paid for "
+                f"in outputs that can never be spent again. Send it as a private "
+                f"message instead, or post a smaller version.")
 
     body = (Header(type=TYPE_GROUP).encode()
             + bytes([len(channel.encode())]) + channel.encode()
