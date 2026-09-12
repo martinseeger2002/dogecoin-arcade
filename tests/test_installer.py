@@ -151,3 +151,62 @@ def test_both_update_paths_use_one_implementation(fake_home):
         "arcade/update.py has grown its own copy of the migration; it should "
         "call the installer's instead"
     )
+
+
+# --- an existing installation has nothing to restart --------------------------
+# install.py registered the web interface only on a fresh install, so an
+# installation made before that existed had no unit -- and every update left the
+# OLD code running, serving the previous release with no sign but the commit in
+# the footer. On one machine that cost four rounds in a day and produced two
+# false diagnoses: a phantom progress bar, and a button that posted into a void.
+# Both were this single cause in different clothes.
+
+
+def test_the_web_service_is_registered_when_missing(fake_home, monkeypatch):
+    tmp_path, units = fake_home
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "bin" / "arcade-web").write_text("#!/bin/sh\n")
+
+    monkeypatch.setattr(install.shutil, "which", lambda name: "/usr/bin/systemctl")
+    monkeypatch.setattr(install.subprocess, "run",
+                        lambda *a, **k: type("R", (), {"returncode": 0})())
+    monkeypatch.setattr(install.platform, "system", lambda: "Linux")
+
+    assert install.ensure_web_service(venv) is True
+    assert (units / "arcade-web.service").exists()
+
+
+def test_registering_is_idempotent(fake_home, monkeypatch):
+    """An update runs it every time; it must not rewrite a unit each run."""
+    tmp_path, units = fake_home
+    (units / "arcade-web.service").write_text("[Service]\n")
+    monkeypatch.setattr(install.shutil, "which", lambda name: "/usr/bin/systemctl")
+
+    assert install.ensure_web_service(tmp_path / "venv") is False
+
+
+def test_nothing_is_registered_without_systemd(fake_home, monkeypatch):
+    tmp_path, _ = fake_home
+    monkeypatch.setattr(install.shutil, "which", lambda name: None)
+
+    assert install.ensure_web_service(tmp_path / "venv") is False
+
+
+def test_the_updater_registers_it_too(fake_home):
+    """The console script is the path a user actually takes."""
+    import inspect
+    from arcade import update
+
+    source = inspect.getsource(update)
+    assert "_ensure_web_service" in source
+    assert "nothing to restart" in source
+
+
+def test_both_installer_calls_go_through_one_loader(fake_home):
+    """Two copies of the loading logic would drift, as everything else has."""
+    import inspect
+    from arcade import update
+
+    source = inspect.getsource(update)
+    assert source.count("spec_from_file_location") == 1

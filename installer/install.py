@@ -888,6 +888,22 @@ def write_launcher(venv: Path, target: Path, system: str) -> Path:
 # --- update -------------------------------------------------------------------
 
 
+def ensure_web_service(venv: Path) -> bool:
+    """Register the web interface as a service if it is not one already.
+
+    Idempotent, and deliberately runs on update as well as install: an
+    installation made before the unit existed has nothing for an update to
+    restart, so it keeps serving the old code with no sign but the version in the
+    footer. Returns True if it registered one.
+    """
+    if not shutil.which("systemctl"):
+        return False
+    unit = Path.home() / ".config/systemd/user" / "arcade-web.service"
+    if unit.exists():
+        return False
+    return bool(install_web_service(venv, platform.system()))
+
+
 def migrate_node_units(dry_run: bool = False) -> list[str]:
     """Bring already-installed node units up to `Restart=always`.
 
@@ -996,7 +1012,20 @@ def do_update(dry_run: bool) -> int:
             fail(f"reinstall failed:\n{result.stderr[-1200:]}")
         info("installed")
 
-    step(3, 4, "Bringing node services up to date")
+    step(3, 4, "Bringing services up to date")
+    # Register the web interface if it is not a service yet. Without this an
+    # existing installation has nothing to restart, so every update leaves the
+    # OLD code running and the interface silently serves the previous release --
+    # it cost four rounds of confusion on one machine in a day, and produced two
+    # false diagnoses: a phantom progress bar and a button that posted into a
+    # void, both this one cause wearing different clothes.
+    if not dry_run:
+        registered = ensure_web_service(venv)
+        if registered:
+            info("registered arcade-web, so updates can restart it")
+    else:
+        info("would register arcade-web if it is not a service")
+
     migrated = migrate_node_units(dry_run)
     if migrated:
         for unit in migrated:

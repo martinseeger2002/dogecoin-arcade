@@ -117,8 +117,11 @@ def update(dry_run: bool = False) -> int:
 
     print("Updating service definitions")
     if dry_run:
-        print("  would bring node units up to Restart=always")
+        print("  would register arcade-web if needed, and bring node units "
+              "up to Restart=always")
     else:
+        if _ensure_web_service(checkout, venv):
+            print("  registered arcade-web, so this update can restart it")
         migrated = _migrate_node_units(checkout)
         for unit in migrated:
             print(f"  Restart=always: {Path(unit).name}")
@@ -171,6 +174,41 @@ def _warn_if_still_running(port: int = 8420) -> bool:
     return True
 
 
+def _ensure_web_service(checkout: Path, venv: Path) -> bool:
+    """Register the web interface as a service if it is not one already.
+
+    The reason this belongs in the updater and not only the installer: an
+    installation made before the unit existed has nothing to restart, so every
+    update leaves the old code running. The only visible sign is the commit in
+    the footer, and a user would not look.
+    """
+    return bool(_call_installer(checkout, "ensure_web_service", venv))
+
+
+def _call_installer(checkout: Path, function: str, *args):
+    """Run one function from the freshly pulled installer.
+
+    Loaded from the checkout rather than reimplemented, so there is one copy --
+    the installer has to stay standalone and cannot import from this package, so
+    the dependency points this way.
+    """
+    script = checkout / "installer" / "install.py"
+    if not script.is_file():
+        return None
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_arcade_installer", script)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        target = getattr(module, function, None)
+        return target(*args) if target else None
+    except Exception as exc:
+        print(f"  could not run {function}: {exc}")
+        return None
+
+
 def _migrate_node_units(checkout: Path) -> list[str]:
     """Run the installer's unit migration from the code just pulled.
 
@@ -180,25 +218,7 @@ def _migrate_node_units(checkout: Path) -> list[str]:
     this way round. Calling into the pulled copy also means the migration is
     always the current one, not whatever shipped with the installed version.
     """
-    script = checkout / "installer" / "install.py"
-    if not script.is_file():
-        return []
-    try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("_arcade_installer", script)
-        if spec is None or spec.loader is None:
-            return []
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        migrate = getattr(module, "migrate_node_units", None)
-        if migrate is None:
-            return []          # a checkout from before the migration existed
-        return list(migrate())
-    except Exception as exc:
-        # Never fail an update over this: the code is already installed and
-        # working, and a stale unit is a missing improvement, not a breakage.
-        print(f"  could not update service definitions: {exc}")
-        return []
+    return list(_call_installer(checkout, "migrate_node_units") or [])
 
 
 def main(argv: list[str] | None = None) -> int:

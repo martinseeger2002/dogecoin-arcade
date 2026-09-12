@@ -471,3 +471,59 @@ def test_the_repair_runs_once_per_generation(tmp_path):
             raise AssertionError("must not touch the node when already repaired")
 
     assert repair_announcement_names(Forbidden(), NETWORKS["regtest"], store) == 0
+
+
+def test_the_repair_corrects_only_what_the_chain_supports(tmp_path):
+    """a test machine asked for this one specifically, and it is the right test to keep.
+
+    Its store held two announcements of the same key: one genuinely containing
+    twelve bytes because it was published truncated, and one containing sixteen
+    that an older parser had cut on the way in. Repairing the second while
+    leaving the first alone is the difference between re-reading the chain and
+    guessing at the rest -- and only a store that scanned both can show it.
+    """
+    from arcade.messaging.envelope import build_key_announcement
+    from arcade.messaging.scanner import repair_announcement_names
+    from arcade.config import NETWORKS
+    from arcade.payload import AnyData
+
+    key = bytes(range(32))
+    short = build_key_announcement(key, b"\x0f" * 20, "Big Chief En")
+    full = build_key_announcement(key, b"\x0f" * 20, "Big Chief Energy")
+
+    class ChainWithBoth:
+        """Serves the two transactions as the node would."""
+
+        def call(self, method, txid, *rest):
+            assert method == "getrawtransaction"
+            return {"txid": txid, "payload": txid}
+
+    store = _legacy_store(tmp_path)
+    store.conn.execute("DELETE FROM contact")
+    # Both stored cut to twelve, as a reader on the old parser would have them.
+    store.add_key_announcement("tx-short", "nA", key, "ff", 100, 1, stated=True,
+                               name="Big Chief En")
+    store.add_key_announcement("tx-full", "nA", key, "ff", 200, 2, stated=True,
+                               name="Big Chief En")
+    store.set_meta("announcement_repair", "")
+
+    payloads = {"tx-short": short, "tx-full": full}
+    import arcade.messaging.scanner as scanner
+
+    def fake_extract(raw, height, position, params, lookup):
+        return type("Atx", (), {"payload": AnyData(data=payloads[raw["txid"]]).encode(),
+                                "sender": "nA", "txid": raw["txid"]})()
+
+    original = scanner.extract
+    scanner.extract = fake_extract
+    try:
+        repair_announcement_names(ChainWithBoth(), NETWORKS["regtest"], store)
+    finally:
+        scanner.extract = original
+
+    names = {r["txid"]: r["name"] for r in store.conn.execute(
+        "SELECT txid, name FROM key_announcement")}
+    assert names["tx-full"] == "Big Chief Energy", "the cut row should be repaired"
+    assert names["tx-short"] == "Big Chief En", (
+        "a genuinely short announcement must not be invented into a longer one"
+    )
