@@ -120,9 +120,16 @@ TESTNET = Params(
     rpc_port=44873,
     p2p_port=44874,
     activation_height=0,
-    # Set 2026-09-11 at tip 1,483,184. Everything before this is development
-    # traffic from building the application and is deliberately not read.
-    messaging_start_height=1_483_184,
+    # Set 2026-09-12 at tip 1,484,661. Everything before this is development
+    # traffic from building and testing the application -- cross-machine sends,
+    # chunked posts, deliberately interrupted sends -- and is not read.
+    #
+    # This is pinned to the VERSION rather than chosen per machine (D-015), so
+    # every node that installs this release starts from the same block and two
+    # machines cannot disagree about what the channel contains. Raising it makes
+    # everything below unreadable to a fresh install: the transactions stay on
+    # the chain for ever, but nothing here will look at them again.
+    messaging_start_height=1_484_661,
     datadir_subdir="testnet3",
     pubkeyhash_version=113,
     scripthash_version=196,
