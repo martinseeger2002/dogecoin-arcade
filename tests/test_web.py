@@ -2137,3 +2137,32 @@ def test_publishing_asks_the_chain_before_it_spends(monkeypatch, client):
     assert "add_key_announcement" not in publish, (
         "refusing is enough; writing the rows back undoes the user's reset"
     )
+
+
+def test_the_reset_dialog_does_not_promise_a_row_it_may_not_keep(client):
+    """Copy has outrun the code three times today; this pins one of them.
+
+    The dialog said "your address book, your wallet and your own published key
+    are left alone". Whether that announcement row survives depends on the
+    identity being loadable, and on a machine where it was not the reset took
+    three announcements to none -- which is exactly what a test machine measured, an hour
+    after I promised it otherwise.
+
+    The guarantee the sentence was really making is a different one and it does
+    hold: publishing consults the chain, so a cleared list cannot cost a second
+    fee. That is what the page should say, because a reader who takes the
+    stronger reading -- "the Keys page will still show my key" -- is reading
+    something false.
+    """
+    app, _ = client
+    body = app.get("/").text
+
+    assert "published key</strong> are left" not in body, (
+        "the dialog promises the announcement row survives; it may not"
+    )
+    assert "cannot cost you twice" in body, (
+        "the dialog should state the guarantee that actually holds"
+    )
+    assert "checks the chain rather than that" in body, (
+        "and say what makes it hold, so the claim can be checked"
+    )

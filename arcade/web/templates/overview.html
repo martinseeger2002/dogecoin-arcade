@@ -111,9 +111,15 @@ function copyOf(id, ev){
   <div class="note">
     <strong>The chain is not affected.</strong> Those transactions are permanent,
     and anyone they were addressed to can still read them &mdash; this clears only
-    what is remembered here. Your <strong>address book</strong>, your
-    <strong>wallet</strong> and your own <strong>published key</strong> are left
-    alone.
+    what is remembered here. Your <strong>address book</strong> and your
+    <strong>wallet</strong> are left alone.
+    {# Deliberately NOT "your published key is left alone". Whether that row
+       survives depends on the identity being loadable, and on a machine where
+       it was not the reset took three announcements to none -- a test machine measured
+       exactly that. What IS guaranteed is the thing the sentence was really
+       promising: you cannot be charged twice, because publishing asks the
+       chain rather than this list. Say that instead of implying a row is
+       there. #}
   </div>
   <div class="note">
     <strong>What is cleared is discarded, not just forgotten.</strong> The new
@@ -122,8 +128,11 @@ function copyOf(id, ev){
     them back. The transactions themselves stay on the chain for ever, and
     anyone holding their ids can still read them.
     <br><br>
-    Publishing your key is safe either way: that is checked against the chain
-    before anything is spent, so a cleared list can never cost you a second fee.
+    <strong>Your published key cannot cost you twice.</strong> The Keys page may
+    show nothing afterwards &mdash; an announcement below the new starting point
+    is not scanned again &mdash; but publishing checks the chain rather than that
+    list, so it will tell you the key is already out there instead of charging
+    you a second fee for it.
   </div>
   <form method="post" action="/reset-history"
         onsubmit="return confirm('Forget everything scanned so far?')">
