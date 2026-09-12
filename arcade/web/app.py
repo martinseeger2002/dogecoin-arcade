@@ -635,9 +635,16 @@ def create_app(state: AppState) -> FastAPI:
                             store.contact_by_key(bytes.fromhex(peer_hex))),
                         "fingerprint": fingerprint_of(bytes.fromhex(peer_hex)),
                         "code": contact.encode(state.messaging.network, bytes.fromhex(peer_hex))}
-        # What the confirmation needs to say about a file: how long, and why.
+        # What the confirmation needs to say: how long, and why.
+        #
+        # This was gated on `file_bytes`, so it was built for an attachment and
+        # never for a text message -- however many transactions that message
+        # needed. a test machine's two captures were both text-only three-transaction
+        # sends and neither could show the timing note, which is the exact case
+        # its block-packing measurement was about. A long text message chunks
+        # for the same reason a file does and waits the same way.
         timing = None
-        if plan is not None and file_bytes:
+        if plan is not None and plan.transactions > 1:
             independent = 0
             try:
                 with state.messaging.rpc() as rpc:
@@ -1254,6 +1261,25 @@ def create_app(state: AppState) -> FastAPI:
             state.flash(str(exc), "err")
         return RedirectResponse(f"/messages/{peer_hex}", status_code=303)
 
+    def _post_timing(chain, plan):
+        """How long before a chunked post can be read, or None if not chunked.
+
+        One definition called from both render paths. It was pasted into both,
+        and the GET route has no `plan` -- so it raised NameError on every
+        listing of the public board. Two copies of a thing that reads local
+        state is the same mistake that let the CLI and the web disagree about
+        recording a send.
+        """
+        if plan is None or plan.transactions <= 1:
+            return None
+        try:
+            with chain.rpc() as rpc:
+                typical, _slow = recent_block_seconds(rpc)
+        except Exception:
+            typical = 60.0
+        return {"readable": describe_duration(
+            estimate_readable_seconds(plan.transactions, typical))}
+
     @app.post("/groups/resume")
     def resume_post(request: Request, which: str = Form("messaging"),
                     channel: str = Form(""), csrf_token: str = Form("")):
@@ -1398,7 +1424,8 @@ def create_app(state: AppState) -> FastAPI:
                       channel=channel, posts=posts, channels=channels,
                       balance=balance, when=_when,
                       room=group.max_text_bytes(channel, state.profile_name),
-                      nickname=state.profile_name, unfinished=unfinished)
+                      nickname=state.profile_name, unfinished=unfinished,
+                      timing=_post_timing(chain, None))
 
     @app.get("/groups/media/{post_id}")
     def group_media(request: Request, post_id: int, download: int = 0):
@@ -1550,7 +1577,8 @@ def create_app(state: AppState) -> FastAPI:
                       nickname=state.profile_name,
                       attached_b64=base64.b64encode(file_bytes).decode() if file_bytes else "",
                       attached_name=file_name, attached_type=file_type,
-                      unfinished=unfinished)
+                      unfinished=unfinished,
+                      timing=_post_timing(chain, plan))
 
     @app.post("/contacts/scan")
     def contacts_scan(request: Request, csrf_token: str = Form("")):

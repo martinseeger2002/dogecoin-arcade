@@ -157,6 +157,14 @@
           Costs <strong>{{ "%.5f"|format(prepared.total_coins) }}</strong> &mdash;
           one OP_RETURN output and no dust.
         {% endif %}
+        {% if timing and timing.readable and plan and plan.transactions > 1 %}
+        <div class="note" style="margin:10px 0 0">
+          Broadcast is the fast part. A chunked post cannot be READ until every
+          chunk is in a block, and large chunks do not share one, so expect
+          <strong>{{ timing.readable }}</strong> before it is complete for
+          anyone reading &mdash; measured on both chains.
+        </div>
+        {% endif %}
         {% if chain.is_mainnet %}
         <div class="note" style="margin:10px 0 0">
           This writes onto the chain permanently, in plain text, under your name.

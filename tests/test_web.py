@@ -2026,3 +2026,69 @@ def test_a_post_resume_will_not_touch_a_private_pending_send(client, _stubbed_ch
     )
     with state.store() as store:
         assert len(store.pending_sends()) == 1, "the private record must survive"
+
+
+def test_the_timing_note_is_not_gated_on_an_attachment():
+    """A long TEXT message chunks for the same reason a file does.
+
+    The gate was `plan is not None and file_bytes`, so timing was built only for
+    an attachment and a text message needing three transactions got timing=None
+    -- which silently skipped the readable-by note. a test machine's two captures were
+    both text-only three-transaction sends, the exact case its block-packing
+    measurement was about, and neither could show it.
+    """
+    import inspect
+
+    from arcade.web import app as webapp
+
+    source = inspect.getsource(webapp.create_app)
+    assert "if plan is not None and file_bytes:" not in source, (
+        "timing is gated on an attachment again"
+    )
+    assert "if plan is not None and plan.transactions > 1:" in source
+
+
+def test_the_public_confirm_can_show_a_readable_estimate(client):
+    """groups.html was never passed timing at all.
+
+    So the post whose chunks were measured landing two blocks apart could never
+    say how long before anyone could read it.
+    """
+    source = pathlib.Path("arcade/web/templates/groups.html").read_text()
+    assert "timing.readable" in source, (
+        "the public confirm screen cannot report a readable-by time"
+    )
+
+    import inspect
+
+    from arcade.web import app as webapp
+
+    route = inspect.getsource(webapp.create_app)
+    assert "timing=_post_timing(chain, plan)" in route, (
+        "groups.html is still passed no timing"
+    )
+    assert "estimate_readable_seconds" in route
+    # One definition, called from both render paths. Pasted into both, it raised
+    # NameError on the listing route, which has no `plan` at all.
+    assert route.count("def _post_timing(") == 1
+
+
+def test_both_confirm_screens_quote_dust_from_a_real_field(client):
+    """Guards the pairing, not just the presence of a figure.
+
+    A screen that renders prepared.dust_coins is only honest if prepare() fills
+    it in; the template was right and the value was structurally zero. So this
+    asserts the template reads the field AND that the field is set where the
+    messages and posts are built.
+    """
+    groups = pathlib.Path("arcade/web/templates/groups.html").read_text()
+    messages = pathlib.Path("arcade/web/templates/messages.html").read_text()
+    assert "prepared.dust_coins" in groups
+    assert "prepared[0].dust_sats" in messages
+
+    sender = pathlib.Path("arcade/messaging/sender.py").read_text()
+    body = sender[sender.index("    def prepare("):]
+    body = body[:body.index("\n    def ", 1)]
+    assert "dust_sats=" in body, (
+        "prepare() must set dust_sats or both screens quote zero"
+    )

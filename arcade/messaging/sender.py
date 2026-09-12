@@ -316,10 +316,10 @@ class MessageSender:
             fee_sats=int(round(float(funded.get("fee", 0)) * COIN)),
             size=len(signed["hex"]) // 2,
             outputs=len(decoded.get("vout", [])),
-            # `outputs` above counts what is on the wire, change included. This
-            # is what the sender actually loses to them, which is the figure a
-            # confirm screen has to show.
-            dust_sats=sum(value for value, _ in outputs),
+            # No dust_sats here on purpose. A split's outputs go back to the
+            # SAME address as spendable change, so they are not a cost -- only
+            # the fee is. Reporting them as dust would say a split costs twelve
+            # coins when it costs a fraction of one.
         )
 
     #: What one Class B chunk costs: about 110 outputs of dust plus a fee. Split
@@ -684,6 +684,10 @@ class MessageSender:
             fee_sats=fee_sats,
             size=len(signed["hex"]) // 2,
             outputs=len(decoded.get("vout", [])),
+            # What the sender loses to the outputs themselves, as opposed to
+            # `outputs` above, which counts what is on the wire including
+            # change. Zero for Class C, whose single output carries no value.
+            dust_sats=sum(value for value, _ in outputs),
         )
 
     def broadcast(self, prepared: PreparedTx) -> str:
