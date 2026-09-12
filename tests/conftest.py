@@ -41,3 +41,29 @@ def regtest():
         pytest.skip(f"regtest node unavailable: {exc}")
     yield node
     node.stop()
+
+
+@pytest.fixture
+def no_nodes(monkeypatch):
+    """Guarantee that nothing under test can reach a real node.
+
+    `datadir=Path("/nonexistent")` looks airtight and is not: credential loading
+    falls back to a default location, so on any machine with a node running the
+    "offline" web tests quietly talked to it. They then passed or failed
+    according to what happened to be running, which is the opposite of a test.
+    a test machine found this because the same test failed there and passed here.
+
+    Both doors are shut: explicit credentials, and the discovery fallback.
+    """
+    def refuse(*args, **kwargs):
+        raise RuntimeError("no node available (test)")
+
+    import arcade.config
+    import arcade.discovery
+    import arcade.web.state
+
+    monkeypatch.setattr(arcade.config, "load_rpc_credentials", refuse)
+    monkeypatch.setattr(arcade.web.state, "load_rpc_credentials", refuse,
+                        raising=False)
+    monkeypatch.setattr(arcade.discovery, "best", lambda *a, **k: None)
+    return None

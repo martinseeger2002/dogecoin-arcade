@@ -742,6 +742,19 @@ class MessageStore:
 
     def add_sent(self, txid: str, recipient_key: bytes, recipient_addr: str,
                  sender_fp: str, body: bytes) -> None:
+        """Keep our own plaintext copy of a message we sent.
+
+        Not an optimisation -- it is the only copy we will ever have. A message
+        is sealed to the recipient, so the sender genuinely cannot read it back
+        off the chain: that is `crypto_box_seal` doing its job, not a gap. A
+        conversation on any machine is therefore what it received (from the
+        chain) plus what it sent (from here), and a machine that fails to write
+        this down shows a half conversation with its own replies missing.
+
+        Which is what happened: this was called from the web interface and not
+        from the CLI, so a machine that sent with `arcade-msg` saw only the other
+        person's side. Both front ends go through `record_sent` now.
+        """
         self.conn.execute(
             "INSERT OR IGNORE INTO sent"
             "(txid,created,recipient_key,recipient_addr,sender_fp,body) VALUES(?,?,?,?,?,?)",
@@ -868,12 +881,27 @@ class MessageStore:
         return sorted(peers.values(), key=lambda e: e["last"], reverse=True)
 
     def thread(self, recipient_fp: str, peer_key: bytes) -> list[dict]:
-        """Every message with one correspondent, oldest first."""
+        """Every message with one correspondent, oldest first.
+
+        A message is shown once even when both halves of it are held here. That
+        happens whenever you are your own correspondent: the send is recorded
+        locally *and* the same transaction is later decrypted off the chain, so
+        the conversation showed every message twice. Both records are correct;
+        they are the same message, and the sent copy is the one to keep because
+        it is the plaintext as written.
+        """
         items = []
+        sent_txids = {
+            row["txid"] for row in self.conn.execute(
+                "SELECT txid FROM sent WHERE sender_fp=? AND recipient_key=?",
+                (recipient_fp, peer_key))
+        }
         for row in self.conn.execute(
             "SELECT id, body, block_time, read_at, first_txid, height FROM message "
             "WHERE recipient_fp=? AND sender_pubkey=? ", (recipient_fp, peer_key)
         ):
+            if row["first_txid"] in sent_txids:
+                continue          # our own message, already held as sent
             items.append({"id": row["id"], "body": row["body"], "when": row["block_time"],
                           "mine": False, "txid": row["first_txid"], "height": row["height"],
                           "unread": row["read_at"] is None})

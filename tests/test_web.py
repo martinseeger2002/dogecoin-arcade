@@ -20,7 +20,7 @@ from arcade.web.state import AppState, ChainContext
 
 
 @pytest.fixture
-def app_state(tmp_path):
+def app_state(tmp_path, no_nodes):
     """An application pointed at nowhere: no node, no identity.
 
     Deliberately unreachable. Every page must still render and explain itself --
@@ -60,8 +60,17 @@ def test_no_page_leaks_a_traceback(client, path):
 
 
 def test_offline_node_is_explained_not_hidden(client):
+    """An unreachable node must say so, and say why.
+
+    Asserts the property rather than one lower layer's wording. It used to match
+    the literal string "nothing listening", which only appears when a connection
+    is actually refused -- so the test was pinned to the reason a node happened
+    to be unavailable on the machine running it. a test machine had it fail there and pass
+    here for exactly that reason.
+    """
     body = client[0].get("/").text
-    assert "nothing listening" in body or "Could not reach" in body
+    assert "offline" in body
+    assert "Start the node" in body, "it should say what to do about it"
 
 
 # --- CSRF ---------------------------------------------------------------------
@@ -78,17 +87,25 @@ POST_ROUTES = [
 
 @pytest.mark.parametrize("path,data", POST_ROUTES, ids=[p for p, _ in POST_ROUTES])
 def test_state_changing_routes_require_a_csrf_token(client, path, data):
-    """A local server is reachable by any process here, including a stray browser tab."""
+    """A local server is reachable by any process here, including a stray browser tab.
+
+    The status code is part of the assertion now. It used to be 200 or 303,
+    because every handler caught the rejection into its own error path -- so a
+    refused request was indistinguishable from an accepted one to anything but a
+    human reading the page. a test machine audited `/publish-key`, saw 200 with no token,
+    and had to check the chain and the wallet before concluding it was safe.
+    """
     app, state = client
     response = app.post(path, data=data, follow_redirects=False)
-    assert response.status_code in (200, 303), response.status_code
-    # Nothing may have happened.
+    assert response.status_code == 400, f"{path} answered {response.status_code}"
     assert not state.unlocked
 
 
 def test_wrong_csrf_token_is_rejected(client):
     app, state = client
-    app.post("/setup-identity", data={"csrf_token": "wrong"}, follow_redirects=False)
+    response = app.post("/setup-identity", data={"csrf_token": "wrong"},
+                        follow_redirects=False)
+    assert response.status_code == 400
     assert not state.unlocked
 
 
@@ -247,7 +264,7 @@ def test_the_address_book_rejects_a_stale_form(client):
     app, state = client
     response = app.post("/contacts/save", data={"name": "Forged", "csrf_token": "wrong"},
                         follow_redirects=False)
-    assert response.status_code == 303
+    assert response.status_code == 400
     with state.store() as store:
         assert store.contacts() == []
 
@@ -278,7 +295,7 @@ def test_backup_actions_fail_cleanly_without_a_node(client, path, data):
 def test_backup_actions_require_a_csrf_token(client, path, data):
     app, state = client
     response = app.post(path, data=data, follow_redirects=False)
-    assert response.status_code in (200, 303)
+    assert response.status_code == 400
 
 
 def test_printing_keys_requires_the_acknowledgement(client):
@@ -545,3 +562,43 @@ def test_the_updater_warns_when_something_is_still_serving():
         assert _warn_if_still_running(port) is True
 
     assert _warn_if_still_running(port) is False
+
+
+def test_a_conversation_with_yourself_shows_each_message_once(tmp_path):
+    """Both halves are held locally, and they are the same message.
+
+    A send is recorded when it goes out, and the same transaction is later
+    decrypted off the chain -- so a self-conversation showed everything twice.
+    """
+    from arcade.messaging.sender import record_sent
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    me_key, me_fp = b"\x50" * 32, "my fingerprint"
+    record_sent(store, "tx-self", me_key, me_fp, b"a note to myself")
+    store.add_message(None, "tx-self", "tx-self", 1, 100, "nMe", me_key, me_fp,
+                      b"a note to myself")
+
+    thread = store.thread(me_fp, me_key)
+    assert len(thread) == 1
+    assert thread[0]["mine"] is True
+
+
+def test_a_real_conversation_keeps_both_sides(tmp_path):
+    """Deduplicating must not collapse two people's messages into one."""
+    from arcade.messaging.sender import record_sent
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    peer = b"\x51" * 32
+    record_sent(store, "tx-out", peer, "me", b"mine")
+    store.add_message(None, "tx-in", "tx-in", 1, 200, "nThem", peer, "me", b"theirs")
+
+    assert len(store.thread("me", peer)) == 2
+
+
+def test_the_conversation_can_scroll(client):
+    """A flex child sizes to its content unless min-height is zero."""
+    body = client[0].get("/messages").text
+    assert "overflow-y:auto" in body
+    assert "min-height:0" in body

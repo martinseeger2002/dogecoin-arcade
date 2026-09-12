@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import (
     HTMLResponse, JSONResponse, RedirectResponse, Response,
 )
@@ -31,7 +31,7 @@ from ..messaging.keys import fingerprint_of
 from ..messaging.miner import Miner, MiningError
 from ..messaging.scanner import Scanner
 from ..messaging.sender import (
-    MessageSender, SendError, funded_address, plan_message,
+    MessageSender, SendError, funded_address, plan_message, record_sent,
 )
 from .state import AppState
 
@@ -78,9 +78,22 @@ def create_app(state: AppState) -> FastAPI:
         return TEMPLATES.TemplateResponse(request, template, base)
 
     def check_csrf(token: str) -> None:
+        """Reject a request whose form token does not match this process's.
+
+        Raises `HTTPException(400)` rather than a plain error so the rejection
+        has a status code that says what happened. It used to raise ValueError,
+        which every handler caught into its own error path -- so a rejected
+        request answered 200 or 303 and looked, to anything but a human reading
+        the page, exactly like a successful one. a test machine audited this endpoint,
+        saw `POST /publish-key -> 200` with no token, and had to check the chain
+        and the wallet before concluding the protection worked. A check nobody
+        can verify from the outside is a poor check even when it is sound.
+        """
         import secrets as _s
         if not _s.compare_digest(token or "", state.csrf_token):
-            raise ValueError("stale form -- reload the page and try again")
+            raise HTTPException(
+                status_code=400,
+                detail="stale form -- reload the page and try again")
 
     def messaging_status() -> dict[str, Any]:
         """Testnet node health plus funding, which only the Messenger needs."""
@@ -89,6 +102,8 @@ def create_app(state: AppState) -> FastAPI:
             try:
                 with state.messaging.rpc() as rpc:
                     status["funding"] = Miner(rpc, state.messaging.params).status()
+            except HTTPException:
+                raise          # a rejected form is a 400, not an error page
             except Exception as exc:
                 status["funding"] = None
                 status["funding_error"] = str(exc)
@@ -111,6 +126,8 @@ def create_app(state: AppState) -> FastAPI:
         if not state.unlocked:
             try:
                 state.ensure_identity()
+            except HTTPException:
+                raise          # a rejected form is a 400, not an error page
             except Exception:
                 pass
         code, announced = None, True
@@ -137,8 +154,12 @@ def create_app(state: AppState) -> FastAPI:
             check_csrf(csrf_token)
             state.ensure_identity()
             state.flash("You are ready to send and receive messages.", "ok")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except (DerivationError, ValueError) as exc:
             state.flash(str(exc), "err")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             state.flash(f"Could not reach the testnet node: {exc}", "err")
         return RedirectResponse("/", status_code=303)
@@ -160,6 +181,8 @@ def create_app(state: AppState) -> FastAPI:
         if state.store_path.exists() and state.unlocked:
             try:
                 peer_key = bytes.fromhex(peer_hex)
+            except HTTPException:
+                raise          # a rejected form is a 400, not an error page
             except ValueError:
                 return RedirectResponse("/messages", status_code=303)
             with state.store() as store:
@@ -199,6 +222,8 @@ def create_app(state: AppState) -> FastAPI:
                 if name.strip() or address:
                     store.name_contact(peer_key, name.strip(), address)
             return RedirectResponse(f"/messages/{peer_key.hex()}", status_code=303)
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             state.flash(str(exc), "err")
             return RedirectResponse("/messages", status_code=303)
@@ -210,6 +235,8 @@ def create_app(state: AppState) -> FastAPI:
             check_csrf(csrf_token)
             with state.store() as store:
                 store.name_contact(bytes.fromhex(peer_hex), name.strip())
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             state.flash(str(exc), "err")
         return RedirectResponse(f"/messages/{peer_hex}", status_code=303)
@@ -279,11 +306,13 @@ def create_app(state: AppState) -> FastAPI:
                     # Keep our own plaintext: the sealed box is to the recipient,
                     # so we could never read this back off the chain ourselves.
                     with state.store() as store:
-                        store.add_sent(txids[0], peer_key, "",
-                                       state.identity.fingerprint,
-                                       (body or f"[sent {file_name}]").encode())
+                        record_sent(store, txids[0], peer_key,
+                                    state.identity.fingerprint,
+                                    (body or f"[sent {file_name}]").encode())
                     state.flash(f"Sent in {len(txids)} transaction(s).", "ok")
                     return RedirectResponse(f"/messages/{peer_hex}", status_code=303)
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             error = str(exc)
 
@@ -329,6 +358,8 @@ def create_app(state: AppState) -> FastAPI:
         if message:
             try:
                 body_text = message.body.decode("utf-8")
+            except HTTPException:
+                raise          # a rejected form is a 400, not an error page
             except UnicodeDecodeError:
                 body_text = None
         return render(request, "message.html", message=message, body_text=body_text,
@@ -363,6 +394,8 @@ def create_app(state: AppState) -> FastAPI:
                 keys = store.all_keys()
             recipient_key = _resolve_recipient(state, recipient)
             plan = plan_message(state.identity, recipient_key, body.encode())
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             error = str(exc)
         return render(request, "compose.html", keys=keys, plan=plan, error=error,
@@ -397,6 +430,8 @@ def create_app(state: AppState) -> FastAPI:
                 prepared = [sender.prepare(address, p) for p in plan.chunk_payloads]
                 if confirmed == "yes":
                     broadcast_txids = [sender.broadcast(p) for p in prepared]
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             error = str(exc)
 
@@ -456,6 +491,8 @@ def create_app(state: AppState) -> FastAPI:
                      contact_id: str = Form(""), csrf_token: str = Form("")):
         try:
             check_csrf(csrf_token)
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except ValueError as exc:
             state.flash(str(exc), "err")
             return RedirectResponse("/contacts", status_code=303)
@@ -481,6 +518,8 @@ def create_app(state: AppState) -> FastAPI:
         if code.strip():
             try:
                 network, pubkey = contact.decode(code.strip())
+            except HTTPException:
+                raise          # a rejected form is a 400, not an error page
             except Exception as exc:
                 state.flash(f"Contact code: {exc}", "err")
                 return RedirectResponse("/contacts", status_code=303)
@@ -502,6 +541,8 @@ def create_app(state: AppState) -> FastAPI:
     def delete_contact(request: Request, contact_id: int, csrf_token: str = Form("")):
         try:
             check_csrf(csrf_token)
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except ValueError as exc:
             state.flash(str(exc), "err")
             return RedirectResponse("/contacts", status_code=303)
@@ -545,6 +586,8 @@ def create_app(state: AppState) -> FastAPI:
                     card["wallet_readable"] = os.access(path, os.R_OK)
                     card["wallets"] = backup.list_wallets(chain.datadir, chain.network)
                     card["can_switch"] = os.access(path.parent, os.W_OK)
+            except HTTPException:
+                raise          # a rejected form is a 400, not an error page
             except Exception as exc:
                 card["problem"] = str(exc)
             cards.append(card)
@@ -568,8 +611,12 @@ def create_app(state: AppState) -> FastAPI:
                                                network=chain.network)
             state.flash(f"Saved a copy of the {chain.label.lower()} wallet to {written}. "
                         f"Keep it somewhere other than this computer.", "ok")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except (backup.BackupError, ValueError) as exc:
             state.flash(str(exc), "err")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             state.flash(f"Could not back up: {exc}", "err")
         return RedirectResponse("/backup", status_code=303)
@@ -587,8 +634,12 @@ def create_app(state: AppState) -> FastAPI:
                 keys = backup.private_keys(rpc)
             return render(request, "printkeys.html", keys=keys, chain=chain,
                           when=_when)
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except (backup.BackupError, ValueError) as exc:
             state.flash(str(exc), "err")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             state.flash(f"Could not read the keys: {exc}", "err")
         return RedirectResponse("/backup", status_code=303)
@@ -609,8 +660,12 @@ def create_app(state: AppState) -> FastAPI:
                 "Importing. The node has to re-read the chain to find this key's "
                 "coins, which takes a few minutes and makes it unresponsive in the "
                 "meantime. This page will say when it is done.", "ok")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except (backup.BackupError, ValueError) as exc:
             state.flash(str(exc), "err")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             state.flash(f"Could not import: {exc}", "err")
         return RedirectResponse("/backup", status_code=303)
@@ -640,8 +695,12 @@ def create_app(state: AppState) -> FastAPI:
                 + ("The node has restarted and is using it now."
                    if came_back else
                    "The node is still starting -- give it a minute."), "ok")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except (backup.BackupError, ValueError) as exc:
             state.flash(str(exc), "err")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             state.flash(f"Could not restore: {exc}", "err")
         return RedirectResponse("/backup", status_code=303)
@@ -668,8 +727,12 @@ def create_app(state: AppState) -> FastAPI:
                 f"previous wallet is kept and can be switched back to at any time. "
                 + ("The node has restarted." if came_back
                    else "The node is still starting -- give it a minute."), "ok")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except (backup.BackupError, ValueError) as exc:
             state.flash(str(exc), "err")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             state.flash(f"Could not create a wallet: {exc}", "err")
         return RedirectResponse("/backup", status_code=303)
@@ -693,8 +756,12 @@ def create_app(state: AppState) -> FastAPI:
                 f"Now using {result['now_using']}. "
                 + ("The node has restarted." if came_back
                    else "The node is still starting -- give it a minute."), "ok")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except (backup.BackupError, ValueError) as exc:
             state.flash(str(exc), "err")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             state.flash(f"Could not switch wallets: {exc}", "err")
         return RedirectResponse("/backup", status_code=303)
@@ -713,8 +780,12 @@ def create_app(state: AppState) -> FastAPI:
                 f"Removed {result['removed']} from the list. The file itself was "
                 f"moved to {result['moved_to']}, not deleted -- a wallet can hold "
                 f"coins nothing else records.", "ok")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except (backup.BackupError, ValueError) as exc:
             state.flash(str(exc), "err")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             state.flash(f"Could not remove that wallet: {exc}", "err")
         return RedirectResponse("/backup", status_code=303)
@@ -776,6 +847,8 @@ def create_app(state: AppState) -> FastAPI:
             state.flash(
                 f"New contacts will see you as {name.strip()}." if name.strip()
                 else "Your name will no longer be sent to new contacts.", "ok")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except ValueError as exc:
             state.flash(str(exc), "err")
         return RedirectResponse("/contacts", status_code=303)
@@ -812,6 +885,8 @@ def create_app(state: AppState) -> FastAPI:
         try:
             with chain.rpc() as rpc:
                 balance = float(rpc.call("getbalance") or 0)
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception:
             balance = None
         return render(request, "groups.html", which=which, chain=chain,
@@ -899,6 +974,8 @@ def create_app(state: AppState) -> FastAPI:
                         f"It is public and permanent.", "ok")
                     return RedirectResponse(
                         f"/groups?which={which}&channel={channel}", status_code=303)
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             error = str(exc)
 
@@ -910,6 +987,8 @@ def create_app(state: AppState) -> FastAPI:
         try:
             with chain.rpc() as rpc:
                 balance = float(rpc.call("getbalance") or 0)
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception:
             balance = None
         return render(request, "groups.html", which=which, chain=chain,
@@ -941,6 +1020,8 @@ def create_app(state: AppState) -> FastAPI:
                 + (f"{found} published address{'' if found == 1 else 'es'} not in "
                    f"your address book." if found else
                    "Nothing new to add."), "ok")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             state.flash(f"Scan failed: {exc}", "err")
         return RedirectResponse("/contacts", status_code=303)
@@ -962,8 +1043,12 @@ def create_app(state: AppState) -> FastAPI:
                 f"Added {name.strip() or address.strip()}. An announcement proves "
                 f"control of that address, never who somebody is &mdash; confirm "
                 f"it with them before trusting it.", "ok")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except (ValueError, TypeError) as exc:
             state.flash(str(exc), "err")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             state.flash(f"Could not add that: {exc}", "err")
         return RedirectResponse("/contacts", status_code=303)
@@ -993,6 +1078,8 @@ def create_app(state: AppState) -> FastAPI:
             home = state.derived_address or ""
             try:
                 _, home_hash = b58check_decode(home) if home else (0, b"")
+            except HTTPException:
+                raise          # a rejected form is a 400, not an error page
             except Exception:
                 home_hash = b""
             payload = build_key_announcement(
@@ -1006,6 +1093,8 @@ def create_app(state: AppState) -> FastAPI:
                     change_address=home)
                 if confirmed == "yes":
                     txid = sender.broadcast(prepared)
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             error = str(exc)
         keys = []
@@ -1035,6 +1124,8 @@ def create_app(state: AppState) -> FastAPI:
             with ctx.rpc() as rpc:
                 address = walletlib.receive_address(rpc, "DogecoinArcade")
             state.flash(f"{ctx.label} receiving address:  {address}", "reveal")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             state.flash(str(exc), "err")
         return RedirectResponse("/wallet", status_code=303)
@@ -1061,6 +1152,8 @@ def create_app(state: AppState) -> FastAPI:
                 if confirmed == "yes":
                     txid = walletlib.broadcast(rpc, prepared)
                     state.flash(f"Sent. Transaction {txid}", "ok")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             error = str(exc)
 
@@ -1078,6 +1171,8 @@ def create_app(state: AppState) -> FastAPI:
                 scanner = Scanner(rpc, state.messaging.params, store, identity=state.identity)
                 result = scanner.scan(max_blocks=5000)
                 state.flash(f"Scanned {result}", "ok")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             state.flash(f"Scan failed: {exc}", "err")
         return RedirectResponse("/", status_code=303)
@@ -1095,6 +1190,8 @@ def create_app(state: AppState) -> FastAPI:
                     address = rpc.call("getnewaddress")
                     status = miner.bootstrap(address)
                     state.flash(status.describe())
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
         except (MiningError, Exception) as exc:
             state.flash(f"Mining failed: {exc}", "err")
         return RedirectResponse("/wallet", status_code=303)
@@ -1188,6 +1285,8 @@ def _profile_for_state(state, peer_key: bytes) -> "content.Profile | None":
     try:
         with state.ledger.rpc() as rpc:
             mainnet = rpc.call("getaccountaddress", "arcade-identity") or ""
+    except HTTPException:
+        raise          # a rejected form is a 400, not an error page
     except Exception:
         mainnet = ""
     profile = content.Profile(name=name, testnet_address=testnet,
@@ -1274,6 +1373,8 @@ def _check_address(address: str, *, mainnet: bool) -> str | None:
     wanted = [p for p in NETWORKS.values() if p.name.endswith("main") == mainnet]
     try:
         version, payload = b58check_decode(address)
+    except HTTPException:
+        raise          # a rejected form is a 400, not an error page
     except Exception:
         return "that does not look like an address (the checksum does not match)."
     if len(payload) != 20:

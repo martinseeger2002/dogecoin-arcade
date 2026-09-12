@@ -329,7 +329,7 @@ def test_a_lone_final_chunk_is_not_treated_as_complete(tmp_path):
 
 
 @pytest.fixture
-def feed_client(tmp_path):
+def feed_client(tmp_path, no_nodes):
     from pathlib import Path
     from fastapi.testclient import TestClient
     from arcade.web.app import create_app

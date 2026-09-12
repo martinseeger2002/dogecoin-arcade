@@ -12,6 +12,7 @@ The flow follows the brief exactly, and the confirmation step is not optional:
 
 from __future__ import annotations
 
+import logging
 import time
 
 from dataclasses import dataclass, field
@@ -22,6 +23,8 @@ from ..encoding import MAX_CLASS_B_PAYLOAD, encode_class_b, encode_class_c, max_
 from ..payload import AnyData
 from ..rpc import RpcClient
 from ..txbuild import build_raw_tx, multisig_script, op_return_script, p2pkh_script
+
+log = logging.getLogger(__name__)
 from .envelope import (
     Header, TYPE_CHUNK, TYPE_SINGLE, new_message_id, seal_ciphertext, seal_message,
 )
@@ -526,3 +529,21 @@ def funded_address(rpc, prefer: str | None = None, need: int = COIN,
             "then wait for the coins to mature."
         )
     return best
+
+
+def record_sent(store, txid: str, recipient_key: bytes, sender_fp: str,
+                body: bytes, recipient_addr: str = "") -> None:
+    """Write down a message we just sent, on whichever front end sent it.
+
+    A sealed message cannot be read back off the chain by its sender, so this
+    local copy is the only one that will ever exist. Missing it does not lose the
+    message for the recipient -- it loses it for *us*, which is why a machine
+    that sent by CLI showed a conversation with its own half absent.
+
+    Failure here must never look like a failed send: the transaction is already
+    on the chain and irreversible by the time this is called.
+    """
+    try:
+        store.add_sent(txid, recipient_key, recipient_addr, sender_fp, body)
+    except Exception:                      # pragma: no cover - storage only
+        log.warning("could not record sent message %s locally", txid, exc_info=True)

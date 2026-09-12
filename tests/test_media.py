@@ -100,7 +100,7 @@ def test_the_media_policy_forbids_everything_by_default():
 
 
 @pytest.fixture
-def client(tmp_path):
+def client(tmp_path, no_nodes):
     from pathlib import Path
     from fastapi.testclient import TestClient
     from arcade.web.app import create_app

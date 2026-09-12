@@ -502,3 +502,64 @@ def test_a_long_name_is_truncated_not_refused():
     payload = build_key_announcement(bytes(range(32)), b"\x05" * 20, "a" * 80)
     _, name = parse_announced_identity(payload)
     assert name == "a" * MAX_ANNOUNCE_NAME
+
+
+# --- a sender keeps the only copy of what it sent ------------------------------
+# A message is sealed to the recipient, so whoever sent it cannot read it back
+# off the chain. That is crypto_box_seal working, not a gap -- but it means a
+# conversation on any machine is what it received plus what it sent, and a
+# machine that does not write down its own half shows half a conversation.
+#
+# Which is exactly what happened: `add_sent` was called from the web interface
+# and not from the CLI, so a machine that sent with `arcade-msg` saw only the
+# other person's messages.
+
+
+def test_a_sender_cannot_read_its_own_message_back(alice, bob):
+    """The reason a local copy is the only copy, stated as a test."""
+    from arcade.messaging.envelope import EnvelopeError, open_message, seal_message
+    from arcade.messaging.envelope import Header, TYPE_SINGLE
+
+    payload = seal_message(alice, bob.public_bytes, Header(type=TYPE_SINGLE), b"hello")
+
+    assert open_message(bob, payload)[1] == b"hello"
+    with pytest.raises(EnvelopeError):
+        open_message(alice, payload)
+
+
+def test_recording_a_send_keeps_the_plaintext(tmp_path):
+    from arcade.messaging.sender import record_sent
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    record_sent(store, "txid1", b"\x40" * 32, "my fingerprint", b"what I said")
+
+    (row,) = store.conn.execute("SELECT * FROM sent").fetchall()
+    assert bytes(row["body"]) == b"what I said"
+    assert row["sender_fp"] == "my fingerprint"
+
+
+def test_a_recorded_send_appears_in_the_thread(tmp_path):
+    """Both halves, from two different sources, in one conversation."""
+    from arcade.messaging.sender import record_sent
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    peer = b"\x41" * 32
+    store.add_message(None, "tx-in", "tx-in", 1, 100, "nThem", peer, "me", b"their reply")
+    record_sent(store, "tx-out", peer, "me", b"my message")
+
+    thread = store.thread("me", peer)
+    assert [(item["mine"], bytes(item["body"])) for item in thread] == [
+        (False, b"their reply"), (True, b"my message")]
+
+
+def test_a_storage_failure_does_not_look_like_a_failed_send(tmp_path):
+    """The transaction is already on the chain by the time this runs."""
+    from arcade.messaging.sender import record_sent
+
+    class Broken:
+        def add_sent(self, *args, **kwargs):
+            raise RuntimeError("database is locked")
+
+    record_sent(Broken(), "txid", b"\x42" * 32, "fp", b"body")   # must not raise

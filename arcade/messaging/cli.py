@@ -39,6 +39,7 @@ from .miner import COINBASE_MATURITY, DEFAULT_TARGET_COINS, Miner, MiningError
 from .scanner import Scanner
 from .sender import (
     MessageSender, PartialSend, SendError, funded_address, plan_message,
+    record_sent,
 )
 from .store import MessageStore
 
@@ -393,6 +394,10 @@ def cmd_send(args) -> int:
             sent = sender.send_all(address, plan.chunk_payloads,
                                    on_progress=progress, approve=approve,
                                    on_broadcast=broadcast_done)
+            if sent:
+                # The only copy we will ever have: a sealed message cannot be
+                # read back off the chain by whoever sent it.
+                record_sent(store, sent[0], recipient, identity.fingerprint, body)
             if plan.chunked and sent:
                 store.finish_pending_send(plan.msg_id)
         except PartialSend as exc:
@@ -439,6 +444,10 @@ def _resume_send(args, params, store: MessageStore, record: dict) -> int:
             sent = sender.send_all(record["sender_address"], remaining,
                                    on_progress=progress, approve=approve,
                                    on_broadcast=broadcast_done)
+            if sent:
+                record_sent(store, record["txids"][0] if record["txids"] else sent[0],
+                            record["recipient_key"], _identity(args).fingerprint,
+                            record["body"])
         except PartialSend as exc:
             print(f"\n{exc}", file=sys.stderr)
             return 1
@@ -610,7 +619,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--hex", action="store_true", help="the file holds hex, not raw bytes")
     s.set_defaults(func=cmd_import_key)
 
-    s = sub.add_parser("publish-key", help="announce your public key on chain")
+    s = sub.add_parser(
+        "publish-key",
+        help="announce your public key, identity address and name on chain",
+        description="Publishes your key together with the address it belongs to "
+                    "and your name, in a single OP_RETURN. The name is taken "
+                    "from the profile stored locally -- there is no flag for it, "
+                    "because it should be the same name the web interface "
+                    "publishes. Set it on the Address book page; with no profile "
+                    "set, the name is simply empty.")
     s.add_argument("--address", help="send from this address")
     s.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     s.add_argument("--dry-run", action="store_true")
