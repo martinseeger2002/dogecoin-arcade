@@ -184,13 +184,25 @@ def _update_services(checkout: Path, venv: Path, dry_run: bool) -> int:
     if dry_run:
         print("  would restart arcade-web")
     elif shutil.which("systemctl"):
-        for scope in (["--user"], []):
+        # Restart the scope that ACTUALLY OWNS the port, not the first one that
+        # accepts the command. This tried --user first and stopped on success,
+        # so on a machine with a system unit serving :8420 it restarted an
+        # unrelated user unit, printed "restarted", and left the old code
+        # running for hours. The interface's staleness banner was the only thing
+        # that knew. `_listener_pid` is the question that matters: whose process
+        # is on the port?
+        scopes = _scopes_for_port()
+        for scope in scopes:
             if _run("systemctl", *scope, "restart", "arcade-web").returncode == 0:
                 print(f"  restarted ({'user' if scope else 'system'} service)")
-                _verify_service_owns_port(scope)
-                break
+                if _verify_service_owns_port(scope):
+                    break
+            elif not scope:
+                print("  the system service needs root to restart:")
+                print("    sudo systemctl restart arcade-web")
         else:
-            print("  arcade-web is not a service here; restart it yourself")
+            if not scopes:
+                print("  arcade-web is not a service here; restart it yourself")
             _warn_if_still_running()
     else:
         print("  restart the interface yourself to pick up the new version")
@@ -231,6 +243,28 @@ def _listener_pid(port: int) -> int | None:
     import re
     found = re.search(r"pid=(\d+)", result.stdout)
     return int(found.group(1)) if found else None
+
+
+def _scopes_for_port(port: int = 8420) -> list[list[str]]:
+    """systemctl scopes to try, the one owning `port` first.
+
+    Both a user unit and a system unit can be called arcade-web, and only one of
+    them can hold the port. Asking which scope's unit has the listener puts the
+    right one first instead of taking whichever accepts a restart.
+    """
+    pid = _listener_pid(port)
+    scopes = []
+    if pid is not None:
+        for scope in (["--user"], []):
+            result = _run("systemctl", *scope, "show", "arcade-web", "-p",
+                          "MainPID", "--value")
+            if result.returncode == 0 and result.stdout.strip() == str(pid):
+                scopes.append(scope)
+    for scope in (["--user"], []):
+        if scope not in scopes and _run("systemctl", *scope, "cat",
+                                        "arcade-web").returncode == 0:
+            scopes.append(scope)
+    return scopes
 
 
 def _verify_service_owns_port(scope: list, port: int = 8420) -> bool:

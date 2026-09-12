@@ -527,8 +527,13 @@ def test_a_second_enter_is_still_swallowed(browser, served):
     browser.get(f"{base}/messages/{peer}")
     box = browser.find_element(By.CSS_SELECTOR, "form.composer textarea")
 
-    # Pin the form in the sending state, as an in-flight send leaves it.
+    # Pin the form in the sending state, as an in-flight send leaves it -- and
+    # stop the /events poller first. It runs every 2s and calls resetComposer
+    # when the server reports nothing in flight, which clears the very flag this
+    # test sets; that race made the sibling test flaky before it was made
+    # atomic, and it can reach this one between the paint and the keypress.
     browser.execute_script("""
+      for (var i = 1; i < 99999; i++) window.clearInterval(i);
       var f = document.querySelector('form.composer');
       f.dataset.sending = 'yes';
       window.__posted = 0;
@@ -539,7 +544,9 @@ def test_a_second_enter_is_still_swallowed(browser, served):
     box.send_keys(Keys.ENTER)
     time.sleep(0.5)
 
-    assert browser.execute_script("return window.__posted;") == 0, (
+    assert browser.execute_script("""
+      return [window.__posted, document.querySelector('form.composer').dataset.sending];
+    """) == [0, "yes"], (
         "a second Enter while a send is in flight must not start another"
     )
 

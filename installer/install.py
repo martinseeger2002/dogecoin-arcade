@@ -664,6 +664,12 @@ def install_services_macos(main_dir: Path, test_dir: Path, coin) -> list[str]:
     return installed
 
 
+#: A machine may already have a SYSTEM unit of the same name. Module-level so a
+#: test can point it somewhere else -- checking the real path made the installer
+#: tests depend on whether the host happened to have one, which is the same
+#: hermeticity trap as the node-discovery tests reaching a real datadir.
+SYSTEM_WEB_UNIT = Path("/etc/systemd/system/arcade-web.service")
+
 ARCADE_WEB_UNIT = """\
 [Unit]
 Description=DogecoinArcade web interface
@@ -900,6 +906,15 @@ def ensure_web_service(venv: Path) -> bool:
         return False
     unit = Path.home() / ".config/systemd/user" / "arcade-web.service"
     if unit.exists():
+        return False
+    # A SYSTEM unit counts as already registered. Checking only the user path
+    # meant a machine with a perfectly good /etc/systemd/system/arcade-web
+    # .service got a second, user-level copy -- which could never bind, because
+    # the system one already owned :8420. So it sat in a permanent restart loop
+    # while the system service carried on serving code from hours earlier, and
+    # every update restarted the user unit and reported success. The interface's
+    # own staleness banner was the only thing telling the truth.
+    if SYSTEM_WEB_UNIT.exists():
         return False
     return bool(install_web_service(venv, platform.system()))
 

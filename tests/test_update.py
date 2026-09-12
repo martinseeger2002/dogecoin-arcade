@@ -131,3 +131,55 @@ def test_check_reads_the_checkout_it_actually_has(tmp_path, monkeypatch, checkou
     assert installed == "abc1234"
     assert published == "abc1234"
     assert not available, "the machine is on the published commit"
+
+
+# --- two units can be called arcade-web ---------------------------------------
+#
+# This machine already had a hardened system unit at
+# /etc/systemd/system/arcade-web.service. `ensure_web_service` checked only the
+# USER path, so it wrote a second, user-level unit -- which could never bind,
+# because the system one owned :8420. The user unit sat in a restart loop
+# (NRestarts reached 40) while the system service carried on serving code from
+# hours earlier, and every `dogecoinarcade-update` restarted the user unit and
+# printed "restarted (user service)". Nothing in the output was false; it was
+# just about the wrong unit.
+#
+# The interface's own staleness banner was the only thing telling the truth, and
+# I did not read it -- I grepped the page for the commit hash instead, which
+# matched the banner's "<hash> is installed" text. That is the day's lesson
+# again: presence of a string is not the property you wanted.
+
+
+def test_the_owner_of_the_port_is_restarted_first(monkeypatch):
+    """Not the first scope that accepts the command."""
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        calls.append(args)
+        import subprocess
+        # The user unit exists but is NOT the listener; the system unit is.
+        if args[:2] == ("systemctl", "--user") and "show" in args:
+            return subprocess.CompletedProcess(args, 0, "99999\n", "")
+        if args[0] == "systemctl" and "show" in args:
+            return subprocess.CompletedProcess(args, 0, "4242\n", "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(update, "_run", fake_run)
+    monkeypatch.setattr(update, "_listener_pid", lambda port=8420: 4242)
+
+    scopes = update._scopes_for_port()
+    assert scopes[0] == [], (
+        "the system unit holds the port, so it must be restarted first"
+    )
+
+
+def test_a_scope_that_owns_nothing_is_still_offered_last(monkeypatch):
+    """So a machine with no listener yet can still be restarted."""
+    import subprocess
+
+    monkeypatch.setattr(update, "_listener_pid", lambda port=8420: None)
+    monkeypatch.setattr(update, "_run", lambda *a, **k:
+                        subprocess.CompletedProcess(a, 0, "", ""))
+
+    scopes = update._scopes_for_port()
+    assert scopes == [["--user"], []], "both scopes exist, neither owns the port"

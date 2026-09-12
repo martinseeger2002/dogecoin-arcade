@@ -162,7 +162,39 @@ def test_both_update_paths_use_one_implementation(fake_home):
 # Both were this single cause in different clothes.
 
 
-def test_the_web_service_is_registered_when_missing(fake_home, monkeypatch):
+@pytest.fixture
+def no_system_unit(monkeypatch, tmp_path):
+    """Pretend the host has no /etc/systemd/system/arcade-web.service.
+
+    Without this these tests pass or fail according to what the machine running
+    them happens to have installed -- and this machine has one, which is how the
+    duplicate-unit bug got here in the first place.
+    """
+    monkeypatch.setattr(install, "SYSTEM_WEB_UNIT", tmp_path / "absent.service")
+
+
+def test_a_system_unit_is_registration_enough(fake_home, monkeypatch, tmp_path):
+    """The bug: only the user path was checked.
+
+    A second unit beside a working system one can never bind, because the system
+    one already owns :8420 -- so it restart-loops while the system service goes
+    on serving whatever code it started with.
+    """
+    present = tmp_path / "present.service"
+    present.write_text("[Service]\n")
+    monkeypatch.setattr(install, "SYSTEM_WEB_UNIT", present)
+
+    called = []
+    monkeypatch.setattr(install, "install_web_service",
+                        lambda venv, system: called.append(system) or True)
+    monkeypatch.setattr(install.shutil, "which", lambda name: "/usr/bin/systemctl")
+
+    assert install.ensure_web_service(tmp_path / "venv") is False
+    assert called == [], "a duplicate unit was written"
+
+
+def test_the_web_service_is_registered_when_missing(fake_home, monkeypatch,
+                                                    no_system_unit):
     tmp_path, units = fake_home
     venv = tmp_path / "venv"
     (venv / "bin").mkdir(parents=True)
