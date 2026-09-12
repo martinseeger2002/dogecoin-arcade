@@ -112,3 +112,22 @@ def test_the_launcher_is_written_when_it_is_missing(tmp_path, monkeypatch, check
     calls.clear()
     assert update._ensure_launcher(checkout, checkout / ".venv") is None
     assert "write_launcher" not in calls
+
+
+def test_check_reads_the_checkout_it_actually_has(tmp_path, monkeypatch, checkout):
+    """It reported "installed: unknown, an update is available" on a current machine.
+
+    `check` looked in the installer's ~/.dogecoinarcade/src, which a source
+    install does not have, so every check claimed the machine was behind.
+    """
+    monkeypatch.setattr(update, "HOME", tmp_path / "absent")
+    monkeypatch.setattr(update, "__file__", str(checkout / "arcade" / "update.py"))
+    monkeypatch.setattr(update.sys, "prefix", str(checkout / ".venv"))
+    monkeypatch.setattr(update, "current_revision",
+                        lambda path: "abc1234" if path == checkout else None)
+    monkeypatch.setattr(update, "remote_revision", lambda: "abc1234")
+
+    installed, published, available = update.check()
+    assert installed == "abc1234"
+    assert published == "abc1234"
+    assert not available, "the machine is on the published commit"

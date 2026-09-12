@@ -95,8 +95,17 @@ def remote_revision() -> str | None:
 
 
 def check() -> tuple[str | None, str | None, bool]:
-    """Return (installed, published, update_available)."""
-    installed = current_revision(HOME / "src")
+    """Return (installed, published, update_available).
+
+    The checkout comes from _layout, not from the installer's path: on a source
+    install that path does not exist, so this reported "installed: unknown" and
+    "an update is available" no matter how current the machine actually was.
+    """
+    try:
+        _, checkout, _ = _layout()
+    except UpdateError:
+        checkout = HOME / "src"
+    installed = current_revision(checkout)
     published = remote_revision()
     if installed is None or published is None:
         return installed, published, published is not None
