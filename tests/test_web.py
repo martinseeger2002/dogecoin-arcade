@@ -1359,3 +1359,109 @@ def test_media_may_still_be_cached(client):
 
     header = app.get(f"/messages/media/{message_id}").headers.get("cache-control", "")
     assert "no-store" not in header
+
+
+# --- the hidden attribute must actually hide ----------------------------------
+# `[hidden]{display:none}` lives in the browser's stylesheet, and ANY author rule
+# setting `display` on the same element beats it outright. `.bubble-row{display:
+# flex}` therefore made `hidden` inert on the send progress bubble: it rendered
+# on first paint of a brand-new page with no send in progress, and every
+# `row.hidden = true` in the JavaScript was a no-op that appeared to work.
+#
+# a test machine found it in a headless browser by asserting the computed style. That
+# distinction is the lesson: checking for the attribute reports "hidden: 1" for
+# ever while the user stares at the element. These tests cannot render, so they
+# check the rule that makes the attribute trustworthy, and flag any new element
+# that would need it.
+
+
+def _stylesheet(body: str) -> str:
+    return body[body.index("<style>"):body.index("</style>")]
+
+
+def test_hidden_is_enforced_over_author_display_rules(client):
+    css = _stylesheet(client[0].get("/").text)
+    assert "[hidden]{display:none !important}" in css, (
+        "without !important, any author display rule makes `hidden` inert"
+    )
+
+
+def test_the_progress_bubble_would_otherwise_be_visible(client):
+    """Pins the exact collision, so removing the guard fails loudly."""
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    peer = b"\xf0" * 32
+    state.identity = Identity.generate()
+    with state.store() as store:
+        store.add_message(None, "tx", "tx", 1, 0, "nThem", peer,
+                          state.identity.fingerprint, b"hi")
+
+    body = app.get(f"/messages/{peer.hex()}").text
+    assert 'id="sending-bubble" hidden' in body
+    assert "class=\"bubble-row mine\" id=\"sending-bubble\"" in body
+    css = _stylesheet(body)
+    assert ".bubble-row{" in css.replace("\n", "") or ".bubble-row {" in css
+    # Matched as a rule, not by splitting on the first occurrence of the string
+    # -- which found the explanatory comment above the rule and failed. That is
+    # the same class of mistake as checking for the attribute instead of the
+    # computed style: a measurement that looks right and is not.
+    import re as _re
+    rules = _re.findall(r"^\[hidden\]\s*\{([^}]*)\}", css, _re.MULTILINE)
+    assert rules, "no [hidden] rule found at all"
+    assert all("!important" in rule for rule in rules), rules
+
+
+@pytest.mark.parametrize("path", ["/", "/messages", "/contacts", "/groups", "/backup"])
+def test_every_page_carries_the_guard(path, client):
+    """It is one rule in the shared stylesheet; every page must get it."""
+    assert "[hidden]{display:none !important}" in _stylesheet(client[0].get(path).text)
+
+
+def test_no_element_relies_on_hidden_without_the_guard():
+    """A static sweep for the next one, since we cannot render here.
+
+    Reports any element carrying `hidden` whose own class sets display, which is
+    the exact shape that failed. It is not a substitute for a browser assertion
+    and does not pretend to be -- it is the cheap check that would have caught
+    this particular case.
+    """
+    import pathlib
+    import re
+
+    templates = pathlib.Path("arcade/web/templates")
+    css = (templates / "base.html").read_text()
+    css = css[css.index("<style>"):css.index("</style>")]
+    assert "[hidden]{display:none !important}" in css, (
+        "the guard is what makes the sweep below unnecessary"
+    )
+
+    display_classes = set()
+    for block in re.finditer(r"([^{}]+)\{([^}]*)\}", css):
+        selector, body = block.group(1), block.group(2)
+        if "display:" not in body:
+            continue
+        for part in selector.split(","):
+            part = part.strip()
+            # Only a selector targeting a single class, not a descendant.
+            if re.fullmatch(r"\.[A-Za-z0-9_-]+", part):
+                display_classes.add(part[1:])
+
+    risky = []
+    for template in templates.glob("*.html"):
+        for line in template.read_text().splitlines():
+            if not re.search(r"<[^>]*\shidden\b", line):
+                continue
+            classes = re.search(r'class="([^"]*)"', line)
+            if not classes:
+                continue
+            for name in classes.group(1).split():
+                if name in display_classes:
+                    risky.append((template.name, name, line.strip()[:60]))
+
+    # Recorded rather than forbidden: the guard above makes them safe, and this
+    # names them so a future change that removes the guard is understood.
+    for name, cls, line in risky:
+        assert "[hidden]{display:none !important}" in css, (
+            f"{name}: .{cls} sets display and would make `hidden` inert -- {line}"
+        )

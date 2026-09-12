@@ -23,6 +23,20 @@
   }
 }
 *{box-sizing:border-box}
+/* The `hidden` attribute needs `!important` to be reliable here.
+ *
+ * `[hidden]{display:none}` lives in the browser's own stylesheet, and ANY author
+ * rule that sets `display` on the same element beats it outright -- so
+ * `.bubble-row{display:flex}` made `hidden` completely inert on the send
+ * progress bubble. The element rendered on first paint of a brand-new page with
+ * no send in progress, and every `row.hidden = true` in the JavaScript was a
+ * no-op that silently appeared to work.
+ *
+ * a test machine found it in a headless browser by asserting the computed style rather
+ * than the attribute. That distinction is the whole lesson: a check for the
+ * attribute reports "hidden: 1" for ever while the user stares at the element.
+ */
+[hidden]{display:none !important}
 body{margin:0;background:var(--bg);color:var(--fg);
   font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
 a{color:var(--accent);text-decoration:none}
