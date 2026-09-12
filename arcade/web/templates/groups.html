@@ -110,11 +110,17 @@
       <div class="confirm">
         {% if chain.is_mainnet %}<strong class="danger-text">This spends real coins.</strong>
         {% else %}<strong>Post this?</strong>{% endif %}
-        {{ plan.transactions if plan else 1 }} transaction{{ '' if not plan or plan.transactions == 1 else 's' }},
-        fee {{ "%.8f"|format(prepared.fee_sats / 100000000) }}{% if plan and not plan.class_c %},
-        carried in multisig outputs &mdash; most of that cost is
-        <strong>dust that can never be spent again</strong>{% else %},
-        one OP_RETURN output and no dust{% endif %}.
+        {{ plan.transactions if plan else 1 }} transaction{{ '' if not plan or plan.transactions == 1 else 's' }}.
+        {% if plan and not plan.class_c %}
+          Costs <strong>{{ "%.5f"|format(prepared.total_coins) }}</strong> in total
+          &mdash; {{ "%.5f"|format(prepared.fee_coins) }} fee plus
+          {{ "%.5f"|format(prepared.dust_coins) }} in
+          <strong>dust that can never be spent again</strong>, because the post
+          is carried in the outputs themselves.
+        {% else %}
+          Costs <strong>{{ "%.5f"|format(prepared.total_coins) }}</strong> &mdash;
+          one OP_RETURN output and no dust.
+        {% endif %}
         {% if chain.is_mainnet %}
         <div class="note" style="margin:10px 0 0">
           This writes onto the chain permanently, in plain text, under your name.
@@ -143,6 +149,7 @@
     {% endif %}
 
     <form method="post" action="/groups/post" class="composer"
+          {% if prepared %}data-awaiting-confirm="yes"{% endif %}
           enctype="multipart/form-data" onsubmit="return startPosting(this)">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="which" value="{{ which }}">
@@ -163,7 +170,16 @@
                 oninput="countLeft(this); grow(this)"
                 onkeydown="postOnEnter(event, this)"
                 placeholder="Say something in #{{ channel }}…">{{ draft or '' }}</textarea>
-      <button type="submit">Post</button>
+      {# A pending confirmation must be the only way to act on this content. The
+      composer's own submit button stayed live BEHIND the confirmation -- three
+      buttons on screen, two of them saying Post -- so a page reading "Post this?
+      1 transaction, fee ..." would also accept a fresh submission of whatever was
+      in the box. a test machine clicked the wrong one and re-submitted an empty composer.
+      Nothing was spent, but a live control contradicting a pending confirmation is
+      a hazard for anyone in a hurry. The Enter handler checks the same flag, or
+      disabling the button alone would just move the hazard to the keyboard. #}
+      <button type="submit" {% if prepared %}disabled
+        title="Confirm or cancel the post waiting above first"{% endif %}>Post</button>
     </form>
     <p class="muted composer-note" id="picked" hidden>
       <span id="picked-text"></span>
@@ -235,6 +251,10 @@ function postOnEnter(event, box){
   // old-browser fallback and does NOT fire onsubmit, so that branch has to paint
   // the sending state itself.
   if (form.dataset.sending === 'yes') return;
+  // A confirmation for this content is already on screen; acting on it is the
+  // only way forward. Without this, disabling the button would just move the
+  // hazard to the keyboard.
+  if (form.dataset.awaitingConfirm === 'yes') return;
   if (form.requestSubmit) form.requestSubmit();
   else if (startPosting(form)) form.submit();
 }
@@ -299,11 +319,15 @@ function countLeft(el){
   left.textContent = '0';
   left.style.color = 'var(--bad)';
   note.classList.add('costly');
+  // "in dust" and not "in total": the fee is on top, and the confirm screen
+  // gives the real total. Quoting the dust alone read as the whole cost -- a
+  // post shown "about 0.03" actually cost 0.04568.
   msg.textContent = 'bytes left \u2014 this post is ' + over + ' over, so it is ' +
     'carried like a file: about ' +
     (outputs * 0.01).toLocaleString(undefined, {maximumFractionDigits: 2}) +
-    ' in dust that can never be spent again. Shorten it to stay in one cheap ' +
-    'output.';
+    ' in dust that can never be spent again, on top of the fee. The exact ' +
+    'total is shown before anything is posted. Shorten it to stay in one ' +
+    'cheap output.';
 }
 
 var b = document.getElementById('bubbles');

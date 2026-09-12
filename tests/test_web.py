@@ -10,6 +10,7 @@ with the node unreachable, which is also the state a new user starts in.
 """
 
 import re
+import pathlib
 import dataclasses
 from pathlib import Path
 
@@ -1661,3 +1662,71 @@ def test_the_wallet_split_form_is_in_the_body(client):
     assert 'action="/wallet/split"' in body, (
         "the split form has to be in the body to be submittable"
     )
+
+
+# --- a pending confirmation is the only live control --------------------------
+#
+# The composer's own submit button stayed live BEHIND the confirmation. On the
+# public board that put three buttons on screen, two of them saying Post ("New",
+# "Post it", "Post"), and a page reading "Post this? 1 transaction, fee ..."
+# would also accept a fresh submission of whatever was in the box. a test machine clicked
+# the wrong one and re-submitted an empty composer. Nothing was spent, but a
+# live control contradicting a pending confirmation is a hazard for anyone in a
+# hurry, and the private messenger had the same shape with "Send it" beside a
+# live "Send".
+
+
+def test_a_composer_offers_no_second_route_while_confirming():
+    """Rendered with `prepared`, the composer must be inert.
+
+    Both halves are asserted. The disabled attribute covers the mouse; the
+    data flag is what the Enter handler reads, and without it disabling the
+    button would only move the hazard to the keyboard.
+
+    This reads the template rather than driving a live send, because reaching a
+    confirmation needs a funded node -- so it is a shape check, with the same
+    limitation as any shape check. What it cannot tell you is whether the
+    composer is really inert on screen; tests/test_browser.py does that.
+    """
+    root = pathlib.Path("arcade/web/templates")
+
+    for name in ("groups.html", "messages.html"):
+        source = (root / name).read_text()
+        assert "{% if prepared %}disabled" in source, (
+            f"{name}: the composer button stays live behind a confirmation"
+        )
+        assert '{% if prepared %}data-awaiting-confirm="yes"{% endif %}' in source, (
+            f"{name}: the Enter handler has no way to know a confirmation is up"
+        )
+        assert "awaitingConfirm === 'yes'" in source, (
+            f"{name}: Enter would still submit past a pending confirmation"
+        )
+
+
+def test_the_confirm_screen_quotes_the_total_not_one_component():
+    """Fee alone and dust alone are both true and neither is the cost.
+
+    a test machine posted for 0.04568 having been shown "fee 0.00568000" on the confirm
+    screen and "about 0.03 in dust" while typing.
+    """
+    root = pathlib.Path("arcade/web/templates")
+    groups = (root / "groups.html").read_text()
+    assert "prepared.total_coins" in groups, (
+        "the confirm screen still quotes a component rather than the total"
+    )
+    assert "on top of the fee" in groups, (
+        "the typing note lets its dust figure read as the whole cost"
+    )
+
+
+def test_prepared_totals_reconcile():
+    """The total is exact, not estimated: fee plus the outputs it builds."""
+    from arcade.messaging.sender import PreparedTx
+
+    prepared = PreparedTx(hex="", txid="", decoded={}, fee_sats=568_000,
+                          size=567, outputs=5, dust_sats=4_000_000)
+    assert prepared.total_sats == 4_568_000
+    assert abs(prepared.total_coins - 0.04568) < 1e-9, (
+        "this is the transaction a test machine actually paid for; the numbers must agree"
+    )
+    assert prepared.dust_coins == 0.04

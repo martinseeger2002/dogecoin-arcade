@@ -79,6 +79,26 @@ class PreparedTx:
     fee_sats: int
     size: int
     outputs: int
+    #: What the outputs themselves cost, excluding the fee and excluding change.
+    #: The confirm screen quoted the fee alone while the composer quoted the dust
+    #: alone -- both true, neither the total, and a user reading either one
+    #: underestimates. a test machine posted for 0.04568 having been shown 0.00568 and
+    #: "about 0.03". This is exact rather than estimated: it is the sum of the
+    #: outputs this builds, known before the wallet funds anything.
+    dust_sats: int = 0
+
+    @property
+    def total_sats(self) -> int:
+        """Everything the sender gives up: fee plus unspendable outputs."""
+        return self.fee_sats + self.dust_sats
+
+    @property
+    def total_coins(self) -> float:
+        return self.total_sats / COIN
+
+    @property
+    def dust_coins(self) -> float:
+        return self.dust_sats / COIN
 
     @property
     def fee_coins(self) -> float:
@@ -296,6 +316,10 @@ class MessageSender:
             fee_sats=int(round(float(funded.get("fee", 0)) * COIN)),
             size=len(signed["hex"]) // 2,
             outputs=len(decoded.get("vout", [])),
+            # `outputs` above counts what is on the wire, change included. This
+            # is what the sender actually loses to them, which is the figure a
+            # confirm screen has to show.
+            dust_sats=sum(value for value, _ in outputs),
         )
 
     #: What one Class B chunk costs: about 110 outputs of dust plus a fee. Split

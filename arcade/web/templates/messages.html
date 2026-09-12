@@ -213,7 +213,8 @@
     {% endif %}
 
     <form method="post" action="/messages/{{ peer.hex }}/send" class="composer"
-          enctype="multipart/form-data" onsubmit="return startSending(this)">
+          enctype="multipart/form-data" onsubmit="return startSending(this)"
+          {% if prepared %}data-awaiting-confirm="yes"{% endif %}>
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <textarea name="body" rows="1" placeholder="Write a message…"
                 oninput="grow(this)"
@@ -223,7 +224,15 @@
                onchange="showPick(this)" hidden>
         <span id="clip">📎</span>
       </label>
-      <button type="submit">Send</button>
+      {# A pending confirmation must be the only way to act on this content. The
+      composer's own submit button stayed live BEHIND the confirmation -- three
+      buttons on screen, two of them saying Send -- so a page reading "Send this?" would also accept a fresh submission of whatever was
+      in the box. a test machine clicked the wrong one and re-submitted an empty composer.
+      Nothing was spent, but a live control contradicting a pending confirmation is
+      a hazard for anyone in a hurry. The Enter handler checks the same flag, or
+      disabling the button alone would just move the hazard to the keyboard. #}
+      <button type="submit" {% if prepared %}disabled
+        title="Confirm or cancel the message waiting above first"{% endif %}>Send</button>
       {% if is_new_contact %}
       <label class="introduce">
         <input type="checkbox" name="share_profile" value="yes" checked>
@@ -363,6 +372,10 @@ function sendOnEnter(event, box){
   // old-browser fallback and does NOT fire onsubmit, so that branch has to paint
   // the sending state itself.
   if (form.dataset.sending === 'yes') return;
+  // A confirmation for this content is already on screen; acting on it is the
+  // only way forward. Without this, disabling the button would just move the
+  // hazard to the keyboard.
+  if (form.dataset.awaitingConfirm === 'yes') return;
   if (form.requestSubmit) form.requestSubmit();
   else if (startSending(form)) form.submit();
 }

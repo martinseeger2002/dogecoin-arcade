@@ -542,3 +542,48 @@ def test_a_second_enter_is_still_swallowed(browser, served):
     assert browser.execute_script("return window.__posted;") == 0, (
         "a second Enter while a send is in flight must not start another"
     )
+
+
+def test_enter_stands_down_while_a_confirmation_is_pending(browser, served):
+    """Enter must not submit past a confirmation for the same content.
+
+    The composer's submit button stayed live behind the confirmation -- on the
+    public board, three buttons with two of them saying Post -- so a page asking
+    "Post this?" would also accept a fresh submission of whatever was in the
+    box. a test machine hit it. Disabling the button covers the mouse; this covers the
+    keyboard, which is the half a `disabled` attribute cannot.
+
+    The flag is set here rather than reached through a real send, because
+    rendering a confirmation needs a funded node. The handler's behaviour is
+    what is being asserted, and that is independent of how the flag got there.
+    """
+    base, peer = served
+    browser.get(f"{base}/messages/{peer}")
+
+    browser.execute_script("""
+      var f = document.querySelector('form.composer');
+      f.dataset.awaitingConfirm = 'yes';
+      window.__posted = 0;
+      f.addEventListener('submit', function (e) { window.__posted++; e.preventDefault(); });
+    """)
+    box = browser.find_element(By.CSS_SELECTOR, "form.composer textarea")
+    box.send_keys("typed while a confirmation is on screen")
+    from selenium.webdriver.common.keys import Keys
+    box.send_keys(Keys.ENTER)
+    time.sleep(0.5)
+
+    assert browser.execute_script("return window.__posted;") == 0, (
+        "Enter submitted past a pending confirmation"
+    )
+
+    # And it must start working again once the confirmation is gone, or the
+    # composer would be dead for the rest of the page's life.
+    browser.execute_script("""
+      var f = document.querySelector('form.composer');
+      delete f.dataset.awaitingConfirm;
+    """)
+    box.send_keys(Keys.ENTER)
+    time.sleep(0.5)
+    assert browser.execute_script("return window.__posted;") == 1, (
+        "Enter stayed dead after the confirmation was dismissed"
+    )
