@@ -21,6 +21,7 @@ from __future__ import annotations
 import dataclasses
 import secrets
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -170,6 +171,47 @@ class AppState:
                 continue
         object.__setattr__(self, "_version", version)
         return version
+
+    #: Held for the whole of a send. A long message can take minutes -- the
+    #: wallet may be split and that split has to confirm -- and a browser shows
+    #: nothing while it waits, so a second click is the natural thing to do. Two
+    #: concurrent sends each select their own outputs without seeing the other's
+    #: claims, so they can collide and strand a half-written message on the
+    #: chain. Only one at a time, and the second is told why.
+    _sending: threading.Lock = field(default_factory=threading.Lock)
+
+    #: Digest and time of the last message sent, so an identical one submitted
+    #: moments later is recognised as a double click rather than obeyed.
+    _last_send: tuple = ("", 0.0)
+
+    #: How long an identical resend is treated as accidental.
+    REPEAT_WINDOW = 120.0
+
+    def begin_send(self) -> bool:
+        """Claim the right to send. False if another send is already running."""
+        return self._sending.acquire(blocking=False)
+
+    def is_repeat_send(self, digest: str) -> bool:
+        """True if this exact message was just sent.
+
+        The lock above stops two sends OVERLAPPING, which is not the same thing:
+        a slow send shows nothing while it works, so the second click usually
+        arrives after the first has finished, and both complete. That is not
+        damaging -- each is a valid message -- but it sends the file twice and
+        pays for it twice, which is not what the second click meant.
+        """
+        last, when = self._last_send
+        return bool(last) and last == digest and (
+            time.monotonic() - when) < self.REPEAT_WINDOW
+
+    def note_send(self, digest: str) -> None:
+        self._last_send = (digest, time.monotonic())
+
+    def end_send(self) -> None:
+        try:
+            self._sending.release()
+        except RuntimeError:
+            pass                    # not held; nothing to do
 
     def bump_generation(self) -> None:
         with self._lock:

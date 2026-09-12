@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import hashlib
 import time
 import html
 import os
@@ -243,13 +244,23 @@ def create_app(state: AppState) -> FastAPI:
         return RedirectResponse(f"/messages/{peer_hex}", status_code=303)
 
     @app.post("/messages/{peer_hex}/send", response_class=HTMLResponse)
-    async def send_in_thread(request: Request, peer_hex: str, body: str = Form(""),
-                             confirmed: str = Form(""), csrf_token: str = Form(""),
-                             share_profile: str = Form(""),
-                             attachment: UploadFile | None = File(None),
-                             attached_name: str = Form(""),
-                             attached_type: str = Form(""),
-                             attached_b64: str = Form("")):
+    def send_in_thread(request: Request, peer_hex: str, body: str = Form(""),
+                       confirmed: str = Form(""), csrf_token: str = Form(""),
+                       share_profile: str = Form(""),
+                       attachment: UploadFile | None = File(None),
+                       attached_name: str = Form(""),
+                       attached_type: str = Form(""),
+                       attached_b64: str = Form("")):
+        """Deliberately a sync route, not an async one.
+
+        Everything in here blocks: RPC calls, waiting for a confirmation, and
+        possibly splitting the wallet first. An `async def` runs on the event
+        loop, so a send that takes minutes froze the whole interface -- no
+        progress, no /events, a browser that appeared hung. That is what made a
+        second click the obvious thing to do. FastAPI runs a sync route in its
+        threadpool instead, so the rest of the application keeps answering while
+        this works.
+        """
         """Send within a conversation.
 
         Still two steps: the decoded transaction and its cost are shown before
@@ -273,7 +284,7 @@ def create_app(state: AppState) -> FastAPI:
             # browser will not resend a file input on the second.
             file_bytes, file_name, file_type = b"", attached_name, attached_type
             if attachment is not None and attachment.filename:
-                file_bytes = await attachment.read()
+                file_bytes = attachment.file.read()
                 file_name = attachment.filename
                 file_type = attachment.content_type or "application/octet-stream"
             elif attached_b64:
@@ -296,12 +307,34 @@ def create_app(state: AppState) -> FastAPI:
                     raise ValueError(f"cannot send: {funding.describe()}")
                 sender = MessageSender(rpc, state.messaging.params)
                 address = funded_address(rpc, prefer=state.derived_address)
+
+                def _prepare_first(where: str):
+                    """Build the first transaction, falling back if short.
+
+                    The identity address is preferred so a message is attributed
+                    to the address people were given. But preferring it is not
+                    the same as being able to pay from it, and when it came up
+                    short the send failed with advice a browser cannot act on:
+                    "your coins are on a different address, use that one" -- with
+                    no way to choose one. a test machine hit exactly that. So try the
+                    preferred address, and if it cannot cover this message, use
+                    the one that can.
+                    """
+                    try:
+                        return where, sender.prepare(where, plan.chunk_payloads[0])
+                    except SendError:
+                        other = funded_address(rpc)
+                        if other == where:
+                            raise
+                        return other, sender.prepare(other, plan.chunk_payloads[0])
+
+                address, first = _prepare_first(address)
                 # Only the first chunk is built for the preview. The rest cannot
                 # be: each one spends the change of the one before it, so its
                 # input does not exist until that one is broadcast. Building them
                 # all up front -- which this did -- produced transactions that
                 # spent the same output twice.
-                prepared = [sender.prepare(address, plan.chunk_payloads[0])]
+                prepared = [first]
 
                 # A plain message on testnet goes straight out. There is nothing
                 # to weigh up: the coins are free, it is one transaction, and it
@@ -316,7 +349,43 @@ def create_app(state: AppState) -> FastAPI:
                              and plan.transactions == 1
                              and not state.messaging.is_mainnet)
                 if immediate or confirmed == "yes":
-                    txids = sender.send_all(address, plan.chunk_payloads)
+                    # Only one send at a time. A long one can take minutes, the
+                    # browser shows nothing while it waits, and a second click is
+                    # then the natural thing to do -- but two sends select their
+                    # outputs without seeing each other's claims, so they can
+                    # collide and strand a half-written message on the chain.
+                    digest = hashlib.sha256(
+                        peer_key + body.encode() + file_bytes).hexdigest()
+                    if state.is_repeat_send(digest):
+                        raise ValueError(
+                            "that exact message was just sent. If you meant to "
+                            "send it twice, change something or wait a minute -- "
+                            "a second click while a send is working is usually an "
+                            "accident, and it costs the whole message again.")
+                    if not state.begin_send():
+                        raise ValueError(
+                            "a message is already being sent. Wait for it to "
+                            "finish: sending two at once can leave a half-written "
+                            "message on the chain that nobody can read.")
+                    try:
+                        if plan.transactions > 1:
+                            # Fund every chunk up front so they go at once
+                            # instead of waiting a block apiece.
+                            sender.ensure_outputs(address, plan.transactions)
+                            # Written down before anything is broadcast, so an
+                            # interrupted send can be finished rather than
+                            # stranded. The CLI always did this; this did not.
+                            with state.store() as store:
+                                store.begin_pending_send(
+                                    plan.msg_id, peer_key, address,
+                                    payload_body, plan.chunk_payloads)
+                        txids = sender.send_all(address, plan.chunk_payloads)
+                        if plan.transactions > 1:
+                            with state.store() as store:
+                                store.finish_pending_send(plan.msg_id)
+                        state.note_send(digest)
+                    finally:
+                        state.end_send()
                     # Keep our own plaintext: the sealed box is to the recipient,
                     # so we could never read this back off the chain ourselves.
                     with state.store() as store:
@@ -472,6 +541,28 @@ def create_app(state: AppState) -> FastAPI:
                     raise ValueError(f"cannot send: {funding.describe()}")
                 sender = MessageSender(rpc, state.messaging.params)
                 address = funded_address(rpc, prefer=state.derived_address)
+
+                def _prepare_first(where: str):
+                    """Build the first transaction, falling back if short.
+
+                    The identity address is preferred so a message is attributed
+                    to the address people were given. But preferring it is not
+                    the same as being able to pay from it, and when it came up
+                    short the send failed with advice a browser cannot act on:
+                    "your coins are on a different address, use that one" -- with
+                    no way to choose one. a test machine hit exactly that. So try the
+                    preferred address, and if it cannot cover this message, use
+                    the one that can.
+                    """
+                    try:
+                        return where, sender.prepare(where, plan.chunk_payloads[0])
+                    except SendError:
+                        other = funded_address(rpc)
+                        if other == where:
+                            raise
+                        return other, sender.prepare(other, plan.chunk_payloads[0])
+
+                address, first = _prepare_first(address)
                 prepared = [sender.prepare(address, p) for p in plan.chunk_payloads]
                 if confirmed == "yes":
                     broadcast_txids = [sender.broadcast(p) for p in prepared]
@@ -968,13 +1059,14 @@ def create_app(state: AppState) -> FastAPI:
                      "Cache-Control": "private, max-age=300"})
 
     @app.post("/groups/post", response_class=HTMLResponse)
-    async def group_post_send(request: Request, which: str = Form("messaging"),
-                              channel: str = Form(""), text: str = Form(""),
-                              confirmed: str = Form(""), csrf_token: str = Form(""),
-                              attachment: UploadFile | None = File(None),
-                              attached_name: str = Form(""),
-                              attached_type: str = Form(""),
-                              attached_b64: str = Form("")):
+    def group_post_send(request: Request, which: str = Form("messaging"),
+                        channel: str = Form(""), text: str = Form(""),
+                        confirmed: str = Form(""), csrf_token: str = Form(""),
+                        attachment: UploadFile | None = File(None),
+                        attached_name: str = Form(""),
+                        attached_type: str = Form(""),
+                        attached_b64: str = Form("")):
+        """Sync for the same reason as `send_in_thread`: it blocks."""
         chain = state.ledger if which == "ledger" else state.messaging
         channel = (channel or group.DEFAULT_CHANNEL).strip() or group.DEFAULT_CHANNEL
         prepared, error, plan = None, None, None
@@ -982,7 +1074,7 @@ def create_app(state: AppState) -> FastAPI:
         try:
             check_csrf(csrf_token)
             if attachment is not None and attachment.filename:
-                file_bytes = await attachment.read()
+                file_bytes = attachment.file.read()
                 file_name = attachment.filename
                 file_type = attachment.content_type or "application/octet-stream"
             elif attached_b64:

@@ -43,9 +43,25 @@ from typing import Any
 BODY_MAGIC = b"\x01ARCB"
 BODY_VERSION = 1
 
-#: Refused rather than truncated. A message this size is already several
-#: transactions and a substantial amount of dust; see docs for the arithmetic.
-MAX_FILE_BYTES = 5 * 1024 * 1024
+#: A ceiling on a single attachment.
+#:
+#: 5 MB was an invented number. The real limits are the chain's, and they are
+#: steep enough that the figure here matters less than showing them:
+#:
+#:     1 MB    138 transactions     35,091 dust outputs      351 PEP    2 blocks
+#:     5 MB    688 transactions    175,451 dust outputs    1,755 PEP   10 blocks
+#:    14 MB  1,925 transactions    491,261 dust outputs    4,913 PEP   28 blocks
+#:
+#: The dust is permanently unspendable, and a Dogecoin-family block is 1 MB, so
+#: roughly seventy of these 14.8 KB transactions fit in one even on an otherwise
+#: idle chain. The block count above is therefore a floor, not an estimate.
+#:
+#: Messaging is testnet-only and permanently so (D-010), where the coins are
+#: mined and free -- so this is a question of patience and block space rather
+#: than money, and the user is the one who should answer it. The cap is raised to
+#: something the chain could plausibly carry, and the cost is shown before
+#: sending rather than enforced by a number nobody can see.
+MAX_FILE_BYTES = 32 * 1024 * 1024
 
 
 class ContentError(Exception):
@@ -101,9 +117,11 @@ def build(text: str = "", attachment: Attachment | None = None,
         if len(attachment.data) > MAX_FILE_BYTES:
             raise ContentError(
                 f"{attachment.name or 'that file'} is "
-                f"{len(attachment.data) / 1_048_576:.1f} MB. The limit is "
-                f"{MAX_FILE_BYTES // 1_048_576} MB, because every byte is paid for "
-                f"in transaction outputs that can never be spent again.")
+                f"{len(attachment.data) / 1_048_576:.1f} MB, over the "
+                f"{MAX_FILE_BYTES // 1_048_576} MB limit. Every 30 bytes becomes "
+                f"an output that can never be spent again, and a block holds "
+                f"about 70 of these transactions, so a file this size would take "
+                f"the chain to itself for a long time.")
         if not attachment.data:
             raise ContentError("that file is empty.")
 

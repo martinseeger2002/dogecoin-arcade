@@ -159,7 +159,8 @@
           until it finishes.
         </div>
         {% endif %}
-        <form method="post" action="/messages/{{ peer.hex }}/send" style="margin-top:10px">
+        <form method="post" action="/messages/{{ peer.hex }}/send" style="margin-top:10px"
+              onsubmit="return startSending(this)">
           <input type="hidden" name="csrf_token" value="{{ csrf }}">
           <input type="hidden" name="body" value="{{ draft }}">
           <input type="hidden" name="confirmed" value="yes">
@@ -176,7 +177,7 @@
     {% endif %}
 
     <form method="post" action="/messages/{{ peer.hex }}/send" class="composer"
-          enctype="multipart/form-data">
+          enctype="multipart/form-data" onsubmit="return startSending(this)">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <textarea name="body" rows="1" placeholder="Write a message…"
                 oninput="grow(this)"
@@ -195,6 +196,7 @@
     </form>
     <p class="muted composer-note" id="picked" hidden></p>
     {% if is_new_contact %}
+    <p class="msg info" id="sending" hidden style="margin:0 16px 10px"></p>
     <p class="muted composer-note" style="padding-bottom:2px">
       Your own messages are kept on this computer only: each one is encrypted to
       the person you sent it to, so it cannot be read back off the chain &mdash;
@@ -207,6 +209,7 @@
       {% if not profile_name %}<a href="/contacts">Set your name</a>.{% endif %}
     </p>
     {% endif %}
+    <p class="msg info" id="sending" hidden style="margin:0 16px 10px"></p>
     <p class="muted composer-note" style="padding-bottom:2px">
       Your own messages are kept on this computer only: each one is encrypted to
       the person you sent it to, so it cannot be read back off the chain &mdash;
@@ -223,10 +226,38 @@
 // does and what a one-line box implies. Sending is not a decision that needs a
 // second click here: a testnet message costs free coins, goes as one
 // transaction, and is on the chain the moment it is broadcast either way.
+// A file can take minutes: the wallet may be split first, and that split has to
+// confirm before the chunks can go. Showing nothing while that happens invites a
+// second click, and a second click starts a SECOND send -- which selects its own
+// outputs, can collide with the first, and can strand a half-written message on
+// the chain. So: one submission only, and say what is going on.
+function startSending(form){
+  if (form.dataset.sending === 'yes') return false;
+  form.dataset.sending = 'yes';
+  form.querySelectorAll('button').forEach(function (b) {
+    b.disabled = true;
+    if (b.type === 'submit') b.textContent = 'Sending…';
+  });
+  var note = document.getElementById('sending');
+  if (note) {
+    note.hidden = false;
+    note.innerHTML = '<span class="spin"></span> Sending. A long message is sent ' +
+      'as several transactions and the wallet may be split first, which waits ' +
+      'for one block &mdash; this can take a few minutes. Leave this page open; ' +
+      'it will move on by itself when the message is away.';
+  }
+  return true;
+}
 function sendOnEnter(event, box){
   if (event.key !== 'Enter' || event.shiftKey) return;
   event.preventDefault();
-  if (box.value.trim()) box.form.submit();
+  if (!box.value.trim()) return;
+  // requestSubmit, not submit: form.submit() bypasses onsubmit entirely, so the
+  // double-send guard never ran on the Enter path -- the very path most likely
+  // to be pressed twice.
+  if (!startSending(box.form)) return;
+  if (box.form.requestSubmit) box.form.requestSubmit();
+  else box.form.submit();
 }
 function grow(box){
   box.style.height = 'auto';

@@ -295,6 +295,12 @@ a.thread.on{background:var(--code);box-shadow:inset 3px 0 0 var(--accent)}
 
 footer.version{max-width:1000px;margin:0 auto;padding:0 20px 30px;
   font-size:.74rem;color:var(--muted)}
+
+.spin{display:inline-block;width:11px;height:11px;margin-right:7px;vertical-align:-1px;
+  border:2px solid var(--accent);border-right-color:transparent;border-radius:50%;
+  animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+button:disabled{opacity:.55;cursor:default}
 </style>
 </head>
 <body>

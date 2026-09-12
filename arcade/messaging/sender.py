@@ -298,8 +298,14 @@ class MessageSender:
             outputs=len(decoded.get("vout", [])),
         )
 
+    #: What one Class B chunk costs: about 110 outputs of dust plus a fee. Split
+    #: pieces are sized from this rather than a round number, because a large
+    #: file needs thousands of them and 10 coins apiece would need more than a
+    #: wallet is likely to hold.
+    CHUNK_COST_SATS = 2 * COIN
+
     def ensure_outputs(self, address: str, wanted: int,
-                       each_sats: int = 10 * COIN,
+                       each_sats: int = CHUNK_COST_SATS,
                        on_progress: Callable[[str, int, int], None] | None = None,
                        confirm_timeout: float = 900.0) -> bool:
         """Make sure `address` has `wanted` confirmed outputs before a long send.
@@ -320,8 +326,19 @@ class MessageSender:
         if have >= wanted:
             return False
 
-        # A few spare, so the next message does not have to do this again.
-        pieces = wanted + 4
+        # A few spare, so the next message does not have to do this again --
+        # but never more than the wallet can pay for. Asking for two thousand
+        # pieces of a wallet that holds a few hundred coins would simply fail,
+        # and failing to split is better handled by splitting less: the chunks
+        # that do get their own output go at once, and the rest chain as before.
+        try:
+            balance = int(round(float(self.rpc.call("getbalance")) * COIN))
+        except Exception:
+            balance = 0
+        affordable = max(0, (balance - COIN) // each_sats)
+        pieces = min(wanted + 4, affordable)
+        if pieces < 2:
+            return False              # nothing useful to do; chain instead
         if on_progress is not None:
             on_progress(
                 f"splitting the wallet into {pieces} pieces so all "

@@ -762,3 +762,129 @@ def test_adding_a_published_contact_keeps_their_name(client):
         (row,) = store.contacts()
     assert row["name"] == "bob"
     assert row["testnet_address"] == "nTheirAddress"
+
+
+# --- one send at a time -------------------------------------------------------
+# A long send can take minutes and the browser shows nothing while it waits, so a
+# second click is the natural thing to do. Two concurrent sends each choose their
+# own outputs without seeing the other's claims, so they can collide -- and a
+# chunked message that stops part way is permanently unreadable.
+
+
+def test_a_second_send_is_refused_while_one_is_running(client):
+    app, state = client
+    assert state.begin_send() is True
+    try:
+        assert state.begin_send() is False, "two sends must not run at once"
+    finally:
+        state.end_send()
+    assert state.begin_send() is True
+    state.end_send()
+
+
+def test_the_claim_is_released_even_when_a_send_fails(client):
+    """A failed send must not lock out every later one."""
+    app, state = client
+    assert state.begin_send()
+    state.end_send()
+    assert state.begin_send(), "the lock should be free again"
+    state.end_send()
+
+
+def test_releasing_a_lock_nobody_holds_is_harmless(client):
+    client[1].end_send()
+    assert client[1].begin_send()
+    client[1].end_send()
+
+
+def test_the_send_forms_cannot_be_submitted_twice(client):
+    """Client side, so a second click never becomes a second request."""
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    peer = b"\x80" * 32
+    state.identity = Identity.generate()
+    with state.store() as store:
+        store.add_message(None, "tx", "tx", 1, 0, "nThem", peer,
+                          state.identity.fingerprint, b"hi")
+
+    body = app.get(f"/messages/{peer.hex()}").text
+    assert "startSending" in body
+    assert "form.dataset.sending" in body
+
+
+def test_a_long_send_says_it_is_working(client):
+    """Showing nothing for minutes is what invited the second click."""
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    peer = b"\x81" * 32
+    state.identity = Identity.generate()
+    with state.store() as store:
+        store.add_message(None, "tx", "tx", 1, 0, "nThem", peer,
+                          state.identity.fingerprint, b"hi")
+
+    body = app.get(f"/messages/{peer.hex()}").text
+    assert 'id="sending"' in body
+    assert "Leave this page open" in body
+
+
+def test_the_web_route_funds_a_long_message_before_sending(client):
+    """This was written, demonstrated, and then never wired into the route.
+
+    `ensure_outputs` existed and worked when called directly, but the send path
+    did not call it -- so a large file still chained a block at a time. The
+    feature was verified in isolation and absent in practice.
+    """
+    import inspect
+    from arcade.web import app as webapp
+
+    source = inspect.getsource(webapp.create_app)
+    assert "ensure_outputs" in source
+    assert "begin_pending_send" in source, "a web send should be resumable too"
+
+
+def test_a_short_identity_address_falls_back_rather_than_advising(client):
+    """The advice was unusable: a browser offers no way to choose an address.
+
+    The identity address is preferred so a message is attributed to the address
+    people were given -- but preferring it is not the same as being able to pay
+    from it, and the failure told the user to "use that one" with no way to.
+    """
+    import inspect
+    from arcade.web import app as webapp
+
+    source = inspect.getsource(webapp.create_app)
+    assert "_prepare_first" in source
+    assert "if other == where:" in source, "it must not loop on the same address"
+
+
+def test_the_send_route_does_not_hold_the_event_loop(client):
+    """A blocking async route froze the whole interface while a send ran.
+
+    No progress, no /events, a browser that looked hung -- which is what made a
+    second click the natural thing to do. A sync route runs in the threadpool.
+    """
+    import inspect
+    from arcade.web import app as webapp
+
+    source = inspect.getsource(webapp.create_app)
+    assert "async def send_in_thread" not in source
+    assert "async def group_post_send" not in source
+    assert "await " not in source, "nothing in these routes may await"
+
+
+def test_enter_goes_through_the_double_send_guard(client):
+    """form.submit() does not fire onsubmit, so the guard never ran on Enter."""
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    peer = b"\x82" * 32
+    state.identity = Identity.generate()
+    with state.store() as store:
+        store.add_message(None, "tx", "tx", 1, 0, "nThem", peer,
+                          state.identity.fingerprint, b"hi")
+
+    body = app.get(f"/messages/{peer.hex()}").text
+    assert "requestSubmit" in body
+    assert "if (!startSending(box.form)) return;" in body
