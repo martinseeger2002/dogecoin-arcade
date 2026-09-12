@@ -399,6 +399,30 @@ button:disabled{opacity:.55;cursor:default}
 </main>
 
 <script>
+// Formatting for the two figures every composer quotes: a file's size and what
+// it will cost in dust. Defined once here because both composers quote both,
+// and both got them wrong in the same way.
+//
+// `(bytes/1024).toFixed(0) + " KB"` showed a 102-byte file as "0 KB", and
+// `toLocaleString(undefined, {maximumFractionDigits: 0})` showed its 0.03 of
+// dust as "0". That second one is the worse of the two: a 900-byte file really
+// costs 0.16 and displayed as "about 0 in dust", so ANY cost under half a coin
+// read as free. a test machine met the 102-byte case; the rest of the range was the same
+// bug with a less obvious face.
+function arcadeSize(bytes){
+  if (bytes < 1024) return bytes.toLocaleString() + ' bytes';
+  if (bytes < 10 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return Math.round(bytes / 1024).toLocaleString() + ' KB';
+}
+
+function arcadeCoins(coins){
+  // Enough digits that a real cost never reads as nothing. Two decimals is the
+  // dust granularity (0.01 per output), so nothing smaller can arise.
+  if (coins < 10) return coins.toFixed(2);
+  if (coins < 1000) return coins.toFixed(1);
+  return Math.round(coins).toLocaleString();
+}
+
 // Refresh a conversation when a new block brings something to show.
 //
 // Polls a counter the block watcher maintains, rather than reloading on a timer:

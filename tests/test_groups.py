@@ -42,16 +42,49 @@ def test_the_exception_must_be_asked_for_explicitly():
 
 
 def test_no_encrypted_call_site_passes_public_only():
-    """A grep-style guard: the flag must never appear near sealed sending."""
+    """The flag may only be asked for from the public-post paths.
+
+    Checked by walking the syntax tree for the ENCLOSING FUNCTION of each call,
+    rather than by looking at a window of characters around the line. The
+    window version passed and failed for the wrong reasons: it searched for
+    "group" within 900 characters, which a long docstring could satisfy by
+    accident and a legitimate new call site could miss by being far from its
+    own route decorator -- which is what happened when the public resume path
+    was added. It also used source.index(line), which finds the FIRST
+    occurrence of a line's text, so two identical call lines checked the same
+    context twice.
+    """
+    import ast
     import pathlib
 
+    allowed = ("group", "post")
     for name in ("arcade/messaging/cli.py", "arcade/web/app.py"):
-        source = pathlib.Path(name).read_text()
-        for line in source.splitlines():
-            if "public_only=True" in line:
-                # Only the group-post path may ask for it.
-                assert "group" in source[max(0, source.index(line) - 900):
-                                         source.index(line) + 200].lower(), line
+        tree = ast.parse(pathlib.Path(name).read_text())
+
+        # Innermost enclosing function for every node. ast.walk is
+        # breadth-first, so shallower functions are visited first and plain
+        # assignment lets the deepest one win -- with setdefault, create_app()
+        # claimed every route nested inside it and nothing could be attributed.
+        holder: dict[int, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for child in ast.walk(node):
+                    holder[id(child)] = node.name
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            asks = any(kw.arg == "public_only"
+                       and isinstance(kw.value, ast.Constant)
+                       and kw.value.value is True
+                       for kw in node.keywords)
+            if not asks:
+                continue
+            where = holder.get(id(node), "<module>")
+            assert any(word in where.lower() for word in allowed), (
+                f"{name}: public_only=True asked for in {where}(), which is not "
+                f"a public-post path -- nothing sealed may pass this flag"
+            )
 
 
 # --- the format ---------------------------------------------------------------

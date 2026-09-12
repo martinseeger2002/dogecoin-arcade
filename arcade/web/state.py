@@ -228,8 +228,36 @@ class AppState:
     REPEAT_WINDOW = 120.0
 
     def begin_send(self) -> bool:
-        """Claim the right to send. False if another send is already running."""
+        """Claim the right to send. False if another send is already running.
+
+        Refuses once shutdown has begun, so a restart cannot start work it is
+        about to abandon.
+        """
+        if self.shutting_down:
+            return False
         return self._sending.acquire(blocking=False)
+
+    #: Set by the shutdown hook. Send threads are daemons, so the interpreter
+    #: does not wait for them, and a test machine caught one writing to the store
+    #: seventeen seconds AFTER a graceful `systemctl restart` -- the old process
+    #: had released the port while its thread carried on, so two processes
+    #: briefly shared the database. Nothing was harmed, but a send outliving its
+    #: own service is not a property to discover during a wallet operation.
+    shutting_down: bool = False
+
+    def begin_shutdown(self, grace: float = 20.0) -> bool:
+        """Stop accepting sends and wait for one in flight to finish.
+
+        Returns True if nothing was in flight or it finished within `grace`.
+        False means a send is still running and the process is about to go
+        anyway: the caller says so rather than leaving it silent, because the
+        pending-send record is then the only thing that knows what happened.
+        """
+        self.shutting_down = True
+        if self._sending.acquire(timeout=grace):
+            self._sending.release()
+            return True
+        return False
 
     def is_repeat_send(self, digest: str) -> bool:
         """True if this exact message was just sent.

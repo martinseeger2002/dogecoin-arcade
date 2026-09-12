@@ -1730,3 +1730,97 @@ def test_prepared_totals_reconcile():
         "this is the transaction a test machine actually paid for; the numbers must agree"
     )
     assert prepared.dust_coins == 0.04
+
+
+# --- a public post is a chunked send too --------------------------------------
+#
+# a test machine read the group route and found three things the private path had and the
+# public one did not, then measured each: no begin_pending_send, so an
+# interrupted post spent what it had broadcast and left no record; no
+# start_progress, so /events reported "sending": null throughout a 90-second
+# post; and no thread, so send_all ran inside the request, holding it open
+# across a confirmation wait per chunk. A 30 KB post would hold it six or seven
+# minutes. It also closed the browser part way through and the post finished
+# anyway -- the work was never tied to the client, which is why it survived and
+# equally why nothing reported back.
+
+
+def test_a_public_post_records_itself_before_broadcasting(tmp_path):
+    """The record is what makes an interruption recoverable rather than lost."""
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(tmp_path / "s.sqlite")
+    store.begin_pending_post(b"\x11" * 8, "test", "main", "a test machine", "addr",
+                             b"a long post", [b"one", b"two", b"three"])
+
+    posts = store.pending_posts()
+    assert len(posts) == 1
+    assert posts[0]["channel"] == "main"
+    assert posts[0]["nickname"] == "a test machine"
+    assert posts[0]["total"] == 3
+    assert posts[0]["sent_count"] == 0
+    assert posts[0]["chunks"] == [b"one", b"two", b"three"]
+
+
+def test_a_post_never_appears_in_the_private_resume_path(tmp_path):
+    """The kind filter is load-bearing, not tidiness.
+
+    pending_send is one table for both. Unfiltered, the private resume path
+    would pick up a post and try to seal it to a recipient_key of b''.
+    """
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(tmp_path / "s.sqlite")
+    store.begin_pending_send(b"\x01" * 8, b"\x02" * 32, "a1", b"msg", [b"x", b"y"])
+    store.begin_pending_post(b"\x03" * 8, "test", "main", "a test machine", "a2", b"post",
+                             [b"p", b"q"])
+
+    assert [r["msg_id"] for r in store.pending_sends()] == [b"\x01" * 8]
+    assert [r["msg_id"] for r in store.pending_posts()] == [b"\x03" * 8]
+    assert store.pending_posts("test") and not store.pending_posts("main")
+
+
+def test_progress_on_a_post_is_recorded_per_chunk(tmp_path):
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(tmp_path / "s.sqlite")
+    store.begin_pending_post(b"\x11" * 8, "test", "main", "a test machine", "addr",
+                             b"post", [b"one", b"two"])
+    store.record_pending_progress(b"\x11" * 8, "txid-one")
+
+    record = store.pending_posts()[0]
+    assert record["sent_count"] == 1
+    assert record["txids"] == ["txid-one"]
+    # Only the rest go out on resume; re-sending a broadcast chunk would pay
+    # for it twice and strand the post under a second msg_id.
+    assert record["chunks"][record["sent_count"]:] == [b"two"]
+
+    store.finish_pending_send(b"\x11" * 8)
+    assert store.pending_posts() == []
+
+
+def test_the_public_route_no_longer_posts_inside_the_request():
+    """A chunked post must hand off to a thread, as a private message does."""
+    import inspect
+
+    from arcade.web import app as webapp
+
+    source = inspect.getsource(webapp.create_app)
+    assert "_post_in_background" in source
+    assert 'threading.Thread(target=work, name="arcade-post"' in source
+    assert "begin_pending_post" in source
+    # The single-transaction case stays inline: there is nothing to report and
+    # nothing to resume.
+    assert "if plan.transactions == 1:" in source
+
+
+def test_an_unfinished_post_can_be_finished(client):
+    app, _ = client
+    html = app.get("/groups").text
+    assert 'action="/groups/resume"' in html or "{% if unfinished %}" in (
+        pathlib.Path("arcade/web/templates/groups.html").read_text())
+
+    source = pathlib.Path("arcade/web/templates/groups.html").read_text()
+    assert "Finish posting" in source
+    assert 'action="/groups/resume"' in source
+    assert 'id="posting-bubble"' in source, "a running post must be visible"

@@ -159,6 +159,12 @@
          cost of a multi-transaction message is estimated from the first. #}
       {% set count = plan.transactions if plan else 1 %}
       {% set fee = prepared[0].fee_sats * count / 100000000 %}
+      {# The fee alone was quoted here while the dust went unmentioned as a
+         number, and for a file the dust IS the cost -- a test machine was shown
+         "fee 0.17940000" for a send that moved 1.74. Scaled from the first
+         chunk, since only that one is built; the rest spend its change. #}
+      {% set dust = prepared[0].dust_sats * count / 100000000 %}
+      {% set total = fee + dust %}
       <div class="confirm">
         {% if attached_name %}
           <strong>Send {{ attached_name }}?</strong>
@@ -179,14 +185,22 @@
           {% else %}
             One transaction, so it goes straight away.
           {% endif %}
-          About {{ "%.4f"|format(fee) }} in fees and
-          {{ plan.multisig_outputs if plan else '' }} outputs &mdash; most of that
-          is <strong>dust that can never be spent again</strong>, because a file
-          is carried in the outputs themselves.
+          Costs about <strong>{{ "%.4f"|format(total) }}</strong> in total
+          &mdash; {{ "%.4f"|format(fee) }} in fees plus
+          {{ "%.4f"|format(dust) }} across
+          {{ plan.multisig_outputs if plan else '' }} outputs, which is
+          <strong>dust that can never be spent again</strong>, because a file is
+          carried in the outputs themselves.
         {% else %}
           <strong>Send this?</strong>
-          {{ count }} transaction{{ '' if count == 1 else 's' }},
-          fee {{ "%.8f"|format(fee) }}. It becomes permanent once broadcast.
+          {{ count }} transaction{{ '' if count == 1 else 's' }}{% if count > 1 %},
+          and one more first to split the wallet if it does not already have
+          enough separate outputs &mdash; those coins come straight back as
+          change, so the split costs only its own fee{% endif %}.
+          Costs about <strong>{{ "%.5f"|format(total) }}</strong>
+          &mdash; {{ "%.5f"|format(fee) }} in fees{% if dust %} plus
+          {{ "%.5f"|format(dust) }} in dust that can never be spent
+          again{% endif %}. It becomes permanent once broadcast.
         {% endif %}
         {% if count > 1 %}
         <div class="note" style="margin:10px 0 0">
@@ -414,11 +428,11 @@ function showPick(input){
   note.hidden = false;
   note.className = 'muted picked' + (e.chunks > 40 ? ' costly' : '');
   document.getElementById('picked-text').innerHTML = '<strong>' + file.name + '</strong> — ' +
-    (file.size / 1024).toFixed(0) + ' KB, sent as <strong>' +
+    arcadeSize(file.size) + ', sent as <strong>' +
     e.chunks.toLocaleString() + '</strong> transaction' + (e.chunks === 1 ? '' : 's') +
-    ' costing about <strong>' + e.coins.toLocaleString(undefined,
-      {maximumFractionDigits: 0}) + '</strong> in dust that can never be spent ' +
-    'again, and filling at least ' + e.blocks.toLocaleString() + ' block' +
+    ' costing about <strong>' + arcadeCoins(e.coins) + '</strong> in dust that can ' +
+    'never be spent again, on top of the fee, and filling at least ' +
+    e.blocks.toLocaleString() + ' block' +
     (e.blocks === 1 ? '' : 's') + (mins >= 1 ? ' (~' + mins + ' min)' : '') + '.';
   document.getElementById('clip').textContent = '📎•';
 }

@@ -7,12 +7,14 @@ that pretends otherwise would be worse than one that says so.
 
 from __future__ import annotations
 
+import contextlib
 import base64
 import datetime as dt
 import hashlib
 import threading
 import time
 import html
+import sys
 import os
 from pathlib import Path
 from typing import Any
@@ -64,7 +66,39 @@ NAV = [
 
 
 def create_app(state: AppState) -> FastAPI:
-    app = FastAPI(title="DogecoinArcade", docs_url=None, redoc_url=None)
+    @contextlib.asynccontextmanager
+    async def _lifespan(_app: FastAPI):
+        """Hold the shutdown while a send is in flight.
+
+        Send threads are daemons, so nothing waits for them: the interpreter
+        exits and the thread is killed wherever it happens to be. a test machine caught
+        one writing to the store seventeen seconds AFTER a graceful `systemctl
+        restart` -- the old process had released the port while its thread
+        carried on, so two processes briefly shared the database. Nothing was
+        harmed that time, and the pending-send record means a killed send can be
+        finished rather than lost, but neither is a reason to let a restart land
+        in the middle of a wallet operation.
+
+        So: stop accepting new sends, and wait a short while for the running one
+        to reach its own bookkeeping. If it does not, say so -- that line is the
+        only warning anyone gets that a send was cut off, and the record of what
+        went out is what to look at next.
+
+        `begin_shutdown` blocks, deliberately, and this is the one place in the
+        application where blocking the event loop is the point: nothing else
+        needs it once shutdown has begun. Written without `await` so the guard
+        that keeps the routes synchronous still reads cleanly.
+        """
+        yield
+        if not state.begin_shutdown():
+            print("arcade-web: a send was still running at shutdown. What is "
+                  "already broadcast cannot be taken back; the interface will "
+                  "offer to finish the rest when it starts again.",
+                  file=sys.stderr, flush=True)
+
+    app = FastAPI(title="DogecoinArcade", docs_url=None, redoc_url=None,
+                  lifespan=_lifespan)
+
 
     def render(request: Request, template: str, **context: Any) -> HTMLResponse:
         """Render a page, never from a cache.
@@ -247,6 +281,65 @@ def create_app(state: AppState) -> FastAPI:
                 state.end_send()
 
         threading.Thread(target=work, name="arcade-send", daemon=True).start()
+
+    def _record_post(store, txid, local):
+        """Keep our own copy of a post. One definition, three callers.
+
+        The route, the background thread and the resume path all have to write
+        the same row, and three copies of an eight-argument call is how they
+        drift -- which is exactly how the CLI and the web came to record sends
+        differently and each machine showed half a conversation.
+        """
+        store.add_group_post(
+            local["network"], local["channel"], txid, 0, int(time.time()),
+            local["address"], local["nickname"], local["text"], mine=True,
+            file_name=local["file_name"], file_type=local["file_type"],
+            file_data=local["file_data"])
+
+    def _post_in_background(sender, address, plan, local):
+        """Post a chunked public post on a thread, reporting as it goes.
+
+        The send lock is already held by the caller and is released here, at the
+        end of the real work rather than the end of the request.
+        """
+        def work():
+            try:
+                with state.store() as store:
+                    # Written down before anything is broadcast. A post that
+                    # stops half way has spent outputs that cannot be recovered,
+                    # so the record of what went out is the one thing that must
+                    # survive the interruption.
+                    store.begin_pending_post(
+                        plan.msg_id, local["network"], local["channel"],
+                        local["nickname"], address, local["text"].encode(),
+                        plan.payloads)
+
+                def note(text, index, total):
+                    state.update_progress(note=text)
+
+                sender.ensure_outputs(address, plan.transactions,
+                                      on_progress=note)
+
+                def sent_one(index, total, txid):
+                    state.update_progress(done=index,
+                                          note=f"posted {index} of {total}")
+                    with state.store() as store:
+                        store.record_pending_progress(plan.msg_id, txid)
+
+                txids = sender.send_all(address, plan.payloads,
+                                        on_progress=note, on_broadcast=sent_one)
+                with state.store() as store:
+                    store.finish_pending_send(plan.msg_id)
+                    _record_post(store, txids[0], local)
+                state.finish_progress()
+            except Exception as exc:
+                # Says what is already on the chain: a part-sent post cannot be
+                # taken back and that is the thing worth knowing.
+                state.finish_progress(error=str(exc))
+            finally:
+                state.end_send()
+
+        threading.Thread(target=work, name="arcade-post", daemon=True).start()
 
     @app.get("/messages", response_class=HTMLResponse)
     def messages(request: Request):
@@ -1154,6 +1247,61 @@ def create_app(state: AppState) -> FastAPI:
             state.flash(str(exc), "err")
         return RedirectResponse(f"/messages/{peer_hex}", status_code=303)
 
+    @app.post("/groups/resume")
+    def resume_post(request: Request, which: str = Form("messaging"),
+                    channel: str = Form(""), csrf_token: str = Form("")):
+        """Finish a public post that stopped part way.
+
+        The public path had no record at all, so there was nothing to finish:
+        an interrupted post spent the outputs it had already broadcast and left
+        no trace. The payloads are written down before the first broadcast, so
+        the rest go out unchanged under the same msg_id -- rebuilding them would
+        produce a different id and strand what is already on the chain, which is
+        the same reason the private path stores them rather than the text.
+        """
+        chain = state.ledger if which == "ledger" else state.messaging
+        try:
+            check_csrf(csrf_token)
+            record = None
+            with state.store() as store:
+                for candidate in store.pending_posts(chain.network):
+                    if not channel or candidate["channel"] == channel:
+                        record = candidate
+                        break
+            if record is None:
+                raise ValueError("there is nothing left to finish.")
+            if not state.begin_send():
+                raise ValueError("a message is already being sent.")
+
+            remaining = record["chunks"][record["sent_count"]:]
+            plan = type("ResumePost", (), {
+                "transactions": len(remaining),
+                "payloads": remaining,
+                "msg_id": record["msg_id"],
+            })()
+            local = dict(network=record["network"], channel=record["channel"],
+                         address=record["sender_address"],
+                         nickname=record["nickname"],
+                         text=record["body"].decode("utf-8", "replace"),
+                         file_name="", file_type="", file_data=None)
+            state.start_progress(f"#{record['channel']}", len(remaining),
+                                 "a few minutes")
+            with chain.rpc() as rpc:
+                sender = MessageSender(rpc, chain.params, public_only=True)
+                try:
+                    _post_in_background(sender, record["sender_address"], plan,
+                                        local)
+                except Exception:
+                    state.end_send()
+                    state.clear_progress()
+                    raise
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse(
+            f"/groups?which={which}&channel={channel or 'main'}", status_code=303)
+
     @app.get("/messages/sent-media/{sent_id}")
     def sent_media(request: Request, sent_id: int, download: int = 0):
         """A file we sent. Same rules as one we received."""
@@ -1216,6 +1364,18 @@ def create_app(state: AppState) -> FastAPI:
         chain = state.ledger if which == "ledger" else state.messaging
         channel = (channel or group.DEFAULT_CHANNEL).strip() or group.DEFAULT_CHANNEL
         posts, channels, balance = [], [], None
+        # An interrupted post leaves a record but no progress, so the bubble
+        # would sit at 0% with nothing driving it. Offer it as something that
+        # can be finished instead -- exactly as the messenger does.
+        unfinished = None
+        if not state.live_progress() and state.store_path.exists():
+            with state.store() as store:
+                for record in store.pending_posts(chain.network):
+                    if record["channel"] == channel:
+                        unfinished = {"sent": record["sent_count"],
+                                      "total": record["total"],
+                                      "channel": record["channel"]}
+                        break
         if state.store_path.exists():
             with state.store() as store:
                 posts = _with_media(store, store.group_posts(chain.network, channel))
@@ -1231,7 +1391,7 @@ def create_app(state: AppState) -> FastAPI:
                       channel=channel, posts=posts, channels=channels,
                       balance=balance, when=_when,
                       room=group.max_text_bytes(channel, state.profile_name),
-                      nickname=state.profile_name)
+                      nickname=state.profile_name, unfinished=unfinished)
 
     @app.get("/groups/media/{post_id}")
     def group_media(request: Request, post_id: int, download: int = 0):
@@ -1296,29 +1456,75 @@ def create_app(state: AppState) -> FastAPI:
                                           class_c=plan.class_c,
                                           change_address=address)
                 if confirmed == "yes":
+                    local = dict(
+                        network=chain.network, channel=channel, address=address,
+                        nickname=state.profile_name, text=text,
+                        file_name=group._safe_name(file_name) if file_bytes else "",
+                        file_type=file_type if file_bytes else "",
+                        file_data=file_bytes or None)
+
                     if plan.transactions == 1:
                         txids = [sender.broadcast(prepared)]
-                    else:
-                        txids = sender.send_all(address, plan.payloads)
-                    with state.store() as store:
-                        store.add_group_post(
-                            chain.network, channel, txids[0], 0, int(time.time()),
-                            address, state.profile_name, text, mine=True,
-                            file_name=group._safe_name(file_name) if file_bytes else "",
-                            file_type=file_type if file_bytes else "",
-                            file_data=file_bytes or None)
-                    state.flash(
-                        f"Posted to #{channel} in "
-                        f"{len(txids)} transaction{'' if len(txids) == 1 else 's'}. "
-                        f"It is public and permanent.", "ok")
+                        with state.store() as store:
+                            _record_post(store, txids[0], local)
+                        state.flash(
+                            f"Posted to #{channel} in 1 transaction. "
+                            f"It is public and permanent.", "ok")
+                        return RedirectResponse(
+                            f"/groups?which={which}&channel={channel}",
+                            status_code=303)
+
+                    # A chunked post used to run inside this request, with no
+                    # record, no progress and nothing reported when it finished.
+                    # a test machine measured two chunks at about 90 seconds and closed the
+                    # browser part way through: the post completed anyway, which
+                    # was luck rather than design, and nothing told anyone. A
+                    # 30 KB post would hold the request for six or seven minutes.
+                    # Same three fixes the private path already had.
+                    if not state.begin_send():
+                        raise ValueError(
+                            "a message is already being sent. Wait for it to "
+                            "finish: two sends choose their outputs without "
+                            "seeing each other's claims and can collide.")
+                    try:
+                        typical, slow = recent_block_seconds(rpc)
+                        spare = sender.spendable_outputs(address)
+                        quick, _ = estimate_send_seconds(
+                            plan.transactions, typical, slow, spare)
+                        estimate = describe_duration(quick)
+                    except Exception:
+                        estimate = "a few minutes"
+                    state.start_progress(f"#{channel}", plan.transactions,
+                                         estimate)
+                    try:
+                        _post_in_background(sender, address, plan, local)
+                    except Exception:
+                        # The thread never started, so nothing will release the
+                        # claim on its behalf.
+                        state.end_send()
+                        state.clear_progress()
+                        raise
                     return RedirectResponse(
-                        f"/groups?which={which}&channel={channel}", status_code=303)
+                        f"/groups?which={which}&channel={channel}",
+                        status_code=303)
         except HTTPException:
             raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             error = str(exc)
 
         posts, channels, balance = [], [], None
+        # An interrupted post leaves a record but no progress, so the bubble
+        # would sit at 0% with nothing driving it. Offer it as something that
+        # can be finished instead -- exactly as the messenger does.
+        unfinished = None
+        if not state.live_progress() and state.store_path.exists():
+            with state.store() as store:
+                for record in store.pending_posts(chain.network):
+                    if record["channel"] == channel:
+                        unfinished = {"sent": record["sent_count"],
+                                      "total": record["total"],
+                                      "channel": record["channel"]}
+                        break
         if state.store_path.exists():
             with state.store() as store:
                 posts = _with_media(store, store.group_posts(chain.network, channel))
@@ -1336,7 +1542,8 @@ def create_app(state: AppState) -> FastAPI:
                       plan=plan, draft=text, room=group.max_text_bytes(channel, state.profile_name),
                       nickname=state.profile_name,
                       attached_b64=base64.b64encode(file_bytes).decode() if file_bytes else "",
-                      attached_name=file_name, attached_type=file_type)
+                      attached_name=file_name, attached_type=file_type,
+                      unfinished=unfinished)
 
     @app.post("/contacts/scan")
     def contacts_scan(request: Request, csrf_token: str = Form("")):

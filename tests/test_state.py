@@ -228,3 +228,52 @@ def test_invalid_transactions_are_recorded_not_discarded(engine):
     assert row["valid"] == 0
     assert "does not exist" in row["invalid_reason"]
     assert row["message_type"] == 0
+
+
+# --- a send must not outlive its own service ----------------------------------
+
+def test_shutdown_waits_for_a_send_and_then_refuses_more(tmp_path):
+    """a test machine caught a send thread writing to the store 17s after a restart.
+
+    Send threads are daemons, so nothing waits for them: the old process had
+    released the port while its thread carried on, and two processes briefly
+    shared the database. The pending-send record means a cut-off send can be
+    finished rather than lost, but a restart should not land in the middle of a
+    wallet operation in the first place.
+    """
+    from pathlib import Path
+
+    from arcade.web.state import AppState, ChainContext
+
+    state = AppState(
+        home=tmp_path,
+        messaging=ChainContext(network="regtest", role="messaging",
+                               label="Testnet", datadir=Path("/nonexistent")),
+        ledger=ChainContext(network="main", role="ledger", label="Mainnet",
+                            datadir=Path("/nonexistent")))
+
+    # Nothing in flight: shutdown is immediate.
+    assert state.begin_shutdown(grace=0.1) is True
+
+    # And once shutting down, no new send may start -- otherwise a restart
+    # begins work it is about to abandon.
+    assert state.begin_send() is False
+
+
+def test_shutdown_reports_a_send_it_could_not_wait_out(tmp_path):
+    from arcade.web.state import AppState, ChainContext
+    from pathlib import Path
+
+    state = AppState(
+        home=tmp_path,
+        messaging=ChainContext(network="regtest", role="messaging",
+                               label="Testnet", datadir=Path("/nonexistent")),
+        ledger=ChainContext(network="main", role="ledger", label="Mainnet",
+                            datadir=Path("/nonexistent")))
+
+    assert state.begin_send() is True          # a send is now in flight
+    # It never finishes, so the grace expires and this reports False rather
+    # than blocking the restart for ever.
+    assert state.begin_shutdown(grace=0.2) is False
+    state.end_send()
+    assert state.begin_shutdown(grace=0.2) is True

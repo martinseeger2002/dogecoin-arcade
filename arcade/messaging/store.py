@@ -274,6 +274,17 @@ class MessageStore:
         # bytes. Without this the same person could appear under two names
         # depending on which arrived first, which is arbitrary.
         ("contact", "name_source", "TEXT NOT NULL DEFAULT ''"),
+        # A public post is also a chunked send that can be interrupted, but the
+        # table was shaped for private messages only -- so group_post_send
+        # recorded nothing, and an interrupted post spent the coins it had
+        # already broadcast and left no trace that it happened. These columns
+        # let one table hold both without the private resume path ever seeing a
+        # post: 'private' is the default precisely because every row that
+        # existed before this was one.
+        ("pending_send", "kind", "TEXT NOT NULL DEFAULT 'private'"),
+        ("pending_send", "channel", "TEXT NOT NULL DEFAULT ''"),
+        ("pending_send", "network", "TEXT NOT NULL DEFAULT ''"),
+        ("pending_send", "nickname", "TEXT NOT NULL DEFAULT ''"),
     )
 
     #: Backfills run after the columns exist. A column added with a default is
@@ -838,9 +849,29 @@ class MessageStore:
         self.conn.execute(
             "INSERT OR REPLACE INTO pending_send"
             "(msg_id,recipient_key,sender_address,body,chunks,total,sent_count,"
-            "txids,created) VALUES(?,?,?,?,?,?,0,'',?)",
+            "txids,created,kind) VALUES(?,?,?,?,?,?,0,'',?,'private')",
             (msg_id, recipient_key, sender_address, body, _pack_chunks(chunks),
              len(chunks), int(time.time())),
+        )
+
+    def begin_pending_post(self, msg_id: bytes, network: str, channel: str,
+                           nickname: str, sender_address: str, body: bytes,
+                           chunks: list[bytes]) -> None:
+        """Record a chunked PUBLIC post before any of it is broadcast.
+
+        The same reasoning as the private path, which had this from the start: a
+        post that stops half way has spent real outputs and cannot be taken
+        back, so the one thing that must survive is a record of what went out.
+        recipient_key is b'' -- a post has no recipient, and the column is NOT
+        NULL from a schema that predates this.
+        """
+        self.conn.execute(
+            "INSERT OR REPLACE INTO pending_send"
+            "(msg_id,recipient_key,sender_address,body,chunks,total,sent_count,"
+            "txids,created,kind,channel,network,nickname) "
+            "VALUES(?,?,?,?,?,?,0,'',?,'public',?,?,?)",
+            (msg_id, b"", sender_address, body, _pack_chunks(chunks),
+             len(chunks), int(time.time()), channel, network, nickname),
         )
 
     def record_pending_progress(self, msg_id: bytes, txid: str) -> None:
@@ -859,12 +890,42 @@ class MessageStore:
         self.conn.execute("DELETE FROM pending_send WHERE msg_id=?", (msg_id,))
 
     def pending_sends(self) -> list[dict[str, Any]]:
-        """Unfinished chunked sends, oldest first."""
+        """Unfinished chunked private messages, oldest first.
+
+        Filtered by kind. Without that, a public post would be offered to the
+        private resume path, which would try to seal it to a recipient_key of
+        b'' -- so the filter is load-bearing, not tidiness.
+        """
         out = []
-        for row in self.conn.execute("SELECT * FROM pending_send ORDER BY created"):
+        for row in self.conn.execute(
+                "SELECT * FROM pending_send WHERE kind='private' ORDER BY created"):
             out.append({
                 "msg_id": bytes(row["msg_id"]),
                 "recipient_key": bytes(row["recipient_key"]),
+                "sender_address": row["sender_address"],
+                "body": bytes(row["body"]),
+                "chunks": _unpack_chunks(bytes(row["chunks"])),
+                "total": row["total"],
+                "sent_count": row["sent_count"],
+                "txids": [t for t in row["txids"].split(",") if t],
+                "created": row["created"],
+            })
+        return out
+
+    def pending_posts(self, network: str | None = None) -> list[dict[str, Any]]:
+        """Unfinished chunked public posts, oldest first."""
+        sql = "SELECT * FROM pending_send WHERE kind='public'"
+        args: list[Any] = []
+        if network is not None:
+            sql += " AND network=?"
+            args.append(network)
+        out = []
+        for row in self.conn.execute(sql + " ORDER BY created", args):
+            out.append({
+                "msg_id": bytes(row["msg_id"]),
+                "network": row["network"],
+                "channel": row["channel"],
+                "nickname": row["nickname"],
                 "sender_address": row["sender_address"],
                 "body": bytes(row["body"]),
                 "chunks": _unpack_chunks(bytes(row["chunks"])),

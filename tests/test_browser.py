@@ -587,3 +587,37 @@ def test_enter_stands_down_while_a_confirmation_is_pending(browser, served):
     assert browser.execute_script("return window.__posted;") == 1, (
         "Enter stayed dead after the confirmation was dismissed"
     )
+
+
+# --- a real cost must never display as nothing --------------------------------
+
+def test_small_costs_and_sizes_do_not_round_away(browser, served):
+    """A 900-byte file costs 0.16 and used to display as "about 0 in dust".
+
+    `toLocaleString(undefined, {maximumFractionDigits: 0})` rounded every cost
+    under half a coin to "0", and `(bytes/1024).toFixed(0) + " KB"` showed a
+    102-byte file as "0 KB". a test machine met the 102-byte case; the rest of the range
+    was the same bug wearing a less obvious face, which is why these are shared
+    helpers in base.html rather than fixed twice.
+    """
+    base, peer = served
+    browser.get(f"{base}/messages/{peer}")
+
+    rows = browser.execute_script("""
+      return [102, 900, 4000, 40000].map(function (n) {
+        var chunks = Math.ceil(n / 7628);
+        var outputs = Math.ceil(n / 60) + chunks;
+        return [n, arcadeSize(n), arcadeCoins(outputs * 0.01)];
+      });
+    """)
+    for size, shown_size, shown_cost in rows:
+        assert shown_size not in ("0 KB", "0 bytes"), (
+            f"{size} bytes displayed as {shown_size!r}"
+        )
+        assert float(shown_cost.replace(",", "")) > 0, (
+            f"{size} bytes costs something but displayed as {shown_cost!r}"
+        )
+
+    assert rows[0][1] == "102 bytes", "under 1 KB should be shown in bytes"
+    assert rows[0][2] == "0.03"
+    assert rows[1][2] == "0.16", "this is the case that read as free"
