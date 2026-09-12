@@ -348,9 +348,23 @@ function sendOnEnter(event, box){
   // requestSubmit, not submit: form.submit() bypasses onsubmit entirely, so the
   // double-send guard never ran on the Enter path -- the very path most likely
   // to be pressed twice.
-  if (!startSending(box.form)) return;
-  if (box.form.requestSubmit) box.form.requestSubmit();
-  else box.form.submit();
+  var form = box.form;
+  // Do NOT call startSending here. requestSubmit fires the form's own submit event,
+  // and that runs onsubmit="return startSending(this)" -- so calling it first set
+  // form.dataset.sending, the handler's second call saw it already set, returned
+  // false, and CANCELLED the submission. Enter painted "Sending..." over a form
+  // that never posted; the button worked because a click goes through onsubmit
+  // exactly once. The operator reported precisely that: "the first time I pressed
+  // enter it gave me the error and the second time I pressed the send button it
+  // sent." Measured in a browser -- pressing Enter left the page alive with no
+  // request behind it, while clicking reached the server.
+  //
+  // The flag is only READ here, to swallow a second Enter. form.submit() is the
+  // old-browser fallback and does NOT fire onsubmit, so that branch has to paint
+  // the sending state itself.
+  if (form.dataset.sending === 'yes') return;
+  if (form.requestSubmit) form.requestSubmit();
+  else if (startSending(form)) form.submit();
 }
 function grow(box){
   box.style.height = 'auto';

@@ -9,6 +9,7 @@ value here is not depth -- it is that every route gets exercised at least once,
 with the node unreachable, which is also the state a new user starts in.
 """
 
+import re
 import dataclasses
 from pathlib import Path
 
@@ -874,8 +875,23 @@ def test_the_send_route_does_not_hold_the_event_loop(client):
     assert "await " not in source, "nothing in these routes may await"
 
 
-def test_enter_goes_through_the_double_send_guard(client):
-    """form.submit() does not fire onsubmit, so the guard never ran on Enter."""
+def test_enter_does_not_arm_the_guard_before_submitting(client):
+    """The Enter handler must not call startSending itself.
+
+    This test used to assert the opposite, as a literal string:
+    `if (!startSending(box.form)) return;`. That line was the bug. Arming the
+    guard before calling requestSubmit meant the form's own
+    `onsubmit="return startSending(this)"` saw the flag already set, returned
+    false, and CANCELLED the submission -- so Enter painted "Sending..." over a
+    form that never posted, while the button worked because a click goes through
+    onsubmit exactly once. The operator reported it and it survived two wrong
+    diagnoses, partly because this test said the path was covered.
+
+    Matching served JavaScript as a string cannot tell a working handler from a
+    broken one. The behaviour is asserted in tests/test_browser.py, by checking
+    whether a request reaches the server at all; this only guards the shape that
+    made it possible, so it cannot come back unnoticed.
+    """
     app, state = client
     from arcade.messaging.keys import Identity
 
@@ -886,8 +902,13 @@ def test_enter_goes_through_the_double_send_guard(client):
                           state.identity.fingerprint, b"hi")
 
     body = app.get(f"/messages/{peer.hex()}").text
-    assert "requestSubmit" in body
-    assert "if (!startSending(box.form)) return;" in body
+    assert "requestSubmit" in body, "form.submit() would skip onsubmit entirely"
+    assert "if (!startSending(box.form)) return;" not in body, (
+        "arming the guard before requestSubmit makes onsubmit cancel the submit"
+    )
+    assert "if (form.dataset.sending === 'yes') return;" in body, (
+        "the guard must be read, not set, on the Enter path"
+    )
 
 
 # --- watching a long send -----------------------------------------------------
@@ -1591,3 +1612,52 @@ def test_sending_no_longer_flashes_a_banner(client):
 
     source = inspect.getsource(webapp.create_app)
     assert 'state.flash("Sent.' not in source
+
+
+# --- nothing but a title belongs in <title> -----------------------------------
+#
+# Three pages were rendering whole panels inside <title>, because the panel had
+# been pasted after the title text inside {% block title %} and base.html wraps
+# that block in <title>. On / and /contacts the trapped copy was a duplicate of
+# one that also rendered in the body, so the damage was a tab title 1,100
+# characters long. On /wallet it was the ONLY copy: the "Fast sending" panel and
+# its split form rendered inside <head>, so the feature was unreachable -- the
+# page looked as though the panel had never been written. a test machine found it by
+# measuring the served <title>, and pressed on the difference between the two
+# cases rather than calling all three cosmetic.
+#
+# One assertion catches the whole class, needs no browser, and would have caught
+# it on the day it was introduced.
+
+TITLED_PAGES = ["/", "/contacts", "/wallet", "/messages", "/groups", "/keys", "/backup"]
+
+
+@pytest.mark.parametrize("path", TITLED_PAGES)
+def test_a_page_title_is_only_a_title(client, path):
+    app, _ = client
+    html = app.get(path).text
+
+    match = re.search(r"<title>(.*?)</title>", html, re.S)
+    assert match, f"{path} rendered no <title>"
+    title = match.group(1)
+
+    assert "<" not in title, (
+        f"{path} has markup inside <title> ({len(title)} bytes). A block pasted "
+        f"into {{% block title %}} renders inside <head>: on /wallet that made "
+        f"the Fast sending panel unreachable."
+    )
+    assert len(title) < 120, f"{path} has a {len(title)}-byte title"
+    assert title.strip(), f"{path} has an empty title"
+
+
+def test_the_wallet_split_form_is_in_the_body(client):
+    """The specific feature that was lost, asserted where a user can reach it."""
+    app, _ = client
+    html = app.get("/wallet").text
+    head, _, body = html.partition("</head>")
+
+    assert "Fast sending" not in head, "the panel is back inside <head>"
+    assert "Fast sending" in body
+    assert 'action="/wallet/split"' in body, (
+        "the split form has to be in the body to be submittable"
+    )

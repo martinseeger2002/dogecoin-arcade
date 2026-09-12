@@ -1,26 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Address book · DogecoinArcade<script>
-// Say what the chain will carry, before anyone pays for it. An announcement
-// holds 12 bytes of name and used to cut a longer one silently -- "Big Chief
-// Energy" was published, permanently and for a fee, as "Big Chief En".
-function showPublished(box){
-  var limit = {{ announce_limit }};
-  var note = document.getElementById('published-as');
-  var bytes = new TextEncoder().encode(box.value);
-  if (bytes.length <= limit) { note.hidden = true; return; }
-  var cut = new TextDecoder().decode(bytes.slice(0, limit));
-  note.hidden = false;
-  note.innerHTML = 'Your whole name is published — but it is ' + bytes.length +
-    ' bytes and a single cheap output holds ' + limit + ', so the announcement ' +
-    'is carried in multisig outputs instead. That costs a few hundredths of a ' +
-    'coin in dust rather than nothing. A name of ' + limit + ' bytes or fewer ' +
-    'costs only a fee.';
-  note.className = 'muted';
-}
-var nameBox = document.getElementById('profile-name');
-if (nameBox) showPublished(nameBox);
-</script>
-{% endblock %}
+{% block title %}Address book · DogecoinArcade{% endblock %}
 {% block body %}
 <h1>Address book</h1>
 <p class="sub">Who is who, and where to pay them. Stored only on this computer.</p>

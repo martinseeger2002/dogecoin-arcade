@@ -16,6 +16,7 @@ anywhere -- but the skip says why, because a silent skip here would return us to
 having no coverage of this at all.
 """
 
+import os
 import socket
 import threading
 import time
@@ -27,6 +28,7 @@ pytest.importorskip("selenium", reason="browser tests need selenium: pip install
 from selenium import webdriver                                       # noqa: E402
 from selenium.webdriver.common.by import By                          # noqa: E402
 from selenium.webdriver.firefox.options import Options               # noqa: E402
+from selenium.webdriver.firefox.service import Service as FirefoxService  # noqa: E402
 
 
 def _free_port() -> int:
@@ -37,12 +39,30 @@ def _free_port() -> int:
 
 @pytest.fixture(scope="module")
 def browser():
+    """Headless Firefox, with the binary and driver overridable.
+
+    ARCADE_FIREFOX_BINARY and ARCADE_GECKODRIVER exist because the default
+    lookup does not find a snap-packaged Firefox: selenium picks up something on
+    PATH and fails with "binary is not a Firefox executable", so the whole file
+    skipped on a machine that had a perfectly good browser. These are the tests
+    that catch the bugs nothing else can -- a skip here is a real loss, not a
+    tidy fallback -- so the machine gets a way to say where its browser is.
+    """
     options = Options()
     options.add_argument("-headless")
+    binary = os.environ.get("ARCADE_FIREFOX_BINARY")
+    if binary:
+        options.binary_location = binary
+    driver_path = os.environ.get("ARCADE_GECKODRIVER")
+    service = FirefoxService(executable_path=driver_path) if driver_path else None
     try:
-        driver = webdriver.Firefox(options=options)
+        driver = webdriver.Firefox(options=options, service=service)
     except Exception as exc:                      # no firefox, no geckodriver
-        pytest.skip(f"no usable browser: {exc}")
+        pytest.skip(
+            f"no usable browser: {exc}. If Firefox is installed somewhere the "
+            f"default lookup misses (a snap, for instance), set "
+            f"ARCADE_FIREFOX_BINARY and ARCADE_GECKODRIVER."
+        )
     yield driver
     driver.quit()
 
@@ -145,10 +165,18 @@ def test_the_composer_freezes_and_thaws(browser, served):
 def test_a_second_submission_is_refused_while_one_is_painted(browser, served):
     base, peer = served
     browser.get(f"{base}/messages/{peer}")
-    form = browser.find_element(By.CSS_SELECTOR, "form.composer")
 
-    assert browser.execute_script("return startSending(arguments[0])", form) is True
-    assert browser.execute_script("return startSending(arguments[0])", form) is False
+    # Both calls in ONE round trip. Split across two, this was flaky: the
+    # /events poller runs every 2s and calls resetComposer when the server
+    # reports no send in progress, which clears the guard flag -- so the second
+    # call could legitimately return True. That race is real but it is not what
+    # this test is about.
+    first, second = browser.execute_script("""
+      var f = document.querySelector('form.composer');
+      return [startSending(f), startSending(f)];
+    """)
+    assert first is True
+    assert second is False
 
 
 def test_the_poller_clears_a_leftover_paint_job(browser, served):
@@ -406,4 +434,94 @@ def test_emoji_cross_the_budget_sooner_than_characters_suggest(browser, served):
     assert "over" in over, (
         "20 emoji are 80 bytes and cannot fit a budget of 60 -- the counter "
         "must say so even though that is only 20 characters"
+    )
+
+
+# --- Enter sends --------------------------------------------------------------
+#
+# It did not. `sendOnEnter` called `startSending` itself and then called
+# `requestSubmit`, which fires the form's own submit event -- and that runs
+# `onsubmit="return startSending(this)"`. The second call saw the guard flag the
+# first had just set, returned false, and cancelled the submission. So Enter
+# painted "Sending..." over a form that never posted, and 25 seconds later the
+# timeout said "that did not reach the application". Clicking the button worked,
+# because a click goes through onsubmit exactly once.
+#
+# The operator reported it as "the first time I pressed enter it gave me the error and
+# the second time I pressed the send button it sent", and it went unexplained
+# through two wrong diagnoses of mine. No assertion on markup or computed style
+# could have caught it: the page is untouched and perfectly healthy, it simply
+# never made a request. The only check that catches it is whether a request
+# happened at all.
+
+
+def _submits(browser, url, selector, how):
+    """True if acting on the composer actually posted to the server.
+
+    Detected by a marker on `window`, which cannot survive a navigation. There
+    is no node behind the test server, so a real submission comes back as an
+    error page -- that arrival is the proof, not the error itself.
+    """
+    browser.get(url)
+    browser.execute_script("window.__alive = 'yes';")
+    box = browser.find_element(By.CSS_SELECTOR, f"{selector} textarea")
+    box.send_keys("a message to send")
+    if how == "enter":
+        from selenium.webdriver.common.keys import Keys
+        box.send_keys(Keys.ENTER)
+    else:
+        browser.find_element(By.CSS_SELECTOR, f"{selector} button[type=submit]").click()
+    for _ in range(40):
+        if not browser.execute_script("return window.__alive === 'yes';"):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def test_enter_sends_a_private_message(browser, served):
+    base, peer = served
+    assert _submits(browser, f"{base}/messages/{peer}", "form.composer", "enter"), (
+        "pressing Enter did not post anything -- the double-send guard cancelled it"
+    )
+
+
+def test_the_button_sends_a_private_message(browser, served):
+    """The path that always worked, asserted alongside so a fix cannot swap them."""
+    base, peer = served
+    assert _submits(browser, f"{base}/messages/{peer}", "form.composer", "click")
+
+
+def test_enter_posts_on_the_public_board(browser, served):
+    """The same bug, the same shape, in postOnEnter."""
+    base, _ = served
+    assert _submits(browser, f"{base}/groups", "form.composer", "enter"), (
+        "pressing Enter did not post anything on the public board either"
+    )
+
+
+def test_a_second_enter_is_still_swallowed(browser, served):
+    """The guard has to keep working -- it just must not eat the first press.
+
+    A send can take minutes with nothing on screen, which is exactly when a
+    second press happens, and two sends select their outputs without seeing each
+    other's claims.
+    """
+    base, peer = served
+    browser.get(f"{base}/messages/{peer}")
+    box = browser.find_element(By.CSS_SELECTOR, "form.composer textarea")
+
+    # Pin the form in the sending state, as an in-flight send leaves it.
+    browser.execute_script("""
+      var f = document.querySelector('form.composer');
+      f.dataset.sending = 'yes';
+      window.__posted = 0;
+      f.addEventListener('submit', function (e) { window.__posted++; e.preventDefault(); });
+    """)
+    box.send_keys("a second press")
+    from selenium.webdriver.common.keys import Keys
+    box.send_keys(Keys.ENTER)
+    time.sleep(0.5)
+
+    assert browser.execute_script("return window.__posted;") == 0, (
+        "a second Enter while a send is in flight must not start another"
     )
