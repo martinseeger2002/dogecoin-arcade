@@ -168,15 +168,42 @@
 </div>
 
 <script>
+function resetPoster(reason){
+  document.querySelectorAll('form[data-sending="yes"]').forEach(function (form) {
+    delete form.dataset.sending;
+    form.querySelectorAll('button').forEach(function (b) {
+      b.disabled = false;
+      if (b.type === 'submit') b.textContent = b.dataset.label || 'Post';
+    });
+  });
+  if (reason) {
+    var note = document.getElementById('picked');
+    note.hidden = false;
+    note.className = 'muted composer-note costly';
+    note.textContent = reason;
+  }
+}
 function startPosting(form){
   if (form.dataset.sending === 'yes') return false;
   form.dataset.sending = 'yes';
   form.querySelectorAll('button').forEach(function (b) {
+    if (b.type === 'submit' && !b.dataset.label) b.dataset.label = b.textContent;
     b.disabled = true;
     if (b.type === 'submit') b.textContent = 'Posting…';
   });
+  // Recover if the request never lands. Without this the button stays disabled
+  // for good and nothing can be posted, with no explanation.
+  window.setTimeout(function () {
+    if (document.querySelector('form[data-sending="yes"]')) {
+      resetPoster('That did not reach the application, so nothing was posted. ' +
+                  'Try again.');
+    }
+  }, 25000);
   return true;
 }
+window.addEventListener('pageshow', function (event) {
+  if (event.persisted) resetPoster('');
+});
 function postOnEnter(event, box){
   if (event.key !== 'Enter' || event.shiftKey) return;
   event.preventDefault();

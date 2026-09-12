@@ -1256,3 +1256,81 @@ def test_a_stale_send_does_not_render_as_working(client):
     # The conversation treats it as finished and clears it, as /events does.
     app.get(f"/messages/{peer.hex()}")
     assert state.send_progress == {}
+
+
+# --- a frozen composer must be able to thaw -----------------------------------
+# `startSending` was a one-way transition. If the submission never completed --
+# a dropped connection, a server restarted underneath the page, a back-button
+# restore -- the interface stayed convincingly frozen at "Sending…" with the
+# button disabled, while the server had no send at all and would not accept
+# another because the button was disabled. a test machine measured that state against an
+# idle server.
+
+
+def test_the_composer_can_be_reset(client):
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    peer = b"\xd0" * 32
+    state.identity = Identity.generate()
+    with state.store() as store:
+        store.add_message(None, "tx", "tx", 1, 0, "nThem", peer,
+                          state.identity.fingerprint, b"hi")
+
+    body = app.get(f"/messages/{peer.hex()}").text
+    assert "function resetComposer" in body
+
+
+def test_a_restored_page_is_not_left_mid_send(client):
+    """bfcache returns the page exactly as it was, paint and all."""
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    peer = b"\xd1" * 32
+    state.identity = Identity.generate()
+    with state.store() as store:
+        store.add_message(None, "tx", "tx", 1, 0, "nThem", peer,
+                          state.identity.fingerprint, b"hi")
+
+    body = app.get(f"/messages/{peer.hex()}").text
+    assert "'pageshow'" in body
+    assert "event.persisted" in body
+
+
+def test_a_request_that_never_lands_recovers(client):
+    """The case that actually happened: the server restarted underneath it."""
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    peer = b"\xd2" * 32
+    state.identity = Identity.generate()
+    with state.store() as store:
+        store.add_message(None, "tx", "tx", 1, 0, "nThem", peer,
+                          state.identity.fingerprint, b"hi")
+
+    body = app.get(f"/messages/{peer.hex()}").text
+    assert "did not reach the application" in body
+    assert "setTimeout" in body
+
+
+def test_the_poller_clears_the_whole_sending_state(client):
+    """Clearing the bubble alone left a page that refuses input while telling
+    the truth in one small element."""
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    peer = b"\xd3" * 32
+    state.identity = Identity.generate()
+    with state.store() as store:
+        store.add_message(None, "tx", "tx", 1, 0, "nThem", peer,
+                          state.identity.fingerprint, b"hi")
+
+    body = app.get(f"/messages/{peer.hex()}").text
+    assert 'form[data-sending="yes"]' in body
+    assert "resetComposer('')" in body
+
+
+def test_the_public_composer_recovers_too(client):
+    body = client[0].get("/groups?channel=main").text
+    assert "function resetPoster" in body
+    assert "did not reach the application" in body

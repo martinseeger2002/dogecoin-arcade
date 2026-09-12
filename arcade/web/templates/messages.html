@@ -260,23 +260,70 @@
 // second click, and a second click starts a SECOND send -- which selects its own
 // outputs, can collide with the first, and can strand a half-written message on
 // the chain. So: one submission only, and say what is going on.
+function resetComposer(reason){
+  // Undoes everything startSending paints. Its absence was the bug: the
+  // transition was one-way, so a submission that never completed left the
+  // interface convincingly frozen -- "Sending…", a disabled button, an amber
+  // notice -- while the server had no send at all and would not accept another,
+  // because the button was disabled. a test machine measured exactly that state against
+  // an idle server.
+  document.querySelectorAll('form[data-sending="yes"]').forEach(function (form) {
+    delete form.dataset.sending;
+    form.querySelectorAll('button').forEach(function (b) {
+      b.disabled = false;
+      if (b.type === 'submit') {
+        b.textContent = b.dataset.label || 'Send';
+      }
+    });
+  });
+  var note = document.getElementById('sending');
+  if (note) {
+    if (reason) {
+      note.hidden = false;
+      note.className = 'msg err';
+      note.textContent = reason;
+    } else {
+      note.hidden = true;
+    }
+  }
+}
+
 function startSending(form){
   if (form.dataset.sending === 'yes') return false;
   form.dataset.sending = 'yes';
   form.querySelectorAll('button').forEach(function (b) {
+    if (b.type === 'submit' && !b.dataset.label) b.dataset.label = b.textContent;
     b.disabled = true;
     if (b.type === 'submit') b.textContent = 'Sending…';
   });
   var note = document.getElementById('sending');
   if (note) {
     note.hidden = false;
+    note.className = 'msg info';
     note.innerHTML = '<span class="spin"></span> Sending. A long message is sent ' +
       'as several transactions and the wallet may be split first, which waits ' +
       'for one block &mdash; this can take a few minutes. Leave this page open; ' +
       'it will move on by itself when the message is away.';
   }
+
+  // If the page has not navigated by now the request did not land -- a dropped
+  // connection, or a server restarted underneath us, which is how the operator got
+  // stuck. Recover rather than sit there looking busy.
+  window.setTimeout(function () {
+    if (document.querySelector('form[data-sending="yes"]')) {
+      resetComposer('That did not reach the application, so nothing was sent. ' +
+                    'Try again.');
+    }
+  }, 25000);
   return true;
 }
+
+// A page restored from history comes back exactly as it was left, mid-send
+// paint and all, with no request behind it.
+window.addEventListener('pageshow', function (event) {
+  if (event.persisted) resetComposer('');
+});
+
 function sendOnEnter(event, box){
   if (event.key !== 'Enter' || event.shiftKey) return;
   event.preventDefault();
@@ -340,7 +387,15 @@ function showPick(input){
   var peer = '{{ peer.hex if peer else "" }}';
 
   function draw(s) {
-    if (!s || s.peer !== peer) { row.hidden = true; return; }
+    if (!s || s.peer !== peer) {
+      row.hidden = true;
+      // The server says nothing is in flight. If the composer still looks busy
+      // it is a leftover paint job, not a send -- clearing the bubble alone left
+      // the worst combination: a page that refuses input while telling the truth
+      // in one small element.
+      if (document.querySelector('form[data-sending="yes"]')) resetComposer('');
+      return;
+    }
     row.hidden = false;
     if (s.error) {
       row.classList.add('failed');
