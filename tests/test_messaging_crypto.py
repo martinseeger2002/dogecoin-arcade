@@ -563,3 +563,167 @@ def test_a_storage_failure_does_not_look_like_a_failed_send(tmp_path):
             raise RuntimeError("database is locked")
 
     record_sent(Broken(), "txid", b"\x42" * 32, "fp", b"body")   # must not raise
+
+
+def test_reassembly_does_not_depend_on_the_utxo_chain():
+    """Chunks are joined by message id and countdown, never by their inputs.
+
+    Worth pinning, because the envelope once claimed ordering was "enforced
+    structurally by the UTXO chain" -- and nothing enforced it. Reassembly never
+    looked at the chain, so the guarantee was asserted rather than checked. Once
+    chunks can be funded from separate outputs they do not chain at all, and this
+    is what must hold instead: the whole ciphertext is authenticated, so a wrong
+    order fails the MAC rather than producing wrong text.
+    """
+    import inspect
+    from arcade.messaging import scanner
+
+    source = inspect.getsource(scanner.Scanner._assemble_one)
+    for chain_word in ("vin", "prevout", "spends", "input"):
+        assert chain_word not in source, (
+            f"reassembly should not consult {chain_word!r}")
+
+
+def test_chunks_joined_in_the_wrong_order_fail_rather_than_lie(alice, bob):
+    """Tampering can stop a message being read. It cannot change what it says."""
+    from arcade.messaging.envelope import (
+        EnvelopeError, Header, TYPE_CHUNK, open_ciphertext, seal_ciphertext)
+
+    msg_id = b"\x01" * 8
+    body = seal_ciphertext(alice, bob.public_bytes,
+                           Header(type=TYPE_CHUNK, msg_id=msg_id), b"x" * 400)
+    half = len(body) // 2
+    swapped = body[half:] + body[:half]
+
+    with pytest.raises(EnvelopeError):
+        open_ciphertext(bob, Header(type=TYPE_CHUNK, msg_id=msg_id), swapped)
+
+
+# --- splitting the wallet so chunks need not chain ----------------------------
+# Chunks chain through change outputs only because there is one output to spend.
+# Give the address many and each chunk funds itself: measured at 2 seconds for
+# six transactions, against about four minutes chained.
+
+
+def test_splitting_needs_at_least_two_pieces():
+    from arcade.messaging.sender import MessageSender, SendError
+    from arcade.config import NETWORKS
+
+    sender = MessageSender.__new__(MessageSender)
+    sender.params = NETWORKS["regtest"]
+    with pytest.raises(SendError):
+        sender.split_outputs("nAddr", 1, 1_000_000_000)
+
+
+def test_pieces_must_be_worth_spending():
+    """Below the wallet's discard threshold an output can never be spent again."""
+    from arcade.messaging.sender import MessageSender, SendError
+    from arcade.config import NETWORKS
+
+    sender = MessageSender.__new__(MessageSender)
+    sender.params = NETWORKS["regtest"]
+    with pytest.raises(SendError) as caught:
+        sender.split_outputs("nAddr", 30, 1000)
+    assert "dust" in str(caught.value)
+
+
+def test_independent_outputs_remove_the_waiting():
+    from arcade.messaging.sender import estimate_send_seconds
+
+    chained = estimate_send_seconds(6, 60.0, 180.0, independent_outputs=1)
+    split = estimate_send_seconds(6, 60.0, 180.0, independent_outputs=30)
+    assert chained[0] == 300
+    assert split[0] == 0
+
+
+def test_more_chunks_than_outputs_still_waits_for_the_remainder():
+    """Half a split wallet is half the benefit, not all of it."""
+    from arcade.messaging.sender import estimate_send_seconds
+
+    typical, _ = estimate_send_seconds(10, 60.0, 180.0, independent_outputs=4)
+    assert typical == 6 * 60          # nine waits, three of them avoided
+
+
+def test_input_selection_skips_what_another_chunk_claimed():
+    """Without this every chunk picks the largest output and double-spends it."""
+    from arcade.config import NETWORKS
+    from arcade.messaging.sender import MessageSender
+
+    class FakeRpc:
+        def call(self, method, *args):
+            assert method == "listunspent"
+            return [{"txid": "a", "vout": 0, "amount": 10.0},
+                    {"txid": "b", "vout": 1, "amount": 10.0}]
+
+    sender = MessageSender.__new__(MessageSender)
+    sender.rpc = FakeRpc()
+    sender.params = NETWORKS["regtest"]
+
+    first = sender._select_inputs("nAddr", 100_000_000)
+    second = sender._select_inputs("nAddr", 100_000_000,
+                                   exclude=frozenset(first))
+    assert first and second and set(first).isdisjoint(second)
+
+
+def test_selection_prefers_the_smallest_output_that_covers_it():
+    """Otherwise one message breaks a large output and undoes the split."""
+    from arcade.config import NETWORKS
+    from arcade.messaging.sender import MessageSender
+
+    class FakeRpc:
+        def call(self, method, *args):
+            return [{"txid": "big", "vout": 0, "amount": 9000.0},
+                    {"txid": "small", "vout": 0, "amount": 10.0}]
+
+    sender = MessageSender.__new__(MessageSender)
+    sender.rpc = FakeRpc()
+    sender.params = NETWORKS["regtest"]
+
+    assert sender._select_inputs("nAddr", 100_000_000) == [("small", 0)]
+
+
+def test_a_large_message_can_be_planned_at_all(alice, bob):
+    """Sealing before deciding was a hard limit at about 64 KB.
+
+    The single-transaction header carries the ciphertext length in a uint16, and
+    `plan_message` built that form first to decide whether to chunk -- so any
+    message over 64 KB raised "exceeds a uint16" and could not be planned, even
+    though chunking handles it. A private attachment may be 5 MB, so an ordinary
+    photo hit this.
+    """
+    from arcade.messaging.sender import plan_message
+
+    plan = plan_message(alice, bob.public_bytes, b"x" * 400_000)
+    assert plan.chunked and plan.transactions > 1
+
+
+def test_the_chunk_boundary_is_unchanged_by_that(alice, bob):
+    """Deciding on size must give the same answer sealing did."""
+    from arcade.messaging.sender import plan_message
+
+    assert plan_message(alice, bob.public_bytes, b"x" * 7512).transactions == 1
+    assert plan_message(alice, bob.public_bytes, b"x" * 7513).transactions > 1
+
+
+def test_a_single_transaction_message_never_splits_the_wallet():
+    """Nothing to gain, and it would spend a fee for nothing."""
+    from arcade.config import NETWORKS
+    from arcade.messaging.sender import MessageSender
+
+    sender = MessageSender.__new__(MessageSender)
+    sender.params = NETWORKS["regtest"]
+    assert sender.ensure_outputs("nAddr", wanted=1) is False
+
+
+def test_enough_outputs_means_no_split():
+    from arcade.config import NETWORKS
+    from arcade.messaging.sender import MessageSender
+
+    class FakeRpc:
+        def call(self, method, *args):
+            return [{"txid": f"t{i}", "vout": 0, "amount": 10.0} for i in range(40)]
+
+    sender = MessageSender.__new__(MessageSender)
+    sender.rpc = FakeRpc()
+    sender.params = NETWORKS["regtest"]
+    assert sender.ensure_outputs("nAddr", wanted=6) is False

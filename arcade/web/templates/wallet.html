@@ -1,6 +1,30 @@
 {% extends "base.html" %}
 {% import "_chains.html" as chains %}
-{% block title %}Wallets · DogecoinArcade{% endblock %}
+{% block title %}Wallets · DogecoinArcade
+<h2>Fast sending <span class="tag testnet">test</span></h2>
+<div class="panel">
+  <p>A long message or a file is sent as several linked transactions, and each one
+     waits for the previous to confirm &mdash; because there is a single output to
+     spend and each transaction has to use the change from the last.</p>
+  <p>Splitting that output into many small ones removes the waiting entirely: each
+     transaction funds itself. Measured on this chain, a 40&nbsp;KB file went from
+     about four minutes to two seconds.</p>
+  <form method="post" action="/wallet/split">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <div class="row">
+      <div style="flex:0 0 90px"><input name="pieces" value="30" inputmode="numeric"></div>
+      <span class="muted">pieces of</span>
+      <div style="flex:0 0 110px"><input name="each" value="10" inputmode="decimal"></div>
+      <button type="submit" class="ghost">Split for fast sending</button>
+    </div>
+  </form>
+  <p class="muted" style="font-size:.85rem;margin:11px 0 0">
+    One transaction, and the coins stay yours &mdash; they stay on the same address,
+    which they must, because a message is encoded against the address that sends
+    it. It takes effect once the split confirms, about a block.</p>
+</div>
+
+{% endblock %}
 {% block body %}
 <h1>Wallets</h1>
 <p class="sub">One per chain. Testnet coins pay message fees; mainnet coins are real.</p>

@@ -345,17 +345,33 @@ def create_app(state: AppState) -> FastAPI:
         # What the confirmation needs to say about a file: how long, and why.
         timing = None
         if plan is not None and file_bytes:
+            independent = 0
             try:
                 with state.messaging.rpc() as rpc:
                     typical, slow = recent_block_seconds(rpc)
+                    # Confirmed outputs on the sending address: each one lets a
+                    # chunk fund itself instead of waiting for the previous.
+                    independent = MessageSender(
+                        rpc, state.messaging.params).spendable_outputs(
+                            state.derived_address or "")
             except Exception:
                 typical, slow = 60.0, 180.0
-            quick, patient = estimate_send_seconds(plan.transactions, typical, slow)
+            # If there are not enough outputs the send splits the wallet first:
+            # one wait for the split to confirm, then everything at once. So the
+            # honest estimate is one block, not one per transaction.
+            will_split = plan.transactions > 1 and independent < plan.transactions
+            effective = plan.transactions if will_split else independent
+            quick, patient = estimate_send_seconds(plan.transactions, typical, slow,
+                                                   effective)
+            if will_split:
+                quick, patient = int(typical), int(slow)
             timing = {
                 "transactions": plan.transactions,
                 "typical": describe_duration(quick),
                 "slow": describe_duration(patient),
-                "waits": plan.transactions > 1,
+                "waits": quick > 0,
+                "independent": independent,
+                "will_split": will_split,
             }
         return render(request, "messages.html", threads=threads, thread=items, peer=peer,
                       when=_when, fingerprint_of=fingerprint_of, prepared=prepared,
@@ -1206,6 +1222,37 @@ def create_app(state: AppState) -> FastAPI:
         except Exception as exc:
             state.flash(f"Scan failed: {exc}", "err")
         return RedirectResponse("/", status_code=303)
+
+    @app.post("/wallet/split")
+    def wallet_split(request: Request, csrf_token: str = Form(""),
+                     pieces: str = Form("30"), each: str = Form("10")):
+        """Cut the messaging wallet into many small outputs.
+
+        Chunks of a long message chain through change outputs only because there
+        is one output to spend. With many, each chunk funds itself independently
+        and they all go at once -- minutes of waiting become seconds.
+        """
+        try:
+            check_csrf(csrf_token)
+            count = max(2, min(200, int(pieces or 30)))
+            amount = walletlib.parse_amount(each or "10")
+            with state.messaging.rpc() as rpc:
+                sender = MessageSender(rpc, state.messaging.params)
+                home = state.derived_address or funded_address(rpc)
+                prepared = sender.split_outputs(home, count, amount)
+                txid = sender.broadcast(prepared)
+            state.flash(
+                f"Split into {count} pieces of {amount / 100_000_000:.2f}. "
+                f"This takes effect once the split confirms -- about a block. "
+                f"After that a long message sends in one go instead of waiting "
+                f"between every transaction. ({txid[:16]}…)", "ok")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
+        except (SendError, ValueError, walletlib.WalletError) as exc:
+            state.flash(str(exc), "err")
+        except Exception as exc:
+            state.flash(f"Could not split: {exc}", "err")
+        return RedirectResponse("/wallet", status_code=303)
 
     @app.post("/fund")
     def fund(request: Request, csrf_token: str = Form("")):

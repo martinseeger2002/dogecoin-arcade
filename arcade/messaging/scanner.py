@@ -348,7 +348,21 @@ class Scanner:
         the only question. The countdown makes that self-describing -- the last
         chunk carries zero, and the number of links is therefore known from it.
         """
-        chunks = self.store.group_chunks(self.params.name, msg_id)
+        all_chunks = self.store.group_chunks(self.params.name, msg_id)
+        # Grouped by sender for the same reason sealed chunks are: a message id
+        # is in the clear on the chain, so anyone can publish a chunk claiming
+        # one, and a single injected chunk would otherwise make the real post
+        # look permanently incomplete.
+        by_sender: dict[str, list] = {}
+        for row in all_chunks:
+            by_sender.setdefault(row["sender"], []).append(row)
+        for chunks in by_sender.values():
+            if self._assemble_group_from(msg_id, chunks):
+                return True
+        return False
+
+    def _assemble_group_from(self, msg_id: bytes, chunks: list) -> bool:
+        """Try one sender's chunks for a public post."""
         seen = {row["countdown"] for row in chunks}
 
         # The highest countdown seen says how many links there are -- but only if
@@ -428,24 +442,47 @@ class Scanner:
         return message_id
 
     def _try_assemble(self, row: Any, me: str) -> int:
-        """Reassemble a chunked message if every link is present.
+        """Reassemble a chunked message if every link from one sender is present.
 
-        Completion is self-describing: the final chunk carries countdown 0, and
-        the chunks descend to it. An abandoned chain never reaches 0, so a partial
-        message is always distinguishable from a complete one and is simply not
-        surfaced.
+        Completion is self-describing: the final chunk carries countdown 0 and
+        the chunks descend to it, so an abandoned chain never reaches 0 and a
+        partial message is simply not surfaced.
+
+        Chunks are grouped by SENDER before anything is joined. A message id is
+        eight bytes in a cleartext header, in plain view on the chain, so anybody
+        who sees one can publish a chunk claiming it -- and a single injected
+        chunk with an unused countdown makes the real message look permanently
+        incomplete. Grouping means such a chunk forms its own group, which simply
+        fails to decrypt, instead of poisoning the real one.
+
+        Note what this replaces. The envelope documentation claimed ordering was
+        "enforced structurally by the UTXO chain". It was not: this function
+        never looked at the chain, and collected by message id alone. Chunked
+        sends happened to chain through change outputs, but nothing verified it,
+        so the guarantee was asserted rather than enforced. Reassembly does not
+        need the chain -- only the countdown and, now, agreement on the sender.
         """
         msg_id = bytes(row["msg_id"]) if row["msg_id"] else None
         if msg_id is None:
             return 0
 
-        chunks = self.store.chunks_for(msg_id)
+        by_sender: dict[str, list] = {}
+        for chunk in self.store.chunks_for(msg_id):
+            by_sender.setdefault(chunk["sender_addr"], []).append(chunk)
+
+        for chunks in by_sender.values():
+            if self._assemble_one(msg_id, chunks, me):
+                return 1
+        return 0
+
+    def _assemble_one(self, msg_id: bytes, chunks: list, me: str) -> bool:
+        """Try to open one sender's chunks for a message id."""
         countdowns = [c["countdown"] for c in chunks]
         if 0 not in countdowns:
-            return 0                                   # final chunk not seen yet
+            return False                               # final chunk not seen yet
         expected = max(countdowns) + 1
         if len(set(countdowns)) != expected:
-            return 0                                   # gaps remain
+            return False                               # gaps remain
 
         ordered = sorted(chunks, key=lambda c: -c["countdown"])
         header = Header(type=TYPE_CHUNK, msg_id=msg_id)
@@ -457,14 +494,14 @@ class Scanner:
             try:
                 chunk_header = Header.decode(raw)
             except EnvelopeError:
-                return 0
+                return False
             body = raw[chunk_header.length :]
             joined += body[: chunk_header.clen] if chunk_header.clen else body
 
         try:
             sender_pk, plaintext = open_ciphertext(self.identity, header, joined)
         except EnvelopeError:
-            return 0      # not ours, or not yet complete
+            return False      # not ours, not complete, or not really one message
 
         self._store_message(
             msg_id, ordered[0]["txid"], ordered[-1]["txid"], ordered[-1]["height"],
@@ -473,4 +510,4 @@ class Scanner:
         )
         for chunk in chunks:
             self.store.mark_opened(chunk["txid"])
-        return 1
+        return True

@@ -38,6 +38,7 @@ log = logging.getLogger(__name__)
 SPENDABLE_MINCONF = 0
 
 from .envelope import (
+    overhead_for,
     Header, TYPE_CHUNK, TYPE_SINGLE, new_message_id, seal_ciphertext, seal_message,
 )
 from .keys import Identity
@@ -126,6 +127,15 @@ def plan_message(
     would multiply the 132-byte overhead by the chunk count and expose the chunk
     structure to observers.
     """
+    # Decide on SIZE before sealing as a single transaction. Sealing first was a
+    # real limit: a single-transaction header carries the ciphertext length in a
+    # uint16, so anything over about 64 KB raised "exceeds a uint16" and could
+    # not be planned at all -- even though chunking handles it perfectly well,
+    # and a private attachment may be up to 5 MB. Any ordinary photo hit this.
+    would_be = len(message) + overhead_for(Header(type=TYPE_SINGLE))
+    if would_be > MAX_CLASS_B_PAYLOAD - 4:
+        return _plan_chunked(sender, recipient_public, message)
+
     single = seal_message(sender, recipient_public, Header(type=TYPE_SINGLE), message)
 
     if len(single) <= MAX_CLASS_B_PAYLOAD - 4:      # 4 = AnyData header
@@ -140,7 +150,12 @@ def plan_message(
             chunk_payloads=[single],
         )
 
-    # Too large for one transaction: chunk the finished ciphertext.
+    return _plan_chunked(sender, recipient_public, message)
+
+
+def _plan_chunked(sender: Identity, recipient_public: bytes,
+                  message: bytes) -> MessagePlan:
+    """Seal once and split the ciphertext across linked transactions."""
     msg_id = new_message_id()
     # Seal ONCE, then split the ciphertext. Framing is added per chunk below, so
     # seal_ciphertext (not seal_message) is used -- the latter would prepend a
@@ -239,8 +254,102 @@ class MessageSender:
             )
         return bytes.fromhex(pubkey_hex)
 
+    def split_outputs(self, address: str, count: int, amount_sats: int) -> PreparedTx:
+        """Cut one large output into many small ones, all on `address`.
+
+        Why this matters more than it sounds: chunks of a long message have to
+        chain through change outputs *only because there is one output to spend*.
+        Each chunk takes it, and the next must wait a block for the change. Give
+        the address thirty separate outputs and the chunks become independent
+        transactions that can all go at once -- minutes of waiting collapse to
+        seconds, and there is no unconfirmed ancestor chain to hit a mempool
+        limit either.
+
+        Everything stays on one address on purpose. Class B seeds its
+        obfuscation with the sender and the sender is "largest input by sum", so
+        spreading the coins across addresses would break message encoding; this
+        spreads the *outputs* and leaves the address alone.
+        """
+        if count < 2:
+            raise SendError("splitting means at least two outputs.")
+        if amount_sats < int(0.02 * COIN):
+            raise SendError(
+                "each piece needs to be worth more than the dust threshold, or "
+                "the wallet will refuse to spend it later.")
+
+        script = p2pkh_script(address)
+        outputs = [(amount_sats, script) for _ in range(count)]
+        needed = amount_sats * count + COIN            # pieces plus fee headroom
+        inputs = self._select_inputs(address, needed)
+
+        raw = build_raw_tx(inputs, outputs)
+        funded = self.rpc.call("fundrawtransaction", raw,
+                               {"changeAddress": address})
+        if not funded or "hex" not in funded:
+            raise SendError("could not fund the split")
+        signed = self.rpc.call("signrawtransaction", funded["hex"])
+        if not signed.get("complete"):
+            raise SendError("the wallet could not sign the split")
+        decoded = self.rpc.call("decoderawtransaction", signed["hex"])
+        return PreparedTx(
+            hex=signed["hex"], txid=decoded["txid"], decoded=decoded,
+            fee_sats=int(round(float(funded.get("fee", 0)) * COIN)),
+            size=len(signed["hex"]) // 2,
+            outputs=len(decoded.get("vout", [])),
+        )
+
+    def ensure_outputs(self, address: str, wanted: int,
+                       each_sats: int = 10 * COIN,
+                       on_progress: Callable[[str, int, int], None] | None = None,
+                       confirm_timeout: float = 900.0) -> bool:
+        """Make sure `address` has `wanted` confirmed outputs before a long send.
+
+        A file large enough to chunk otherwise waits a block between every
+        transaction. Splitting first costs ONE wait, however many chunks there
+        are: the split confirms once, and then all the chunks go at once. Six
+        transactions measured at about four minutes chained, against one block
+        plus two seconds this way.
+
+        Returns True if it split and waited, False if there was already enough.
+        Never splits for a message that fits one transaction -- there is nothing
+        to gain and it would spend a fee for nothing.
+        """
+        if wanted < 2:
+            return False
+        have = self.spendable_outputs(address, at_least=each_sats // 2)
+        if have >= wanted:
+            return False
+
+        # A few spare, so the next message does not have to do this again.
+        pieces = wanted + 4
+        if on_progress is not None:
+            on_progress(
+                f"splitting the wallet into {pieces} pieces so all "
+                f"{wanted} transactions can go at once", 0, wanted)
+        prepared = self.split_outputs(address, pieces, each_sats)
+        txid = self.broadcast(prepared)
+
+        if on_progress is not None:
+            on_progress("waiting for the split to confirm -- about one block, "
+                        "once, instead of one per transaction", 0, wanted)
+        # Unconfirmed outputs are descendants of the split, so spending them
+        # rebuilds the chain this exists to avoid. The wait is the whole point.
+        self._await_confirmation(txid, confirm_timeout)
+        return True
+
+    def spendable_outputs(self, address: str, at_least: int = 0) -> int:
+        """How many separate outputs `address` has that are worth spending."""
+        try:
+            unspent = self.rpc.call("listunspent", SPENDABLE_MINCONF, 9_999_999,
+                                    [address]) or []
+        except Exception:
+            return 0
+        return sum(1 for u in unspent
+                   if int(round(float(u["amount"]) * COIN)) >= at_least)
+
     def _select_inputs(self, address: str, target: int,
-                       minconf: int = SPENDABLE_MINCONF) -> list[tuple[str, int]]:
+                       minconf: int = SPENDABLE_MINCONF,
+                       exclude: frozenset = frozenset()) -> list[tuple[str, int]]:
         """Pick outputs belonging to `address` worth at least `target`.
 
         Class B seeds its obfuscation keystream with the SENDER address, and the
@@ -252,7 +361,18 @@ class MessageSender:
         unspent = self.rpc.call("listunspent", minconf, 9_999_999, [address])
         chosen: list[tuple[str, int]] = []
         total = 0
-        for utxo in sorted(unspent, key=lambda u: -float(u["amount"])):
+        # Smallest sufficient first, so a wallet that has been split does not
+        # break a large output to pay for a small message and collapse back to
+        # having one output. Excluded outpoints are ones another transaction in
+        # this same send has already claimed.
+        candidates = [u for u in unspent
+                      if (u["txid"], int(u["vout"])) not in exclude]
+        big_enough = [u for u in candidates
+                      if int(round(float(u["amount"]) * COIN)) >= target]
+        ordered = (sorted(big_enough, key=lambda u: float(u["amount"]))
+                   if big_enough else
+                   sorted(candidates, key=lambda u: -float(u["amount"])))
+        for utxo in ordered:
             chosen.append((utxo["txid"], int(utxo["vout"])))
             total += int(round(float(utxo["amount"]) * COIN))
             if total >= target:
@@ -307,8 +427,16 @@ class MessageSender:
         change it had just made, and the web interface built every chunk up front,
         which would have had two transactions spending the same output.
 
-        Why this waits for a confirmation rather than spending unconfirmed change
-        ---------------------------------------------------------------------
+        When no waiting is needed
+        -------------------------
+        If the sending address has several separate outputs -- see
+        `split_outputs` -- each chunk funds itself from a different one and they
+        all go at once. A 40 KB attachment that took four minutes takes seconds.
+        Chunks only chain, and only wait, when there is nothing independent left
+        to spend.
+
+        Why the fallback waits rather than spending unconfirmed change
+        -------------------------------------------------------------
         Spending 0-conf change would be faster and works for short messages, but
         it fails outright past about six chunks. A Class B chunk is roughly
         14.8 KB, and `DEFAULT_ANCESTOR_SIZE_LIMIT` is 101 KB
@@ -325,29 +453,58 @@ class MessageSender:
         """
         txids: list[str] = []
         total = len(payloads)
-        for index, payload in enumerate(payloads, 1):
-            if index > 1:
-                if on_progress is not None:
-                    on_progress(f"waiting for transaction {index - 1} of {total} to "
-                                f"confirm before sending {index}", index, total)
-                try:
-                    self._await_confirmation(txids[-1], confirm_timeout)
-                except Exception as exc:
-                    raise PartialSend(
-                        f"{exc} {len(txids)} of {total} are already on the chain "
-                        f"and cannot be taken back. An incomplete message can "
-                        f"never be read by anyone.", txids, total) from None
+        # Outputs already claimed by an earlier transaction in this same send.
+        # Without this every chunk would select the same largest output and the
+        # second would be a double spend of the first.
+        used: set[tuple[str, int]] = set()
 
-            try:
-                prepared = self.prepare(sender_address, payload)
-            except Exception as exc:
-                if txids:
-                    raise PartialSend(
-                        f"could not build transaction {index} of {total}: {exc} "
-                        f"{len(txids)} of {total} are already on the chain and "
-                        f"cannot be taken back. An incomplete message can never "
-                        f"be read by anyone.", txids, total) from None
-                raise
+        for index, payload in enumerate(payloads, 1):
+            prepared = None
+            if index > 1:
+                # Try to fund from a CONFIRMED output nothing in this send has
+                # touched. Confirmed matters: an unconfirmed output is a
+                # descendant of whatever created it, so spending a set of
+                # unconfirmed siblings rebuilds the very chain this is avoiding
+                # and hits the mempool descendant limit. A freshly split wallet
+                # therefore does nothing until the split confirms -- which is a
+                # block, once, rather than a block per chunk.
+                try:
+                    prepared = self.prepare(sender_address, payload,
+                                            minconf=1, exclude=frozenset(used))
+                except SendError:
+                    prepared = None
+
+                if prepared is None:
+                    # Nothing independent left, so fall back to chaining: this
+                    # chunk must spend the previous one's change, which means
+                    # waiting for it.
+                    if on_progress is not None:
+                        on_progress(
+                            f"waiting for transaction {index - 1} of {total} to "
+                            f"confirm before sending {index}", index, total)
+                    try:
+                        self._await_confirmation(txids[-1], confirm_timeout)
+                    except Exception as exc:
+                        raise PartialSend(
+                            f"{exc} {len(txids)} of {total} are already on the "
+                            f"chain and cannot be taken back. An incomplete "
+                            f"message can never be read by anyone.",
+                            txids, total) from None
+                    used.clear()
+
+            if prepared is None:
+                try:
+                    prepared = self.prepare(sender_address, payload,
+                                            exclude=frozenset(used))
+                except Exception as exc:
+                    if txids:
+                        raise PartialSend(
+                            f"could not build transaction {index} of {total}: "
+                            f"{exc} {len(txids)} of {total} are already on the "
+                            f"chain and cannot be taken back. An incomplete "
+                            f"message can never be read by anyone.",
+                            txids, total) from None
+                    raise
 
             if approve is not None and not approve(index, total, prepared):
                 if txids:
@@ -359,8 +516,11 @@ class MessageSender:
 
             txid = self.broadcast(prepared)
             txids.append(txid)
-            # Reported before the next wait begins, so a caller can write the
-            # progress down before anything else can fail.
+            for vin in prepared.decoded.get("vin", []):
+                if "txid" in vin:
+                    used.add((vin["txid"], int(vin.get("vout", 0))))
+            # Reported before anything else can fail, so a caller can write the
+            # progress down.
             if on_broadcast is not None:
                 on_broadcast(index, total, txid)
             if on_progress is not None:
@@ -415,7 +575,8 @@ class MessageSender:
 
     def prepare(self, sender_address: str, payload: bytes, class_c: bool = False,
                 minconf: int = SPENDABLE_MINCONF,
-                change_address: str | None = None) -> PreparedTx:
+                change_address: str | None = None,
+                exclude: frozenset = frozenset()) -> PreparedTx:
         """Build, fund and sign one transaction. Does NOT broadcast.
 
         `minconf=0` lets this spend change that is still unconfirmed, which is
@@ -449,7 +610,8 @@ class MessageSender:
         # largest input, which is never the address the user was told to share.
         # a test machine measured all three being different at once.
         needed = sum(value for value, _ in outputs) + COIN         # outputs + fee headroom
-        inputs = self._select_inputs(sender_address, needed, minconf=minconf)
+        inputs = self._select_inputs(sender_address, needed, minconf=minconf,
+                                     exclude=exclude)
 
         raw = build_raw_tx(inputs, outputs)
 
@@ -590,15 +752,18 @@ def recent_block_seconds(rpc, samples: int = 25) -> tuple[float, float]:
     return float(median), float(max(slow, median))
 
 
-def estimate_send_seconds(transactions: int, typical: float, slow: float
-                          ) -> tuple[int, int]:
-    """How long sending `transactions` linked transactions will take.
+def estimate_send_seconds(transactions: int, typical: float, slow: float,
+                          independent_outputs: int = 0) -> tuple[int, int]:
+    """How long sending `transactions` transactions will take.
 
-    Only the waits BETWEEN chunks cost time: broadcasting is immediate, and the
-    last chunk does not wait for anything. So a single transaction is instant,
-    and each additional one costs about one block.
+    Only waits cost time; broadcasting is immediate. A chunk waits when it has to
+    spend the previous chunk's change, and it does not when it can fund itself
+    from a confirmed output of its own -- see `split_outputs`. So a wallet with
+    enough separate outputs sends a long message in seconds rather than minutes,
+    which is measured rather than hoped: six transactions took 2 seconds split,
+    against about four minutes chained.
     """
-    waits = max(0, transactions - 1)
+    waits = max(0, transactions - 1 - max(0, independent_outputs - 1))
     return int(waits * typical), int(waits * slow)
 
 

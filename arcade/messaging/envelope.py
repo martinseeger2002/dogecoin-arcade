@@ -118,11 +118,20 @@ class Header:
         impossible by construction.
 
         Excluding it is safe because the countdown is transport framing, not
-        content: tampering with it can only cause a reassembly failure, which the
-        gap and ordering checks already detect, and ordering is in any case
-        enforced structurally by the UTXO chain rather than by trusting this
-        field. Everything that identifies the message -- magic, version, type and
+        content: the ciphertext is authenticated as a whole, so chunks joined in
+        the wrong order fail the MAC and the message is not surfaced. Tampering
+        can prevent a message being read; it cannot change what it says.
+        Everything that identifies the message -- magic, version, type and
         message id -- remains authenticated.
+
+        This used to add that ordering was "enforced structurally by the UTXO
+        chain". That was wrong, and worth recording as wrong: reassembly
+        collected chunks by message id and never looked at the chain at all, so
+        the guarantee was asserted rather than enforced. Chunked sends did chain
+        through change outputs, but nothing verified it -- and once chunks can be
+        funded independently they do not chain at all. What actually protects
+        reassembly is the MAC above, plus grouping chunks by sender so an
+        injected chunk cannot poison a real message.
         """
         head = MAGIC + bytes([VERSION, self.type])
         if self.type == TYPE_CHUNK:

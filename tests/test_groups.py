@@ -438,3 +438,41 @@ def test_the_channel_control_is_above_the_feed(feed_client):
     body = app.get("/groups?channel=main").text
     assert body.index('class="card chanbar"') < body.index('id="postform"')
     assert "a new one starts it" in body
+
+
+def test_an_injected_chunk_cannot_block_a_real_post(tmp_path):
+    """A message id is in the clear on the chain, so anyone can claim one.
+
+    One injected chunk with an unused countdown would otherwise make the real
+    post look permanently incomplete: the reassembler would see a higher maximum
+    and wait forever for links that were never sent. Grouping by sender means the
+    injected chunk forms its own group and simply fails.
+    """
+    from arcade.config import NETWORKS
+    from arcade.messaging.scanner import Scanner
+    from arcade.messaging.store import MessageStore
+
+    original = _png(G.MAX_CLASS_B_PAYLOAD + 500)
+    plan = G.plan(G.GroupPost("art", "m", "real", "x.png", "image/png", original))
+    assert plan.transactions == 2
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    scanner = Scanner.__new__(Scanner)
+    scanner.params = NETWORKS["regtest"]
+    scanner.store = store
+    scanner.identity = None
+    scanner.public_only = True
+
+    # A stranger claims the same message id with a countdown nobody sent.
+    msg_id = plan.msg_id
+    store.add_group_chunk("regtest", msg_id, 7, "tx-forged", 1, 1, "nAttacker",
+                          b"nonsense")
+
+    for index, payload in enumerate(plan.payloads):
+        _, countdown, piece = G.parse_chunk(payload)
+        store.add_group_chunk("regtest", msg_id, countdown, f"tx{index}",
+                              100 + index, 1000 + index, "nHonest", piece)
+        scanner._assemble_group(msg_id, 100 + index, 1000 + index)
+
+    (row,) = store.group_posts("regtest", "art")
+    assert bytes(store.group_post_file(row["id"])["file_data"]) == original

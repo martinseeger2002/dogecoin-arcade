@@ -126,10 +126,20 @@
       <div class="confirm">
         {% if attached_name %}
           <strong>Send {{ attached_name }}?</strong>
-          {% if timing and timing.waits %}
+          {% if timing and timing.will_split %}
+            {{ count }} transactions. Your wallet has
+            {{ timing.independent }} output{{ '' if timing.independent == 1 else 's' }}
+            ready, so it is split first and then they all go at once:
+            <strong>{{ timing.typical }}</strong>, sometimes {{ timing.slow }}
+            &mdash; one wait for the split, not one per transaction.
+          {% elif timing and timing.waits %}
             This takes <strong>{{ timing.typical }}</strong>, sometimes
             {{ timing.slow }}: it goes as {{ count }} linked transactions and each
             one waits for the previous to confirm.
+          {% elif timing and timing.independent > 1 %}
+            {{ count }} transaction{{ '' if count == 1 else 's' }}, going at once
+            &mdash; your wallet has {{ timing.independent }} separate outputs, so
+            none of them waits for another.
           {% else %}
             One transaction, so it goes straight away.
           {% endif %}
