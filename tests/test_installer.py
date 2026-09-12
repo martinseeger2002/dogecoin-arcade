@@ -210,3 +210,64 @@ def test_both_installer_calls_go_through_one_loader(fake_home):
 
     source = inspect.getsource(update)
     assert source.count("spec_from_file_location") == 1
+
+
+# --- restarting a service is not the same as it running -----------------------
+# `systemctl restart` succeeding says nothing about whether the service could
+# bind. Every existing installation has an arcade-web started by hand holding
+# the port, so the new unit starts, fails with "address already in use", and
+# enters a restart loop while the OLD code keeps answering -- and the update
+# reports success. a test machine hit exactly that on the first update after the unit was
+# registered, and got the out-of-date banner for its trouble.
+
+
+def test_a_foreign_listener_is_reported(monkeypatch, capsys):
+    from arcade import update
+
+    def fake_run(*args, **kwargs):
+        joined = " ".join(args)
+        if "is-active" in joined:
+            return type("R", (), {"returncode": 0, "stdout": "active\n"})()
+        if "MainPID" in joined:
+            return type("R", (), {"returncode": 0, "stdout": "4242\n"})()
+        return type("R", (), {"returncode": 0, "stdout": ""})()
+
+    monkeypatch.setattr(update, "_run", fake_run)
+    monkeypatch.setattr(update, "_listener_pid", lambda port: 9999)
+
+    assert update._verify_service_owns_port(["--user"]) is False
+    printed = capsys.readouterr().out
+    assert "Something else is serving" in printed
+    assert "9999" in printed and "started by hand" in printed
+    assert "kill 9999" in printed, "it should give the exact commands"
+
+
+def test_the_service_owning_the_port_is_not_reported(monkeypatch, capsys):
+    from arcade import update
+
+    def fake_run(*args, **kwargs):
+        joined = " ".join(args)
+        if "is-active" in joined:
+            return type("R", (), {"returncode": 0, "stdout": "active\n"})()
+        if "MainPID" in joined:
+            return type("R", (), {"returncode": 0, "stdout": "4242\n"})()
+        return type("R", (), {"returncode": 0, "stdout": ""})()
+
+    monkeypatch.setattr(update, "_run", fake_run)
+    monkeypatch.setattr(update, "_listener_pid", lambda port: 4242)
+
+    assert update._verify_service_owns_port(["--user"]) is True
+    assert "Something else is serving" not in capsys.readouterr().out
+
+
+def test_an_undeterminable_listener_does_not_cry_wolf(monkeypatch, capsys):
+    """Without `ss` the PID is unknown; a false alarm is worse than silence."""
+    from arcade import update
+
+    monkeypatch.setattr(update, "_run",
+                        lambda *a, **k: type("R", (), {"returncode": 0,
+                                                       "stdout": "active\n"})())
+    monkeypatch.setattr(update, "_listener_pid", lambda port: None)
+
+    assert update._verify_service_owns_port(["--user"]) is True
+    assert "Something else" not in capsys.readouterr().out

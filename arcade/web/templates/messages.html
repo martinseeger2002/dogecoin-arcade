@@ -306,15 +306,21 @@ function startSending(form){
       'it will move on by itself when the message is away.';
   }
 
-  // If the page has not navigated by now the request did not land -- a dropped
-  // connection, or a server restarted underneath us, which is how the operator got
-  // stuck. Recover rather than sit there looking busy.
+  // If the page has not navigated by now, the request connected and then never
+  // answered -- a server that accepts and hangs. Note what this does NOT cover:
+  // a failure at the network level navigates the browser to its own error page,
+  // so the page that would freeze is already gone. a test machine established that by
+  // stopping the server and submitting: Firefox went to about:neterror and no
+  // frozen composer could exist. So this timeout is for the hanging case only,
+  // which is the one that leaves a live page waiting.
+  //
+  // Overridable so a test can exercise it in a second rather than twenty-five.
   window.setTimeout(function () {
     if (document.querySelector('form[data-sending="yes"]')) {
       resetComposer('That did not reach the application, so nothing was sent. ' +
                     'Try again.');
     }
-  }, 25000);
+  }, window.ARCADE_SEND_TIMEOUT || 25000);
   return true;
 }
 

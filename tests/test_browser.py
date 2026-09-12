@@ -184,3 +184,50 @@ def test_the_public_composer_behaves_the_same(browser, served):
     assert button.get_attribute("disabled") == "true"
     browser.execute_script("resetPoster('')")
     assert button.get_attribute("disabled") is None
+
+
+def test_a_request_that_hangs_recovers_on_its_own(browser, served):
+    """The only case the timeout can actually cover.
+
+    a test machine established the shape of this: a failure at the NETWORK level navigates
+    the browser to its own error page, so the page that would freeze is already
+    gone -- stopping the server and submitting gives about:neterror, not a stuck
+    composer. What remains is a server that accepts the request and then never
+    answers, which leaves a live page waiting. That is what this exercises, with
+    the timeout shortened so the test takes a second rather than twenty-five.
+    """
+    import time
+
+    base, peer = served
+    browser.get(f"{base}/messages/{peer}")
+    browser.execute_script("window.ARCADE_SEND_TIMEOUT = 700;")
+
+    form = browser.find_element(By.CSS_SELECTOR, "form.composer")
+    button = form.find_element(By.CSS_SELECTOR, "button[type=submit]")
+    browser.execute_script("return startSending(arguments[0])", form)
+    assert button.get_attribute("disabled") == "true"
+
+    time.sleep(1.5)
+
+    assert button.get_attribute("disabled") is None, "it should have recovered"
+    assert button.text == "Send"
+    notice = browser.find_element(By.ID, "sending")
+    assert notice.is_displayed(), "it should say why, not just re-enable"
+    assert "did not reach the application" in notice.text
+
+
+def test_presence_is_not_visibility(browser, served):
+    """Pins the measurement error both machines made, twice each.
+
+    The notice is always in the DOM and simply not displayed. Counting elements
+    that contain its text reports 1 at rest, which reads as "the notice is
+    showing" when nothing is showing at all. Only is_displayed or a computed
+    style distinguishes them.
+    """
+    base, peer = served
+    browser.get(f"{base}/messages/{peer}")
+
+    notice = browser.find_element(By.ID, "sending")
+    assert notice is not None, "present in the DOM"
+    assert notice.is_displayed() is False, "and not visible"
+    assert _display(browser, notice) == "none"

@@ -191,14 +191,14 @@ function startPosting(form){
     b.disabled = true;
     if (b.type === 'submit') b.textContent = 'Posting…';
   });
-  // Recover if the request never lands. Without this the button stays disabled
-  // for good and nothing can be posted, with no explanation.
+  // For a request that connects and then hangs. A network-level failure takes
+  // the browser to its own error page instead, so no frozen page survives that.
   window.setTimeout(function () {
     if (document.querySelector('form[data-sending="yes"]')) {
       resetPoster('That did not reach the application, so nothing was posted. ' +
                   'Try again.');
     }
-  }, 25000);
+  }, window.ARCADE_SEND_TIMEOUT || 25000);
   return true;
 }
 window.addEventListener('pageshow', function (event) {

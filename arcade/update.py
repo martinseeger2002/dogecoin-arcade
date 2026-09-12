@@ -135,6 +135,7 @@ def update(dry_run: bool = False) -> int:
         for scope in (["--user"], []):
             if _run("systemctl", *scope, "restart", "arcade-web").returncode == 0:
                 print(f"  restarted ({'user' if scope else 'system'} service)")
+                _verify_service_owns_port(scope)
                 break
         else:
             print("  arcade-web is not a service here; restart it yourself")
@@ -145,6 +146,61 @@ def update(dry_run: bool = False) -> int:
     print()
     print("Updated. Your wallet, messages and chain data were not touched.")
     return 0
+
+
+def _listener_pid(port: int) -> int | None:
+    """The PID listening on `port`, if it can be determined."""
+    if not shutil.which("ss"):
+        return None
+    result = _run("ss", "-H", "-ltnp", f"sport = :{port}")
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    import re
+    found = re.search(r"pid=(\d+)", result.stdout)
+    return int(found.group(1)) if found else None
+
+
+def _verify_service_owns_port(scope: list, port: int = 8420) -> bool:
+    """Confirm the restarted service is the thing actually serving.
+
+    `systemctl restart` succeeding is not the same as the service running. Every
+    existing installation has an `arcade-web` somebody started by hand, and it
+    holds the port -- so the new unit starts, fails to bind with "address already
+    in use", and enters a restart loop while the OLD code keeps answering. The
+    update reports success and the interface is unchanged. a test machine hit exactly that
+    on the first update after the unit was registered.
+    """
+    import time
+
+    for _ in range(10):
+        time.sleep(0.5)
+        active = _run("systemctl", *scope, "is-active", "arcade-web")
+        if active.stdout.strip() == "active":
+            break
+    else:
+        print()
+        print("  !  The service did not stay running.")
+
+    main_pid = _run("systemctl", *scope, "show", "arcade-web", "-p", "MainPID",
+                    "--value").stdout.strip()
+    holder = _listener_pid(port)
+    if holder is None or not main_pid.isdigit():
+        return True                       # cannot tell; do not cry wolf
+
+    if holder == int(main_pid):
+        return True
+
+    print()
+    print(f"  !  Something else is serving on 127.0.0.1:{port} (pid {holder}),")
+    print(f"     not the service (pid {main_pid or 'none'}). That is almost")
+    print( "     certainly an arcade-web started by hand, from before this was")
+    print( "     a service. It is holding the port, so the new version cannot")
+    print( "     bind and the OLD code is what you are still looking at.")
+    print()
+    print(f"     Stop it and start the service:   kill {holder}")
+    print(f"                                      systemctl {' '.join(scope)} "
+           "restart arcade-web")
+    return False
 
 
 def _warn_if_still_running(port: int = 8420) -> bool:
