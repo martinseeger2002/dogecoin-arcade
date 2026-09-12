@@ -9,12 +9,17 @@
   --bg:#faf8f4; --panel:#fffdf9; --fg:#1b1a17; --muted:#6b665c; --line:#e2ddd3;
   --accent:#b8860b; --accent-fg:#fff; --ok:#2d7a4f; --warn:#a8620a; --bad:#a83232;
   --code:#f2eee6;
+  /* Sent bubbles get their own colour rather than the app accent: a chat reads
+     as a chat largely because outgoing messages are a distinct, saturated
+     block, and the amber accent is too close to the page ground to do that. */
+  --sent:#2f7cf6; --sent-fg:#fff;
 }
 @media (prefers-color-scheme:dark){
   :root{
     --bg:#141310; --panel:#1a1815; --fg:#ece8e0; --muted:#9b948a; --line:#2c2a25;
     --accent:#d9a520; --accent-fg:#141310; --ok:#5bbd85; --warn:#d99a3e; --bad:#e07070;
     --code:#1d1b17;
+    --sent:#0b84ff; --sent-fg:#fff;
   }
 }
 *{box-sizing:border-box}
@@ -137,7 +142,7 @@ label.introduce input{width:auto;margin:0}
 a.file{display:flex;align-items:center;gap:10px;margin-top:7px;padding:9px 11px;
   border-radius:8px;background:rgba(0,0,0,.07);color:inherit;text-decoration:none}
 a.file:hover{background:rgba(0,0,0,.13);text-decoration:none}
-.bubble-row.mine a.file{background:rgba(255,255,255,.18)}
+.bubble-row.mine a.file{background:rgba(255,255,255,.2)}
 .file-icon{font-size:1.35rem;flex:none}
 .file-meta{display:flex;flex-direction:column;min-width:0;line-height:1.35}
 .file-meta strong{word-break:break-all;font-size:.86rem}
@@ -209,6 +214,82 @@ audio.post-media{height:40px}
 table.published{width:100%;border-collapse:collapse;margin-top:6px}
 table.published td{padding:8px 6px;border-top:1px solid var(--line);vertical-align:middle}
 table.published tr:first-child td{border-top:0}
+
+/* --- messenger -------------------------------------------------------------
+   A conversation, styled like one: the other person on the left in a neutral
+   bubble, you on the right in an accented one, each with a tail. The whole
+   messenger block was silently lost in an earlier edit, which is why this had
+   been rendering as unstyled divs. */
+.msgr{display:grid;grid-template-columns:290px 1fr;gap:0;height:calc(100vh - 150px);
+  min-height:460px;border:1px solid var(--line);border-radius:12px;overflow:hidden;
+  background:var(--panel)}
+@media(max-width:760px){.msgr{grid-template-columns:1fr;height:auto}
+  .msgr .threads{max-height:250px}}
+
+.threads{border-right:1px solid var(--line);display:flex;flex-direction:column;
+  overflow-y:auto;background:var(--bg)}
+.threads-head{display:flex;align-items:center;gap:8px;padding:13px 14px;
+  border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:1}
+.threads-head strong{flex:1;font-size:.92rem}
+.newthread,.newconv{padding:13px 14px;border-bottom:1px solid var(--line);
+  background:var(--code)}
+.newconv label{display:block;font-size:.78rem;color:var(--muted);margin-bottom:5px}
+.newconv input{margin-bottom:7px}
+
+a.thread{display:block;padding:11px 14px;border-bottom:1px solid var(--line);
+  color:var(--fg);text-decoration:none}
+a.thread:hover{background:var(--code);text-decoration:none}
+a.thread.on{background:var(--code);box-shadow:inset 3px 0 0 var(--accent)}
+.thread-top{display:flex;align-items:center;gap:8px}
+.thread-top .who{flex:1;font-weight:600;font-size:.9rem;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.badge{background:var(--accent);color:var(--accent-fg);border-radius:999px;
+  padding:1px 7px;font-size:.72rem;font-weight:700;flex:none}
+.thread-preview{font-size:.8rem;color:var(--muted);margin-top:3px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.thread-when{font-size:.72rem;color:var(--muted);margin-top:3px}
+
+.convo{display:flex;flex-direction:column;min-width:0;background:var(--panel)}
+.convo-head{display:flex;align-items:center;gap:10px;padding:12px 16px;
+  border-bottom:1px solid var(--line);flex-wrap:wrap}
+.convo-name{font-weight:700}
+.convo-sub{font-size:.76rem;color:var(--muted);word-break:break-all}
+.convo .nothing,.convo .empty{padding:28px 16px;text-align:center;color:var(--muted)}
+
+.bubbles{flex:1;overflow-y:auto;padding:18px 16px;display:flex;
+  flex-direction:column;gap:3px}
+.bubble-row{display:flex;margin-top:7px}
+.bubble-row.theirs{justify-content:flex-start}
+.bubble-row.mine{justify-content:flex-end}
+.bubble{position:relative;max-width:min(76%,520px);padding:9px 14px;
+  border-radius:19px;font-size:.94rem;line-height:1.4}
+.bubble .text{white-space:pre-wrap;overflow-wrap:anywhere}
+.bubble-row.theirs .bubble{background:var(--code);color:var(--fg);
+  border-bottom-left-radius:5px}
+.bubble-row.mine .bubble{background:var(--sent);color:var(--sent-fg);
+  border-bottom-right-radius:5px}
+/* the tail, drawn rather than imaged so it follows the bubble colour */
+.bubble-row.theirs .bubble::after,.bubble-row.mine .bubble::after{
+  content:"";position:absolute;bottom:0;width:12px;height:15px}
+.bubble-row.theirs .bubble::after{left:-6px;
+  background:radial-gradient(circle at 100% 0,transparent 12px,var(--code) 12px)}
+.bubble-row.mine .bubble::after{right:-6px;
+  background:radial-gradient(circle at 0 0,transparent 12px,var(--sent) 12px)}
+.bubble .stamp{font-size:.68rem;opacity:.62;margin-top:4px}
+.bubble-row.mine .bubble a{color:inherit;text-decoration:underline}
+
+.composer{display:flex;align-items:flex-end;gap:8px;padding:11px 14px;
+  border-top:1px solid var(--line);background:var(--bg)}
+.composer textarea{flex:1;resize:none;border-radius:19px;padding:10px 15px;
+  max-height:160px}
+.composer button{border-radius:19px;flex:none}
+.composer-note{font-size:.76rem;padding:0 16px 11px;margin:0;background:var(--bg)}
+.convo .confirm{margin:0 16px 10px;padding:12px 14px;border:1px solid var(--accent);
+  border-radius:10px;font-size:.88rem;background:var(--code)}
+.small-input{padding:5px 9px;font-size:.84rem}
+
+footer.version{max-width:1000px;margin:0 auto;padding:0 20px 30px;
+  font-size:.74rem;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -264,5 +345,9 @@ table.published tr:first-child td{border-top:0}
   setInterval(poll, 5000);
 })();
 </script>
+<footer class="version">
+  {% if state.running_version %}running {{ state.running_version }}{% endif %}
+  &middot; <a href="/backup">back up your wallet</a>
+</footer>
 </body>
 </html>

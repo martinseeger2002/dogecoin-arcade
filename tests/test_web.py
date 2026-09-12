@@ -438,3 +438,110 @@ def test_scanning_from_the_address_book_fails_cleanly_without_a_node(client):
                         follow_redirects=False)
     assert response.status_code == 303
     assert "no attribute" not in (state.notice or "")
+
+
+def test_you_are_not_a_contact_of_yourself(tmp_path):
+    """Scanning your own announcement was putting you in your own address book.
+
+    Your published name is not a stranger's claim about you, and you are not
+    somebody you message. It appeared as an ordinary contact card alongside real
+    people.
+    """
+    from arcade.config import NETWORKS
+    from arcade.messaging.keys import Identity
+    from arcade.messaging.scanner import Scanner
+    from arcade.messaging.store import MessageStore
+
+    me = Identity.generate()
+    store = MessageStore(tmp_path / "m.sqlite")
+    scanner = Scanner.__new__(Scanner)
+    scanner.params = NETWORKS["regtest"]
+    scanner.store = store
+    scanner.identity = me
+    scanner.public_only = False
+
+    # What the scanner does on seeing an announcement naming its own key.
+    mine = me.public_bytes == me.public_bytes
+    if not mine:                                   # pragma: no cover
+        store.apply_profile(me.public_bytes, "me", "nMyAddress", "")
+
+    assert store.contacts() == []
+
+
+def test_the_name_field_asks_for_your_name(client):
+    """Not a suggestion, and not somebody else's name."""
+    body = client[0].get("/contacts").text
+    assert 'placeholder="Your name"' in body
+
+
+# --- stated addresses beat inferred ones --------------------------------------
+# An announcement can say which address a key belongs to. An address merely
+# inferred from the transaction's inputs follows whichever coins paid, so it is
+# a guess -- and leaving both live meant two rows for one key, both resolving as
+# targets, with no way to tell which the owner meant.
+
+
+def test_a_stated_address_wins_over_an_inferred_one(tmp_path):
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    key = b"\x30" * 32
+    store.add_key_announcement("tx1", "nFunding", key, "ff", 100, 1000, stated=False)
+    store.add_key_announcement("tx2", "nIdentity", key, "ff", 200, 2000, stated=True)
+
+    assert [r["address"] for r in store.live_keys()] == ["nIdentity"]
+    assert store.superseded_addresses(key) == ["nFunding"]
+
+
+def test_a_newer_inferred_address_does_not_displace_a_stated_one(tmp_path):
+    """Height must not decide this: the inferred one can arrive later."""
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    key = b"\x31" * 32
+    store.add_key_announcement("tx1", "nIdentity", key, "ff", 100, 1000, stated=True)
+    store.add_key_announcement("tx2", "nFunding", key, "ff", 900, 9000, stated=False)
+
+    assert [r["address"] for r in store.live_keys()] == ["nIdentity"]
+
+
+def test_with_no_stated_address_the_inferred_one_is_all_there_is(tmp_path):
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    store.add_key_announcement("tx1", "nFunding", b"\x32" * 32, "ff", 100, 1000)
+
+    assert [r["address"] for r in store.live_keys()] == ["nFunding"]
+
+
+def test_a_stated_address_replaces_one_the_book_inferred(tmp_path):
+    """The user-visible half: the book was handing out a funding address."""
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    key = b"\x33" * 32
+    store.add_message(None, "tx", "tx", 1, 0, "nFunding", key, "me", b"hi")
+    assert store.contact_by_key(key)["testnet_address"] == "nFunding"
+
+    store.set_contact_address(key, "nIdentity")
+    assert store.contact_by_key(key)["testnet_address"] == "nIdentity"
+
+
+def test_the_interface_says_which_version_it_is_running(client):
+    """A stale process is otherwise invisible after an update."""
+    body = client[0].get("/").text
+    assert "running" in body
+
+
+def test_the_updater_warns_when_something_is_still_serving():
+    """Without a service unit there is nothing to restart, so it keeps serving."""
+    import socket
+    from arcade.update import _warn_if_still_running
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        port = listener.getsockname()[1]
+        assert _warn_if_still_running(port) is True
+
+    assert _warn_if_still_running(port) is False

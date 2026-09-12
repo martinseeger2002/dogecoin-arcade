@@ -142,6 +142,35 @@ class AppState:
     #: must not reload every browser.
     generation: int = 0
 
+    @property
+    def running_version(self) -> str:
+        """The commit this process is running, if it can be worked out.
+
+        Shown in the interface because a stale process is otherwise invisible:
+        after an update, an `arcade-web` with no service unit keeps serving the
+        previous code from memory, and nothing says so. a test machine demonstrated exactly
+        that -- every page between the update and a manual restart was the old
+        version, and a user would not have noticed.
+        """
+        import subprocess
+        cached = getattr(self, "_version", None)
+        if cached is not None:
+            return cached
+        version = ""
+        for root in (Path(__file__).resolve().parent.parent.parent,
+                     Path.home() / ".dogecoinarcade" / "src"):
+            try:
+                result = subprocess.run(
+                    ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+                    capture_output=True, text=True, timeout=5)
+                if result.returncode == 0 and result.stdout.strip():
+                    version = result.stdout.strip()
+                    break
+            except Exception:
+                continue
+        object.__setattr__(self, "_version", version)
+        return version
+
     def bump_generation(self) -> None:
         with self._lock:
             self.generation += 1

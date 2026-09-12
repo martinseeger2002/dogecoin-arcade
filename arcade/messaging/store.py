@@ -258,6 +258,8 @@ class MessageStore:
         ("group_post", "file_name", "TEXT NOT NULL DEFAULT ''"),
         ("group_post", "file_type", "TEXT NOT NULL DEFAULT ''"),
         ("group_post", "file_data", "BLOB"),
+        ("key_announcement", "stated", "INTEGER NOT NULL DEFAULT 0"),
+        ("key_announcement", "name", "TEXT NOT NULL DEFAULT ''"),
     )
 
     def _migrate(self) -> None:
@@ -369,20 +371,87 @@ class MessageStore:
 
     def add_key_announcement(
         self, txid: str, address: str, pubkey: bytes, fingerprint: str,
-        height: int, block_time: int,
+        height: int, block_time: int, stated: bool = False, name: str = "",
     ) -> None:
+        """Record an announcement.
+
+        `stated` marks an address the announcement itself named, as against one
+        inferred from the transaction's inputs. Without the distinction a reader
+        cannot tell an authoritative row from a guess, and a stale inferred row
+        goes on working as a target forever. a test machine asked for this after measuring
+        two live rows for one key under two addresses.
+        """
         self.conn.execute(
             "INSERT OR IGNORE INTO key_announcement"
-            "(txid,address,pubkey,fingerprint,height,block_time,seen_at) VALUES(?,?,?,?,?,?,?)",
-            (txid, address, pubkey, fingerprint, height, block_time, int(time.time())),
+            "(txid,address,pubkey,fingerprint,height,block_time,seen_at,stated,name) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (txid, address, pubkey, fingerprint, height, block_time,
+             int(time.time()), 1 if stated else 0, name),
         )
 
+    def superseded_addresses(self, pubkey: bytes) -> list[str]:
+        """Inferred addresses for a key that a stated one has replaced.
+
+        Once a key says where it lives, every address merely guessed from an
+        earlier transaction's inputs is history rather than a live target.
+        """
+        stated = self.conn.execute(
+            "SELECT address FROM key_announcement WHERE pubkey=? AND stated=1 "
+            "ORDER BY height DESC LIMIT 1", (pubkey,)).fetchone()
+        if stated is None:
+            return []
+        return [row["address"] for row in self.conn.execute(
+            "SELECT DISTINCT address FROM key_announcement "
+            "WHERE pubkey=? AND stated=0 AND address<>?", (pubkey, stated["address"]))]
+
+    def set_contact_address(self, pubkey: bytes, address: str) -> None:
+        """Set a contact's testnet address outright, not filling a blank.
+
+        Used only for an address the key itself stated. That beats one inferred
+        from inputs even when a value is already there, because the inferred one
+        follows whichever coins paid for the transaction -- so the address book
+        was handing people a funding address. It still does not beat an address
+        the user typed; see `mine_wins` below.
+        """
+        row = self.contact_by_key(pubkey)
+        now = int(time.time())
+        if row is None:
+            self.conn.execute(
+                "INSERT INTO contact(pubkey,name,address,testnet_address,added,updated) "
+                "VALUES(?,'',?,?,?,?)", (pubkey, address, address, now, now))
+            return
+        self.conn.execute(
+            "UPDATE contact SET address=?, testnet_address=?, updated=? WHERE id=?",
+            (address, address, now, row["id"]))
+
     def key_for(self, address: str) -> sqlite3.Row | None:
-        """The most recent announced key for an address."""
+        """The announced key for an address, preferring what a key stated.
+
+        An address the announcement named outranks one inferred from the
+        transaction's inputs, whatever their heights: the inferred one follows
+        the coins and can be older, newer, or simply wrong. Within each kind the
+        most recent wins.
+        """
         return self.conn.execute(
-            "SELECT * FROM key_announcement WHERE address=? ORDER BY height DESC LIMIT 1",
-            (address,),
+            "SELECT * FROM key_announcement WHERE address=? "
+            "ORDER BY stated DESC, height DESC LIMIT 1", (address,),
         ).fetchone()
+
+    def live_keys(self) -> list[sqlite3.Row]:
+        """Announced keys that are still current targets.
+
+        An address inferred from inputs stops being one once the same key has
+        stated where it lives -- it is history, not a way to reach somebody.
+        Leaving both live was the mess: two rows for one key, both resolving,
+        and no way for a reader to tell which the owner meant.
+        """
+        rows = list(self.conn.execute(
+            "SELECT address, pubkey, fingerprint, name, MAX(stated) AS stated, "
+            "       MAX(height) AS height, MAX(block_time) AS block_time "
+            "FROM key_announcement GROUP BY address ORDER BY height DESC"))
+        has_stated = {bytes(r["pubkey"]) for r in rows if r["stated"]}
+        return [r for r in rows
+                if r["stated"] or bytes(r["pubkey"]) not in has_stated]
 
     def key_history(self, address: str) -> list[sqlite3.Row]:
         return list(self.conn.execute(
@@ -404,7 +473,8 @@ class MessageStore:
         list shrinks as it is used rather than repeating what is known.
         """
         return list(self.conn.execute(
-            "SELECT k.address, k.pubkey, k.fingerprint, MAX(k.height) AS height, "
+            "SELECT k.address, k.pubkey, k.fingerprint, k.name, "
+            "       MAX(k.stated) AS stated, MAX(k.height) AS height, "
             "       MAX(k.block_time) AS block_time "
             "FROM key_announcement k "
             "LEFT JOIN contact c ON c.pubkey = k.pubkey "

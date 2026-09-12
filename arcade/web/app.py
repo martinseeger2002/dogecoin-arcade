@@ -428,8 +428,12 @@ def create_app(state: AppState) -> FastAPI:
         if state.store_path.exists():
             with state.store() as store:
                 published = []
-                for row in store.unknown_published_keys():
+                rows = store.unknown_published_keys()
+                stated_keys = {bytes(r["pubkey"]) for r in rows if r["stated"]}
+                for row in rows:
                     key = bytes(row["pubkey"])
+                    if not row["stated"] and key in stated_keys:
+                        continue      # an inferred address the key has replaced
                     # A name published alongside the key, if there was one. It
                     # lands in `contact` via apply_profile when scanned, so a
                     # contact may exist with a name and nothing else.

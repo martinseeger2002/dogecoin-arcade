@@ -135,12 +135,40 @@ def update(dry_run: bool = False) -> int:
                 break
         else:
             print("  arcade-web is not a service here; restart it yourself")
+            _warn_if_still_running()
     else:
         print("  restart the interface yourself to pick up the new version")
 
     print()
     print("Updated. Your wallet, messages and chain data were not touched.")
     return 0
+
+
+def _warn_if_still_running(port: int = 8420) -> bool:
+    """Say plainly when an old interface is still serving.
+
+    Without a service unit there is nothing to restart, so `arcade-web` keeps
+    running the previous code from memory and every page served is stale. The
+    update output said nothing about it and the interface showed no version, so
+    the only clue was that nothing had changed. a test machine hit this and caught it; a
+    user would not.
+    """
+    import socket
+
+    with socket.socket() as probe:
+        probe.settimeout(0.4)
+        try:
+            probe.connect(("127.0.0.1", port))
+        except OSError:
+            return False
+
+    print()
+    print("  !  Something is still serving on 127.0.0.1:%d." % port)
+    print("     That is the old version, running from memory: the new code is")
+    print("     installed but will not be used until it restarts. Stop that")
+    print("     process and start it again, or the interface will keep showing")
+    print("     you the previous release.")
+    return True
 
 
 def _migrate_node_units(checkout: Path) -> list[str]:

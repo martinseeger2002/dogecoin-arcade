@@ -265,12 +265,26 @@ class Scanner:
                 if claimed_hash:
                     address = b58check_encode(self.params.pubkeyhash_version,
                                               claimed_hash)
-                if claimed_name:
+                mine = (self.identity is not None
+                        and pubkey == self.identity.public_bytes)
+                if claimed_hash and not mine:
+                    # The key said where it lives. That beats the address the
+                    # address book inferred from an earlier transaction's
+                    # inputs, which followed the coins -- so the book was
+                    # showing, and handing out, a funding address.
+                    self.store.set_contact_address(pubkey, address)
+                if claimed_name and not mine:
                     # Unverified, and filling blanks only -- a name the user
                     # typed always wins over one a stranger asserted.
+                    #
+                    # Never for our own key: scanning your own announcement was
+                    # adding you to your own address book, which is not a
+                    # contact, and put your published name somewhere that reads
+                    # like a stranger's claim about you.
                     self.store.apply_profile(pubkey, claimed_name, address, "")
                 self.store.add_key_announcement(
-                    atx.txid, address, pubkey, fingerprint_of(pubkey), height, block_time
+                    atx.txid, address, pubkey, fingerprint_of(pubkey), height,
+                    block_time, stated=bool(claimed_hash), name=claimed_name
                 )
                 result.announcements += 1
                 continue
