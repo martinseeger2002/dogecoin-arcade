@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS contact (
     pubkey          BLOB UNIQUE,
     name            TEXT NOT NULL DEFAULT '',
     address         TEXT NOT NULL DEFAULT '',
+    name_source     TEXT NOT NULL DEFAULT '',
     testnet_address TEXT NOT NULL DEFAULT '',
     mainnet_address TEXT NOT NULL DEFAULT '',
     notes           TEXT NOT NULL DEFAULT '',
@@ -266,6 +267,11 @@ class MessageStore:
         ("sent", "file_name", "TEXT NOT NULL DEFAULT ''"),
         ("sent", "file_type", "TEXT NOT NULL DEFAULT ''"),
         ("sent", "file_data", "BLOB"),
+        # '' = the user typed it, 'profile' = they told us in a message,
+        # 'announce' = read off a public announcement, where names are cut to 12
+        # bytes. Without this the same person could appear under two names
+        # depending on which arrived first, which is arbitrary.
+        ("contact", "name_source", "TEXT NOT NULL DEFAULT ''"),
     )
 
     def _migrate(self) -> None:
@@ -357,7 +363,8 @@ class MessageStore:
         )
 
     def reset_history(self, network: str, from_height: int,
-                      keep_contacts: bool = True) -> dict[str, int]:
+                      keep_contacts: bool = True,
+                      keep_key: bytes | None = None) -> dict[str, int]:
         """Forget everything scanned so far and start watching from here.
 
         For clearing out test traffic. Nothing on the chain is affected -- those
@@ -368,6 +375,15 @@ class MessageStore:
         typed rather than scanned, so losing it would be losing work rather than
         losing test data.
         """
+        # Your own announcement survives. It is on the chain permanently, below
+        # the new starting point, so it would never be rescanned -- and the Keys
+        # page would then offer to publish again, paying a second fee for
+        # something already published. a test machine hit exactly that.
+        own = []
+        if keep_key:
+            own = list(self.conn.execute(
+                "SELECT * FROM key_announcement WHERE pubkey=?", (keep_key,)))
+
         counts: dict[str, int] = {}
         tables = ["message", "sent", "candidate", "group_post", "group_chunk",
                   "pending_send", "key_announcement", "attachment"]
@@ -381,8 +397,22 @@ class MessageStore:
             except Exception:
                 counts[table] = 0
 
+        for row in own:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO key_announcement"
+                "(txid,address,pubkey,fingerprint,height,block_time,seen_at,"
+                "stated,name) VALUES(?,?,?,?,?,?,?,?,?)",
+                (row["txid"], row["address"], row["pubkey"], row["fingerprint"],
+                 row["height"], row["block_time"], row["seen_at"],
+                 row["stated"], row["name"]))
+        if own:
+            counts["key_announcement"] -= len(own)
+
         # Start from here rather than from the identity's creation, so nothing
-        # just cleared is simply found again by the next scan.
+        # just cleared is simply found again by the next scan. The caller passes
+        # the protocol's shared start height where there is one, so clearing
+        # brings a machine back into step with everyone else rather than pinning
+        # it to whatever block it happened to be at.
         self.set_meta(f"identity_height:{network}", str(from_height))
         self.conn.execute("DELETE FROM scan_state WHERE network=?", (network,))
         return counts
@@ -501,7 +531,7 @@ class MessageStore:
             "FROM key_announcement GROUP BY address ORDER BY height DESC"
         ))
 
-    def unknown_published_keys(self) -> list[sqlite3.Row]:
+    def unknown_published_keys(self, exclude: bytes | None = None) -> list[sqlite3.Row]:
         """Announced keys that are not in the address book yet.
 
         The address book is where you decide who somebody is, so this is the
@@ -515,8 +545,9 @@ class MessageStore:
             "       MAX(k.block_time) AS block_time "
             "FROM key_announcement k "
             "LEFT JOIN contact c ON c.pubkey = k.pubkey "
-            "WHERE c.id IS NULL "
-            "GROUP BY k.address ORDER BY height DESC"
+            "WHERE c.id IS NULL AND (? IS NULL OR k.pubkey != ?) "
+            "GROUP BY k.address ORDER BY height DESC",
+            (exclude, exclude),
         ))
 
     # --- candidates -----------------------------------------------------------
@@ -623,31 +654,47 @@ class MessageStore:
             "SELECT id, name, content_type, LENGTH(data) AS size FROM attachment "
             "WHERE message_id=?", (message_id,)).fetchone()
 
+    #: Which claimed name beats which. A name the user typed always wins; a name
+    #: from a message beats one from an announcement, because an announcement is
+    #: capped at 12 bytes and is therefore often a truncation of the real one.
+    NAME_RANK = {"": 3, "profile": 2, "announce": 1}
+
     def apply_profile(self, pubkey: bytes, name: str = "", testnet_address: str = "",
-                      mainnet_address: str = "") -> None:
+                      mainnet_address: str = "", source: str = "profile") -> None:
         """Fill in an address book entry from what a sender said about themselves.
 
-        Only fills blanks. A name the user typed themselves always wins over one
-        a stranger asserted, because the whole value of the local name is that
-        nobody else chose it.
+        A name the user typed always wins, because the whole value of the local
+        name is that nobody else chose it. Between two claimed names the fuller
+        one wins: an announcement carries at most 12 bytes, so "Big Chief En" is
+        a truncation of a name a message would deliver whole.
         """
         now = int(time.time())
         existing = self.contact_by_key(pubkey)
         if existing is None:
             self.conn.execute(
-                "INSERT INTO contact(pubkey,name,testnet_address,mainnet_address,"
-                "added,updated) VALUES(?,?,?,?,?,?)",
-                (pubkey, name, testnet_address, mainnet_address, now, now))
+                "INSERT INTO contact(pubkey,name,name_source,testnet_address,"
+                "mainnet_address,added,updated) VALUES(?,?,?,?,?,?,?)",
+                (pubkey, name, source if name else "", testnet_address,
+                 mainnet_address, now, now))
             return
+
+        # Replace the name only if this claim outranks the one already there.
+        if name:
+            current = existing["name"]
+            current_rank = self.NAME_RANK.get(
+                existing["name_source"] if current else "announce", 0)
+            if not current or self.NAME_RANK.get(source, 0) > current_rank:
+                self.conn.execute(
+                    "UPDATE contact SET name=?, name_source=?, updated=? WHERE id=?",
+                    (name, source, now, existing["id"]))
         self.conn.execute(
             "UPDATE contact SET "
-            "name=CASE WHEN contact.name='' THEN ? ELSE contact.name END, "
             "testnet_address=CASE WHEN contact.testnet_address='' THEN ? "
             "  ELSE contact.testnet_address END, "
             "mainnet_address=CASE WHEN contact.mainnet_address='' THEN ? "
             "  ELSE contact.mainnet_address END, "
             "updated=? WHERE id=?",
-            (name, testnet_address, mainnet_address, now, existing["id"]))
+            (testnet_address, mainnet_address, now, existing["id"]))
 
     # --- public group posts ---------------------------------------------------
 

@@ -114,3 +114,48 @@ def test_a_reorg_rewind_still_respects_the_floor(store, params):
 
     assert rpc.scanned, "a rewind should still scan something"
     assert min(rpc.scanned) >= IDENTITY_HEIGHT
+
+
+# --- one starting height for everyone on a version ----------------------------
+# Each machine used to begin at whatever height its own identity happened to be
+# created, so two people on the same release saw different histories and neither
+# could tell why -- one would see an announcement or a public post the other had
+# simply never scanned.
+
+
+def test_every_installation_starts_at_the_same_block(store, params):
+    """No local record, so this is what a fresh install does."""
+    from arcade.config import NETWORKS
+
+    testnet = NETWORKS["test"]
+    scanner = Scanner(FakeRpc(), testnet, store)
+    assert scanner.start_height() == testnet.messaging_start_height
+
+
+def test_a_local_record_cannot_start_earlier_than_everyone_else(store):
+    """Otherwise one machine reads history the protocol says is not there."""
+    from arcade.config import NETWORKS
+
+    testnet = NETWORKS["test"]
+    store.set_meta("identity_height:test", "1000")
+    assert Scanner(FakeRpc(), testnet, store).start_height() == \
+        testnet.messaging_start_height
+
+
+def test_a_later_identity_may_start_later(store):
+    """Nothing written before a key existed can be addressed to it."""
+    from arcade.config import NETWORKS
+
+    testnet = NETWORKS["test"]
+    later = testnet.messaging_start_height + 5000
+    store.set_meta("identity_height:test", str(later))
+    assert Scanner(FakeRpc(), testnet, store).start_height() == later
+
+
+def test_the_shared_height_is_a_release_decision_not_a_guess():
+    """It is written down per network, not derived from whatever the tip is."""
+    from arcade.config import NETWORKS
+
+    assert NETWORKS["test"].messaging_start_height > 0
+    # Chains with no declared start fall back to their activation height.
+    assert NETWORKS["regtest"].messaging_start_height == 0

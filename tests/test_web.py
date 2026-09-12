@@ -1160,3 +1160,68 @@ def test_an_unknown_version_is_not_reported_as_stale(client, monkeypatch):
     monkeypatch.setattr(type(state), "installed_version",
                         property(lambda self: "new2222"))
     assert state.is_stale is False
+
+
+def test_the_name_field_shows_what_the_chain_will_carry(client):
+    """An announcement holds 12 bytes and used to cut a longer name in silence."""
+    body = client[0].get("/contacts").text
+    assert "showPublished" in body
+    assert "published as" in body
+
+
+def test_a_reset_keeps_your_own_published_key(tmp_path):
+    """It is on the chain permanently, below the new starting point.
+
+    Forgetting it meant the Keys page offered to publish again -- paying a second
+    fee for something already published and unreachable by any rescan. a test machine hit
+    exactly that after clearing.
+    """
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    mine, theirs = b"\xc0" * 32, b"\xc1" * 32
+    store.add_key_announcement("tx-mine", "nMine", mine, "aa", 100, 1, stated=True)
+    store.add_key_announcement("tx-them", "nThem", theirs, "bb", 101, 2, stated=True)
+
+    store.reset_history("test", from_height=999, keep_key=mine)
+
+    remaining = [bytes(r["pubkey"]) for r in store.all_keys()]
+    assert remaining == [mine]
+
+
+def test_a_reset_without_an_identity_still_works(tmp_path):
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    store.add_key_announcement("tx", "nSomeone", b"\xc2" * 32, "aa", 1, 1)
+    store.reset_history("test", from_height=999, keep_key=None)
+    assert store.all_keys() == []
+
+
+def test_every_reader_of_progress_applies_the_staleness_rule(client):
+    """Two readers of one piece of state, one ignoring the rule, is the same
+    drift that produced the identity pin and funded-address bugs."""
+    import inspect
+    from arcade.web import app as webapp
+
+    source = inspect.getsource(webapp.create_app)
+    assert "state.send_progress" not in source, (
+        "the rendered pages must read live_progress(), like /events does"
+    )
+
+
+def test_a_stale_send_does_not_render_as_working(client):
+    """The 15-minute rule applied to the JSON but not to the page."""
+    import time
+
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    peer = b"\xc3" * 32
+    state.identity = Identity.generate()
+    state.start_progress(peer.hex(), total=6, estimate="a minute")
+    state.send_progress["updated"] = time.time() - state.PROGRESS_STALE_AFTER - 10
+
+    # The conversation treats it as finished and clears it, as /events does.
+    app.get(f"/messages/{peer.hex()}")
+    assert state.send_progress == {}

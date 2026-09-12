@@ -117,10 +117,21 @@ class Scanner:
         -- an imported identity, say, whose messages may genuinely predate this
         installation.
         """
+        # The protocol's shared start comes first. Every installation on this
+        # version begins here, so two people running the same release see the
+        # same history -- previously each began at whatever height its own
+        # identity happened to be created, and neither could tell why the other
+        # had seen a post they had not.
+        floor = max(self.params.messaging_start_height,
+                    self.params.activation_height or 0)
+
+        # A local record can only push the start LATER, never earlier: nothing
+        # written before a key existed can be addressed to it, so there is no
+        # point reading it. It cannot drag the start below the shared floor.
         recorded = self.store.get_meta(f"identity_height:{self.params.name}")
         if recorded is not None:
-            return max(int(recorded), self.params.activation_height or 0)
-        return max(self.params.activation_height or 0, 0)
+            return max(int(recorded), floor)
+        return floor
 
     def _resolve_fork(self, result: ScanResult) -> int:
         """Return the height to resume from, unwinding if our view is stale."""
@@ -281,7 +292,10 @@ class Scanner:
                     # adding you to your own address book, which is not a
                     # contact, and put your published name somewhere that reads
                     # like a stranger's claim about you.
-                    self.store.apply_profile(pubkey, claimed_name, address, "")
+                    # From an announcement, so capped at 12 bytes and quite
+                    # possibly a truncation of their real name.
+                    self.store.apply_profile(pubkey, claimed_name, address, "",
+                                             source="announce")
                 self.store.add_key_announcement(
                     atx.txid, address, pubkey, fingerprint_of(pubkey), height,
                     block_time, stated=bool(claimed_hash), name=claimed_name

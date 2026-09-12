@@ -218,7 +218,7 @@ def create_app(state: AppState) -> FastAPI:
     def messages(request: Request):
         # Any visit to the messenger is the reload the progress bubble asked
         # for, so a finished send has nothing left to report.
-        if state.send_progress.get("finished"):
+        if state.live_progress().get("finished"):
             state.clear_progress()
         threads = []
         if state.store_path.exists() and state.unlocked:
@@ -232,15 +232,15 @@ def create_app(state: AppState) -> FastAPI:
         # A finished send has been reported; the message it produced is in the
         # thread below, so the progress bubble has nothing left to say. Cleared
         # on the reload it asked for, rather than lingering at 100% forever.
-        finished = state.send_progress.get("finished")
-        if finished and state.send_progress.get("peer") == peer_hex:
+        finished = state.live_progress().get("finished")
+        if finished and state.live_progress().get("peer") == peer_hex:
             state.clear_progress()
 
         # A send interrupted by a restart leaves a record on disk but no live
         # progress, so the bubble sat at 0% with nothing driving it. Surface it
         # as something that can be finished instead.
         unfinished = None
-        if not state.send_progress and state.store_path.exists():
+        if not state.live_progress() and state.store_path.exists():
             with state.store() as store:
                 for record in store.pending_sends():
                     if record["recipient_key"].hex() == peer_hex:
@@ -692,7 +692,10 @@ def create_app(state: AppState) -> FastAPI:
         if state.store_path.exists():
             with state.store() as store:
                 published = []
-                rows = store.unknown_published_keys()
+                # Never offer to add yourself: your own announcement is yours,
+                # and it appeared in the list of people to meet.
+                rows = store.unknown_published_keys(
+                    exclude=state.identity.public_bytes if state.unlocked else None)
                 stated_keys = {bytes(r["pubkey"]) for r in rows if r["stated"]}
                 for row in rows:
                     key = bytes(row["pubkey"])
@@ -1475,17 +1478,26 @@ def create_app(state: AppState) -> FastAPI:
             check_csrf(csrf_token)
             if understand != "yes":
                 raise ValueError("tick the box to confirm.")
-            with state.messaging.rpc() as rpc:
-                tip = rpc.get_block_count()
+            # Back to the protocol's shared start, not this machine's current
+            # block: clearing should put an installation back in step with
+            # everyone else on this version, not pin it to wherever it happened
+            # to be. Falls back to the tip on a chain with no shared start.
+            start = state.messaging.params.messaging_start_height
+            if not start:
+                with state.messaging.rpc() as rpc:
+                    start = rpc.get_block_count()
             with state.store() as store:
-                counts = store.reset_history(state.messaging.network, tip)
+                counts = store.reset_history(
+                    state.messaging.network, start,
+                    keep_key=state.identity.public_bytes if state.unlocked else None)
             state.clear_progress()
             removed = sum(counts.values())
             state.flash(
                 f"Cleared {removed:,} stored record"
                 f"{'' if removed == 1 else 's'} and set the starting point to "
-                f"block {tip:,}. Your address book and your wallet are "
-                f"untouched; so is the chain.", "ok")
+                f"block {start:,}, which is where every installation on this "
+                f"version begins. Your address book, your wallet and your own "
+                f"published key are untouched; so is the chain.", "ok")
         except HTTPException:
             raise          # a rejected form is a 400, not an error page
         except Exception as exc:

@@ -1,5 +1,25 @@
 {% extends "base.html" %}
-{% block title %}Address book · DogecoinArcade{% endblock %}
+{% block title %}Address book · DogecoinArcade<script>
+// Say what the chain will carry, before anyone pays for it. An announcement
+// holds 12 bytes of name and used to cut a longer one silently -- "Big Chief
+// Energy" was published, permanently and for a fee, as "Big Chief En".
+function showPublished(box){
+  var limit = {{ announce_limit }};
+  var note = document.getElementById('published-as');
+  var bytes = new TextEncoder().encode(box.value);
+  if (bytes.length <= limit) { note.hidden = true; return; }
+  var cut = new TextDecoder().decode(bytes.slice(0, limit));
+  note.hidden = false;
+  note.innerHTML = 'On the chain this is published as <strong>' + cut +
+    '</strong> — an announcement carries ' + limit + ' bytes and yours is ' +
+    bytes.length + '. People who find you by a message will see the whole name; ' +
+    'people who find you by the announcement will see the short one.';
+  note.className = 'muted costly';
+}
+var nameBox = document.getElementById('profile-name');
+if (nameBox) showPublished(nameBox);
+</script>
+{% endblock %}
 {% block body %}
 <h1>Address book</h1>
 <p class="sub">Who is who, and where to pay them. Stored only on this computer.</p>
@@ -10,7 +30,8 @@
     <h3 style="margin:0 0 12px">How you introduce yourself</h3>
     <div class="row">
       <div style="flex:1"><input name="name" value="{{ state.profile_name }}"
-             placeholder="Your name"></div>
+             id="profile-name" placeholder="Your name" maxlength="80"
+             oninput="showPublished(this)"></div>
       <button type="submit">Save</button>
     </div>
     <p class="muted" style="font-size:.84rem;margin:9px 0 0">
@@ -18,6 +39,7 @@
       addresses, so they know who is writing before deciding whether to deal with
       you. Not sent afterwards, and you can untick it on any message.
       It ties this identity to your mainnet address for whoever receives it.</p>
+    <p class="muted" style="font-size:.84rem;margin:9px 0 0" id="published-as"></p>
     <p class="muted" style="font-size:.84rem;margin:9px 0 0">
       The first <strong>{{ announce_limit }} characters</strong> are also included
       when you <a href="/keys">publish your key on the chain</a>, so anyone who
@@ -174,5 +196,25 @@ function copyAddr(el){
     setTimeout(function(){ el.classList.remove('copied'); }, 1200);
   });
 }
+</script>
+<script>
+// Say what the chain will carry, before anyone pays for it. An announcement
+// holds 12 bytes of name and used to cut a longer one silently -- "Big Chief
+// Energy" was published, permanently and for a fee, as "Big Chief En".
+function showPublished(box){
+  var limit = {{ announce_limit }};
+  var note = document.getElementById('published-as');
+  var bytes = new TextEncoder().encode(box.value);
+  if (bytes.length <= limit) { note.hidden = true; return; }
+  var cut = new TextDecoder().decode(bytes.slice(0, limit));
+  note.hidden = false;
+  note.innerHTML = 'On the chain this is published as <strong>' + cut +
+    '</strong> — an announcement carries ' + limit + ' bytes and yours is ' +
+    bytes.length + '. People who find you by a message will see the whole name; ' +
+    'people who find you by the announcement will see the short one.';
+  note.className = 'muted costly';
+}
+var nameBox = document.getElementById('profile-name');
+if (nameBox) showPublished(nameBox);
 </script>
 {% endblock %}

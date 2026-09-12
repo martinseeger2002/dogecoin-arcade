@@ -289,3 +289,58 @@ def test_without_a_profile_the_funding_address_is_still_better_than_nothing(tmp_
     store.add_message(None, "tx", "tx", 1, 0, "nFundingAddress", key, "me", b"hi")
 
     assert store.contact_by_key(key)["testnet_address"] == "nFundingAddress"
+
+
+# --- a published name is capped, and must not be cut silently -----------------
+# "Big Chief Energy" was published as "Big Chief En": permanently, for a fee that
+# cannot be taken back, and cut mid-word so it reads as a bug rather than a
+# limit. The arithmetic is right -- 12 bytes fits the datacarrier exactly -- but
+# nothing said so until after the money was spent.
+
+
+def test_a_name_from_a_message_beats_one_from_an_announcement(tmp_path):
+    """An announcement name is capped at 12 bytes, so it is often a truncation."""
+    store = _store(tmp_path)
+    key = b"\xb0" * 32
+
+    store.apply_profile(key, "Big Chief En", "nAddr", "", source="announce")
+    assert store.contact_by_key(key)["name"] == "Big Chief En"
+
+    store.apply_profile(key, "Big Chief Energy", "", "", source="profile")
+    assert store.contact_by_key(key)["name"] == "Big Chief Energy"
+
+
+def test_an_announcement_does_not_overwrite_the_fuller_name(tmp_path):
+    """Otherwise the name would flip about depending on what was scanned last."""
+    store = _store(tmp_path)
+    key = b"\xb1" * 32
+
+    store.apply_profile(key, "Big Chief Energy", "", "", source="profile")
+    store.apply_profile(key, "Big Chief En", "", "", source="announce")
+
+    assert store.contact_by_key(key)["name"] == "Big Chief Energy"
+
+
+def test_a_name_the_user_typed_beats_both(tmp_path):
+    store = _store(tmp_path)
+    key = b"\xb2" * 32
+
+    store.apply_profile(key, "Whatever", "", "", source="profile")
+    row = store.contact_by_key(key)
+    store.save_contact(contact_id=row["id"], name="What I call them")
+
+    store.apply_profile(key, "Something Else", "", "", source="profile")
+    assert store.contact_by_key(key)["name"] == "What I call them"
+
+
+def test_you_are_never_offered_as_someone_to_meet(tmp_path):
+    """Your own announcement appeared in the list of people to add."""
+    store = _store(tmp_path)
+    mine = b"\xb3" * 32
+    theirs = b"\xb4" * 32
+    store.add_key_announcement("tx1", "nMine", mine, "aa", 1, 1, stated=True)
+    store.add_key_announcement("tx2", "nTheirs", theirs, "bb", 2, 2, stated=True)
+
+    found = [bytes(r["pubkey"]) for r in store.unknown_published_keys(exclude=mine)]
+    assert found == [theirs]
+

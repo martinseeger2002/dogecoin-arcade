@@ -76,6 +76,18 @@ class Params:
     #
     # Overrides the derived marker. Only for tests and regtest harnesses; real
     # networks use derive_marker_address() so every installation agrees.
+    #: The block every installation starts reading messages from.
+    #:
+    #: Shared deliberately. Before this, each machine began at whatever height
+    #: its own identity happened to be created, so two people running the same
+    #: version saw different histories and neither could tell why -- one would
+    #: see an announcement or a public post the other simply never scanned.
+    #:
+    #: It is a release decision, not a runtime one: bumping it declares a clean
+    #: slate for everyone at once, and lowering it asks every installation to
+    #: rescan. Set per network because the chains are unrelated.
+    messaging_start_height: int = 0
+
     marker_address: str | None = None
 
     @property
@@ -108,6 +120,9 @@ TESTNET = Params(
     rpc_port=44873,
     p2p_port=44874,
     activation_height=0,
+    # Set 2026-09-11 at tip 1,483,184. Everything before this is development
+    # traffic from building the application and is deliberately not read.
+    messaging_start_height=1_483_184,
     datadir_subdir="testnet3",
     pubkeyhash_version=113,
     scripthash_version=196,
