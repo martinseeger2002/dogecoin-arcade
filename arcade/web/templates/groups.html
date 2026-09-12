@@ -152,7 +152,14 @@
                onchange="showPick(this)" hidden>
         <span id="clip">📎</span>
       </label>
-      <textarea name="text" rows="1" maxlength="{{ room }}" id="post"
+      {# No maxlength. It counted CHARACTERS while the budget is in BYTES, so a
+         curly apostrophe, an em dash or an emoji walked straight past it and
+         was refused by the server instead -- with a message whose last clause
+         mentioned attaching a file. And going over is no longer refused at all:
+         the post is carried as a Class B transaction, which costs dust. So the
+         budget is advice about cost now, not a limit, and the note below says
+         so as it is crossed. #}
+      <textarea name="text" rows="1" id="post"
                 oninput="countLeft(this); grow(this)"
                 onkeydown="postOnEnter(event, this)"
                 placeholder="Say something in #{{ channel }}…">{{ draft or '' }}</textarea>
@@ -162,9 +169,10 @@
       <span id="picked-text"></span>
       <button type="button" class="ghost small" onclick="clearPick()">Remove</button>
     </p>
-    <p class="muted composer-note">
-      <span id="left">{{ room }}</span> characters left &mdash; a text post is a
-      single cheap output, which is what keeps it short.
+    <p class="muted composer-note" id="budget">
+      <span id="left">{{ room }}</span> <span id="budget-msg">bytes left in a
+      single cheap output &mdash; past that a post still goes, carried like a
+      file, and costs dust.</span>
       {% if nickname %}Posting as <strong>{{ nickname }}</strong>.
       {% else %}<a href="/contacts">Set a name</a> to sign your posts.{% endif %}
     </p>
@@ -234,7 +242,7 @@ function showPick(input){
   if (!file) {
     note.hidden = true;
     document.getElementById('clip').textContent = '📎';
-    box.setAttribute('maxlength', {{ room }});
+    countLeft(box);
     return;
   }
   var chunks = Math.ceil(file.size / 7628);
@@ -246,15 +254,44 @@ function showPick(input){
     ' transaction' + (chunks === 1 ? '' : 's') + ' costing about ' +
     outputs * 0.01 + ' in dust that can never be spent again.';
   document.getElementById('clip').textContent = '📎•';
-  box.removeAttribute('maxlength');
+  countLeft(box);
 }
 function countLeft(el){
+  // Bytes, via TextEncoder, because the budget is bytes -- one emoji is four of
+  // them. The count was already right; it was the maxlength beside it that was
+  // in characters, which let an over-budget post through to be refused by the
+  // server with a message that mentioned attaching a file.
+  //
+  // Only textContent is touched, never innerHTML: rewriting the note replaced
+  // the #left span it contains, so the counter stopped updating and the
+  // over-budget wording could never be undone by shortening the post.
   var max = {{ room }};
   var used = new TextEncoder().encode(el.value).length;
+  var over = used - max;
   var left = document.getElementById('left');
-  left.textContent = max - used;
-  left.style.color = (max - used) < 0 ? 'var(--bad)' : '';
+  var msg = document.getElementById('budget-msg');
+  var note = document.getElementById('budget');
+  if (over <= 0) {
+    left.textContent = -over;
+    left.style.color = '';
+    note.classList.remove('costly');
+    msg.textContent = 'bytes left in a single cheap output \u2014 past that a ' +
+      'post still goes, carried like a file, and costs dust.';
+    return;
+  }
+  // Past the free budget the whole post moves into multisig outputs, so the
+  // cost is the whole body, not just the overflow.
+  var outputs = Math.ceil(used / 60);
+  left.textContent = '0';
+  left.style.color = 'var(--bad)';
+  note.classList.add('costly');
+  msg.textContent = 'bytes left \u2014 this post is ' + over + ' over, so it is ' +
+    'carried like a file: about ' +
+    (outputs * 0.01).toLocaleString(undefined, {maximumFractionDigits: 2}) +
+    ' in dust that can never be spent again. Shorten it to stay in one cheap ' +
+    'output.';
 }
+
 var b = document.getElementById('bubbles');
 if (b) b.scrollTop = b.scrollHeight;
 </script>

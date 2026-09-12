@@ -338,3 +338,72 @@ def test_the_tail_carries_the_corner(browser, served):
     """, bubble)
     assert radius == "0px", f"tail-side radius is {radius}, which notches the join"
     assert clip.startswith("path("), f"the tail is not clipped to a shape: {clip}"
+
+
+# --- the public composer's byte budget ----------------------------------------
+
+def test_the_public_composer_has_no_character_cap(browser, served):
+    """maxlength counted characters while the budget is bytes.
+
+    One emoji is four bytes but one character, so a post inside the character
+    cap could be well over the byte budget: the browser let it through and the
+    server refused it with a message ending "attaching a file lifts the limit",
+    which reads as a file-size error. The operator hit exactly that with no file
+    attached. Going over is now allowed -- it costs dust instead.
+    """
+    base, _ = served
+    browser.get(f"{base}/groups")
+
+    box = browser.find_element(By.ID, "post")
+    assert box.get_attribute("maxlength") is None, (
+        "a cap in characters cannot enforce a budget in bytes"
+    )
+
+
+def test_the_budget_note_recovers_when_the_post_is_shortened(browser, served):
+    """Over, then under again. The over-budget wording must not be permanent.
+
+    The first version of this rewrote the note's innerHTML, which replaced the
+    span holding the count -- so the counter stopped updating and shortening the
+    post could never undo the warning.
+    """
+    base, _ = served
+    browser.get(f"{base}/groups")
+
+    def note_for(text):
+        browser.execute_script("""
+          var b = document.getElementById('post');
+          b.value = arguments[0];
+          countLeft(b);
+        """, text)
+        return browser.find_element(By.ID, "budget").text
+
+    under = note_for("hi")
+    assert "dust" in under and "over" not in under
+
+    over = note_for("x" * 400)
+    assert "over" in over and "dust" in over
+
+    again = note_for("hi")
+    assert again == under, (
+        f"shortening the post must restore the note.\n  was: {under}\n  now: {again}"
+    )
+    # And the counter itself must still be live, not a replaced span.
+    assert browser.find_element(By.ID, "left").text == under.split()[0]
+
+
+def test_emoji_cross_the_budget_sooner_than_characters_suggest(browser, served):
+    """The counter has to agree with the server, which counts bytes."""
+    base, _ = served
+    browser.get(f"{base}/groups")
+
+    over = browser.execute_script("""
+      var b = document.getElementById('post');
+      b.value = '\\ud83d\\udc38'.repeat(20);          // 20 frogs: 80 bytes, 40 UTF-16 units
+      countLeft(b);
+      return document.getElementById('budget').textContent;
+    """)
+    assert "over" in over, (
+        "20 emoji are 80 bytes and cannot fit a budget of 60 -- the counter "
+        "must say so even though that is only 20 characters"
+    )

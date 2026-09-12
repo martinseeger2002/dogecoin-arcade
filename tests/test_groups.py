@@ -71,11 +71,24 @@ def test_a_post_carries_no_ciphertext_length():
     assert len(Header(type=TYPE_GROUP).encode()) == 6
 
 
-def test_the_size_limit_is_exact():
+def test_the_budget_is_exact_and_one_byte_over_changes_the_carriage():
+    """Over the budget is not refused -- it moves to Class B and costs dust.
+
+    It used to raise, from inside `build`, which runs before `plan` can choose a
+    carriage. That made plan's own documented fallback ("three cases, cheapest
+    first") unreachable: every text post over the Class C budget failed, with an
+    error ending "attaching a file lifts the limit, but costs far more". The operator
+    hit it with no file attached and read it as a file-size error.
+    """
     room = G.max_text_bytes("main", "robin")
-    G.build(G.GroupPost("main", "robin", "x" * room))
-    with pytest.raises(G.GroupError):
-        G.build(G.GroupPost("main", "robin", "x" * (room + 1)))
+
+    at = G.plan(G.GroupPost("main", "robin", "x" * room))
+    assert at.class_c, "at the budget it must still be the one cheap output"
+    assert at.transactions == 1
+
+    over = G.plan(G.GroupPost("main", "robin", "x" * (room + 1)))
+    assert not over.class_c, "one byte over moves it into multisig outputs"
+    assert over.transactions == 1, "but it is still a single transaction"
 
 
 def test_a_longer_channel_name_leaves_less_room():
@@ -93,10 +106,41 @@ def test_a_post_fits_in_one_op_return():
 
 
 def test_unicode_is_measured_in_bytes_not_characters():
-    """A limit counted in characters would overflow the output on emoji."""
+    """The budget is bytes, so emoji cross it far sooner than the count suggests.
+
+    The composer's textarea used to carry maxlength="{room}", which counts UTF-16
+    CHARACTERS. One emoji is four bytes, so a post well inside the character cap
+    was well over the byte budget, walked past the browser's limit, and was
+    refused by the server. What must not happen is the post being carried in a
+    Class C output it does not fit in.
+    """
     room = G.max_text_bytes("main", "")
+    text = "🐸" * room
+    assert len(text) < len(text.encode()), "the premise: characters are not bytes"
+
+    planned = G.plan(G.GroupPost("main", "", text))
+    assert not planned.class_c, "it does not fit one OP_RETURN and must not claim to"
+
+
+def test_a_post_over_the_budget_still_fits_one_op_return_when_short_enough():
+    """The cheap path is not lost -- only the refusal is."""
+    planned = G.plan(G.GroupPost("main", "Big Chief Energy", "hello"))
+    assert planned.class_c and planned.transactions == 1
+
+
+def test_a_nickname_eats_the_budget_but_no_longer_costs_the_post():
+    """This is what made the old refusal constant rather than an edge case."""
+    assert G.max_text_bytes("main", "Big Chief Energy") < 50
+    text = "Right on everything looks good. Except for when I went to send one."
+    assert len(text.encode()) > G.max_text_bytes("main", "Big Chief Energy")
+    planned = G.plan(G.GroupPost("main", "Big Chief Energy", text))
+    assert planned.transactions == 1 and not planned.class_c
+
+
+def test_the_text_ceiling_that_remains_is_the_header_field():
+    """65,535 is a real limit -- the length is a uint16 on the wire."""
     with pytest.raises(G.GroupError):
-        G.build(G.GroupPost("main", "", "🐸" * room))
+        G.build(G.GroupPost("main", "", "x" * 70_000))
 
 
 @pytest.mark.parametrize("post,reason", [
@@ -475,3 +519,38 @@ def test_an_injected_chunk_cannot_block_a_real_post(tmp_path):
 
     (row,) = store.group_posts("regtest", "art")
     assert bytes(store.group_post_file(row["id"])["file_data"]) == original
+
+
+def test_a_text_only_class_b_post_reads_back():
+    """A combination that did not exist before: text only, carried Class B.
+
+    Text posts were always Class C and file posts always Class B, so "Class B
+    with no file marker" is new on the wire. Nothing in the reader needed
+    changing, but that is worth proving rather than assuming.
+    """
+    text = "Right on everything looks good. Except for when I went to send one."
+    planned = G.plan(G.GroupPost("main", "Big Chief Energy", text))
+    assert not planned.class_c and planned.transactions == 1
+
+    back = G.parse(planned.payloads[0])
+    assert back.text == text
+    assert back.channel == "main"
+    assert back.nickname == "Big Chief Energy"
+    assert not back.has_file, "no file was posted, so none must be read back"
+
+
+def test_an_emoji_post_reads_back_intact():
+    """The bytes that crossed the budget must survive the crossing."""
+    text = "🐸" * 30
+    planned = G.plan(G.GroupPost("main", "", text))
+    assert not planned.class_c
+    assert G.parse(planned.payloads[0]).text == text
+
+
+def test_a_chunked_text_only_post_reassembles():
+    text = "long post. " * 900
+    planned = G.plan(G.GroupPost("main", "", text))
+    assert planned.transactions > 1
+
+    joined = b"".join(G.parse_chunk(piece)[2] for piece in planned.payloads)
+    assert G.parse(joined).text == text

@@ -201,20 +201,23 @@ def build(post: GroupPost) -> bytes:
         raise GroupError("write something to post.")
 
     encoded = text.encode()
-    if not post.has_file:
-        # Only a text-only post is constrained by the OP_RETURN. One carrying a
-        # file is Class B already, where the limit is the message size rather
-        # than 80 bytes.
-        room = max_text_bytes(channel, nickname)
-        if len(encoded) > room:
-            raise GroupError(
-                f"that is {len(encoded)} bytes and only {room} fit in one post. "
-                f"A text post is a single OP_RETURN output, which is what makes "
-                f"it cost a fee and no dust. Attaching a file lifts the limit, "
-                f"but costs far more.")
-    else:
-        if len(encoded) > 0xFFFF:
-            raise GroupError("the text of a post is limited to 65,535 bytes.")
+    # There is deliberately NO OP_RETURN-sized limit on the text here any more.
+    # `build` is an encoder; which carriage a post gets is `plan`'s decision,
+    # and plan already handles a text post too long for one OP_RETURN -- it
+    # falls back to a single Class B transaction, then to a chain of them. A
+    # length check here ran BEFORE plan could choose, so that fallback was
+    # unreachable: every text post over the Class C budget failed instead, with
+    # an error whose last clause was "attaching a file lifts the limit". The operator
+    # hit it with no file attached and read it as a file-size error, which is
+    # exactly what it sounds like.
+    #
+    # The budget it was enforcing is small enough that this was constant: with
+    # the nickname charged against the same 76-byte payload, "Big Chief Energy"
+    # leaves 44 bytes for the message. The nickname cost the user a third of
+    # their own post.
+    if len(encoded) > 0xFFFF:
+        raise GroupError("the text of a post is limited to 65,535 bytes.")
+    if post.has_file:
         if len(post.file_data) > MAX_FILE_BYTES:
             raise GroupError(
                 f"that file is {len(post.file_data) / 1_048_576:.1f} MB and a "
