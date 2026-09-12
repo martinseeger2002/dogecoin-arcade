@@ -1160,7 +1160,7 @@ def create_app(state: AppState) -> FastAPI:
             "generation": state.generation,
             "tips": state.tips,
             "checked": state.last_checked,
-            "sending": state.send_progress or None,
+            "sending": state.live_progress() or None,
         })
 
     # --- public group posts ---------------------------------------------------

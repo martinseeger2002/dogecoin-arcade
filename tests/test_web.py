@@ -1064,3 +1064,41 @@ def test_a_sent_file_is_kept_and_shown_like_a_received_one(client):
     served = app.get(f"/messages/sent-media/{row['id']}")
     assert served.content == png
     assert served.headers["content-type"] == "image/png"
+
+
+def test_an_abandoned_send_stops_claiming_to_be_working(client):
+    """In-memory progress dies with a restart; a browser polling for it does not.
+
+    A bar could sit at 0% for ever with no thread behind it. A send that is
+    genuinely working reports on every chunk and every wait, so a long silence
+    means the thread is gone.
+    """
+    import time
+
+    app, state = client
+    state.start_progress("aa" * 32, total=6, estimate="a minute")
+    state.send_progress["updated"] = time.time() - state.PROGRESS_STALE_AFTER - 10
+
+    shown = app.get("/events").json()["sending"]
+    assert shown["finished"] is True
+    assert "stopped reporting" in shown["error"]
+
+
+def test_a_working_send_is_not_declared_abandoned(client):
+    app, state = client
+    state.start_progress("bb" * 32, total=6, estimate="a minute")
+    state.update_progress(done=1, note="sent 1 of 6")
+
+    assert app.get("/events").json()["sending"]["finished"] is False
+
+
+def test_marking_a_send_stale_does_not_rewrite_the_record(client):
+    """Read-time judgement, so a slow-but-alive send can still report later."""
+    import time
+
+    app, state = client
+    state.start_progress("cc" * 32, total=2, estimate="")
+    state.send_progress["updated"] = time.time() - state.PROGRESS_STALE_AFTER - 1
+
+    state.live_progress()
+    assert state.send_progress["finished"] is False

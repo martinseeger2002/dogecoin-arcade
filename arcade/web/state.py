@@ -224,8 +224,16 @@ class AppState:
             self.send_progress = {
                 "peer": peer_hex, "total": total, "done": 0,
                 "note": "preparing", "estimate": estimate,
-                "started": time.time(), "finished": False, "error": "",
+                "started": time.time(), "updated": time.time(),
+                "finished": False, "error": "",
             }
+
+    #: A send reporting nothing for this long is treated as gone. In-memory
+    #: progress does not survive a restart, but a browser polling for it does --
+    #: so a bar could sit at 0%% for ever with no thread behind it. A send that
+    #: is genuinely working reports on every chunk and every wait, so silence
+    #: this long means the thread is not there any more.
+    PROGRESS_STALE_AFTER = 900.0
 
     def update_progress(self, done: int | None = None, note: str | None = None) -> None:
         with self._lock:
@@ -235,6 +243,26 @@ class AppState:
                 self.send_progress["done"] = done
             if note is not None:
                 self.send_progress["note"] = note
+            self.send_progress["updated"] = time.time()
+
+    def live_progress(self) -> dict:
+        """Progress as a browser should see it, with abandoned sends marked.
+
+        Checked on read rather than by a timer: there is no thread left to run
+        one, which is the whole problem.
+        """
+        with self._lock:
+            progress = dict(self.send_progress)
+        if not progress or progress.get("finished"):
+            return progress
+        last = progress.get("updated") or progress.get("started", 0)
+        if time.time() - last > self.PROGRESS_STALE_AFTER:
+            progress["finished"] = True
+            progress["error"] = (
+                "this send stopped reporting -- the application was probably "
+                "restarted while it was working. Anything already on the chain "
+                "is listed above and can be finished from there.")
+        return progress
 
     def finish_progress(self, error: str = "") -> None:
         with self._lock:
