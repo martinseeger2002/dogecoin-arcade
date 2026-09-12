@@ -469,6 +469,15 @@ def _submits(browser, url, selector, how):
     Detected by a marker on `window`, which cannot survive a navigation. There
     is no node behind the test server, so a real submission comes back as an
     error page -- that arrival is the proof, not the error itself.
+
+    TO REPEAT THIS AGAINST A REAL INSTALLATION, STOP THE WEB SERVER FIRST.
+    The marker works the same way -- the browser navigates to its own network
+    error page and the marker is gone -- but with the server down nothing can be
+    broadcast, so the check costs nothing. Run against a live application on a
+    machine with a funded wallet, the identical test SENDS A REAL MESSAGE and
+    spends real outputs. a test machine verified this fix on the operator's machine that way.
+    The failure mode of getting it wrong is spending someone's coins to learn
+    what a free test would have told you.
     """
     browser.get(url)
     browser.execute_script("window.__alive = 'yes';")
