@@ -846,30 +846,33 @@ def estimate_readable_seconds(transactions: int, typical: float) -> int:
     correctly. But a chunked message cannot be read until the last chunk is in a
     block, and large chunks do not appear to share one.
 
-    THE EVIDENCE, on both chains, with the citation pointed at the right pair.
+    WHAT IS ACTUALLY OBSERVED, and what it does and does not show.
 
-    On testnet, a test machine's two chunks from test 4 each spend a DIFFERENT output of
-    the same already-confirmed split (f9d0584a <- ffe4ab85:1, 890c1a31 <-
-    ffe4ab85:2), so neither depends on the other and both were free to share a
-    block. Both were broadcast at 17:04:03 UTC; the split had confirmed in block
-    1,484,219 at 17:03:58. Block 1,484,220 arrived at 17:04:55 -- 52 seconds
-    later, with both chunks in the mempool and ample room -- and contained
-    exactly one of them plus its coinbase: 2 transactions, 9,140 bytes. Block
-    1,484,221, nine seconds later, took the other: 2 transactions, 9,139 bytes.
-    So the miner had both and chose one. On regtest, three 10.7 KB chunks
-    against one split took blocks 246, 247 and 248, one each.
+    Testnet, a test machine's test 4: two chunks spending DIFFERENT outputs of the same
+    already-confirmed split (f9d0584a <- ffe4ab85:1, 890c1a31 <- ffe4ab85:2), so
+    neither depends on the other and both were free to share a block. Both
+    broadcast at 17:04:03 UTC. Block 1,484,220 arrived at 17:04:55 with one of
+    them and its coinbase -- 9,140 bytes against a getblocktemplate sizelimit of
+    1,000,000, so 0.9% full -- while the other waited in the mempool. Block
+    1,484,221 took it nine seconds later. Not a size constraint: a test machine checked
+    for a hidden cap and there is none. Regtest showed the same with three
+    chunks in three blocks.
 
-    An earlier version of this cited a test machine's 1b post instead, described as
-    broadcast together. That pair was chained -- 8b51a4c7 spends e528fcdc, 85
-    seconds apart -- because the public path had no `ensure_outputs` then, so
-    that gap was send_all's confirmation wait and not packing. The claim was
-    true and the citation was wrong; it cost a round trip to find that the
-    right transactions were in the other report. Independence is the thing to
-    check before reading anything into two chunks landing in different blocks.
+    THE CAVEAT, which is the honest limit on all of that. Over the 300 blocks
+    around those sends, 292 contain nothing but a coinbase, the median block is
+    170 bytes, and the eight that hold anything hold exactly one transaction
+    each -- ours. A 396-byte split and a 567-byte message got their own blocks
+    too. So NO two transactions shared a block on this chain at all, and the
+    observation cannot distinguish "large chunks do not share a block" from
+    "nothing shares a block here". It is miner behaviour on an idle testnet.
 
-    So: one chunk per block. It errs towards overstating rather than promising a
-    message will be readable sooner than it is, which is the right direction to
-    be wrong in. A single-transaction message is one block like anything else.
+    The estimate is kept anyway because its error points the right way: under
+    real competition for space, chunks can only be spread further apart, never
+    closer. It is a floor presented as an expectation, which is the safe
+    direction for a number a user waits on -- but it is not a measurement of
+    packing under load, and nobody should extrapolate it as one.
+
+    A single-transaction message is one block like anything else.
     """
     return int(max(1, transactions) * typical)
 

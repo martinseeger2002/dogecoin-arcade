@@ -250,23 +250,19 @@ def test_scan_picks_up_where_it_left_off(pair, params, tmp_path, identities):
 # --- broadcast is not the same question as readable ---------------------------
 
 def test_readable_takes_a_block_per_chunk_even_when_broadcast_is_instant():
-    """One chunk per block, on both chains.
+    """One chunk per block -- a floor, from a quiet chain.
 
-    Testnet: two chunks spending DIFFERENT outputs of the same confirmed split
-    (f9d0584a <- ffe4ab85:1, 890c1a31 <- ffe4ab85:2) so neither waits on the
-    other, both broadcast at 17:04:03 UTC, and block 1,484,220 at 17:04:55 took
-    exactly one of them plus its coinbase while the other sat in the mempool
-    with room to spare. Regtest: three 10.7 KB chunks against one split, blocks
-    246, 247, 248.
+    Testnet: two chunks spending different outputs of the same confirmed split,
+    broadcast together, taking blocks 1,484,220 and 1,484,221 while the loser
+    sat in a mempool beside a block 0.9% full. Regtest: three chunks, three
+    blocks.
 
-    The citation was wrong twice before it was right: first pointed at a chained
-    pair (8b51a4c7 spends e528fcdc, 85 seconds apart -- send_all's confirmation
-    wait, not packing), then narrowed to regtest alone when testnet did support
-    it. INDEPENDENCE is the thing to check before reading anything into two
-    chunks landing in different blocks.
-
-    The point stands against the screen's old claim either way: "they all go at
-    once" is true of broadcasting and not of reading.
+    But 292 of the surrounding 300 blocks hold nothing but a coinbase and no
+    block held two transactions at all, so this cannot separate "large chunks do
+    not share a block" from "nothing shares a block here". Kept because the
+    error points the right way -- competition can only spread chunks further
+    apart -- and because the alternative was the screen's old claim that they
+    "all go at once", which is true of broadcasting and not of reading.
     """
     from arcade.messaging.sender import (
         estimate_readable_seconds, estimate_send_seconds)
