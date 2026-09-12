@@ -82,6 +82,7 @@ class BlockWatcher:
 
     def _tick(self) -> None:
         self._repair_once()
+        self._confirm_sent()
         self._check(self.state.messaging, public_only=False)
         # The public board's mainnet half needs its own scan, and a public-only
         # scanner decrypts nothing, so it is safe there (D-014).
@@ -107,6 +108,43 @@ class BlockWatcher:
         if fixed:
             log.info("repaired %d stored announcement name(s)", fixed)
             self.state.bump_generation()
+
+    def _confirm_sent(self) -> None:
+        """Notice when a message we sent reaches a block.
+
+        A sent bubble says "unconfirmed" until this finds it, because until then
+        the only timestamp available is when this computer pressed send -- which
+        is not when the message exists for anybody else. Nothing marked a send
+        confirmed at all before; the column existed and no code ever set it.
+        """
+        try:
+            with self.state.store() as store:
+                pending = store.unconfirmed_sent()
+                if not pending:
+                    return
+                with self.state.messaging.rpc() as rpc:
+                    for row in pending:
+                        try:
+                            raw = rpc.call("getrawtransaction", row["txid"], 1)
+                        except Exception:
+                            continue          # not ours, or not indexed yet
+                        if int(raw.get("confirmations") or 0) < 1:
+                            continue
+                        store.mark_sent_confirmed(
+                            row["txid"], int(raw.get("blocktime") or 0),
+                            self._height_of(rpc, raw.get("blockhash")))
+                        self.state.bump_generation()
+        except Exception:
+            log.debug("could not confirm sent messages", exc_info=True)
+
+    @staticmethod
+    def _height_of(rpc: Any, blockhash: str | None) -> int:
+        if not blockhash:
+            return 0
+        try:
+            return int(rpc.call("getblock", blockhash).get("height") or 0)
+        except Exception:
+            return 0
 
     def _check(self, chain: Any, public_only: bool) -> None:
         name = chain.network

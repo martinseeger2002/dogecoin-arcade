@@ -109,9 +109,16 @@
               </a>
             {% endif %}
             <div class="stamp">
-              {{ when(m.when) }}
-              {% if m.mine %}· {{ 'confirmed' if m.get('confirmed') else 'sent' }}{% endif %}
-              {% if m.height %}· block {{ "{:,}".format(m.height) }}{% endif %}
+              {# A message you sent shows "unconfirmed" rather than a time, until
+                 it is in a block. The only time available before that is when
+                 this computer pressed send, which is not when the message exists
+                 for anyone else -- and a timestamp implies it does. #}
+              {% if m.mine and not m.get('confirmed') %}
+                <span class="unconfirmed">unconfirmed</span>
+              {% else %}
+                {{ when(m.when) }}
+                {%- if m.height %} &middot; block {{ "{:,}".format(m.height) }}{% endif %}
+              {% endif %}
             </div>
           </div>
         </div>

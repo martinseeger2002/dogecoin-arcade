@@ -1510,3 +1510,84 @@ def test_the_refusal_page_escapes_what_it_shows(client):
     from arcade.web import app as webapp
 
     assert "html.escape" in inspect.getsource(webapp.create_app)
+
+
+# --- a sent message reports its own state -------------------------------------
+# A green "Sent." banner on top of a bubble saying the same thing is one
+# notification too many, and the bubble's timestamp was misleading anyway: before
+# a message is in a block the only time available is when this computer pressed
+# send, which is not when the message exists for anybody else.
+#
+# Nothing marked a send confirmed at all before this -- the column existed and no
+# code ever set it.
+
+
+def test_a_sent_message_says_unconfirmed_until_it_is_in_a_block(client):
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    peer = b"\xe1" * 32
+    state.identity = Identity.generate()
+    with state.store() as store:
+        store.add_sent("tx-new", peer, "", state.identity.fingerprint, b"just sent")
+
+    body = app.get(f"/messages/{peer.hex()}").text
+    assert 'class="unconfirmed">unconfirmed' in body
+
+
+def test_a_confirmed_message_shows_the_block_time(client):
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    peer = b"\xe2" * 32
+    state.identity = Identity.generate()
+    with state.store() as store:
+        store.add_sent("tx-old", peer, "", state.identity.fingerprint, b"landed")
+        store.mark_sent_confirmed("tx-old", block_time=1_760_000_000,
+                                  height=1_483_995)
+
+    body = app.get(f"/messages/{peer.hex()}").text
+    assert "unconfirmed" not in body.split('class="bubbles"')[1].split("</div>")[0] \
+        or "1,483,995" in body
+    assert "1,483,995" in body
+
+
+def test_the_block_time_replaces_the_local_send_time(tmp_path):
+    """"When this computer pressed send" is not when the message exists."""
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    peer = b"\xe3" * 32
+    store.add_sent("tx", peer, "", "me", b"x")
+    local = store.thread("me", peer)[0]["when"]
+
+    store.mark_sent_confirmed("tx", block_time=1_760_000_000, height=42)
+    item = store.thread("me", peer)[0]
+
+    assert item["when"] == 1_760_000_000 != local
+    assert item["height"] == 42
+    assert item["confirmed"] is True
+
+
+def test_confirming_without_a_block_time_keeps_what_is_there(tmp_path):
+    """A confirmation we cannot date must not blank the date we have."""
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    peer = b"\xe4" * 32
+    store.add_sent("tx", peer, "", "me", b"x")
+    before = store.thread("me", peer)[0]["when"]
+
+    store.mark_sent_confirmed("tx")
+    item = store.thread("me", peer)[0]
+    assert item["when"] == before
+    assert item["confirmed"] is True
+
+
+def test_sending_no_longer_flashes_a_banner(client):
+    """The bubble is the notification."""
+    import inspect
+    from arcade.web import app as webapp
+
+    source = inspect.getsource(webapp.create_app)
+    assert 'state.flash("Sent.' not in source

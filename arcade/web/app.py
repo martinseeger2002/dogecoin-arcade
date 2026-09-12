@@ -519,7 +519,10 @@ def create_app(state: AppState) -> FastAPI:
                                     state.identity.fingerprint, own_copy,
                                     file_name=file_name, file_type=file_type,
                                     file_data=file_bytes or None)
-                    state.flash("Sent.", "ok")
+                    # No flash: the message itself appears in the conversation,
+                    # marked unconfirmed until it is in a block. A green banner
+                    # saying "Sent." on top of a bubble that says the same thing
+                    # is one notification too many.
                     return RedirectResponse(f"/messages/{peer_hex}", status_code=303)
         except HTTPException:
             raise          # a rejected form is a 400, not an error page

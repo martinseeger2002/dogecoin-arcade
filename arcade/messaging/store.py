@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS sent (
     file_name      TEXT NOT NULL DEFAULT '',
     file_type      TEXT NOT NULL DEFAULT '',
     file_data      BLOB,
+    height         INTEGER NOT NULL DEFAULT 0,
     UNIQUE (txid)
 );
 CREATE INDEX IF NOT EXISTS sent_time ON sent(created DESC);
@@ -267,6 +268,7 @@ class MessageStore:
         ("sent", "file_name", "TEXT NOT NULL DEFAULT ''"),
         ("sent", "file_type", "TEXT NOT NULL DEFAULT ''"),
         ("sent", "file_data", "BLOB"),
+        ("sent", "height", "INTEGER NOT NULL DEFAULT 0"),
         # '' = the user typed it, 'profile' = they told us in a message,
         # 'announce' = read off a public announcement, where names are cut to 12
         # bytes. Without this the same person could appear under two names
@@ -904,8 +906,26 @@ class MessageStore:
             "SELECT file_name, file_type, file_data FROM sent WHERE id=?",
             (sent_id,)).fetchone()
 
-    def mark_sent_confirmed(self, txid: str) -> None:
-        self.conn.execute("UPDATE sent SET confirmed=1 WHERE txid=?", (txid,))
+    def mark_sent_confirmed(self, txid: str, block_time: int = 0,
+                            height: int = 0) -> None:
+        """Record that a message we sent is in a block.
+
+        The block time replaces the local send time, because that is the moment
+        the message actually exists for anyone else -- and until it arrives the
+        bubble says "unconfirmed" rather than showing a time that only means
+        "when this computer pressed send".
+        """
+        self.conn.execute(
+            "UPDATE sent SET confirmed=1, "
+            "created=CASE WHEN ? > 0 THEN ? ELSE created END, "
+            "height=CASE WHEN ? > 0 THEN ? ELSE height END "
+            "WHERE txid=?",
+            (block_time, block_time, height, height, txid))
+
+    def unconfirmed_sent(self) -> list[sqlite3.Row]:
+        """Messages we have sent that are not in a block yet."""
+        return list(self.conn.execute(
+            "SELECT id, txid FROM sent WHERE confirmed=0"))
 
     # --- contacts -------------------------------------------------------------
 
@@ -1050,12 +1070,13 @@ class MessageStore:
                           "mine": False, "txid": row["first_txid"], "height": row["height"],
                           "unread": row["read_at"] is None})
         for row in self.conn.execute(
-            "SELECT id, body, created, txid, confirmed, file_name, file_type, "
-            "       LENGTH(file_data) AS file_size FROM sent "
+            "SELECT id, body, created, txid, confirmed, height, file_name, "
+            "       file_type, LENGTH(file_data) AS file_size FROM sent "
             "WHERE sender_fp=? AND recipient_key=?", (recipient_fp, peer_key)
         ):
             items.append({"id": row["id"], "body": row["body"], "when": row["created"],
-                          "mine": True, "txid": row["txid"], "height": None,
+                          "mine": True, "txid": row["txid"],
+                          "height": row["height"] or None,
                           "confirmed": bool(row["confirmed"]),
                           "file_name": row["file_name"],
                           "file_type": row["file_type"],
