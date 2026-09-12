@@ -26,7 +26,7 @@ from ..config import NETWORKS, MainnetRefused, WrongChain
 from ..messaging import contact, content, group
 from ..script import b58check_decode
 from ..messaging.derive import DerivationError, derive_identity
-from ..messaging.envelope import build_key_announcement
+from ..messaging.envelope import MAX_ANNOUNCE_NAME, build_key_announcement
 from ..messaging.keys import fingerprint_of
 from ..messaging.miner import Miner, MiningError
 from ..messaging.scanner import Scanner
@@ -424,7 +424,26 @@ def create_app(state: AppState) -> FastAPI:
                 if edit:
                     row = store.contact_by_id(edit)
                     editing = _contact_view(row) if row else None
-        return render(request, "contacts.html", people=people, editing=editing)
+        published = []
+        if state.store_path.exists():
+            with state.store() as store:
+                published = []
+                for row in store.unknown_published_keys():
+                    key = bytes(row["pubkey"])
+                    # A name published alongside the key, if there was one. It
+                    # lands in `contact` via apply_profile when scanned, so a
+                    # contact may exist with a name and nothing else.
+                    claimed = store.contact_by_key(key)
+                    published.append({
+                        "address": row["address"],
+                        "hex": key.hex(),
+                        "height": row["height"],
+                        "when": row["block_time"],
+                        "name": claimed["name"] if claimed else "",
+                    })
+        return render(request, "contacts.html", people=people, editing=editing,
+                      published=published, when=_when,
+                      announce_limit=MAX_ANNOUNCE_NAME)
 
     @app.post("/contacts/save")
     def save_contact(request: Request, name: str = Form(""),
@@ -897,6 +916,54 @@ def create_app(state: AppState) -> FastAPI:
                       attached_b64=base64.b64encode(file_bytes).decode() if file_bytes else "",
                       attached_name=file_name, attached_type=file_type)
 
+    @app.post("/contacts/scan")
+    def contacts_scan(request: Request, csrf_token: str = Form("")):
+        """Look for key announcements on the chain, from the address book.
+
+        The same scan the Overview runs. Offered here because this is where
+        somebody is actually trying to find a person, and sending them elsewhere
+        to press a differently named button was a poor answer to "who is out
+        there?".
+        """
+        try:
+            check_csrf(csrf_token)
+            with state.messaging.rpc() as rpc, state.store() as store:
+                scanner = Scanner(rpc, state.messaging.params, store,
+                                  identity=state.identity)
+                result = scanner.scan(max_blocks=5000)
+                found = len(store.unknown_published_keys())
+            state.flash(
+                f"Scanned {result}. "
+                + (f"{found} published address{'' if found == 1 else 'es'} not in "
+                   f"your address book." if found else
+                   "Nothing new to add."), "ok")
+        except Exception as exc:
+            state.flash(f"Scan failed: {exc}", "err")
+        return RedirectResponse("/contacts", status_code=303)
+
+    @app.post("/contacts/add-published")
+    def add_published(request: Request, pubkey: str = Form(""),
+                      address: str = Form(""), name: str = Form(""),
+                      csrf_token: str = Form("")):
+        """Add somebody found on the chain to the address book."""
+        try:
+            check_csrf(csrf_token)
+            raw = bytes.fromhex(pubkey.strip())
+            if len(raw) != 32:
+                raise ValueError("that is not a 32-byte key")
+            with state.store() as store:
+                store.save_contact(pubkey=raw, name=name.strip(),
+                                   testnet_address=address.strip())
+            state.flash(
+                f"Added {name.strip() or address.strip()}. An announcement proves "
+                f"control of that address, never who somebody is &mdash; confirm "
+                f"it with them before trusting it.", "ok")
+        except (ValueError, TypeError) as exc:
+            state.flash(str(exc), "err")
+        except Exception as exc:
+            state.flash(f"Could not add that: {exc}", "err")
+        return RedirectResponse("/contacts", status_code=303)
+
     @app.get("/keys", response_class=HTMLResponse)
     def keys_page(request: Request):
         keys = []
@@ -916,12 +983,20 @@ def create_app(state: AppState) -> FastAPI:
                 # Nothing for the user to do but wait for the node; there is no
                 # passphrase to enter any more.
                 state.ensure_identity()
-            payload = build_key_announcement(state.identity.public_bytes)
+            # Publish WHO the key belongs to, not just the key. Without this the
+            # announcement is filed under whichever address funded it, which is
+            # not the address anyone was told to use.
+            home = state.derived_address or ""
+            try:
+                _, home_hash = b58check_decode(home) if home else (0, b"")
+            except Exception:
+                home_hash = b""
+            payload = build_key_announcement(
+                state.identity.public_bytes, home_hash, state.profile_name)
             with state.messaging.rpc() as rpc:
                 if not Miner(rpc, state.messaging.params).status().funded:
                     raise ValueError("no spendable coins yet -- see Wallet")
                 sender = MessageSender(rpc, state.messaging.params)
-                home = state.derived_address
                 prepared = sender.prepare(
                     funded_address(rpc, prefer=home), payload, class_c=True,
                     change_address=home)

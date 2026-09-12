@@ -191,11 +191,57 @@ def is_message_payload(payload: bytes) -> bool:
 # --- key announcements --------------------------------------------------------
 
 
-def build_key_announcement(public_bytes: bytes) -> bytes:
-    """38 bytes: header + X25519 public key. Fits Class C's 72-byte capacity."""
+#: Marks the optional tail that carries who the key belongs to. A NUL here means
+#: Class B padding, not a tail, which is why the tag is 0x01 rather than a length.
+ANNOUNCE_TAG_IDENTITY = 0x01
+
+#: What is left for the name once everything else is accounted for. Computed,
+#: not written down: the first attempt hardcoded 16 and was wrong, because it
+#: forgot the 4-byte AnyData wrapper that every Arcade payload carries. A
+#: published name is short -- 12 bytes -- and that is the price of an
+#: announcement costing a flat fee instead of dust.
+_ANNOUNCE_FIXED = KEY_ANNOUNCE_HEADER_LEN + 32 + 1 + 20 + 1   # header, key, tag, hash, length
+_ANYDATA_OVERHEAD = 4
+
+
+def _max_announce_name() -> int:
+    from ..encoding import max_class_c_payload
+    return max(0, max_class_c_payload() - _ANYDATA_OVERHEAD - _ANNOUNCE_FIXED)
+
+
+MAX_ANNOUNCE_NAME = _max_announce_name()
+
+
+def build_key_announcement(public_bytes: bytes, hash160: bytes = b"",
+                           name: str = "") -> bytes:
+    """Header + X25519 public key, optionally saying whose key it is.
+
+    The bare form is 38 bytes and is what earlier versions publish. The tail adds
+    two things that solve real problems:
+
+    - **The identity address**, as its 20-byte hash160. Without it, an
+      announcement is attributed to whichever address funded the transaction,
+      and that address changes with coin selection -- so the address a reader
+      files the key under is not the one the user was told to hand out. a test machine
+      measured three different addresses in play at once.
+    - **A name**, so a reader's address book can fill itself in rather than
+      showing a row of base58.
+
+    The name is unverified by construction: anyone can publish any name. It is a
+    convenience for the reader, never a claim the chain can support, and the
+    interface says so wherever it is shown.
+    """
     if len(public_bytes) != 32:
         raise EnvelopeError(f"public key must be 32 bytes, got {len(public_bytes)}")
-    return Header(type=TYPE_KEY_ANNOUNCE).encode() + public_bytes
+
+    body = Header(type=TYPE_KEY_ANNOUNCE).encode() + public_bytes
+    if not hash160:
+        return body
+
+    if len(hash160) != 20:
+        raise EnvelopeError(f"address hash must be 20 bytes, got {len(hash160)}")
+    encoded = (name or "").strip().encode()[:MAX_ANNOUNCE_NAME]
+    return body + bytes([ANNOUNCE_TAG_IDENTITY]) + hash160 + bytes([len(encoded)]) + encoded
 
 
 def parse_key_announcement(payload: bytes) -> bytes:
@@ -207,8 +253,30 @@ def parse_key_announcement(payload: bytes) -> bytes:
             f"key announcement must be at least {KEY_ANNOUNCE_LEN} bytes, got {len(payload)}"
         )
     # Trailing bytes beyond the key are tolerated: an announcement carried by
-    # Class B would arrive NUL-padded to a 30-byte boundary.
+    # Class B would arrive NUL-padded to a 30-byte boundary, and a newer sender
+    # may append the tail below, which an older reader should simply ignore.
     return payload[KEY_ANNOUNCE_HEADER_LEN : KEY_ANNOUNCE_HEADER_LEN + 32]
+
+
+def parse_announced_identity(payload: bytes) -> tuple[bytes, str]:
+    """Return (hash160, name) from an announcement's tail, or (b"", "").
+
+    Never raises on a malformed tail: these bytes came from a stranger, and an
+    announcement whose extras are damaged should still yield its key rather than
+    being discarded.
+    """
+    start = KEY_ANNOUNCE_HEADER_LEN + 32
+    if len(payload) <= start or payload[start] != ANNOUNCE_TAG_IDENTITY:
+        return b"", ""            # bare announcement, or NUL padding
+    try:
+        hash160 = payload[start + 1 : start + 21]
+        if len(hash160) != 20:
+            return b"", ""
+        length = payload[start + 21]
+        name = payload[start + 22 : start + 22 + length].decode("utf-8", "replace")
+    except IndexError:
+        return b"", ""
+    return hash160, name.strip()[:MAX_ANNOUNCE_NAME]
 
 
 # --- sealing and opening ------------------------------------------------------

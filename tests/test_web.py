@@ -351,3 +351,90 @@ def test_a_downloaded_file_is_never_served_as_html(client):
 def test_a_missing_attachment_does_not_500(client):
     response = client[0].get("/messages/attachment/99999", follow_redirects=False)
     assert response.status_code == 303
+
+
+# --- finding people from the address book -------------------------------------
+# The address book is where you decide who somebody is, so it is where "who has
+# published a key?" belongs. It was only on the Keys page, with no way to act on
+# what it showed.
+
+
+def test_the_address_book_offers_a_scan(client):
+    body = client[0].get("/contacts").text
+    assert "Scan for published addresses" in body
+
+
+def test_a_published_key_is_offered_for_adding(client):
+    app, state = client
+    with state.store() as store:
+        store.add_key_announcement("tx1", "nPublishedAddress", b"\x21" * 32,
+                                   "aaaa bbbb cccc dddd", 500, 1000)
+
+    body = app.get("/contacts").text
+    assert "nPublishedAddress" in body
+    assert "/contacts/add-published" in body
+
+
+def test_adding_a_published_key_puts_it_in_the_address_book(client):
+    app, state = client
+    with state.store() as store:
+        store.add_key_announcement("tx1", "nPublishedAddress", b"\x21" * 32,
+                                   "aaaa bbbb", 500, 1000)
+
+    app.post("/contacts/add-published",
+             data={"csrf_token": state.csrf_token, "pubkey": ("21" * 32),
+                   "address": "nPublishedAddress", "name": "Someone"},
+             follow_redirects=False)
+
+    with state.store() as store:
+        (row,) = store.contacts()
+    assert row["name"] == "Someone"
+    assert row["testnet_address"] == "nPublishedAddress"
+
+
+def test_someone_already_in_the_book_is_not_offered_again(client):
+    """The list shrinks as it is used rather than repeating what is known."""
+    app, state = client
+    with state.store() as store:
+        store.add_key_announcement("tx1", "nKnown", b"\x22" * 32, "ffff", 500, 1000)
+        store.save_contact(pubkey=b"\x22" * 32, name="Known", testnet_address="nKnown")
+
+    body = app.get("/contacts").text
+    assert "/contacts/add-published" not in body
+
+
+def test_the_page_says_an_announcement_proves_nothing_about_identity(client):
+    """Anyone can publish a key and call themselves anything."""
+    app, state = client
+    with state.store() as store:
+        store.add_key_announcement("tx1", "nAnyone", b"\x23" * 32, "gggg", 500, 1000)
+
+    body = app.get("/contacts").text
+    assert "nothing about who they are" in body
+
+
+def test_a_malformed_key_is_refused(client):
+    app, state = client
+    response = app.post("/contacts/add-published",
+                        data={"csrf_token": state.csrf_token, "pubkey": "not-hex",
+                              "address": "nSomewhere"}, follow_redirects=False)
+    assert response.status_code == 303
+    with state.store() as store:
+        assert store.contacts() == []
+
+
+def test_a_short_key_is_refused(client):
+    app, state = client
+    app.post("/contacts/add-published",
+             data={"csrf_token": state.csrf_token, "pubkey": "aabb",
+                   "address": "nSomewhere"}, follow_redirects=False)
+    with state.store() as store:
+        assert store.contacts() == []
+
+
+def test_scanning_from_the_address_book_fails_cleanly_without_a_node(client):
+    app, state = client
+    response = app.post("/contacts/scan", data={"csrf_token": state.csrf_token},
+                        follow_redirects=False)
+    assert response.status_code == 303
+    assert "no attribute" not in (state.notice or "")

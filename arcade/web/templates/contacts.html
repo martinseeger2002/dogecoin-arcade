@@ -18,6 +18,12 @@
       addresses, so they know who is writing before deciding whether to deal with
       you. Not sent afterwards, and you can untick it on any message.
       It ties this identity to your mainnet address for whoever receives it.</p>
+    <p class="muted" style="font-size:.84rem;margin:9px 0 0">
+      The first <strong>{{ announce_limit }} characters</strong> are also included
+      when you <a href="/keys">publish your key on the chain</a>, so anyone who
+      finds you there gets a name rather than a row of base58 &mdash; their
+      address book fills itself in. That part is public and permanent, and like
+      any published name it is a claim rather than proof.</p>
   </form>
 </div>
 
@@ -59,6 +65,60 @@
       {% if editing %}<a href="/contacts" class="muted" style="font-size:.88rem">Cancel</a>{% endif %}
     </div>
   </form>
+</div>
+
+<div class="panel" style="margin-bottom:18px">
+  <div class="row" style="align-items:baseline">
+    <h3 style="flex:1;margin:0">Find people on the chain</h3>
+    <form method="post" action="/contacts/scan">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <button class="ghost" type="submit">Scan for published addresses</button>
+    </form>
+  </div>
+
+  {% if not published %}
+    <p class="muted" style="font-size:.88rem;margin:12px 0 0">
+      Nobody new. This lists people who have published a messaging key on the
+      chain and are not already in your address book &mdash; scan to look for
+      more. Publishing is optional, so plenty of people will never appear here;
+      for those, paste a contact code above.</p>
+  {% else %}
+    <p class="muted" style="font-size:.86rem;margin:12px 0 4px">
+      {{ published|length }} address{{ '' if published|length == 1 else 'es' }}
+      published on the chain and not yet in your address book. Adding one lets
+      you message them without a contact code.</p>
+    <table class="published">
+      {% for k in published %}
+      <tr>
+        <td style="word-break:break-all">
+          {% if k.name %}<strong>{{ k.name }}</strong>
+            <span class="muted" style="font-size:.75rem">says their name is</span><br>{% endif %}
+          <span class="mono" style="font-size:.78rem">{{ k.address }}</span></td>
+        <td class="muted" style="font-size:.78rem;white-space:nowrap">
+          block {{ "{:,}".format(k.height) }}</td>
+        <td style="text-align:right">
+          <form method="post" action="/contacts/add-published" class="row"
+                style="gap:6px;justify-content:flex-end">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}">
+            <input type="hidden" name="pubkey" value="{{ k.hex }}">
+            <input type="hidden" name="address" value="{{ k.address }}">
+            <input name="name" value="{{ k.name }}" placeholder="name them"
+                   class="small-input" style="max-width:150px">
+            <button class="ghost small" type="submit">Add</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    <div class="note" style="margin-top:14px">
+      An announcement proves that whoever controlled that address published that
+      key. It proves <strong>nothing about who they are</strong> &mdash; anyone can
+      publish a key and call themselves anything, including somebody else's name.
+      A name shown here is filled in for your convenience and is not evidence.
+      Confirm the address with the person directly before trusting it with
+      anything that matters.
+    </div>
+  {% endif %}
 </div>
 
 {% if people %}

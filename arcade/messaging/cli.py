@@ -31,6 +31,7 @@ from ..config import (
     verify_connected_chain,
 )
 from ..rpc import RpcClient
+from ..script import b58check_decode
 from .derive import derive_identity, resolve_identity_address
 from .envelope import build_key_announcement
 from .keys import Identity, KeyError_, fingerprint_of, load_identity, save_identity
@@ -272,8 +273,6 @@ def cmd_import_key(args) -> int:
 def cmd_publish_key(args) -> int:
     params = _params(args)
     identity = _identity(args)
-    payload = build_key_announcement(identity.public_bytes)
-
     with _rpc(args, params) as rpc:
         sender = MessageSender(rpc, params)
         # Announce FROM the identity address whenever it can pay. The
@@ -282,7 +281,16 @@ def cmd_publish_key(args) -> int:
         # funding it from anywhere else files it under an address nobody can
         # guess. `getnewaddress` was the worst possible choice: guaranteed empty,
         # and it dragged the change to a brand new address every time.
-        home = resolve_identity_address(rpc, _store(args), params.name)
+        store = _store(args)
+        home = resolve_identity_address(rpc, store, params.name)
+        # Say whose key this is. Attribution by funding address is not stable
+        # enough to be the answer: it follows the coins.
+        try:
+            _, home_hash = b58check_decode(home)
+        except Exception:
+            home_hash = b""
+        payload = build_key_announcement(
+            identity.public_bytes, home_hash, store.get_meta("profile_name") or "")
         address = args.address or funded_address(rpc, prefer=home)
         prepared = sender.prepare(address, payload, class_c=True,
                                   change_address=home)

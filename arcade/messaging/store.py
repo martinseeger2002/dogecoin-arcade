@@ -395,6 +395,23 @@ class MessageStore:
             "FROM key_announcement GROUP BY address ORDER BY height DESC"
         ))
 
+    def unknown_published_keys(self) -> list[sqlite3.Row]:
+        """Announced keys that are not in the address book yet.
+
+        The address book is where you decide who somebody is, so this is the
+        useful half of the announcement list: the people you have seen publish
+        but have not yet written down. Anyone already recorded drops out, so the
+        list shrinks as it is used rather than repeating what is known.
+        """
+        return list(self.conn.execute(
+            "SELECT k.address, k.pubkey, k.fingerprint, MAX(k.height) AS height, "
+            "       MAX(k.block_time) AS block_time "
+            "FROM key_announcement k "
+            "LEFT JOIN contact c ON c.pubkey = k.pubkey "
+            "WHERE c.id IS NULL "
+            "GROUP BY k.address ORDER BY height DESC"
+        ))
+
     # --- candidates -----------------------------------------------------------
 
     def add_candidate(

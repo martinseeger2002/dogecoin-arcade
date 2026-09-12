@@ -23,6 +23,7 @@ from ..indexer import PrevOutCache
 from ..rpc import RpcClient
 from ..tx import TxError, extract
 from . import content, group
+from ..script import b58check_encode
 from .envelope import (
     EnvelopeError,
     Header,
@@ -32,6 +33,7 @@ from .envelope import (
     TYPE_SINGLE,
     is_message_payload,
     open_message,
+    parse_announced_identity,
     parse_key_announcement,
 )
 from .keys import Identity, fingerprint_of
@@ -255,8 +257,20 @@ class Scanner:
                 except EnvelopeError as exc:
                     result.errors.append(f"{atx.txid}: {exc}")
                     continue
+                # A newer announcement says which address the key belongs to.
+                # Prefer that over the transaction's sender, which is whichever
+                # address funded it and therefore changes with coin selection.
+                claimed_hash, claimed_name = parse_announced_identity(body)
+                address = atx.sender
+                if claimed_hash:
+                    address = b58check_encode(self.params.pubkeyhash_version,
+                                              claimed_hash)
+                if claimed_name:
+                    # Unverified, and filling blanks only -- a name the user
+                    # typed always wins over one a stranger asserted.
+                    self.store.apply_profile(pubkey, claimed_name, address, "")
                 self.store.add_key_announcement(
-                    atx.txid, atx.sender, pubkey, fingerprint_of(pubkey), height, block_time
+                    atx.txid, address, pubkey, fingerprint_of(pubkey), height, block_time
                 )
                 result.announcements += 1
                 continue

@@ -428,3 +428,77 @@ def test_a_finished_send_leaves_nothing_pending(alice, bob):
                                  b"x" * 9000, plan.chunk_payloads)
         store.finish_pending_send(plan.msg_id)
         assert store.pending_sends() == []
+
+
+# --- announcing who a key belongs to ------------------------------------------
+# A bare announcement is attributed to whichever address funded the transaction,
+# and that changes with coin selection -- a test machine measured an identity address, a
+# funding address and an announcement address all differing at once. Saying who
+# the key belongs to, in the announcement itself, is the stable answer.
+
+
+def test_a_bare_announcement_is_unchanged():
+    """Earlier versions publish exactly this, and must keep working."""
+    from arcade.messaging.envelope import build_key_announcement
+
+    assert len(build_key_announcement(b"\x01" * 32)) == 38
+
+
+def test_an_older_reader_still_gets_the_key_from_a_newer_announcement():
+    from arcade.messaging.envelope import build_key_announcement, parse_key_announcement
+
+    key = bytes(range(32))
+    full = build_key_announcement(key, b"\x02" * 20, "robin")
+    assert parse_key_announcement(full) == key
+
+
+def test_the_address_and_name_round_trip():
+    from arcade.messaging.envelope import build_key_announcement, parse_announced_identity
+    from arcade.script import b58check_decode, b58check_encode
+
+    address = "nYW2BPLENpu2nGa7WCExvzxD3hQYueULFa"
+    version, hash160 = b58check_decode(address)
+    payload = build_key_announcement(bytes(range(32)), hash160, "robin")
+
+    got_hash, got_name = parse_announced_identity(payload)
+    assert b58check_encode(version, got_hash) == address
+    assert got_name == "robin"
+
+
+def test_a_full_announcement_still_fits_one_op_return():
+    """If it did not, publishing would cost dust instead of a flat fee."""
+    from arcade.encoding import max_class_c_payload
+    from arcade.messaging.envelope import MAX_ANNOUNCE_NAME, build_key_announcement
+    from arcade.payload import AnyData
+
+    payload = build_key_announcement(bytes(range(32)), b"\x03" * 20,
+                                     "x" * MAX_ANNOUNCE_NAME)
+    assert len(AnyData(data=payload).encode()) <= max_class_c_payload()
+
+
+def test_class_b_padding_is_not_mistaken_for_an_identity_tail():
+    """The tag is 0x01 precisely so a NUL pad cannot be read as a tail."""
+    from arcade.messaging.envelope import build_key_announcement, parse_announced_identity
+
+    padded = build_key_announcement(bytes(range(32))) + b"\x00" * 22
+    assert parse_announced_identity(padded) == (b"", "")
+
+
+def test_a_damaged_tail_does_not_lose_the_key():
+    """These bytes came from a stranger; a bad tail must not discard the key."""
+    from arcade.messaging.envelope import (
+        build_key_announcement, parse_announced_identity, parse_key_announcement)
+
+    key = bytes(range(32))
+    truncated = build_key_announcement(key, b"\x04" * 20, "somebody")[:-12]
+    assert parse_key_announcement(truncated) == key
+    assert parse_announced_identity(truncated) == (b"", "")
+
+
+def test_a_long_name_is_truncated_not_refused():
+    from arcade.messaging.envelope import (
+        MAX_ANNOUNCE_NAME, build_key_announcement, parse_announced_identity)
+
+    payload = build_key_announcement(bytes(range(32)), b"\x05" * 20, "a" * 80)
+    _, name = parse_announced_identity(payload)
+    assert name == "a" * MAX_ANNOUNCE_NAME

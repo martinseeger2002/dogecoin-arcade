@@ -35,7 +35,11 @@
     </form>
   </div>
   <p class="muted" style="margin-top:10px;font-size:.87rem">
-    A 38-byte OP_RETURN, so it costs far less than a message.</p>
+    Publishes your key, this address, and your name if you have set one, in a
+    single OP_RETURN &mdash; a flat fee and no dust. Anyone who scans then finds
+    you with their address book filled in, instead of a row of base58.
+    <a href="/contacts">Set the name</a> before publishing; it is public and
+    cannot be taken back.</p>
 {% else %}
   <p class="muted">Waiting for the testnet node. Nothing to do.</p>
 {% endif %}
