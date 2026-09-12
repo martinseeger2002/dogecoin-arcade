@@ -10,11 +10,12 @@ function showPublished(box){
   if (bytes.length <= limit) { note.hidden = true; return; }
   var cut = new TextDecoder().decode(bytes.slice(0, limit));
   note.hidden = false;
-  note.innerHTML = 'On the chain this is published as <strong>' + cut +
-    '</strong> — an announcement carries ' + limit + ' bytes and yours is ' +
-    bytes.length + '. People who find you by a message will see the whole name; ' +
-    'people who find you by the announcement will see the short one.';
-  note.className = 'muted costly';
+  note.innerHTML = 'Your whole name is published — but it is ' + bytes.length +
+    ' bytes and a single cheap output holds ' + limit + ', so the announcement ' +
+    'is carried in multisig outputs instead. That costs a few hundredths of a ' +
+    'coin in dust rather than nothing. A name of ' + limit + ' bytes or fewer ' +
+    'costs only a fee.';
+  note.className = 'muted';
 }
 var nameBox = document.getElementById('profile-name');
 if (nameBox) showPublished(nameBox);
@@ -30,7 +31,7 @@ if (nameBox) showPublished(nameBox);
     <h3 style="margin:0 0 12px">How you introduce yourself</h3>
     <div class="row">
       <div style="flex:1"><input name="name" value="{{ state.profile_name }}"
-             id="profile-name" placeholder="Your name" maxlength="80"
+             id="profile-name" placeholder="Your name" maxlength="{{ name_limit }}"
              oninput="showPublished(this)"></div>
       <button type="submit">Save</button>
     </div>
@@ -40,6 +41,9 @@ if (nameBox) showPublished(nameBox);
       you. Not sent afterwards, and you can untick it on any message.
       It ties this identity to your mainnet address for whoever receives it.</p>
     <p class="muted" style="font-size:.84rem;margin:9px 0 0" id="published-as"></p>
+    <p class="muted" style="font-size:.8rem;margin:6px 0 0">
+      Up to {{ name_limit }} characters. The first {{ announce_limit }} fit in a
+      single cheap output; beyond that the announcement costs a little dust.</p>
     <p class="muted" style="font-size:.84rem;margin:9px 0 0">
       The first <strong>{{ announce_limit }} characters</strong> are also included
       when you <a href="/keys">publish your key on the chain</a>, so anyone who
@@ -208,11 +212,12 @@ function showPublished(box){
   if (bytes.length <= limit) { note.hidden = true; return; }
   var cut = new TextDecoder().decode(bytes.slice(0, limit));
   note.hidden = false;
-  note.innerHTML = 'On the chain this is published as <strong>' + cut +
-    '</strong> — an announcement carries ' + limit + ' bytes and yours is ' +
-    bytes.length + '. People who find you by a message will see the whole name; ' +
-    'people who find you by the announcement will see the short one.';
-  note.className = 'muted costly';
+  note.innerHTML = 'Your whole name is published — but it is ' + bytes.length +
+    ' bytes and a single cheap output holds ' + limit + ', so the announcement ' +
+    'is carried in multisig outputs instead. That costs a few hundredths of a ' +
+    'coin in dust rather than nothing. A name of ' + limit + ' bytes or fewer ' +
+    'costs only a fee.';
+  note.className = 'muted';
 }
 var nameBox = document.getElementById('profile-name');
 if (nameBox) showPublished(nameBox);

@@ -416,8 +416,24 @@ class AppState:
             return store.get_meta("profile_name") or ""
 
     def set_profile_name(self, name: str) -> None:
+        """Store the name, refusing one that cannot be published whole.
+
+        Checked here as well as in the form, because a browser's maxlength is a
+        convenience rather than a guarantee. Refused rather than trimmed: the
+        whole reason this exists is that a name was once cut in silence and
+        published permanently.
+        """
+        from ..messaging.envelope import MAX_ANNOUNCE_NAME_CLASS_B
+
+        cleaned = (name or "").strip()
+        encoded = cleaned.encode()
+        if len(encoded) > MAX_ANNOUNCE_NAME_CLASS_B:
+            raise ValueError(
+                f"that name is {len(encoded)} bytes and the limit is "
+                f"{MAX_ANNOUNCE_NAME_CLASS_B}. Shorten it rather than have it "
+                f"cut for you.")
         with self.store() as store:
-            store.set_meta("profile_name", (name or "").strip()[:80])
+            store.set_meta("profile_name", cleaned)
 
     @property
     def has_identity(self) -> bool:

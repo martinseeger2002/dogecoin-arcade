@@ -28,7 +28,10 @@ from ..config import NETWORKS, MainnetRefused, WrongChain
 from ..messaging import contact, content, group
 from ..script import b58check_decode
 from ..messaging.derive import DerivationError, derive_identity
-from ..messaging.envelope import MAX_ANNOUNCE_NAME, build_key_announcement
+from ..messaging.envelope import (
+    MAX_ANNOUNCE_NAME, MAX_ANNOUNCE_NAME_CLASS_B,
+    announcement_fits_one_output, build_key_announcement,
+)
 from ..messaging.keys import fingerprint_of
 from ..messaging.miner import Miner, MiningError
 from ..messaging.scanner import Scanner
@@ -715,7 +718,8 @@ def create_app(state: AppState) -> FastAPI:
                     })
         return render(request, "contacts.html", people=people, editing=editing,
                       published=published, when=_when,
-                      announce_limit=MAX_ANNOUNCE_NAME)
+                      announce_limit=MAX_ANNOUNCE_NAME,
+                      name_limit=MAX_ANNOUNCE_NAME_CLASS_B)
 
     @app.post("/contacts/save")
     def save_contact(request: Request, name: str = Form(""),
@@ -1385,13 +1389,17 @@ def create_app(state: AppState) -> FastAPI:
                 home_hash = b""
             payload = build_key_announcement(
                 state.identity.public_bytes, home_hash, state.profile_name)
+            # A long name will not fit one OP_RETURN, so it goes as Class B --
+            # a couple of dust outputs rather than none. Better than publishing
+            # half a name, permanently, for the cheaper fee.
+            single_output = announcement_fits_one_output(payload)
             with state.messaging.rpc() as rpc:
                 if not Miner(rpc, state.messaging.params).status().funded:
                     raise ValueError("no spendable coins yet -- see Wallet")
                 sender = MessageSender(rpc, state.messaging.params)
                 prepared = sender.prepare(
-                    funded_address(rpc, prefer=home), payload, class_c=True,
-                    change_address=home)
+                    funded_address(rpc, prefer=home), payload,
+                    class_c=single_output, change_address=home)
                 if confirmed == "yes":
                     txid = sender.broadcast(prepared)
         except HTTPException:

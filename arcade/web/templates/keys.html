@@ -35,9 +35,11 @@
     </form>
   </div>
   <p class="muted" style="margin-top:10px;font-size:.87rem">
-    Publishes your key, this address, and your name if you have set one, in a
-    single OP_RETURN &mdash; a flat fee and no dust. Anyone who scans then finds
-    you with their address book filled in, instead of a row of base58.
+    Publishes your key, this address, and your name if you have set one. A short
+    name fits a single OP_RETURN &mdash; a flat fee and no dust; a longer one is
+    carried in multisig outputs instead, costing a few hundredths of a coin.
+    Either way it goes whole. Anyone who scans then finds you with their address
+    book filled in, instead of a row of base58.
     <a href="/contacts">Set the name</a> before publishing; it is public and
     cannot be taken back.</p>
 {% else %}

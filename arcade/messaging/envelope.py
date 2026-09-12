@@ -218,7 +218,15 @@ def _max_announce_name() -> int:
     return max(0, max_class_c_payload() - _ANYDATA_OVERHEAD - _ANNOUNCE_FIXED)
 
 
+#: What fits a single OP_RETURN, and therefore what costs a flat fee and no dust.
 MAX_ANNOUNCE_NAME = _max_announce_name()
+
+#: The hard ceiling. A name longer than MAX_ANNOUNCE_NAME is still publishable --
+#: it simply goes as Class B instead, costing a couple of dust outputs rather
+#: than nothing. That is a far better trade than silently cutting somebody's name
+#: in half: "Big Chief Energy" went on the chain twice as "Big Chief En",
+#: permanently, for a fee that cannot be taken back.
+MAX_ANNOUNCE_NAME_CLASS_B = 64
 
 
 def build_key_announcement(public_bytes: bytes, hash160: bytes = b"",
@@ -249,8 +257,28 @@ def build_key_announcement(public_bytes: bytes, hash160: bytes = b"",
 
     if len(hash160) != 20:
         raise EnvelopeError(f"address hash must be 20 bytes, got {len(hash160)}")
-    encoded = (name or "").strip().encode()[:MAX_ANNOUNCE_NAME]
+
+    # Refused rather than trimmed. Truncating here was silent, permanent and
+    # paid for; a caller that wants a shorter name can shorten it deliberately.
+    encoded = (name or "").strip().encode()
+    if len(encoded) > MAX_ANNOUNCE_NAME_CLASS_B:
+        raise EnvelopeError(
+            f"a published name is limited to {MAX_ANNOUNCE_NAME_CLASS_B} bytes; "
+            f"this one is {len(encoded)}")
     return body + bytes([ANNOUNCE_TAG_IDENTITY]) + hash160 + bytes([len(encoded)]) + encoded
+
+
+def announcement_fits_one_output(payload: bytes) -> bool:
+    """Whether this announcement can go as a single OP_RETURN.
+
+    A name up to MAX_ANNOUNCE_NAME does; a longer one needs Class B, which costs
+    a couple of unspendable outputs instead of nothing. Cheap either way, and a
+    great deal better than publishing half of somebody's name.
+    """
+    from ..encoding import max_class_c_payload
+    from ..payload import AnyData
+
+    return len(AnyData(data=payload).encode()) <= max_class_c_payload()
 
 
 def parse_key_announcement(payload: bytes) -> bytes:
@@ -285,7 +313,10 @@ def parse_announced_identity(payload: bytes) -> tuple[bytes, str]:
         name = payload[start + 22 : start + 22 + length].decode("utf-8", "replace")
     except IndexError:
         return b"", ""
-    return hash160, name.strip()[:MAX_ANNOUNCE_NAME]
+    # Bounded by the Class B ceiling, not the single-output one: a longer name is
+    # published as Class B, and cutting it here would undo that on the way in --
+    # the reader would see the same truncation the sender paid extra to avoid.
+    return hash160, name.strip()[:MAX_ANNOUNCE_NAME_CLASS_B]
 
 
 # --- sealing and opening ------------------------------------------------------

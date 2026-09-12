@@ -1163,10 +1163,41 @@ def test_an_unknown_version_is_not_reported_as_stale(client, monkeypatch):
 
 
 def test_the_name_field_shows_what_the_chain_will_carry(client):
-    """An announcement holds 12 bytes and used to cut a longer name in silence."""
+    """An announcement holds 12 bytes cheaply and used to cut a longer name.
+
+    A longer one is published whole now, as Class B, so what the field must say
+    is what it will cost rather than what will be lost.
+    """
     body = client[0].get("/contacts").text
     assert "showPublished" in body
-    assert "published as" in body
+    assert "whole name is published" in body
+
+
+def test_the_name_field_enforces_the_limit(client):
+    from arcade.messaging.envelope import MAX_ANNOUNCE_NAME_CLASS_B
+
+    body = client[0].get("/contacts").text
+    assert f'maxlength="{MAX_ANNOUNCE_NAME_CLASS_B}"' in body
+
+
+def test_an_over_long_name_is_refused_not_trimmed(client):
+    """A browser's maxlength is a convenience, not a guarantee."""
+    app, state = client
+    app.post("/profile", data={"csrf_token": state.csrf_token, "name": "x" * 200},
+             follow_redirects=False)
+
+    assert "limit is" in (state.notice or "")
+    assert state.profile_name == ""
+
+
+def test_a_name_at_the_limit_is_accepted(client):
+    from arcade.messaging.envelope import MAX_ANNOUNCE_NAME_CLASS_B
+
+    app, state = client
+    name = "x" * MAX_ANNOUNCE_NAME_CLASS_B
+    app.post("/profile", data={"csrf_token": state.csrf_token, "name": name},
+             follow_redirects=False)
+    assert state.profile_name == name
 
 
 def test_a_reset_keeps_your_own_published_key(tmp_path):

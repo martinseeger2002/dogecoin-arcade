@@ -1,180 +1,216 @@
 {% extends "base.html" %}
 {% block title %}Public · DogecoinArcade{% endblock %}
 {% block body %}
-<div class="feed">
-  <div class="feedhead">
-    <div>
-      <h1>#{{ channel }}</h1>
-      <p class="sub">Public. Anyone can read this &mdash; that is the point of it.</p>
+
+<h1>Public channels</h1>
+<p class="sub">Anyone can read these &mdash; that is the point of them. Nothing
+   here is encrypted and nothing can be deleted.</p>
+
+{# The same frame as the private messenger. What changes is the left column:
+   channels rather than conversations, because a channel is who you are talking
+   to here. #}
+<div class="msgr">
+  <aside class="threads">
+    <div class="threads-head">
+      <strong>Channels</strong>
+      <button type="button" class="ghost small"
+              onclick="document.getElementById('newchan').hidden=false">New</button>
     </div>
-    <div class="chainpills">
+
+    <form method="get" action="/groups" id="newchan" class="newconv" hidden>
+      <input type="hidden" name="which" value="{{ which }}">
+      <label>Channel name</label>
+      <input name="channel" maxlength="24" placeholder="e.g. trading" required>
+      <div class="row" style="margin-top:9px">
+        <button type="submit" class="small">Go</button>
+        <button type="button" class="ghost small"
+                onclick="document.getElementById('newchan').hidden=true">Cancel</button>
+      </div>
+      <p class="muted" style="font-size:.78rem;margin:9px 0 0">
+        There is no step to create one: a channel is just a name. Type one nobody
+        has used and your first post starts it.</p>
+    </form>
+
+    <div class="chainpick-row">
       <a class="pillpick {{ 'on' if which == 'messaging' }}"
          href="/groups?which=messaging&channel={{ channel }}">testnet</a>
       <a class="pillpick main {{ 'on' if which == 'ledger' }}"
          href="/groups?which=ledger&channel={{ channel }}">mainnet</a>
     </div>
-  </div>
 
-  <div class="card chanbar">
-    <form method="get" action="/groups" class="row">
-      <input type="hidden" name="which" value="{{ which }}">
-      <div style="flex:1"><input name="channel" value="{{ channel }}" maxlength="24"
-             placeholder="Type a channel name — a new one starts it"></div>
-      <button type="submit" class="ghost">Go</button>
-    </form>
-    {% if channels %}
-    <div class="chanlist">
-      {% for c in channels %}
-        <a class="chanchip {{ 'on' if c.channel == channel }}"
-           href="/groups?which={{ which }}&channel={{ c.channel }}">#{{ c.channel }}
-          <span class="muted">{{ c.posts }}</span></a>
-      {% endfor %}
-    </div>
+    {% if not channels %}
+      <p class="muted empty">No channels seen yet. Press <strong>New</strong>,
+         or scan from the Overview page.</p>
     {% endif %}
-    <p class="muted feednote" style="border:0;padding:0;margin-top:10px">
-      There is no step to create a channel: it is just a name. Type one nobody
-      has used and your first post starts it. Anyone using the same name is in
-      the same room &mdash; there is no member list, no invitation, and no way to
-      keep anyone out.
-    </p>
-  </div>
+    {% for c in channels %}
+      <a class="thread {{ 'on' if c.channel == channel }}"
+         href="/groups?which={{ which }}&channel={{ c.channel }}">
+        <div class="thread-top"><span class="who">#{{ c.channel }}</span></div>
+        <div class="thread-preview">{{ c.posts }} post{{ '' if c.posts == 1 else 's' }}</div>
+        <div class="thread-when">{{ when(c.last) }}</div>
+      </a>
+    {% endfor %}
+  </aside>
 
-  {# --- the composer, near the top: what you post drops into the feed below --- #}
-  <div class="card composer-card">
-    {% if error %}<div class="msg err" style="margin-bottom:12px">{{ error }}</div>{% endif %}
-
-    <form method="post" action="/groups/post" enctype="multipart/form-data" id="postform">
-      <input type="hidden" name="csrf_token" value="{{ csrf }}">
-      <input type="hidden" name="which" value="{{ which }}">
-      <input type="hidden" name="channel" value="{{ channel }}">
-      <textarea name="text" rows="3" maxlength="{{ room }}" id="post"
-                oninput="countLeft(this)"
-                placeholder="Say something in #{{ channel }}…">{{ draft or '' }}</textarea>
-      <p class="muted counter" id="counter">
-        <span id="left">{{ room }}</span> characters left &mdash; a text post is a
-        single cheap output, which is what keeps it short.</p>
-      <p class="muted picked" id="picked" hidden></p>
-      <div class="composer-foot">
-        <label class="attach" title="Attach a file">
-          <input type="file" name="attachment" onchange="showPick(this)" hidden>
-          <span id="clip">📎</span> <span class="attach-label">File</span>
-        </label>
-        <span class="grow"></span>
-        {% if nickname %}<span class="muted as">as <strong>{{ nickname }}</strong></span>
-        {% else %}<a class="muted as" href="/contacts">set a name</a>{% endif %}
-        <button type="submit">Post</button>
+  <section class="convo">
+    <header class="convo-head">
+      <div>
+        <div class="convo-name">#{{ channel }}</div>
+        <div class="convo-sub">{{ chain.label }}
+          {%- if balance is not none %} &middot; {{ "{:,.4f}".format(balance) }} spendable
+          {%- else %} &middot; node not answering{% endif %}
+          {%- if chain.is_mainnet %} &middot; <span class="danger-text">real coins</span>{% endif %}</div>
       </div>
-    </form>
-
-    <p class="muted feednote">
-      {{ chain.label }} &middot;
-      {% if balance is not none %}{{ "{:,.4f}".format(balance) }} spendable
-      {% else %}node not answering{% endif %}
-      &middot; nothing here is encrypted and nothing can be deleted
-      {%- if chain.is_mainnet %} &middot; <strong class="danger-text">real coins</strong>{% endif %}
-    </p>
-  </div>
-
-  {% if prepared %}
-  <div class="card confirm-card">
-    {% if chain.is_mainnet %}<strong class="danger-text">This spends real coins.</strong>
-    {% else %}<strong>Post this?</strong>{% endif %}
-    {{ plan.transactions if plan else 1 }} transaction{{ '' if not plan or plan.transactions == 1 else 's' }},
-    fee {{ "%.8f"|format(prepared.fee_sats / 100000000) }}{% if plan and not plan.class_c %},
-    carried in multisig outputs &mdash; most of that cost is
-    <strong>dust that can never be spent again</strong>{% else %},
-    one OP_RETURN output and no dust{% endif %}.
-    {% if chain.is_mainnet %}
-    <div class="note" style="margin:10px 0 0">
-      This writes onto the Pepecoin chain permanently, in plain text, under your
-      name. It cannot be edited or removed. Testnet behaves identically and costs
-      nothing &mdash; use it if you are trying this out.
-    </div>
-    {% endif %}
-    <form method="post" action="/groups/post" style="margin-top:11px">
-      <input type="hidden" name="csrf_token" value="{{ csrf }}">
-      <input type="hidden" name="which" value="{{ which }}">
-      <input type="hidden" name="channel" value="{{ channel }}">
-      <input type="hidden" name="text" value="{{ draft }}">
-      <input type="hidden" name="confirmed" value="yes">
-      <input type="hidden" name="attached_b64" value="{{ attached_b64 or '' }}">
-      <input type="hidden" name="attached_name" value="{{ attached_name or '' }}">
-      <input type="hidden" name="attached_type" value="{{ attached_type or '' }}">
-      <div class="row">
-        <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">
-          {{ 'Post to mainnet' if chain.is_mainnet else 'Post it' }}</button>
-        <a class="muted" href="/groups?which={{ which }}&channel={{ channel }}">Cancel</a>
-      </div>
-    </form>
-  </div>
-  {% endif %}
-
-  <div id="live" data-generation="{{ state.generation }}" class="live"></div>
-
-  {# --- the feed itself: newest first --- #}
-  {% if not posts %}
-    <div class="card empty-card">
-      <p><strong>#{{ channel }}</strong> is empty on {{ chain.label|lower }}.</p>
-      <p class="muted">Either nobody has posted here, or nothing has been scanned
-        yet. Post above and you start it.</p>
-    </div>
-  {% endif %}
-
-  {% for p in posts %}
-  <article class="card post {{ 'mine' if p.mine }}">
-    <header class="post-head">
-      <span class="poster">{{ p.nickname or p.sender or 'anonymous' }}</span>
-      <span class="muted when">{{ when(p.block_time) }}
-        {%- if p.height %} &middot; block {{ "{:,}".format(p.height) }}
-        {%- else %} &middot; <span class="pending">pending</span>{% endif %}</span>
     </header>
 
-    {% if p.text %}<p class="post-text">{{ p.text }}</p>{% endif %}
+    {% if error %}<div class="msg err" style="margin:14px 16px 0">{{ error }}</div>{% endif %}
 
-    {% if p.file_size %}
-      {% if p.kind == 'image' %}
-        <img class="post-media" src="/groups/media/{{ p.id }}"
-             alt="{{ p.file_name }}" loading="lazy">
-      {% elif p.kind == 'video' %}
-        <video class="post-media" controls preload="metadata"
-               src="/groups/media/{{ p.id }}"></video>
-      {% elif p.kind == 'audio' %}
-        <audio class="post-media" controls preload="none"
-               src="/groups/media/{{ p.id }}"></audio>
+    <div class="bubbles" id="bubbles">
+      {% if not posts %}
+        <p class="muted empty"><strong>#{{ channel }}</strong> is empty on
+           {{ chain.label|lower }}. Post below and you start it.</p>
       {% endif %}
-      <a class="post-file" href="/groups/media/{{ p.id }}?download=1">
-        {{ '🖼' if p.kind == 'image' else ('🎬' if p.kind == 'video'
-           else ('🎵' if p.kind == 'audio' else '📄')) }}
-        {{ p.file_name }} &middot; {{ "{:,}".format(p.file_size) }} bytes &middot; save
-      </a>
-    {% endif %}
-  </article>
-  {% endfor %}
+      {% for p in posts %}
+        <div class="bubble-row {{ 'mine' if p.mine else 'theirs' }}">
+          <div class="bubble">
+            <div class="poster">{{ p.nickname or p.sender or 'anonymous' }}</div>
+            {% if p.text %}<div class="text">{{ p.text }}</div>{% endif %}
+            {% if p.file_size %}
+              {% if p.kind == 'image' %}
+                <a class="media" href="/groups/media/{{ p.id }}?download=1"
+                   title="{{ p.file_name }} — click to save">
+                  <img src="/groups/media/{{ p.id }}" alt="{{ p.file_name }}" loading="lazy"></a>
+              {% elif p.kind == 'video' %}
+                <video class="media" controls preload="metadata"
+                       src="/groups/media/{{ p.id }}"></video>
+              {% elif p.kind == 'audio' %}
+                <audio class="media" controls preload="none"
+                       src="/groups/media/{{ p.id }}"></audio>
+              {% endif %}
+              <a class="file" href="/groups/media/{{ p.id }}?download=1">
+                <span class="file-icon">{{ '🖼' if p.kind == 'image'
+                  else ('🎬' if p.kind == 'video'
+                  else ('🎵' if p.kind == 'audio' else '📄')) }}</span>
+                <span class="file-meta">
+                  <strong>{{ p.file_name }}</strong>
+                  <span class="muted">{{ p.label or 'file' }} &middot;
+                    {{ "{:,}".format(p.file_size) }} bytes &middot; save</span>
+                </span>
+              </a>
+            {% endif %}
+            <div class="stamp">{{ when(p.block_time) }}
+              {%- if p.height %} &middot; block {{ "{:,}".format(p.height) }}
+              {%- else %} &middot; <span class="pending">pending</span>{% endif %}</div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
 
+    {% if prepared %}
+      <div class="confirm">
+        {% if chain.is_mainnet %}<strong class="danger-text">This spends real coins.</strong>
+        {% else %}<strong>Post this?</strong>{% endif %}
+        {{ plan.transactions if plan else 1 }} transaction{{ '' if not plan or plan.transactions == 1 else 's' }},
+        fee {{ "%.8f"|format(prepared.fee_sats / 100000000) }}{% if plan and not plan.class_c %},
+        carried in multisig outputs &mdash; most of that cost is
+        <strong>dust that can never be spent again</strong>{% else %},
+        one OP_RETURN output and no dust{% endif %}.
+        {% if chain.is_mainnet %}
+        <div class="note" style="margin:10px 0 0">
+          This writes onto the chain permanently, in plain text, under your name.
+          It cannot be edited or removed. Testnet behaves identically and costs
+          nothing.
+        </div>
+        {% endif %}
+        <form method="post" action="/groups/post" style="margin-top:10px"
+              onsubmit="return startPosting(this)">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <input type="hidden" name="which" value="{{ which }}">
+          <input type="hidden" name="channel" value="{{ channel }}">
+          <input type="hidden" name="text" value="{{ draft }}">
+          <input type="hidden" name="confirmed" value="yes">
+          <input type="hidden" name="attached_b64" value="{{ attached_b64 or '' }}">
+          <input type="hidden" name="attached_name" value="{{ attached_name or '' }}">
+          <input type="hidden" name="attached_type" value="{{ attached_type or '' }}">
+          <div class="row">
+            <button type="submit" class="small {{ 'danger' if chain.is_mainnet }}">
+              {{ 'Post to mainnet' if chain.is_mainnet else 'Post it' }}</button>
+            <a class="muted" href="/groups?which={{ which }}&channel={{ channel }}"
+               style="font-size:.87rem">Cancel</a>
+          </div>
+        </form>
+      </div>
+    {% endif %}
+
+    <form method="post" action="/groups/post" class="composer"
+          enctype="multipart/form-data" onsubmit="return startPosting(this)">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="which" value="{{ which }}">
+      <input type="hidden" name="channel" value="{{ channel }}">
+      <label class="attach" title="Attach a file">
+        <input type="file" name="attachment" onchange="showPick(this)" hidden>
+        <span id="clip">📎</span>
+      </label>
+      <textarea name="text" rows="1" maxlength="{{ room }}" id="post"
+                oninput="countLeft(this); grow(this)"
+                onkeydown="postOnEnter(event, this)"
+                placeholder="Say something in #{{ channel }}…">{{ draft or '' }}</textarea>
+      <button type="submit">Post</button>
+    </form>
+    <p class="muted composer-note" id="picked" hidden></p>
+    <p class="muted composer-note">
+      <span id="left">{{ room }}</span> characters left &mdash; a text post is a
+      single cheap output, which is what keeps it short.
+      {% if nickname %}Posting as <strong>{{ nickname }}</strong>.
+      {% else %}<a href="/contacts">Set a name</a> to sign your posts.{% endif %}
+    </p>
+  </section>
 </div>
 
 <script>
+function startPosting(form){
+  if (form.dataset.sending === 'yes') return false;
+  form.dataset.sending = 'yes';
+  form.querySelectorAll('button').forEach(function (b) {
+    b.disabled = true;
+    if (b.type === 'submit') b.textContent = 'Posting…';
+  });
+  return true;
+}
+function postOnEnter(event, box){
+  if (event.key !== 'Enter' || event.shiftKey) return;
+  event.preventDefault();
+  if (!box.value.trim()) return;
+  if (!startPosting(box.form)) return;
+  if (box.form.requestSubmit) box.form.requestSubmit();
+  else box.form.submit();
+}
+function grow(box){
+  box.style.height = 'auto';
+  box.style.height = Math.min(box.scrollHeight, 160) + 'px';
+}
+// Same arithmetic as the private composer: a chunk carries 7,628 payload bytes
+// and a multisig output carries two 30-byte packets.
 function showPick(input){
   var note = document.getElementById('picked');
   var file = input.files && input.files[0];
   var box = document.getElementById('post');
   if (!file) {
     note.hidden = true;
-    document.getElementById('counter').hidden = false;
-    box.setAttribute('maxlength', {{ room }});
     document.getElementById('clip').textContent = '📎';
+    box.setAttribute('maxlength', {{ room }});
     return;
   }
+  var chunks = Math.ceil(file.size / 7628);
+  var outputs = Math.ceil(file.size / 60) + chunks;
   note.hidden = false;
-  note.innerHTML = '<strong>' + file.name + '</strong> — ' + file.size.toLocaleString() +
-    ' bytes. A file cannot fit in an OP_RETURN, so this is carried in multisig ' +
-    'outputs instead: roughly one unspendable output per 30 bytes. It costs far ' +
-    'more than text.';
+  note.className = 'muted composer-note' + (chunks > 40 ? ' costly' : '');
+  note.innerHTML = '<strong>' + file.name + '</strong> — ' +
+    (file.size / 1024).toFixed(0) + ' KB, posted as ' + chunks +
+    ' transaction' + (chunks === 1 ? '' : 's') + ' costing about ' +
+    outputs * 0.01 + ' in dust that can never be spent again.';
   document.getElementById('clip').textContent = '📎•';
-  // With a file attached the post is carried in multisig outputs instead, so the
-  // OP_RETURN character limit no longer applies and showing it would mislead.
   box.removeAttribute('maxlength');
-  document.getElementById('counter').hidden = true;
 }
 function countLeft(el){
   var max = {{ room }};
@@ -183,5 +219,7 @@ function countLeft(el){
   left.textContent = max - used;
   left.style.color = (max - used) < 0 ? 'var(--bad)' : '';
 }
+var b = document.getElementById('bubbles');
+if (b) b.scrollTop = b.scrollHeight;
 </script>
 {% endblock %}

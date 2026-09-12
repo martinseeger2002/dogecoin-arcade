@@ -152,12 +152,12 @@ def test_the_same_channel_on_two_chains_is_two_rooms(store):
     assert [r["text"] for r in store.group_posts("main", "main")] == ["on mainnet"]
 
 
-def test_the_newest_post_comes_first(store):
-    """A feed, not a conversation: you drop in, and the unseen thing is newest."""
+def test_a_channel_reads_downward_like_a_conversation(store):
+    """Presented beside a private thread, it should behave like one."""
     for index, when in enumerate([300, 100, 200]):
         store.add_group_post("test", "main", f"tx{index}", 1, when, "nA", "", str(when))
 
-    assert [r["text"] for r in store.group_posts("test", "main")] == ["300", "200", "100"]
+    assert [r["text"] for r in store.group_posts("test", "main")] == ["100", "200", "300"]
 
 
 def test_rescanning_does_not_duplicate_posts(store):
@@ -351,16 +351,16 @@ def _post(state, channel, text, when, **file):
                              "somebody", text, **file)
 
 
-def test_the_composer_comes_before_the_feed(feed_client):
-    """What you post drops down into the feed underneath it."""
+def test_the_composer_sits_below_the_posts(feed_client):
+    """Like the private messenger: you read down to the newest, then reply."""
     app, state = feed_client
     _post(state, "main", "a post", 100)
 
     body = app.get("/groups?channel=main").text
-    assert body.index('id="postform"') < body.index('class="card post')
+    assert body.index('class="bubble-row') < body.index('class="composer"')
 
 
-def test_the_newest_post_is_rendered_first(feed_client):
+def test_posts_are_rendered_oldest_first(feed_client):
     import re
 
     app, state = feed_client
@@ -369,9 +369,9 @@ def test_the_newest_post_is_rendered_first(feed_client):
 
     body = app.get("/groups?channel=main").text
     # Match the rendered posts, not the whole document: a bare substring search
-    # finds "older" inside the composer's own placeholder text.
-    rendered = re.findall(r'class="post-text">([^<]+)', body)
-    assert rendered == ["second thing", "first thing"]
+    # finds "older" inside a placeholder.
+    rendered = re.findall(r'class="text">([^<]+)', body)
+    assert rendered == ["first thing", "second thing"]
 
 
 def test_an_image_is_shown_without_a_click(feed_client):
@@ -380,7 +380,7 @@ def test_an_image_is_shown_without_a_click(feed_client):
           file_data=b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
 
     body = app.get("/groups?channel=main").text
-    assert '<img class="post-media"' in body
+    assert '<img src="/groups/media/' in body
 
 
 def test_audio_is_a_player_that_waits_to_be_started(feed_client):
@@ -389,7 +389,7 @@ def test_audio_is_a_player_that_waits_to_be_started(feed_client):
           file_data=b"RIFF\x00\x00\x00\x00WAVEfmt " + b"\x00" * 32)
 
     body = app.get("/groups?channel=main").text
-    assert 'audio class="post-media" controls' in body
+    assert 'audio class="media" controls' in body
     assert 'preload="none"' in body
 
 
@@ -399,7 +399,7 @@ def test_video_is_a_player_that_waits_to_be_started(feed_client):
           file_data=b"\x00\x00\x00\x20ftypisom" + b"\x00" * 64)
 
     body = app.get("/groups?channel=main").text
-    assert 'video class="post-media" controls' in body
+    assert 'video class="media" controls' in body
     assert 'preload="metadata"' in body
 
 
@@ -411,8 +411,8 @@ def test_an_unsafe_file_gets_no_player_at_all(feed_client):
 
     body = app.get("/groups?channel=main").text
     # The class name also appears in the stylesheet, so look for the elements.
-    for element in ('<img class="post-media"', '<video class="post-media"',
-                    '<audio class="post-media"'):
+    for element in ('<img src="/groups/media/', '<video class="media"',
+                    '<audio class="media"'):
         assert element not in body
     assert "x.svg" in body, "it should still be offered as a download"
 
@@ -429,15 +429,14 @@ def test_starting_a_channel_needs_no_creation_step(feed_client):
     assert "first ever" in app.get("/groups?channel=brand-new").text
 
 
-def test_the_channel_control_is_above_the_feed(feed_client):
-    """It was at the bottom, labelled 'Go to channel', which hid that you can
-    invent one."""
+def test_channels_are_listed_beside_the_posts(feed_client):
+    """Channels take the place conversations hold in the private messenger."""
     app, state = feed_client
     _post(state, "main", "a post", 100)
 
     body = app.get("/groups?channel=main").text
-    assert body.index('class="card chanbar"') < body.index('id="postform"')
-    assert "a new one starts it" in body
+    assert 'class="threads"' in body
+    assert "a channel is just a name" in body
 
 
 def test_an_injected_chunk_cannot_block_a_real_post(tmp_path):

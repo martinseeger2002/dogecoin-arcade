@@ -732,20 +732,21 @@ class MessageStore:
 
     def group_posts(self, network: str, channel: str,
                     limit: int = 200) -> list[sqlite3.Row]:
-        """Posts in one channel, **newest first**.
+        """Posts in one channel, oldest first, so a channel reads like a room.
 
-        A feed, not a conversation. A private thread reads downward because it is
-        a dialogue you follow from the start; a public channel is something you
-        drop into, where the thing you have not seen is the newest.
+        It was newest-first for a while, as a feed. A channel presented beside a
+        private conversation should behave like one: you read downward and the
+        newest is at the bottom, where the composer is.
 
         The file bytes are deliberately not selected: a channel listing must not
         pull every attachment in it into memory to render a page.
         """
-        return list(self.conn.execute(
+        rows = list(self.conn.execute(
             "SELECT id,network,channel,txid,height,block_time,sender,nickname,text,"
             "mine,file_name,file_type,LENGTH(file_data) AS file_size "
             "FROM group_post WHERE network=? AND channel=? "
             "ORDER BY block_time DESC, id DESC LIMIT ?", (network, channel, limit)))
+        return list(reversed(rows))
 
     def add_group_chunk(self, network: str, msg_id: bytes, countdown: int,
                         txid: str, height: int, block_time: int, sender: str,

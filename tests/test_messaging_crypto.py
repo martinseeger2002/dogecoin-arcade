@@ -495,13 +495,37 @@ def test_a_damaged_tail_does_not_lose_the_key():
     assert parse_announced_identity(truncated) == (b"", "")
 
 
-def test_a_long_name_is_truncated_not_refused():
-    from arcade.messaging.envelope import (
-        MAX_ANNOUNCE_NAME, build_key_announcement, parse_announced_identity)
+def test_a_long_name_is_published_whole_rather_than_cut():
+    """It used to be trimmed to 12 bytes in silence.
 
-    payload = build_key_announcement(bytes(range(32)), b"\x05" * 20, "a" * 80)
-    _, name = parse_announced_identity(payload)
-    assert name == "a" * MAX_ANNOUNCE_NAME
+    "Big Chief Energy" went on the chain twice as "Big Chief En" -- permanently,
+    for a fee that cannot be taken back, and cut mid-word. A name that does not
+    fit one OP_RETURN now goes as Class B instead: a couple of unspendable
+    outputs rather than none, which is a far better trade than half a name.
+    """
+    from arcade.messaging.envelope import (
+        announcement_fits_one_output, build_key_announcement,
+        parse_announced_identity)
+
+    payload = build_key_announcement(bytes(range(32)), b"\x05" * 20,
+                                     "Big Chief Energy")
+    assert parse_announced_identity(payload)[1] == "Big Chief Energy"
+    assert announcement_fits_one_output(payload) is False
+
+
+def test_a_short_name_still_costs_nothing_but_a_fee():
+    from arcade.messaging.envelope import (
+        announcement_fits_one_output, build_key_announcement)
+
+    payload = build_key_announcement(bytes(range(32)), b"\x05" * 20, "robin")
+    assert announcement_fits_one_output(payload) is True
+
+
+def test_an_absurd_name_is_refused_rather_than_trimmed():
+    from arcade.messaging.envelope import EnvelopeError, build_key_announcement
+
+    with pytest.raises(EnvelopeError):
+        build_key_announcement(bytes(range(32)), b"\x05" * 20, "x" * 100)
 
 
 # --- a sender keeps the only copy of what it sent ------------------------------
