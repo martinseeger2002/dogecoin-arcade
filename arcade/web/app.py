@@ -16,10 +16,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import (
+    HTMLResponse, JSONResponse, RedirectResponse, Response,
+)
 from fastapi.templating import Jinja2Templates
 
-from .. import backup, wallet as walletlib
+from .. import backup, media, wallet as walletlib
 from ..config import NETWORKS, MainnetRefused, WrongChain
 from ..messaging import contact, content, group
 from ..script import b58check_decode
@@ -715,6 +717,34 @@ def create_app(state: AppState) -> FastAPI:
                      "X-Content-Type-Options": "nosniff"},
         )
 
+    @app.get("/messages/media/{message_id}")
+    def render_attachment(request: Request, message_id: int):
+        """Serve an attachment for inline display -- images, audio, video only.
+
+        The type comes from the file's own bytes, never from what the sender
+        claimed, and anything not on the allow-list is refused here and offered
+        as a download instead. Refusing to render is not refusing to deliver.
+        """
+        with state.store() as store:
+            row = store.attachment_for(message_id)
+        if row is None:
+            return Response(status_code=404)
+        data = bytes(row["data"])
+        kind = media.renderable(data)
+        if kind is None:
+            # Not recognised, or too large to inline. Never guess.
+            return RedirectResponse(f"/messages/attachment/{message_id}",
+                                    status_code=303)
+        return Response(
+            content=data, media_type=kind.mime,
+            headers={
+                "Content-Disposition": "inline",
+                "X-Content-Type-Options": "nosniff",
+                "Content-Security-Policy": media.MEDIA_CSP,
+                "Cache-Control": "private, max-age=300",
+            },
+        )
+
     @app.post("/profile")
     def set_profile(request: Request, name: str = Form(""), csrf_token: str = Form("")):
         try:
@@ -726,6 +756,19 @@ def create_app(state: AppState) -> FastAPI:
         except ValueError as exc:
             state.flash(str(exc), "err")
         return RedirectResponse("/contacts", status_code=303)
+
+    @app.get("/events")
+    def events(request: Request):
+        """What an open page polls to decide whether to refresh.
+
+        Deliberately tiny and does no RPC of its own: the watcher thread already
+        knows the answer, so a page left open overnight costs the node nothing.
+        """
+        return JSONResponse({
+            "generation": state.generation,
+            "tips": state.tips,
+            "checked": state.last_checked,
+        })
 
     # --- public group posts ---------------------------------------------------
     # The one part of this application that is NOT encrypted, and the interface
@@ -741,7 +784,7 @@ def create_app(state: AppState) -> FastAPI:
         posts, channels, balance = [], [], None
         if state.store_path.exists():
             with state.store() as store:
-                posts = store.group_posts(chain.network, channel)
+                posts = _with_media(store, store.group_posts(chain.network, channel))
                 channels = store.group_channels(chain.network)
         try:
             with chain.rpc() as rpc:
@@ -754,32 +797,83 @@ def create_app(state: AppState) -> FastAPI:
                       room=group.max_text_bytes(channel, state.profile_name),
                       nickname=state.profile_name)
 
+    @app.get("/groups/media/{post_id}")
+    def group_media(request: Request, post_id: int, download: int = 0):
+        """A file attached to a public post. Same rules as a private one.
+
+        The type is decided from the bytes, never from what the poster claimed,
+        and anything unrecognised is sent as a download rather than rendered.
+        """
+        with state.store() as store:
+            row = store.group_post_file(post_id)
+        if row is None or row["file_data"] is None:
+            return Response(status_code=404)
+        data = bytes(row["file_data"])
+        name = _safe_filename(row["file_name"])
+        kind = None if download else media.renderable(data)
+        if kind is None:
+            return Response(
+                content=data, media_type="application/octet-stream",
+                headers={"Content-Disposition": f'attachment; filename="{name}"',
+                         "X-Content-Type-Options": "nosniff"})
+        return Response(
+            content=data, media_type=kind.mime,
+            headers={"Content-Disposition": "inline",
+                     "X-Content-Type-Options": "nosniff",
+                     "Content-Security-Policy": media.MEDIA_CSP,
+                     "Cache-Control": "private, max-age=300"})
+
     @app.post("/groups/post", response_class=HTMLResponse)
-    def group_post_send(request: Request, which: str = Form("messaging"),
-                        channel: str = Form(""), text: str = Form(""),
-                        confirmed: str = Form(""), csrf_token: str = Form("")):
+    async def group_post_send(request: Request, which: str = Form("messaging"),
+                              channel: str = Form(""), text: str = Form(""),
+                              confirmed: str = Form(""), csrf_token: str = Form(""),
+                              attachment: UploadFile | None = File(None),
+                              attached_name: str = Form(""),
+                              attached_type: str = Form(""),
+                              attached_b64: str = Form("")):
         chain = state.ledger if which == "ledger" else state.messaging
         channel = (channel or group.DEFAULT_CHANNEL).strip() or group.DEFAULT_CHANNEL
         prepared, error = None, None
+        file_bytes, file_name, file_type = b"", attached_name, attached_type
         try:
             check_csrf(csrf_token)
-            payload = group.build(group.GroupPost(
-                channel=channel, nickname=state.profile_name, text=text))
+            if attachment is not None and attachment.filename:
+                file_bytes = await attachment.read()
+                file_name = attachment.filename
+                file_type = attachment.content_type or "application/octet-stream"
+            elif attached_b64:
+                file_bytes = base64.b64decode(attached_b64)
+
+            plan = group.plan(group.GroupPost(
+                channel=channel, nickname=state.profile_name, text=text,
+                file_name=file_name, file_type=file_type, file_data=file_bytes))
             with chain.rpc() as rpc:
                 # public_only=True is the narrow exception to D-010. Nothing
                 # encrypted passes it; see MessageSender.__init__.
                 sender = MessageSender(rpc, chain.params, public_only=True)
                 address = funded_address(rpc, mainnet=chain.is_mainnet)
-                prepared = sender.prepare(address, payload, class_c=True,
+                # Only the first transaction is built for the preview: a chunked
+                # post chains through change outputs, so the next one's input
+                # does not exist until this one is broadcast.
+                prepared = sender.prepare(address, plan.payloads[0],
+                                          class_c=plan.class_c,
                                           change_address=address)
                 if confirmed == "yes":
-                    txid = sender.broadcast(prepared)
+                    if plan.transactions == 1:
+                        txids = [sender.broadcast(prepared)]
+                    else:
+                        txids = sender.send_all(address, plan.payloads)
                     with state.store() as store:
                         store.add_group_post(
-                            chain.network, channel, txid, 0, int(time.time()),
-                            address, state.profile_name, text, mine=True)
+                            chain.network, channel, txids[0], 0, int(time.time()),
+                            address, state.profile_name, text, mine=True,
+                            file_name=group._safe_name(file_name) if file_bytes else "",
+                            file_type=file_type if file_bytes else "",
+                            file_data=file_bytes or None)
                     state.flash(
-                        f"Posted to #{channel}. It is public and permanent.", "ok")
+                        f"Posted to #{channel} in "
+                        f"{len(txids)} transaction{'' if len(txids) == 1 else 's'}. "
+                        f"It is public and permanent.", "ok")
                     return RedirectResponse(
                         f"/groups?which={which}&channel={channel}", status_code=303)
         except Exception as exc:
@@ -788,7 +882,7 @@ def create_app(state: AppState) -> FastAPI:
         posts, channels, balance = [], [], None
         if state.store_path.exists():
             with state.store() as store:
-                posts = store.group_posts(chain.network, channel)
+                posts = _with_media(store, store.group_posts(chain.network, channel))
                 channels = store.group_channels(chain.network)
         try:
             with chain.rpc() as rpc:
@@ -799,7 +893,9 @@ def create_app(state: AppState) -> FastAPI:
                       channel=channel, posts=posts, channels=channels,
                       balance=balance, when=_when, prepared=prepared, error=error,
                       draft=text, room=group.max_text_bytes(channel, state.profile_name),
-                      nickname=state.profile_name)
+                      nickname=state.profile_name,
+                      attached_b64=base64.b64encode(file_bytes).decode() if file_bytes else "",
+                      attached_name=file_name, attached_type=file_type)
 
     @app.get("/keys", response_class=HTMLResponse)
     def keys_page(request: Request):
@@ -1029,9 +1125,38 @@ def _with_attachments(store, rows: list) -> list:
         if message_id and not item.get("mine"):
             summary = store.attachment_summary(message_id)
             if summary is not None:
-                item["file"] = {"id": message_id, "name": summary["name"],
-                                "type": summary["content_type"],
-                                "size": summary["size"]}
+                info = {"id": message_id, "name": summary["name"],
+                        "type": summary["content_type"], "size": summary["size"],
+                        "kind": None, "label": ""}
+                # Decide from the bytes, here, once -- the template must never be
+                # in a position to render something on a sender's say-so.
+                row = store.attachment_for(message_id)
+                if row is not None:
+                    found = media.renderable(bytes(row["data"]))
+                    if found is not None:
+                        info["kind"] = found.kind
+                        info["label"] = found.label
+                item["file"] = info
+        out.append(item)
+    return out
+
+
+def _with_media(store, rows: list) -> list:
+    """Decide what each post's file is, from its bytes, once and server side.
+
+    The template must never be in a position to render something on a poster's
+    say-so, so the decision does not travel as a declared type.
+    """
+    out = []
+    for row in rows:
+        item = dict(row)
+        if item.get("file_size"):
+            found = None
+            record = store.group_post_file(item["id"])
+            if record is not None and record["file_data"] is not None:
+                found = media.renderable(bytes(record["file_data"]))
+            item["kind"] = found.kind if found else None
+            item["label"] = found.label if found else ""
         out.append(item)
     return out
 

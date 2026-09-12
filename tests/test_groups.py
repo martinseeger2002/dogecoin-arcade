@@ -195,3 +195,127 @@ def test_a_confirmed_post_is_not_reset_by_a_later_optimistic_row(store):
     store.add_group_post("test", "main", "tx1", 0, 1000, "nMe", "", "hi")
 
     assert store.group_posts("test", "main")[0]["height"] == 500
+
+
+# --- chunked public posts -----------------------------------------------------
+# A post carrying a file outgrows one transaction quickly. Unlike a private
+# message these chunks are NOT sealed, so rejoining them needs no key and no
+# identity -- a node with no wallet can read them. That is the whole reason they
+# needed a type of their own rather than reusing the sealed chunk path.
+
+
+def _png(size):
+    return b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * (size // 256 + 1)
+
+
+def test_a_text_post_is_still_one_cheap_op_return():
+    plan = G.plan(G.GroupPost("main", "robin", "just talking"))
+    assert plan.transactions == 1 and plan.class_c
+
+
+def test_a_small_file_is_one_transaction_but_not_class_c():
+    """An OP_RETURN cannot hold a file at all."""
+    plan = G.plan(G.GroupPost("art", "m", "look", "x.png", "image/png", _png(1000)))
+    assert plan.transactions == 1 and not plan.class_c
+
+
+def test_a_large_file_chunks():
+    plan = G.plan(G.GroupPost("art", "m", "look", "x.png", "image/png", _png(40_000)))
+    assert plan.transactions > 1
+    assert plan.msg_id and len(plan.msg_id) == 8
+
+
+def test_chunks_are_split_evenly():
+    """Same reason as private messages: a greedy split makes the first the largest."""
+    plan = G.plan(G.GroupPost("art", "m", "look", "x.png", "image/png", _png(40_000)))
+    sizes = [len(p) for p in plan.payloads]
+    assert max(sizes) - min(sizes) <= 20, sizes
+
+
+def test_the_final_chunk_carries_countdown_zero():
+    plan = G.plan(G.GroupPost("art", "m", "look", "x.png", "image/png", _png(40_000)))
+    countdowns = [G.parse_chunk(p)[1] for p in plan.payloads]
+    assert countdowns[-1] == 0
+    assert countdowns == list(range(len(countdowns) - 1, -1, -1))
+
+
+def test_every_chunk_shares_one_message_id():
+    plan = G.plan(G.GroupPost("art", "m", "look", "x.png", "image/png", _png(40_000)))
+    ids = {G.parse_chunk(p)[0] for p in plan.payloads}
+    assert len(ids) == 1
+
+
+def test_rejoining_the_chunks_reproduces_the_post():
+    original = _png(40_000)
+    plan = G.plan(G.GroupPost("art", "m", "look", "x.png", "image/png", original))
+    joined = b"".join(G.parse_chunk(p)[2] for p in plan.payloads)
+    got = G.parse(joined)
+    assert got.file_data == original
+    assert got.channel == "art" and got.text == "look"
+
+
+def test_a_chunk_is_not_mistaken_for_a_whole_post():
+    plan = G.plan(G.GroupPost("art", "m", "look", "x.png", "image/png", _png(40_000)))
+    assert G.is_group_chunk_payload(plan.payloads[0])
+    assert not G.is_group_payload(plan.payloads[0])
+
+
+@pytest.mark.parametrize("order", [(0, 1, 2), (2, 1, 0), (1, 2, 0), (2, 0, 1)])
+def test_chunks_reassemble_in_any_arrival_order(tmp_path, order):
+    """Blocks are scanned in whatever order the chain gives them."""
+    from arcade.config import NETWORKS
+    from arcade.messaging.scanner import Scanner
+    from arcade.messaging.store import MessageStore
+
+    original = _png(G.MAX_CLASS_B_PAYLOAD * 2 + 500)
+    plan = G.plan(G.GroupPost("art", "m", "look", "x.png", "image/png", original))
+    assert plan.transactions == 3, "fixture must produce exactly three chunks"
+
+    store = MessageStore(tmp_path / f"m{order}.sqlite")
+    scanner = Scanner.__new__(Scanner)
+    scanner.params = NETWORKS["regtest"]
+    scanner.store = store
+    scanner.identity = None
+    scanner.public_only = True
+
+    for index in order:
+        msg_id, countdown, piece = G.parse_chunk(plan.payloads[index])
+        store.add_group_chunk("regtest", msg_id, countdown, f"tx{index}",
+                              100 + index, 1000 + index, "nA", piece)
+        scanner._assemble_group(msg_id, 100 + index, 1000 + index)
+
+    (row,) = store.group_posts("regtest", "art")
+    assert bytes(store.group_post_file(row["id"])["file_data"]) == original
+
+
+def test_a_lone_final_chunk_is_not_treated_as_complete(tmp_path):
+    """The bug this guard exists for, and it destroyed data.
+
+    A chunk with countdown 0 satisfies every naive completeness check -- "the
+    highest countdown is 0, so there is one chunk, and we have one" -- while
+    being the *last* piece of a post whose start has not arrived. The parse then
+    failed and the error path deleted the stored chunks, so each chunk was
+    destroyed as it arrived and the post could never complete.
+    """
+    from arcade.config import NETWORKS
+    from arcade.messaging.scanner import Scanner
+    from arcade.messaging.store import MessageStore
+
+    plan = G.plan(G.GroupPost("art", "m", "look", "x.png", "image/png",
+                              _png(G.MAX_CLASS_B_PAYLOAD * 2)))
+    store = MessageStore(tmp_path / "lone.sqlite")
+    scanner = Scanner.__new__(Scanner)
+    scanner.params = NETWORKS["regtest"]
+    scanner.store = store
+    scanner.identity = None
+    scanner.public_only = True
+
+    msg_id, countdown, piece = G.parse_chunk(plan.payloads[-1])
+    assert countdown == 0
+    store.add_group_chunk("regtest", msg_id, countdown, "tx", 1, 1, "nA", piece)
+
+    assert scanner._assemble_group(msg_id, 1, 1) is False
+    assert store.group_posts("regtest", "art") == []
+    assert len(store.group_chunks("regtest", msg_id)) == 1, (
+        "an incomplete chain must be kept, not discarded"
+    )

@@ -70,6 +70,7 @@
 
     {% if error %}<div class="msg err" style="margin:14px 16px 0">{{ error }}</div>{% endif %}
 
+    <div id="live" data-generation="{{ state.generation }}" class="live"></div>
     <div class="bubbles" id="bubbles">
       {% if not thread %}
         <p class="muted nothing" style="padding:30px 0">
@@ -80,13 +81,27 @@
           <div class="bubble">
             {% if m.body %}<div class="text">{{ m.body.decode('utf-8', 'replace') }}</div>{% endif %}
             {% if m.file %}
-            <a class="file" href="/messages/attachment/{{ m.file.id }}">
-              <span class="file-icon">📄</span>
-              <span class="file-meta">
-                <strong>{{ m.file.name }}</strong>
-                <span class="muted">{{ "{:,}".format(m.file.size) }} bytes · save</span>
-              </span>
-            </a>
+              {% if m.file.kind == 'image' %}
+                <a class="media" href="/messages/attachment/{{ m.file.id }}"
+                   title="{{ m.file.name }} — click to save">
+                  <img src="/messages/media/{{ m.file.id }}" alt="{{ m.file.name }}" loading="lazy"></a>
+              {% elif m.file.kind == 'audio' %}
+                <audio class="media" controls preload="none"
+                       src="/messages/media/{{ m.file.id }}"></audio>
+              {% elif m.file.kind == 'video' %}
+                <video class="media" controls preload="metadata"
+                       src="/messages/media/{{ m.file.id }}"></video>
+              {% endif %}
+              <a class="file" href="/messages/attachment/{{ m.file.id }}">
+                <span class="file-icon">{{ '🖼' if m.file.kind == 'image'
+                  else ('🎵' if m.file.kind == 'audio'
+                  else ('🎬' if m.file.kind == 'video' else '📄')) }}</span>
+                <span class="file-meta">
+                  <strong>{{ m.file.name }}</strong>
+                  <span class="muted">{{ m.file.label or 'file' }} ·
+                    {{ "{:,}".format(m.file.size) }} bytes · save</span>
+                </span>
+              </a>
             {% endif %}
             <div class="stamp">
               {{ when(m.when) }}

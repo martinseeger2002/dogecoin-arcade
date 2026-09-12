@@ -144,10 +144,27 @@ CREATE TABLE IF NOT EXISTS group_post (
     nickname   TEXT NOT NULL DEFAULT '',
     text       TEXT NOT NULL DEFAULT '',
     mine       INTEGER NOT NULL DEFAULT 0,
+    file_name  TEXT NOT NULL DEFAULT '',
+    file_type  TEXT NOT NULL DEFAULT '',
+    file_data  BLOB,
     UNIQUE (network, txid)
 );
 CREATE INDEX IF NOT EXISTS group_post_channel
     ON group_post(network, channel, block_time DESC);
+
+-- Links of a public post too large for one transaction, held until the chain is
+-- complete. Not encrypted, so anyone can rejoin them -- no key, no identity.
+CREATE TABLE IF NOT EXISTS group_chunk (
+    network    TEXT NOT NULL,
+    msg_id     BLOB NOT NULL,
+    countdown  INTEGER NOT NULL,
+    txid       TEXT NOT NULL,
+    height     INTEGER NOT NULL,
+    block_time INTEGER NOT NULL,
+    sender     TEXT NOT NULL DEFAULT '',
+    data       BLOB NOT NULL,
+    PRIMARY KEY (network, msg_id, countdown)
+);
 
 CREATE TABLE IF NOT EXISTS pending_send (
     msg_id         BLOB PRIMARY KEY,
@@ -238,6 +255,9 @@ class MessageStore:
         ("contact", "mainnet_address", "TEXT NOT NULL DEFAULT ''"),
         ("contact", "notes", "TEXT NOT NULL DEFAULT ''"),
         ("contact", "updated", "INTEGER NOT NULL DEFAULT 0"),
+        ("group_post", "file_name", "TEXT NOT NULL DEFAULT ''"),
+        ("group_post", "file_type", "TEXT NOT NULL DEFAULT ''"),
+        ("group_post", "file_data", "BLOB"),
     )
 
     def _migrate(self) -> None:
@@ -509,7 +529,8 @@ class MessageStore:
 
     def add_group_post(self, network: str, channel: str, txid: str, height: int,
                        block_time: int, sender: str, nickname: str, text: str,
-                       mine: bool = False) -> int:
+                       mine: bool = False, file_name: str = "",
+                       file_type: str = "", file_data: bytes | None = None) -> int:
         # A post this machine made is recorded optimistically at broadcast, with
         # height 0, so it appears straight away. The scan then sees the same txid
         # on chain. INSERT OR IGNORE kept the optimistic row and the real height
@@ -518,8 +539,9 @@ class MessageStore:
         # tell us that, only we know it.
         cur = self.conn.execute(
             "INSERT INTO group_post"
-            "(network,channel,txid,height,block_time,sender,nickname,text,mine) "
-            "VALUES(?,?,?,?,?,?,?,?,?) "
+            "(network,channel,txid,height,block_time,sender,nickname,text,mine,"
+            "file_name,file_type,file_data) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(network,txid) DO UPDATE SET "
             "  height=CASE WHEN excluded.height > 0 THEN excluded.height "
             "              ELSE group_post.height END, "
@@ -527,18 +549,53 @@ class MessageStore:
             "              ELSE group_post.block_time END, "
             "  sender=CASE WHEN excluded.sender != '' THEN excluded.sender "
             "              ELSE group_post.sender END, "
-            "  mine=MAX(group_post.mine, excluded.mine)",
+            "  mine=MAX(group_post.mine, excluded.mine), "
+            "  file_name=CASE WHEN excluded.file_name != '' THEN excluded.file_name "
+            "              ELSE group_post.file_name END, "
+            "  file_type=CASE WHEN excluded.file_type != '' THEN excluded.file_type "
+            "              ELSE group_post.file_type END, "
+            "  file_data=COALESCE(excluded.file_data, group_post.file_data)",
             (network, channel, txid, height, block_time, sender, nickname, text,
-             1 if mine else 0))
+             1 if mine else 0, file_name, file_type, file_data))
         return cur.lastrowid or 0
 
     def group_posts(self, network: str, channel: str,
                     limit: int = 200) -> list[sqlite3.Row]:
-        """Posts in one channel, oldest first, so a conversation reads downward."""
+        """Posts in one channel, oldest first, so a conversation reads downward.
+
+        The file bytes are deliberately not selected: a channel listing must not
+        pull every attachment in it into memory to render a page.
+        """
         rows = list(self.conn.execute(
-            "SELECT * FROM group_post WHERE network=? AND channel=? "
+            "SELECT id,network,channel,txid,height,block_time,sender,nickname,text,"
+            "mine,file_name,file_type,LENGTH(file_data) AS file_size "
+            "FROM group_post WHERE network=? AND channel=? "
             "ORDER BY block_time DESC, id DESC LIMIT ?", (network, channel, limit)))
         return list(reversed(rows))
+
+    def add_group_chunk(self, network: str, msg_id: bytes, countdown: int,
+                        txid: str, height: int, block_time: int, sender: str,
+                        data: bytes) -> None:
+        self.conn.execute(
+            "INSERT OR IGNORE INTO group_chunk"
+            "(network,msg_id,countdown,txid,height,block_time,sender,data) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (network, msg_id, countdown, txid, height, block_time, sender, data))
+
+    def group_chunks(self, network: str, msg_id: bytes) -> list[sqlite3.Row]:
+        """Every link seen so far, in send order (countdown counts down to 0)."""
+        return list(self.conn.execute(
+            "SELECT * FROM group_chunk WHERE network=? AND msg_id=? "
+            "ORDER BY countdown DESC", (network, msg_id)))
+
+    def drop_group_chunks(self, network: str, msg_id: bytes) -> None:
+        self.conn.execute("DELETE FROM group_chunk WHERE network=? AND msg_id=?",
+                          (network, msg_id))
+
+    def group_post_file(self, post_id: int) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT file_name, file_type, file_data FROM group_post WHERE id=?",
+            (post_id,)).fetchone()
 
     def group_channels(self, network: str) -> list[sqlite3.Row]:
         """Channels seen on this network, most recently active first."""

@@ -38,6 +38,7 @@ TYPE_SINGLE = 1       # a whole message in one transaction
 TYPE_CHUNK = 2        # one link of a chained multi-transaction message
 TYPE_KEY_ANNOUNCE = 3 # an X25519 public key announcement
 TYPE_GROUP = 4        # a public group post -- NOT encrypted, readable by anyone
+TYPE_GROUP_CHUNK = 5  # one link of a public post too large for one transaction
 
 # Cleartext header lengths. Both message types carry `clen`, the exact number of
 # ciphertext bytes in this payload.
@@ -55,6 +56,10 @@ HEADER_BOUND_CHUNK_LEN = 14    # + msg_id8
 KEY_ANNOUNCE_HEADER_LEN = 6    # announcements are fixed-size and need no clen
 KEY_ANNOUNCE_LEN = 38          # header6 + pubkey32
 GROUP_HEADER_LEN = 6           # public, so no clen: nothing is sealed to unpad
+#: magic4 + version1 + type1 + msg_id8 + countdown2 + clen2. A public chunk DOES
+#: carry `clen`: Class B pads its final packet with NULs, and while a trailing
+#: NUL is harmless in text it is not harmless in the middle of a rejoined file.
+GROUP_CHUNK_HEADER_LEN = 18
 
 SEALED_OVERHEAD = 48
 SENDER_KEY_LEN = 32
@@ -85,6 +90,12 @@ class Header:
 
     def encode(self) -> bytes:
         """The full cleartext header, as it appears on chain."""
+        if self.type == TYPE_GROUP_CHUNK:
+            if len(self.msg_id) != 8:
+                raise EnvelopeError("a public chunk header needs an 8-byte id")
+            return (MAGIC + bytes([VERSION, self.type]) + self.msg_id
+                    + self.countdown.to_bytes(2, "big")
+                    + self.clen.to_bytes(2, "big"))
         if self.type in (TYPE_KEY_ANNOUNCE, TYPE_GROUP):
             # Neither carries `clen`. It exists to undo Class B's NUL padding
             # before opening a sealed box, and nothing here is sealed: an
@@ -127,6 +138,8 @@ class Header:
             return KEY_ANNOUNCE_HEADER_LEN
         if self.type == TYPE_GROUP:
             return GROUP_HEADER_LEN
+        if self.type == TYPE_GROUP_CHUNK:
+            return GROUP_CHUNK_HEADER_LEN
         return HEADER_CHUNK_LEN if self.type == TYPE_CHUNK else HEADER_SINGLE_LEN
 
     @property
@@ -156,6 +169,15 @@ class Header:
             if len(payload) < HEADER_SINGLE_LEN:
                 raise EnvelopeError("payload too short to contain a header")
             return cls(type=msg_type, clen=int.from_bytes(payload[6:8], "big"))
+        if msg_type == TYPE_GROUP_CHUNK:
+            if len(payload) < GROUP_CHUNK_HEADER_LEN:
+                raise EnvelopeError("payload too short for a public chunk header")
+            return cls(
+                type=msg_type,
+                msg_id=payload[6:14],
+                countdown=int.from_bytes(payload[14:16], "big"),
+                clen=int.from_bytes(payload[16:18], "big"),
+            )
         if msg_type not in (TYPE_KEY_ANNOUNCE, TYPE_GROUP):
             raise EnvelopeError(f"unknown message type {msg_type}")
         return cls(type=msg_type)

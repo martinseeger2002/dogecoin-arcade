@@ -259,3 +259,33 @@ def test_a_binary_attachment_round_trips_through_encryption_and_chunking():
     assert got.attachment.data == original
     assert got.attachment.content_type == "image/png"
     assert got.text == "photo"
+
+
+def test_a_declared_profile_address_beats_the_funding_address(tmp_path):
+    """Found across machines by a test machine: the address book showed the wrong address.
+
+    `add_message` fills a blank address from the transaction, and that address is
+    whichever one funded the send -- it changes with coin selection. A profile
+    declares the identity address explicitly. If the inferred one is written
+    first it occupies the field and the declared one, being "fill blanks only",
+    silently loses.
+    """
+    store = _store(tmp_path)
+    key = b"\x0f" * 32
+    identity_address = "nYW2BPLENpu2nGa7WCExvzxD3hQYueULFa"
+    funding_address = "nou2qUYgAU58cKHWEPCy9QQdg1Psmqig1v"
+
+    # The order the scanner uses: profile first, then the message.
+    store.apply_profile(key, "", identity_address, "")
+    store.add_message(None, "tx", "tx", 1, 0, funding_address, key, "me", b"hi")
+
+    assert store.contact_by_key(key)["testnet_address"] == identity_address
+
+
+def test_without_a_profile_the_funding_address_is_still_better_than_nothing(tmp_path):
+    """It is not wrong, only less stable -- and it is all there is to go on."""
+    store = _store(tmp_path)
+    key = b"\x10" * 32
+    store.add_message(None, "tx", "tx", 1, 0, "nFundingAddress", key, "me", b"hi")
+
+    assert store.contact_by_key(key)["testnet_address"] == "nFundingAddress"

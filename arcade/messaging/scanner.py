@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from .. import payload as P
-from ..config import Params, require_messaging_network
+from ..config import MainnetRefused, Params, require_messaging_network
 from ..indexer import PrevOutCache
 from ..rpc import RpcClient
 from ..tx import TxError, extract
@@ -66,8 +66,26 @@ class Scanner:
     """Walks the chain, collecting message payloads and key announcements."""
 
     def __init__(self, rpc: RpcClient, params: Params, store: MessageStore,
-                 identity: Identity | None = None):
-        require_messaging_network(params)
+                 identity: Identity | None = None, *, public_only: bool = False):
+        """`public_only` mirrors the same flag on MessageSender (D-014).
+
+        A scanner that only collects public group posts decrypts nothing and
+        needs no identity, so it may run on mainnet. Without this the public
+        board could post to mainnet and then never show anything, which is worse
+        than not offering it.
+
+        It is enforced, not merely declared: with the flag set, an identity is
+        refused outright, so no code path can quietly start trial-decrypting
+        mainnet traffic by passing one in.
+        """
+        if public_only:
+            if identity is not None:
+                raise MainnetRefused(
+                    "a public-only scanner must not be given an identity: "
+                    "decryption is exactly what it exists to avoid")
+        else:
+            require_messaging_network(params)
+        self.public_only = public_only
         self.rpc = rpc
         self.params = params
         self.store = store
@@ -194,6 +212,18 @@ class Scanner:
             # Public posts are read here and now. There is nothing to decrypt and
             # no identity required, which is the whole difference: a node with no
             # key at all still sees every group post on the chain.
+            if group.is_group_chunk_payload(body):
+                try:
+                    msg_id, countdown, piece = group.parse_chunk(body)
+                except EnvelopeError:
+                    continue
+                self.store.add_group_chunk(
+                    self.params.name, msg_id, countdown, atx.txid, height,
+                    block_time, atx.sender, piece)
+                if self._assemble_group(msg_id, height, block_time):
+                    result.group_posts += 1
+                continue
+
             if group.is_group_payload(body):
                 try:
                     post = group.parse(body)
@@ -205,6 +235,8 @@ class Scanner:
                     mine=(self.identity is not None
                           and atx.sender == self.store.get_meta(
                               f"identity_address:{self.params.name}")),
+                    file_name=post.file_name, file_type=post.file_type,
+                    file_data=post.file_data or None,
                 )
                 result.group_posts += 1
                 continue
@@ -213,6 +245,9 @@ class Scanner:
                 header = Header.decode(body)
             except EnvelopeError:
                 continue
+
+            if self.public_only:
+                continue          # nothing else here is ours to look at
 
             if header.type == TYPE_KEY_ANNOUNCE:
                 try:
@@ -278,6 +313,54 @@ class Scanner:
             self.store.mark_opened(row["txid"])
         return opened
 
+    def _assemble_group(self, msg_id: bytes, height: int, block_time: int) -> bool:
+        """Rejoin a chunked public post once every link has been seen.
+
+        No decryption and no identity: a public post is plain, so completeness is
+        the only question. The countdown makes that self-describing -- the last
+        chunk carries zero, and the number of links is therefore known from it.
+        """
+        chunks = self.store.group_chunks(self.params.name, msg_id)
+        seen = {row["countdown"] for row in chunks}
+
+        # The highest countdown seen says how many links there are -- but only if
+        # the FIRST link has arrived. A lone countdown-0 chunk satisfies every
+        # naive completeness check ("highest is 0, so there is 1, and we have 1")
+        # while being the *last* piece of a message whose start has not landed
+        # yet. That is not a hypothetical: chunks arrive in whatever order the
+        # scan reaches their blocks.
+        #
+        # Chunking is only ever used for two or more links, so a single chunk is
+        # by definition incomplete, and the set must run contiguously from the
+        # highest down to zero.
+        if len(chunks) < 2:
+            return False
+        expected = max(seen) + 1
+        if len(chunks) != expected or seen != set(range(expected)):
+            return False                      # a gap; wait for the rest
+
+        joined = b"".join(bytes(row["data"]) for row in chunks)
+        try:
+            post = group.parse(joined)
+        except EnvelopeError:
+            # Kept, not dropped. These chunks are the only copy held locally, and
+            # a parse failure here is more likely to mean something is still
+            # missing than that the data is bad. Discarding them was a real bug:
+            # it destroyed each chunk as it arrived and the post could never
+            # complete.
+            return False
+
+        first, last = chunks[0], chunks[-1]
+        self.store.add_group_post(
+            self.params.name, post.channel, first["txid"], last["height"],
+            last["block_time"], first["sender"], post.nickname, post.text,
+            mine=(first["sender"] == self.store.get_meta(
+                f"identity_address:{self.params.name}")),
+            file_name=post.file_name, file_type=post.file_type,
+            file_data=post.file_data or None)
+        self.store.drop_group_chunks(self.params.name, msg_id)
+        return True
+
     def _store_message(self, msg_id, first_txid, last_txid, height, block_time,
                        sender_addr, sender_pk, me, plaintext) -> int:
         """Store a decrypted message, unpacking whatever the body carries.
@@ -287,6 +370,24 @@ class Scanner:
         forgotten on the other.
         """
         parsed = content.parse(plaintext)
+
+        # The profile goes in FIRST, before `add_message` infers an address from
+        # the transaction. Order matters and getting it wrong was a real bug:
+        # `add_message` fills a blank address with the *funding* address, which
+        # changes with coin selection, and the declared profile then found the
+        # field already occupied and lost. a test machine caught it -- the address book
+        # showed the address my coins came from rather than the identity address
+        # I had explicitly sent.
+        #
+        # Both are still "fill blanks only", so a name or address the user typed
+        # themselves beats either.
+        if parsed.profile is not None:
+            # What a sender says about themselves. Unverified: anyone can claim
+            # any name and any address, and the interface says so where shown.
+            self.store.apply_profile(
+                sender_pk, parsed.profile.name, parsed.profile.testnet_address,
+                parsed.profile.mainnet_address)
+
         message_id = self.store.add_message(
             msg_id, first_txid, last_txid, height, block_time, sender_addr,
             sender_pk, me, parsed.text.encode() if not parsed.plain else plaintext,
@@ -296,13 +397,6 @@ class Scanner:
             self.store.add_attachment(
                 message_id, parsed.attachment.name,
                 parsed.attachment.content_type, parsed.attachment.data)
-        if parsed.profile is not None:
-            # What a sender says about themselves, filling blanks only. It is
-            # unverified: anyone can claim any name and any address, and the
-            # interface says so where it is shown.
-            self.store.apply_profile(
-                sender_pk, parsed.profile.name, parsed.profile.testnet_address,
-                parsed.profile.mainnet_address)
         return message_id
 
     def _try_assemble(self, row: Any, me: str) -> int:

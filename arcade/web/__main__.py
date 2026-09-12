@@ -18,6 +18,7 @@ import uvicorn
 from ..config import MESSAGING_NETWORKS
 from .app import create_app
 from .state import AppState, ChainContext
+from .watcher import BlockWatcher
 
 DEFAULT_HOME = Path.home() / ".dogecoinarcade"
 
@@ -99,6 +100,11 @@ def main(argv: list[str] | None = None) -> int:
     # do it on every launch. That is the entire point of saving it.
     if state.try_auto_unlock():
         print(f"  messaging ready as {state.derived_address}")
+
+    # Watch for new blocks and scan when one lands, so a message that arrives
+    # while somebody is looking at the conversation actually appears.
+    BlockWatcher(state).start()
+    print("  watching for new blocks")
 
     print(f"DogecoinArcade  ->  http://{args.host}:{args.port}")
     uvicorn.run(create_app(state), host=args.host, port=args.port, log_level="warning")

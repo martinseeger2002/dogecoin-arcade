@@ -153,6 +153,13 @@ a.chainpick em{display:block;font-weight:400;font-style:normal;font-size:.8rem;
 a.chainpick:hover{background:var(--code);text-decoration:none}
 a.chainpick.on{border-color:var(--accent);box-shadow:0 0 0 2px rgba(120,110,255,.16)}
 .poster{font-size:.76rem;font-weight:700;opacity:.75;margin-bottom:3px}
+
+.live{font-size:.78rem;color:var(--accent);padding:0 16px;min-height:1.1em}
+
+.media{display:block;margin-top:8px;max-width:100%;border-radius:8px;overflow:hidden}
+.media img,img.media{display:block;max-width:100%;height:auto;border-radius:8px}
+audio.media{width:100%;min-width:220px}
+video.media{width:100%;max-height:420px;background:#000;border-radius:8px}
 </style>
 </head>
 <body>
@@ -172,5 +179,41 @@ a.chainpick.on{border-color:var(--accent);box-shadow:0 0 0 2px rgba(120,110,255,
 {% if notice %}<div class="msg {{ notice_kind }}">{{ notice }}</div>{% endif %}
 {% block body %}{% endblock %}
 </main>
+
+<script>
+// Refresh a conversation when a new block brings something to show.
+//
+// Polls a counter the block watcher maintains, rather than reloading on a timer:
+// a block with nothing in it for you must not interrupt you. Anything half
+// typed, and any open confirmation, suppresses the reload -- losing a draft to
+// an automatic refresh would be a worse bug than the staleness it fixes.
+(function () {
+  var el = document.getElementById('live');
+  if (!el) return;
+  var known = parseInt(el.dataset.generation || '0', 10);
+
+  function busy() {
+    var active = document.activeElement;
+    if (active && /^(TEXTAREA|INPUT)$/.test(active.tagName)) return true;
+    var drafts = document.querySelectorAll('textarea, input[type=text]');
+    for (var i = 0; i < drafts.length; i++) {
+      if (drafts[i].value && drafts[i].value.trim()) return true;
+    }
+    return !!document.querySelector('.confirm');
+  }
+
+  function poll() {
+    fetch('/events', {cache: 'no-store'})
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.generation === known) return;
+        if (busy()) { el.textContent = 'new messages — finish typing to see them'; return; }
+        location.reload();
+      })
+      .catch(function () { /* node or server momentarily away; try again */ });
+  }
+  setInterval(poll, 5000);
+})();
+</script>
 </body>
 </html>

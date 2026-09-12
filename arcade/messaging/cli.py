@@ -203,7 +203,13 @@ def cmd_fund(args) -> int:
         print(f"  Rewards go to {address}")
         print()
         if not args.yes:
-            if input("Start mining? [y/N] ").strip().lower() not in ("y", "yes"):
+            try:
+                answer = input("Start mining? [y/N] ").strip().lower()
+            except EOFError:
+                print("no terminal to ask on -- pass --yes to start mining.",
+                      file=sys.stderr)
+                return 1
+            if answer not in ("y", "yes"):
                 return 1
 
         def progress(attempt, message):
@@ -461,7 +467,14 @@ def _confirm(args, prepared) -> bool:
     if args.dry_run:
         print("dry run: not broadcasting")
         return False
-    answer = input("Broadcast this transaction? [y/N] ").strip().lower()
+    try:
+        answer = input("Broadcast this transaction? [y/N] ").strip().lower()
+    except EOFError:
+        # No terminal: a cron job, a pipe, a script. A stack trace here is
+        # useless and alarming, and the safe answer is obvious.
+        print("no terminal to ask on -- pass --yes to broadcast without "
+              "confirming, or --dry-run to see the plan.", file=sys.stderr)
+        return False
     return answer in ("y", "yes")
 
 

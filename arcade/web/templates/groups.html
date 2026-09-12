@@ -62,6 +62,7 @@
 
     {% if error %}<div class="msg err" style="margin:14px 16px 0">{{ error }}</div>{% endif %}
 
+    <div id="live" data-generation="{{ state.generation }}" class="live"></div>
     <div class="bubbles" id="bubbles">
       {% if not posts %}
         <p class="muted empty">Nothing in #{{ channel }} yet on {{ chain.label|lower }}.</p>
@@ -70,7 +71,28 @@
         <div class="bubble-row {{ 'mine' if p.mine else 'theirs' }}">
           <div class="bubble">
             <div class="poster">{{ p.nickname or p.sender or 'anonymous' }}</div>
-            <div class="text">{{ p.text }}</div>
+            {% if p.text %}<div class="text">{{ p.text }}</div>{% endif %}
+            {% if p.file_size %}
+              {% if p.kind == 'image' %}
+                <a class="media" href="/groups/media/{{ p.id }}?download=1"
+                   title="{{ p.file_name }} — click to save">
+                  <img src="/groups/media/{{ p.id }}" alt="{{ p.file_name }}" loading="lazy"></a>
+              {% elif p.kind == 'audio' %}
+                <audio class="media" controls preload="none" src="/groups/media/{{ p.id }}"></audio>
+              {% elif p.kind == 'video' %}
+                <video class="media" controls preload="metadata" src="/groups/media/{{ p.id }}"></video>
+              {% endif %}
+              <a class="file" href="/groups/media/{{ p.id }}?download=1">
+                <span class="file-icon">{{ '🖼' if p.kind == 'image'
+                  else ('🎵' if p.kind == 'audio'
+                  else ('🎬' if p.kind == 'video' else '📄')) }}</span>
+                <span class="file-meta">
+                  <strong>{{ p.file_name }}</strong>
+                  <span class="muted">{{ p.label or 'file' }} ·
+                    {{ "{:,}".format(p.file_size) }} bytes · save</span>
+                </span>
+              </a>
+            {% endif %}
             <div class="stamp">
               {{ when(p.block_time) }}
               {% if p.height %}· block {{ "{:,}".format(p.height) }}{% else %}· pending{% endif %}
@@ -86,7 +108,10 @@
         <strong class="danger-text">This spends real coins.</strong>
         {% else %}<strong>Post this?</strong>{% endif %}
         Fee {{ "%.8f"|format(prepared.fee_sats / 100000000) }},
-        one OP_RETURN output and no dust.
+        {% if attached_name %}{{ prepared.outputs if prepared.outputs is defined
+          else 'several' }} outputs &mdash; a file is carried in multisig outputs,
+        so most of this cost is <strong>dust that can never be spent again</strong>.
+        {% else %}one OP_RETURN output and no dust.{% endif %}
         {% if chain.is_mainnet %}
         <div class="note" style="margin:10px 0 0">
           Posting to mainnet writes <em>{{ draft }}</em> onto the Pepecoin chain
@@ -101,6 +126,9 @@
           <input type="hidden" name="channel" value="{{ channel }}">
           <input type="hidden" name="text" value="{{ draft }}">
           <input type="hidden" name="confirmed" value="yes">
+          <input type="hidden" name="attached_b64" value="{{ attached_b64 or '' }}">
+          <input type="hidden" name="attached_name" value="{{ attached_name or '' }}">
+          <input type="hidden" name="attached_type" value="{{ attached_type or '' }}">
           <div class="row">
             <button type="submit" class="small {{ 'danger' if chain.is_mainnet }}">
               {{ 'Post to mainnet' if chain.is_mainnet else 'Post it' }}</button>
@@ -111,15 +139,21 @@
       </div>
     {% endif %}
 
-    <form method="post" action="/groups/post" class="composer">
+    <form method="post" action="/groups/post" class="composer"
+          enctype="multipart/form-data">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="which" value="{{ which }}">
       <input type="hidden" name="channel" value="{{ channel }}">
+      <label class="attach" title="Attach a file — costs far more than text">
+        <input type="file" name="attachment" onchange="showPick(this)" hidden>
+        <span id="clip">📎</span>
+      </label>
       <textarea name="text" rows="2" maxlength="{{ room }}" id="post"
                 oninput="countLeft(this)"
                 placeholder="Say something in public…">{{ draft or '' }}</textarea>
       <button type="submit">Review</button>
     </form>
+    <p class="muted composer-note" id="picked" hidden></p>
     <p class="muted composer-note">
       <span id="left">{{ room }}</span> characters left. A post is one OP_RETURN
       output, which is why it is short and why it costs a fee and no dust.
@@ -130,6 +164,19 @@
 </div>
 
 <script>
+function showPick(input){
+  var note = document.getElementById('picked');
+  var file = input.files && input.files[0];
+  var box = document.getElementById('post');
+  if (!file) { note.hidden = true; return; }
+  note.hidden = false;
+  note.innerHTML = '<strong>' + file.name + '</strong> — ' + file.size.toLocaleString() +
+    ' bytes. A file cannot fit in an OP_RETURN, so this post is carried in ' +
+    'multisig outputs instead: roughly one unspendable output per 30 bytes. ' +
+    'It costs far more than text.';
+  document.getElementById('clip').textContent = '📎•';
+  box.removeAttribute('maxlength');
+}
 function countLeft(el){
   var max = {{ room }};
   var used = new TextEncoder().encode(el.value).length;

@@ -131,6 +131,21 @@ class AppState:
     notice: str | None = None
     notice_kind: str = "info"
 
+    #: Latest known tip per network, and when each was last successfully asked.
+    #: Kept so the interface can distinguish "nothing new" from "not looking",
+    #: which is the failure the block watcher exists to prevent.
+    tips: dict = field(default_factory=dict)
+    last_checked: dict = field(default_factory=dict)
+
+    #: Incremented whenever a scan finds something a page would show. Open pages
+    #: poll this and refresh when it moves; a block with nothing in it for us
+    #: must not reload every browser.
+    generation: int = 0
+
+    def bump_generation(self) -> None:
+        with self._lock:
+            self.generation += 1
+
     def flash(self, message: str, kind: str = "info") -> None:
         self.notice, self.notice_kind = message, kind
 
