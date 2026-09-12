@@ -41,12 +41,18 @@ def _free_port() -> int:
 def browser():
     """Headless Firefox, with the binary and driver overridable.
 
-    ARCADE_FIREFOX_BINARY and ARCADE_GECKODRIVER exist because the default
-    lookup does not find a snap-packaged Firefox: selenium picks up something on
-    PATH and fails with "binary is not a Firefox executable", so the whole file
-    skipped on a machine that had a perfectly good browser. These are the tests
-    that catch the bugs nothing else can -- a skip here is a real loss, not a
-    tidy fallback -- so the machine gets a way to say where its browser is.
+    ARCADE_GECKODRIVER and ARCADE_FIREFOX_BINARY exist because the default
+    lookup does not find a snap-packaged Firefox: /usr/bin/firefox is a shell
+    wrapper and geckodriver rejects it with "binary is not a Firefox
+    executable", so the whole file skipped on a machine that had a perfectly
+    good browser. These are the tests that catch the bugs nothing else can -- a
+    skip here is a real loss, not a tidy fallback.
+
+    Try ARCADE_GECKODRIVER alone first. On a snap install the driver knows where
+    its own Firefox lives, so it is the only variable needed; a test machine confirmed
+    that on Ubuntu with ARCADE_GECKODRIVER=/snap/bin/firefox.geckodriver and
+    nothing else. ARCADE_FIREFOX_BINARY is for the other shape of odd install,
+    where the driver is findable and the browser is not.
     """
     options = Options()
     options.add_argument("-headless")
@@ -60,8 +66,10 @@ def browser():
     except Exception as exc:                      # no firefox, no geckodriver
         pytest.skip(
             f"no usable browser: {exc}. If Firefox is installed somewhere the "
-            f"default lookup misses (a snap, for instance), set "
-            f"ARCADE_FIREFOX_BINARY and ARCADE_GECKODRIVER."
+            f"default lookup misses, point ARCADE_GECKODRIVER at the driver -- "
+            f"on a snap install that is /snap/bin/firefox.geckodriver and is "
+            f"enough on its own. ARCADE_FIREFOX_BINARY overrides the browser "
+            f"too, if the driver cannot find it."
         )
     yield driver
     driver.quit()
