@@ -293,14 +293,33 @@ function grow(box){
   box.style.height = Math.min(box.scrollHeight, 160) + 'px';
 }
 
+// Priced the moment a file is chosen, not after a click. The arithmetic is the
+// encoder's: a chunk carries 7,628 payload bytes, and a multisig output carries
+// two 30-byte packets, so 60 bytes per output. Dust is 0.01 per output and is
+// never spendable again.
+function estimateFile(bytes){
+  var perChunk = 7628, perOutput = 60, dustEach = 0.01;
+  var chunks = Math.ceil(bytes / perChunk);
+  var outputs = Math.ceil(bytes / perOutput) + chunks;
+  var blocks = Math.ceil((chunks * 12600) / 1048576);
+  return {chunks: chunks, outputs: outputs, coins: outputs * dustEach,
+          blocks: Math.max(1, blocks)};
+}
 function showPick(input){
   var note = document.getElementById('picked');
   var file = input.files && input.files[0];
-  if (!file) { note.hidden = true; return; }
+  if (!file) { note.hidden = true; document.getElementById('clip').textContent = '📎'; return; }
+  var e = estimateFile(file.size);
+  var mins = Math.round(e.blocks * 35 / 60);
   note.hidden = false;
+  note.className = 'muted picked' + (e.chunks > 40 ? ' costly' : '');
   note.innerHTML = '<strong>' + file.name + '</strong> — ' +
-    file.size.toLocaleString() + ' bytes will be written to the chain. ' +
-    'Every byte is paid for in outputs that can never be spent again.';
+    (file.size / 1024).toFixed(0) + ' KB, sent as <strong>' +
+    e.chunks.toLocaleString() + '</strong> transaction' + (e.chunks === 1 ? '' : 's') +
+    ' costing about <strong>' + e.coins.toLocaleString(undefined,
+      {maximumFractionDigits: 0}) + '</strong> in dust that can never be spent ' +
+    'again, and filling at least ' + e.blocks.toLocaleString() + ' block' +
+    (e.blocks === 1 ? '' : 's') + (mins >= 1 ? ' (~' + mins + ' min)' : '') + '.';
   document.getElementById('clip').textContent = '📎•';
 }
 

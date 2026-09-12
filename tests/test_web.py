@@ -1102,3 +1102,61 @@ def test_marking_a_send_stale_does_not_rewrite_the_record(client):
 
     state.live_progress()
     assert state.send_progress["finished"] is False
+
+
+# --- an interface newer than the code it runs ---------------------------------
+# Jinja reads templates from disk every request; Python is whatever was imported
+# at startup. After an update without a restart the server renders the NEW page
+# against the OLD code, so it advertises buttons whose routes do not exist. a test machine
+# measured "Start fresh" posting into a 404, and the operator reasonably concluded the
+# feature was broken. That is worse than plain staleness: it looks like a bug in
+# the feature rather than a stale process.
+
+
+def test_matching_versions_are_not_called_stale(client, monkeypatch):
+    app, state = client
+    monkeypatch.setattr(type(state), "running_version",
+                        property(lambda self: "abc1234"))
+    monkeypatch.setattr(type(state), "installed_version",
+                        property(lambda self: "abc1234"))
+    assert state.is_stale is False
+    assert "must be restarted" not in app.get("/").text
+
+
+def test_a_newer_checkout_is_announced_on_every_page(client, monkeypatch):
+    app, state = client
+    monkeypatch.setattr(type(state), "running_version",
+                        property(lambda self: "old1111"))
+    monkeypatch.setattr(type(state), "installed_version",
+                        property(lambda self: "new2222"))
+
+    assert state.is_stale is True
+    for path in ("/", "/messages", "/contacts", "/backup"):
+        body = app.get(path).text
+        assert "must be restarted" in body, path
+        assert "old1111" in body and "new2222" in body
+
+
+def test_the_warning_says_buttons_may_silently_do_nothing(client, monkeypatch):
+    """The symptom, named -- otherwise it reads as a vague upgrade nag."""
+    app, state = client
+    monkeypatch.setattr(type(state), "running_version",
+                        property(lambda self: "old1111"))
+    monkeypatch.setattr(type(state), "installed_version",
+                        property(lambda self: "new2222"))
+
+    import re
+
+    # Normalised, because the sentence wraps in the template: a raw substring
+    # search is asserting on where the line breaks fall, not on what it says.
+    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", app.get("/").text))
+    assert "buttons will do nothing at all" in text
+
+
+def test_an_unknown_version_is_not_reported_as_stale(client, monkeypatch):
+    """Not a git checkout, no git installed: say nothing rather than warn wrongly."""
+    app, state = client
+    monkeypatch.setattr(type(state), "running_version", property(lambda self: ""))
+    monkeypatch.setattr(type(state), "installed_version",
+                        property(lambda self: "new2222"))
+    assert state.is_stale is False

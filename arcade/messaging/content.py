@@ -45,16 +45,19 @@ BODY_VERSION = 1
 
 #: A ceiling on a single attachment.
 #:
-#: 5 MB was an invented number. The real limits are the chain's, and they are
-#: steep enough that the figure here matters less than showing them:
+#: 5 MB was an invented number. The real limits are the chain's, measured from
+#: the encoder rather than reasoned about -- a multisig output carries TWO
+#: 30-byte packets, so it is 60 bytes per output, not 30. An earlier version of
+#: this comment said otherwise and was wrong by exactly a factor of two:
 #:
-#:     1 MB    138 transactions     35,091 dust outputs      351 PEP    2 blocks
-#:     5 MB    688 transactions    175,451 dust outputs    1,755 PEP   10 blocks
-#:    14 MB  1,925 transactions    491,261 dust outputs    4,913 PEP   28 blocks
+#:     1 MB    138 transactions     17,911 dust outputs      179 PEP    2 MB on chain
+#:     5 MB    688 transactions     89,551 dust outputs      896 PEP    8 MB
+#:    14 MB  1,925 transactions    250,740 dust outputs    2,507 PEP   23 MB
+#:    32 MB  4,399 transactions    573,119 dust outputs    5,731 PEP   53 MB
 #:
-#: The dust is permanently unspendable, and a Dogecoin-family block is 1 MB, so
-#: roughly seventy of these 14.8 KB transactions fit in one even on an otherwise
-#: idle chain. The block count above is therefore a floor, not an estimate.
+#: Still enormous. The dust is permanently unspendable, and a Dogecoin-family
+#: block is 1 MB, so a 14 MB attachment needs at least 23 blocks of a chain it
+#: does not have to itself.
 #:
 #: Messaging is testnet-only and permanently so (D-010), where the coins are
 #: mined and free -- so this is a question of patience and block space rather

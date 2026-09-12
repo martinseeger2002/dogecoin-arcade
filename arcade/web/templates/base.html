@@ -187,6 +187,7 @@ video.media{width:100%;max-height:420px;background:#000;border-radius:8px}
 .composer-foot label.attach{padding:0;opacity:.7;font-size:1rem;gap:5px}
 .attach-label{font-size:.84rem}
 .picked{font-size:.83rem;margin:9px 0 0}
+.picked.costly{color:var(--bad);font-weight:500}
 .feednote{font-size:.8rem;margin:12px 0 0;padding-top:11px;border-top:1px solid var(--line)}
 .confirm-card{border-color:var(--accent);box-shadow:0 0 0 3px rgba(120,110,255,.1)}
 .empty-card p{margin:0 0 6px}
@@ -312,6 +313,8 @@ button:disabled{opacity:.55;cursor:default}
 .bubble-row.failed .bubble{background:var(--bad)}
 .bubble.failed-note{background:var(--warn,#b8860b)}
 .bubble-row.failed .bar-fill{background:rgba(255,255,255,.6)}
+
+.msg.stale{border-width:2px}
 </style>
 </head>
 <body>
@@ -328,6 +331,16 @@ button:disabled{opacity:.55;cursor:default}
   </nav>
 </div></header>
 <main>
+{% if state.is_stale %}
+<div class="msg err stale">
+  <strong>This interface is out of date and must be restarted.</strong>
+  It is running <code>{{ state.running_version }}</code> while
+  <code>{{ state.installed_version }}</code> is installed. Pages are drawn from
+  the new version but acted on by the old one, so <strong>some buttons will do
+  nothing at all</strong> rather than reporting an error. Restart
+  DogecoinArcade to use what is installed.
+</div>
+{% endif %}
 {% if notice %}<div class="msg {{ notice_kind }}">{{ notice }}</div>{% endif %}
 {% block body %}{% endblock %}
 </main>

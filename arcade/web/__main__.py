@@ -101,6 +101,14 @@ def main(argv: list[str] | None = None) -> int:
     if state.try_auto_unlock():
         print(f"  messaging ready as {state.derived_address}")
 
+    # Read now, while it is still the version that was imported. Left until
+    # first use it would report whatever is on disk by then, which after an
+    # update is the code that is NOT running.
+    state.running_version
+    if state.is_stale:
+        print(f"  WARNING: running {state.running_version} but "
+              f"{state.installed_version} is installed -- restart to use it")
+
     # Watch for new blocks and scan when one lands, so a message that arrives
     # while somebody is looking at the conversation actually appears.
     BlockWatcher(state).start()

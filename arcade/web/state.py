@@ -143,6 +143,46 @@ class AppState:
     #: must not reload every browser.
     generation: int = 0
 
+    #: Re-read from the checkout, briefly cached. Compared against the version
+    #: the code was imported from, because they can differ: Jinja loads
+    #: templates from disk on every request while Python is whatever was
+    #: imported at startup. After an update without a restart the server renders
+    #: the NEW page against the OLD code, so the interface advertises buttons
+    #: whose routes do not exist -- a test machine measured a "Start fresh" button posting
+    #: into a 404, and the operator reasonably concluded the feature was broken. That
+    #: is worse than plain staleness and needs saying out loud.
+    _disk_version: tuple = ("", 0.0)
+    DISK_CHECK_SECONDS = 20.0
+
+    def _git_head(self) -> str:
+        import subprocess
+        for root in (Path(__file__).resolve().parent.parent.parent,
+                     Path.home() / ".dogecoinarcade" / "src"):
+            try:
+                result = subprocess.run(
+                    ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+                    capture_output=True, text=True, timeout=5)
+                if result.returncode == 0 and result.stdout.strip():
+                    return result.stdout.strip()
+            except Exception:
+                continue
+        return ""
+
+    @property
+    def installed_version(self) -> str:
+        """What is on disk right now, as against what is running."""
+        version, when = self._disk_version
+        if version and (time.monotonic() - when) < self.DISK_CHECK_SECONDS:
+            return version
+        found = self._git_head()
+        object.__setattr__(self, "_disk_version", (found, time.monotonic()))
+        return found
+
+    @property
+    def is_stale(self) -> bool:
+        running, installed = self.running_version, self.installed_version
+        return bool(running and installed and running != installed)
+
     @property
     def running_version(self) -> str:
         """The commit this process is running, if it can be worked out.
