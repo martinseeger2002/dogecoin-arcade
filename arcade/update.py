@@ -37,6 +37,35 @@ class UpdateError(Exception):
     """The update could not proceed."""
 
 
+def _layout() -> tuple[Path, Path, bool]:
+    """Find the environment and the checkout, and say whether code can be fetched.
+
+    The installer's layout is ~/.dogecoinarcade/{venv,src}, and this command used
+    to accept nothing else: on a machine set up from a source checkout it refused
+    outright with "no installation found", while the application it was refusing
+    to update was running on that very machine. The user typed the documented
+    command on their own mini PC and got that.
+
+    A source checkout has no code to fetch -- the code is already there, and on
+    the machine the releases are published from it is AHEAD of what is published.
+    Pulling would either fail for want of an upstream or, worse, try to rewind
+    work. So it returns `fetchable=False` and the update does only the half that
+    still applies: registering the service, migrating unit files and restarting.
+    That restart is the part that was actually wanted.
+    """
+    if (HOME / "venv").exists():
+        return HOME / "venv", HOME / "src", True
+
+    checkout = Path(__file__).resolve().parent.parent
+    if not (checkout / "pyproject.toml").is_file():
+        raise UpdateError(
+            f"no installation found at {HOME / 'venv'}, and {checkout} does not\n"
+            "  look like a checkout either. This command updates an installation\n"
+            "  made by install.py."
+        )
+    return Path(sys.prefix), checkout, False
+
+
 def _git() -> str:
     git = shutil.which("git")
     if not git:
@@ -75,14 +104,12 @@ def check() -> tuple[str | None, str | None, bool]:
 
 
 def update(dry_run: bool = False) -> int:
-    venv = HOME / "venv"
-    checkout = HOME / "src"
+    venv, checkout, fetchable = _layout()
 
-    if not venv.exists():
-        raise UpdateError(
-            f"no installation found at {venv}.\n"
-            "  This command updates an installation made by install.py."
-        )
+    if not fetchable:
+        print(f"Source checkout at {checkout}")
+        print("  Nothing to fetch: the code here is whatever you have checked out.")
+        return _update_services(checkout, venv, dry_run)
 
     git = _git()
     print("Fetching the latest code")
@@ -115,6 +142,22 @@ def update(dry_run: bool = False) -> int:
             raise UpdateError(f"reinstall failed:\n{result.stderr[-1200:]}")
         print("  installed")
 
+    return _update_services(checkout, venv, dry_run)
+
+
+def _update_services(checkout: Path, venv: Path, dry_run: bool) -> int:
+    """The half of an update that is about this machine, not about the code.
+
+    Shared by both paths: a source checkout has nothing to fetch but still needs
+    its service registered, its unit files current and its interface restarted.
+    """
+    print("Checking the commands are on your PATH")
+    if dry_run:
+        print("  would write the launcher and updater if they are missing")
+    else:
+        written = _ensure_launcher(checkout, venv)
+        print(f"  wrote {written}" if written else "  already there")
+
     print("Updating service definitions")
     if dry_run:
         print("  would register arcade-web if needed, and bring node units "
@@ -146,6 +189,27 @@ def update(dry_run: bool = False) -> int:
     print()
     print("Updated. Your wallet, messages and chain data were not touched.")
     return 0
+
+
+def _ensure_launcher(checkout: Path, venv: Path) -> Path | None:
+    """Write the `dogecoinarcade` and `dogecoinarcade-update` shims if missing.
+
+    Same reasoning as registering the service: a machine set up before these
+    existed, or set up from a checkout rather than by the installer, has neither
+    on its PATH. The user ran `dogecoinarcade-update` and got `command not
+    found` -- on the machine running the application. Written from the
+    installer's own templates so there is one definition of what they contain.
+    """
+    import platform
+    system = platform.system()
+    target = _call_installer(checkout, "bindir", system)
+    if target is None:
+        return None
+    name = "dogecoinarcade.cmd" if system == "Windows" else "dogecoinarcade"
+    if (Path(target) / name).exists():
+        return None
+    written = _call_installer(checkout, "write_launcher", venv, Path(target), system)
+    return Path(written) if written else None
 
 
 def _listener_pid(port: int) -> int | None:

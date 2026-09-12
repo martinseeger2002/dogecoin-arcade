@@ -30,7 +30,12 @@ web = [
 # selenium because one class of bug is invisible without a browser: the
 # `hidden` attribute rendered anyway under an author display rule, and every
 # markup-level check reported it as hidden while it was on screen.
-dev = ["pytest>=8.3", "httpx>=0.27", "selenium>=4.20"]
+# pillow because the chat bubble tail went wrong three times in a row in ways
+# no computed-style check could see: a spur off the side, a sliver (a border
+# radius wider than the box it was on), and a hairline (a clipped path whose
+# two curves hugged each other). Each had a perfectly sane computed style.
+# Counting painted pixels is the only check that can tell a tail from a line.
+dev = ["pytest>=8.3", "httpx>=0.27", "selenium>=4.20", "pillow>=10.0"]
 
 [project.scripts]
 arcade-msg = "arcade.messaging.cli:main"

@@ -231,3 +231,110 @@ def test_presence_is_not_visibility(browser, served):
     assert notice is not None, "present in the DOM"
     assert notice.is_displayed() is False, "and not visible"
     assert _display(browser, notice) == "none"
+
+
+# --- the chat bubble tail -----------------------------------------------------
+#
+# Three attempts at this rendered wrong while computing perfectly sane styles:
+# a box hung off the side with a quarter-disc carved from its top-left (a spur,
+# not a tail); a pair of blocks whose horizontal border-radius exceeded their
+# own width, which collapsed the tail to a sliver; and a clipped path whose two
+# curves hugged each other, leaving a hairline. Only the pixels tell those apart
+# from a tail, so that is what these look at.
+#
+# Total coverage is not enough on its own: the hairline filled 18% of the tail's
+# strip and the real tail 23%, which no threshold can separate. What actually
+# distinguishes a tail is its PROFILE -- it is nearly the full width of the
+# strip where it meets the bubble's bottom edge and tapers to nothing going up.
+# A hairline is thin everywhere; a bare rectangle is full everywhere.
+
+
+def _tail_profile(browser, pane, bubble, side):
+    """Fill fraction of each pixel row of the tail's strip, top row first.
+
+    The strip is the 12px beside the bubble's `side` edge, spanning the bottom
+    16px -- exactly where the tail is drawn. The scroll pane is screenshotted
+    rather than the bubble or its row, because an element screenshot is clipped
+    to that element's box and the tail is painted outside both of those: the row
+    is a full-width flex container and the bubble sits hard against its edge, so
+    the tail lands in the pane's own padding.
+    """
+    Image = pytest.importorskip("PIL.Image", reason="tail pixel checks need pillow")
+    import io
+
+    shot = Image.open(io.BytesIO(pane.screenshot_as_png)).convert("RGB")
+    inner = Image.open(io.BytesIO(bubble.screenshot_as_png)).convert("RGB")
+    scale = shot.width / pane.size["width"]                   # device pixel ratio
+
+    left, right, bottom = browser.execute_script("""
+      var p = arguments[0].getBoundingClientRect();
+      var b = arguments[1].getBoundingClientRect();
+      return [b.left - p.left, b.right - p.left, b.bottom - p.top];
+    """, pane, bubble)
+
+    pad, height = round(12 * scale), round(16 * scale)
+    y1 = min(round(bottom * scale), shot.height)
+    x0 = round(right * scale) if side == "right" else round(left * scale) - pad
+    x0 = max(0, min(x0, shot.width - pad))
+    strip = shot.crop((x0, max(0, y1 - height), x0 + pad, y1))
+
+    # The bubble's own colour, sampled from inside it rather than assumed, so
+    # the check holds in either colour scheme.
+    fill = inner.getpixel((inner.width // 2, inner.height - 2))
+    # tobytes rather than getdata: getdata is deprecated in Pillow 12 and the
+    # warning is an error under this suite's filters.
+    raw, width = strip.tobytes(), strip.width
+
+    rows = []
+    for y in range(strip.height):
+        start = y * width * 3
+        hit = sum(1 for x in range(width)
+                  if all(abs(raw[start + x * 3 + c] - fill[c]) <= 14 for c in range(3)))
+        rows.append(hit / width)
+    return rows
+
+
+def test_the_tail_leaves_the_bottom_corner(browser, served):
+    """It is wide where it meets the bubble's bottom edge and tapers going up.
+
+    That profile is the whole point: the shapes this replaced stuck out of the
+    SIDE, which reads as a spur, and the user said so.
+    """
+    base, peer = served
+    browser.get(f"{base}/messages/{peer}")
+
+    pane = browser.find_element(By.CSS_SELECTOR, ".bubbles")
+    bubble = pane.find_element(By.CSS_SELECTOR, ".bubble-row.theirs .bubble")
+    rows = _tail_profile(browser, pane, bubble, "left")
+
+    assert len(rows) >= 12
+    foot = sum(rows[-3:]) / 3
+    head_ = sum(rows[:3]) / 3
+    assert foot > 0.55, (
+        f"the tail fills {foot:.0%} of its strip at the bubble's bottom edge -- "
+        f"a tail is nearly full there; a line or a sliver is not. rows={rows}"
+    )
+    assert head_ < 0.45, (
+        f"the tail still fills {head_:.0%} of its strip 16px up -- it is not "
+        f"tapering, so it reads as a block beside the bubble. rows={rows}"
+    )
+    assert foot > head_ + 0.3, f"the tail does not taper: rows={rows}"
+
+
+def test_the_tail_carries_the_corner(browser, served):
+    """The bubble's radius is dropped on the tail side.
+
+    Any radius there curves the bubble away from the tail's root and leaves a
+    notch at the join.
+    """
+    base, peer = served
+    browser.get(f"{base}/messages/{peer}")
+
+    bubble = browser.find_element(By.CSS_SELECTOR, ".bubble-row.theirs .bubble")
+    radius, clip = browser.execute_script("""
+      var s = getComputedStyle(arguments[0]);
+      var t = getComputedStyle(arguments[0], '::after');
+      return [s.borderBottomLeftRadius, t.clipPath];
+    """, bubble)
+    assert radius == "0px", f"tail-side radius is {radius}, which notches the join"
+    assert clip.startswith("path("), f"the tail is not clipped to a shape: {clip}"
