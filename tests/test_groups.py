@@ -428,16 +428,27 @@ def _post(state, channel, text, when, **file):
                              "somebody", text, **file)
 
 
-def test_the_composer_sits_below_the_posts(feed_client):
-    """Like the private messenger: you read down to the newest, then reply."""
+def test_the_composer_sits_above_the_posts(feed_client):
+    """A public channel is a feed: you write at the top and read down.
+
+    This asserted the opposite for a while. The board was first built as a feed,
+    then changed to match the private messenger -- read down to the newest, then
+    reply -- and then changed back, because the two are not the same thing: a
+    conversation has a bottom and a channel does not.
+    """
     app, state = feed_client
     _post(state, "main", "a post", 100)
 
     body = app.get("/groups?channel=main").text
-    assert body.index('class="bubble-row') < body.index('class="composer"')
+    assert body.index('class="composer"') < body.index('class="bubble-row')
 
 
-def test_posts_are_rendered_oldest_first(feed_client):
+def test_posts_are_rendered_newest_first(feed_client):
+    """The order the feed reads in, not the order the store keeps.
+
+    group_posts() stays oldest-first: the scanner and the chunk assembler both
+    depend on that, so the reversal belongs in the template.
+    """
     import re
 
     app, state = feed_client
@@ -448,7 +459,13 @@ def test_posts_are_rendered_oldest_first(feed_client):
     # Match the rendered posts, not the whole document: a bare substring search
     # finds "older" inside a placeholder.
     rendered = re.findall(r'class="text">([^<]+)', body)
-    assert rendered == ["first thing", "second thing"]
+    assert rendered == ["second thing", "first thing"]
+
+    with state.store() as store:
+        kept = [p["text"] for p in store.group_posts("regtest", "main")]
+    assert kept == ["first thing", "second thing"], (
+        "the store's own order must not have been reversed to do this"
+    )
 
 
 def test_an_image_is_shown_without_a_click(feed_client):

@@ -186,22 +186,17 @@
           {% else %}
             One transaction, so it goes straight away.
           {% endif %}
-          Costs about <strong>{{ "%.4f"|format(total) }}</strong> in total
-          &mdash; {{ "%.4f"|format(fee) }} in fees plus
-          {{ "%.4f"|format(dust) }} across
-          {{ plan.multisig_outputs if plan else '' }} outputs, which is
-          <strong>dust that can never be spent again</strong>, because a file is
-          carried in the outputs themselves.
+          Costs about <strong>{{ "%.4f"|format(total) }}</strong>. Most of that
+          is spent into the {{ plan.multisig_outputs if plan else '' }} outputs
+          that carry the file and cannot be recovered.
         {% else %}
           <strong>Send this?</strong>
           {{ count }} transaction{{ '' if count == 1 else 's' }}{% if count > 1 %},
           and one more first to split the wallet if it does not already have
           enough separate outputs &mdash; those coins come straight back as
           change, so the split costs only its own fee{% endif %}.
-          Costs about <strong>{{ "%.5f"|format(total) }}</strong>
-          &mdash; {{ "%.5f"|format(fee) }} in fees{% if dust %} plus
-          {{ "%.5f"|format(dust) }} in dust that can never be spent
-          again{% endif %}. It becomes permanent once broadcast.
+          Costs about <strong>{{ "%.5f"|format(total) }}</strong>.
+          It becomes permanent once broadcast.
         {% endif %}
         {% if timing and timing.readable and count > 1 %}
         <div class="note" style="margin:10px 0 0">
@@ -439,8 +434,9 @@ function showPick(input){
   document.getElementById('picked-text').innerHTML = '<strong>' + file.name + '</strong> — ' +
     arcadeSize(file.size) + ', sent as <strong>' +
     e.chunks.toLocaleString() + '</strong> transaction' + (e.chunks === 1 ? '' : 's') +
-    ' costing about <strong>' + arcadeCoins(e.coins) + '</strong> in dust that can ' +
-    'never be spent again, on top of the fee, and filling at least ' +
+    ' costing about <strong>' + arcadeCoins(arcadeFileCost(file.size).coins) +
+    '</strong>, most of it spent into outputs that cannot be recovered, and ' +
+    'filling at least ' +
     e.blocks.toLocaleString() + ' block' +
     (e.blocks === 1 ? '' : 's') + (mins >= 1 ? ' (~' + mins + ' min)' : '') + '.';
   document.getElementById('clip').textContent = '📎•';

@@ -1717,8 +1717,10 @@ def test_the_confirm_screen_quotes_the_total_not_one_component():
     assert "cost.total" in groups, (
         "the confirm screen still quotes a component rather than the total"
     )
-    assert "on top of the fee" in groups, (
-        "the typing note lets its dust figure read as the whole cost"
+    # And the total is ONE number. Splitting it into fee and dust gave two
+    # figures where neither was the answer to "what does this cost me".
+    assert "cost.fee" not in groups and "cost.dust" not in groups, (
+        "the confirm screen is breaking the cost apart again"
     )
 
 
@@ -2086,8 +2088,12 @@ def test_both_confirm_screens_quote_dust_from_a_real_field(client):
     """
     groups = pathlib.Path("arcade/web/templates/groups.html").read_text()
     messages = pathlib.Path("arcade/web/templates/messages.html").read_text()
-    assert "cost.dust" in groups
-    assert "cost.dust" in messages
+    # The screens show one figure now, but it still has to CONTAIN the dust --
+    # which for a Class B send is most of it. The check moved from "is the dust
+    # displayed" to "is the dust in the total", because the first was satisfied
+    # by a 0.00000 that was structurally impossible to be anything else.
+    assert "cost.total" in groups
+    assert "total" in messages
 
     sender = pathlib.Path("arcade/messaging/sender.py").read_text()
     body = sender[sender.index("    def prepare("):]

@@ -65,80 +65,53 @@
 
     {% if error %}<div class="msg err" style="margin:14px 16px 0">{{ error }}</div>{% endif %}
 
-    <div class="bubbles" id="bubbles">
-      {% if not posts %}
-        <p class="muted empty"><strong>#{{ channel }}</strong> is empty on
-           {{ chain.label|lower }}. Post below and you start it.</p>
-      {% endif %}
-      {% for p in posts %}
-        <div class="bubble-row {{ 'mine' if p.mine else 'theirs' }}">
-          <div class="bubble">
-            <div class="poster">{{ p.nickname or p.sender or 'anonymous' }}</div>
-            {% if p.text %}<div class="text">{{ p.text }}</div>{% endif %}
-            {% if p.file_size %}
-              {% if p.kind == 'image' %}
-                <a class="media" href="/groups/media/{{ p.id }}?download=1"
-                   title="{{ p.file_name }} — click to save">
-                  <img src="/groups/media/{{ p.id }}" alt="{{ p.file_name }}" loading="lazy"></a>
-              {% elif p.kind == 'video' %}
-                <video class="media" controls preload="metadata"
-                       src="/groups/media/{{ p.id }}"></video>
-              {% elif p.kind == 'audio' %}
-                <audio class="media" controls preload="none"
-                       src="/groups/media/{{ p.id }}"></audio>
-              {% endif %}
-              <a class="file" href="/groups/media/{{ p.id }}?download=1">
-                <span class="file-icon">{{ '🖼' if p.kind == 'image'
-                  else ('🎬' if p.kind == 'video'
-                  else ('🎵' if p.kind == 'audio' else '📄')) }}</span>
-                <span class="file-meta">
-                  <strong>{{ p.file_name }}</strong>
-                  <span class="muted">{{ p.label or 'file' }} &middot;
-                    {{ "{:,}".format(p.file_size) }} bytes &middot; save</span>
-                </span>
-              </a>
-            {% endif %}
-            <div class="stamp">{{ when(p.block_time) }}
-              {%- if p.height %} &middot; block {{ "{:,}".format(p.height) }}
-              {%- else %} &middot; <span class="pending">pending</span>{% endif %}</div>
-          </div>
-        </div>
-      {% endfor %}
-
-      {% if unfinished %}
-      <div class="bubble-row mine">
-        <div class="bubble failed-note">
-          <div class="text">This post stopped after
-            {{ unfinished.sent }} of {{ unfinished.total }} transactions.</div>
-          <div class="stamp">What is on the chain cannot be taken back, and the
-            post cannot be read in full until the rest goes out.</div>
-          <form method="post" action="/groups/resume"
-                style="margin-top:9px" onsubmit="return startPosting(this)">
-            <input type="hidden" name="csrf_token" value="{{ csrf }}">
-            <input type="hidden" name="which" value="{{ which }}">
-            <input type="hidden" name="channel" value="{{ unfinished.channel }}">
-            <button type="submit" class="small">Finish posting</button>
-          </form>
-        </div>
-      </div>
-      {% endif %}
-
-      {# The public board showed NOTHING while a chunked post ran. a test machine measured
-         two chunks at about 90 seconds with /events reporting "sending": null
-         throughout, and a 30 KB post would run for six or seven minutes. Same
-         bubble as the private messenger, fed by the same /events. #}
-      <div class="bubble-row mine" id="posting-bubble" hidden>
-        <div class="bubble">
-          <div class="text" id="posting-text">Posting…</div>
-          <div class="bar-row">
-            <div class="bar"><div class="bar-fill" id="posting-fill"></div></div>
-            <span class="bar-pct" id="posting-pct">0%</span>
-          </div>
-          <div class="stamp" id="posting-stamp"></div>
-        </div>
-      </div>
-    </div>
-
+    <form method="post" action="/groups/post" class="composer"
+          {% if prepared %}data-awaiting-confirm="yes"{% endif %}
+          enctype="multipart/form-data" onsubmit="return startPosting(this)">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="which" value="{{ which }}">
+      <input type="hidden" name="channel" value="{{ channel }}">
+      <label class="attach" title="Attach a file">
+        <input type="file" name="attachment" id="attachment"
+               onchange="showPick(this)" hidden>
+        <span id="clip">📎</span>
+      </label>
+      {# No maxlength. It counted CHARACTERS while the budget is in BYTES, so a
+         curly apostrophe, an em dash or an emoji walked straight past it and
+         was refused by the server instead -- with a message whose last clause
+         mentioned attaching a file. And going over is no longer refused at all:
+         the post is carried as a Class B transaction, which costs dust. So the
+         budget is advice about cost now, not a limit, and the note below says
+         so as it is crossed. #}
+      <textarea name="text" rows="1" id="post"
+                oninput="grow(this)"
+                onkeydown="postOnEnter(event, this)"
+                placeholder="Say something in #{{ channel }}…">{{ draft or '' }}</textarea>
+      {# A pending confirmation must be the only way to act on this content. The
+      composer's own submit button stayed live BEHIND the confirmation -- three
+      buttons on screen, two of them saying Post -- so a page reading "Post this?
+      1 transaction, fee ..." would also accept a fresh submission of whatever was
+      in the box. a test machine clicked the wrong one and re-submitted an empty composer.
+      Nothing was spent, but a live control contradicting a pending confirmation is
+      a hazard for anyone in a hurry. The Enter handler checks the same flag, or
+      disabling the button alone would just move the hazard to the keyboard. #}
+      <button type="submit" {% if prepared %}disabled
+        title="Confirm or cancel the post waiting above first"{% endif %}>Post</button>
+    </form>
+    <p class="muted composer-note" id="picked" hidden>
+      <span id="picked-text"></span>
+      <button type="button" class="ghost small" onclick="clearPick()">Remove</button>
+    </p>
+    {# The byte budget used to be announced here as a running warning. It told
+       the truth -- past ~44 bytes a post moves from one cheap output into
+       multisig ones -- but it read as a limit being broken on almost every
+       post, when the only consequence is that it costs more. The confirm
+       screen states the cost before anything is sent, which is where a number
+       you can act on belongs. #}
+    <p class="muted composer-note">
+      {% if nickname %}Posting as <strong>{{ nickname }}</strong>.
+      {% else %}<a href="/contacts">Set a name</a> to sign your posts.{% endif %}
+    </p>
     {% if prepared %}
       <div class="confirm">
         {% if chain.is_mainnet %}<strong class="danger-text">This spends real coins.</strong>
@@ -152,16 +125,9 @@
            two-chunk post was offered at 0.85856 against the 1.71712 it cost --
            the fee understated as well as the dust. `cost` is scaled by
            send_cost(), shared with the messenger. #}
-        {% if plan and not plan.class_c %}
-          Costs <strong>{{ "%.5f"|format(cost.total if cost else 0) }}</strong>
-          in total &mdash; {{ "%.5f"|format(cost.fee if cost else 0) }} in
-          fees plus {{ "%.5f"|format(cost.dust if cost else 0) }} in
-          <strong>dust that can never be spent again</strong>, because the post
-          is carried in the outputs themselves.
-        {% else %}
-          Costs <strong>{{ "%.5f"|format(cost.total if cost else 0) }}</strong>
-          &mdash; one OP_RETURN output and no dust.
-        {% endif %}
+        Costs <strong>{{ "%.5f"|format(cost.total if cost else 0) }}</strong>.
+        {%- if plan and not plan.class_c %} Most of that is spent into the
+        outputs that carry the post and cannot be recovered.{% endif %}
         {% if timing and timing.readable and plan and plan.transactions > 1 %}
         <div class="note" style="margin:10px 0 0">
           Broadcast is the fast part. A chunked post cannot be READ until every
@@ -198,50 +164,85 @@
       </div>
     {% endif %}
 
-    <form method="post" action="/groups/post" class="composer"
-          {% if prepared %}data-awaiting-confirm="yes"{% endif %}
-          enctype="multipart/form-data" onsubmit="return startPosting(this)">
-      <input type="hidden" name="csrf_token" value="{{ csrf }}">
-      <input type="hidden" name="which" value="{{ which }}">
-      <input type="hidden" name="channel" value="{{ channel }}">
-      <label class="attach" title="Attach a file">
-        <input type="file" name="attachment" id="attachment"
-               onchange="showPick(this)" hidden>
-        <span id="clip">📎</span>
-      </label>
-      {# No maxlength. It counted CHARACTERS while the budget is in BYTES, so a
-         curly apostrophe, an em dash or an emoji walked straight past it and
-         was refused by the server instead -- with a message whose last clause
-         mentioned attaching a file. And going over is no longer refused at all:
-         the post is carried as a Class B transaction, which costs dust. So the
-         budget is advice about cost now, not a limit, and the note below says
-         so as it is crossed. #}
-      <textarea name="text" rows="1" id="post"
-                oninput="countLeft(this); grow(this)"
-                onkeydown="postOnEnter(event, this)"
-                placeholder="Say something in #{{ channel }}…">{{ draft or '' }}</textarea>
-      {# A pending confirmation must be the only way to act on this content. The
-      composer's own submit button stayed live BEHIND the confirmation -- three
-      buttons on screen, two of them saying Post -- so a page reading "Post this?
-      1 transaction, fee ..." would also accept a fresh submission of whatever was
-      in the box. a test machine clicked the wrong one and re-submitted an empty composer.
-      Nothing was spent, but a live control contradicting a pending confirmation is
-      a hazard for anyone in a hurry. The Enter handler checks the same flag, or
-      disabling the button alone would just move the hazard to the keyboard. #}
-      <button type="submit" {% if prepared %}disabled
-        title="Confirm or cancel the post waiting above first"{% endif %}>Post</button>
-    </form>
-    <p class="muted composer-note" id="picked" hidden>
-      <span id="picked-text"></span>
-      <button type="button" class="ghost small" onclick="clearPick()">Remove</button>
-    </p>
-    <p class="muted composer-note" id="budget">
-      <span id="left">{{ room }}</span> <span id="budget-msg">bytes left in a
-      single cheap output &mdash; past that a post still goes, carried like a
-      file, and costs dust.</span>
-      {% if nickname %}Posting as <strong>{{ nickname }}</strong>.
-      {% else %}<a href="/contacts">Set a name</a> to sign your posts.{% endif %}
-    </p>
+    <div class="bubbles" id="bubbles">
+      {% if not posts %}
+        <p class="muted empty"><strong>#{{ channel }}</strong> is empty on
+           {{ chain.label|lower }}. Post above and you start it.</p>
+      {% endif %}
+      {# The public board showed NOTHING while a chunked post ran. a test machine measured
+         two chunks at about 90 seconds with /events reporting "sending": null
+         throughout, and a 30 KB post would run for six or seven minutes. Same
+         bubble as the private messenger, fed by the same /events. #}
+      <div class="bubble-row mine" id="posting-bubble" hidden>
+        <div class="bubble">
+          <div class="text" id="posting-text">Posting…</div>
+          <div class="bar-row">
+            <div class="bar"><div class="bar-fill" id="posting-fill"></div></div>
+            <span class="bar-pct" id="posting-pct">0%</span>
+          </div>
+          <div class="stamp" id="posting-stamp"></div>
+        </div>
+      </div>
+      {% if unfinished %}
+      <div class="bubble-row mine">
+        <div class="bubble failed-note">
+          <div class="text">This post stopped after
+            {{ unfinished.sent }} of {{ unfinished.total }} transactions.</div>
+          <div class="stamp">What is on the chain cannot be taken back, and the
+            post cannot be read in full until the rest goes out.</div>
+          <form method="post" action="/groups/resume"
+                style="margin-top:9px" onsubmit="return startPosting(this)">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}">
+            <input type="hidden" name="which" value="{{ which }}">
+            <input type="hidden" name="channel" value="{{ unfinished.channel }}">
+            <button type="submit" class="small">Finish posting</button>
+          </form>
+        </div>
+      </div>
+      {% endif %}
+      {# Newest first: a public channel reads as a feed, not a
+         conversation. Reversed here rather than in the query because
+         group_posts() is oldest-first for the scanner and the chunk
+         assembler, which both depend on that order. #}
+      {% for p in posts|reverse %}
+        <div class="bubble-row {{ 'mine' if p.mine else 'theirs' }}">
+          <div class="bubble">
+            <div class="poster">{{ p.nickname or p.sender or 'anonymous' }}</div>
+            {% if p.text %}<div class="text">{{ p.text }}</div>{% endif %}
+            {% if p.file_size %}
+              {% if p.kind == 'image' %}
+                <a class="media" href="/groups/media/{{ p.id }}?download=1"
+                   title="{{ p.file_name }} — click to save">
+                  <img src="/groups/media/{{ p.id }}" alt="{{ p.file_name }}" loading="lazy"></a>
+              {% elif p.kind == 'video' %}
+                <video class="media" controls preload="metadata"
+                       src="/groups/media/{{ p.id }}"></video>
+              {% elif p.kind == 'audio' %}
+                <audio class="media" controls preload="none"
+                       src="/groups/media/{{ p.id }}"></audio>
+              {% endif %}
+              <a class="file" href="/groups/media/{{ p.id }}?download=1">
+                <span class="file-icon">{{ '🖼' if p.kind == 'image'
+                  else ('🎬' if p.kind == 'video'
+                  else ('🎵' if p.kind == 'audio' else '📄')) }}</span>
+                <span class="file-meta">
+                  <strong>{{ p.file_name }}</strong>
+                  <span class="muted">{{ p.label or 'file' }} &middot;
+                    {{ "{:,}".format(p.file_size) }} bytes &middot; save</span>
+                </span>
+              </a>
+            {% endif %}
+            <div class="stamp">{{ when(p.block_time) }}
+              {%- if p.height %} &middot; block {{ "{:,}".format(p.height) }}
+              {%- else %} &middot; <span class="pending">pending</span>{% endif %}</div>
+          </div>
+        </div>
+      {% endfor %}
+
+
+    </div>
+
+
   </section>
 </div>
 
@@ -326,7 +327,6 @@ function showPick(input){
   if (!file) {
     note.hidden = true;
     document.getElementById('clip').textContent = '📎';
-    countLeft(box);
     return;
   }
   var chunks = Math.ceil(file.size / 7628);
@@ -336,49 +336,9 @@ function showPick(input){
   document.getElementById('picked-text').innerHTML = '<strong>' + file.name + '</strong> — ' +
     arcadeSize(file.size) + ', posted as ' + chunks +
     ' transaction' + (chunks === 1 ? '' : 's') + ' costing about ' +
-    arcadeCoins(outputs * 0.01) + ' in dust that can never be spent again, on ' +
-    'top of the fee.';
+    arcadeCoins(arcadeFileCost(file.size).coins) + ', most of it spent into ' +
+    'outputs that cannot be recovered.';
   document.getElementById('clip').textContent = '📎•';
-  countLeft(box);
-}
-function countLeft(el){
-  // Bytes, via TextEncoder, because the budget is bytes -- one emoji is four of
-  // them. The count was already right; it was the maxlength beside it that was
-  // in characters, which let an over-budget post through to be refused by the
-  // server with a message that mentioned attaching a file.
-  //
-  // Only textContent is touched, never innerHTML: rewriting the note replaced
-  // the #left span it contains, so the counter stopped updating and the
-  // over-budget wording could never be undone by shortening the post.
-  var max = {{ room }};
-  var used = new TextEncoder().encode(el.value).length;
-  var over = used - max;
-  var left = document.getElementById('left');
-  var msg = document.getElementById('budget-msg');
-  var note = document.getElementById('budget');
-  if (over <= 0) {
-    left.textContent = -over;
-    left.style.color = '';
-    note.classList.remove('costly');
-    msg.textContent = 'bytes left in a single cheap output \u2014 past that a ' +
-      'post still goes, carried like a file, and costs dust.';
-    return;
-  }
-  // Past the free budget the whole post moves into multisig outputs, so the
-  // cost is the whole body, not just the overflow.
-  var outputs = Math.ceil(used / 60);
-  left.textContent = '0';
-  left.style.color = 'var(--bad)';
-  note.classList.add('costly');
-  // "in dust" and not "in total": the fee is on top, and the confirm screen
-  // gives the real total. Quoting the dust alone read as the whole cost -- a
-  // post shown "about 0.03" actually cost 0.04568.
-  msg.textContent = 'bytes left \u2014 this post is ' + over + ' over, so it is ' +
-    'carried like a file: about ' +
-    (outputs * 0.01).toLocaleString(undefined, {maximumFractionDigits: 2}) +
-    ' in dust that can never be spent again, on top of the fee. The exact ' +
-    'total is shown before anything is posted. Shorten it to stay in one ' +
-    'cheap output.';
 }
 
 // Draw a running post, from the same /events the messenger reads. state's
@@ -441,7 +401,11 @@ function countLeft(el){
   setInterval(poll, 2000);
 })();
 
+// Newest is at the TOP of this feed now, so there is nothing to scroll to.
+// Scrolling to the bottom would land the reader on the oldest post in the
+// channel -- which is what it did, and the fix was lost once to a restore
+// before the pane's own scrollTop showed it was still 3,225 rather than 0.
 var b = document.getElementById('bubbles');
-if (b) b.scrollTop = b.scrollHeight;
+if (b) b.scrollTop = 0;
 </script>
 {% endblock %}

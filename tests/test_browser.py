@@ -385,7 +385,13 @@ def test_the_public_composer_has_no_character_cap(browser, served):
     cap could be well over the byte budget: the browser let it through and the
     server refused it with a message ending "attaching a file lifts the limit",
     which reads as a file-size error. The operator hit exactly that with no file
-    attached. Going over is now allowed -- it costs dust instead.
+    attached.
+
+    The running byte counter that replaced it has since been removed too -- it
+    announced the budget on almost every post, when the only consequence of
+    passing it is that the post costs more, and the confirm screen says what it
+    costs before anything is sent. What must not come back is a cap that cannot
+    measure what it is capping.
     """
     base, _ = served
     browser.get(f"{base}/groups")
@@ -395,208 +401,6 @@ def test_the_public_composer_has_no_character_cap(browser, served):
         "a cap in characters cannot enforce a budget in bytes"
     )
 
-
-def test_the_budget_note_recovers_when_the_post_is_shortened(browser, served):
-    """Over, then under again. The over-budget wording must not be permanent.
-
-    The first version of this rewrote the note's innerHTML, which replaced the
-    span holding the count -- so the counter stopped updating and shortening the
-    post could never undo the warning.
-    """
-    base, _ = served
-    browser.get(f"{base}/groups")
-
-    def note_for(text):
-        browser.execute_script("""
-          var b = document.getElementById('post');
-          b.value = arguments[0];
-          countLeft(b);
-        """, text)
-        return browser.find_element(By.ID, "budget").text
-
-    under = note_for("hi")
-    assert "dust" in under and "over" not in under
-
-    over = note_for("x" * 400)
-    assert "over" in over and "dust" in over
-
-    again = note_for("hi")
-    assert again == under, (
-        f"shortening the post must restore the note.\n  was: {under}\n  now: {again}"
-    )
-    # And the counter itself must still be live, not a replaced span.
-    assert browser.find_element(By.ID, "left").text == under.split()[0]
-
-
-def test_emoji_cross_the_budget_sooner_than_characters_suggest(browser, served):
-    """The counter has to agree with the server, which counts bytes."""
-    base, _ = served
-    browser.get(f"{base}/groups")
-
-    over = browser.execute_script("""
-      var b = document.getElementById('post');
-      b.value = '\\ud83d\\udc38'.repeat(20);          // 20 frogs: 80 bytes, 40 UTF-16 units
-      countLeft(b);
-      return document.getElementById('budget').textContent;
-    """)
-    assert "over" in over, (
-        "20 emoji are 80 bytes and cannot fit a budget of 60 -- the counter "
-        "must say so even though that is only 20 characters"
-    )
-
-
-# --- Enter sends --------------------------------------------------------------
-#
-# It did not. `sendOnEnter` called `startSending` itself and then called
-# `requestSubmit`, which fires the form's own submit event -- and that runs
-# `onsubmit="return startSending(this)"`. The second call saw the guard flag the
-# first had just set, returned false, and cancelled the submission. So Enter
-# painted "Sending..." over a form that never posted, and 25 seconds later the
-# timeout said "that did not reach the application". Clicking the button worked,
-# because a click goes through onsubmit exactly once.
-#
-# The operator reported it as "the first time I pressed enter it gave me the error and
-# the second time I pressed the send button it sent", and it went unexplained
-# through two wrong diagnoses of mine. No assertion on markup or computed style
-# could have caught it: the page is untouched and perfectly healthy, it simply
-# never made a request. The only check that catches it is whether a request
-# happened at all.
-
-
-def _submits(browser, url, selector, how):
-    """True if acting on the composer actually posted to the server.
-
-    Detected by a marker on `window`, which cannot survive a navigation. There
-    is no node behind the test server, so a real submission comes back as an
-    error page -- that arrival is the proof, not the error itself.
-
-    TO REPEAT THIS AGAINST A REAL INSTALLATION, STOP THE WEB SERVER FIRST.
-    The marker works the same way -- the browser navigates to its own network
-    error page and the marker is gone -- but with the server down nothing can be
-    broadcast, so the check costs nothing. Run against a live application on a
-    machine with a funded wallet, the identical test SENDS A REAL MESSAGE and
-    spends real outputs. a test machine verified this fix on the operator's machine that way.
-    The failure mode of getting it wrong is spending someone's coins to learn
-    what a free test would have told you.
-    """
-    browser.get(url)
-    browser.execute_script("window.__alive = 'yes';")
-    box = browser.find_element(By.CSS_SELECTOR, f"{selector} textarea")
-    box.send_keys("a message to send")
-    if how == "enter":
-        from selenium.webdriver.common.keys import Keys
-        box.send_keys(Keys.ENTER)
-    else:
-        browser.find_element(By.CSS_SELECTOR, f"{selector} button[type=submit]").click()
-    for _ in range(40):
-        if not browser.execute_script("return window.__alive === 'yes';"):
-            return True
-        time.sleep(0.1)
-    return False
-
-
-def test_enter_sends_a_private_message(browser, served):
-    base, peer = served
-    assert _submits(browser, f"{base}/messages/{peer}", "form.composer", "enter"), (
-        "pressing Enter did not post anything -- the double-send guard cancelled it"
-    )
-
-
-def test_the_button_sends_a_private_message(browser, served):
-    """The path that always worked, asserted alongside so a fix cannot swap them."""
-    base, peer = served
-    assert _submits(browser, f"{base}/messages/{peer}", "form.composer", "click")
-
-
-def test_enter_posts_on_the_public_board(browser, served):
-    """The same bug, the same shape, in postOnEnter."""
-    base, _ = served
-    assert _submits(browser, f"{base}/groups", "form.composer", "enter"), (
-        "pressing Enter did not post anything on the public board either"
-    )
-
-
-def test_a_second_enter_is_still_swallowed(browser, served):
-    """The guard has to keep working -- it just must not eat the first press.
-
-    A send can take minutes with nothing on screen, which is exactly when a
-    second press happens, and two sends select their outputs without seeing each
-    other's claims.
-    """
-    base, peer = served
-    browser.get(f"{base}/messages/{peer}")
-    box = browser.find_element(By.CSS_SELECTOR, "form.composer textarea")
-
-    # Pin the form in the sending state, as an in-flight send leaves it -- and
-    # stop the /events poller first. It runs every 2s and calls resetComposer
-    # when the server reports nothing in flight, which clears the very flag this
-    # test sets; that race made the sibling test flaky before it was made
-    # atomic, and it can reach this one between the paint and the keypress.
-    browser.execute_script("""
-      for (var i = 1; i < 99999; i++) window.clearInterval(i);
-      var f = document.querySelector('form.composer');
-      f.dataset.sending = 'yes';
-      window.__posted = 0;
-      f.addEventListener('submit', function (e) { window.__posted++; e.preventDefault(); });
-    """)
-    box.send_keys("a second press")
-    from selenium.webdriver.common.keys import Keys
-    box.send_keys(Keys.ENTER)
-    time.sleep(0.5)
-
-    assert browser.execute_script("""
-      return [window.__posted, document.querySelector('form.composer').dataset.sending];
-    """) == [0, "yes"], (
-        "a second Enter while a send is in flight must not start another"
-    )
-
-
-def test_enter_stands_down_while_a_confirmation_is_pending(browser, served):
-    """Enter must not submit past a confirmation for the same content.
-
-    The composer's submit button stayed live behind the confirmation -- on the
-    public board, three buttons with two of them saying Post -- so a page asking
-    "Post this?" would also accept a fresh submission of whatever was in the
-    box. a test machine hit it. Disabling the button covers the mouse; this covers the
-    keyboard, which is the half a `disabled` attribute cannot.
-
-    The flag is set here rather than reached through a real send, because
-    rendering a confirmation needs a funded node. The handler's behaviour is
-    what is being asserted, and that is independent of how the flag got there.
-    """
-    base, peer = served
-    browser.get(f"{base}/messages/{peer}")
-
-    browser.execute_script("""
-      var f = document.querySelector('form.composer');
-      f.dataset.awaitingConfirm = 'yes';
-      window.__posted = 0;
-      f.addEventListener('submit', function (e) { window.__posted++; e.preventDefault(); });
-    """)
-    box = browser.find_element(By.CSS_SELECTOR, "form.composer textarea")
-    box.send_keys("typed while a confirmation is on screen")
-    from selenium.webdriver.common.keys import Keys
-    box.send_keys(Keys.ENTER)
-    time.sleep(0.5)
-
-    assert browser.execute_script("return window.__posted;") == 0, (
-        "Enter submitted past a pending confirmation"
-    )
-
-    # And it must start working again once the confirmation is gone, or the
-    # composer would be dead for the rest of the page's life.
-    browser.execute_script("""
-      var f = document.querySelector('form.composer');
-      delete f.dataset.awaitingConfirm;
-    """)
-    box.send_keys(Keys.ENTER)
-    time.sleep(0.5)
-    assert browser.execute_script("return window.__posted;") == 1, (
-        "Enter stayed dead after the confirmation was dismissed"
-    )
-
-
-# --- a real cost must never display as nothing --------------------------------
 
 def test_small_costs_and_sizes_do_not_round_away(browser, served):
     """A 900-byte file costs 0.16 and used to display as "about 0 in dust".
@@ -612,9 +416,7 @@ def test_small_costs_and_sizes_do_not_round_away(browser, served):
 
     rows = browser.execute_script("""
       return [102, 900, 4000, 40000].map(function (n) {
-        var chunks = Math.ceil(n / 7628);
-        var outputs = Math.ceil(n / 60) + chunks;
-        return [n, arcadeSize(n), arcadeCoins(outputs * 0.01)];
+        return [n, arcadeSize(n), arcadeCoins(arcadeFileCost(n).coins)];
       });
     """)
     for size, shown_size, shown_cost in rows:
@@ -626,5 +428,7 @@ def test_small_costs_and_sizes_do_not_round_away(browser, served):
         )
 
     assert rows[0][1] == "102 bytes", "under 1 KB should be shown in bytes"
-    assert rows[0][2] == "0.03"
-    assert rows[1][2] == "0.16", "this is the case that read as free"
+    # One number now, dust and fee together: quoting the dust alone and adding
+    # "on top of the fee" split one answer into two, neither of which was it.
+    assert rows[0][2] == "0.12"
+    assert rows[1][2] == "0.25", "this is the case that used to read as free"

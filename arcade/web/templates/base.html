@@ -96,7 +96,6 @@ button.danger{background:var(--bad);border-color:var(--bad);color:#fff}
   border-radius:4px;margin-left:6px;vertical-align:1px;font-weight:600}
 .tag.testnet{background:color-mix(in srgb,var(--ok) 22%,transparent);color:var(--ok)}
 .tag.mainnet{background:color-mix(in srgb,var(--bad) 20%,transparent);color:var(--bad)}
-nav a.on .tag{background:rgba(255,255,255,.25);color:inherit}
 .chainbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px}
 .chaincard{flex:1;min-width:240px;background:var(--panel);border:1px solid var(--line);
   border-radius:10px;padding:14px 16px}
@@ -348,6 +347,13 @@ footer.version{max-width:1000px;margin:0 auto;padding:0 20px 30px;
 @keyframes spin{to{transform:rotate(360deg)}}
 button:disabled{opacity:.55;cursor:default}
 
+/* The button that sends is the colour of what it produces -- the same blue as a
+   sent bubble -- rather than the app accent, which is the colour of links and
+   navigation. Both composers, because the public board is meant to look like
+   the private one. */
+form.composer button[type=submit]{background:var(--sent);border-color:var(--sent);
+  color:var(--sent-fg)}
+
 .bubble .bar-row{display:flex;align-items:center;gap:9px;margin-top:8px}
 .bubble .bar{flex:1;height:6px;border-radius:3px;overflow:hidden;
   background:rgba(255,255,255,.28)}
@@ -376,9 +382,9 @@ button:disabled{opacity:.55;cursor:default}
   <nav>
   {%- for href, label, chain, built in nav %}
     {%- if built %}
-    <a class="{{ 'on' if path == href else '' }}" href="{{ href }}">{{ label }}{% if chain %}<span class="tag {{ chain }}">{{ 'test' if chain == 'testnet' else 'main' }}</span>{% endif %}</a>
+    <a class="{{ 'on' if path == href else '' }}" href="{{ href }}">{{ label }}</a>
     {%- else %}
-    <a class="off" href="{{ href }}" title="not built yet">{{ label }}{% if chain %}<span class="tag {{ chain }}">{{ 'test' if chain == 'testnet' else 'main' }}</span>{% endif %}</a>
+    <a class="off" href="{{ href }}" title="not built yet">{{ label }}</a>
     {%- endif %}
   {%- endfor %}
   </nav>
@@ -421,6 +427,19 @@ function arcadeCoins(coins){
   if (coins < 10) return coins.toFixed(2);
   if (coins < 1000) return coins.toFixed(1);
   return Math.round(coins).toLocaleString();
+}
+
+// What a file will cost, all in. The two chips used to quote the dust alone and
+// add "on top of the fee", which split one number into two and left neither of
+// them being the answer. A Class B transaction is about 0.01 per KB, and a
+// chunk is roughly 9 KB on the wire, so the fee is near enough 0.09 each --
+// small beside the dust for a large file, and not small for a small one.
+function arcadeFileCost(bytes){
+  var perChunk = 7628, perOutput = 60, dustEach = 0.01, feePerChunk = 0.09;
+  var chunks = Math.ceil(bytes / perChunk);
+  var outputs = Math.ceil(bytes / perOutput) + chunks;
+  return {chunks: chunks, outputs: outputs,
+          coins: outputs * dustEach + chunks * feePerChunk};
 }
 
 // Refresh a conversation when a new block brings something to show.
