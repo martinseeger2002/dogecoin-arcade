@@ -98,6 +98,22 @@ def create_app(state: AppState) -> FastAPI:
         response.headers["Cache-Control"] = "no-store, must-revalidate"
         return response
 
+    @app.exception_handler(HTTPException)
+    def refused(request: Request, exc: HTTPException):
+        """Answer a refusal in the language of whoever asked.
+
+        The status code stays what it was -- 400 for a rejected form -- because
+        that is what made the protection legible to anything but a human. But a
+        browser posting a form was being handed raw JSON, which is a worse
+        experience than the 303 it replaced. So: the code for machines, a page
+        for people, from the same refusal.
+        """
+        wants_html = "text/html" in (request.headers.get("accept") or "")
+        if not wants_html:
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+        return HTMLResponse(REFUSED_PAGE.format(detail=html.escape(str(exc.detail))),
+                            status_code=exc.status_code)
+
     def check_csrf(token: str) -> None:
         """Reject a request whose form token does not match this process's.
 
@@ -1805,6 +1821,25 @@ def _check_address(address: str, *, mainnet: bool) -> str | None:
         return (f"that is a {other[0]} address, not a "
                 f"{'mainnet' if mainnet else 'testnet'} one.")
     return f"unrecognised address version {version}."
+
+
+#: Deliberately self-contained rather than a template: it has to render when
+#: something has already gone wrong, so it should not depend on page state.
+REFUSED_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Not accepted \u00b7 DogecoinArcade</title>
+<style>
+body{{margin:0;background:#141310;color:#ece8e0;
+  font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}}
+main{{max-width:520px;margin:14vh auto;padding:0 24px}}
+h1{{font-size:1.3rem;margin:0 0 10px}}
+p{{color:#9b948a}}
+a{{color:#d9a520}}
+</style></head><body><main>
+<h1>That was not accepted</h1>
+<p>{detail}</p>
+<p><a href="/">Back to DogecoinArcade</a></p>
+</main></body></html>"""
 
 
 def _when(ts: int | None = None) -> str:

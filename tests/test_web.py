@@ -1465,3 +1465,48 @@ def test_no_element_relies_on_hidden_without_the_guard():
         assert "[hidden]{display:none !important}" in css, (
             f"{name}: .{cls} sets display and would make `hidden` inert -- {line}"
         )
+
+
+# --- a refusal should suit whoever asked --------------------------------------
+# Making a rejected form answer 400 was right: it is what made the protection
+# legible to anything but a human, after a test machine audited an endpoint, saw 200 with
+# no token, and had to check the chain before concluding it was safe. But it then
+# handed a browser raw JSON, which is a worse experience than the redirect it
+# replaced. The code is for machines; the page is for people.
+
+
+def test_a_rejected_form_gives_a_browser_a_page(client):
+    app, _ = client
+    response = app.post("/scan", data={"csrf_token": "wrong"},
+                        headers={"Accept": "text/html"}, follow_redirects=False)
+
+    assert response.status_code == 400
+    assert "text/html" in response.headers["content-type"]
+    assert "not accepted" in response.text.lower()
+    assert "reload the page" in response.text
+
+
+def test_a_rejected_form_still_gives_a_script_json(client):
+    app, _ = client
+    response = app.post("/scan", data={"csrf_token": "wrong"},
+                        headers={"Accept": "application/json"},
+                        follow_redirects=False)
+
+    assert response.status_code == 400
+    assert response.json()["detail"]
+
+
+def test_the_refusal_page_does_not_depend_on_page_state(client):
+    """It renders when something has already gone wrong."""
+    from arcade.web.app import REFUSED_PAGE
+
+    assert "{detail}" in REFUSED_PAGE
+    assert "<!doctype html>" in REFUSED_PAGE.lower()
+
+
+def test_the_refusal_page_escapes_what_it_shows(client):
+    """The detail is ours, but escaping it costs nothing and closes the class."""
+    import inspect
+    from arcade.web import app as webapp
+
+    assert "html.escape" in inspect.getsource(webapp.create_app)

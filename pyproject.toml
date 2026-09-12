@@ -27,7 +27,10 @@ web = [
 # pytest is floated rather than pinned. The pin was not load-bearing -- the suite
 # passes on 9.x -- and a hard pin makes the dev extra conflict with whatever else
 # is in a contributor's environment for no benefit.
-dev = ["pytest>=8.3", "httpx>=0.27"]
+# selenium because one class of bug is invisible without a browser: the
+# `hidden` attribute rendered anyway under an author display rule, and every
+# markup-level check reported it as hidden while it was on screen.
+dev = ["pytest>=8.3", "httpx>=0.27", "selenium>=4.20"]
 
 [project.scripts]
 arcade-msg = "arcade.messaging.cli:main"
