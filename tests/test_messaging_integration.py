@@ -250,12 +250,19 @@ def test_scan_picks_up_where_it_left_off(pair, params, tmp_path, identities):
 # --- broadcast is not the same question as readable ---------------------------
 
 def test_readable_takes_a_block_per_chunk_even_when_broadcast_is_instant():
-    """Measured on both chains, which is why it is not a regtest artefact.
+    """One chunk per block, on regtest evidence.
 
-    a test machine's two 8,855-byte public chunks were broadcast in the same second and
-    confirmed in testnet blocks 1,484,210 and 1,484,212 -- two apart. On regtest
-    three 10.7 KB chunks took one block each. The confirm screen said "they all
-    go at once", which is true of broadcasting and not of reading.
+    Three 10.7 KB chunks each spending the same confirmed split -- independent,
+    free to share a block -- took blocks 246, 247 and 248.
+
+    This originally also cited a test machine's two testnet chunks landing two blocks
+    apart, said to have been broadcast together. Checking the chain showed chunk
+    2 spends chunk 1 (8b51a4c7 <- e528fcdc), so that gap is send_all's chaining
+    wait and not packing at all. One chain's evidence, said plainly, beats two
+    where one of them was misread.
+
+    Either way the point stands against the screen's old claim: "they all go at
+    once" is true of broadcasting and not of reading.
     """
     from arcade.messaging.sender import (
         estimate_readable_seconds, estimate_send_seconds)

@@ -207,8 +207,7 @@
         <div class="note" style="margin:10px 0 0">
           Broadcast is the fast part. A chunked message cannot be READ until
           every chunk is in a block, and large chunks do not share one, so
-          expect <strong>{{ timing.readable }}</strong> before they can open it
-          &mdash; measured on both chains.
+          expect <strong>{{ timing.readable }}</strong> before they can open it.
         </div>
         {% endif %}
         {% if count > 1 %}

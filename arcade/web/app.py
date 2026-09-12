@@ -675,8 +675,8 @@ def create_app(state: AppState) -> FastAPI:
                 "will_split": will_split,
                 # Broadcast and readable are different questions and the screen
                 # only answered the first. A split send is broadcast in seconds
-                # and still takes a block per chunk to confirm -- measured on
-                # both chains, see estimate_readable_seconds.
+                # and still takes a block per chunk to confirm -- see
+                # estimate_readable_seconds for what that rests on.
                 "readable": describe_duration(
                     estimate_readable_seconds(plan.transactions, typical)),
             }
