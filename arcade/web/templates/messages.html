@@ -87,17 +87,17 @@
             {% if m.body %}<div class="text">{{ m.body.decode('utf-8', 'replace') }}</div>{% endif %}
             {% if m.file %}
               {% if m.file.kind == 'image' %}
-                <a class="media" href="/messages/attachment/{{ m.file.id }}"
+                <a class="media" href="{{ m.file.url }}?download=1"
                    title="{{ m.file.name }} — click to save">
-                  <img src="/messages/media/{{ m.file.id }}" alt="{{ m.file.name }}" loading="lazy"></a>
+                  <img src="{{ m.file.url }}" alt="{{ m.file.name }}" loading="lazy"></a>
               {% elif m.file.kind == 'audio' %}
                 <audio class="media" controls preload="none"
-                       src="/messages/media/{{ m.file.id }}"></audio>
+                       src="{{ m.file.url }}"></audio>
               {% elif m.file.kind == 'video' %}
                 <video class="media" controls preload="metadata"
-                       src="/messages/media/{{ m.file.id }}"></video>
+                       src="{{ m.file.url }}"></video>
               {% endif %}
-              <a class="file" href="/messages/attachment/{{ m.file.id }}">
+              <a class="file" href="{{ m.file.url }}?download=1">
                 <span class="file-icon">{{ '🖼' if m.file.kind == 'image'
                   else ('🎵' if m.file.kind == 'audio'
                   else ('🎬' if m.file.kind == 'video' else '📄')) }}</span>
@@ -116,6 +116,35 @@
           </div>
         </div>
       {% endfor %}
+
+      {# Drawn only while a long message is on its way. It is an outgoing bubble
+         because that is what it will become. #}
+      {% if unfinished %}
+      <div class="bubble-row mine">
+        <div class="bubble failed-note">
+          <div class="text">This message stopped after
+            {{ unfinished.sent }} of {{ unfinished.total }} transactions.</div>
+          <div class="stamp">What is on the chain cannot be taken back, and the
+            message cannot be read until the rest goes out.</div>
+          <form method="post" action="/messages/{{ peer.hex }}/resume"
+                style="margin-top:9px" onsubmit="return startSending(this)">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}">
+            <button type="submit" class="small">Finish sending</button>
+          </form>
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="bubble-row mine" id="sending-bubble" hidden>
+        <div class="bubble">
+          <div class="text" id="sending-text">Sending…</div>
+          <div class="bar-row">
+            <div class="bar"><div class="bar-fill" id="sending-fill"></div></div>
+            <span class="bar-pct" id="sending-pct">0%</span>
+          </div>
+          <div class="stamp" id="sending-stamp"></div>
+        </div>
+      </div>
     </div>
 
     {% if prepared %}
@@ -277,6 +306,66 @@ function showPick(input){
 
   var b = document.getElementById('bubbles');
   if (b) b.scrollTop = b.scrollHeight;
+
+// Watch a send running in the background. The request returned the moment the
+// send started, so nothing here holds a connection open -- this asks what is
+// happening and draws it. Showing nothing for minutes is what made a second
+// click look like the right thing to do.
+(function () {
+  var row = document.getElementById('sending-bubble');
+  if (!row) return;
+  var text = document.getElementById('sending-text');
+  var fill = document.getElementById('sending-fill');
+  var pctText = document.getElementById('sending-pct');
+  var stamp = document.getElementById('sending-stamp');
+  var peer = '{{ peer.hex if peer else "" }}';
+
+  function draw(s) {
+    if (!s || s.peer !== peer) { row.hidden = true; return; }
+    row.hidden = false;
+    if (s.error) {
+      row.classList.add('failed');
+      text.textContent = s.error;
+      fill.style.width = '100%';
+      pctText.textContent = '';
+      stamp.textContent = 'stopped';
+      return;
+    }
+    var pct = s.total ? Math.round((s.done / s.total) * 100) : 0;
+    fill.style.width = Math.max(4, pct) + '%';
+    pctText.textContent = pct + '%';
+    text.textContent = 'Sending as ' + s.total + ' transactions';
+    var left = s.total - s.done;
+    stamp.textContent = s.note + ' \u00b7 ' +
+      (s.done ? left + ' to go' : 'estimated ' + s.estimate);
+    if (s.finished) {
+      pctText.textContent = '100%';
+      // Reload ONCE per send. Without this the page reloads, polls, still sees
+      // a finished send, and reloads again -- a flashing loop at 100%. The
+      // server clears finished progress when the conversation reloads, but this
+      // must not depend on that having happened first.
+      var key = 'arcade-sent-' + s.started;
+      var already = false;
+      try { already = sessionStorage.getItem(key) === '1'; } catch (e) {}
+      if (already) {
+        row.hidden = true;
+        return;
+      }
+      try { sessionStorage.setItem(key, '1'); } catch (e) {}
+      stamp.textContent = 'sent \u00b7 updating';
+      setTimeout(function () { location.reload(); }, 900);
+    }
+  }
+
+  function poll() {
+    fetch('/events', {cache: 'no-store'})
+      .then(function (r) { return r.json(); })
+      .then(function (d) { draw(d.sending); })
+      .catch(function () { /* momentary; try again */ });
+  }
+  poll();
+  setInterval(poll, 2000);
+})();
 </script>
 {% endif %}
 {% endblock %}

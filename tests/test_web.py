@@ -888,3 +888,179 @@ def test_enter_goes_through_the_double_send_guard(client):
     body = app.get(f"/messages/{peer.hex()}").text
     assert "requestSubmit" in body
     assert "if (!startSending(box.form)) return;" in body
+
+
+# --- watching a long send -----------------------------------------------------
+# A long send used to hold the request open for minutes with nothing on screen.
+# It now runs on a thread, the browser is sent back to the conversation, and a
+# bubble reports what is happening.
+
+
+def test_progress_starts_empty_and_can_be_reported(client):
+    app, state = client
+    assert state.send_progress == {}
+
+    state.start_progress("aa" * 32, total=16, estimate="about 2 minutes")
+    assert state.send_progress["total"] == 16
+    assert state.send_progress["done"] == 0
+    assert state.send_progress["estimate"] == "about 2 minutes"
+
+    state.update_progress(done=6, note="broadcast 6 of 16")
+    assert state.send_progress["done"] == 6
+    assert "6 of 16" in state.send_progress["note"]
+
+    state.finish_progress()
+    assert state.send_progress["finished"] is True
+
+
+def test_events_carries_the_progress(client):
+    app, state = client
+    state.start_progress("bb" * 32, total=4, estimate="under a minute")
+    state.update_progress(done=2)
+
+    data = app.get("/events").json()
+    assert data["sending"]["done"] == 2
+    assert data["sending"]["total"] == 4
+
+
+def test_a_failed_send_says_so_rather_than_vanishing(client):
+    """A part-sent message cannot be finished later; that is worth saying."""
+    app, state = client
+    state.start_progress("cc" * 32, total=4, estimate="")
+    state.finish_progress(error="2 of 4 are already on the chain")
+
+    data = app.get("/events").json()
+    assert "already on the chain" in data["sending"]["error"]
+
+
+def test_finished_progress_clears_when_the_conversation_reloads(client):
+    """Otherwise the bubble sits at 100% for good."""
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    peer = b"\x90" * 32
+    state.identity = Identity.generate()
+    state.start_progress(peer.hex(), total=2, estimate="")
+    state.finish_progress()
+
+    app.get(f"/messages/{peer.hex()}")
+    assert state.send_progress == {}
+
+
+def test_progress_for_another_conversation_is_left_alone(client):
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    state.identity = Identity.generate()
+    state.start_progress(("91" * 32), total=2, estimate="")
+    state.finish_progress()
+
+    app.get(f"/messages/{'92' * 32}")
+    assert state.send_progress != {}, "a different thread must not clear it"
+
+
+def test_the_bubble_shows_a_percentage(client):
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    peer = b"\x93" * 32
+    state.identity = Identity.generate()
+    with state.store() as store:
+        store.add_message(None, "tx", "tx", 1, 0, "nThem", peer,
+                          state.identity.fingerprint, b"hi")
+
+    body = app.get(f"/messages/{peer.hex()}").text
+    assert 'id="sending-pct"' in body
+    assert "pct + '%'" in body
+    assert 'id="sending-fill"' in body
+
+
+# --- starting fresh -----------------------------------------------------------
+
+
+def test_a_reset_clears_history_but_keeps_the_address_book(tmp_path):
+    """The address book is the one thing here that was typed, not scanned."""
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    peer = b"\xa0" * 32
+    store.add_message(None, "tx", "tx", 1, 0, "nThem", peer, "me", b"old test")
+    store.add_sent("tx2", peer, "", "me", b"another")
+    store.save_contact(pubkey=peer, name="Someone I know")
+
+    counts = store.reset_history("test", from_height=1_500_000)
+
+    assert counts["message"] == 1 and counts["sent"] == 1
+    assert store.stats()["messages"] == 0
+    assert [c["name"] for c in store.contacts()] == ["Someone I know"]
+
+
+def test_a_reset_moves_the_starting_point_forward(tmp_path):
+    """Otherwise the next scan finds everything that was just cleared."""
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    store.set_meta("identity_height:test", "1000")
+    store.set_scan_cursor("test", 1200, "hash")
+
+    store.reset_history("test", from_height=1_500_000)
+
+    assert store.get_meta("identity_height:test") == "1500000"
+    assert store.scan_cursor("test") is None
+
+
+def test_a_reset_can_drop_contacts_when_asked(tmp_path):
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    store.save_contact(pubkey=b"\xa1" * 32, name="Someone")
+
+    store.reset_history("test", from_height=1, keep_contacts=False)
+    assert store.contacts() == []
+
+
+def test_the_reset_needs_the_acknowledgement(client):
+    app, state = client
+    app.post("/reset-history", data={"csrf_token": state.csrf_token},
+             follow_redirects=False)
+    assert "tick the box" in (state.notice or "")
+
+
+def test_an_interrupted_send_is_offered_for_finishing(client):
+    """Progress lives in memory; a restart loses it and left the bar at 0%."""
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    peer = b"\xa2" * 32
+    state.identity = Identity.generate()
+    with state.store() as store:
+        store.begin_pending_send(b"\x01" * 8, peer, "nAddr", b"body",
+                                 [b"chunk1", b"chunk2"])
+        store.record_pending_progress(b"\x01" * 8, "tx-one")
+
+    body = app.get(f"/messages/{peer.hex()}").text
+    assert "stopped after" in body
+    assert "Finish sending" in body
+
+
+def test_a_sent_file_is_kept_and_shown_like_a_received_one(client):
+    """An image you sent should look like an image, not like '[sent photo.png]'."""
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    peer = b"\xa3" * 32
+    state.identity = Identity.generate()
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+    with state.store() as store:
+        store.add_sent("tx", peer, "", state.identity.fingerprint, b"look",
+                       file_name="photo.png", file_type="image/png", file_data=png)
+
+    body = app.get(f"/messages/{peer.hex()}").text
+    assert "/messages/sent-media/" in body
+    assert '<img src="/messages/sent-media/' in body
+
+    with state.store() as store:
+        (row,) = store.conn.execute("SELECT id FROM sent").fetchall()
+    served = app.get(f"/messages/sent-media/{row['id']}")
+    assert served.content == png
+    assert served.headers["content-type"] == "image/png"

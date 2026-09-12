@@ -213,6 +213,40 @@ class AppState:
         except RuntimeError:
             pass                    # not held; nothing to do
 
+    #: What a send in flight is doing, for the conversation to draw. A long send
+    #: is minutes of work, so the browser is told to go away and watch rather
+    #: than made to hold a request open -- which is what froze the interface and
+    #: made a second click look like the thing to do.
+    send_progress: dict = field(default_factory=dict)
+
+    def start_progress(self, peer_hex: str, total: int, estimate: str) -> None:
+        with self._lock:
+            self.send_progress = {
+                "peer": peer_hex, "total": total, "done": 0,
+                "note": "preparing", "estimate": estimate,
+                "started": time.time(), "finished": False, "error": "",
+            }
+
+    def update_progress(self, done: int | None = None, note: str | None = None) -> None:
+        with self._lock:
+            if not self.send_progress:
+                return
+            if done is not None:
+                self.send_progress["done"] = done
+            if note is not None:
+                self.send_progress["note"] = note
+
+    def finish_progress(self, error: str = "") -> None:
+        with self._lock:
+            if self.send_progress:
+                self.send_progress["finished"] = True
+                self.send_progress["error"] = error
+        self.generation += 1
+
+    def clear_progress(self) -> None:
+        with self._lock:
+            self.send_progress = {}
+
     def bump_generation(self) -> None:
         with self._lock:
             self.generation += 1

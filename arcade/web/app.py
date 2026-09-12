@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import hashlib
+import threading
 import time
 import html
 import os
@@ -168,8 +169,57 @@ def create_app(state: AppState) -> FastAPI:
 
     # --- messenger ------------------------------------------------------------
 
+
+    def _send_in_background(sender, address, plan, peer_key, payload_body,
+                            own_copy, digest, attachment=None):
+        """Send a long message on a thread, reporting progress as it goes.
+
+        The send lock is already held by the caller; it is released here, at the
+        end of the real work rather than the end of the request.
+        """
+        def work():
+            try:
+                with state.store() as store:
+                    # Written down before anything is broadcast, so an interrupted
+                    # send can be finished rather than stranded.
+                    store.begin_pending_send(plan.msg_id, peer_key, address,
+                                             payload_body, plan.chunk_payloads)
+
+                def note(text, index, total):
+                    state.update_progress(note=text)
+
+                sender.ensure_outputs(address, plan.transactions, on_progress=note)
+
+                def sent_one(index, total, txid):
+                    state.update_progress(done=index,
+                                          note=f"sent {index} of {total}")
+                    with state.store() as store:
+                        store.record_pending_progress(plan.msg_id, txid)
+
+                txids = sender.send_all(address, plan.chunk_payloads,
+                                        on_progress=note, on_broadcast=sent_one)
+                with state.store() as store:
+                    store.finish_pending_send(plan.msg_id)
+                    record_sent(store, txids[0], peer_key,
+                                state.identity.fingerprint, own_copy,
+                                **(attachment or {}))
+                state.note_send(digest)
+                state.finish_progress()
+            except Exception as exc:
+                # Says what is already on the chain, because a part-sent message
+                # cannot be finished later and that is the thing worth knowing.
+                state.finish_progress(error=str(exc))
+            finally:
+                state.end_send()
+
+        threading.Thread(target=work, name="arcade-send", daemon=True).start()
+
     @app.get("/messages", response_class=HTMLResponse)
     def messages(request: Request):
+        # Any visit to the messenger is the reload the progress bubble asked
+        # for, so a finished send has nothing left to report.
+        if state.send_progress.get("finished"):
+            state.clear_progress()
         threads = []
         if state.store_path.exists() and state.unlocked:
             with state.store() as store:
@@ -179,6 +229,27 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/messages/{peer_hex}", response_class=HTMLResponse)
     def conversation(request: Request, peer_hex: str):
+        # A finished send has been reported; the message it produced is in the
+        # thread below, so the progress bubble has nothing left to say. Cleared
+        # on the reload it asked for, rather than lingering at 100% forever.
+        finished = state.send_progress.get("finished")
+        if finished and state.send_progress.get("peer") == peer_hex:
+            state.clear_progress()
+
+        # A send interrupted by a restart leaves a record on disk but no live
+        # progress, so the bubble sat at 0% with nothing driving it. Surface it
+        # as something that can be finished instead.
+        unfinished = None
+        if not state.send_progress and state.store_path.exists():
+            with state.store() as store:
+                for record in store.pending_sends():
+                    if record["recipient_key"].hex() == peer_hex:
+                        unfinished = {
+                            "sent": record["sent_count"],
+                            "total": record["total"],
+                            "msg_id": record["msg_id"].hex(),
+                        }
+                        break
         threads, items, peer = [], [], None
         if state.store_path.exists() and state.unlocked:
             try:
@@ -207,6 +278,7 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "messages.html", threads=threads, thread=items,
                       peer=peer, when=_when, fingerprint_of=fingerprint_of,
                       is_new_contact=bool(peer) and not items,
+                      unfinished=unfinished,
                       profile_name=state.profile_name)
 
     @app.post("/messages/start")
@@ -367,22 +439,42 @@ def create_app(state: AppState) -> FastAPI:
                             "a message is already being sent. Wait for it to "
                             "finish: sending two at once can leave a half-written "
                             "message on the chain that nobody can read.")
+                    own_copy = (body or f"[sent {file_name}]").encode()
+                    if plan.transactions > 1:
+                        # A long send runs on a thread and the browser goes back
+                        # to the conversation to watch it. Holding the request
+                        # open for minutes is what froze the interface, and a
+                        # frozen interface is what made a second click look like
+                        # the right thing to do.
+                        # Estimated here, not borrowed from `timing` -- that is
+                        # built further down for the rendered page and does not
+                        # exist yet. Referencing it raised NameError inside the
+                        # try, which surfaced as an unrelated error AND leaked
+                        # the send lock, because only the background thread
+                        # releases it.
+                        try:
+                            typical, slow = recent_block_seconds(rpc)
+                            spare = sender.spendable_outputs(address)
+                            quick, _ = estimate_send_seconds(
+                                plan.transactions, typical, slow, spare)
+                            estimate = describe_duration(quick)
+                        except Exception:
+                            estimate = "a few minutes"
+
+                        state.start_progress(peer_hex, plan.transactions, estimate)
+                        try:
+                            _send_in_background(sender, address, plan, peer_key,
+                                                payload_body, own_copy, digest)
+                        except Exception:
+                            # The thread never started, so nothing will release
+                            # the claim on its behalf.
+                            state.end_send()
+                            state.clear_progress()
+                            raise
+                        return RedirectResponse(f"/messages/{peer_hex}",
+                                                status_code=303)
                     try:
-                        if plan.transactions > 1:
-                            # Fund every chunk up front so they go at once
-                            # instead of waiting a block apiece.
-                            sender.ensure_outputs(address, plan.transactions)
-                            # Written down before anything is broadcast, so an
-                            # interrupted send can be finished rather than
-                            # stranded. The CLI always did this; this did not.
-                            with state.store() as store:
-                                store.begin_pending_send(
-                                    plan.msg_id, peer_key, address,
-                                    payload_body, plan.chunk_payloads)
                         txids = sender.send_all(address, plan.chunk_payloads)
-                        if plan.transactions > 1:
-                            with state.store() as store:
-                                store.finish_pending_send(plan.msg_id)
                         state.note_send(digest)
                     finally:
                         state.end_send()
@@ -390,9 +482,10 @@ def create_app(state: AppState) -> FastAPI:
                     # so we could never read this back off the chain ourselves.
                     with state.store() as store:
                         record_sent(store, txids[0], peer_key,
-                                    state.identity.fingerprint,
-                                    (body or f"[sent {file_name}]").encode())
-                    state.flash(f"Sent in {len(txids)} transaction(s).", "ok")
+                                    state.identity.fingerprint, own_copy,
+                                    file_name=file_name, file_type=file_type,
+                                    file_data=file_bytes or None)
+                    state.flash("Sent.", "ok")
                     return RedirectResponse(f"/messages/{peer_hex}", status_code=303)
         except HTTPException:
             raise          # a rejected form is a 400, not an error page
@@ -976,6 +1069,72 @@ def create_app(state: AppState) -> FastAPI:
             },
         )
 
+    @app.post("/messages/{peer_hex}/resume")
+    def resume_send(request: Request, peer_hex: str, csrf_token: str = Form("")):
+        """Finish a send that stopped part way.
+
+        The sealed chunks were written down before the first broadcast, so the
+        rest can go out unchanged under the same message id. Re-sealing would
+        produce a different id and strand what is already on the chain.
+        """
+        try:
+            check_csrf(csrf_token)
+            record = None
+            with state.store() as store:
+                for candidate in store.pending_sends():
+                    if candidate["recipient_key"].hex() == peer_hex:
+                        record = candidate
+                        break
+            if record is None:
+                raise ValueError("there is nothing left to finish.")
+            if not state.begin_send():
+                raise ValueError("a message is already being sent.")
+
+            remaining = record["chunks"][record["sent_count"]:]
+            plan = type("Resume", (), {
+                "transactions": len(remaining),
+                "chunk_payloads": remaining,
+                "msg_id": record["msg_id"],
+            })()
+            state.start_progress(peer_hex, len(remaining), "a few minutes")
+            with state.messaging.rpc() as rpc:
+                sender = MessageSender(rpc, state.messaging.params)
+                try:
+                    _send_in_background(sender, record["sender_address"], plan,
+                                        record["recipient_key"], record["body"],
+                                        record["body"], "")
+                except Exception:
+                    state.end_send()
+                    state.clear_progress()
+                    raise
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse(f"/messages/{peer_hex}", status_code=303)
+
+    @app.get("/messages/sent-media/{sent_id}")
+    def sent_media(request: Request, sent_id: int, download: int = 0):
+        """A file we sent. Same rules as one we received."""
+        with state.store() as store:
+            row = store.sent_file(sent_id)
+        if row is None or row["file_data"] is None:
+            return Response(status_code=404)
+        data = bytes(row["file_data"])
+        name = _safe_filename(row["file_name"])
+        kind = None if download else media.renderable(data)
+        if kind is None:
+            return Response(
+                content=data, media_type="application/octet-stream",
+                headers={"Content-Disposition": f'attachment; filename="{name}"',
+                         "X-Content-Type-Options": "nosniff"})
+        return Response(
+            content=data, media_type=kind.mime,
+            headers={"Content-Disposition": "inline",
+                     "X-Content-Type-Options": "nosniff",
+                     "Content-Security-Policy": media.MEDIA_CSP,
+                     "Cache-Control": "private, max-age=300"})
+
     @app.post("/profile")
     def set_profile(request: Request, name: str = Form(""), csrf_token: str = Form("")):
         try:
@@ -1001,6 +1160,7 @@ def create_app(state: AppState) -> FastAPI:
             "generation": state.generation,
             "tips": state.tips,
             "checked": state.last_checked,
+            "sending": state.send_progress or None,
         })
 
     # --- public group posts ---------------------------------------------------
@@ -1301,6 +1461,37 @@ def create_app(state: AppState) -> FastAPI:
                       ledger=ledger_status(), prepared=prepared, which=which,
                       error=error, destination=destination, amount=amount)
 
+    @app.post("/reset-history")
+    def reset_history(request: Request, understand: str = Form(""),
+                      csrf_token: str = Form("")):
+        """Forget everything scanned so far and start from the current block.
+
+        Nothing on the chain changes -- those transactions are permanent and
+        whoever they were addressed to can still read them. This clears only what
+        this installation remembers, which is what makes it useful for clearing
+        out test traffic.
+        """
+        try:
+            check_csrf(csrf_token)
+            if understand != "yes":
+                raise ValueError("tick the box to confirm.")
+            with state.messaging.rpc() as rpc:
+                tip = rpc.get_block_count()
+            with state.store() as store:
+                counts = store.reset_history(state.messaging.network, tip)
+            state.clear_progress()
+            removed = sum(counts.values())
+            state.flash(
+                f"Cleared {removed:,} stored record"
+                f"{'' if removed == 1 else 's'} and set the starting point to "
+                f"block {tip:,}. Your address book and your wallet are "
+                f"untouched; so is the chain.", "ok")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
+        except Exception as exc:
+            state.flash(f"Could not reset: {exc}", "err")
+        return RedirectResponse("/", status_code=303)
+
     @app.post("/scan")
     def scan(request: Request, csrf_token: str = Form("")):
         try:
@@ -1469,21 +1660,44 @@ def _with_attachments(store, rows: list) -> list:
     for row in rows:
         item = dict(row)
         message_id = item.get("id")
-        if message_id and not item.get("mine"):
+        if not message_id:
+            out.append(item)
+            continue
+
+        # A file, whether it arrived or we sent it. The sender keeps their own
+        # copy because the chain's is sealed to the recipient, and it is shown
+        # the same way -- an image they sent should look like an image, not like
+        # the text "[sent photo.png]".
+        if item.get("mine"):
+            if not item.get("file_size"):
+                out.append(item)
+                continue
+            row = store.sent_file(message_id)
+            data = bytes(row["file_data"]) if row and row["file_data"] else b""
+            info = {"id": message_id, "name": item.get("file_name", ""),
+                    "type": item.get("file_type", ""),
+                    "size": item.get("file_size", 0),
+                    "url": f"/messages/sent-media/{message_id}",
+                    "kind": None, "label": ""}
+        else:
             summary = store.attachment_summary(message_id)
-            if summary is not None:
-                info = {"id": message_id, "name": summary["name"],
-                        "type": summary["content_type"], "size": summary["size"],
-                        "kind": None, "label": ""}
-                # Decide from the bytes, here, once -- the template must never be
-                # in a position to render something on a sender's say-so.
-                row = store.attachment_for(message_id)
-                if row is not None:
-                    found = media.renderable(bytes(row["data"]))
-                    if found is not None:
-                        info["kind"] = found.kind
-                        info["label"] = found.label
-                item["file"] = info
+            if summary is None:
+                out.append(item)
+                continue
+            row = store.attachment_for(message_id)
+            data = bytes(row["data"]) if row is not None else b""
+            info = {"id": message_id, "name": summary["name"],
+                    "type": summary["content_type"], "size": summary["size"],
+                    "url": f"/messages/media/{message_id}",
+                    "kind": None, "label": ""}
+
+        # Decided from the bytes, here, once -- the template must never be in a
+        # position to render something on a sender's say-so.
+        found = media.renderable(data) if data else None
+        if found is not None:
+            info["kind"] = found.kind
+            info["label"] = found.label
+        item["file"] = info
         out.append(item)
     return out
 

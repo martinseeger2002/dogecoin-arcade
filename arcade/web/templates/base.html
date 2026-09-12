@@ -301,6 +301,17 @@ footer.version{max-width:1000px;margin:0 auto;padding:0 20px 30px;
   animation:spin .7s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 button:disabled{opacity:.55;cursor:default}
+
+.bubble .bar-row{display:flex;align-items:center;gap:9px;margin-top:8px}
+.bubble .bar{flex:1;height:6px;border-radius:3px;overflow:hidden;
+  background:rgba(255,255,255,.28)}
+.bubble .bar-pct{font-size:.74rem;font-variant-numeric:tabular-nums;opacity:.9;
+  min-width:2.6em;text-align:right}
+.bubble .bar-fill{height:100%;width:4%;border-radius:3px;background:#fff;
+  transition:width .4s ease}
+.bubble-row.failed .bubble{background:var(--bad)}
+.bubble.failed-note{background:var(--warn,#b8860b)}
+.bubble-row.failed .bar-fill{background:rgba(255,255,255,.6)}
 </style>
 </head>
 <body>

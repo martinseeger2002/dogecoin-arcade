@@ -724,7 +724,8 @@ def funded_address(rpc, prefer: str | None = None, need: int = COIN,
 
 
 def record_sent(store, txid: str, recipient_key: bytes, sender_fp: str,
-                body: bytes, recipient_addr: str = "") -> None:
+                body: bytes, recipient_addr: str = "", file_name: str = "",
+                file_type: str = "", file_data: bytes | None = None) -> None:
     """Write down a message we just sent, on whichever front end sent it.
 
     A sealed message cannot be read back off the chain by its sender, so this
@@ -736,7 +737,9 @@ def record_sent(store, txid: str, recipient_key: bytes, sender_fp: str,
     on the chain and irreversible by the time this is called.
     """
     try:
-        store.add_sent(txid, recipient_key, recipient_addr, sender_fp, body)
+        store.add_sent(txid, recipient_key, recipient_addr, sender_fp, body,
+                       file_name=file_name, file_type=file_type,
+                       file_data=file_data)
     except Exception:                      # pragma: no cover - storage only
         log.warning("could not record sent message %s locally", txid, exc_info=True)
 

@@ -95,6 +95,9 @@ CREATE TABLE IF NOT EXISTS sent (
     sender_fp      TEXT NOT NULL,
     body           BLOB NOT NULL,
     confirmed      INTEGER NOT NULL DEFAULT 0,
+    file_name      TEXT NOT NULL DEFAULT '',
+    file_type      TEXT NOT NULL DEFAULT '',
+    file_data      BLOB,
     UNIQUE (txid)
 );
 CREATE INDEX IF NOT EXISTS sent_time ON sent(created DESC);
@@ -260,6 +263,9 @@ class MessageStore:
         ("group_post", "file_data", "BLOB"),
         ("key_announcement", "stated", "INTEGER NOT NULL DEFAULT 0"),
         ("key_announcement", "name", "TEXT NOT NULL DEFAULT ''"),
+        ("sent", "file_name", "TEXT NOT NULL DEFAULT ''"),
+        ("sent", "file_type", "TEXT NOT NULL DEFAULT ''"),
+        ("sent", "file_data", "BLOB"),
     )
 
     def _migrate(self) -> None:
@@ -349,6 +355,37 @@ class MessageStore:
             "updated_at=excluded.updated_at",
             (network, height, block_hash, int(time.time())),
         )
+
+    def reset_history(self, network: str, from_height: int,
+                      keep_contacts: bool = True) -> dict[str, int]:
+        """Forget everything scanned so far and start watching from here.
+
+        For clearing out test traffic. Nothing on the chain is affected -- those
+        transactions are permanent and whoever they were addressed to can still
+        read them. This is only what THIS installation remembers.
+
+        The address book is kept by default: it is the one thing here that was
+        typed rather than scanned, so losing it would be losing work rather than
+        losing test data.
+        """
+        counts: dict[str, int] = {}
+        tables = ["message", "sent", "candidate", "group_post", "group_chunk",
+                  "pending_send", "key_announcement", "attachment"]
+        if not keep_contacts:
+            tables.append("contact")
+        for table in tables:
+            try:
+                counts[table] = self.conn.execute(
+                    f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
+                self.conn.execute(f"DELETE FROM {table}")
+            except Exception:
+                counts[table] = 0
+
+        # Start from here rather than from the identity's creation, so nothing
+        # just cleared is simply found again by the next scan.
+        self.set_meta(f"identity_height:{network}", str(from_height))
+        self.conn.execute("DELETE FROM scan_state WHERE network=?", (network,))
+        return counts
 
     def rewind(self, network: str, height: int) -> int:
         """Drop everything at or above `height`, for reorg handling.
@@ -741,7 +778,8 @@ class MessageStore:
         return out
 
     def add_sent(self, txid: str, recipient_key: bytes, recipient_addr: str,
-                 sender_fp: str, body: bytes) -> None:
+                 sender_fp: str, body: bytes, file_name: str = "",
+                 file_type: str = "", file_data: bytes | None = None) -> None:
         """Keep our own plaintext copy of a message we sent.
 
         Not an optimisation -- it is the only copy we will ever have. A message
@@ -757,9 +795,18 @@ class MessageStore:
         """
         self.conn.execute(
             "INSERT OR IGNORE INTO sent"
-            "(txid,created,recipient_key,recipient_addr,sender_fp,body) VALUES(?,?,?,?,?,?)",
-            (txid, int(time.time()), recipient_key, recipient_addr, sender_fp, body),
+            "(txid,created,recipient_key,recipient_addr,sender_fp,body,"
+            "file_name,file_type,file_data) VALUES(?,?,?,?,?,?,?,?,?)",
+            (txid, int(time.time()), recipient_key, recipient_addr, sender_fp,
+             body, file_name, file_type, file_data),
         )
+
+    def sent_file(self, sent_id: int) -> sqlite3.Row | None:
+        """The file the sender kept. Their own copy: the chain's is sealed to
+        the recipient, so this is the only one they will ever have."""
+        return self.conn.execute(
+            "SELECT file_name, file_type, file_data FROM sent WHERE id=?",
+            (sent_id,)).fetchone()
 
     def mark_sent_confirmed(self, txid: str) -> None:
         self.conn.execute("UPDATE sent SET confirmed=1 WHERE txid=?", (txid,))
@@ -906,12 +953,16 @@ class MessageStore:
                           "mine": False, "txid": row["first_txid"], "height": row["height"],
                           "unread": row["read_at"] is None})
         for row in self.conn.execute(
-            "SELECT id, body, created, txid, confirmed FROM sent "
+            "SELECT id, body, created, txid, confirmed, file_name, file_type, "
+            "       LENGTH(file_data) AS file_size FROM sent "
             "WHERE sender_fp=? AND recipient_key=?", (recipient_fp, peer_key)
         ):
             items.append({"id": row["id"], "body": row["body"], "when": row["created"],
                           "mine": True, "txid": row["txid"], "height": None,
-                          "confirmed": bool(row["confirmed"])})
+                          "confirmed": bool(row["confirmed"]),
+                          "file_name": row["file_name"],
+                          "file_type": row["file_type"],
+                          "file_size": row["file_size"] or 0})
         return sorted(items, key=lambda i: i["when"])
 
     def mark_thread_read(self, recipient_fp: str, peer_key: bytes) -> None:
