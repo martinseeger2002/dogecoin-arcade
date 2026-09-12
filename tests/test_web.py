@@ -1824,3 +1824,205 @@ def test_an_unfinished_post_can_be_finished(client):
     assert "Finish posting" in source
     assert 'action="/groups/resume"' in source
     assert 'id="posting-bubble"' in source, "a running post must be visible"
+
+
+# --- resuming a send that got part way ----------------------------------------
+#
+# a test machine proved resume end to end on regtest: killed a send with SIGKILL while it
+# waited for its wallet split, confirmed the sealed chunks survived on disk
+# byte-for-byte, then pressed Finish sending and watched all three transactions
+# go out under the ORIGINAL msg_id -- continuing the message rather than sealing
+# a new one, which is the thing most worth proving.
+#
+# What that could NOT reach is resume with sent_count > 0. It needs an
+# interruption between two chunk broadcasts, and with a confirmed split those go
+# out back to back in under a second. a test machine said plainly that racing it is not
+# reliable even on regtest and that the honest way is a unit test. This is it.
+
+
+class _StubSender:
+    """Records what it is asked to send. Sends nothing."""
+
+    def __init__(self):
+        self.ensured = None
+        self.sent = None
+
+    def ensure_outputs(self, address, wanted, on_progress=None):
+        self.ensured = (address, wanted)
+        return False
+
+    def spendable_outputs(self, address, at_least=0):
+        return 99
+
+    def send_all(self, address, payloads, on_progress=None, on_broadcast=None):
+        self.sent = (address, list(payloads))
+        for index, payload in enumerate(payloads, 1):
+            if on_broadcast is not None:
+                on_broadcast(index, len(payloads), f"txid-{index}")
+        return [f"txid-{i}" for i in range(1, len(payloads) + 1)]
+
+
+@pytest.fixture
+def _stubbed_chain(monkeypatch, app_state):
+    """Let a route reach a sender without a node behind it."""
+    import contextlib
+
+    from arcade.web import app as webapp
+
+    stub = _StubSender()
+    monkeypatch.setattr(webapp, "MessageSender", lambda *a, **k: stub)
+
+    @contextlib.contextmanager
+    def fake_rpc():
+        yield object()
+
+    monkeypatch.setattr(app_state.messaging, "rpc", fake_rpc)
+    monkeypatch.setattr(webapp, "recent_block_seconds", lambda rpc: (60.0, 120.0))
+    return stub
+
+
+def test_resuming_a_message_sends_only_what_is_left(client, _stubbed_chain, monkeypatch):
+    """sent_count chunks are already paid for and on the chain.
+
+    Re-sending one would pay for it twice and put the same chunk on the chain
+    under the same msg_id, which no reader asked for.
+    """
+    import time as _time
+
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    state.identity = Identity.generate()
+    peer = b"\x55" * 32
+    chunks = [b"chunk-one", b"chunk-two", b"chunk-three"]
+    msg_id = b"\xab" * 8
+
+    with state.store() as store:
+        store.begin_pending_send(msg_id, peer, "senderaddr", b"the body", chunks)
+        store.record_pending_progress(msg_id, "txid-already-sent")
+
+    token = re.search(r'name="csrf_token" value="([^"]+)"',
+                      app.get("/messages").text).group(1)
+    app.post(f"/messages/{peer.hex()}/resume", data={"csrf_token": token},
+             follow_redirects=False)
+
+    for _ in range(100):                      # the work is on a thread
+        if _stubbed_chain.sent is not None:
+            break
+        _time.sleep(0.02)
+
+    assert _stubbed_chain.sent is not None, "resume never reached the sender"
+    address, payloads = _stubbed_chain.sent
+    assert address == "senderaddr"
+    assert payloads == [b"chunk-two", b"chunk-three"], (
+        "resume must send only the chunks that never went out"
+    )
+    assert _stubbed_chain.ensured == ("senderaddr", 2), (
+        "it should prepare outputs for what is left, not for the whole message"
+    )
+
+
+def test_resuming_keeps_the_original_message_id(client, _stubbed_chain):
+    """A new id would strand what is already on the chain, unreadable for ever."""
+    import time as _time
+
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    state.identity = Identity.generate()
+    peer = b"\x66" * 32
+    msg_id = b"\xcd" * 8
+
+    with state.store() as store:
+        store.begin_pending_send(msg_id, peer, "addr2", b"body",
+                                 [b"a", b"b", b"c"])
+        store.record_pending_progress(msg_id, "txid-1")
+        store.record_pending_progress(msg_id, "txid-2")
+
+    token = re.search(r'name="csrf_token" value="([^"]+)"',
+                      app.get("/messages").text).group(1)
+    app.post(f"/messages/{peer.hex()}/resume", data={"csrf_token": token},
+             follow_redirects=False)
+
+    for _ in range(100):
+        if _stubbed_chain.sent is not None:
+            break
+        _time.sleep(0.02)
+
+    assert _stubbed_chain.sent[1] == [b"c"], "only the last chunk was outstanding"
+    # The record is keyed by msg_id, so it can only have been cleared by a
+    # finish under the ORIGINAL id.
+    for _ in range(100):
+        with state.store() as store:
+            if not store.pending_sends():
+                break
+        _time.sleep(0.02)
+    with state.store() as store:
+        assert store.pending_sends() == [], (
+            "the pending record must be cleared under the original msg_id"
+        )
+
+
+def test_resuming_a_post_sends_only_what_is_left(client, _stubbed_chain):
+    """The public resume path slices the same way, so it is checked the same way.
+
+    Two implementations of "send the rest" is how the CLI and the web came to
+    disagree about recording a send, and each machine then showed half a
+    conversation. These are separate routes, so they get separate tests.
+    """
+    import time as _time
+
+    app, state = client
+    msg_id = b"\xef" * 8
+    with state.store() as store:
+        store.begin_pending_post(msg_id, "regtest", "main", "a test machine", "postaddr",
+                                 b"a long public post", [b"p1", b"p2", b"p3"])
+        store.record_pending_progress(msg_id, "txid-p1")
+
+    token = re.search(r'name="csrf_token" value="([^"]+)"',
+                      app.get("/groups").text).group(1)
+    app.post("/groups/resume",
+             data={"csrf_token": token, "which": "messaging", "channel": "main"},
+             follow_redirects=False)
+
+    for _ in range(100):
+        if _stubbed_chain.sent is not None:
+            break
+        _time.sleep(0.02)
+
+    assert _stubbed_chain.sent is not None, "resume never reached the sender"
+    address, payloads = _stubbed_chain.sent
+    assert address == "postaddr"
+    assert payloads == [b"p2", b"p3"]
+
+    for _ in range(100):
+        with state.store() as store:
+            if not store.pending_posts():
+                break
+        _time.sleep(0.02)
+    with state.store() as store:
+        assert store.pending_posts() == []
+        # And the local copy of the post is written on completion, which is
+        # what makes it appear on the board afterwards.
+        assert any(p["text"] == "a long public post"
+                   for p in store.group_posts("regtest", "main"))
+
+
+def test_a_post_resume_will_not_touch_a_private_pending_send(client, _stubbed_chain):
+    """The kind filter, asserted through the route rather than the store."""
+    app, state = client
+    with state.store() as store:
+        store.begin_pending_send(b"\x01" * 8, b"\x02" * 32, "privaddr", b"m",
+                                 [b"x", b"y"])
+
+    token = re.search(r'name="csrf_token" value="([^"]+)"',
+                      app.get("/groups").text).group(1)
+    app.post("/groups/resume",
+             data={"csrf_token": token, "which": "messaging", "channel": "main"},
+             follow_redirects=False)
+
+    assert _stubbed_chain.sent is None, (
+        "a public resume reached a private message's chunks"
+    )
+    with state.store() as store:
+        assert len(store.pending_sends()) == 1, "the private record must survive"

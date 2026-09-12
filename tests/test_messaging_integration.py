@@ -245,3 +245,33 @@ def test_scan_picks_up_where_it_left_off(pair, params, tmp_path, identities):
     assert result.blocks == 1, "should have scanned exactly the one new block"
     assert store.scan_cursor(params.name)[0] == height_before + 1
     store.close()
+
+
+# --- broadcast is not the same question as readable ---------------------------
+
+def test_readable_takes_a_block_per_chunk_even_when_broadcast_is_instant():
+    """Measured on both chains, which is why it is not a regtest artefact.
+
+    a test machine's two 8,855-byte public chunks were broadcast in the same second and
+    confirmed in testnet blocks 1,484,210 and 1,484,212 -- two apart. On regtest
+    three 10.7 KB chunks took one block each. The confirm screen said "they all
+    go at once", which is true of broadcasting and not of reading.
+    """
+    from arcade.messaging.sender import (
+        estimate_readable_seconds, estimate_send_seconds)
+
+    typical = 60.0
+    # A well-split wallet: nothing waits to be broadcast.
+    quick, _ = estimate_send_seconds(3, typical, 180.0, independent_outputs=8)
+    assert quick == 0, "with enough outputs, broadcasting waits for nothing"
+
+    # But the message is not readable for three blocks.
+    assert estimate_readable_seconds(3, typical) == 180
+    assert estimate_readable_seconds(1, typical) == 60, "one block, like anything"
+    assert estimate_readable_seconds(0, typical) == 60, "never less than a block"
+
+    # The two answers must not be confused: readable is never the shorter one.
+    for chunks in (1, 2, 5, 20):
+        broadcast, _ = estimate_send_seconds(chunks, typical, 180.0,
+                                             independent_outputs=chunks + 4)
+        assert estimate_readable_seconds(chunks, typical) >= broadcast

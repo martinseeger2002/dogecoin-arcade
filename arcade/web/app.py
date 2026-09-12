@@ -38,7 +38,8 @@ from ..messaging.keys import fingerprint_of
 from ..messaging.miner import Miner, MiningError
 from ..messaging.scanner import Scanner
 from ..messaging.sender import (
-    MessageSender, SendError, describe_duration, estimate_send_seconds,
+    MessageSender, SendError, describe_duration, estimate_readable_seconds,
+    estimate_send_seconds,
     funded_address, plan_message, record_sent, recent_block_seconds,
 )
 from .state import AppState
@@ -664,6 +665,12 @@ def create_app(state: AppState) -> FastAPI:
                 "waits": quick > 0,
                 "independent": independent,
                 "will_split": will_split,
+                # Broadcast and readable are different questions and the screen
+                # only answered the first. A split send is broadcast in seconds
+                # and still takes a block per chunk to confirm -- measured on
+                # both chains, see estimate_readable_seconds.
+                "readable": describe_duration(
+                    estimate_readable_seconds(plan.transactions, typical)),
             }
         return render(request, "messages.html", threads=threads, thread=items, peer=peer,
                       when=_when, fingerprint_of=fingerprint_of, prepared=prepared,

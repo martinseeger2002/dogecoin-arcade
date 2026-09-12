@@ -202,6 +202,14 @@
           {{ "%.5f"|format(dust) }} in dust that can never be spent
           again{% endif %}. It becomes permanent once broadcast.
         {% endif %}
+        {% if timing and timing.readable and count > 1 %}
+        <div class="note" style="margin:10px 0 0">
+          Broadcast is the fast part. A chunked message cannot be READ until
+          every chunk is in a block, and large chunks do not share one, so
+          expect <strong>{{ timing.readable }}</strong> before they can open it
+          &mdash; measured on both chains.
+        </div>
+        {% endif %}
         {% if count > 1 %}
         <div class="note" style="margin:10px 0 0">
           If sending stops part way, what is already on the chain cannot be taken

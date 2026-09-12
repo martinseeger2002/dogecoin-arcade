@@ -811,6 +811,24 @@ def estimate_send_seconds(transactions: int, typical: float, slow: float,
     return int(waits * typical), int(waits * slow)
 
 
+def estimate_readable_seconds(transactions: int, typical: float) -> int:
+    """How long until every chunk is CONFIRMED, not merely broadcast.
+
+    Broadcasting a split send is instant, and `estimate_send_seconds` says so
+    correctly. But a chunked message cannot be read until the last chunk is in a
+    block, and large chunks do not share one: a test machine's two 8,855-byte public
+    chunks went out in the same second and confirmed in testnet blocks
+    1,484,210 and 1,484,212 -- two apart, not together -- and on regtest three
+    10.7 KB chunks took one block each. Two independent observations, one on
+    each chain, so this is not a regtest artefact.
+
+    Assumes one chunk per block, which matches both and errs towards over-
+    stating rather than promising a message will be readable sooner than it is.
+    A single-transaction message is one block like anything else.
+    """
+    return int(max(1, transactions) * typical)
+
+
 def describe_duration(seconds: int) -> str:
     """A duration a person can act on. Deliberately coarse."""
     if seconds < 45:
