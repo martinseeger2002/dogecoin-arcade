@@ -167,7 +167,8 @@
           Broadcast is the fast part. A chunked post cannot be READ until every
           chunk is in a block, and large chunks do not share one, so expect
           <strong>{{ timing.readable }}</strong> before it is complete for
-          anyone reading.
+          anyone reading
+          &mdash; measured on both chains.
         </div>
         {% endif %}
         {% if chain.is_mainnet %}

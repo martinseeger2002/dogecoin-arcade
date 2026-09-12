@@ -846,25 +846,30 @@ def estimate_readable_seconds(transactions: int, typical: float) -> int:
     correctly. But a chunked message cannot be read until the last chunk is in a
     block, and large chunks do not appear to share one.
 
-    THE EVIDENCE, stated accurately because the first version of this docstring
-    was not. On regtest, three 10.7 KB chunks each spending the same confirmed
-    split -- so genuinely independent, able to go in any block -- took blocks
-    246, 247 and 248: one each. That is the whole of the support for one chunk
-    per block.
+    THE EVIDENCE, on both chains, with the citation pointed at the right pair.
 
-    What this originally also cited was a test machine's two 8,855-byte testnet chunks
-    landing in blocks 1,484,210 and 1,484,212, described as broadcast in the
-    same second. They were not. Chunk 2 spends chunk 1's output
-    (8b51a4c7 <- e528fcdc, checked on chain), so it could not be built until
-    chunk 1 confirmed: that gap is `send_all`'s chaining wait, not block
-    packing. It chained because the public path had no `ensure_outputs` at the
-    time -- which is now fixed, so a public post will split and its chunks will
-    be independent, making the regtest case the relevant one.
+    On testnet, a test machine's two chunks from test 4 each spend a DIFFERENT output of
+    the same already-confirmed split (f9d0584a <- ffe4ab85:1, 890c1a31 <-
+    ffe4ab85:2), so neither depends on the other and both were free to share a
+    block. Both were broadcast at 17:04:03 UTC; the split had confirmed in block
+    1,484,219 at 17:03:58. Block 1,484,220 arrived at 17:04:55 -- 52 seconds
+    later, with both chunks in the mempool and ample room -- and contained
+    exactly one of them plus its coinbase: 2 transactions, 9,140 bytes. Block
+    1,484,221, nine seconds later, took the other: 2 transactions, 9,139 bytes.
+    So the miner had both and chose one. On regtest, three 10.7 KB chunks
+    against one split took blocks 246, 247 and 248, one each.
 
-    So: assumes one chunk per block, on one chain's evidence rather than two. It
-    errs towards overstating rather than promising a message will be readable
-    sooner than it is, which is the right direction to be wrong in. A
-    single-transaction message is one block like anything else.
+    An earlier version of this cited a test machine's 1b post instead, described as
+    broadcast together. That pair was chained -- 8b51a4c7 spends e528fcdc, 85
+    seconds apart -- because the public path had no `ensure_outputs` then, so
+    that gap was send_all's confirmation wait and not packing. The claim was
+    true and the citation was wrong; it cost a round trip to find that the
+    right transactions were in the other report. Independence is the thing to
+    check before reading anything into two chunks landing in different blocks.
+
+    So: one chunk per block. It errs towards overstating rather than promising a
+    message will be readable sooner than it is, which is the right direction to
+    be wrong in. A single-transaction message is one block like anything else.
     """
     return int(max(1, transactions) * typical)
 

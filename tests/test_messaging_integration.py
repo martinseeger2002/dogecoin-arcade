@@ -250,18 +250,22 @@ def test_scan_picks_up_where_it_left_off(pair, params, tmp_path, identities):
 # --- broadcast is not the same question as readable ---------------------------
 
 def test_readable_takes_a_block_per_chunk_even_when_broadcast_is_instant():
-    """One chunk per block, on regtest evidence.
+    """One chunk per block, on both chains.
 
-    Three 10.7 KB chunks each spending the same confirmed split -- independent,
-    free to share a block -- took blocks 246, 247 and 248.
+    Testnet: two chunks spending DIFFERENT outputs of the same confirmed split
+    (f9d0584a <- ffe4ab85:1, 890c1a31 <- ffe4ab85:2) so neither waits on the
+    other, both broadcast at 17:04:03 UTC, and block 1,484,220 at 17:04:55 took
+    exactly one of them plus its coinbase while the other sat in the mempool
+    with room to spare. Regtest: three 10.7 KB chunks against one split, blocks
+    246, 247, 248.
 
-    This originally also cited a test machine's two testnet chunks landing two blocks
-    apart, said to have been broadcast together. Checking the chain showed chunk
-    2 spends chunk 1 (8b51a4c7 <- e528fcdc), so that gap is send_all's chaining
-    wait and not packing at all. One chain's evidence, said plainly, beats two
-    where one of them was misread.
+    The citation was wrong twice before it was right: first pointed at a chained
+    pair (8b51a4c7 spends e528fcdc, 85 seconds apart -- send_all's confirmation
+    wait, not packing), then narrowed to regtest alone when testnet did support
+    it. INDEPENDENCE is the thing to check before reading anything into two
+    chunks landing in different blocks.
 
-    Either way the point stands against the screen's old claim: "they all go at
+    The point stands against the screen's old claim either way: "they all go at
     once" is true of broadcasting and not of reading.
     """
     from arcade.messaging.sender import (
