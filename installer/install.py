@@ -54,6 +54,18 @@ from pathlib import Path
 #: account, no key and no forge.
 REPO_URL = "https://dogecoinarcade.com/repo"
 
+#: The same code as a plain archive, for machines with no git. Windows is why:
+#: git is a separate 60 MB download there, and a user who installs it still has
+#: a terminal holding the old PATH, so the installer cannot see it even after
+#: they have done what it asked. The archive needs nothing but this script.
+ARCHIVE_URL = "https://dogecoinarcade.com/source.tar.gz"
+ARCHIVE_SUMS_URL = "https://dogecoinarcade.com/source.tar.gz.sha256"
+REVISION_URL = "https://dogecoinarcade.com/source.rev"
+
+#: Written into a checkout fetched as an archive, because it has no .git for
+#: `git rev-parse` to read and the updater still has to know what is installed.
+REVISION_FILE = ".revision"
+
 
 class Coin:
     """Everything that differs between the two chains.
@@ -497,11 +509,38 @@ WINDOWS_TASK = (
 )
 
 
-def install_services_windows(target: Path, main_dir: Path, test_dir: Path, coin) -> list[str]:
-    """Register both nodes as logon Scheduled Tasks.
+def windows_startup_dir() -> Path:
+    """The per-user Startup folder: what runs at logon without any privilege."""
+    appdata = os.environ.get("APPDATA") or str(Path.home() / "AppData/Roaming")
+    return Path(appdata) / "Microsoft/Windows/Start Menu/Programs/Startup"
 
-    Windows has no systemd. A Scheduled Task set to ONLOGON is the closest
-    equivalent that needs no service wrapper and no administrator rights.
+
+def install_startup_entry(name: str, command: str) -> Path | None:
+    """Start something at logon by putting a .cmd in the user's Startup folder.
+
+    Used when `schtasks` refuses. A Scheduled Task with /SC ONLOGON needs
+    administrator rights -- the first version of this said it did not, and a
+    Windows user got "ERROR: Access is denied." twice and a working install with
+    nothing starting on its own. The Startup folder needs no rights at all: it
+    is the user's own folder, and it is what the user can see and delete.
+    """
+    try:
+        folder = windows_startup_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        entry = folder / f"{name}.cmd"
+        entry.write_text(f'@echo off\r\nstart "" /min {command}\r\n')
+        return entry
+    except OSError as exc:
+        warn(f"could not write a Startup entry for {name}: {exc}")
+        return None
+
+
+def install_services_windows(target: Path, main_dir: Path, test_dir: Path, coin) -> list[str]:
+    """Start both nodes at logon.
+
+    Windows has no systemd. A Scheduled Task is the tidier equivalent but
+    /SC ONLOGON needs administrator rights, so when it is refused this falls
+    back to the user's Startup folder, which never is.
     """
     binary = target / f"{coin.binaries[0]}.exe"
     if not binary.exists():
@@ -515,8 +554,15 @@ def install_services_windows(target: Path, main_dir: Path, test_dir: Path, coin)
         if result.returncode == 0:
             installed.append(label)
             info(f"registered logon task for {label}")
+            continue
+        entry = install_startup_entry(f"DogecoinArcade-{coin.key}-{label}",
+                                      f'"{binary}" -datadir="{datadir}"')
+        if entry is not None:
+            installed.append(label)
+            info(f"{label} will start at logon ({entry.name})")
         else:
-            warn(f"could not register the {label} task: {result.stdout.strip() or result.stderr.strip()}")
+            warn(f"could not start the {label} node automatically: "
+                 f"{result.stdout.strip() or result.stderr.strip()}")
             warn(f"  start it yourself: {binary} -datadir={datadir}")
     return installed
 
@@ -732,6 +778,11 @@ def install_web_service(venv: Path, system: str) -> bool:
         if subprocess.run(command, shell=True, capture_output=True).returncode == 0:
             info("registered the web interface as a logon task")
             return True
+        # Same reason as the nodes: ONLOGON wants administrator rights.
+        entry = install_startup_entry("DogecoinArcade", f'"{binary}"')
+        if entry is not None:
+            info(f"the interface will start at logon ({entry.name})")
+            return True
 
     warn(f"could not register the web interface; start it yourself: {binary}")
     return False
@@ -797,14 +848,11 @@ def find_source(dry_run: bool) -> Path:
         info(f"would fetch the application from {REPO_URL} into {checkout}")
         return checkout
 
-    git = shutil.which("git")
+    git = find_git()
     if not git:
-        fail(
-            "git is needed to fetch the application, and it is not installed.\n"
-            "        Debian/Ubuntu:  sudo apt install git\n"
-            "        Fedora:         sudo dnf install git\n"
-            "        macOS:          xcode-select --install"
-        )
+        info("git is not installed; fetching the source archive instead")
+        fetch_source_archive(checkout)
+        return checkout
 
     if (checkout / ".git").exists():
         info(f"updating {checkout}")
@@ -820,6 +868,104 @@ def find_source(dry_run: bool) -> Path:
         if result.returncode != 0:
             fail(f"could not fetch {REPO_URL}: {result.stderr.strip()}")
     return checkout
+
+
+def find_git() -> str | None:
+    """git, including where Windows put it a moment ago.
+
+    `shutil.which` reads the PATH this process inherited. A user told "install
+    git" does so, comes back to the same Command Prompt and is told again that
+    git is not installed -- because that window's PATH was fixed when it opened.
+    Looking in the standard install locations makes the obvious thing work.
+    """
+    git = shutil.which("git")
+    if git:
+        return git
+    if os.name != "nt":
+        return None
+    for base in filter(None, (os.environ.get("ProgramFiles"),
+                              os.environ.get("ProgramFiles(x86)"),
+                              os.environ.get("LOCALAPPDATA"))):
+        candidate = Path(base) / "Git" / "cmd" / "git.exe"
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def fetch_source_archive(checkout: Path) -> str | None:
+    """Fetch the application as an archive. Returns the revision, if published.
+
+    The archive is served from the same site as this script and checked against
+    the SHA-256 published beside it. That catches a truncated or corrupted
+    download; it is not a signature, and it cannot be -- whoever could replace
+    the archive could replace the sum next to it, exactly as they could replace
+    the repository `git clone` reads. It is the same trust as the clone, with
+    one fewer program to install.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        workdir = Path(tmp)
+        archive = download(ARCHIVE_URL, workdir / "source.tar.gz", "source.tar.gz")
+        expected = read_url(ARCHIVE_SUMS_URL, "checksum").split()
+        actual = sha256_of(archive)
+        if not expected or expected[0] != actual:
+            fail(
+                f"SHA-256 MISMATCH for the source archive\n"
+                f"        expected {expected[0] if expected else '(none published)'}\n"
+                f"        got      {actual}\n"
+                f"      Refusing to install."
+            )
+        info(f"sha256 matches the published sum ({actual[:16]}...)")
+
+        unpacked = workdir / "unpacked"
+        unpacked.mkdir()
+        with tarfile.open(archive) as tf:
+            for member in tf.getmembers():
+                resolved = (unpacked / member.name).resolve()
+                if not str(resolved).startswith(str(unpacked.resolve())):
+                    fail(f"archive contains an unsafe path: {member.name}")
+            tf.extractall(unpacked, filter="data")
+
+        root = next((p for p in unpacked.iterdir() if (p / "pyproject.toml").is_file()),
+                    None)
+        if root is None:
+            fail("the source archive does not contain the application")
+
+        revision = (read_url(REVISION_URL, "revision", quiet=True) or "").strip() or None
+        if revision:
+            (root / REVISION_FILE).write_text(revision + "\n")
+
+        # Replaced wholesale rather than merged: a file deleted upstream has to
+        # disappear here too, and a half-updated checkout is worse than either
+        # version of it. Nothing personal lives here -- the identity, messages
+        # and chain data are all in ~/.dogecoinarcade itself, not in src.
+        checkout.parent.mkdir(parents=True, exist_ok=True)
+        previous = checkout.with_name(checkout.name + ".old")
+        shutil.rmtree(previous, ignore_errors=True)
+        if checkout.exists():
+            checkout.rename(previous)
+        try:
+            shutil.move(str(root), str(checkout))
+        except Exception:
+            if previous.exists() and not checkout.exists():
+                previous.rename(checkout)          # put back what was working
+            raise
+        shutil.rmtree(previous, ignore_errors=True)
+
+    info(f"fetched the application into {checkout}"
+         + (f" ({revision[:7]})" if revision else ""))
+    return revision
+
+
+def read_url(url: str, label: str, quiet: bool = False) -> str:
+    """Fetch a small text file. Returns "" when it is not there and quiet."""
+    try:
+        with urllib.request.urlopen(url, timeout=60) as response:
+            return response.read().decode("utf-8", "replace")
+    except urllib.error.URLError as exc:
+        if quiet:
+            return ""
+        fail(f"could not download the {label} from {url}: {exc}")
+    return ""
 
 
 def install_app(dry_run: bool) -> Path:

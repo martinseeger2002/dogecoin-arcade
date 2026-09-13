@@ -30,6 +30,11 @@ import sys
 from pathlib import Path
 
 REPO_URL = "https://dogecoinarcade.com/repo"
+#: The archive the installer falls back to when there is no git (see
+#: installer/install.py). An installation made that way has no .git, so both
+#: "what is installed" and "what is published" have to be read another way.
+REVISION_URL = "https://dogecoinarcade.com/source.rev"
+REVISION_FILE = ".revision"
 HOME = Path.home() / ".dogecoinarcade"
 
 
@@ -67,10 +72,24 @@ def _layout() -> tuple[Path, Path, bool]:
 
 
 def _git() -> str:
-    git = shutil.which("git")
+    git = _find_git()
     if not git:
         raise UpdateError("git is required to update. Install it and try again.")
     return git
+
+
+def _find_git() -> str | None:
+    """git, including where Windows put it after the terminal's PATH was set."""
+    git = shutil.which("git")
+    if git or os.name != "nt":
+        return git
+    for base in filter(None, (os.environ.get("ProgramFiles"),
+                              os.environ.get("ProgramFiles(x86)"),
+                              os.environ.get("LOCALAPPDATA"))):
+        candidate = Path(base) / "Git" / "cmd" / "git.exe"
+        if candidate.exists():
+            return str(candidate)
+    return None
 
 
 def _run(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
@@ -80,6 +99,11 @@ def _run(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
 
 def current_revision(checkout: Path) -> str | None:
     if not (checkout / ".git").exists():
+        # Fetched as an archive: the installer wrote down what it fetched,
+        # because there is no repository here to ask.
+        stamp = checkout / REVISION_FILE
+        if stamp.is_file():
+            return stamp.read_text().strip()[:7] or None
         return None
     result = _run(_git(), "rev-parse", "--short", "HEAD", cwd=checkout)
     return result.stdout.strip() or None
@@ -87,11 +111,24 @@ def current_revision(checkout: Path) -> str | None:
 
 def remote_revision() -> str | None:
     """The published HEAD, without fetching the whole repository."""
-    result = _run(_git(), "ls-remote", REPO_URL, "HEAD")
-    if result.returncode != 0:
+    if _find_git() is not None:
+        result = _run(_git(), "ls-remote", REPO_URL, "HEAD")
+        if result.returncode == 0:
+            line = result.stdout.split()
+            if line:
+                return line[0][:7]
+    return _published_revision()
+
+
+def _published_revision() -> str | None:
+    """The revision named beside the source archive. No git needed."""
+    import urllib.error
+    import urllib.request
+    try:
+        with urllib.request.urlopen(REVISION_URL, timeout=30) as response:
+            return response.read().decode("utf-8", "replace").strip()[:7] or None
+    except (urllib.error.URLError, OSError):
         return None
-    line = result.stdout.split()
-    return line[0][:7] if line else None
 
 
 def check() -> tuple[str | None, str | None, bool]:
@@ -120,10 +157,24 @@ def update(dry_run: bool = False) -> int:
         print("  Nothing to fetch: the code here is whatever you have checked out.")
         return _update_services(checkout, venv, dry_run)
 
-    git = _git()
     print("Fetching the latest code")
+    git = None if dry_run else _find_git()
     if dry_run:
         print(f"  would fetch {REPO_URL} into {checkout}")
+    elif git is None or (checkout.exists() and not (checkout / ".git").exists()):
+        # Installed from the archive, or installed with a git that has since
+        # gone. Either way the archive is the way back to current, and it needs
+        # nothing but a download.
+        before = current_revision(checkout)
+        after = _call_installer(checkout, "fetch_source_archive", checkout)
+        if after is None:
+            raise UpdateError(
+                f"could not fetch the source archive into {checkout}.\n"
+                "  Run the installer again from https://dogecoinarcade.com to "
+                "repair this installation.")
+        after = str(after)[:7]
+        print(f"  already up to date ({after})" if before == after
+              else f"  {before or 'unknown'} -> {after}")
     elif (checkout / ".git").exists():
         before = current_revision(checkout)
         result = _run(git, "pull", "--ff-only", "--quiet", cwd=checkout)

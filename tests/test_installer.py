@@ -303,3 +303,151 @@ def test_an_undeterminable_listener_does_not_cry_wolf(monkeypatch, capsys):
 
     assert update._verify_service_owns_port(["--user"]) is True
     assert "Something else" not in capsys.readouterr().out
+
+
+# --- fetching the application without git -------------------------------------
+# A Windows user got as far as [6/7] and was told "git is needed", with install
+# lines for Debian, Fedora and macOS and nothing for the machine they were on.
+# They installed Git for Windows and the same Command Prompt still could not see
+# it, because its PATH was fixed when the window opened. Neither half of that
+# should have been possible: the archive needs no git at all.
+
+
+@pytest.fixture
+def published(tmp_path, monkeypatch):
+    """A site serving source.tar.gz, its sum and its revision, from disk."""
+    import tarfile
+    import urllib.request
+
+    source = tmp_path / "repo" / "dogecoinarcade"
+    (source / "arcade").mkdir(parents=True)
+    (source / "pyproject.toml").write_text("[project]\nname='dogecoinarcade'\n")
+    (source / "arcade" / "__init__.py").write_text("VERSION = 2\n")
+    archive = tmp_path / "source.tar.gz"
+    with tarfile.open(archive, "w:gz") as tf:
+        tf.add(source, arcname="dogecoinarcade")
+
+    import hashlib
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    served = {
+        install.ARCHIVE_URL: archive.read_bytes(),
+        install.ARCHIVE_SUMS_URL: (digest + "  source.tar.gz\n").encode(),
+        install.REVISION_URL: b"1234567890abcdef1234567890abcdef12345678\n",
+    }
+
+    class FakeResponse:
+        def __init__(self, body):
+            self._body = body
+            self.headers = {"Content-Length": str(len(body))}
+            self._read = False
+
+        def read(self, size=None):
+            if self._read:
+                return b""
+            self._read = True
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(url, timeout=None):
+        if url not in served:
+            raise urllib.error.URLError(f"not served: {url}")
+        return FakeResponse(served[url])
+
+    monkeypatch.setattr(install.urllib.request, "urlopen", fake_urlopen)
+    return served, digest
+
+
+def test_the_application_can_be_fetched_without_git(fake_home, published, tmp_path):
+    """The archive path has to produce exactly what a clone would: a directory
+    with pyproject.toml at its root, ready for `pip install`."""
+    checkout = tmp_path / "home" / "src"
+    revision = install.fetch_source_archive(checkout)
+
+    assert (checkout / "pyproject.toml").is_file()
+    assert (checkout / "arcade" / "__init__.py").read_text() == "VERSION = 2\n"
+    assert revision.startswith("1234567")
+    assert (checkout / install.REVISION_FILE).read_text().strip() == revision
+
+
+def test_a_corrupted_archive_is_refused(fake_home, published, tmp_path, monkeypatch):
+    """A truncated download must never reach pip. The sum is the only check
+    there is here -- it is not a signature -- so it has to be enforced."""
+    served, _ = published
+    served[install.ARCHIVE_SUMS_URL] = b"0" * 64 + b"  source.tar.gz\n"
+
+    with pytest.raises(install.InstallError, match="MISMATCH"):
+        install.fetch_source_archive(tmp_path / "home" / "src")
+
+
+def test_an_update_that_fails_leaves_the_old_code_in_place(fake_home, published,
+                                                           tmp_path, monkeypatch):
+    """Replacing the checkout wholesale must not be able to lose it. A machine
+    left with no application because a download died mid-way is worse than one
+    running last week's."""
+    checkout = tmp_path / "home" / "src"
+    install.fetch_source_archive(checkout)
+    (checkout / "pyproject.toml").write_text("[project]\nname='old'\n")
+
+    monkeypatch.setattr(install.shutil, "move",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    with pytest.raises(OSError):
+        install.fetch_source_archive(checkout)
+    assert (checkout / "pyproject.toml").read_text() == "[project]\nname='old'\n"
+
+
+def test_git_is_found_where_windows_puts_it(monkeypatch, tmp_path):
+    """`shutil.which` reads the PATH this process started with, so a git
+    installed a minute ago is invisible to the terminal that asked for it."""
+    import types
+
+    monkeypatch.setattr(install.shutil, "which", lambda name: None)
+    # A shim rather than os.name itself: setting that turns every pathlib.Path
+    # on this machine into a WindowsPath, which cannot be instantiated here.
+    monkeypatch.setattr(install, "os", types.SimpleNamespace(
+        name="nt", environ={"ProgramFiles": str(tmp_path)}))
+    assert install.find_git() is None                # not there at all
+
+    git = tmp_path / "Git" / "cmd" / "git.exe"
+    git.parent.mkdir(parents=True)
+    git.write_text("")
+    assert install.find_git() == str(git)
+
+
+def test_the_updater_knows_what_an_archive_install_holds(fake_home, tmp_path):
+    """No .git means `git rev-parse` has nothing to read; the installer wrote
+    the revision down for exactly this."""
+    import arcade.update as update
+
+    checkout = tmp_path / "src"
+    checkout.mkdir()
+    assert update.current_revision(checkout) is None
+    (checkout / update.REVISION_FILE).write_text("abcdef1234567890\n")
+    assert update.current_revision(checkout) == "abcdef1"
+
+
+def test_the_published_revision_needs_no_git(monkeypatch):
+    """--check on a machine with no git reported "unknown" against "unknown"
+    and offered an update it could not describe."""
+    import urllib.request
+
+    import arcade.update as update
+
+    monkeypatch.setattr(update, "_find_git", lambda: None)
+
+    class FakeResponse:
+        def read(self):
+            return b"7113d88aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout=None: FakeResponse())
+    assert update.remote_revision() == "7113d88"
