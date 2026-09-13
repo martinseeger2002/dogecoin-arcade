@@ -120,6 +120,8 @@ def main(argv: list[str] | None = None) -> int:
     BlockWatcher(state).start()
     print("  watching for new blocks")
 
+    # The remote-access page points cloudflared at this port, so it has to know.
+    state.port = args.port
     print(f"DogecoinArcade  ->  http://{args.host}:{args.port}")
     uvicorn.run(create_app(state), host=args.host, port=args.port, log_level="warning")
     return 0

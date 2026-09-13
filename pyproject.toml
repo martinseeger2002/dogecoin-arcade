@@ -25,6 +25,10 @@ web = [
     "uvicorn==0.34.0",
     "jinja2==3.1.5",
     "python-multipart==0.0.20",
+    # The QR code on the Remote page. Pure Python with no dependencies of its
+    # own, so it installs from a wheel on every Python -- the rule the rest of
+    # this list follows for the same reason pyzmq is not in it.
+    "segno==1.6.6",
 ]
 # httpx is not optional: fastapi.testclient imports it, so without it the web
 # tests do not skip -- collection ABORTS and the entire suite runs zero tests,

@@ -62,6 +62,34 @@ ARCHIVE_URL = "https://dogecoinarcade.com/source.tar.gz"
 ARCHIVE_SUMS_URL = "https://dogecoinarcade.com/source.tar.gz.sha256"
 REVISION_URL = "https://dogecoinarcade.com/source.rev"
 
+#: cloudflared, for the Remote page: a temporary tunnel so a phone can reach
+#: the wallet (arcade/remote.py). Pinned by version AND by hash, because
+#: Cloudflare publishes no checksum file beside the binaries -- these were read
+#: from GitHub's own asset digests at the version below and written down here,
+#: so the installer is checking against something it brought with it rather
+#: than against a number from the same download.
+CLOUDFLARED_VERSION = "2026.9.1"
+CLOUDFLARED_URL = ("https://github.com/cloudflare/cloudflared/releases/download/"
+                   "{version}/{asset}")
+CLOUDFLARED_ASSETS = {
+    ("Linux", "x86_64"):   ("cloudflared-linux-amd64",
+                            "03f1f25d1cc93b9ad6c60569d44060bc4f17ed97075760ed8cfca4b12dcd68cc"),
+    ("Linux", "aarch64"):  ("cloudflared-linux-arm64",
+                            "3d97437c71848bd8df68041e12436b484a661d95073ea1937f01a845ce88faa3"),
+    ("Linux", "arm64"):    ("cloudflared-linux-arm64",
+                            "3d97437c71848bd8df68041e12436b484a661d95073ea1937f01a845ce88faa3"),
+    ("Linux", "armv7l"):   ("cloudflared-linux-armhf",
+                            "95420507a720fb543122a5d69372fbde8f5c919790e95ddd4374a449e0a6f4dd"),
+    ("Linux", "i686"):     ("cloudflared-linux-386",
+                            "5d66134cf7646cb98f33aeee7bcc8b97d8feacd76db279f5903f9585226e0922"),
+    ("Windows", "AMD64"):  ("cloudflared-windows-amd64.exe",
+                            "2837888cc0f5d58f15b6dc478376de90b4d3ba5241c7947455d1e0a0df429712"),
+    ("Darwin", "x86_64"):  ("cloudflared-darwin-amd64.tgz",
+                            "ff0d3b51d5ff70eceef89d6b32145fee985018a2174596a5dbe405e2766e2ac4"),
+    ("Darwin", "arm64"):   ("cloudflared-darwin-arm64.tgz",
+                            "c27ab8fd0aa489449e3d201eb02f957ef460a13b613662928b1b23394bf1bcfe"),
+}
+
 #: Written into a checkout fetched as an archive, because it has no .git for
 #: `git rev-parse` to read and the updater still has to know what is installed.
 REVISION_FILE = ".revision"
@@ -870,6 +898,83 @@ def find_source(dry_run: bool) -> Path:
     return checkout
 
 
+def cloudflared_path(target: Path) -> Path:
+    return target / ("cloudflared.exe" if platform.system() == "Windows"
+                     else "cloudflared")
+
+
+def install_cloudflared(target: Path, system: str | None = None,
+                        machine: str | None = None) -> Path | None:
+    """Fetch cloudflared for this machine. Never fatal.
+
+    The Remote page uses it to open a temporary tunnel so a phone can reach the
+    wallet. A machine without it simply has that page disabled and a message
+    saying why -- an install must not fail over a feature nobody has asked for
+    yet, and the platforms Cloudflare does not build for are real.
+    """
+    system = system or platform.system()
+    machine = machine or platform.machine()
+    entry = CLOUDFLARED_ASSETS.get((system, machine))
+    if entry is None:
+        warn(f"no cloudflared build for {system}/{machine}; "
+             "the Remote page will be unavailable")
+        return None
+    asset, digest = entry
+    destination = cloudflared_path(target)
+
+    if destination.exists():
+        result = subprocess.run([str(destination), "--version"],
+                                capture_output=True, text=True)
+        if CLOUDFLARED_VERSION in (result.stdout + result.stderr):
+            info(f"cloudflared {CLOUDFLARED_VERSION} is already installed")
+            return destination
+
+    url = CLOUDFLARED_URL.format(version=CLOUDFLARED_VERSION, asset=asset)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            workdir = Path(tmp)
+            archive = download(url, workdir / asset, asset)
+            actual = sha256_of(archive)
+            if actual != digest:
+                warn(f"SHA-256 MISMATCH for {asset}: expected {digest}, got "
+                     f"{actual}. Not installing it.")
+                return None
+            info(f"sha256 matches the hash pinned in this installer ({actual[:16]}...)")
+
+            binary = archive
+            if asset.endswith(".tgz"):
+                # macOS ships it in a tarball; everything else is the bare file.
+                with tarfile.open(archive) as tf:
+                    for member in tf.getmembers():
+                        resolved = (workdir / member.name).resolve()
+                        if not str(resolved).startswith(str(workdir.resolve())):
+                            warn(f"unsafe path in {asset}: {member.name}")
+                            return None
+                    tf.extractall(workdir, filter="data")
+                binary = next((p for p in workdir.rglob("cloudflared") if p.is_file()),
+                              None)
+                if binary is None:
+                    warn(f"{asset} did not contain cloudflared")
+                    return None
+            install_binary(binary, destination)
+    except InstallError as exc:
+        warn(f"could not install cloudflared: {exc}")
+        return None
+    info(f"installed cloudflared {CLOUDFLARED_VERSION} to {destination}")
+    return destination
+
+
+def ensure_cloudflared() -> str | None:
+    """Install cloudflared if it is missing or old. Called by the updater too.
+
+    On update as well as install, because the Remote page arrived after some
+    machines were already set up -- exactly the shape of bug that left old
+    installations with no web service and every update silently doing nothing.
+    """
+    result = install_cloudflared(bindir(platform.system()))
+    return str(result) if result else None
+
+
 def find_git() -> str | None:
     """git, including where Windows put it a moment ago.
 
@@ -1278,7 +1383,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         coins = choose_chain()
     per_coin = 0 if args.skip_core else 2
-    total = 3 + len(coins) * (per_coin + 2)
+    total = 4 + len(coins) * (per_coin + 2)          # +1 for cloudflared
     n = 0
 
     try:
@@ -1345,6 +1450,13 @@ def main(argv: list[str] | None = None) -> int:
                 info("skipped")
             else:
                 install_services(system, target, main_dir, test_dir, coin)
+
+        n += 1
+        step(n, total, "Installing cloudflared (for the Remote page)")
+        if args.dry_run:
+            info("skipped")
+        else:
+            install_cloudflared(target, system, machine)
 
         n += 1
         step(n, total, "Installing the application")

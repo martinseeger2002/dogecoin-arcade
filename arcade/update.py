@@ -218,6 +218,14 @@ def _update_services(checkout: Path, venv: Path, dry_run: bool) -> int:
         written = _ensure_launcher(checkout, venv)
         print(f"  wrote {written}" if written else "  already there")
 
+    print("Checking cloudflared")
+    if dry_run:
+        print("  would install cloudflared if it is missing or out of date")
+    else:
+        where = _call_installer(checkout, "ensure_cloudflared")
+        print(f"  {where}" if where else
+              "  not installed; the Remote page will say so")
+
     print("Updating service definitions")
     if dry_run:
         print("  would register arcade-web if needed, and bring node units "

@@ -507,3 +507,55 @@ def test_a_build_failure_says_what_it_actually_means():
     assert "no ready-made build for Python" in hint
     assert "no compiler" in hint
     assert install.build_failure_hint("some unrelated pip noise") == ""
+
+
+# --- cloudflared, for the Remote page ------------------------------------------
+
+
+def test_every_supported_platform_can_get_cloudflared():
+    """"Make sure it will work on all the OS". A platform in SUPPORT with no
+    cloudflared entry is a machine where the Remote page silently cannot work."""
+    missing = [key for key in install.SUPPORT if key not in install.CLOUDFLARED_ASSETS]
+    assert missing == [], f"no cloudflared build pinned for {missing}"
+
+
+def test_the_pinned_hashes_are_real_hashes():
+    for (system, machine), (asset, digest) in install.CLOUDFLARED_ASSETS.items():
+        assert len(digest) == 64 and all(c in "0123456789abcdef" for c in digest), \
+            f"{system}/{machine}: {asset} has no usable hash"
+        assert asset.startswith("cloudflared-")
+
+
+def test_a_cloudflared_that_does_not_match_its_hash_is_not_installed(tmp_path,
+                                                                     monkeypatch):
+    """It is fetched from GitHub, which publishes no checksum file beside it,
+    so the hash pinned here is the only check there is. It has to bite."""
+    target = tmp_path / "bin"
+    target.mkdir()
+
+    def fake_download(url, dest, label):
+        dest.write_bytes(b"not cloudflared")
+        return dest
+
+    monkeypatch.setattr(install, "download", fake_download)
+    monkeypatch.setattr(install, "install_binary",
+                        lambda *a: pytest.fail("must not install an unverified binary"))
+    assert install.install_cloudflared(target, "Linux", "x86_64") is None
+    assert not (target / "cloudflared").exists()
+
+
+def test_a_platform_cloudflare_does_not_build_for_is_not_fatal(tmp_path, capsys):
+    """An install must not fail over a feature nobody has asked for yet."""
+    assert install.install_cloudflared(tmp_path, "Plan9", "risc-v") is None
+    assert "Remote page will be unavailable" in capsys.readouterr().out
+
+
+def test_the_updater_installs_cloudflared_too(fake_home):
+    """The Remote page arrived after some machines were set up. An update that
+    does not fetch it leaves those machines with a page that cannot work --
+    the same shape as the missing web service that cost four rounds in a day."""
+    import arcade.update as update
+
+    source = pathlib.Path(update.__file__).read_text()
+    assert "ensure_cloudflared" in source
+    assert hasattr(install, "ensure_cloudflared")

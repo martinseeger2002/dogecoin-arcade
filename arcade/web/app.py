@@ -14,6 +14,7 @@ import hashlib
 import threading
 import time
 import html
+import secrets
 import sys
 import os
 from pathlib import Path
@@ -29,6 +30,7 @@ from fastapi.templating import Jinja2Templates
 from .. import backup, media, tokens as tokenlib, wallet as walletlib
 from ..ledger import AmountError, format_amount, parse_amount
 from ..config import NETWORKS, MainnetRefused, WrongChain
+from .. import remote as remotelib
 from ..messaging import contact, content, group
 from ..script import b58check_decode
 from ..messaging.derive import DerivationError, derive_identity
@@ -67,7 +69,64 @@ NAV = [
     ("/nfts",         "NFTs",         "mainnet",   False),
     ("/exchange",     "Exchange",     "mainnet",   False),
     ("/inscriptions", "Inscriptions", "mainnet",   False),
+    ("/remote",       "Remote",       None,        True),
 ]
+
+
+LOCKED_PAGE = """<!doctype html><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DogecoinArcade</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;margin:0;display:grid;
+place-items:center;min-height:100vh;background:#12131a;color:#e8e8ea}
+div{max-width:26rem;padding:2rem;text-align:center}
+h1{font-size:1.2rem}p{color:#a0a0ab}</style>
+<div><h1>%s</h1><p>%s</p></div>
+"""
+
+
+def locked(title: str, detail: str, status: int = 403) -> HTMLResponse:
+    """What a stranger sees. Deliberately plain: it names nothing about this
+    wallet, because whoever is reading it has not shown they may see it."""
+    return HTMLResponse(LOCKED_PAGE % (title, detail), status_code=status)
+
+
+def remote_guard(state: AppState):
+    """Refuse anything that arrived from outside without the key.
+
+    Registered as middleware so it covers every route there is and every route
+    anyone adds later. A door guarded route-by-route is a door that is open the
+    first time somebody forgets.
+    """
+    async def guard(request: Request, call_next):
+        tunnel = state.remote_tunnel()
+        if not remotelib.is_remote(request.headers, request.headers.get("host", ""),
+                                   tunnel.url if tunnel else None):
+            return await call_next(request)
+
+        if tunnel is None:
+            return locked(
+                "Not open",
+                "This wallet is not accepting remote connections. It reached "
+                "this answer because the request arrived through a proxy.")
+        path = request.url.path
+        if path.startswith("/rpc"):
+            # The bot RPC has its own key, in a file on that machine, and it can
+            # spend. It is for programs running beside the wallet, never for
+            # anything that came in over the internet.
+            return JSONResponse({"result": None, "id": None, "error": {
+                "code": -32600,
+                "message": "the bot RPC is not available through the tunnel"}},
+                status_code=403)
+        if path == "/remote/unlock":
+            return await call_next(request)
+        if not secrets.compare_digest(
+                request.cookies.get(remotelib.COOKIE_NAME, ""), tunnel.token):
+            return locked("Locked",
+                          "Scan the QR code on the wallet's Remote page to open "
+                          "this. The link on its own is not enough.")
+        return await call_next(request)
+
+    return guard
 
 
 def create_app(state: AppState) -> FastAPI:
@@ -103,6 +162,7 @@ def create_app(state: AppState) -> FastAPI:
 
     app = FastAPI(title="DogecoinArcade", docs_url=None, redoc_url=None,
                   lifespan=_lifespan)
+    app.middleware("http")(remote_guard(state))
 
 
     def render(request: Request, template: str, **context: Any) -> HTMLResponse:
@@ -2191,6 +2251,80 @@ def create_app(state: AppState) -> FastAPI:
     # Omni Core's method names over JSON-RPC, one URL per chain, cookie-
     # authenticated. The forms above are for people; this is for scripts, and
     # it follows the same prepare-then-broadcast rule (web/rpc.py).
+
+    # --- remote access ------------------------------------------------------
+
+    def _remote_context(request: Request, error: str | None = None) -> dict:
+        tunnel = state.remote_tunnel()
+        return {
+            "tunnel": tunnel,
+            "qr": remotelib.qr_svg(tunnel.link) if tunnel else None,
+            "durations": remotelib.DURATIONS,
+            "default_minutes": remotelib.DEFAULT_MINUTES,
+            "cloudflared": remotelib.find_cloudflared(state.home),
+            "unlocked_here": (tunnel is not None and request.cookies.get(
+                remotelib.COOKIE_NAME) == tunnel.token),
+            "error": error,
+        }
+
+    @app.get("/remote", response_class=HTMLResponse)
+    def remote_page(request: Request):
+        return render(request, "remote.html", **_remote_context(request))
+
+    @app.post("/remote/start", response_class=HTMLResponse)
+    def remote_start(request: Request, csrf_token: str = Form(""),
+                     minutes: str = Form(str(remotelib.DEFAULT_MINUTES))):
+        """Open the tunnel. Sync, because waiting for the edge takes seconds."""
+        error = None
+        try:
+            check_csrf(csrf_token)
+            if state.remote_tunnel() is not None:
+                raise ValueError("a tunnel is already open. Close it first.")
+            wanted = int(minutes)
+            if wanted not in remotelib.DURATIONS:
+                raise ValueError("choose one of the offered lengths")
+            state.set_tunnel(remotelib.open_tunnel(state.port, wanted, state.home))
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
+        except Exception as exc:
+            error = str(exc)
+        return render(request, "remote.html", **_remote_context(request, error))
+
+    @app.post("/remote/stop")
+    def remote_stop(request: Request, csrf_token: str = Form("")):
+        try:
+            check_csrf(csrf_token)
+            remotelib.close_tunnel(state.remote_tunnel())
+            state.set_tunnel(None)
+            state.flash("The tunnel is closed.", "ok")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse("/remote", status_code=303)
+
+    @app.get("/remote/unlock")
+    def remote_unlock(request: Request, k: str = ""):
+        """Trade the key in the QR code for a cookie, then get out of the URL.
+
+        Out of the URL because it would otherwise sit in the phone's history and
+        in every Referer the browser sends afterwards. The cookie is the session
+        from here on, and it dies with the tunnel.
+        """
+        tunnel = state.remote_tunnel()
+        if tunnel is None:
+            return locked("Not open",
+                          "This wallet is not accepting remote connections.")
+        if not secrets.compare_digest(k, tunnel.token):
+            return locked("Wrong key", "That link does not open this wallet.")
+        response = RedirectResponse("/", status_code=303)
+        response.set_cookie(
+            remotelib.COOKIE_NAME, tunnel.token,
+            max_age=tunnel.seconds_left, httponly=True, samesite="lax",
+            # The tunnel is https end to end; a cookie that would travel in
+            # clear has no business existing.
+            secure=True)
+        return response
 
     @app.post("/rpc/{which}")
     def bot_rpc(request: Request, which: str, payload: Any = Body(None)):

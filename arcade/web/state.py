@@ -135,6 +135,13 @@ class AppState:
     rpc_secret: str = field(default_factory=lambda: secrets.token_hex(32))
     notice: str | None = None
     notice_kind: str = "info"
+    #: The port this interface is served on. Needed by the remote-access page,
+    #: which has to tell cloudflared where to point, and by the guard that
+    #: decides whether a request came from this machine.
+    port: int = 8420
+    #: The open Cloudflare tunnel, if the user has opened one (arcade/remote.py).
+    #: One at a time: a second would be a second door nobody is watching.
+    tunnel: Any = None
 
     #: Latest known tip per network, and when each was last successfully asked.
     #: Kept so the interface can distinguish "nothing new" from "not looking",
@@ -363,6 +370,24 @@ class AppState:
     def bump_generation(self) -> None:
         with self._lock:
             self.generation += 1
+
+    def remote_tunnel(self):
+        """The tunnel if it is still open, and None the moment it is not.
+
+        Checked rather than remembered: it closes on its own deadline, and
+        cloudflared can die on its own too. Anything asking whether the door is
+        open must get the truth now, not what was true when it was opened.
+        """
+        with self._lock:
+            tunnel = self.tunnel
+            if tunnel is not None and not tunnel.alive():
+                self.tunnel = None
+                return None
+            return tunnel
+
+    def set_tunnel(self, tunnel) -> None:
+        with self._lock:
+            self.tunnel = tunnel
 
     def flash(self, message: str, kind: str = "info") -> None:
         self.notice, self.notice_kind = message, kind

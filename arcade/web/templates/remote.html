@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Remote · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Remote</h1>
+<p class="sub">Open this wallet on your phone, from anywhere, for a while.</p>
+
+{% if error %}<div class="msg err">{{ error }}</div>{% endif %}
+
+{% if not tunnel %}
+
+  {% if not cloudflared %}
+  <div class="msg err">
+    cloudflared is not installed. Run the installer again from
+    <a href="https://dogecoinarcade.com">dogecoinarcade.com</a> and it will
+    fetch it.
+  </div>
+  {% endif %}
+
+  <div class="panel">
+    <p style="margin-top:0">
+      This starts a Cloudflare tunnel to the interface running on this machine
+      and shows you a QR code. Scan it with your phone and you are in — no
+      account, no port forwarding, nothing to configure on your router.
+    </p>
+    <p style="color:var(--bad);font-weight:600">
+      Whoever scans that code can spend your coins and read your messages.
+      Do not photograph it, do not share it, and do not leave it on screen.
+    </p>
+    <p class="muted">
+      The tunnel closes itself when the time is up, and closes immediately if
+      you press Close or stop the interface. The bot RPC is never reachable
+      through it.
+    </p>
+    <form method="post" action="/remote/start" class="row">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <label for="minutes" class="muted">Open for</label>
+      <select name="minutes" id="minutes">
+        {% for d in durations %}
+        <option value="{{ d }}" {% if d == default_minutes %}selected{% endif %}>
+          {% if d < 60 %}{{ d }} minutes{% elif d == 60 %}1 hour{% else %}{{ d // 60 }} hours{% endif %}
+        </option>
+        {% endfor %}
+      </select>
+      <button type="submit" {{ 'disabled' if not cloudflared }}>Open the tunnel</button>
+    </form>
+  </div>
+
+{% else %}
+
+  <div class="panel">
+    <div class="remote-open">
+      <div class="qr">{{ qr | safe }}</div>
+      <div class="detail">
+        <p style="margin-top:0"><strong>Scan this with your phone's camera.</strong></p>
+        <p class="muted">
+          The code carries a key as well as the address. Typing the address on
+          its own opens a locked page — which is what anyone who reads it over
+          your shoulder gets.
+        </p>
+        <table>
+          <tr><td class="muted">Address</td>
+              <td class="mono" style="word-break:break-all">{{ tunnel.url }}</td></tr>
+          <tr><td class="muted">Closes in</td>
+              <td id="left" data-seconds="{{ tunnel.seconds_left }}">
+                {{ tunnel.seconds_left // 60 }} minutes</td></tr>
+        </table>
+        <form method="post" action="/remote/stop" style="margin-top:12px">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <button type="submit" class="danger">Close it now</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <p class="muted" style="margin-top:14px">
+    Closing it, or stopping the interface, ends every phone that is signed in.
+    So does the deadline: there is no way to leave this open by forgetting.
+  </p>
+
+  <script>
+    // Counts down what the server already decided. It is a readout, not the
+    // clock -- the tunnel closes on the server's deadline whatever this says.
+    (function () {
+      var el = document.getElementById('left');
+      if (!el) return;
+      var left = parseInt(el.dataset.seconds, 10);
+      setInterval(function () {
+        left -= 1;
+        if (left <= 0) { location.reload(); return; }
+        var m = Math.floor(left / 60), s = left % 60;
+        el.textContent = m > 0 ? m + ' min ' + s + ' s' : s + ' seconds';
+      }, 1000);
+    })();
+  </script>
+
+{% endif %}
+
+<style>
+  .remote-open{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start}
+  .remote-open .qr{background:#fff;padding:10px;border-radius:10px;line-height:0}
+  .remote-open .detail{flex:1;min-width:260px}
+</style>
+{% endblock %}
