@@ -999,9 +999,34 @@ def install_app(dry_run: bool) -> Path:
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        fail(f"installing the application failed:\n{result.stderr[-1500:]}")
+        fail(f"installing the application failed:\n{result.stderr[-1500:]}"
+             + build_failure_hint(result.stderr + result.stdout))
     info("installed DogecoinArcade and its dependencies")
     return venv
+
+
+def build_failure_hint(output: str) -> str:
+    """Explain a pip failure that is really a missing wheel.
+
+    "Failed to build 'pyzmq'" with a line about scikit-build-core tells a user
+    nothing they can act on. What it means is that pip found no wheel for this
+    Python and tried to compile from source, which needs a compiler that Windows
+    does not have. Naming the Python version is the useful part: the fix is
+    almost always a Python the package has wheels for.
+    """
+    if "did not run successfully" not in output and "Failed to build" not in output:
+        return ""
+    version = ".".join(str(n) for n in sys.version_info[:3])
+    return (
+        f"\n\n      That is a dependency with no ready-made build for Python "
+        f"{version},\n"
+        f"      so pip tried to compile it and this machine has no compiler.\n"
+        f"      Installing DogecoinArcade with an older Python -- 3.12 or 3.13 "
+        f"from\n"
+        f"      python.org -- is the quickest way past it. Tell us which "
+        f"version you\n"
+        f"      were on; a dependency that needs a compiler is a bug on our side."
+    )
 
 
 LAUNCHER = """\
@@ -1263,6 +1288,10 @@ def main(argv: list[str] | None = None) -> int:
         machine = platform.machine()
         target = bindir(system)
         info(f"{system} / {machine}")
+        # Printed because it is the first thing worth knowing when an install
+        # fails: a dependency with no wheel for this Python is the difference
+        # between "pip installed it" and a page of compiler output.
+        info(f"Python {'.'.join(str(n) for n in sys.version_info[:3])}")
         info(f"binaries  -> {target}")
         info(f"chains    -> {', '.join(c.name for c in coins)}")
         # 3.10 is the real floor: the code uses `X | None` annotations and

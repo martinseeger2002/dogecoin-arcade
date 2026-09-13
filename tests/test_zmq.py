@@ -1,8 +1,16 @@
-"""ZMQ notifications arrive and carry the right block hashes."""
+"""ZMQ notifications arrive and carry the right block hashes.
+
+Skipped where pyzmq is not installed: it is an extra (see pyproject.toml), so a
+plain install does not have it, and a missing extra must not abort collection --
+that once took the whole suite down to "1 error in 0.43s".
+"""
 
 import pytest
 
-from arcade.zmq_listener import TOPIC_HASH_BLOCK, TOPIC_RAW_BLOCK, ZmqListener
+pytest.importorskip("zmq", reason="pyzmq is an extra: pip install '.[zmq]'")
+
+from arcade.zmq_listener import (          # noqa: E402  (after the skip check)
+    TOPIC_HASH_BLOCK, TOPIC_RAW_BLOCK, ZmqListener)
 
 
 @pytest.fixture

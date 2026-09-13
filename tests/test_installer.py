@@ -451,3 +451,59 @@ def test_the_published_revision_needs_no_git(monkeypatch):
 
     monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout=None: FakeResponse())
     assert update.remote_revision() == "7113d88"
+
+
+# --- what a plain install has to be able to build -----------------------------
+# The same Windows user, one step later: "Failed to build 'pyzmq'". pip found no
+# wheel for their Python, tried to compile from source, and Windows has no
+# compiler. It was building a C extension for a module the application never
+# imports.
+
+
+def test_nothing_the_application_runs_needs_a_compiler():
+    """Every required dependency must install from a wheel on any Python.
+
+    pyzmq is the one with a C extension, and it is an extra for that reason. A
+    required dependency that has to be compiled turns a new Python release into
+    a broken installer on every machine without build tools.
+    """
+    import tomllib
+
+    root = pathlib.Path(install.__file__).resolve().parent.parent
+    meta = tomllib.loads((root / "pyproject.toml").read_text())
+    required = meta["project"]["dependencies"]
+    web = meta["project"]["optional-dependencies"]["web"]
+
+    assert not any("zmq" in dep for dep in required + web), (
+        "pyzmq belongs in the [zmq] extra: nothing the application runs imports "
+        "it, and it is the only dependency that needs a compiler"
+    )
+    assert any("zmq" in dep
+               for dep in meta["project"]["optional-dependencies"]["zmq"])
+
+
+def test_no_module_the_installer_installs_imports_zmq():
+    """The extra may only be needed by the listener itself.
+
+    If anything else grew an `import zmq`, a plain install would import it and
+    fail at runtime instead of at install time -- which is worse.
+    """
+    root = pathlib.Path(install.__file__).resolve().parent.parent
+    offenders = [
+        path.relative_to(root)
+        for path in (root / "arcade").rglob("*.py")
+        if path.name != "zmq_listener.py"
+        and any(line.startswith(("import zmq", "from zmq"))
+                for line in path.read_text().splitlines())
+    ]
+    assert offenders == [], f"these would fail without the [zmq] extra: {offenders}"
+
+
+def test_a_build_failure_says_what_it_actually_means():
+    """"Use build.targets instead of cmake.targets" is not a sentence anyone
+    can act on. The version of Python is the part that matters."""
+    hint = install.build_failure_hint(
+        "ERROR: Failed to build 'pyzmq' when getting requirements to build wheel")
+    assert "no ready-made build for Python" in hint
+    assert "no compiler" in hint
+    assert install.build_failure_hint("some unrelated pip noise") == ""

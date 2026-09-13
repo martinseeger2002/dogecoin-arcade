@@ -5,14 +5,21 @@ description = "A sidecar Omni-style meta-layer for Dogecoin-family chains"
 requires-python = ">=3.10"
 
 # Pinned exactly, per the project ground rules. Arcade's dependency surface is
-# deliberately tiny: an HTTP client, a ZMQ binding, and a test runner.
+# deliberately tiny: an HTTP client and the crypto library. Both are pure Python
+# or ship abi3 wheels, so installing needs no compiler on any Python.
 dependencies = [
     "requests==2.32.3",
-    "pyzmq==26.2.0",
     "pynacl==1.5.0",
 ]
 
 [project.optional-dependencies]
+# pyzmq is an extra, not a requirement. Nothing the application runs imports it
+# -- `arcade.zmq_listener` is a faster wake-up than the 5-second poll and is not
+# wired in yet -- and it is the one dependency with a C extension, so it is the
+# one that needs a compiler when no wheel matches. A Windows user on a Python
+# newer than the pin's wheels got "Failed to build 'pyzmq'" and no application,
+# for a module that was never going to load. Install it with [zmq] to work on it.
+zmq = ["pyzmq>=26.2"]
 web = [
     "fastapi==0.115.6",
     "uvicorn==0.34.0",
