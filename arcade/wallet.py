@@ -127,6 +127,25 @@ def prepare_send(rpc: RpcClient, destination: str, amount_sats: int,
             "enough spendable coins -- newly mined coins take 240 blocks to mature."
         ) from None
 
+    # Change goes back where the coins came from. Left to itself the node parks
+    # change on a fresh address, which is fine for a wallet that is only a
+    # wallet -- and quietly empties the messaging identity: one plain send from
+    # the Wallet page spent its 9,978-coin output and left it holding 5, and
+    # the next picture could not be sent. Every message and token send in the
+    # arcade already keeps change on its sender; this makes the plain send do
+    # the same. Fund once to learn which coins the node chose, then fund again
+    # with those exact inputs and the change address named.
+    change_to = _largest_input_address(rpc, funded["hex"])
+    if change_to is not None:
+        chosen = [{"txid": vin["txid"], "vout": vin["vout"]}
+                  for vin in rpc.call("decoderawtransaction", funded["hex"])["vin"]]
+        raw = rpc.call("createrawtransaction", chosen, {destination: float(amount)})
+        try:
+            funded = rpc.call("fundrawtransaction", raw,
+                              {**options, "changeAddress": change_to})
+        except Exception as exc:
+            raise WalletError(f"could not fund the transaction: {exc}") from None
+
     signed = rpc.call("signrawtransaction", funded["hex"])
     if not signed.get("complete"):
         raise WalletError(f"signing failed: {signed.get('errors')}")
@@ -149,6 +168,20 @@ def prepare_send(rpc: RpcClient, destination: str, amount_sats: int,
         fee_sats=fee_sats, size=len(signed["hex"]) // 2,
         destination=destination, amount_sats=sent, change_sats=change,
     )
+
+
+def _largest_input_address(rpc: RpcClient, funded_hex: str) -> str | None:
+    """The wallet address that put the most value into a funded transaction."""
+    decoded = rpc.call("decoderawtransaction", funded_hex)
+    spent = {(vin["txid"], int(vin["vout"])) for vin in decoded.get("vin", [])}
+    totals: dict[str, int] = {}
+    for utxo in rpc.call("listunspent", 0, 9_999_999) or []:
+        if (utxo["txid"], int(utxo["vout"])) in spent and utxo.get("address"):
+            totals[utxo["address"]] = (totals.get(utxo["address"], 0)
+                                       + int(round(float(utxo["amount"]) * COIN)))
+    if not totals:
+        return None
+    return max(totals, key=lambda name: totals[name])
 
 
 def broadcast(rpc: RpcClient, prepared: PreparedSend) -> str:

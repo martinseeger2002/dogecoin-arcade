@@ -271,3 +271,42 @@ def test_rebuilding_the_contact_table_is_idempotent(tmp_path):
     assert len(store.contacts()) == 1
     assert not store.conn.execute(
         "SELECT name FROM sqlite_master WHERE name='contact_old'").fetchone()
+
+
+# --- the plain send keeps its change where the coins were -----------------------
+
+
+def test_a_plain_send_returns_change_to_the_address_that_paid(regtest):
+    """a test machine: one Wallet-page send of 5,000 spent the messaging identity's
+    9,978-coin output, the node parked the 4,978 change on a fresh address of
+    its own, and the identity was left with 5 coins and could not send a
+    picture. Change now goes back to the address that put in the most."""
+    from arcade import wallet as walletlib
+
+    regtest.generate(200)
+    identity = regtest.rpc.call("getnewaddress")
+    regtest.rpc.call("sendtoaddress", identity, 900)
+    regtest.generate(1)
+    # Every other output in this wallet is a small one, so the node's coin
+    # selection reaches for the 900 whichever way it leans.
+    payee = regtest.rpc.call("getnewaddress")
+
+    prepared = walletlib.prepare_send(regtest.rpc, payee, 500 * walletlib.COIN)
+    spent = {(v["txid"], v["vout"]) for v in prepared.decoded["vin"]}
+    mine = {(u["txid"], u["vout"]): u for u in regtest.rpc.call("listunspent", 0)}
+    assert any(mine[o]["address"] == identity for o in spent), "the 900 was spent"
+
+    by_address = {}
+    for out in prepared.decoded["vout"]:
+        for name in out["scriptPubKey"].get("addresses", []):
+            by_address[name] = out["value"]
+    assert by_address[payee] == 500
+    assert identity in by_address, f"change went elsewhere: {by_address}"
+    assert by_address[identity] > 399, "the change is the whole remainder minus fee"
+    assert set(by_address) == {payee, identity}, "no fresh change address"
+
+    txid = walletlib.broadcast(regtest.rpc, prepared)
+    regtest.generate(1)
+    still_there = sum(float(u["amount"]) for u in
+                      regtest.rpc.call("listunspent", 1, 9_999_999, [identity]))
+    assert still_there > 399, txid
