@@ -188,8 +188,13 @@
         <div class="bubble failed-note">
           <div class="text">This post stopped after
             {{ unfinished.sent }} of {{ unfinished.total }} transactions.</div>
+          {% if unfinished.sent %}
           <div class="stamp">What is on the chain cannot be taken back, and the
             post cannot be read in full until the rest goes out.</div>
+          {% else %}
+          <div class="stamp">Nothing reached the chain. Posting again starts
+            from the first transaction.</div>
+          {% endif %}
           <form method="post" action="/groups/resume"
                 style="margin-top:9px" onsubmit="return startPosting(this)">
             <input type="hidden" name="csrf_token" value="{{ csrf }}">

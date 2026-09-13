@@ -739,6 +739,86 @@ def test_a_single_transaction_message_never_splits_the_wallet():
     assert sender.ensure_outputs("nAddr", wanted=1) is False
 
 
+def test_the_split_is_sized_by_the_sending_address_not_the_wallet():
+    """a test machine, testnet: the wallet held 5,985 coins but the identity address 4.996.
+
+    `ensure_outputs` sized the split from getbalance (the whole wallet) and then
+    funded it from the identity address alone, so it planned 8 pieces at 17
+    coins and died with "holds 4.99641000, which is short of the 17.00000000"
+    before the first transaction of the message. The address that funds the
+    split is the one whose balance must size it.
+    """
+    from arcade.config import NETWORKS
+    from arcade.messaging.sender import COIN, MessageSender
+
+    calls = []
+
+    class FakeRpc:
+        def call(self, method, *args):
+            calls.append(method)
+            if method == "getbalance":
+                return 5985.16487
+            if method == "listunspent":
+                assert args[2] == ["nIdentity"], "only the sender's own coins count"
+                return [{"txid": "a", "vout": 0, "amount": 1.5},
+                        {"txid": "b", "vout": 0, "amount": 1.5},
+                        {"txid": "c", "vout": 0, "amount": 1.99641}]
+            raise AssertionError(f"unexpected {method}")
+
+    sender = MessageSender.__new__(MessageSender)
+    sender.rpc = FakeRpc()
+    sender.params = NETWORKS["regtest"]
+    sender.split_outputs = lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("must not plan a split the address cannot pay for"))
+
+    assert sender.spendable_value("nIdentity") == 499_641_000
+    # 4.996 minus a coin of headroom buys one 2-coin piece: not worth a split,
+    # so the send chains one chunk per block instead of failing outright.
+    assert sender.ensure_outputs("nIdentity", wanted=4) is False
+    assert "getbalance" not in calls
+
+    # With enough on the address itself, it splits into what THAT can afford.
+    class RicherRpc(FakeRpc):
+        def call(self, method, *args):
+            if method == "listunspent":
+                return [{"txid": "big", "vout": 0, "amount": 9.5}]
+            return super().call(method, *args)
+
+    planned = {}
+    sender.rpc = RicherRpc()
+    sender.split_outputs = lambda address, pieces, each: planned.update(pieces=pieces) or "raw"
+    sender.broadcast = lambda prepared: "txid"
+    sender._await_confirmation = lambda txid, timeout: None
+    assert sender.ensure_outputs("nIdentity", wanted=6) is True
+    assert planned["pieces"] == 4, "(9.5 - 1) // 2, not wanted + 4 = 10"
+
+
+def test_the_short_of_coins_advice_says_to_fund_the_sending_address():
+    """"Use that one" cannot be followed: a message is sent from the messaging
+    identity and nothing else. The advice has to be to move coins onto it."""
+    import pytest
+
+    from arcade.config import NETWORKS
+    from arcade.messaging.sender import MessageSender, SendError
+
+    class FakeRpc:
+        def call(self, method, *args):
+            if args and args[-1] == ["nIdentity"]:
+                return [{"txid": "x", "vout": 0, "amount": 4.99641, "address": "nIdentity"}]
+            return [{"txid": "y", "vout": 1, "amount": 4978.18004, "address": "nChange"},
+                    {"txid": "x", "vout": 0, "amount": 4.99641, "address": "nIdentity"}]
+
+    sender = MessageSender.__new__(MessageSender)
+    sender.rpc = FakeRpc()
+    sender.params = NETWORKS["regtest"]
+    with pytest.raises(SendError) as excinfo:
+        sender._select_inputs("nIdentity", 17 * 100_000_000)
+    text = str(excinfo.value)
+    assert "nChange holds 4978.18004000" in text
+    assert "to nIdentity" in text and "Wallet page" in text
+    assert "Use that one" not in text
+
+
 def test_enough_outputs_means_no_split():
     from arcade.config import NETWORKS
     from arcade.messaging.sender import MessageSender

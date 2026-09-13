@@ -351,14 +351,14 @@ class MessageSender:
             return False
 
         # A few spare, so the next message does not have to do this again --
-        # but never more than the wallet can pay for. Asking for two thousand
-        # pieces of a wallet that holds a few hundred coins would simply fail,
-        # and failing to split is better handled by splitting less: the chunks
-        # that do get their own output go at once, and the rest chain as before.
-        try:
-            balance = int(round(float(self.rpc.call("getbalance")) * COIN))
-        except Exception:
-            balance = 0
+        # but never more than `address` itself can pay for. The split is funded
+        # from that one address alone (split_outputs, _select_inputs), so the
+        # whole wallet's balance is the wrong measure: a wallet whose coins sit
+        # on some other address would plan a split the sender cannot fund and
+        # the send would die before its first transaction. Failing to split is
+        # better handled by splitting less: the chunks that do get their own
+        # output go at once, and the rest chain as before.
+        balance = self.spendable_value(address)
         affordable = max(0, (balance - COIN) // each_sats)
         pieces = min(wanted + 4, affordable)
         if pieces < 2:
@@ -377,6 +377,15 @@ class MessageSender:
         # rebuilds the chain this exists to avoid. The wait is the whole point.
         self._await_confirmation(txid, confirm_timeout)
         return True
+
+    def spendable_value(self, address: str) -> int:
+        """The satoshis `address` alone can spend -- what its sends are funded from."""
+        try:
+            unspent = self.rpc.call("listunspent", SPENDABLE_MINCONF, 9_999_999,
+                                    [address]) or []
+        except Exception:
+            return 0
+        return sum(int(round(float(u["amount"]) * COIN)) for u in unspent)
 
     def spendable_outputs(self, address: str, at_least: int = 0) -> int:
         """How many separate outputs `address` has that are worth spending."""
@@ -418,18 +427,24 @@ class MessageSender:
             total += int(round(float(utxo["amount"]) * COIN))
             if total >= target:
                 return chosen
-        # Name an address that can actually pay. Saying "fund that address" to
-        # someone whose wallet holds a thousand coins points them at the one
-        # action that is not the problem -- the coins are simply somewhere else,
-        # and the single-address rule above is why that matters. listunspent
-        # already has what is needed to say something useful.
+        # Say where the coins are, and what to do about it. The sending address
+        # is not a free choice: a message goes from the messaging identity and a
+        # token send from the address that holds the token, so "use the other
+        # address" is advice the user cannot take. The remedy that always works
+        # is moving coins onto this one. An ordinary send (the Wallet page, or
+        # sendtoaddress) is how the coins usually left it: the node's own coin
+        # selection spends the address's output and parks the change on a fresh
+        # address of its own. listunspent already has what is needed to say so.
         alternative = self._largest_funded_address(target, excluding=address)
         if alternative:
             name, held = alternative
             raise SendError(
                 f"{address} holds {total / COIN:.8f}, which is short of the "
                 f"{target / COIN:.8f} this transaction needs. Your coins are on a "
-                f"different address: {name} holds {held / COIN:.8f}. Use that one."
+                f"different address: {name} holds {held / COIN:.8f}. Send at least "
+                f"{target / COIN:.8f} from the Wallet page to {address} and try "
+                f"again once it confirms; every input has to come from {address} "
+                f"itself, so coins elsewhere in the wallet cannot help."
             )
         raise SendError(
             f"no single address in this wallet holds the {target / COIN:.8f} this "

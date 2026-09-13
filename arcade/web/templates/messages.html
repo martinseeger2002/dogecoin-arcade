@@ -131,8 +131,13 @@
         <div class="bubble failed-note">
           <div class="text">This message stopped after
             {{ unfinished.sent }} of {{ unfinished.total }} transactions.</div>
+          {% if unfinished.sent %}
           <div class="stamp">What is on the chain cannot be taken back, and the
             message cannot be read until the rest goes out.</div>
+          {% else %}
+          <div class="stamp">Nothing reached the chain. Sending again starts
+            from the first transaction.</div>
+          {% endif %}
           <form method="post" action="/messages/{{ peer.hex }}/resume"
                 style="margin-top:9px" onsubmit="return startSending(this)">
             <input type="hidden" name="csrf_token" value="{{ csrf }}">

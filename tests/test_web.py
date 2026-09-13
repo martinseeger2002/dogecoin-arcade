@@ -1069,6 +1069,29 @@ def test_an_interrupted_send_is_offered_for_finishing(client):
     body = app.get(f"/messages/{peer.hex()}").text
     assert "stopped after" in body
     assert "Finish sending" in body
+    assert "cannot be taken back" in body      # one transaction is on the chain
+
+
+def test_a_send_that_never_started_does_not_claim_the_chain_has_part_of_it(client):
+    """a test machine saw "0 of 4 transactions" under "what is on the chain cannot be
+    taken back" -- nothing was on the chain. The sentence is only true once
+    something has gone out."""
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    peer = b"\xa3" * 32
+    state.identity = Identity.generate()
+    with state.store() as store:
+        store.begin_pending_send(b"\x02" * 8, peer, "nAddr", b"body",
+                                 [b"chunk1", b"chunk2", b"chunk3", b"chunk4"])
+
+    body = app.get(f"/messages/{peer.hex()}").text
+    assert "stopped after" in body and "0 of 4" in body
+    assert "cannot be taken back" not in body
+    assert "Nothing reached the chain" in body
+    for name in ("messages.html", "groups.html"):
+        source = pathlib.Path("arcade/web/templates", name).read_text()
+        assert "{% if unfinished.sent %}" in source, name
 
 
 def test_a_sent_file_is_kept_and_shown_like_a_received_one(client):
