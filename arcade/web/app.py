@@ -19,7 +19,8 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import (
     HTMLResponse, JSONResponse, RedirectResponse, Response,
 )
@@ -44,6 +45,7 @@ from ..messaging.sender import (
     estimate_send_seconds,
     funded_address, plan_message, record_sent, recent_block_seconds,
 )
+from . import rpc as botrpc
 from .state import AppState
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -1901,23 +1903,6 @@ def create_app(state: AppState) -> FastAPI:
     # as sending coins is, because on mainnet each one spends real coins and,
     # once a token exists, moves real value.
 
-    def _ledger_addresses(rpc) -> list[str]:
-        """Every address this wallet owns, funded or not.
-
-        `listunspent` alone misses an address that holds tokens but no coins --
-        the usual state of a recipient -- so the address book is asked too.
-        """
-        found: dict[str, None] = {}
-        try:
-            for row in rpc.call("listreceivedbyaddress", 0, True):
-                found.setdefault(row["address"], None)
-        except Exception:
-            pass
-        for utxo in rpc.call("listunspent", 0, 9_999_999):
-            if utxo.get("address"):
-                found.setdefault(utxo["address"], None)
-        return list(found)
-
     def _funded_addresses(rpc) -> list[dict[str, Any]]:
         """Addresses with coins to pay a fee from, largest first."""
         sums: dict[str, int] = {}
@@ -2012,6 +1997,7 @@ def create_app(state: AppState) -> FastAPI:
                 if prepared is None:
                     sender_address, payload, reference = build(rpc)
                     prepared = sender.prepare(sender_address, payload, reference)
+                    prepared.what = action
                     state.prepared_tokens[(chain.network, prepared.txid)] = prepared
                     while len(state.prepared_tokens) > 20:     # keep the newest
                         del state.prepared_tokens[next(iter(state.prepared_tokens))]
@@ -2191,6 +2177,39 @@ def create_app(state: AppState) -> FastAPI:
 
         return _issuer_action(request, property_id, "change issuer", confirmed,
                               dict(recipient=recipient), build)
+
+    # --- the bot RPC ----------------------------------------------------------
+    #
+    # Omni Core's method names over JSON-RPC, one URL per chain, cookie-
+    # authenticated. The forms above are for people; this is for scripts, and
+    # it follows the same prepare-then-broadcast rule (web/rpc.py).
+
+    @app.post("/rpc/{which}")
+    def bot_rpc(request: Request, which: str, payload: Any = Body(None)):
+        """A sync route, like every route that touches the node (see send_in_thread)."""
+        chain = state.rpc_chain(which)
+        if chain is None:
+            return JSONResponse(
+                {"result": None, "id": None,
+                 "error": {"code": -32600,
+                           "message": "no such chain: use /rpc/main or /rpc/test"}},
+                status_code=404)
+        return botrpc.handle(state, request, payload, chain)
+
+    @app.exception_handler(RequestValidationError)
+    def unreadable(request: Request, exc: RequestValidationError):
+        """A body the RPC cannot parse is answered in JSON-RPC's own terms."""
+        if request.url.path.startswith("/rpc/"):
+            return JSONResponse(botrpc.parse_error(), status_code=400)
+        return JSONResponse({"detail": exc.errors()}, status_code=422)
+
+    @app.post("/rpc")
+    def bot_rpc_unnamed(request: Request):
+        return JSONResponse(
+            {"result": None, "id": None,
+             "error": {"code": -32600,
+                       "message": "name the chain: POST /rpc/main or /rpc/test"}},
+            status_code=404)
 
     # --- not yet built --------------------------------------------------------
 
@@ -2373,6 +2392,25 @@ def _contact_view(row: Any) -> dict[str, Any]:
         "hex": key.hex() if key else "",
         "fingerprint": fingerprint_of(key) if key else "",
     }
+
+
+def _ledger_addresses(rpc) -> list[str]:
+    """Every address this wallet owns, funded or not.
+
+    `listunspent` alone misses an address that holds tokens but no coins --
+    the usual state of a recipient -- so the address book is asked too. Module
+    level because the bot RPC (rpc.py) asks the same question.
+    """
+    found: dict[str, None] = {}
+    try:
+        for row in rpc.call("listreceivedbyaddress", 0, True):
+            found.setdefault(row["address"], None)
+    except Exception:
+        pass
+    for utxo in rpc.call("listunspent", 0, 9_999_999):
+        if utxo.get("address"):
+            found.setdefault(utxo["address"], None)
+    return list(found)
 
 
 def _check_address(address: str, *, mainnet: bool) -> str | None:

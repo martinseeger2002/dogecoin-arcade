@@ -80,6 +80,9 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
 
+    # Bots authenticate to /rpc/main and /rpc/test with this file's contents.
+    print(f"  RPC cookie {state.write_rpc_cookie()}")
+
     if args.host != "127.0.0.1":
         print(f"WARNING: binding {args.host}, not loopback. This app can spend.")
 

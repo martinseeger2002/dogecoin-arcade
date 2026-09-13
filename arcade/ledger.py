@@ -288,7 +288,7 @@ class LedgerIndex:
         clause = ("WHERE " + " AND ".join(where)) if where else ""
         with self.open() as db:
             rows = db.conn.execute(
-                f"SELECT t.*, b.time AS block_time FROM arcade_tx t "
+                f"SELECT t.*, b.time AS block_time, b.hash AS block_hash FROM arcade_tx t "
                 f"JOIN block b ON b.height = t.block_height {clause} "
                 f"ORDER BY t.block_height DESC, t.position DESC",
                 tuple(args),
@@ -351,7 +351,7 @@ class LedgerIndex:
     def transaction(self, txid: str) -> dict[str, Any] | None:
         with self.open() as db:
             row = db.conn.execute(
-                "SELECT t.*, b.time AS block_time FROM arcade_tx t "
+                "SELECT t.*, b.time AS block_time, b.hash AS block_hash FROM arcade_tx t "
                 "JOIN block b ON b.height = t.block_height WHERE txid = ?", (txid,)
             ).fetchone()
             if row is None:

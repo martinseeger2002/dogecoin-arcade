@@ -130,6 +130,9 @@ class AppState:
     #: Per-process token required on every state-changing form. A local server is
     #: reachable by any process on this machine, including a stray browser tab.
     csrf_token: str = field(default_factory=lambda: secrets.token_urlsafe(32))
+    #: Per-process secret for the bot RPC (web/rpc.py), handed out through
+    #: `rpc_cookie_path` the way bitcoind hands out its .cookie.
+    rpc_secret: str = field(default_factory=lambda: secrets.token_hex(32))
     notice: str | None = None
     notice_kind: str = "info"
 
@@ -397,6 +400,23 @@ class AppState:
         if self.messaging.network != self.ledger.network:
             chains.append(self.messaging)
         return chains
+
+    @property
+    def rpc_cookie_path(self) -> Path:
+        return self.home / "rpc.cookie"
+
+    def write_rpc_cookie(self) -> Path:
+        """Write this process's RPC cookie; done once at startup."""
+        from .rpc import write_cookie
+        write_cookie(self.rpc_cookie_path, self.rpc_secret)
+        return self.rpc_cookie_path
+
+    def rpc_chain(self, which: str) -> "ChainContext | None":
+        """The chain `/rpc/main` or `/rpc/test` speaks for, if it is indexed."""
+        for chain in self.token_chains:
+            if which == ("main" if chain.is_mainnet else "test"):
+                return chain
+        return None
 
     @property
     def token_chain_path(self) -> Path:

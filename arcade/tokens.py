@@ -81,6 +81,9 @@ class PreparedTokenTx:
     size: int
     #: The Class B marker address, so the outputs list can name that output.
     marker: str | None = None
+    #: What this is for ("send", "grant", ...), so a broadcast can be listed
+    #: as such wherever it was prepared.
+    what: str = ""
 
     @property
     def total_sats(self) -> int:
