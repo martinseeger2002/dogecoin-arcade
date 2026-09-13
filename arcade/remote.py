@@ -48,9 +48,13 @@ URL_PATTERN = re.compile(rb"https://[a-z0-9][a-z0-9-]*\.trycloudflare\.com")
 #: How long to wait for the edge to answer before giving up.
 START_TIMEOUT = 45.0
 
-#: Offered lengths, in minutes. Not unlimited: see the deadline note above.
-DURATIONS = (15, 60, 240)
-DEFAULT_MINUTES = 60
+#: Offered lengths, in minutes: 4 hours, 12 hours, a day. Long enough to be out
+#: for the day and still reach the wallet, which is the point -- and still a
+#: list rather than a text box, because "until I remember" is not a length. The
+#: shortest is the default: the one that has to be chosen deliberately should be
+#: the one that leaves the door open longest.
+DURATIONS = (240, 720, 1440)
+DEFAULT_MINUTES = 240
 
 #: The name the cookie is stored under. Distinct from the CSRF token: this one
 #: says *who* may ask, the other says *this form came from our own page*.

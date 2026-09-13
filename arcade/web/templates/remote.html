@@ -37,7 +37,10 @@
       <select name="minutes" id="minutes">
         {% for d in durations %}
         <option value="{{ d }}" {% if d == default_minutes %}selected{% endif %}>
-          {% if d < 60 %}{{ d }} minutes{% elif d == 60 %}1 hour{% else %}{{ d // 60 }} hours{% endif %}
+          {% if d < 60 %}{{ d }} minutes
+          {%- elif d == 60 %}1 hour
+          {%- elif d == 1440 %}1 day
+          {%- else %}{{ d // 60 }} hours{% endif %}
         </option>
         {% endfor %}
       </select>

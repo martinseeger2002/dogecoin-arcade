@@ -234,3 +234,20 @@ def test_opening_without_cloudflared_says_where_to_get_it(monkeypatch):
     monkeypatch.setattr(remotelib, "find_cloudflared", lambda home=None: None)
     with pytest.raises(remotelib.TunnelError, match="cloudflared is not installed"):
         remotelib.open_tunnel(8420)
+
+
+def test_the_offered_lengths_are_what_the_page_shows(client):
+    """Read from the page, not from the constant: a select that disagrees with
+    what the route accepts is a button that cannot be pressed."""
+    app, _ = client
+    body = app.get("/remote").text
+    for minutes in remotelib.DURATIONS:
+        assert f'value="{minutes}"' in body
+    assert "4 hours" in body and "12 hours" in body and "1 day" in body
+    assert f'value="{remotelib.DEFAULT_MINUTES}" selected' in body
+
+
+def test_the_shortest_length_is_the_default():
+    """The one that leaves the door open longest should be the one somebody
+    has to choose on purpose."""
+    assert remotelib.DEFAULT_MINUTES == min(remotelib.DURATIONS)
