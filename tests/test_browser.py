@@ -432,3 +432,149 @@ def test_small_costs_and_sizes_do_not_round_away(browser, served):
     # "on top of the fee" split one answer into two, neither of which was it.
     assert rows[0][2] == "0.12"
     assert rows[1][2] == "0.25", "this is the case that used to read as free"
+
+
+# --- phones -------------------------------------------------------------------
+# "Make sure it looks good when viewing from a mobile device", now that the
+# Remote page exists to make that the normal way to use it. Measured rather than
+# eyeballed, because every one of these was invisible on a desktop:
+#
+#   * the messenger clipped its own composer note mid-sentence -- 818px of 833 --
+#     because `height:auto` on a phone left `max-height:820px` standing;
+#   * every text field was under 16px, which makes Safari on iOS zoom the page in
+#     on the first tap and never zoom back out;
+#   * the address book pushed the whole page sideways at 320px, because its
+#     cards asked for a 330px minimum.
+
+
+PHONE_PAGES = ["/", "/messages", "/contacts", "/groups", "/backup", "/keys",
+               "/wallet", "/tokens", "/compose", "/inbox", "/remote"]
+
+
+@pytest.fixture(scope="module")
+def phone(browser, served):
+    """A viewport the width of a phone, which a window cannot be.
+
+    Headless Firefox refuses to make a window narrower than 500 CSS px -- wider
+    than any phone made. An iframe is a real viewport: the document inside lays
+    out at the iframe's width and its media queries answer to that width, so a
+    390px iframe is a 390px phone as far as the page is concerned.
+    """
+    base, peer = served
+
+    def visit(path, width=390):
+        browser.get(base + "/")            # same origin, so the frame can be set
+        browser.execute_script(
+            """
+            document.body.innerHTML = '';
+            document.body.style.margin = '0';
+            const f = document.createElement('iframe');
+            f.id = 'phone'; f.width = arguments[1]; f.height = 800;
+            f.style.border = '0'; f.src = arguments[0];
+            document.body.appendChild(f);
+            """, base + path, width)
+        time.sleep(0.6)
+        browser.switch_to.frame(browser.find_element(By.ID, "phone"))
+        return browser
+
+    yield visit, peer
+    browser.switch_to.default_content()
+
+
+@pytest.mark.parametrize("path", PHONE_PAGES)
+@pytest.mark.parametrize("width", [390, 320])
+def test_no_page_pushes_a_phone_sideways(phone, path, width):
+    """A page wider than the screen moves every element on it, so the text no
+    longer fits either. Wide things must scroll on their own."""
+    visit, _ = phone
+    browser = visit(path, width)
+    try:
+        scroll_width, view_width, offenders = browser.execute_script("""
+            const w = window.innerWidth, out = [];
+            for (const el of document.querySelectorAll('body *')) {
+              const r = el.getBoundingClientRect();
+              if (r.width > 0 && r.height > 0 && r.right > w + 1) {
+                out.push(el.tagName.toLowerCase() + '.' +
+                  (typeof el.className === 'string' ? el.className : '') +
+                  ' right=' + Math.round(r.right));
+              }
+            }
+            return [document.documentElement.scrollWidth, w, out.slice(0, 3)];
+        """)
+        assert scroll_width <= view_width + 1, (
+            f"{path} at {width}px scrolls to {scroll_width}px: {offenders}")
+    finally:
+        browser.switch_to.default_content()
+
+
+@pytest.mark.parametrize("path", PHONE_PAGES)
+def test_tapping_a_field_does_not_zoom_the_page(phone, path):
+    """Safari on iOS zooms in when it focuses a field under 16px and does not
+    zoom back, so one tap on any form leaves the wallet magnified and scrolled
+    off to one side. Every field here was 13.6-15px."""
+    visit, _ = phone
+    browser = visit(path)
+    try:
+        small = browser.execute_script("""
+            const out = [];
+            for (const el of document.querySelectorAll('input,select,textarea')) {
+              if (el.type === 'hidden') continue;
+              const size = parseFloat(getComputedStyle(el).fontSize);
+              if (size < 16) out.push((el.name || el.tagName) + ' ' + size + 'px');
+            }
+            return out;
+        """)
+        assert small == [], f"{path} has fields iOS will zoom for: {small}"
+    finally:
+        browser.switch_to.default_content()
+
+
+def test_the_messenger_does_not_cut_off_its_own_composer(phone):
+    """The note it clipped was the one saying a message is permanent once sent."""
+    visit, peer = phone
+    browser = visit(f"/messages/{peer}")
+    try:
+        clipped = browser.execute_script("""
+            const out = [];
+            for (const el of document.querySelectorAll('body *')) {
+              const s = getComputedStyle(el);
+              if ((s.overflow === 'hidden' || s.overflowY === 'hidden')
+                  && el.clientHeight > 0 && el.scrollHeight > el.clientHeight + 2) {
+                out.push(el.className + ' shows ' + el.clientHeight
+                         + ' of ' + el.scrollHeight);
+              }
+            }
+            return out;
+        """)
+        assert clipped == [], f"cut off on a phone: {clipped}"
+        notes = [n.text.strip() for n
+                 in browser.find_elements(By.CSS_SELECTOR, ".composer-note")
+                 if n.text.strip()]
+        assert notes, "the composer says nothing at all"
+        assert any("permanent once sent" in n for n in notes), notes
+        for note in notes:
+            assert note.endswith("."), f"a note ends mid-sentence: {note[-60:]!r}"
+    finally:
+        browser.switch_to.default_content()
+
+
+def test_the_navigation_does_not_eat_the_screen(phone):
+    """Eleven links wrapped onto four rows: 226px of an 844px phone, before any
+    page began, on every page."""
+    visit, _ = phone
+    browser = visit("/")
+    try:
+        height, rows = browser.execute_script("""
+            const tops = new Set();
+            for (const a of document.querySelectorAll('nav a')) {
+              const r = a.getBoundingClientRect();
+              if (r.width === 0) continue;      // hidden here; it reports top 0
+              tops.add(Math.round(r.top));
+            }
+            return [Math.round(document.querySelector('header')
+                     .getBoundingClientRect().height), tops.size];
+        """)
+        assert rows <= 2, f"the navigation wraps onto {rows} rows"
+        assert height <= 150, f"the header takes {height}px of the screen"
+    finally:
+        browser.switch_to.default_content()

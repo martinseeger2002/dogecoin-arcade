@@ -74,7 +74,7 @@
 
 <div class="panel" style="margin-bottom:18px">
   <div class="row" style="align-items:baseline">
-    <h3 style="flex:1;margin:0">Find people on the chain</h3>
+    <h3 class="row-title">Find people on the chain</h3>
     <form method="post" action="/contacts/scan">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <button class="ghost" type="submit">Scan for published addresses</button>
@@ -131,7 +131,7 @@
   {% for p in people %}
   <div class="card{{ ' editing' if editing and editing['id'] == p['id'] }}">
     <div class="row" style="align-items:baseline">
-      <h3 style="flex:1;margin:0">{{ p['name'] or "Unnamed" }}</h3>
+      <h3 class="row-title">{{ p['name'] or "Unnamed" }}</h3>
       {% if p['hex'] %}<span class="pill ok" title="You can message this contact">messaging</span>{% endif %}
     </div>
 

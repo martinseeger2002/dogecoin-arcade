@@ -81,6 +81,11 @@ button:hover{filter:brightness(1.08)}
 button.ghost{background:transparent;color:var(--accent)}
 button.danger{background:var(--bad);border-color:var(--bad);color:#fff}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+/* A heading that shares a row with a button and pushes it to the far end. A
+   class rather than an inline style, so the phone rules below can give it the
+   whole width -- an inline `flex:1` beats any stylesheet and left "Find people
+   on the chain" four words tall in a squeezed column. */
+.row > .row-title{flex:1;margin:0}
 .msg{padding:11px 14px;border-radius:8px;margin-bottom:16px;font-size:.92rem;border:1px solid}
 .msg.err{background:color-mix(in srgb,var(--bad) 10%,transparent);border-color:var(--bad)}
 .msg.info{background:color-mix(in srgb,var(--accent) 10%,transparent);border-color:var(--accent)}
@@ -240,7 +245,13 @@ table.published tr:first-child td{border-top:0}
 .msgr{display:grid;grid-template-columns:290px 1fr;gap:0;height:calc(100vh - 190px);
   min-height:440px;max-height:820px;border:1px solid var(--line);border-radius:12px;overflow:hidden;
   background:var(--panel)}
-@media(max-width:760px){.msgr{grid-template-columns:1fr;height:auto}
+/* `height:auto` alone was not enough: `max-height:820px` still applied and
+   `overflow:hidden` cut what stuck out. On a phone that clipped the composer's
+   own note mid-sentence -- 818px shown of 833px -- and the sentence it cut was
+   the one saying a message is permanent once sent. A stacked messenger has no
+   reason to be capped at all: the page scrolls. */
+@media(max-width:760px){.msgr{grid-template-columns:1fr;height:auto;max-height:none;
+    min-height:0;overflow:visible}
   .msgr .threads{max-height:250px}}
 
 .threads{border-right:1px solid var(--line);display:flex;flex-direction:column;
@@ -377,6 +388,60 @@ form.composer button[type=submit]{background:var(--sent);border-color:var(--sent
 .composer-note.costly{color:var(--bad)}
 
 .bubble .stamp .unconfirmed{opacity:.85;font-style:italic}
+
+/* --- phones ----------------------------------------------------------------
+   Measured in a 390px viewport (an iPhone 12/13/14), not guessed at. Three
+   things were wrong and none of them shows on a desktop:
+
+   * Every text field was 13.6-15px. Safari on iOS zooms the page in when it
+     focuses a field smaller than 16px, and does not zoom back out -- so the
+     first tap on any form left the wallet magnified and scrolled sideways.
+   * The header was 226px of an 844px screen, because eleven navigation links
+     wrapped onto four rows before any page began.
+   * Tap targets were 35px tall against the 44px people's fingers actually need.
+*/
+@media(max-width:640px){
+  input,select,textarea{font-size:16px}
+  input.mono{font-size:16px}
+  textarea{min-height:120px}
+
+  .bar{padding:10px 14px;gap:8px}
+  main{padding:18px 14px 48px}
+  h1{font-size:1.35rem}
+  .panel{padding:14px}
+
+  nav{margin-left:0;width:100%;gap:2px;row-gap:4px}
+  nav a{padding:9px;font-size:.83rem;min-height:40px;display:flex;align-items:center}
+  /* The pages that are not built yet are not links, and a dead row of them is
+     a whole row of a small screen. They are still there on a desktop, where
+     saying what is coming costs nothing. */
+  nav a.off{display:none}
+
+  /* Four one-line figures as four full-width cards is four screens of
+     scrolling to read four numbers. Two columns fit at 390px and read at a
+     glance, which is what a figure on a phone is for. */
+  .grid{grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:10px}
+  /* `minmax(330px,1fr)` is wider than a 320px phone, so a contact card stuck
+     330px out of a 292px column and the whole page scrolled sideways. One
+     column, and the minimum stops being a claim about the screen. */
+  .cards{grid-template-columns:1fr}
+
+  /* A table of transactions cannot be squeezed below the width of its own
+     columns: at 320px the inbox pushed the whole PAGE sideways, so every other
+     page element moved too and the text no longer fit the screen. As a block
+     it scrolls on its own and leaves the page alone. */
+  table{display:block;overflow-x:auto;font-size:.88rem}
+  th,td{padding-right:8px}
+
+  /* A heading sharing a flex row with a wide button gets squeezed to its
+     narrowest: "Find people on the chain" came out four words tall beside
+     "Scan for published addresses". On one column each gets the width. */
+  .row > h2, .row > h3, .row > .row-title{flex-basis:100%}
+
+  button,.btn{padding:11px 16px;min-height:44px}
+  .composer button{min-height:40px}
+  button.small,.btn.small{min-height:40px;padding:8px 13px}
+}
 </style>
 </head>
 <body>

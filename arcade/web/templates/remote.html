@@ -65,7 +65,9 @@
               <td class="mono" style="word-break:break-all">{{ tunnel.url }}</td></tr>
           <tr><td class="muted">Closes in</td>
               <td id="left" data-seconds="{{ tunnel.seconds_left }}">
-                {{ tunnel.seconds_left // 60 }} minutes</td></tr>
+                {% set h = tunnel.seconds_left // 3600 %}
+                {%- set m = (tunnel.seconds_left % 3600) // 60 %}
+                {%- if h %}{{ h }} h {{ m }} min{% else %}{{ m }} min{% endif %}</td></tr>
         </table>
         <form method="post" action="/remote/stop" style="margin-top:12px">
           <input type="hidden" name="csrf_token" value="{{ csrf }}">
@@ -90,8 +92,14 @@
       setInterval(function () {
         left -= 1;
         if (left <= 0) { location.reload(); return; }
-        var m = Math.floor(left / 60), s = left % 60;
-        el.textContent = m > 0 ? m + ' min ' + s + ' s' : s + ' seconds';
+        // Hours, now that a tunnel can run for a day: "1439 min 12 s" is a
+        // number nobody reads as "nearly a day".
+        var h = Math.floor(left / 3600);
+        var m = Math.floor((left % 3600) / 60);
+        var s = left % 60;
+        el.textContent = h > 0 ? h + ' h ' + m + ' min'
+                       : m > 0 ? m + ' min ' + s + ' s'
+                       : s + ' seconds';
       }, 1000);
     })();
   </script>
@@ -102,5 +110,8 @@
   .remote-open{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start}
   .remote-open .qr{background:#fff;padding:10px;border-radius:10px;line-height:0}
   .remote-open .detail{flex:1;min-width:260px}
+  /* "Closes in" broke onto two lines against a narrow first column and read as
+     two separate labels. It is one. */
+  .remote-open td.muted{white-space:nowrap;vertical-align:top}
 </style>
 {% endblock %}
