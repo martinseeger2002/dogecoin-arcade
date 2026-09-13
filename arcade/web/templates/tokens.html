@@ -49,9 +49,9 @@
           <input type="hidden" name="csrf_token" value="{{ csrf }}">
           <input type="hidden" name="sender" value="{{ h.address }}">
           <input type="hidden" name="property_id" value="{{ h.property_id }}">
-          <div style="flex:0 0 110px"><input name="amount" placeholder="amount" inputmode="decimal"
+          <div style="flex:0 0 110px"><input autocomplete="off" name="amount" placeholder="amount" inputmode="decimal"
                value="{{ form_send.amount if form_send and form_send.sender == h.address and form_send.property_id|string == h.property_id|string else '' }}"></div>
-          <div style="flex:1 1 200px"><input name="recipient" class="mono" spellcheck="false"
+          <div style="flex:1 1 200px"><input autocomplete="off" name="recipient" class="mono" spellcheck="false"
                placeholder="recipient address on {{ chain.label|lower }}"
                value="{{ form_send.recipient if form_send and form_send.sender == h.address and form_send.property_id|string == h.property_id|string else '' }}"></div>
           <button type="submit" class="small {{ 'danger' if chain.is_mainnet }}">Review send</button>
@@ -111,7 +111,7 @@
   <form method="post" action="/tokens/create">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
     <div class="field"><label>Name</label>
-      <input name="name" placeholder="what the token is called" value="{{ f.name or '' }}"></div>
+      <input autocomplete="off" name="name" placeholder="what the token is called" value="{{ f.name or '' }}"></div>
     <div class="row" style="align-items:flex-start">
       <div class="field" style="flex:1 1 180px"><label>Supply</label>
         <select name="kind">
@@ -119,7 +119,7 @@
           <option value="managed" {{ 'selected' if f.kind == 'managed' }}>Managed: granted later by the issuer</option>
         </select></div>
       <div class="field" style="flex:1 1 140px"><label>Amount (fixed supply)</label>
-        <input name="supply" placeholder="1000" inputmode="decimal" value="{{ f.supply or '' }}"></div>
+        <input autocomplete="off" name="supply" placeholder="1000" inputmode="decimal" value="{{ f.supply or '' }}"></div>
       <div class="field" style="flex:1 1 140px"><label>Units</label>
         <select name="units">
           <option value="divisible" {{ 'selected' if f.units != 'indivisible' }}>Divisible (8 decimals)</option>
@@ -137,12 +137,12 @@
     <details style="margin-bottom:14px">
       <summary class="muted" style="cursor:pointer;font-size:.9rem">Description, category, link</summary>
       <div class="field" style="margin-top:10px"><label>Description</label>
-        <input name="data" value="{{ f.data or '' }}"></div>
+        <input autocomplete="off" name="data" value="{{ f.data or '' }}"></div>
       <div class="row">
-        <div class="field" style="flex:1"><label>Category</label><input name="category" value="{{ f.category or '' }}"></div>
-        <div class="field" style="flex:1"><label>Subcategory</label><input name="subcategory" value="{{ f.subcategory or '' }}"></div>
+        <div class="field" style="flex:1"><label>Category</label><input autocomplete="off" name="category" value="{{ f.category or '' }}"></div>
+        <div class="field" style="flex:1"><label>Subcategory</label><input autocomplete="off" name="subcategory" value="{{ f.subcategory or '' }}"></div>
       </div>
-      <div class="field"><label>Link</label><input name="url" placeholder="https://" value="{{ f.url or '' }}"></div>
+      <div class="field"><label>Link</label><input autocomplete="off" name="url" placeholder="https://" value="{{ f.url or '' }}"></div>
     </details>
     <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">
       {{ 'Review creation on mainnet' if chain.is_mainnet else 'Review creation' }}</button>

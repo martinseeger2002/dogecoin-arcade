@@ -62,7 +62,7 @@
           onsubmit="return confirm('Start using a new empty wallet? Your current one is kept and you can switch back.')">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <div class="row">
-        <div style="flex:1"><input name="name" placeholder="Name for a new wallet, e.g. savings"></div>
+        <div style="flex:1"><input autocomplete="off" name="name" placeholder="Name for a new wallet, e.g. savings"></div>
         <button type="submit">Make a new wallet</button>
       </div>
       <p class="muted" style="font-size:.84rem;margin:9px 0 0">
@@ -80,7 +80,7 @@
     <form method="post" action="/backup/{{ c.which }}/save">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <div class="row">
-        <div style="flex:1"><input name="folder" value="{{ default_dir }}"
+        <div style="flex:1"><input autocomplete="off" name="folder" value="{{ default_dir }}"
                class="mono" spellcheck="false"></div>
         <button type="submit">Save a copy now</button>
       </div>
@@ -126,7 +126,7 @@
           <input name="key" class="mono" spellcheck="false" autocomplete="off"
                  placeholder="One key, no spaces"></div>
         <div class="field"><label>Label <span class="muted" style="font-weight:400">— optional</span></label>
-          <input name="label" placeholder="e.g. old paper wallet"></div>
+          <input autocomplete="off" name="label" placeholder="e.g. old paper wallet"></div>
         <button type="submit">Import this key</button>
         <p class="muted" style="font-size:.84rem;margin:10px 0 0">
           Adds the key to this wallet and searches the chain for its coins. That
@@ -149,7 +149,7 @@
               onsubmit="return confirm('Replace the {{ c.label|lower }} wallet now? The node will restart.')">
           <input type="hidden" name="csrf_token" value="{{ csrf }}">
           <div class="field"><label>Path to the wallet.dat you want to use</label>
-            <input name="source" class="mono" spellcheck="false"
+            <input autocomplete="off" name="source" class="mono" spellcheck="false"
                    placeholder="{{ default_dir }}/wallet-2026-01-01-120000.dat"></div>
           <label style="display:flex;gap:9px;align-items:flex-start;font-size:.89rem;color:var(--fg)">
             <input type="checkbox" name="understand" value="yes" style="width:auto;margin-top:3px" required>

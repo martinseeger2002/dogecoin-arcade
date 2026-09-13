@@ -58,7 +58,7 @@
   <input type="hidden" name="csrf_token" value="{{ csrf }}">
   <div class="field">
     <label>Recipient</label>
-    <input name="recipient" value="{{ recipient or '' }}" list="known"
+    <input autocomplete="off" name="recipient" value="{{ recipient or '' }}" list="known"
            placeholder="paste a contact code, or pick someone below">
     {% if keys %}
     <datalist id="known">
@@ -75,7 +75,7 @@
   </div>
   <div class="field">
     <label>Message</label>
-    <textarea name="body" placeholder="Up to 7,512 characters fit in a single transaction.">{{ body or '' }}</textarea>
+    <textarea autocomplete="off" name="body" placeholder="Up to 7,512 characters fit in a single transaction.">{{ body or '' }}</textarea>
   </div>
   <div class="row">
     <button type="submit" {{ 'disabled' if not state.unlocked }}>Prepare</button>

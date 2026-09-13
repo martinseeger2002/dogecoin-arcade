@@ -81,9 +81,9 @@
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="which" value="{{ which }}">
       <div class="field"><label>Send to</label>
-        <input name="destination" placeholder="address on {{ ctx.label|lower }}"></div>
+        <input autocomplete="off" name="destination" placeholder="address on {{ ctx.label|lower }}"></div>
       <div class="field"><label>Amount</label>
-        <input name="amount" placeholder="0.00000000" inputmode="decimal"></div>
+        <input autocomplete="off" name="amount" placeholder="0.00000000" inputmode="decimal"></div>
       <button type="submit" {% if tag == 'mainnet' %}class="danger"{% endif %}>
         {{ 'Review real payment' if tag == 'mainnet' else 'Review payment' }}</button>
       {% if tag == 'mainnet' %}
@@ -122,9 +122,9 @@
   <form method="post" action="/wallet/split">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
     <div class="row">
-      <div style="flex:0 0 90px"><input name="pieces" value="30" inputmode="numeric"></div>
+      <div style="flex:0 0 90px"><input autocomplete="off" name="pieces" value="30" inputmode="numeric"></div>
       <span class="muted">pieces of</span>
-      <div style="flex:0 0 110px"><input name="each" value="10" inputmode="decimal"></div>
+      <div style="flex:0 0 110px"><input autocomplete="off" name="each" value="10" inputmode="decimal"></div>
       <button type="submit" class="ghost">Split for fast sending</button>
     </div>
   </form>

@@ -20,7 +20,7 @@
     <form method="get" action="/groups" id="newchan" class="newconv" hidden>
       <input type="hidden" name="which" value="{{ which }}">
       <label>Channel name</label>
-      <input name="channel" maxlength="24" placeholder="e.g. trading" required>
+      <input autocomplete="off" name="channel" maxlength="24" placeholder="e.g. trading" required>
       <div class="row" style="margin-top:9px">
         <button type="submit" class="small">Go</button>
         <button type="button" class="ghost small"
@@ -83,7 +83,7 @@
          the post is carried as a Class B transaction, which costs dust. So the
          budget is advice about cost now, not a limit, and the note below says
          so as it is crossed. #}
-      <textarea name="text" rows="1" id="post"
+      <textarea autocomplete="off" name="text" rows="1" id="post"
                 oninput="grow(this)"
                 onkeydown="postOnEnter(event, this)"
                 placeholder="Say something in #{{ channel }}…">{{ draft or '' }}</textarea>

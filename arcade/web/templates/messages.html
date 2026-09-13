@@ -17,10 +17,10 @@
     <form method="post" action="/messages/start" id="newconv" class="newconv" {% if not request.query_params.get('new') %}hidden{% endif %}>
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <label>Their contact code</label>
-      <input name="code" class="mono" spellcheck="false"
+      <input autocomplete="off" name="code" class="mono" spellcheck="false"
              placeholder="Their address, or their contact code" required>
       <label style="margin-top:8px">Name them (optional)</label>
-      <input name="name" placeholder="e.g. a test machine">
+      <input autocomplete="off" name="name" placeholder="e.g. a test machine">
       <div class="row" style="margin-top:9px">
         <button type="submit" class="small">Start</button>
         <button type="button" class="ghost small" onclick="document.getElementById('newconv').hidden=true">Cancel</button>
@@ -65,7 +65,7 @@
       {% if not peer.name %}
       <form method="post" action="/messages/{{ peer.hex }}/name" class="row">
         <input type="hidden" name="csrf_token" value="{{ csrf }}">
-        <input name="name" placeholder="name them" class="small-input">
+        <input autocomplete="off" name="name" placeholder="name them" class="small-input">
         <button class="ghost small" type="submit">Save</button>
       </form>
       {% endif %}
@@ -239,7 +239,7 @@
           enctype="multipart/form-data" onsubmit="return startSending(this)"
           {% if prepared %}data-awaiting-confirm="yes"{% endif %}>
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
-      <textarea name="body" rows="1" placeholder="Write a message…"
+      <textarea autocomplete="off" name="body" rows="1" placeholder="Write a message…"
                 oninput="grow(this)"
                 onkeydown="sendOnEnter(event, this)">{{ draft or '' }}</textarea>
       <label class="attach" title="Send a file">

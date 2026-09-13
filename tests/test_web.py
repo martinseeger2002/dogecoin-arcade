@@ -2348,3 +2348,42 @@ def test_the_chain_tag_switches_tokens_between_mainnet_and_testnet(client, tmp_p
              follow_redirects=False)
     assert state.token_chain.network == "regtest", "a chain tokens are not on is refused"
     assert "not indexed on" in app.get("/tokens").text
+
+
+# --- the browser must not remember what is typed here -------------------------
+
+
+TEXT_FIELD = re.compile(r"<(input|textarea)\b[^>]*>", re.IGNORECASE | re.DOTALL)
+NOT_TYPED_IN = re.compile(r'type\s*=\s*"(hidden|checkbox|file|radio|submit|button)"',
+                          re.IGNORECASE)
+
+
+def _fields_that_remember(html: str) -> list[str]:
+    return [
+        match.group(0)
+        for match in TEXT_FIELD.finditer(html)
+        if not NOT_TYPED_IN.search(match.group(0))
+        and "autocomplete=" not in match.group(0)
+    ]
+
+
+@pytest.mark.parametrize("path", GET_ROUTES + ["/groups", "/messages"])
+def test_no_page_lets_the_browser_remember_what_was_typed(client, path):
+    """A contact code, an address, a message: the browser offers them back on
+    every form it decides is similar, on a machine anyone may walk up to. The
+    page is checked as served, not as written, so a field added by a macro or a
+    second template is caught too."""
+    app, _ = client
+    body = app.get(path).text
+    remembered = _fields_that_remember(body)
+    assert remembered == [], f"{path} has fields the browser will remember: {remembered}"
+
+
+def test_every_template_says_so_too():
+    """The routes above do not render every branch -- a form behind an `if`
+    would never be seen. The templates themselves have to be clean."""
+    offenders = []
+    for template in sorted(pathlib.Path("arcade/web/templates").glob("*.html")):
+        for tag in _fields_that_remember(template.read_text()):
+            offenders.append(f"{template.name}: {' '.join(tag.split())[:70]}")
+    assert offenders == [], offenders

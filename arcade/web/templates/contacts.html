@@ -9,7 +9,7 @@
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
     <h3 style="margin:0 0 12px">How you introduce yourself</h3>
     <div class="row">
-      <div style="flex:1"><input name="name" value="{{ state.profile_name }}"
+      <div style="flex:1"><input autocomplete="off" name="name" value="{{ state.profile_name }}"
              id="profile-name" placeholder="Your name" maxlength="{{ name_limit }}"
              oninput="showPublished(this)"></div>
       <button type="submit">Save</button>
@@ -39,30 +39,30 @@
     <h3 style="margin:0 0 14px">{{ "Edit " ~ editing['name'] if editing else "Add someone" }}</h3>
 
     <div class="field"><label>Name</label>
-      <input name="name" value="{{ editing['name'] if editing else '' }}"
+      <input autocomplete="off" name="name" value="{{ editing['name'] if editing else '' }}"
              placeholder="What you call them" autofocus required></div>
 
     <div class="two">
       <div class="field"><label>Testnet address <span class="tag testnet">test</span></label>
-        <input name="testnet_address" class="mono" spellcheck="false"
+        <input autocomplete="off" name="testnet_address" class="mono" spellcheck="false"
                value="{{ editing['testnet_address'] if editing else '' }}"
                placeholder="Test coins — no real value"></div>
       <div class="field"><label>Mainnet address <span class="tag mainnet">main</span></label>
-        <input name="mainnet_address" class="mono" spellcheck="false"
+        <input autocomplete="off" name="mainnet_address" class="mono" spellcheck="false"
                value="{{ editing['mainnet_address'] if editing else '' }}"
                placeholder="Real coins — check this one twice"></div>
     </div>
 
     {% if not editing %}
     <div class="field"><label>Contact code <span class="muted" style="font-weight:400">— optional</span></label>
-      <input name="code" class="mono" spellcheck="false" placeholder="arcade:test:…">
+      <input autocomplete="off" name="code" class="mono" spellcheck="false" placeholder="arcade:test:…">
       <p class="muted" style="font-size:.82rem;margin:6px 0 0">
         Add it and you can message them straight from here. It can only be set when
         the entry is created, because it <em>is</em> their identity.</p></div>
     {% endif %}
 
     <div class="field"><label>Notes</label>
-      <textarea name="notes" rows="3" placeholder="How you know them, what they are for, anything worth remembering."
+      <textarea autocomplete="off" name="notes" rows="3" placeholder="How you know them, what they are for, anything worth remembering."
         >{{ editing['notes'] if editing else '' }}</textarea></div>
 
     <div class="row">
@@ -107,7 +107,7 @@
             <input type="hidden" name="csrf_token" value="{{ csrf }}">
             <input type="hidden" name="pubkey" value="{{ k.hex }}">
             <input type="hidden" name="address" value="{{ k.address }}">
-            <input name="name" value="{{ k.name }}" placeholder="name them"
+            <input autocomplete="off" name="name" value="{{ k.name }}" placeholder="name them"
                    class="small-input" style="max-width:150px">
             <button class="ghost small" type="submit">Add</button>
           </form>
