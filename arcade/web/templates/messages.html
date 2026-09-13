@@ -271,14 +271,10 @@
     </form>
     <p class="muted composer-note" id="picked" hidden>
       <span id="picked-text"></span>
+      <span id="picked-sizes" class="sizes" hidden></span>
       <button type="button" class="ghost small" onclick="clearPick()">Remove</button>
     </p>
     {% if is_new_contact %}
-    <p class="msg info" id="sending" hidden style="margin:0 16px 10px"></p>
-    <p class="muted composer-note" style="padding-bottom:2px">
-      Your own messages are kept on this computer only: each one is encrypted to
-      the person you sent it to, so it cannot be read back off the chain &mdash;
-      not by you either. They have their copy; this is yours.</p>
     <p class="muted composer-note">
       <strong>Introduce myself</strong> sends {{ profile_name or 'your name' }} and
       your addresses with this first message, so they know who is writing. It
@@ -435,8 +431,14 @@ function clearPick(){
   document.getElementById('post') && document.getElementById('post').focus();
 }
 function showPick(input){
+  // The picking itself is shared (base.html): it remembers the original,
+  // measures Large, Medium and Small, and swaps the chosen one into the input
+  // so the form carries it. This draws the sentence underneath.
+  arcadePick(input, drawPicked);
+}
+
+function drawPicked(file){
   var note = document.getElementById('picked');
-  var file = input.files && input.files[0];
   if (!file) { note.hidden = true; document.getElementById('clip').textContent = '📎'; return; }
   var e = estimateFile(file.size);
   var mins = Math.round(e.blocks * 35 / 60);

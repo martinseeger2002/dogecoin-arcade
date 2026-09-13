@@ -370,6 +370,13 @@ a.thread.on{background:var(--code);box-shadow:inset 3px 0 0 var(--accent)}
   min-height:0;max-height:160px}
 .composer button{border-radius:19px;flex:none}
 .composer-note{font-size:.76rem;padding:0 16px 11px;margin:0;background:var(--bg)}
+/* The three sizes a picture can be sent at. Each button carries what that
+   choice costs, because the cost is the reason the choice exists. */
+.sizes{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.sizes button.size{font-size:.76rem;padding:6px 9px;line-height:1.25;text-align:left}
+.sizes button.size strong{display:block;font-size:.8rem}
+.sizes button.size.on{background:var(--accent);color:var(--accent-fg);
+  border-color:var(--accent)}
 .convo .confirm{margin:0 16px 10px;padding:12px 14px;border:1px solid var(--accent);
   border-radius:10px;font-size:.88rem;background:var(--code)}
 .small-input{padding:5px 9px;font-size:.84rem}
@@ -462,8 +469,13 @@ form.composer button[type=submit]{background:var(--sent);border-color:var(--sent
 
   button,.btn{padding:11px 16px;min-height:44px}
   /* Every pixel the buttons give back is a pixel of what you are writing. */
-  .composer{gap:6px;padding:9px 10px}
+  /* wrap, or a full-width item on a nowrap flex line squeezes the box it is
+     supposed to sit under to a sliver. */
+  .composer{gap:6px;padding:9px 10px;flex-wrap:wrap}
+  .composer textarea{flex:1 1 55%;min-width:0}
   .composer button{min-height:40px;padding:9px 14px}
+  /* On its own line: sharing the row left "Write a" of "Write a message…". */
+  .composer label.introduce{flex:0 0 100%;order:3;margin-top:2px}
   .composer-foot{gap:8px}
   button.small,.btn.small{min-height:40px;padding:8px 13px}
 }
@@ -527,6 +539,150 @@ function arcadeCoins(coins){
 // them being the answer. A Class B transaction is about 0.01 per KB, and a
 // chunk is roughly 9 KB on the wire, so the fee is near enough 0.09 each --
 // small beside the dust for a large file, and not small for a small one.
+// --- how big a picture goes on the chain --------------------------------------
+// A picture is the most expensive thing this can send: every 60 bytes buys an
+// output that can never be spent again, so a phone photo straight from the
+// camera is several coins and several blocks. Re-encoding it here, before it is
+// uploaded, is the difference between a 3 MB send and an 80 KB one -- and it
+// happens in the browser, so nothing is uploaded twice and the wallet needs no
+// image library of its own.
+var ARCADE_SIZES = [
+  {key: 'large',  label: 'Large',  max: 0,    quality: 1,    hint: 'as it is'},
+  {key: 'medium', label: 'Medium', max: 1280, quality: 0.72, hint: 'fits any screen'},
+  {key: 'small',  label: 'Small',  max: 640,  quality: 0.6,  hint: 'cheapest'}
+];
+
+function arcadeIsImage(file){
+  return !!file && /^image\//.test(file.type) && !/svg/.test(file.type);
+}
+
+// Can this browser put a file back into a file input? Without it the original
+// cannot be restored after a smaller one has been chosen, so the choice is not
+// offered at all rather than offered and then unable to undo itself.
+function arcadeCanSwapFiles(){
+  try { return typeof DataTransfer !== 'undefined' && !!new DataTransfer().items; }
+  catch (e) { return false; }
+}
+
+function arcadePutFile(input, file){
+  var dt = new DataTransfer();
+  dt.items.add(file);
+  input.files = dt.files;
+}
+
+// Re-encode to at most `max` on the long side. JPEG, because it is the one
+// format every phone and every browser agrees on -- and because it has no
+// transparency, anything see-through is painted onto white first rather than
+// coming out black.
+function arcadeShrink(file, max, quality){
+  return new Promise(function(resolve){
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    img.onload = function(){
+      var w = img.naturalWidth, h = img.naturalHeight;
+      var scale = max ? Math.min(1, max / Math.max(w, h)) : 1;
+      var cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
+      var canvas = document.createElement('canvas');
+      canvas.width = cw; canvas.height = ch;
+      var ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.drawImage(img, 0, 0, cw, ch);
+      canvas.toBlob(function(blob){
+        URL.revokeObjectURL(url);
+        resolve(blob ? {blob: blob, width: cw, height: ch} : null);
+      }, 'image/jpeg', quality);
+    };
+    img.onerror = function(){ URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  });
+}
+
+function arcadeJpegName(name){
+  return name.replace(/\.[^.\/]+$/, '') + '.jpg';
+}
+
+// Work out all three, then let the caller draw them. Every one is measured
+// rather than estimated: the number under each button is what that choice
+// actually costs, and a smaller setting that came out bigger than the original
+// (which happens with an already-small picture) is dropped instead of offered.
+function arcadeOfferSizes(file, onReady){
+  var results = [{key: 'large', label: 'Large', hint: 'as it is', file: file,
+                  bytes: file.size, width: 0, height: 0}];
+  var pending = ARCADE_SIZES.slice(1).map(function(spec){
+    return arcadeShrink(file, spec.max, spec.quality).then(function(out){
+      if (!out || out.blob.size >= file.size) return null;
+      return {key: spec.key, label: spec.label, hint: spec.hint,
+              file: new File([out.blob], arcadeJpegName(file.name),
+                             {type: 'image/jpeg'}),
+              bytes: out.blob.size, width: out.width, height: out.height};
+    });
+  });
+  return Promise.all(pending).then(function(rest){
+    rest.forEach(function(r){ if (r) results.push(r); });
+    onReady(results);
+    return results;
+  });
+}
+
+// The whole picker, shared by both composers: remember what was chosen, offer
+// the three sizes, and swap the file in the input so the form carries whichever
+// one is selected. `drawText` is the one part each composer does its own way.
+var arcadeAttach = {original: null, choices: null, chosen: null};
+
+function arcadePick(input, drawText){
+  var file = input.files && input.files[0];
+  var sizes = document.getElementById('picked-sizes');
+  if (!file) {
+    arcadeAttach = {original: null, choices: null, chosen: null};
+    if (sizes) { sizes.innerHTML = ''; sizes.hidden = true; }
+    drawText(null);
+    return;
+  }
+  // A change event means the person chose a file; a swap of our own does not
+  // raise one, so anything arriving here is a new pick.
+  arcadeAttach = {original: file, choices: null, chosen: null};
+  drawText(file);
+  if (!sizes || !arcadeIsImage(file)) return;
+  if (!arcadeCanSwapFiles()) return;        // cannot undo a choice; do not offer
+
+  sizes.hidden = false;
+  sizes.innerHTML = '<span class="muted">measuring sizes…</span>';
+  arcadeOfferSizes(file, function(results){
+    if (arcadeAttach.original !== file) return;       // superseded by a new pick
+    arcadeAttach.choices = results;
+    var preferred = results.filter(function(r){ return r.key === 'medium'; })[0]
+                 || results[results.length - 1];
+    arcadeChoose(input, preferred.key, drawText);
+  });
+}
+
+function arcadeChoose(input, key, drawText){
+  var choices = arcadeAttach.choices || [];
+  var choice = choices.filter(function(r){ return r.key === key; })[0];
+  if (!choice) return;
+  arcadeAttach.chosen = key;
+  arcadePutFile(input, choice.file);
+  drawText(choice.file, choice);
+
+  var sizes = document.getElementById('picked-sizes');
+  if (!sizes) return;
+  sizes.innerHTML = '';
+  choices.forEach(function(r){
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ghost small size' + (r.key === key ? ' on' : '');
+    button.innerHTML = '<strong>' + r.label + '</strong> ' +
+      (r.width ? r.width + '&times;' + r.height + ' · ' : '') +
+      arcadeSize(r.bytes) + ' · ' + arcadeCoins(arcadeFileCost(r.bytes).coins);
+    button.title = r.hint;
+    button.addEventListener('click', function(){
+      arcadeChoose(input, r.key, drawText);
+    });
+    sizes.appendChild(button);
+  });
+}
+
 function arcadeFileCost(bytes){
   var perChunk = 7628, perOutput = 60, dustEach = 0.01, feePerChunk = 0.09;
   var chunks = Math.ceil(bytes / perChunk);

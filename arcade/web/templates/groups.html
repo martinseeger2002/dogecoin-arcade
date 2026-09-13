@@ -115,6 +115,7 @@
     </form>
     <p class="muted composer-note" id="picked" hidden>
       <span id="picked-text"></span>
+      <span id="picked-sizes" class="sizes" hidden></span>
       <button type="button" class="ghost small" onclick="clearPick()">Remove</button>
     </p>
     {# The byte budget used to be announced here as a running warning. It told
@@ -341,8 +342,12 @@ function clearPick(){
   showPick(input);
 }
 function showPick(input){
+  // Shared with the private composer (base.html: arcadePick).
+  arcadePick(input, drawPicked);
+}
+
+function drawPicked(file){
   var note = document.getElementById('picked');
-  var file = input.files && input.files[0];
   var box = document.getElementById('post');
   if (!file) {
     note.hidden = true;

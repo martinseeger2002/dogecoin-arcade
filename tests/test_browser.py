@@ -700,3 +700,201 @@ def test_posting_from_a_phone_stays_in_the_channel(phone):
             "return document.querySelector('.msgr').classList.contains('open')")
     finally:
         browser.switch_to.default_content()
+
+
+# --- pictures cost money, so they can be sent smaller ---------------------------
+# Every 60 bytes of a picture buys an output that can never be spent again, so a
+# photo straight from a phone camera is several coins and several blocks. The
+# three sizes are re-encoded in the browser before anything is uploaded, so the
+# wallet needs no image library and nothing is uploaded twice.
+
+MAKE_A_PHOTO = """
+const done = arguments[0];
+const c = document.createElement('canvas');
+c.width = 2400; c.height = 1600;
+const g = c.getContext('2d');
+// Noise, not flat colour: a flat image compresses to nothing and would not
+// show the difference between the three settings.
+const img = g.createImageData(c.width, c.height);
+for (let i = 0; i < img.data.length; i += 4) {
+  img.data[i] = (i * 7) % 255; img.data[i+1] = (i * 13) % 255;
+  img.data[i+2] = (i * 29) % 255; img.data[i+3] = 255;
+}
+g.putImageData(img, 0, 0);
+c.toBlob(function (blob) {
+  const input = document.getElementById('attachment');
+  const dt = new DataTransfer();
+  dt.items.add(new File([blob], 'photo.png', {type: 'image/png'}));
+  input.files = dt.files;
+  input.dispatchEvent(new Event('change'));
+  done(blob.size);
+}, 'image/png');
+"""
+
+READ_SIZES = """
+const buttons = [...document.querySelectorAll('#picked-sizes button')];
+const input = document.getElementById('attachment');
+return {
+  labels: buttons.map(b => b.textContent.replace(/\\s+/g, ' ').trim()),
+  chosen: buttons.filter(b => b.classList.contains('on'))
+                 .map(b => b.querySelector('strong').textContent),
+  name: input.files[0] ? input.files[0].name : null,
+  type: input.files[0] ? input.files[0].type : null,
+  bytes: input.files[0] ? input.files[0].size : null,
+};
+"""
+
+
+@pytest.mark.parametrize("path,composer", [("/messages/{peer}", "message"),
+                                           ("/groups?channel=main", "post")])
+def test_a_picture_can_be_sent_at_three_sizes(phone, path, composer):
+    visit, peer = phone
+    browser = visit(path.replace("{peer}", peer))
+    try:
+        browser.set_script_timeout(30)
+        original = browser.execute_async_script(MAKE_A_PHOTO)
+        assert original > 200_000, "the test photo has to be worth shrinking"
+
+        for _ in range(60):
+            state = browser.execute_script(READ_SIZES)
+            if len(state["labels"]) == 3:
+                break
+            time.sleep(0.5)
+
+        assert [label.split()[0] for label in state["labels"]] == \
+            ["Large", "Medium", "Small"], state["labels"]
+        assert state["chosen"] == ["Medium"], "Medium is the sensible default"
+        assert "1280×960" in state["labels"][1].replace("&times;", "×") or \
+               "1280" in state["labels"][1], state["labels"][1]
+        assert "640" in state["labels"][2], state["labels"][2]
+
+        # The form carries the chosen one, not the original.
+        assert state["bytes"] < original / 2, (state["bytes"], original)
+        assert state["name"] == "photo.jpg" and state["type"] == "image/jpeg"
+
+        # Each button says what that choice costs, which is the reason it exists.
+        for label in state["labels"]:
+            assert "·" in label, f"no size and cost on {label!r}"
+    finally:
+        browser.switch_to.default_content()
+
+
+def test_choosing_large_puts_the_original_back(phone):
+    """A choice that cannot be undone is not a choice."""
+    visit, peer = phone
+    browser = visit(f"/messages/{peer}")
+    try:
+        browser.set_script_timeout(30)
+        original = browser.execute_async_script(MAKE_A_PHOTO)
+        for _ in range(60):
+            if len(browser.execute_script(READ_SIZES)["labels"]) == 3:
+                break
+            time.sleep(0.5)
+
+        browser.execute_script("""
+            [...document.querySelectorAll('#picked-sizes button')]
+              .filter(b => b.textContent.indexOf('Large') === 0)[0].click();""")
+        time.sleep(0.4)
+        state = browser.execute_script(READ_SIZES)
+        assert state["chosen"] == ["Large"]
+        assert state["bytes"] == original, "Large is the file as it was"
+        assert state["name"] == "photo.png"
+
+        browser.execute_script("""
+            [...document.querySelectorAll('#picked-sizes button')]
+              .filter(b => b.textContent.indexOf('Small') === 0)[0].click();""")
+        time.sleep(0.4)
+        small = browser.execute_script(READ_SIZES)
+        assert small["chosen"] == ["Small"]
+        assert small["bytes"] < state["bytes"] / 4
+    finally:
+        browser.switch_to.default_content()
+
+
+def test_a_file_that_is_not_a_picture_is_offered_no_sizes(phone):
+    """There is nothing to re-encode, and a button that did nothing would be a
+    lie about what was about to be sent."""
+    visit, peer = phone
+    browser = visit(f"/messages/{peer}")
+    try:
+        browser.execute_script("""
+            const input = document.getElementById('attachment');
+            const dt = new DataTransfer();
+            dt.items.add(new File(['x'.repeat(9000)], 'notes.txt',
+                                  {type: 'text/plain'}));
+            input.files = dt.files;
+            input.dispatchEvent(new Event('change'));""")
+        time.sleep(0.6)
+        state = browser.execute_script(READ_SIZES)
+        assert state["labels"] == []
+        assert state["name"] == "notes.txt", "and it is still the file to send"
+    finally:
+        browser.switch_to.default_content()
+
+
+def test_removing_the_picture_forgets_the_sizes(phone):
+    visit, peer = phone
+    browser = visit(f"/messages/{peer}")
+    try:
+        browser.set_script_timeout(30)
+        browser.execute_async_script(MAKE_A_PHOTO)
+        for _ in range(60):
+            if len(browser.execute_script(READ_SIZES)["labels"]) == 3:
+                break
+            time.sleep(0.5)
+        browser.execute_script("clearPick()")
+        time.sleep(0.3)
+        state = browser.execute_script(READ_SIZES)
+        assert state["labels"] == [] and state["name"] is None
+        assert browser.execute_script(
+            "return document.getElementById('picked').hidden") is True
+    finally:
+        browser.switch_to.default_content()
+
+
+def test_the_chat_box_survives_the_introduce_checkbox(phone):
+    """A first message to somebody new puts "Introduce myself" in the composer
+    row. Given a full-width line of its own on a nowrap flex row, it squeezed
+    the box beside it down to a sliver -- one character wide."""
+    visit, _ = phone
+    stranger = "aa" * 32
+    browser = visit(f"/messages/{stranger}")
+    try:
+        assert browser.execute_script(
+            "return !!document.querySelector('.composer .introduce')"), (
+            "this peer should be new, or the test is not testing anything")
+        box, form = browser.execute_script("""
+            const t = document.querySelector('form.composer textarea');
+            const r = t.getBoundingClientRect();
+            const f = t.closest('form').getBoundingClientRect();
+            return [[r.width, r.height], [f.width, f.height]];
+        """)
+        assert box[0] > form[0] * 0.5, (
+            f"the box is {box[0]}px of a {form[0]}px row")
+        assert box[1] < 64, f"and {box[1]}px tall"
+    finally:
+        browser.switch_to.default_content()
+
+
+def test_the_composer_says_each_thing_once(phone):
+    """A new contact got the progress line and the privacy note twice: the same
+    paragraph printed twice on screen, and two elements with id="sending", of
+    which the JavaScript can only ever drive the first."""
+    visit, _ = phone
+    browser = visit("/messages/" + "bb" * 32)
+    try:
+        counts = browser.execute_script("""
+            const notes = [...document.querySelectorAll('.composer-note')]
+              .map(n => n.textContent.replace(/\\s+/g, ' ').trim())
+              .filter(t => t.length > 20);
+            const dupes = notes.filter((t, i) => notes.indexOf(t) !== i);
+            return [dupes, document.querySelectorAll('#sending').length,
+                    document.querySelectorAll('[id]').length -
+                    new Set([...document.querySelectorAll('[id]')]
+                              .map(e => e.id)).size];
+        """)
+        assert counts[0] == [], f"said twice: {counts[0]}"
+        assert counts[1] == 1, f"{counts[1]} elements share id=sending"
+        assert counts[2] == 0, "the page has duplicate ids"
+    finally:
+        browser.switch_to.default_content()
