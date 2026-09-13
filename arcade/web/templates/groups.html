@@ -10,9 +10,19 @@
    channels rather than conversations, because a channel is who you are talking
    to here. #}
 {# A channel is always chosen server-side, so "which pane" cannot be read from
-   `channel`: it is read from whether the address bar asked for one. /groups is
-   the list, /groups?channel=x is that channel. On a desktop both show. #}
-<div class="msgr{% if request.query_params.get('channel') %} open{% endif %}">
+   `channel`: /groups is the list, /groups?channel=x is that channel. On a
+   desktop both show.
+
+   A POST counts as being in the channel, and missing that broke posting from a
+   phone outright. Posting is two steps -- the first press prepares and the page
+   comes back asking "post this?" -- and that question is drawn inside the
+   channel pane. Rendered from /groups/post there is no `channel` in the query
+   string, so the pane was hidden, so the confirmation was invisible: the page
+   appeared to bounce back to the channel list and nothing was ever sent.
+   Reported from a phone, over the tunnel, on both a picture and a one-line
+   message. #}
+{% set showing_channel = request.query_params.get('channel') or request.method == 'POST' %}
+<div class="msgr{% if showing_channel %} open{% endif %}">
   <aside class="threads">
     <div class="threads-head">
       <strong>Channels</strong>

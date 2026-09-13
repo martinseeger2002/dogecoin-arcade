@@ -671,3 +671,32 @@ def test_a_desktop_still_shows_both_and_needs_no_way_back(browser, served):
     assert _shown(browser, ".threads") is True
     assert _shown(browser, ".convo") is True
     assert _shown(browser, ".convo-head .back") is False
+
+
+def test_posting_from_a_phone_stays_in_the_channel(phone):
+    """Reported from a phone, over the tunnel: pressing Post bounced back to the
+    channel list and nothing was ever sent.
+
+    Posting is two steps -- the first press prepares and the page comes back
+    asking "post this?" -- and that question is drawn inside the channel pane.
+    The POST renders from /groups/post, which has no channel in its query
+    string, so the pane was hidden and the confirmation with it. The list was
+    all that was left on screen, and the post could never be confirmed.
+    """
+    visit, _ = phone
+    browser = visit("/groups?channel=main")
+    try:
+        assert _shown(browser, ".convo") is True
+        box = browser.find_element(By.CSS_SELECTOR, "form.composer textarea")
+        box.send_keys("hi all")
+        browser.find_element(
+            By.CSS_SELECTOR, "form.composer button[type=submit]").click()
+        time.sleep(1.2)
+
+        assert _shown(browser, ".convo") is True, (
+            "the channel pane vanished on the way back from posting")
+        assert _shown(browser, ".threads") is False
+        assert browser.execute_script(
+            "return document.querySelector('.msgr').classList.contains('open')")
+    finally:
+        browser.switch_to.default_content()
