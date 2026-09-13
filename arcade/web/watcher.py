@@ -83,6 +83,7 @@ class BlockWatcher:
     def _tick(self) -> None:
         self._repair_once()
         self._confirm_sent()
+        self._confirm_posts()
         self._check(self.state.messaging, public_only=False)
         # The public board's mainnet half needs its own scan, and a public-only
         # scanner decrypts nothing, so it is safe there (D-014).
@@ -171,6 +172,41 @@ class BlockWatcher:
         except Exception:
             log.debug("could not confirm sent messages", exc_info=True)
 
+    def _confirm_posts(self) -> None:
+        """Notice when a post of ours reaches a block.
+
+        The same job `_confirm_sent` does for private messages, which public
+        posts never had. Our own copy is written when it is sent and its height
+        only arrived when the scanner read the WHOLE post back off the chain --
+        every chunk of it. A picture is eighteen transactions spread over ten
+        blocks, so a post whose first transaction confirmed within a minute sat
+        marked pending for ten, with every byte of it already paid for and in a
+        block. Reported from a phone: "it hasn't shown up and it still says
+        pending". It had; the pending was about assembly, not about the chain.
+        """
+        for chain, network in ((self.state.messaging, self.state.messaging.network),
+                               (self.state.ledger, self.state.ledger.network)):
+            try:
+                with self.state.store() as store:
+                    pending = store.unconfirmed_posts(network)
+                    if not pending:
+                        continue
+                    with chain.rpc() as rpc:
+                        for row in pending:
+                            try:
+                                raw = rpc.call("getrawtransaction", row["txid"], 1)
+                            except Exception:
+                                continue      # not indexed yet, or not ours
+                            if int(raw.get("confirmations") or 0) < 1:
+                                continue
+                            store.mark_post_confirmed(
+                                row["id"],
+                                self._height_of(rpc, raw.get("blockhash")),
+                                int(raw.get("blocktime") or 0))
+                            self.state.bump_generation()
+            except Exception:
+                log.debug("could not confirm posts on %s", network, exc_info=True)
+
     @staticmethod
     def _height_of(rpc: Any, blockhash: str | None) -> int:
         if not blockhash:
@@ -190,9 +226,20 @@ class BlockWatcher:
 
         seen = self.state.tips.get(name)
         self.state.last_checked[name] = time.time()
-        if seen == tip:
+
+        # Pieces of an unfinished post mean a scan still has work to find, so
+        # keep looking even at a tip already seen. A chunk that landed in a
+        # block the scan had just passed, or one missed because a pass failed,
+        # otherwise waited for the NEXT block to be noticed -- and a post is
+        # only assembled once every one of its pieces has been.
+        waiting = 0
+        try:
+            with self.state.store() as store:
+                waiting = store.waiting_chunks(name)
+        except Exception:
+            pass
+        if seen == tip and not waiting:
             return
-        self.state.tips[name] = tip
 
         # An identity is only needed to open sealed messages. Without one this
         # still collects public posts, which is the whole point on mainnet.
@@ -211,6 +258,12 @@ class BlockWatcher:
         except Exception:
             log.debug("scan failed for %s", name, exc_info=True)
             return
+
+        # Recorded only once a scan has actually reached it. Marking the tip
+        # seen before scanning meant a pass that failed -- a busy node, a
+        # timeout -- skipped those blocks until the next one arrived, and
+        # nothing ever went back for them.
+        self.state.tips[name] = tip
 
         found = result.opened + result.announcements + result.group_posts
         if found:

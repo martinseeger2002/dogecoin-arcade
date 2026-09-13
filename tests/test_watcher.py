@@ -182,3 +182,142 @@ class _NullStore:
 
     def __exit__(self, *exc):
         return False
+
+
+# --- a post of ours reaches a block -------------------------------------------
+# Our own copy is written when it is sent, and its height only arrived when the
+# scanner had read the WHOLE post back off the chain. A picture is eighteen
+# transactions across ten blocks, so a post whose first transaction confirmed
+# within a minute sat marked pending for ten -- every byte already paid for and
+# in a block. Reported from a phone.
+
+
+class _Stored:
+    """A FakeState that has a real store behind it, which the base one refuses."""
+
+    def __init__(self, store, rpc):
+        chain = FakeChain("regtest")
+        chain.rpc = lambda: _Held(rpc)
+        ledger = FakeChain("main")
+        ledger.rpc = lambda: _Held(rpc)
+        self.messaging = chain
+        self.ledger = ledger
+        self.tips = {}
+        self.last_checked = {}
+        self.generation = 0
+        self.token_chains = []
+        self.ledger_tips = {}
+        self._store = store
+
+    def bump_generation(self):
+        self.generation += 1
+
+    def store(self):
+        return _Held(self._store)
+
+
+class _Held:
+    """A context manager that hands back something already made."""
+
+    def __init__(self, thing):
+        self.thing = thing
+
+    def __enter__(self):
+        return self.thing
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_a_post_is_confirmed_when_its_transaction_is(tmp_path):
+    from arcade.messaging.store import MessageStore
+    from arcade.web.watcher import BlockWatcher
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    store.add_group_post("test", "main", "tx-one", 0, 1000, "nMe", "Me",
+                         "", mine=True, file_name="photo.jpg",
+                         file_type="image/jpeg", file_data=b"\xff\xd8" * 60)
+    assert [dict(r)["txid"] for r in store.unconfirmed_posts("test")] == ["tx-one"]
+
+    class FakeRpc:
+        def call(self, method, *args):
+            if method == "getrawtransaction":
+                return {"confirmations": 3, "blockhash": "bh", "blocktime": 1789}
+            if method == "getblock":
+                return {"height": 1486617}
+            raise AssertionError(method)
+
+    state = _Stored(store, FakeRpc())
+    state.messaging.network = "test"
+
+    BlockWatcher(state)._confirm_posts()
+
+    row = store.conn.execute("SELECT height, block_time FROM group_post").fetchone()
+    assert row["height"] == 1486617, "the block its first transaction reached"
+    assert row["block_time"] == 1789
+    assert store.unconfirmed_posts("test") == []
+    assert state.generation >= 1, "the page has to be told to redraw"
+    store.close()
+
+
+def test_a_post_still_in_the_mempool_stays_pending(tmp_path):
+    from arcade.messaging.store import MessageStore
+    from arcade.web.watcher import BlockWatcher
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    store.add_group_post("test", "main", "tx-one", 0, 1000, "nMe", "Me", "hi",
+                         mine=True)
+
+    class FakeRpc:
+        def call(self, method, *args):
+            return {"confirmations": 0}
+
+    state = _Stored(store, FakeRpc())
+    state.messaging.network = "test"
+    BlockWatcher(state)._confirm_posts()
+
+    assert store.conn.execute("SELECT height FROM group_post").fetchone()[0] == 0
+    store.close()
+
+
+def test_pieces_of_an_unfinished_post_keep_the_scanner_looking(tmp_path):
+    """A chunk that landed in a block the scan had just passed waited for the
+    NEXT block to be noticed -- and a post is only assembled once every one of
+    its pieces has been. Seventeen of eighteen is not a post."""
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    assert store.waiting_chunks("test") == 0
+    store.add_group_chunk("test", b"\x01" * 8, 15, "tx", 1, 1000, "nMe", b"a piece")
+    assert store.waiting_chunks("test") == 1
+    assert store.waiting_chunks("main") == 0
+    store.drop_group_chunks("test", b"\x01" * 8)
+    assert store.waiting_chunks("test") == 0
+    store.close()
+
+
+def test_every_tick_looks_for_posts_to_confirm():
+    """Wired in, not merely written: the method above is only worth anything
+    if something calls it. `_confirm_sent` had exactly this shape and this is
+    its twin for the public board."""
+    import inspect
+
+    from arcade.web.watcher import BlockWatcher
+
+    source = inspect.getsource(BlockWatcher._tick)
+    assert "self._confirm_posts()" in source
+    assert "self._confirm_sent()" in source
+
+
+def test_the_tip_is_only_marked_seen_once_a_scan_has_reached_it():
+    """Marking it before scanning meant a pass that failed -- a busy node, a
+    timeout -- skipped those blocks until the next one arrived, and nothing
+    ever went back for them."""
+    import inspect
+
+    from arcade.web.watcher import BlockWatcher
+
+    source = inspect.getsource(BlockWatcher._check)
+    mark = source.index("self.state.tips[name] = tip")
+    scan = source.index("scanner.scan(")
+    assert scan < mark, "the tip is recorded before the scan that justifies it"

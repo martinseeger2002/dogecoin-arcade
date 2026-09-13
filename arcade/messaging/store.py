@@ -11,6 +11,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 SCHEMA_VERSION = 1
 
@@ -1016,6 +1017,45 @@ class MessageStore:
         """Messages we have sent that are not in a block yet."""
         return list(self.conn.execute(
             "SELECT id, txid FROM sent WHERE confirmed=0"))
+
+    def unconfirmed_posts(self, network: str | None = None) -> list[sqlite3.Row]:
+        """Posts of our own with no block yet -- height 0 means unconfirmed.
+
+        Our own copy is written when it is sent, and its height only arrived
+        when the scanner read the whole post back off the chain. For a picture
+        that is eighteen transactions across ten blocks, so a post whose first
+        transaction confirmed in a minute could sit marked pending for ten --
+        with every byte of it already paid for and in a block.
+        """
+        sql = "SELECT id, network, txid FROM group_post WHERE mine=1 AND height=0"
+        args: list[Any] = []
+        if network is not None:
+            sql += " AND network=?"
+            args.append(network)
+        return list(self.conn.execute(sql, args))
+
+    def mark_post_confirmed(self, post_id: int, height: int,
+                            block_time: int = 0) -> None:
+        """The block its first transaction reached. The rest follow it."""
+        self.conn.execute(
+            "UPDATE group_post SET height=?, "
+            "block_time=CASE WHEN ? > 0 THEN ? ELSE block_time END WHERE id=?",
+            (height, block_time, block_time, post_id))
+
+    def waiting_chunks(self, network: str | None = None) -> int:
+        """How many pieces of unfinished posts are held, waiting for the rest.
+
+        A post is only assembled once every one of its chunks has been seen, so
+        any number here means a scan still has work to find -- which is the
+        difference between "there is nothing new" and "there is something new
+        that has not been looked for yet".
+        """
+        sql = "SELECT COUNT(*) FROM group_chunk"
+        args: list[Any] = []
+        if network is not None:
+            sql += " WHERE network=?"
+            args.append(network)
+        return int(self.conn.execute(sql, args).fetchone()[0])
 
     # --- contacts -------------------------------------------------------------
 
