@@ -326,6 +326,30 @@ class MessageStore:
                 self.conn.execute(statement)
             except Exception:
                 continue
+        self._repair_encoded_own_copies()
+
+    def _repair_encoded_own_copies(self) -> None:
+        """Decode sent rows whose body is the encoded message, not our copy.
+
+        A resumed send recorded the encoded body (`\x01ARCB...`) as the
+        sender's own copy, with no file columns, so a picture showed as its
+        JSON header and raw bytes. Our own copy is never written encoded, so
+        the marker identifies exactly the rows the defect wrote, and the body
+        holds everything needed to write them properly.
+        """
+        from .content import BODY_MAGIC, own_copy
+
+        rows = self.conn.execute(
+            "SELECT id, body FROM sent WHERE substr(body, 1, ?) = ?",
+            (len(BODY_MAGIC), BODY_MAGIC)).fetchall()
+        for row in rows:
+            text, attachment = own_copy(bytes(row["body"]))
+            self.conn.execute(
+                "UPDATE sent SET body=?, file_name=?, file_type=?, file_data=? "
+                "WHERE id=?",
+                (text, attachment.get("file_name", ""),
+                 attachment.get("file_type", ""), attachment.get("file_data"),
+                 row["id"]))
 
     def _rebuild_contact_if_keyless(self) -> None:
         """Give the address book its `id` column, copying every row across.

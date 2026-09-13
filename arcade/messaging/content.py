@@ -152,6 +152,27 @@ def build(text: str = "", attachment: Attachment | None = None,
     return bytes(body)
 
 
+def own_copy(body: bytes) -> tuple[bytes, dict[str, Any]]:
+    """What the sender keeps of a body it sent: readable text, and the file.
+
+    The sealed body is to the recipient and the sender can never read it back
+    off the chain, so the local copy is the only one there will be -- and it
+    has to be the *decoded* content. The resume path wrote the encoded body
+    down as the copy, and a test machine saw its own picture as `ARCB E{"file":...}`
+    followed by a JPEG rendered as text. Returns the text (or "[sent name]"
+    for a bare file) and the attachment columns `record_sent` takes.
+    """
+    parsed = parse(body)
+    attachment: dict[str, Any] = {}
+    if parsed.attachment is not None:
+        attachment = {"file_name": parsed.attachment.name,
+                      "file_type": parsed.attachment.content_type,
+                      "file_data": parsed.attachment.data or None}
+    text = parsed.text or (f"[sent {parsed.attachment.name}]"
+                           if parsed.attachment is not None else "")
+    return text.encode(), attachment
+
+
 def parse(body: bytes) -> Content:
     """Decode a body. Anything unrecognised is treated as plain content.
 

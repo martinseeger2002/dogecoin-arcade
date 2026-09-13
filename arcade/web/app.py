@@ -595,8 +595,13 @@ def create_app(state: AppState) -> FastAPI:
 
                         state.start_progress(peer_hex, plan.transactions, estimate)
                         try:
-                            _send_in_background(sender, address, plan, peer_key,
-                                                payload_body, own_copy, digest)
+                            _send_in_background(
+                                sender, address, plan, peer_key, payload_body,
+                                own_copy, digest,
+                                attachment={"file_name": file_name,
+                                            "file_type": file_type,
+                                            "file_data": file_bytes or None}
+                                if file_bytes else None)
                         except Exception:
                             # The thread never started, so nothing will release
                             # the claim on its behalf.
@@ -1252,12 +1257,15 @@ def create_app(state: AppState) -> FastAPI:
                 "msg_id": record["msg_id"],
             })()
             state.start_progress(peer_hex, len(remaining), "a few minutes")
+            # The record holds the encoded body; the copy we keep for ourselves
+            # is what it decodes to, exactly as a send that never stopped keeps.
+            own_copy, attachment = content.own_copy(record["body"])
             with state.messaging.rpc() as rpc:
                 sender = MessageSender(rpc, state.messaging.params)
                 try:
                     _send_in_background(sender, record["sender_address"], plan,
                                         record["recipient_key"], record["body"],
-                                        record["body"], "")
+                                        own_copy, "", attachment=attachment or None)
                 except Exception:
                     state.end_send()
                     state.clear_progress()

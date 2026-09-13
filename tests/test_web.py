@@ -1885,8 +1885,13 @@ class _StubSender:
         self.ensured = (address, wanted)
         return False
 
-    def spendable_outputs(self, address, at_least=0):
+    def spendable_outputs(self, address, at_least=0, minconf=0):
         return 99
+
+    def prepare(self, address, payload, **kw):
+        from arcade.messaging.sender import PreparedTx
+        return PreparedTx(hex="00", txid="prepared", decoded={"vout": []},
+                          fee_sats=1000, size=100, outputs=2)
 
     def send_all(self, address, payloads, on_progress=None, on_broadcast=None):
         self.sent = (address, list(payloads))
@@ -1954,6 +1959,120 @@ def test_resuming_a_message_sends_only_what_is_left(client, _stubbed_chain, monk
     assert _stubbed_chain.ensured == ("senderaddr", 2), (
         "it should prepare outputs for what is left, not for the whole message"
     )
+
+
+def test_a_resumed_send_keeps_the_readable_copy_and_the_file(client, _stubbed_chain,
+                                                              monkeypatch):
+    """a test machine's own picture came back as `ARCB E{"file":...}` plus JPEG bytes as
+    text, with no file to show: resume recorded the ENCODED body as the own
+    copy. The copy must be what the direct path keeps -- the text, or
+    "[sent name]", and the file in its columns."""
+    import time as _time
+
+    from arcade.messaging import content
+    from arcade.messaging.keys import Identity
+    from arcade.messaging.store import MessageStore
+
+    # The store repairs such rows when it opens; switched off here so this
+    # proves the resume path writes the row right in the first place.
+    monkeypatch.setattr(MessageStore, "_repair_encoded_own_copies", lambda self: None)
+
+    app, state = client
+    state.identity = Identity.generate()
+    peer = b"\x56" * 32
+    msg_id = b"\xac" * 8
+    jpeg = b"\xff\xd8\xff" + bytes(range(256)) * 4
+    body = content.build(text="", attachment=content.Attachment(
+        "sunrise_photo.jpg", "image/jpeg", jpeg))
+    with state.store() as store:
+        store.begin_pending_send(msg_id, peer, "senderaddr", body, [b"a", b"b", b"c"])
+        store.record_pending_progress(msg_id, "txid-1")
+
+    token = re.search(r'name="csrf_token" value="([^"]+)"',
+                      app.get("/messages").text).group(1)
+    app.post(f"/messages/{peer.hex()}/resume", data={"csrf_token": token},
+             follow_redirects=False)
+    for _ in range(100):
+        with state.store() as store:
+            if not store.pending_sends():
+                break
+        _time.sleep(0.02)
+
+    with state.store() as store:
+        row = store.conn.execute("SELECT * FROM sent WHERE txid='txid-1'").fetchone()
+    assert row is not None, "the own copy is filed under the first txid"
+    assert bytes(row["body"]) == b"[sent sunrise_photo.jpg]"
+    assert not bytes(row["body"]).startswith(content.BODY_MAGIC)
+    assert row["file_name"] == "sunrise_photo.jpg"
+    assert row["file_type"] == "image/jpeg"
+    assert bytes(row["file_data"]) == jpeg
+
+
+def test_a_chunked_send_keeps_its_file_too(client, _stubbed_chain, monkeypatch):
+    """The chunked-but-not-resumed path recorded the readable copy but no
+    file, so a large picture never showed in the sender's own bubble."""
+    import time as _time
+    import types
+
+    from arcade.messaging.keys import Identity
+    from arcade.web import app as webapp
+
+    # The route checks the wallet is funded and picks an address before it
+    # hands the chunks to the sender; neither needs a node here.
+    monkeypatch.setattr(webapp, "Miner", lambda rpc, params: types.SimpleNamespace(
+        status=lambda: types.SimpleNamespace(funded=True, describe=lambda: "")))
+    monkeypatch.setattr(webapp, "funded_address", lambda rpc, prefer=None: "senderaddr")
+
+    app, state = client
+    state.identity = Identity.generate()
+    peer = b"\x57" * 32
+    with state.store() as store:
+        store.save_contact(pubkey=peer, name="Peer")
+    big = b"\x89PNG" + bytes(range(256)) * 200         # well past one chunk
+    token = re.search(r'name="csrf_token" value="([^"]+)"',
+                      app.get("/messages").text).group(1)
+    response = app.post(f"/messages/{peer.hex()}/send",
+                        data={"csrf_token": token, "body": "", "confirmed": "yes"},
+                        files={"attachment": ("big.png", big, "image/png")},
+                        follow_redirects=False)
+    for _ in range(200):
+        if _stubbed_chain.sent is not None:
+            with state.store() as store:
+                if store.conn.execute("SELECT 1 FROM sent").fetchone():
+                    break
+        _time.sleep(0.02)
+
+    assert _stubbed_chain.sent is not None, re.findall(
+        r'class="msg err"[^>]*>([^<]*)', response.text)
+    assert len(_stubbed_chain.sent[1]) > 1
+    with state.store() as store:
+        row = store.conn.execute("SELECT * FROM sent").fetchone()
+    assert row is not None
+    assert bytes(row["body"]) == b"[sent big.png]"
+    assert row["file_name"] == "big.png" and bytes(row["file_data"]) == big
+
+
+def test_own_copies_written_encoded_are_repaired_on_open(tmp_path):
+    """The row a test machine already has: length 25746, ARCB header, no file columns."""
+    from arcade.messaging import content
+    from arcade.messaging.store import MessageStore
+
+    jpeg = b"\xff\xd8" * 40
+    encoded = content.build(text="", attachment=content.Attachment(
+        "sunrise_photo.jpg", "image/jpeg", jpeg))
+    path = tmp_path / "m.sqlite"
+    store = MessageStore(path)
+    store.add_sent("t1", b"\x01" * 32, "", "fp", encoded)
+    store.add_sent("t2", b"\x01" * 32, "", "fp", b"a plain copy")
+    store.close()
+
+    store = MessageStore(path)
+    rows = {r["txid"]: r for r in store.conn.execute("SELECT * FROM sent")}
+    assert bytes(rows["t1"]["body"]) == b"[sent sunrise_photo.jpg]"
+    assert rows["t1"]["file_name"] == "sunrise_photo.jpg"
+    assert bytes(rows["t1"]["file_data"]) == jpeg
+    assert bytes(rows["t2"]["body"]) == b"a plain copy"
+    store.close()
 
 
 def test_resuming_keeps_the_original_message_id(client, _stubbed_chain):

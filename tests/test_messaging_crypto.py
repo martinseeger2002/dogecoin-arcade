@@ -819,6 +819,38 @@ def test_the_short_of_coins_advice_says_to_fund_the_sending_address():
     assert "Use that one" not in text
 
 
+def test_only_confirmed_outputs_count_towards_not_splitting():
+    """a test machine topped the identity up with 3,000 and pressed send twenty seconds
+    later. The unconfirmed output made four, so no split happened -- and
+    send_all funds chunks two onwards from CONFIRMED outputs only, so they
+    chained a block apart anyway. The count has to use the same rule."""
+    from arcade.config import NETWORKS
+    from arcade.messaging.sender import MessageSender
+
+    class FakeRpc:
+        def call(self, method, *args):
+            if method == "listunspent":
+                minconf = args[0]
+                confirmed = [{"txid": "c", "vout": 0, "amount": 1.0217, "confirmations": 24}]
+                fresh = [{"txid": "f", "vout": 0, "amount": 3000.0, "confirmations": 0},
+                         {"txid": "s1", "vout": 0, "amount": 1.5, "confirmations": 0},
+                         {"txid": "s2", "vout": 0, "amount": 1.5, "confirmations": 0}]
+                return confirmed if minconf >= 1 else confirmed + fresh
+            raise AssertionError(method)
+
+    sender = MessageSender.__new__(MessageSender)
+    sender.rpc = FakeRpc()
+    sender.params = NETWORKS["regtest"]
+    planned = {}
+    sender.split_outputs = lambda address, pieces, each: planned.update(pieces=pieces) or "raw"
+    sender.broadcast = lambda prepared: "txid"
+    sender._await_confirmation = lambda txid, timeout: None
+
+    assert sender.spendable_outputs("nIdentity", at_least=100_000_000, minconf=1) == 1
+    assert sender.ensure_outputs("nIdentity", wanted=4) is True, "one confirmed output is not four"
+    assert planned["pieces"] == 8, "sized by everything the address holds, unconfirmed included"
+
+
 def test_enough_outputs_means_no_split():
     from arcade.config import NETWORKS
     from arcade.messaging.sender import MessageSender

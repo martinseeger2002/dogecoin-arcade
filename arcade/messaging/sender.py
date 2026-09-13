@@ -346,8 +346,15 @@ class MessageSender:
         """
         if wanted < 2:
             return False
-        have = self.spendable_outputs(address, at_least=each_sats // 2)
+        # Confirmed outputs only, because that is what send_all funds the
+        # second chunk onwards from. Counting an unconfirmed one here judged a
+        # wallet ready when it was not: a test machine topped the identity up, pressed
+        # send twenty seconds later, the fresh output made four, no split was
+        # made, and the chunks chained a block apart after all.
+        have = self.spendable_outputs(address, at_least=each_sats // 2, minconf=1)
         if have >= wanted:
+            log.info("%s has %d confirmed outputs for %d chunks; no split",
+                     address, have, wanted)
             return False
 
         # A few spare, so the next message does not have to do this again --
@@ -362,7 +369,12 @@ class MessageSender:
         affordable = max(0, (balance - COIN) // each_sats)
         pieces = min(wanted + 4, affordable)
         if pieces < 2:
+            log.info("%s holds %.8f, enough for %d pieces of %.8f; chaining "
+                     "%d chunks instead of splitting", address, balance / COIN,
+                     affordable, each_sats / COIN, wanted)
             return False              # nothing useful to do; chain instead
+        log.info("splitting %s into %d pieces of %.8f for %d chunks (%d confirmed)",
+                 address, pieces, each_sats / COIN, wanted, have)
         if on_progress is not None:
             on_progress(
                 f"splitting the wallet into {pieces} pieces so all "
@@ -387,10 +399,11 @@ class MessageSender:
             return 0
         return sum(int(round(float(u["amount"]) * COIN)) for u in unspent)
 
-    def spendable_outputs(self, address: str, at_least: int = 0) -> int:
+    def spendable_outputs(self, address: str, at_least: int = 0,
+                          minconf: int = SPENDABLE_MINCONF) -> int:
         """How many separate outputs `address` has that are worth spending."""
         try:
-            unspent = self.rpc.call("listunspent", SPENDABLE_MINCONF, 9_999_999,
+            unspent = self.rpc.call("listunspent", minconf, 9_999_999,
                                     [address]) or []
         except Exception:
             return 0
