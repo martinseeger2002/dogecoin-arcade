@@ -898,3 +898,34 @@ def test_the_composer_says_each_thing_once(phone):
         assert counts[2] == 0, "the page has duplicate ids"
     finally:
         browser.switch_to.default_content()
+
+
+def test_a_picture_can_be_posted_to_the_board_with_nothing_typed(phone):
+    """"I should be able to post an image without any text attached, but it's
+    not working on the board." The encoder refused an empty text whatever else
+    the post carried, so choosing a picture and pressing Post came back saying
+    to write something -- for a post that was already complete."""
+    visit, _ = phone
+    browser = visit("/groups?channel=main")
+    try:
+        browser.set_script_timeout(30)
+        browser.execute_async_script(MAKE_A_PHOTO)
+        for _ in range(60):
+            if len(browser.execute_script(READ_SIZES)["labels"]) == 3:
+                break
+            time.sleep(0.5)
+
+        assert browser.execute_script(
+            "return document.getElementById('post').value") == "", "nothing typed"
+        browser.find_element(
+            By.CSS_SELECTOR, "form.composer button[type=submit]").click()
+        time.sleep(1.5)
+
+        page = browser.execute_script("return document.body.textContent")
+        assert "write something" not in page, (
+            "the board still refuses a picture on its own")
+        # No node in this fixture, so it cannot get further than trying to pay
+        # for it -- which is proof it got past the encoder.
+        assert ("node" in page or "Post this" in page or "wallet" in page), page[:300]
+    finally:
+        browser.switch_to.default_content()

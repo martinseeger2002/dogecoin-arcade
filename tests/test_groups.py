@@ -177,14 +177,45 @@ def test_the_text_ceiling_that_remains_is_the_header_field():
 
 
 @pytest.mark.parametrize("post,reason", [
-    (G.GroupPost("main", "", ""), "empty text"),
-    (G.GroupPost("main", "", "   "), "whitespace only"),
+    (G.GroupPost("main", "", ""), "empty text and no file"),
+    (G.GroupPost("main", "", "   "), "whitespace only and no file"),
     (G.GroupPost("x" * 40, "", "hello"), "channel too long"),
     (G.GroupPost("main", "y" * 40, "hello"), "nickname too long"),
 ])
 def test_bad_posts_are_refused(post, reason):
     with pytest.raises(G.GroupError):
         G.build(post)
+
+
+def test_a_picture_needs_no_words():
+    """A picture is a post. The private side has always allowed one with
+    nothing typed; the board refused it and told the user to write something,
+    for a post that was already complete. Reported from a phone."""
+    jpeg = b"\xff\xd8\xff" + bytes(range(256)) * 6
+    post = G.GroupPost("main", "the operator", "", file_name="photo.jpg",
+                       file_type="image/jpeg", file_data=jpeg)
+
+    plan = G.plan(post)
+    back = G.parse(plan.payloads[0])
+    assert back.text == ""
+    assert back.file_name == "photo.jpg"
+    assert back.file_type == "image/jpeg"
+    assert back.file_data == jpeg, "the picture is the whole of the post"
+    assert back.channel == "main" and back.nickname == "the operator"
+
+
+def test_nothing_at_all_is_still_refused():
+    """Neither words nor a picture is not a post."""
+    with pytest.raises(G.GroupError, match="write something, or choose a picture"):
+        G.build(G.GroupPost("main", "", "   "))
+
+
+def test_a_picture_with_words_still_carries_both():
+    jpeg = b"\xff\xd8" * 500
+    back = G.parse(G.plan(G.GroupPost("main", "M", "look at this",
+                                      file_name="a.jpg", file_type="image/jpeg",
+                                      file_data=jpeg)).payloads[0])
+    assert back.text == "look at this" and back.file_data == jpeg
 
 
 def test_an_empty_channel_lands_in_the_default_room():

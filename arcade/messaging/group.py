@@ -197,8 +197,12 @@ def build(post: GroupPost) -> bytes:
         raise GroupError(f"channel names are limited to {MAX_CHANNEL} bytes.")
     if len(nickname.encode()) > MAX_NICKNAME:
         raise GroupError(f"names are limited to {MAX_NICKNAME} bytes.")
-    if not text.strip():
-        raise GroupError("write something to post.")
+    # A picture is a post. The private side has always allowed one with nothing
+    # typed (app.py: "write something, or choose a file to send"); this refused
+    # it, so choosing an image on the board and pressing Post failed with an
+    # instruction to write something -- for a post that was already complete.
+    if not text.strip() and not post.has_file:
+        raise GroupError("write something, or choose a picture to post.")
 
     encoded = text.encode()
     # There is deliberately NO OP_RETURN-sized limit on the text here any more.
