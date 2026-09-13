@@ -475,6 +475,83 @@ def install_binary(source: Path, destination: Path) -> None:
         fail(f"could not replace {destination}: {exc}")
 
 
+def core_version(binary: Path | str) -> str | None:
+    """Ask a daemon what it is. None if it will not answer."""
+    try:
+        result = subprocess.run([str(binary), "--version"], capture_output=True,
+                                text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    first = (result.stdout or result.stderr).strip().splitlines()
+    if not first:
+        return None
+    # "Pepecoin Core Daemon version v1.1.0" -> "v1.1.0"
+    words = first[0].split()
+    return words[-1] if words else None
+
+
+def core_search_paths(coin, target: Path, system: str) -> list[Path]:
+    """Where a daemon already on this machine is likely to be.
+
+    Someone who has been running a node for years is the person most likely to
+    want this application, and the installer used to download 30 MB and write
+    over their binary without looking. PATH first, because that is the one they
+    actually run.
+    """
+    daemon = coin.binaries[0] + (".exe" if system == "Windows" else "")
+    found = [target / daemon]
+    on_path = shutil.which(coin.binaries[0])
+    if on_path:
+        found.append(Path(on_path))
+    if system == "Windows":
+        for base in filter(None, (os.environ.get("ProgramFiles"),
+                                  os.environ.get("ProgramFiles(x86)"),
+                                  os.environ.get("LOCALAPPDATA"))):
+            found.append(Path(base) / coin.app_name / "daemon" / daemon)
+    elif system == "Darwin":
+        found += [Path(f"/Applications/{coin.app_name}.app/Contents/MacOS") / daemon,
+                  Path("/usr/local/bin") / daemon,
+                  Path("/opt/homebrew/bin") / daemon]
+    else:
+        found += [Path("/usr/local/bin") / daemon, Path("/usr/bin") / daemon,
+                  Path.home() / ".local/bin" / daemon]
+    seen, unique = set(), []
+    for path in found:
+        if str(path) not in seen:
+            seen.add(str(path))
+            unique.append(path)
+    return unique
+
+
+def existing_core(coin, target: Path, system: str) -> tuple[Path, str | None] | None:
+    """A daemon already installed here, if there is one: (path, version)."""
+    for candidate in core_search_paths(coin, target, system):
+        if candidate.is_file():
+            return candidate, core_version(candidate)
+    return None
+
+
+def running_core(coin) -> str | None:
+    """A daemon of this coin already running, whoever installed it.
+
+    Reported separately from the file on disk: a node that is up is the reason
+    not to touch anything, and it is also the thing an installer is most able to
+    break by replacing a binary underneath it.
+    """
+    daemon = coin.binaries[0]
+    try:
+        if platform.system() == "Windows":
+            result = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {daemon}.exe"],
+                                    capture_output=True, text=True, timeout=20)
+            return daemon if daemon.lower() in result.stdout.lower() else None
+        result = subprocess.run(["pgrep", "-a", daemon], capture_output=True,
+                                text=True, timeout=20)
+        line = result.stdout.strip().splitlines()
+        return line[0] if line else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 def restart_running_nodes(coin) -> list[str]:
     """Restart any node services we installed, so the new binary takes effect.
 
@@ -1353,6 +1430,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="update an existing installation to the latest code")
     parser.add_argument("--skip-core", action="store_true",
                         help="skip Pepecoin Core; install only the application")
+    parser.add_argument("--force-core", action="store_true",
+                        help="install our pinned Core even if one is already "
+                             "installed or running")
     parser.add_argument("--no-services", action="store_true", help="do not register services")
     parser.add_argument("--no-browser", action="store_true", help="do not open a browser")
     parser.add_argument(
@@ -1417,25 +1497,43 @@ def main(argv: list[str] | None = None) -> int:
             system, machine, asset = detect(coin)
             main_dir, test_dir = datadirs(system, coin)
 
-            if not args.skip_core:
-                with tempfile.TemporaryDirectory(prefix="arcade-install-") as tmp:
-                    workdir = Path(tmp)
-                    n += 1
-                    step(n, total, f"Downloading {coin.name} Core {coin.version}")
-                    if args.dry_run:
-                        info(f"would download {coin.base_url}/{asset}")
-                        archive = None
-                    else:
-                        archive = fetch_core(workdir, asset, coin)
+            # Somebody who has run a node for years is exactly the person this
+            # application is for, and the installer used to download 30 MB and
+            # write over their binary without looking. Look first.
+            present = existing_core(coin, target, system)
+            running = running_core(coin)
+            keep = bool(present) and not args.force_core
 
-                    n += 1
-                    step(n, total, f"Installing {coin.name} Core")
-                    if args.dry_run:
-                        info(f"would install {', '.join(coin.binaries)} to {target}")
-                    else:
+            if not args.skip_core:
+                n += 1
+                step(n, total, f"Downloading {coin.name} Core {coin.version}")
+                archive = None
+                if keep:
+                    where, version = present
+                    info(f"{coin.name} Core is already installed: {where}"
+                         + (f" ({version})" if version else ""))
+                    if running:
+                        info("and it is running, so it is left alone")
+                    info("nothing to download. --force-core installs ours anyway.")
+                elif args.dry_run:
+                    info(f"would download {coin.base_url}/{asset}")
+                else:
+                    with tempfile.TemporaryDirectory(prefix="arcade-install-") as tmp:
+                        archive = fetch_core(Path(tmp), asset, coin)
+                        n += 1
+                        step(n, total, f"Installing {coin.name} Core")
                         install_core(archive, target, system, coin)
                         for unit in restart_running_nodes(coin):
                             info(f"restarted {unit} to pick up the new binary")
+                        archive = "done"
+
+                if archive != "done":
+                    n += 1
+                    step(n, total, f"Installing {coin.name} Core")
+                    if keep:
+                        info(f"using the {coin.name} Core already on this machine")
+                    else:
+                        info(f"would install {', '.join(coin.binaries)} to {target}")
 
             n += 1
             step(n, total, f"Writing {coin.name} configuration")
@@ -1448,6 +1546,13 @@ def main(argv: list[str] | None = None) -> int:
             step(n, total, f"Registering {coin.name} services")
             if args.dry_run or args.no_services:
                 info("skipped")
+            elif running:
+                # Two daemons on one datadir do not share it: the second dies
+                # with "Cannot obtain a lock on data directory". Whoever started
+                # the one that is up already has a way of starting it.
+                info(f"{coin.binaries[0]} is already running; leaving it to "
+                     "whatever starts it")
+                info("  --force-core registers ours as well, if you want that")
             else:
                 install_services(system, target, main_dir, test_dir, coin)
 

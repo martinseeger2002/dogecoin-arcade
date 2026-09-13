@@ -7,7 +7,11 @@
   <p class="sub">Set up an identity on the <a href="/">Overview</a> page first.</p>
 {% else %}
 
-<div class="msgr">
+{# `open` says a conversation is showing. On a phone the two panes are one
+   screen's worth, not two: the list hands over to the conversation and the back
+   button hands back. On a desktop the class changes nothing -- both panes fit
+   side by side, which is the better way to read a conversation when they do. #}
+<div class="msgr{% if peer %} open{% endif %}">
   <aside class="threads">
     <div class="threads-head">
       <strong>Conversations</strong>
@@ -55,6 +59,8 @@
     </div>
   {% else %}
     <header class="convo-head">
+      <a class="back" href="/messages" title="All conversations"
+         aria-label="Back to all conversations">&#8592; Back</a>
       <div>
         <div class="convo-name">{{ peer.name or peer.address or 'Unnamed contact' }}</div>
         {% if peer.name and peer.address %}<div class="convo-sub">{{ peer.address }}</div>{% endif %}

@@ -31,7 +31,7 @@
       you press Close or stop the interface. The bot RPC is never reachable
       through it.
     </p>
-    <form method="post" action="/remote/start" class="row">
+    <form method="post" action="/remote/start" class="row" onsubmit="return opening(this)">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <label for="minutes" class="muted">Open for</label>
       <select name="minutes" id="minutes">
@@ -46,7 +46,26 @@
       </select>
       <button type="submit" {{ 'disabled' if not cloudflared }}>Open the tunnel</button>
     </form>
+    <p class="muted" id="opening-note" hidden style="margin:10px 0 0">
+      Asking Cloudflare for an address. This takes a few seconds.</p>
   </div>
+
+  <script>
+    // Opening is a request that takes seconds, and a button that still looks
+    // pressable is a button that gets pressed again. The server refuses the
+    // second one either way -- it claims the right to open before it starts --
+    // but a page that says nothing while it works is how the second press
+    // becomes the obvious thing to do.
+    function opening(form) {
+      var button = form.querySelector('button[type=submit]');
+      if (button.disabled) return false;
+      button.disabled = true;
+      button.textContent = 'Opening…';
+      var note = document.getElementById('opening-note');
+      if (note) note.hidden = false;
+      return true;
+    }
+  </script>
 
 {% else %}
 

@@ -142,6 +142,11 @@ class AppState:
     #: The open Cloudflare tunnel, if the user has opened one (arcade/remote.py).
     #: One at a time: a second would be a second door nobody is watching.
     tunnel: Any = None
+    #: True while one is being opened. Opening takes seconds -- the edge has to
+    #: answer -- and until it does, `tunnel` is still None, so a second press of
+    #: the button would start a second cloudflared that nothing afterwards knows
+    #: about or can close. The claim is what makes the button one press.
+    tunnel_opening: bool = False
 
     #: Latest known tip per network, and when each was last successfully asked.
     #: Kept so the interface can distinguish "nothing new" from "not looking",
@@ -388,6 +393,21 @@ class AppState:
     def set_tunnel(self, tunnel) -> None:
         with self._lock:
             self.tunnel = tunnel
+
+    def claim_tunnel(self) -> bool:
+        """Take the right to open one. False if a tunnel is open or opening."""
+        with self._lock:
+            if self.tunnel_opening:
+                return False
+            if self.tunnel is not None and self.tunnel.alive():
+                return False
+            self.tunnel_opening = True
+            return True
+
+    def release_tunnel(self) -> None:
+        """Give the claim back, whether the tunnel opened or not."""
+        with self._lock:
+            self.tunnel_opening = False
 
     def flash(self, message: str, kind: str = "info") -> None:
         self.notice, self.notice_kind = message, kind

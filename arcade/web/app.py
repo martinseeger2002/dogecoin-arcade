@@ -2276,18 +2276,28 @@ def create_app(state: AppState) -> FastAPI:
                      minutes: str = Form(str(remotelib.DEFAULT_MINUTES))):
         """Open the tunnel. Sync, because waiting for the edge takes seconds."""
         error = None
+        claimed = False
         try:
             check_csrf(csrf_token)
-            if state.remote_tunnel() is not None:
-                raise ValueError("a tunnel is already open. Close it first.")
             wanted = int(minutes)
             if wanted not in remotelib.DURATIONS:
                 raise ValueError("choose one of the offered lengths")
+            # Claimed before anything slow happens. Opening takes seconds, and
+            # two presses in that window would leave a second cloudflared
+            # running that nothing here holds a handle to -- an open door with
+            # no button to close it.
+            claimed = state.claim_tunnel()
+            if not claimed:
+                raise ValueError("a tunnel is already open, or one is opening. "
+                                 "Close it first.")
             state.set_tunnel(remotelib.open_tunnel(state.port, wanted, state.home))
         except HTTPException:
             raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             error = str(exc)
+        finally:
+            if claimed:
+                state.release_tunnel()
         return render(request, "remote.html", **_remote_context(request, error))
 
     @app.post("/remote/stop")

@@ -578,3 +578,96 @@ def test_the_navigation_does_not_eat_the_screen(phone):
         assert height <= 150, f"the header takes {height}px of the screen"
     finally:
         browser.switch_to.default_content()
+
+
+def test_the_chat_box_is_a_line_to_write_on_not_a_squashed_block(phone):
+    """`textarea{min-height:150px}` applied to the chat composer, which asks in
+    its own markup to be one line that grows: rows="1", grow() on input, a
+    160px ceiling. It came out tall and narrow -- a block shoved into the
+    corner beside the Send button rather than something to write on."""
+    visit, peer = phone
+    browser = visit(f"/messages/{peer}")
+    try:
+        box, form = browser.execute_script("""
+            const t = document.querySelector('form.composer textarea');
+            const f = t.closest('form');
+            const a = t.getBoundingClientRect(), b = f.getBoundingClientRect();
+            return [[a.width, a.height], [b.width, b.height]];
+        """)
+        assert box[1] < 64, f"the empty chat box is {box[1]}px tall, not one line"
+        assert box[0] > form[0] * 0.5, (
+            f"the box is {box[0]}px of a {form[0]}px row: the buttons have "
+            f"taken more of it than the writing")
+    finally:
+        browser.switch_to.default_content()
+
+
+# --- one screen at a time -----------------------------------------------------
+# Stacked, the conversation list pushed the conversation itself below the fold
+# on every visit, so reading a reply began with scrolling past everyone you have
+# ever spoken to. A phone shows the list, then the conversation, with a way back.
+
+
+def _shown(browser, selector):
+    return browser.execute_script(
+        """const el = document.querySelector(arguments[0]);
+           return el ? getComputedStyle(el).display !== 'none' : null;""", selector)
+
+
+def test_a_phone_shows_the_conversation_list_on_its_own(phone):
+    visit, _ = phone
+    browser = visit("/messages")
+    try:
+        assert _shown(browser, ".threads") is True
+        assert _shown(browser, ".convo") is False, (
+            "'Select a conversation' is not worth a screen when the list is on it")
+    finally:
+        browser.switch_to.default_content()
+
+
+def test_opening_a_conversation_replaces_the_list(phone):
+    visit, peer = phone
+    browser = visit(f"/messages/{peer}")
+    try:
+        assert _shown(browser, ".threads") is False
+        assert _shown(browser, ".convo") is True
+        back = browser.find_element(By.CSS_SELECTOR, ".convo-head .back")
+        assert back.is_displayed()
+        assert back.get_attribute("href").endswith("/messages")
+        assert back.rect["height"] >= 44, "a back button has to be tappable"
+        assert back.rect["x"] < 60, "it belongs in the top left corner"
+    finally:
+        browser.switch_to.default_content()
+
+
+def test_channels_work_the_same_way(phone):
+    visit, _ = phone
+    browser = visit("/groups")
+    try:
+        assert _shown(browser, ".threads") is True
+        assert _shown(browser, ".convo") is False
+    finally:
+        browser.switch_to.default_content()
+
+    browser = visit("/groups?channel=main")
+    try:
+        assert _shown(browser, ".threads") is False
+        assert _shown(browser, ".convo") is True
+        back = browser.find_element(By.CSS_SELECTOR, ".convo-head .back")
+        assert back.is_displayed()
+        assert "/groups" in back.get_attribute("href")
+        assert "channel=" not in back.get_attribute("href"), (
+            "back has to go to the list, not to the channel it is leaving")
+    finally:
+        browser.switch_to.default_content()
+
+
+def test_a_desktop_still_shows_both_and_needs_no_way_back(browser, served):
+    """Both panes fit side by side there, which is the better way to read a
+    conversation when they do -- and there is nothing to go back to."""
+    base, peer = served
+    browser.set_window_size(1100, 900)
+    browser.get(f"{base}/messages/{peer}")
+    assert _shown(browser, ".threads") is True
+    assert _shown(browser, ".convo") is True
+    assert _shown(browser, ".convo-head .back") is False

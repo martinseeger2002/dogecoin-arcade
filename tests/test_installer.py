@@ -7,6 +7,7 @@ it can look at what is actually there, rather than in instructions that guess.
 """
 
 import pathlib
+from pathlib import Path
 import sys
 
 import pytest
@@ -559,3 +560,113 @@ def test_the_updater_installs_cloudflared_too(fake_home):
     source = pathlib.Path(update.__file__).read_text()
     assert "ensure_cloudflared" in source
     assert hasattr(install, "ensure_cloudflared")
+
+
+# --- a node that is already here -----------------------------------------------
+# "Some people already have it running." They are also the people most likely to
+# want this application, and the installer used to download 30 MB and write over
+# their binary without looking -- underneath a daemon that was up.
+
+
+def test_a_daemon_already_installed_is_found(tmp_path, monkeypatch):
+    daemon = tmp_path / "pepecoind"
+    daemon.write_text("#!/bin/sh\necho 'Pepecoin Core Daemon version v1.1.0'\n")
+    daemon.chmod(0o755)
+    monkeypatch.setattr(install.shutil, "which", lambda name: None)
+
+    found = install.existing_core(install.PEPECOIN, tmp_path, "Linux")
+    assert found is not None
+    where, version = found
+    assert where == daemon
+    assert version == "v1.1.0"
+
+
+def test_one_on_the_PATH_counts_too(tmp_path, monkeypatch):
+    """The copy they actually run is the one the shell finds."""
+    daemon = tmp_path / "elsewhere" / "pepecoind"
+    daemon.parent.mkdir()
+    daemon.write_text("#!/bin/sh\necho 'Pepecoin Core Daemon version v1.1.0'\n")
+    daemon.chmod(0o755)
+    monkeypatch.setattr(install.shutil, "which",
+                        lambda name: str(daemon) if name == "pepecoind" else None)
+
+    found = install.existing_core(install.PEPECOIN, tmp_path / "empty", "Linux")
+    assert found is not None and found[0] == daemon
+
+
+def test_nothing_installed_is_reported_as_nothing(tmp_path, monkeypatch):
+    monkeypatch.setattr(install.shutil, "which", lambda name: None)
+    assert install.existing_core(install.DOGECOIN, tmp_path, "Linux") is None
+
+
+def test_the_usual_places_are_looked_in(tmp_path):
+    for system, expected in (("Linux", "/usr/local/bin/pepecoind"),
+                             ("Darwin", "/opt/homebrew/bin/pepecoind"),
+                             ("Windows", "pepecoind.exe")):
+        paths = [str(p) for p in
+                 install.core_search_paths(install.PEPECOIN, tmp_path, system)]
+        assert any(expected in p for p in paths), (system, paths)
+
+
+def test_a_daemon_that_will_not_answer_is_not_a_crash(tmp_path):
+    """Version is a nicety; being there is the fact that matters."""
+    daemon = tmp_path / "pepecoind"
+    daemon.write_text("not executable")
+    assert install.core_version(daemon) is None
+    found = install.existing_core(install.PEPECOIN, tmp_path, "Linux")
+    assert found is not None and found[1] is None
+
+
+def test_looking_for_a_running_daemon_never_raises(monkeypatch):
+    """pgrep is not everywhere, and tasklist is not on Linux."""
+    def refuse(*a, **k):
+        raise OSError("no such tool")
+    monkeypatch.setattr(install.subprocess, "run", refuse)
+    assert install.running_core(install.PEPECOIN) is None
+
+
+def test_an_existing_node_is_not_downloaded_over(tmp_path, monkeypatch, capsys):
+    """The whole point: no download, no overwrite, and say why."""
+    monkeypatch.setattr(install, "existing_core",
+                        lambda coin, target, system: (Path("/usr/local/bin/pepecoind"),
+                                                      "v1.1.0"))
+    monkeypatch.setattr(install, "running_core", lambda coin: "1234 pepecoind")
+    monkeypatch.setattr(install, "fetch_core",
+                        lambda *a, **k: pytest.fail("must not download"))
+    monkeypatch.setattr(install, "install_core",
+                        lambda *a, **k: pytest.fail("must not overwrite"))
+    monkeypatch.setattr(install, "install_services",
+                        lambda *a, **k: pytest.fail("must not start a second daemon"))
+    monkeypatch.setattr(install, "write_configs", lambda *a, **k: None)
+    monkeypatch.setattr(install, "install_cloudflared", lambda *a, **k: None)
+    monkeypatch.setattr(install, "install_app", lambda dry: tmp_path / "venv")
+    monkeypatch.setattr(install, "install_web_service", lambda *a, **k: True)
+    monkeypatch.setattr(install, "write_launcher", lambda *a, **k: tmp_path / "x")
+
+    assert install.main(["--coin", "pepecoin", "--no-browser"]) == 0
+    out = capsys.readouterr().out
+    assert "already installed" in out
+    assert "it is running, so it is left alone" in out
+    assert "--force-core" in out, "say how to override it"
+
+
+def test_force_core_installs_ours_anyway(tmp_path, monkeypatch):
+    """An override has to actually override."""
+    monkeypatch.setattr(install, "existing_core",
+                        lambda coin, target, system: (Path("/usr/local/bin/pepecoind"),
+                                                      "v1.0.0"))
+    monkeypatch.setattr(install, "running_core", lambda coin: None)
+    fetched = []
+    monkeypatch.setattr(install, "fetch_core",
+                        lambda workdir, asset, coin: fetched.append(asset) or Path("a"))
+    monkeypatch.setattr(install, "install_core", lambda *a, **k: None)
+    monkeypatch.setattr(install, "restart_running_nodes", lambda coin: [])
+    monkeypatch.setattr(install, "write_configs", lambda *a, **k: None)
+    monkeypatch.setattr(install, "install_services", lambda *a, **k: [])
+    monkeypatch.setattr(install, "install_cloudflared", lambda *a, **k: None)
+    monkeypatch.setattr(install, "install_app", lambda dry: tmp_path / "venv")
+    monkeypatch.setattr(install, "install_web_service", lambda *a, **k: True)
+    monkeypatch.setattr(install, "write_launcher", lambda *a, **k: tmp_path / "x")
+
+    assert install.main(["--coin", "pepecoin", "--no-browser", "--force-core"]) == 0
+    assert fetched, "--force-core must download ours"

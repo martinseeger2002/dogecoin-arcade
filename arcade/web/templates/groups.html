@@ -9,7 +9,10 @@
 {# The same frame as the private messenger. What changes is the left column:
    channels rather than conversations, because a channel is who you are talking
    to here. #}
-<div class="msgr">
+{# A channel is always chosen server-side, so "which pane" cannot be read from
+   `channel`: it is read from whether the address bar asked for one. /groups is
+   the list, /groups?channel=x is that channel. On a desktop both show. #}
+<div class="msgr{% if request.query_params.get('channel') %} open{% endif %}">
   <aside class="threads">
     <div class="threads-head">
       <strong>Channels</strong>
@@ -54,6 +57,8 @@
 
   <section class="convo">
     <header class="convo-head">
+      <a class="back" href="/groups?which={{ which }}" title="All channels"
+         aria-label="Back to all channels">&#8592; Back</a>
       <div>
         <div class="convo-name">#{{ channel }}</div>
         <div class="convo-sub">{{ chain.label }}

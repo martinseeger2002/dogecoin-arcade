@@ -251,3 +251,77 @@ def test_the_shortest_length_is_the_default():
     """The one that leaves the door open longest should be the one somebody
     has to choose on purpose."""
     assert remotelib.DEFAULT_MINUTES == min(remotelib.DURATIONS)
+
+
+# --- one press ----------------------------------------------------------------
+
+
+def test_a_second_press_cannot_open_a_second_tunnel(client, monkeypatch):
+    """Opening takes seconds. Until the edge answers, `tunnel` is still None, so
+    a second press would start a second cloudflared that nothing afterwards
+    holds a handle to -- an open door with no button to close it."""
+    app, state = client
+    opened = []
+
+    def slow_open(port, minutes, home=None, binary=None):
+        # The second press lands here, in the window the claim exists for.
+        second = app.post("/remote/start",
+                          data={"csrf_token": state.csrf_token, "minutes": "240"})
+        assert "already open, or one is opening" in second.text
+        opened.append(port)
+        return FakeTunnel()
+
+    monkeypatch.setattr(remotelib, "open_tunnel", slow_open)
+    body = app.post("/remote/start",
+                    data={"csrf_token": state.csrf_token, "minutes": "240"}).text
+    assert opened == [state.port], "exactly one cloudflared"
+    assert "Scan this with your phone" in body
+
+
+def test_the_claim_is_given_back_when_opening_fails(client, monkeypatch):
+    """A tunnel that could not open must not lock the button for ever."""
+    app, state = client
+
+    def fails(*a, **k):
+        raise remotelib.TunnelError("cloudflared did not report an address")
+
+    monkeypatch.setattr(remotelib, "open_tunnel", fails)
+    first = app.post("/remote/start",
+                     data={"csrf_token": state.csrf_token, "minutes": "240"}).text
+    assert "did not report an address" in first
+    assert state.tunnel_opening is False
+
+    monkeypatch.setattr(remotelib, "open_tunnel", lambda *a, **k: FakeTunnel())
+    again = app.post("/remote/start",
+                     data={"csrf_token": state.csrf_token, "minutes": "240"}).text
+    assert "Scan this with your phone" in again
+
+
+def test_the_button_disables_itself_while_it_works(client):
+    """The server refuses the second press either way, but a page that says
+    nothing while it works is how the second press becomes the obvious thing."""
+    app, _ = client
+    body = app.get("/remote").text
+    assert 'onsubmit="return opening(this)"' in body
+    assert "button.disabled = true" in body
+    assert "Opening…" in body
+
+
+def test_closing_one_lets_another_be_opened(client, monkeypatch):
+    """"They should be able to open a new tunnel anytime if they don't have a
+    tunnel open." """
+    app, state = client
+    monkeypatch.setattr(remotelib, "open_tunnel", lambda *a, **k: FakeTunnel())
+
+    app.post("/remote/start", data={"csrf_token": state.csrf_token, "minutes": "240"})
+    assert state.remote_tunnel() is not None
+    refused = app.post("/remote/start",
+                       data={"csrf_token": state.csrf_token, "minutes": "240"}).text
+    assert "already open" in refused
+
+    app.post("/remote/stop", data={"csrf_token": state.csrf_token},
+             follow_redirects=False)
+    assert state.remote_tunnel() is None
+    body = app.post("/remote/start",
+                    data={"csrf_token": state.csrf_token, "minutes": "240"}).text
+    assert "Scan this with your phone" in body

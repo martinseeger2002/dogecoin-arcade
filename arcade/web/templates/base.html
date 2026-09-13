@@ -250,9 +250,25 @@ table.published tr:first-child td{border-top:0}
    own note mid-sentence -- 818px shown of 833px -- and the sentence it cut was
    the one saying a message is permanent once sent. A stacked messenger has no
    reason to be capped at all: the page scrolls. */
+/* Shown only where a pane is hidden; with both on screen there is nothing to
+   go back to. */
+.convo-head .back{display:none;align-items:center;min-height:44px;padding:0 10px 0 2px;
+  margin-right:2px;font-weight:600;color:var(--accent);white-space:nowrap}
+.convo-head .back:hover{text-decoration:none}
+
 @media(max-width:760px){.msgr{grid-template-columns:1fr;height:auto;max-height:none;
     min-height:0;overflow:visible}
-  .msgr .threads{max-height:250px}}
+  .msgr .threads{max-height:none;border-right:0}
+
+  /* One screen at a time. Stacked, the list pushed the conversation below the
+     fold on every visit, so reading a reply began with scrolling past everyone
+     you have ever spoken to. The list hands over to the conversation and the
+     back button hands back -- which is how every phone does this. */
+  .msgr.open .threads{display:none}
+  .msgr:not(.open) .convo{display:none}
+  .convo-head .back{display:inline-flex}
+}
+
 
 .threads{border-right:1px solid var(--line);display:flex;flex-direction:column;
   overflow-y:auto;background:var(--bg)}
@@ -344,8 +360,14 @@ a.thread.on{background:var(--code);box-shadow:inset 3px 0 0 var(--accent)}
 
 .composer{display:flex;align-items:flex-end;gap:8px;padding:11px 14px;
   border-top:1px solid var(--line);background:var(--bg)}
+/* `min-height:0` because the generic `textarea{min-height:150px}` above was
+   never overridden here, and it turned the chat box into a tall narrow block
+   instead of the single-line pill the markup asks for -- `rows="1"`, `grow()`
+   on input, `max-height:160px` to stop it. On a desktop that merely looked
+   heavy; on a phone, where the Send button takes a third of the row, it looked
+   squashed into a corner. It starts at one line and grows as you type. */
 .composer textarea{flex:1;resize:none;border-radius:19px;padding:10px 15px;
-  max-height:160px}
+  min-height:0;max-height:160px}
 .composer button{border-radius:19px;flex:none}
 .composer-note{font-size:.76rem;padding:0 16px 11px;margin:0;background:var(--bg)}
 .convo .confirm{margin:0 16px 10px;padding:12px 14px;border:1px solid var(--accent);
@@ -439,7 +461,10 @@ form.composer button[type=submit]{background:var(--sent);border-color:var(--sent
   .row > h2, .row > h3, .row > .row-title{flex-basis:100%}
 
   button,.btn{padding:11px 16px;min-height:44px}
-  .composer button{min-height:40px}
+  /* Every pixel the buttons give back is a pixel of what you are writing. */
+  .composer{gap:6px;padding:9px 10px}
+  .composer button{min-height:40px;padding:9px 14px}
+  .composer-foot{gap:8px}
   button.small,.btn.small{min-height:40px;padding:8px 13px}
 }
 </style>
