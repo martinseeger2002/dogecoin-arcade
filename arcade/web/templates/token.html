@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% import "_token_confirm.html" as tk %}
+{% block title %}{{ prop.name }} · Tokens · DogecoinArcade{% endblock %}
+{% block body %}
+{% set tag = 'mainnet' if chain.is_mainnet else 'testnet' %}
+<p class="muted" style="margin:0 0 6px;font-size:.86rem"><a href="/tokens">&larr; Tokens</a></p>
+<h1>{{ prop.name }} {{ tk.chain_switch(chain, [], csrf) }}
+  {% if prop.test_ecosystem %}<span class="tag testnet">test ecosystem</span>{% endif %}</h1>
+<p class="sub">Token #{{ prop.property_id }} &middot;
+  {{ 'managed supply' if prop.managed else 'fixed supply' }} &middot;
+  {{ 'divisible' if prop.divisible else 'whole units' }}
+  <span id="live" data-generation="{{ state.generation }}"></span></p>
+
+{% if error %}<div class="msg err">{{ error }}</div>{% endif %}
+{% if node_error %}<div class="msg err">{{ node_error }}</div>{% endif %}
+
+{% if prepared %}
+  {{ tk.confirm(prepared, confirm_action, confirm_fields, confirm_what, back, chain, csrf) }}
+{% endif %}
+
+{{ tk.index_status(index, chain) }}
+
+<div class="grid" style="margin-bottom:16px">
+  <div class="stat"><div class="k">Supply</div><div class="v">{{ prop.total_display }}</div>
+    {% if prop.managed %}<div class="n">granted so far</div>{% endif %}</div>
+  <div class="stat"><div class="k">Holders</div><div class="v">{{ prop.holder_count }}</div></div>
+  <div class="stat"><div class="k">Created</div><div class="v" style="font-size:1.1rem">block {{ "{:,}".format(prop.creation_block) }}</div></div>
+</div>
+
+<div class="panel">
+  <table>
+    <tr><td class="muted" style="width:130px">Issuer</td>
+        <td><code class="addr" onclick="copyAddr(this)" title="Click to copy">{{ prop.issuer }}</code>
+          {% if is_issuer %}<span class="pill ok">you</span>{% endif %}</td></tr>
+    {% if prop.category or prop.subcategory %}
+    <tr><td class="muted">Category</td><td>{{ prop.category }}{% if prop.subcategory %} / {{ prop.subcategory }}{% endif %}</td></tr>
+    {% endif %}
+    {% if prop.url %}<tr><td class="muted">Link</td><td class="mono" style="word-break:break-all">{{ prop.url }}</td></tr>{% endif %}
+    {% if prop.data %}<tr><td class="muted">Description</td><td>{{ prop.data }}</td></tr>{% endif %}
+    <tr><td class="muted">Created by</td>
+        <td class="mono" style="font-size:.78rem;word-break:break-all">{{ prop.creation_txid }}</td></tr>
+  </table>
+</div>
+
+{% if is_issuer and node.wallet %}
+<h2>Issuer controls</h2>
+<div class="panel">
+  <p class="muted" style="font-size:.86rem;margin-top:0">These act from the issuer address
+    <code class="mono" style="font-size:.78rem">{{ prop.issuer }}</code>, which pays the fee.
+    Each shows you the transaction before anything is broadcast.</p>
+  {% if prop.managed %}
+  <form method="post" action="/tokens/{{ prop.property_id }}/grant" style="margin-bottom:18px">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <strong>Grant</strong> <span class="muted" style="font-size:.84rem">— create new tokens for someone (or for the issuer address, left blank)</span>
+    <div class="row" style="margin-top:8px">
+      <div style="flex:0 0 130px"><input name="amount" placeholder="amount" inputmode="decimal"></div>
+      <div style="flex:1 1 220px"><input name="recipient" class="mono" spellcheck="false" placeholder="recipient (blank: the issuer)"></div>
+      <div style="flex:1 1 140px"><input name="note" placeholder="note (optional)"></div>
+      <button type="submit" class="small {{ 'danger' if chain.is_mainnet }}">Review grant</button>
+    </div>
+  </form>
+  <form method="post" action="/tokens/{{ prop.property_id }}/revoke" style="margin-bottom:18px">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <strong>Revoke</strong> <span class="muted" style="font-size:.84rem">— destroy tokens the issuer address holds</span>
+    <div class="row" style="margin-top:8px">
+      <div style="flex:0 0 130px"><input name="amount" placeholder="amount" inputmode="decimal"></div>
+      <div style="flex:1 1 140px"><input name="note" placeholder="note (optional)"></div>
+      <button type="submit" class="small {{ 'danger' if chain.is_mainnet }}">Review revoke</button>
+    </div>
+  </form>
+  {% endif %}
+  <form method="post" action="/tokens/{{ prop.property_id }}/issuer">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <strong>Hand over</strong> <span class="muted" style="font-size:.84rem">— make another address the issuer. You cannot take this back.</span>
+    <div class="row" style="margin-top:8px">
+      <div style="flex:1 1 260px"><input name="recipient" class="mono" spellcheck="false" placeholder="new issuer address"></div>
+      <button type="submit" class="small danger">Review hand-over</button>
+    </div>
+  </form>
+</div>
+{% endif %}
+
+<h2>Holders</h2>
+<div class="panel">
+{% if holders %}
+  <table class="wallets">
+  {% for h in holders %}
+    <tr><td><code class="addr" onclick="copyAddr(this)" title="Click to copy">{{ h.address }}</code>
+          {% if h.address in owned %}<span class="pill ok">you</span>{% endif %}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">{{ h.display }}</td></tr>
+  {% endfor %}
+  </table>
+{% else %}
+  <p class="muted" style="margin:0">Nobody holds any yet.</p>
+{% endif %}
+</div>
+
+<h2>History</h2>
+<div class="panel">
+{% if history %}
+  <table class="wallets">
+  {% for h in history %}
+    <tr>
+      <td style="white-space:nowrap">{{ h.type_name }}
+        {% if not h.valid %}<span class="pill bad">did nothing</span>{% endif %}</td>
+      <td style="font-variant-numeric:tabular-nums;text-align:right">{{ h.amount_display }}</td>
+      <td style="font-size:.8rem">
+        <div class="mono" style="word-break:break-all">{{ h.sender }}
+          {%- if h.reference and h.reference != h.sender %} &rarr; {{ h.reference }}{% endif %}</div>
+        {% if not h.valid %}<div class="muted">{{ h.invalid_reason }}</div>{% endif %}
+        <div class="muted">block {{ "{:,}".format(h.block_height) }} &middot;
+          <span class="mono">{{ h.txid[:16] }}&hellip;</span></div></td>
+    </tr>
+  {% endfor %}
+  </table>
+{% else %}
+  <p class="muted" style="margin:0">Nothing yet.</p>
+{% endif %}
+</div>
+{% endblock %}

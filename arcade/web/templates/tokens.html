@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% import "_chains.html" as chains %}
+{% import "_token_confirm.html" as tk %}
+{% block title %}Tokens · DogecoinArcade{% endblock %}
+{% block body %}
+{% set tag = 'mainnet' if chain.is_mainnet else 'testnet' %}
+<h1>Tokens {{ tk.chain_switch(chain, other_chains, csrf) }}</h1>
+<p class="sub">Fungible tokens on {{ chain.label|lower }}: create one, hold some, send them on.
+  {% if other_chains %}<span class="muted">Click the {{ 'main' if chain.is_mainnet else 'test' }} tag to switch
+  to {{ other_chains[0].label|lower }}.</span>{% endif %}
+  <span id="live" data-generation="{{ state.generation }}"></span></p>
+
+{% if error %}<div class="msg err">{{ error }}</div>{% endif %}
+{% if node_error %}<div class="msg err">{{ node_error }}</div>{% endif %}
+
+{% if prepared %}
+  {{ tk.confirm(prepared, confirm_action, confirm_fields, confirm_what, back, chain, csrf) }}
+{% endif %}
+
+<div class="chainbar">
+  {{ chains.card(chain, node, "Tokens live here.",
+                 "Wallet disabled on this node." if not node.wallet else None) }}
+</div>
+{{ tk.index_status(index, chain) }}
+
+{% if pending %}
+<div class="note">
+  {% for p in pending %}
+  <div>Your {{ p.what }} <code class="mono" style="font-size:.78rem">{{ p.txid }}</code>
+    is broadcast and waiting for its block.</div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<h2>Yours</h2>
+{% if holdings %}
+<div class="panel">
+  <table class="wallets">
+  {% for h in holdings %}
+    <tr>
+      <td><a href="/tokens/{{ h.property_id }}"><strong>{{ h.name }}</strong></a>
+        {% if h.test_ecosystem %}<span class="tag testnet">test ecosystem</span>{% endif %}
+        <div class="muted" style="font-size:.78rem">#{{ h.property_id }} on
+          <code class="addr" onclick="copyAddr(this)" title="Click to copy">{{ h.address }}</code></div></td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap">
+        <strong>{{ h.display }}</strong></td>
+      <td style="width:52%">
+        <form method="post" action="/tokens/send" class="row" style="gap:6px">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <input type="hidden" name="sender" value="{{ h.address }}">
+          <input type="hidden" name="property_id" value="{{ h.property_id }}">
+          <div style="flex:0 0 110px"><input name="amount" placeholder="amount" inputmode="decimal"
+               value="{{ form_send.amount if form_send and form_send.sender == h.address and form_send.property_id|string == h.property_id|string else '' }}"></div>
+          <div style="flex:1 1 200px"><input name="recipient" class="mono" spellcheck="false"
+               placeholder="recipient address on {{ chain.label|lower }}"
+               value="{{ form_send.recipient if form_send and form_send.sender == h.address and form_send.property_id|string == h.property_id|string else '' }}"></div>
+          <button type="submit" class="small {{ 'danger' if chain.is_mainnet }}">Review send</button>
+        </form></td>
+    </tr>
+  {% endfor %}
+  </table>
+  <p class="muted" style="font-size:.84rem;margin:10px 0 0">A send spends a small fee
+    from the holding address, so it needs a few coins of its own. Nothing is sent
+    until you have seen the decoded transaction.</p>
+</div>
+{% else %}
+<div class="panel empty">
+  <p>No tokens on any address in this wallet{% if not index.enabled or index.behind %} that the index has seen{% endif %}.</p>
+  <p class="muted" style="font-size:.86rem">Create one below, or give someone a
+    {{ chain.label|lower }} address from the Wallets page to receive theirs.</p>
+</div>
+{% endif %}
+
+<h2>All tokens</h2>
+<div class="panel">
+{% if tokens %}
+  <table class="wallets">
+    <tr class="muted" style="font-size:.78rem;text-transform:uppercase;letter-spacing:.06em">
+      <td>Token</td><td>Supply</td><td>Holders</td><td>Issuer</td></tr>
+  {% for t in tokens %}
+    <tr>
+      <td><a href="/tokens/{{ t.property_id }}"><strong>{{ t.name }}</strong></a>
+        <span class="muted" style="font-size:.78rem">#{{ t.property_id }}</span>
+        {% if t.test_ecosystem %}<span class="tag testnet">test ecosystem</span>{% endif %}
+        {% if t.managed %}<span class="muted" style="font-size:.78rem">managed</span>{% endif %}</td>
+      <td style="font-variant-numeric:tabular-nums">{{ t.total_display }}</td>
+      <td>{{ t.holder_count }}</td>
+      <td><code class="addr" onclick="copyAddr(this)" title="Click to copy">{{ t.issuer }}</code>
+        {% if t.issuer in owned %}<span class="pill ok">you</span>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </table>
+{% else %}
+  <p class="muted" style="margin:0">No tokens exist on {{ chain.label|lower }} yet
+    {%- if index.activation_height %} (read from block {{ "{:,}".format(index.activation_height) }} on){% endif %}.</p>
+{% endif %}
+</div>
+
+<h2>Create a token</h2>
+<div class="panel">
+  {% if not node.online %}
+    <p class="muted">The {{ chain.label|lower }} node is not reachable.</p>
+  {% elif not node.wallet %}
+    <p>This node runs with <code>disablewallet=1</code>, so it can read tokens but
+       cannot create or send them.</p>
+  {% elif not funded %}
+    <p>No address in this wallet holds coins. Creating a token costs a transaction
+       fee, so fund a {{ chain.label|lower }} address first (Wallets page).</p>
+  {% else %}
+  {% set f = form_create or {} %}
+  <form method="post" action="/tokens/create">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <div class="field"><label>Name</label>
+      <input name="name" placeholder="what the token is called" value="{{ f.name or '' }}"></div>
+    <div class="row" style="align-items:flex-start">
+      <div class="field" style="flex:1 1 180px"><label>Supply</label>
+        <select name="kind">
+          <option value="fixed" {{ 'selected' if f.kind != 'managed' }}>Fixed: all created now</option>
+          <option value="managed" {{ 'selected' if f.kind == 'managed' }}>Managed: granted later by the issuer</option>
+        </select></div>
+      <div class="field" style="flex:1 1 140px"><label>Amount (fixed supply)</label>
+        <input name="supply" placeholder="1000" inputmode="decimal" value="{{ f.supply or '' }}"></div>
+      <div class="field" style="flex:1 1 140px"><label>Units</label>
+        <select name="units">
+          <option value="divisible" {{ 'selected' if f.units != 'indivisible' }}>Divisible (8 decimals)</option>
+          <option value="indivisible" {{ 'selected' if f.units == 'indivisible' }}>Whole units only</option>
+        </select></div>
+    </div>
+    <div class="field"><label>Issued from</label>
+      <select name="sender">
+        {% for a in funded %}
+        <option value="{{ a.address }}" {{ 'selected' if f.sender == a.address }}>{{ a.address }} — {{ "{:,.4f}".format(a.coins) }} coins</option>
+        {% endfor %}
+      </select>
+      <div class="muted" style="font-size:.8rem;margin-top:4px">This address becomes the issuer and,
+        for a fixed supply, receives every token. It pays the fee.</div></div>
+    <details style="margin-bottom:14px">
+      <summary class="muted" style="cursor:pointer;font-size:.9rem">Description, category, link</summary>
+      <div class="field" style="margin-top:10px"><label>Description</label>
+        <input name="data" value="{{ f.data or '' }}"></div>
+      <div class="row">
+        <div class="field" style="flex:1"><label>Category</label><input name="category" value="{{ f.category or '' }}"></div>
+        <div class="field" style="flex:1"><label>Subcategory</label><input name="subcategory" value="{{ f.subcategory or '' }}"></div>
+      </div>
+      <div class="field"><label>Link</label><input name="url" placeholder="https://" value="{{ f.url or '' }}"></div>
+    </details>
+    <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">
+      {{ 'Review creation on mainnet' if chain.is_mainnet else 'Review creation' }}</button>
+    <p class="muted" style="font-size:.84rem;margin:10px 0 0">
+      A token is created by one transaction and exists for as long as the chain
+      does. Its name cannot be changed afterwards. Long names and descriptions
+      cost more: past 76 bytes the data no longer fits one OP_RETURN and is
+      carried in extra outputs instead.</p>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

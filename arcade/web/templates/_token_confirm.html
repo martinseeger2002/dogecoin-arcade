@@ -1,0 +1,90 @@
+{# Shown after prepare and before broadcast. Every token action passes here. #}
+{% macro confirm(prepared, action, fields, what, back, chain, csrf) %}
+{% set mainnet = chain.is_mainnet %}
+<h2>Confirm before sending</h2>
+<div class="panel confirm" {% if mainnet %}style="border-color:var(--bad);border-width:2px"{% endif %}>
+  {% if mainnet %}
+    <p style="color:var(--bad);font-weight:600;margin-top:0">
+      This is mainnet. It spends real coins and cannot be undone.</p>
+  {% endif %}
+  <table>
+    <tr><td class="muted" style="width:130px">Action</td><td>{{ what }}</td></tr>
+    <tr><td class="muted">From</td>
+        <td class="mono" style="word-break:break-all">{{ prepared.sender }}</td></tr>
+    {% if prepared.reference %}
+    <tr><td class="muted">To</td>
+        <td class="mono" style="word-break:break-all">{{ prepared.reference }}</td></tr>
+    {% endif %}
+    <tr><td class="muted">Outputs</td><td>
+      <table style="font-size:.86rem">
+      {% for o in prepared.outputs %}
+        <tr><td style="width:120px;text-align:right;padding-right:10px" class="mono">{{ "%.8f"|format(o.value) }}</td>
+            <td class="mono" style="word-break:break-all">{{ o.where }}
+              {%- if o.is_change %} <span class="muted">(change back to you)</span>
+              {%- elif o.is_recipient %} <span class="muted">(recipient)</span>{% endif %}</td></tr>
+      {% endfor %}
+      </table></td></tr>
+    <tr><td class="muted">Fee</td><td>{{ "%.8f"|format(prepared.fee_coins) }}</td></tr>
+    {% if prepared.dust_sats %}
+    <tr><td class="muted">Outputs cost</td><td>{{ "%.8f"|format(prepared.dust_coins) }}
+        <span class="muted" style="font-size:.84rem">
+          {%- if prepared.encoding_class == 'B' %} (the marker and data outputs
+            {%- if prepared.reference %} and the recipient's{% endif %}; the data outputs stay spendable by you)
+          {%- else %} (the recipient's output){% endif %}</span></td></tr>
+    {% endif %}
+    <tr><td class="muted">Total</td><td><strong>{{ "%.8f"|format(prepared.total_coins) }}</strong></td></tr>
+    <tr><td class="muted">Carried as</td><td>Class {{ prepared.encoding_class }},
+        {{ "{:,}".format(prepared.size) }} bytes</td></tr>
+    <tr><td class="muted">txid</td>
+        <td class="mono" style="font-size:.78rem;word-break:break-all">{{ prepared.txid }}</td></tr>
+  </table>
+  <form method="post" action="{{ action }}" style="margin-top:14px">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    {% for k, v in fields.items() %}
+    <input type="hidden" name="{{ k }}" value="{{ v }}">
+    {% endfor %}
+    <input type="hidden" name="confirmed" value="{{ prepared.txid }}">
+    <div class="row">
+      <button type="submit" {% if mainnet %}class="danger"{% endif %}>
+        {{ 'Broadcast on mainnet' if mainnet else 'Broadcast' }}</button>
+      <a class="muted" href="{{ back }}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endmacro %}
+
+{% macro index_status(index, chain) %}
+{% if not index.enabled %}
+  <div class="msg err">{{ chain.label }} has no start block for tokens yet, so nothing is indexed there.</div>
+{% elif index.stopped %}
+  <div class="msg err"><strong>Token indexing stopped at block {{ "{:,}".format(index.stopped.height) }}.</strong>
+    {{ index.stopped.reason }} Everything shown below is as of block
+    {{ "{:,}".format(index.stopped.height - 1) }}.</div>
+{% elif index.behind is none %}
+  <p class="muted" style="font-size:.86rem">Waiting for the first look at the node.</p>
+{% elif index.behind > 0 %}
+  <div class="msg info">Indexing: {{ "{:,}".format(index.behind) }} block{{ 's' if index.behind != 1 }}
+    behind the node{% if index.indexed_height %} (at {{ "{:,}".format(index.indexed_height) }}){% endif %}.
+    Balances shown here are not current yet.</div>
+{% else %}
+  <p class="muted" style="font-size:.86rem">Index current
+    {%- if index.indexed_height %} at block {{ "{:,}".format(index.indexed_height) }}
+    {%- else %}: the chain has not reached the start block ({{ "{:,}".format(index.activation_height) }}) yet{% endif %}.</p>
+{% endif %}
+{% endmacro %}
+
+{# The chain tag. With another chain to go to it is a button that switches;
+   without one (a token's own page belongs to its chain) it is just the tag. #}
+{% macro chain_switch(chain, others, csrf) %}
+{% set tag = 'mainnet' if chain.is_mainnet else 'testnet' %}
+{% set word = 'main' if chain.is_mainnet else 'test' %}
+{% if others %}
+<form method="post" action="/tokens/chain" style="display:inline">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <button type="submit" class="tag {{ tag }} switch" name="chain" value="{{ others[0].network }}"
+          title="Switch to {{ others[0].label|lower }}">{{ word }}</button>
+</form>
+{% else %}
+<span class="tag {{ tag }}">{{ word }}</span>
+{% endif %}
+{% endmacro %}

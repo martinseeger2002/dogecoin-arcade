@@ -25,7 +25,8 @@ from fastapi.responses import (
 )
 from fastapi.templating import Jinja2Templates
 
-from .. import backup, media, wallet as walletlib
+from .. import backup, media, tokens as tokenlib, wallet as walletlib
+from ..ledger import AmountError, format_amount, parse_amount
 from ..config import NETWORKS, MainnetRefused, WrongChain
 from ..messaging import contact, content, group
 from ..script import b58check_decode
@@ -60,7 +61,7 @@ NAV = [
     ("/backup",       "Backup",       None,        True),
     ("/keys",         "Keys",         "testnet",   True),
     ("/wallet",       "Wallets",      None,        True),
-    ("/tokens",       "Tokens",       "mainnet",   False),
+    ("/tokens",       "Tokens",       "mainnet",   True),
     ("/nfts",         "NFTs",         "mainnet",   False),
     ("/exchange",     "Exchange",     "mainnet",   False),
     ("/inscriptions", "Inscriptions", "mainnet",   False),
@@ -1892,12 +1893,308 @@ def create_app(state: AppState) -> FastAPI:
             state.flash(f"Mining failed: {exc}", "err")
         return RedirectResponse("/wallet", status_code=303)
 
+
+    # --- tokens ---------------------------------------------------------------
+    # Shown for one chain at a time: mainnet, the ledger (D-012), or testnet,
+    # where anyone can try tokens for nothing (D-016). The chain tag on the
+    # page switches. Every action here is prepare -> show -> confirm, exactly
+    # as sending coins is, because on mainnet each one spends real coins and,
+    # once a token exists, moves real value.
+
+    def _ledger_addresses(rpc) -> list[str]:
+        """Every address this wallet owns, funded or not.
+
+        `listunspent` alone misses an address that holds tokens but no coins --
+        the usual state of a recipient -- so the address book is asked too.
+        """
+        found: dict[str, None] = {}
+        try:
+            for row in rpc.call("listreceivedbyaddress", 0, True):
+                found.setdefault(row["address"], None)
+        except Exception:
+            pass
+        for utxo in rpc.call("listunspent", 0, 9_999_999):
+            if utxo.get("address"):
+                found.setdefault(utxo["address"], None)
+        return list(found)
+
+    def _funded_addresses(rpc) -> list[dict[str, Any]]:
+        """Addresses with coins to pay a fee from, largest first."""
+        sums: dict[str, int] = {}
+        for utxo in rpc.call("listunspent", 0, 9_999_999):
+            if utxo.get("address") and utxo.get("spendable", True):
+                sums[utxo["address"]] = sums.get(utxo["address"], 0) + int(
+                    round(float(utxo["amount"]) * 100_000_000))
+        return [{"address": a, "coins": v / 100_000_000}
+                for a, v in sorted(sums.items(), key=lambda kv: -kv[1])]
+
+    def _token_chain() -> tuple[Any, Any]:
+        """The chain the Tokens page is on, and its index."""
+        chain = state.token_chain
+        return chain, state.token_index(chain)
+
+    def _token_page_data() -> dict[str, Any]:
+        """Everything /tokens shows, with the node's absence explained, not hidden."""
+        chain, index = _token_chain()
+        data: dict[str, Any] = {
+            "chain": chain, "node": chain.status(),
+            "other_chains": [c for c in state.token_chains if c is not chain],
+            "index": index.status(node_tip=state.ledger_tips.get(chain.network)),
+            "tokens": [], "holdings": [], "funded": [], "owned": set(),
+            "pending": [], "node_error": None,
+        }
+        try:
+            data["tokens"] = index.properties()
+        except Exception as exc:
+            data["node_error"] = f"the token index could not be read: {exc}"
+            return data
+        try:
+            with chain.rpc() as rpc:
+                owned = _ledger_addresses(rpc)
+                data["funded"] = _funded_addresses(rpc)
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
+        except Exception as exc:
+            data["node_error"] = str(exc)
+            owned = []
+        data["owned"] = set(owned)
+        data["holdings"] = index.balances(owned)
+        # A broadcast token transaction is invisible until its block is
+        # indexed; say so rather than let the page look as if nothing happened.
+        still = []
+        for item in state.pending_tokens:
+            if item["network"] != chain.network:
+                still.append(item)                # the other chain's; keep
+            elif index.transaction(item["txid"]) is None:
+                still.append(item)
+        state.pending_tokens = still
+        data["pending"] = [i for i in still if i["network"] == chain.network]
+        return data
+
+    @app.get("/tokens", response_class=HTMLResponse)
+    def tokens(request: Request):
+        return render(request, "tokens.html", prepared=None, **_token_page_data())
+
+    @app.post("/tokens/chain")
+    def tokens_chain(request: Request, chain: str = Form(""), csrf_token: str = Form("")):
+        """Switch the Tokens page between mainnet and testnet."""
+        check_csrf(csrf_token)
+        try:
+            state.switch_token_chain(chain)
+        except ValueError as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse("/tokens", status_code=303)
+
+    def _token_action(request: Request, *, action: str, confirmed: str,
+                      build, fields: dict[str, str], back: str,
+                      template: str = "tokens.html", **extra):
+        """Prepare a token transaction, show it, and broadcast on a second yes.
+
+        `build(rpc)` returns (sender, payload, reference). Every action funnels
+        through here so the confirmation step cannot be skipped by any of them.
+
+        What is broadcast is the transaction that was shown, byte for byte: the
+        prepared hex is kept under its txid and the confirm form hands the txid
+        back. Rebuilding on the second submission would pick inputs afresh, and
+        then the fee and txid on the screen would belong to a transaction that
+        never went anywhere. If the shown one is gone (the server restarted),
+        it is rebuilt and shown again, not sent.
+        """
+        error, prepared, txid = None, None, None
+        chain, index = _token_chain()
+        try:
+            if not index.enabled:
+                raise tokenlib.TokenError(
+                    f"{chain.label} has no start block for tokens yet.")
+            with chain.rpc() as rpc:
+                sender = tokenlib.TokenSender(rpc, chain.params)
+                prepared = state.prepared_tokens.get((chain.network, confirmed))
+                if prepared is None:
+                    sender_address, payload, reference = build(rpc)
+                    prepared = sender.prepare(sender_address, payload, reference)
+                    state.prepared_tokens[(chain.network, prepared.txid)] = prepared
+                    while len(state.prepared_tokens) > 20:     # keep the newest
+                        del state.prepared_tokens[next(iter(state.prepared_tokens))]
+                else:
+                    txid = sender.broadcast(prepared)
+                    state.prepared_tokens.pop((chain.network, confirmed), None)
+                    state.pending_tokens.append(
+                        {"txid": txid, "what": action, "at": time.time(),
+                         "network": chain.network})
+                    state.flash(f"{action.capitalize()} broadcast as {txid}. It shows "
+                                f"here once its block is indexed.", "ok")
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
+        except (tokenlib.TokenError, AmountError, ValueError) as exc:
+            error = str(exc)
+        except Exception as exc:
+            error = f"{exc.__class__.__name__}: {exc}"
+        if txid:
+            return RedirectResponse(back, status_code=303)
+        context = dict(error=error, prepared=prepared,
+                       confirm_action=request.url.path, confirm_fields=fields,
+                       confirm_what=action, back=back)
+        if template == "tokens.html":
+            context.update(_token_page_data())
+        context.update(extra)
+        return render(request, template, **context)
+
+    def _amount_for(index, property_id: int, text: str) -> tuple[dict[str, Any], int]:
+        prop = index.property(property_id)
+        if prop is None:
+            raise tokenlib.TokenError(f"there is no token {property_id}.")
+        return prop, parse_amount(text, prop["divisible"])
+
+    def _recipient(address: str) -> str:
+        address = (address or "").strip()
+        if not address:
+            raise tokenlib.TokenError("a recipient address is needed.")
+        complaint = _check_address(address, mainnet=state.token_chain.is_mainnet)
+        if complaint:
+            raise tokenlib.TokenError(complaint)
+        return address
+
+    @app.post("/tokens/create", response_class=HTMLResponse)
+    def tokens_create(request: Request, sender: str = Form(""), name: str = Form(""),
+                      supply: str = Form(""), kind: str = Form("fixed"),
+                      units: str = Form("divisible"),
+                      category: str = Form(""), subcategory: str = Form(""),
+                      url: str = Form(""), data: str = Form(""),
+                      confirmed: str = Form(""), csrf_token: str = Form("")):
+        check_csrf(csrf_token)
+        fields = dict(sender=sender, name=name, supply=supply, kind=kind, units=units,
+                      category=category, subcategory=subcategory,
+                      url=url, data=data)
+
+        def build(rpc):
+            divisible = units != "indivisible"
+            managed = kind == "managed"
+            amount = None if managed else parse_amount(supply, divisible)
+            payload = tokenlib.issuance_payload(
+                name=name, divisible=divisible, managed=managed, amount=amount,
+                category=category,
+                subcategory=subcategory, url=url, data=data)
+            if not sender.strip():
+                raise tokenlib.TokenError("choose the address that will issue the token.")
+            return sender.strip(), payload, None
+
+        return _token_action(request, action="create", confirmed=confirmed, build=build,
+                             fields=fields, back="/tokens", form_create=fields)
+
+    @app.post("/tokens/send", response_class=HTMLResponse)
+    def tokens_send(request: Request, sender: str = Form(""), property_id: str = Form(""),
+                    amount: str = Form(""), recipient: str = Form(""),
+                    confirmed: str = Form(""), csrf_token: str = Form("")):
+        check_csrf(csrf_token)
+        fields = dict(sender=sender, property_id=property_id, amount=amount,
+                      recipient=recipient)
+
+        def build(rpc):
+            index = state.token_index(state.token_chain)
+            prop, units = _amount_for(index, int(property_id or 0), amount)
+            held = index.balance(sender.strip(), prop["property_id"])
+            if units > held:
+                raise tokenlib.TokenError(
+                    f"{sender.strip()} holds {format_amount(held, prop['divisible'])} "
+                    f"{prop['name']}, not {format_amount(units, prop['divisible'])}.")
+            return (sender.strip(), tokenlib.send_payload(prop["property_id"], units),
+                    _recipient(recipient))
+
+        return _token_action(request, action="send", confirmed=confirmed, build=build,
+                             fields=fields, back="/tokens", form_send=fields)
+
+    @app.get("/tokens/{property_id}", response_class=HTMLResponse)
+    def token(request: Request, property_id: int):
+        return render(request, "token.html", prepared=None, **_token_detail(property_id))
+
+    def _token_detail(property_id: int) -> dict[str, Any]:
+        chain, index = _token_chain()
+        prop = index.property(property_id)
+        if prop is None:
+            raise HTTPException(status_code=404, detail=f"no token {property_id}")
+        owned: set[str] = set()
+        node_error = None
+        try:
+            with chain.rpc() as rpc:
+                owned = set(_ledger_addresses(rpc))
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
+        except Exception as exc:
+            node_error = str(exc)
+        return {
+            "chain": chain, "node": chain.status(),
+            "prop": prop,
+            "holders": index.holders(property_id),
+            "history": index.history(property_id=property_id),
+            "index": index.status(node_tip=state.ledger_tips.get(chain.network)),
+            "owned": owned,
+            "is_issuer": prop["issuer"] in owned,
+            "node_error": node_error,
+        }
+
+    def _issuer_action(request: Request, property_id: int, action: str, confirmed: str,
+                       fields: dict[str, str], build):
+        def wrapped(rpc):
+            index = state.token_index(state.token_chain)
+            prop = index.property(property_id)
+            if prop is None:
+                raise tokenlib.TokenError(f"there is no token {property_id}.")
+            return build(rpc, prop, index)
+        return _token_action(request, action=action, confirmed=confirmed, build=wrapped,
+                             fields=fields, back=f"/tokens/{property_id}",
+                             template="token.html", **_token_detail(property_id))
+
+    @app.post("/tokens/{property_id}/grant", response_class=HTMLResponse)
+    def token_grant(request: Request, property_id: int, amount: str = Form(""),
+                    recipient: str = Form(""), note: str = Form(""),
+                    confirmed: str = Form(""), csrf_token: str = Form("")):
+        check_csrf(csrf_token)
+
+        def build(rpc, prop, index):
+            units = parse_amount(amount, prop["divisible"])
+            to = _recipient(recipient) if recipient.strip() else None
+            if to == prop["issuer"]:
+                to = None                      # to self: no recipient output needed
+            return prop["issuer"], tokenlib.grant_payload(property_id, units, note), to
+
+        return _issuer_action(request, property_id, "grant", confirmed,
+                              dict(amount=amount, recipient=recipient, note=note), build)
+
+    @app.post("/tokens/{property_id}/revoke", response_class=HTMLResponse)
+    def token_revoke(request: Request, property_id: int, amount: str = Form(""),
+                     note: str = Form(""), confirmed: str = Form(""),
+                     csrf_token: str = Form("")):
+        check_csrf(csrf_token)
+
+        def build(rpc, prop, index):
+            units = parse_amount(amount, prop["divisible"])
+            held = index.balance(prop["issuer"], property_id)
+            if units > held:
+                raise tokenlib.TokenError(
+                    f"the issuer address holds {format_amount(held, prop['divisible'])}, "
+                    f"which is all that can be revoked from it.")
+            return prop["issuer"], tokenlib.revoke_payload(property_id, units, note), None
+
+        return _issuer_action(request, property_id, "revoke", confirmed,
+                              dict(amount=amount, note=note), build)
+
+    @app.post("/tokens/{property_id}/issuer", response_class=HTMLResponse)
+    def token_issuer(request: Request, property_id: int, recipient: str = Form(""),
+                     confirmed: str = Form(""), csrf_token: str = Form("")):
+        check_csrf(csrf_token)
+
+        def build(rpc, prop, index):
+            to = _recipient(recipient)
+            if to == prop["issuer"]:
+                raise tokenlib.TokenError("that address is already the issuer.")
+            return prop["issuer"], tokenlib.change_issuer_payload(property_id), to
+
+        return _issuer_action(request, property_id, "change issuer", confirmed,
+                              dict(recipient=recipient), build)
+
     # --- not yet built --------------------------------------------------------
 
     UNBUILT = {
-        "/tokens": ("Tokens", "M2/M3",
-                    "Fungible properties: balances, issuance, transfers and "
-                    "send-to-owners. The state engine exists; this view does not."),
         "/nfts": ("NFTs", "M4",
                   "Non-fungible properties, range transfers, and the issuer and "
                   "holder data slots."),
@@ -1913,10 +2210,6 @@ def create_app(state: AppState) -> FastAPI:
         section, milestone, detail = UNBUILT[path]
         return render(request, "unbuilt.html", section=section, milestone=milestone,
                       detail=detail, ledger=ledger_status())
-
-    @app.get("/tokens", response_class=HTMLResponse)
-    def tokens(request: Request):
-        return _unbuilt(request, "/tokens")
 
     @app.get("/nfts", response_class=HTMLResponse)
     def nfts(request: Request):

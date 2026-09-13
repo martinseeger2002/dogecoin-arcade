@@ -108,7 +108,12 @@ MAINNET = Params(
     name="main",
     rpc_port=33873,
     p2p_port=33874,
-    activation_height=None,  # set at launch, ~tip + 1440 (D-004)
+    # The block the ledger starts reading from. Set 2026-09-12 at tip 1,206,546,
+    # about a day ahead (D-004 asked for ~tip + 1440), so no transaction that
+    # existed before the token code shipped can be read as a token
+    # transaction. Free to move until the first mainnet token exists (D-016);
+    # after that, moving it rewrites everybody's balances.
+    activation_height=1_208_000,
     datadir_subdir="",
     pubkeyhash_version=56,   # addresses start with "P"
     scripthash_version=22,
@@ -119,7 +124,10 @@ TESTNET = Params(
     name="test",
     rpc_port=44873,
     p2p_port=44874,
-    activation_height=0,
+    # Tokens are indexed on testnet too, from here (D-016). Everything below
+    # is development traffic and the messaging scanner never read it either --
+    # see the next field.
+    activation_height=1_484_661,
     # Set 2026-09-12 at tip 1,484,661. Everything before this is development
     # traffic from building and testing the application -- cross-machine sends,
     # chunked posts, deliberately interrupted sends -- and is not read.

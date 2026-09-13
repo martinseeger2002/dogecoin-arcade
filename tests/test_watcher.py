@@ -46,6 +46,10 @@ class FakeState:
         self.last_checked = {}
         self.generation = 0
         self.scans = []
+        # No token indexes here; test_tokens_web.py drives _sync_ledgers
+        # against a real node.
+        self.token_chains = []
+        self.ledger_tips = {}
 
     def bump_generation(self):
         self.generation += 1

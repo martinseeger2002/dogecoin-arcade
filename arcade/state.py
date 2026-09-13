@@ -251,9 +251,13 @@ class Engine:
             P.SendAll: self._send_all,
             P.IssuanceFixed: self._issuance_fixed,
             P.IssuanceManaged: self._issuance_managed,
+            P.Grant: self._grant,
+            P.Revoke: self._revoke,
+            P.ChangeIssuer: self._change_issuer,
             P.ActivateFeature: self._activate_feature,
             P.DeactivateFeature: self._deactivate_feature,
             P.Alert: self._alert,
+            P.AnyData: self._any_data,
         }.get(type(message))
 
         if handler is None:
@@ -363,6 +367,105 @@ class Engine:
         """Type 54. No supply at creation; tokens arrive via grants (type 55)."""
         self._validate_issuance(msg)
         self._create_property(rtx, msg, managed=True, total=0)
+
+    # --- types 55, 56 and 70: managing a property ----------------------------
+
+    def _managed_property(self, property_id: int) -> Any:
+        """The property row, if it exists and is managed. Shared by 55 and 56."""
+        prop = self.get_property(property_id)
+        if prop is None:
+            raise InvalidTransaction(f"property {property_id} does not exist")
+        if not prop["managed"]:
+            raise InvalidTransaction(
+                f"property {property_id} is not managed; its supply was fixed at creation"
+            )
+        return prop
+
+    def _grant(self, rtx: ArcadeTransaction, msg: P.Grant) -> None:
+        """Type 55. tx.cpp:logicMath_GrantTokens (2158-2257).
+
+        Only the issuer may grant -- Omni also allows a delegate, which arrives
+        with types 73/74 in M6, so until then the issuer is the only authority.
+        The tokens go to the reference address when there is one and otherwise
+        to the sender (tx.cpp:672-675, "assume grant to self").
+        """
+        if not 0 < msg.amount <= MAX_AMOUNT:
+            raise InvalidTransaction(f"amount {msg.amount} out of range")
+        prop = self._managed_property(msg.property_id)
+        if rtx.sender != prop["issuer"]:
+            raise InvalidTransaction(
+                f"{rtx.sender} is not the issuer of property {msg.property_id} "
+                f"(issuer is {prop['issuer']})"
+            )
+        if msg.amount > MAX_AMOUNT - prop["total_tokens"]:
+            raise InvalidTransaction(
+                f"granting {msg.amount} would take property {msg.property_id} past "
+                f"the {MAX_AMOUNT} tokens that can ever exist"
+            )
+
+        receiver = rtx.reference or rtx.sender
+        self.credit(receiver, msg.property_id, msg.amount)
+        self.state.update(
+            "property", {"property_id": msg.property_id},
+            {"total_tokens": prop["total_tokens"] + msg.amount},
+        )
+
+    def _revoke(self, rtx: ArcadeTransaction, msg: P.Revoke) -> None:
+        """Type 56. tx.cpp:logicMath_RevokeTokens (2260-2326).
+
+        Anyone holding a managed property may destroy their own tokens; there is
+        no issuer check, exactly as in Omni. Non-fungible properties are refused.
+        """
+        if not 0 < msg.amount <= MAX_AMOUNT:
+            raise InvalidTransaction(f"amount {msg.amount} out of range")
+        prop = self._managed_property(msg.property_id)
+        if prop["property_type"] == PROPERTY_NONFUNGIBLE:
+            raise InvalidTransaction(f"property {msg.property_id} is non-fungible")
+
+        held = self.get_balance(rtx.sender, msg.property_id)["balance"]
+        if held < msg.amount:
+            raise InvalidTransaction(
+                f"insufficient balance: {rtx.sender} holds {held} of property "
+                f"{msg.property_id}, cannot revoke {msg.amount}"
+            )
+        self.debit(rtx.sender, msg.property_id, msg.amount)
+        self.state.update(
+            "property", {"property_id": msg.property_id},
+            {"total_tokens": prop["total_tokens"] - msg.amount},
+        )
+
+    def _change_issuer(self, rtx: ArcadeTransaction, msg: P.ChangeIssuer) -> None:
+        """Type 70. tx.cpp:logicMath_ChangeIssuer (2329-2390).
+
+        The reference address becomes the issuer. Works for fixed and managed
+        properties alike; Omni's crowdsale checks do not apply (D-008).
+        """
+        prop = self.get_property(msg.property_id)
+        if prop is None:
+            raise InvalidTransaction(f"property {msg.property_id} does not exist")
+        if prop["property_type"] == PROPERTY_NONFUNGIBLE:
+            raise InvalidTransaction(f"property {msg.property_id} is non-fungible")
+        if rtx.sender != prop["issuer"]:
+            raise InvalidTransaction(
+                f"{rtx.sender} is not the issuer of property {msg.property_id} "
+                f"(issuer is {prop['issuer']})"
+            )
+        if rtx.reference is None:
+            raise InvalidTransaction("change issuer has no reference (new issuer) address")
+        self.state.update(
+            "property", {"property_id": msg.property_id}, {"issuer": rtx.reference}
+        )
+
+    # --- type 200: any data ---------------------------------------------------
+
+    def _any_data(self, rtx: ArcadeTransaction, msg: P.AnyData) -> None:
+        """Type 200. tx.cpp:logicMath_AnyData (2735-2747): valid, changes nothing.
+
+        Every Messenger transaction is one of these, so when testnet stands in
+        for the ledger (D-016) the indexer walks through thousands of them. They
+        are recorded like any other transaction and touch no balance.
+        """
+        return None
 
     # --- system messages ------------------------------------------------------
 

@@ -277,3 +277,131 @@ def test_shutdown_reports_a_send_it_could_not_wait_out(tmp_path):
     assert state.begin_shutdown(grace=0.2) is False
     state.end_send()
     assert state.begin_shutdown(grace=0.2) is True
+
+
+# --- managed properties: grant, revoke, change issuer ------------------------
+
+
+def issue_managed(state, engine, sender=ALICE, height=1, name="Managed"):
+    msg = P.IssuanceManaged(
+        ecosystem=1, property_type=2, previous_property_id=0,
+        category="c", subcategory="s", name=name, url="", data="",
+    )
+    with state.block_context(height, f"h{height}", f"h{height-1}", height * 60, 1, 0):
+        return engine.process(make_tx(sender=sender, payload=msg.encode(), height=height))
+
+
+def apply(state, engine, payload, height, sender=ALICE, reference=BOB):
+    with state.block_context(height, f"h{height}", f"h{height-1}", height * 60, 1, 0):
+        return engine.process(make_tx(sender=sender, reference=reference,
+                                      payload=payload, height=height))
+
+
+def test_a_grant_creates_tokens_for_the_reference(engine):
+    state, eng = engine
+    issue_managed(state, eng)
+    result = apply(state, eng, P.Grant(property_id=3, amount=500).encode(), height=2)
+    assert result.valid, result.reason
+    assert eng.get_balance(BOB, 3)["balance"] == 500
+    assert eng.get_balance(ALICE, 3)["balance"] == 0
+    assert eng.get_property(3)["total_tokens"] == 500
+
+
+def test_a_grant_with_no_reference_goes_to_the_issuer(engine):
+    """tx.cpp:672-675 -- 'assume grant to self'."""
+    state, eng = engine
+    issue_managed(state, eng)
+    result = apply(state, eng, P.Grant(property_id=3, amount=7).encode(), height=2,
+                   reference=None)
+    assert result.valid, result.reason
+    assert eng.get_balance(ALICE, 3)["balance"] == 7
+
+
+def test_only_the_issuer_may_grant(engine):
+    state, eng = engine
+    issue_managed(state, eng)
+    result = apply(state, eng, P.Grant(property_id=3, amount=5).encode(), height=2,
+                   sender=BOB, reference=BOB)
+    assert not result.valid and "not the issuer" in result.reason
+    assert eng.get_balance(BOB, 3)["balance"] == 0
+    assert eng.get_property(3)["total_tokens"] == 0
+
+
+def test_a_fixed_property_cannot_be_granted(engine):
+    state, eng = engine
+    issue(state, eng, amount=100)
+    result = apply(state, eng, P.Grant(property_id=3, amount=5).encode(), height=2)
+    assert not result.valid and "not managed" in result.reason
+    assert eng.get_property(3)["total_tokens"] == 100
+
+
+def test_a_grant_cannot_exceed_the_largest_possible_supply(engine):
+    from arcade.state import MAX_AMOUNT
+    state, eng = engine
+    issue_managed(state, eng)
+    assert apply(state, eng, P.Grant(property_id=3, amount=MAX_AMOUNT - 1).encode(),
+                 height=2).valid
+    result = apply(state, eng, P.Grant(property_id=3, amount=2).encode(), height=3)
+    assert not result.valid and "can ever exist" in result.reason
+    assert eng.get_property(3)["total_tokens"] == MAX_AMOUNT - 1
+
+
+def test_a_holder_may_revoke_their_own_tokens(engine):
+    state, eng = engine
+    issue_managed(state, eng)
+    apply(state, eng, P.Grant(property_id=3, amount=500).encode(), height=2)
+    # Bob holds them and is not the issuer; Omni lets any holder destroy.
+    result = apply(state, eng, P.Revoke(property_id=3, amount=200).encode(), height=3,
+                   sender=BOB, reference=None)
+    assert result.valid, result.reason
+    assert eng.get_balance(BOB, 3)["balance"] == 300
+    assert eng.get_property(3)["total_tokens"] == 300
+
+
+def test_revoking_more_than_held_changes_nothing(engine):
+    state, eng = engine
+    issue_managed(state, eng)
+    apply(state, eng, P.Grant(property_id=3, amount=10).encode(), height=2)
+    result = apply(state, eng, P.Revoke(property_id=3, amount=11).encode(), height=3,
+                   sender=BOB, reference=None)
+    assert not result.valid and "insufficient" in result.reason
+    assert eng.get_balance(BOB, 3)["balance"] == 10
+    assert eng.get_property(3)["total_tokens"] == 10
+
+
+def test_change_issuer_hands_control_to_the_reference(engine):
+    state, eng = engine
+    issue_managed(state, eng)
+    result = apply(state, eng, P.ChangeIssuer(property_id=3).encode(), height=2)
+    assert result.valid, result.reason
+    assert eng.get_property(3)["issuer"] == BOB
+    # The old issuer can no longer grant; the new one can.
+    assert not apply(state, eng, P.Grant(property_id=3, amount=1).encode(), height=3).valid
+    assert apply(state, eng, P.Grant(property_id=3, amount=1).encode(), height=4,
+                 sender=BOB, reference=ALICE).valid
+    assert eng.get_balance(ALICE, 3)["balance"] == 1
+
+
+def test_change_issuer_needs_a_reference_and_the_issuer(engine):
+    state, eng = engine
+    issue(state, eng, amount=100)
+    assert not apply(state, eng, P.ChangeIssuer(property_id=3).encode(), height=2,
+                     reference=None).valid
+    assert not apply(state, eng, P.ChangeIssuer(property_id=3).encode(), height=3,
+                     sender=BOB, reference=BOB).valid
+    assert eng.get_property(3)["issuer"] == ALICE
+
+
+def test_grant_and_change_issuer_roll_back_with_their_block(engine):
+    """Every mutation these add must be in the undo journal."""
+    state, eng = engine
+    issue_managed(state, eng)
+    apply(state, eng, P.Grant(property_id=3, amount=50).encode(), height=2)
+    apply(state, eng, P.ChangeIssuer(property_id=3).encode(), height=3)
+    assert eng.get_property(3)["issuer"] == BOB
+    state.rollback_block(3)
+    assert eng.get_property(3)["issuer"] == ALICE
+    assert eng.get_property(3)["total_tokens"] == 50
+    state.rollback_block(2)
+    assert eng.get_property(3)["total_tokens"] == 0
+    assert eng.get_balance(BOB, 3)["balance"] == 0

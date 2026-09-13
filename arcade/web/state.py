@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import NETWORKS, Params, load_rpc_credentials, verify_connected_chain
+from ..ledger import LedgerIndex
 from ..messaging.derive import (
     DerivationError, derive_identity, resolve_identity_address,
 )
@@ -137,6 +138,19 @@ class AppState:
     #: which is the failure the block watcher exists to prevent.
     tips: dict = field(default_factory=dict)
     last_checked: dict = field(default_factory=dict)
+
+    #: Each chain's tip as last seen by its token indexer, by network name and
+    #: separately from `tips`: testnet is read by the public-board scanner too,
+    #: and the one that looks first must not hide a new block from the other.
+    ledger_tips: dict = field(default_factory=dict)
+    _ledger_indexes: dict = field(default_factory=dict)
+    _token_chain: str | None = None
+    #: Token transactions broadcast from here and not yet seen in an indexed
+    #: block, so the page can say "on its way" instead of showing nothing.
+    pending_tokens: list = field(default_factory=list)
+    #: Token transactions prepared and shown but not yet confirmed, by txid,
+    #: so that the one confirmed is exactly the one that was shown.
+    prepared_tokens: dict = field(default_factory=dict)
 
     #: Incremented whenever a scan finds something a page would show. Open pages
     #: poll this and refresh when it moves; a block with nothing in it for us
@@ -367,6 +381,68 @@ class AppState:
 
     def store(self) -> MessageStore:
         return MessageStore(self.store_path)
+
+    # --- the token indexes ----------------------------------------------------
+    #
+    # Tokens are indexed on BOTH chains, always. Mainnet is the ledger (D-012)
+    # and testnet is where anyone can try tokens for nothing (D-016); the
+    # Tokens page shows one at a time and the chain tag on it switches. Both
+    # indexes run whether or not they are being looked at, so the switch shows
+    # a current index rather than one that starts catching up when clicked.
+
+    @property
+    def token_chains(self) -> list[ChainContext]:
+        """The chains tokens are indexed on: the ledger first, then testnet."""
+        chains = [self.ledger]
+        if self.messaging.network != self.ledger.network:
+            chains.append(self.messaging)
+        return chains
+
+    @property
+    def token_chain_path(self) -> Path:
+        return self.home / "tokens-chain"
+
+    @property
+    def token_chain(self) -> ChainContext:
+        """The chain the Tokens page is showing. Mainnet unless switched.
+
+        The choice is kept in a file so that it survives a restart: someone who
+        switched to testnet to try things should not find themselves looking
+        at mainnet again after an update.
+        """
+        if self._token_chain is None:
+            try:
+                self._token_chain = self.token_chain_path.read_text().strip()
+            except OSError:
+                self._token_chain = self.ledger.network
+        for chain in self.token_chains:
+            if chain.network == self._token_chain:
+                return chain
+        return self.ledger
+
+    def switch_token_chain(self, network: str) -> ChainContext:
+        for chain in self.token_chains:
+            if chain.network == network:
+                self._token_chain = network
+                try:
+                    self.token_chain_path.write_text(network + "\n")
+                except OSError:
+                    pass                    # remembered for this run only
+                return chain
+        raise ValueError(f"tokens are not indexed on {network!r}")
+
+    def token_index(self, chain: ChainContext) -> LedgerIndex:
+        """The token index for `chain`, built on first use.
+
+        Holds no connection of its own (see arcade.ledger), so sharing one
+        across the watcher thread and request threads is safe.
+        """
+        index = self._ledger_indexes.get(chain.network)
+        if index is None:
+            index = LedgerIndex(self.home / f"{chain.network}-ledger.sqlite",
+                                chain.params, chain.rpc)
+            self._ledger_indexes[chain.network] = index
+        return index
 
     # --- identity, derived from the wallet ------------------------------------
     #

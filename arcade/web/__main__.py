@@ -33,7 +33,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--msg-datadir", help="testnet datadir, to read its .cookie")
     parser.add_argument("--msg-conf", help="testnet config with rpcuser/rpcpassword")
     parser.add_argument("--msg-marker", help="Class B marker address on testnet")
-    parser.add_argument("--ledger-network", default="main", choices=["main", "doge-main"],
+    # Tokens are also indexed on the messaging chain, and the Tokens page can
+    # switch to it (D-016); the ledger itself is mainnet, always.
+    parser.add_argument("--ledger-network", default="main",
+                        choices=["main", "doge-main"],
                         help="chain for tokens, NFTs and PEP")
     parser.add_argument("--ledger-datadir", help="mainnet datadir, to read its .cookie")
     parser.add_argument("--ledger-conf", help="mainnet config with rpcuser/rpcpassword")

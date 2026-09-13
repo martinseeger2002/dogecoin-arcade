@@ -84,6 +84,12 @@ POST_ROUTES = [
     ("/wallet/receive", {"which": "messaging"}),
     ("/publish-key", {}),
     ("/contacts/save", {"name": "Forged"}),
+    ("/tokens/create", {"name": "Forged", "supply": "1"}),
+    ("/tokens/send", {"property_id": "1", "amount": "1"}),
+    ("/tokens/1/grant", {"amount": "1"}),
+    ("/tokens/1/revoke", {"amount": "1"}),
+    ("/tokens/1/issuer", {"recipient": "x"}),
+    ("/tokens/chain", {"chain": "regtest"}),
 ]
 
 
@@ -2166,3 +2172,37 @@ def test_the_reset_dialog_does_not_promise_a_row_it_may_not_keep(client):
     assert "checks the chain rather than that" in body, (
         "and say what makes it hold, so the claim can be checked"
     )
+
+
+# --- the tokens chain switch --------------------------------------------------
+
+
+def test_the_chain_tag_switches_tokens_between_mainnet_and_testnet(client, tmp_path):
+    """Tokens show on mainnet by default; the tag on the page switches to testnet.
+
+    The choice is written to a file so it survives a restart. Asserts what the
+    served page says and what a fresh AppState reads back, not that a variable
+    was set.
+    """
+    app, state = client
+    page = app.get("/tokens").text
+    assert 'name="chain" value="regtest"' in page, "the tag offers the other chain"
+    assert '<button type="submit" class="tag mainnet switch"' in page
+    assert "Fungible tokens on mainnet" in page
+
+    response = app.post("/tokens/chain", data={"chain": "regtest", "csrf_token": state.csrf_token},
+                        follow_redirects=False)
+    assert response.status_code == 303 and response.headers["location"] == "/tokens"
+    page = app.get("/tokens").text
+    assert '<button type="submit" class="tag testnet switch"' in page
+    assert 'name="chain" value="main"' in page
+    assert "Fungible tokens on testnet" in page
+    assert (state.home / "tokens-chain").read_text().strip() == "regtest"
+
+    again = AppState(home=state.home, messaging=state.messaging, ledger=state.ledger)
+    assert again.token_chain.network == "regtest", "the choice survives a restart"
+
+    app.post("/tokens/chain", data={"chain": "doge-main", "csrf_token": state.csrf_token},
+             follow_redirects=False)
+    assert state.token_chain.network == "regtest", "a chain tokens are not on is refused"
+    assert "not indexed on" in app.get("/tokens").text

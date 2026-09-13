@@ -87,6 +87,40 @@ class BlockWatcher:
         # The public board's mainnet half needs its own scan, and a public-only
         # scanner decrypts nothing, so it is safe there (D-014).
         self._check(self.state.ledger, public_only=True)
+        self._sync_ledgers()
+
+    def _sync_ledgers(self) -> None:
+        """Keep the token indexes in step with their chains.
+
+        Each runs when its tip moves or the index is behind it, a bounded
+        number of blocks at a time, so a fresh install catches up over
+        successive ticks without ever holding the node for minutes. A stopped
+        index is retried only when a new block arrives: the block it stopped
+        on will not read differently five seconds later.
+        """
+        for chain in self.state.token_chains:
+            index = self.state.token_index(chain)
+            if not index.enabled:
+                continue
+            try:
+                with chain.rpc() as rpc:
+                    tip = rpc.get_block_count()
+            except Exception:
+                continue
+            moved = tip != self.state.ledger_tips.get(chain.network)
+            self.state.ledger_tips[chain.network] = tip
+            height = index.indexed_height()
+            behind = height is None or height < tip
+            if not moved and (not behind or index.stopped is not None):
+                continue
+
+            before = (index.stats.get("candidates", 0), index.stopped)
+            result = index.sync(max_blocks=BLOCKS_PER_PASS)
+            after = (index.stats.get("candidates", 0), index.stopped)
+            # Only something a token page would show bumps the generation: a
+            # transaction indexed, or the index stopping or resuming.
+            if after != before or (result is not None and result.reorged):
+                self.state.bump_generation()
 
     _repaired = False
 
