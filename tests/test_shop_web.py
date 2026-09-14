@@ -7,6 +7,7 @@ import sys
 
 import pytest
 
+from arcade import approvals as approvalslib
 from arcade import swap as S
 from arcade.messaging import api
 from arcade.messaging.keys import Identity, fingerprint_of
@@ -337,6 +338,19 @@ def test_the_shopkeeper_sells_what_the_shop_says(shop):
     assert signed["txid"] == decode(node.sent[0])["txid"]
     assert _SIGNED[node.sent[0]] == {BUYER, SELLER}
     assert state.offers.get(offer["id"])["status"] == "sent"
+
+    # The sale is in the approvals book, already done: nobody was asked, but
+    # Approvals is where a person looks to see what this wallet signed (D-029).
+    written = state.approvals.recent()
+    assert len(written) == 1
+    sale = written[0]
+    assert sale["origin"] == "shop" and sale["status"] == "sent"
+    assert sale["kind"] == "swap" and sale["txid"] == signed["txid"]
+    assert sale["toaddress"] == BUYER and sale["fromaddress"] == SELLER
+    assert sale["page"] == SHOP and sale["decided"]
+    assert approvalslib.summary(sale) == "sold 100 Arcade Test for 2.00000000 coins"
+    assert state.approvals.pending() == [], "a sale is not waiting for anybody"
+
     # Asking again gets a refusal, not a second sale.
     _ask(state, buyer, {"swap": "sign", "swapv": S.PROTOCOL, "offer": offer["id"],
                         "hex": half}, 8)
@@ -363,3 +377,30 @@ def test_the_shopkeeper_keeps_out_of_mainnet_and_survives_a_dead_node(shop, monk
     assert keeper.tick() == 0, "not raised"
     monkeypatch.setattr(type(state.messaging), "rpc", lambda self: node)
     assert keeper.tick() == 1, "the order is still there for the next tick"
+
+
+def test_a_shopkeeper_does_not_answer_an_answer(shop):
+    """Two shops that talk to each other must not talk for ever.
+
+    An answer has the same "swap" value as the question it answers, so a
+    shopkeeper that reads every `{"swap": ...}` as an order answers the other
+    shop's refusals, which are refused in turn: one message a block out of
+    each wallet until a node is stopped. It happened on testnet (D-027).
+    """
+    state, index, node, buyer, answers, keeper = shop
+    keeper.tick()                                  # sets the cursor
+    _ask(state, buyer, {"swap": "offer", "swapv": S.PROTOCOL, "re": "q0", "ok": False,
+                        "error": "no such inscription on this node"}, 1)
+    _ask(state, buyer, {"swap": "sign", "swapv": S.PROTOCOL, "re": "q1", "ok": True,
+                        "offer": "cd88cd26ee2eccab", "txid": "d" * 64}, 2)
+    assert keeper.tick() == 0 and answers == [], "an answer is not an order"
+
+    # A question with neither `re` nor `ok` is still answered.
+    _ask(state, buyer, {"swap": "offer", "swapv": S.PROTOCOL, "shop": SHOP,
+                        "listing": 0, "buyer": BUYER}, 3)
+    assert keeper.tick() == 1
+    _, offered = _answers(answers, buyer)[0]
+    assert offered["ok"] and offered["re"] == "q3"
+    # And the answer it just made would not move it, were it sent back.
+    _ask(state, buyer, offered, 4)
+    assert keeper.tick() == 0 and len(answers) == 1

@@ -130,6 +130,10 @@ SECTIONS: list[dict] = [
              "checks the buyer's half against exactly that offer, and only "
              "then signs. It cannot sell what the JSON does not list, or "
              "from a shop this wallet did not create and hold."),
+            ("It answers orders, not answers: an answer carries the txid it "
+             "answers and whether it worked, an order carries neither. Two "
+             "shopkeepers that could not tell them apart would refuse each "
+             "other's refusals for ever, a message a block from each."),
             ("The buyer is asked once, in the approvals pop-up, with the "
              "transaction as built. Approve signs the buyer's half only."),
             ("A page this wallet created and still holds is your own words: "
@@ -152,6 +156,11 @@ SECTIONS: list[dict] = [
             ("Opens in front of the inscription that asked, the moment it "
              "asks; shown on every other page, and on the phone over the "
              "remote tunnel. The page cannot see the pop-up or press it."),
+            ("What was never asked is still written down: a page of your own "
+             "and a shop of your own send without asking, and both are "
+             "written to the same queue as they go, already decided, so one "
+             "page shows everything this wallet signed for something that is "
+             "not a person."),
             ("A request nobody answers within an hour expires; no more than "
              "twenty wait at once."),
         ],

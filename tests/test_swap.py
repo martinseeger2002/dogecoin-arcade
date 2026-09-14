@@ -335,8 +335,10 @@ def test_the_buyer_signs_half_and_the_seller_completes_it(world):
     assert built.outputs[2]["is_change"] and built.outputs[2]["where"] == BUYER
     assert _SIGNED[built.hex] == {BUYER}, "signed by the buyer only"
 
+    assert seller.locked == {("1" * 64, 2)}, "held while the offer is open"
     txid = S.countersign(seller, index, offers, offers.get(offer["id"]), built.hex)
     assert seller.sent == [built.hex]
+    assert seller.locked == set(), "a sold output is not left locked (D-027)"
     assert offers.get(offer["id"])["status"] == "sent"
     assert offers.get(offer["id"])["txid"] == txid == decode(built.hex)["txid"]
     with pytest.raises(S.SwapError, match="that offer is sent"):

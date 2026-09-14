@@ -177,7 +177,9 @@
 </div>
 {% endif %}
 
-<h2>Yours{% if my_tag %} &mdash; @{{ my_tag }}{% endif %}</h2>
+<h2>Yours{% if my_tag %} &mdash; @{{ my_tag }}{% endif %}
+  {% if my_total > mine|length %}<span class="muted" style="text-transform:none;letter-spacing:0">
+    &mdash; newest {{ mine|length }} of {{ "{:,}".format(my_total) }}</span>{% endif %}</h2>
 {% if not mine %}
   <p class="muted">Nothing yet on {{ chain.label }}.</p>
 {% else %}

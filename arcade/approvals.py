@@ -78,6 +78,15 @@ MAX_TEXT = 200
 
 STATUSES = ("pending", "sent", "denied", "failed", "expired")
 
+#: Who asked. "page" is an inscribed page, "rpc" a program on the bot RPC,
+#: "own page" a page this wallet made and holds, which may send without being
+#: asked -- and "shop" is a shop of your own selling what its inscription
+#: lists, which the shopkeeper signs without asking either (D-024). The last
+#: two are never pending: they are written down after the fact, so that one
+#: page shows everything this wallet signed for something other than a
+#: person at the keyboard.
+ORIGINS = ("page", "rpc", "own page", "shop")
+
 
 class RequestError(ValueError):
     """The request cannot be filed as asked -- a bad address, no such token."""
@@ -147,32 +156,60 @@ class Requests:
              propertyid: int | None = None, propertyname: str = "",
              inscription: str = "", number: int | None = None,
              label: str = "", note: str = "", offer: dict | None = None,
-             page: str = "", peer: str = "") -> str:
+             page: str = "", peer: str = "", status: str = "pending",
+             txid: str = "", error: str = "") -> str:
         """Put a request in the queue; returns its id.
 
         The caller's text is cut to length rather than refused: a note is for
         the person deciding, and a note that is too long still says something.
+
+        A `status` other than pending files something already done (see
+        `record`): it is not waiting for anybody, so the cap on how many may
+        wait does not apply to it and it is decided the moment it is written.
         """
         if kind not in KINDS:
             raise RequestError(f"kind must be one of {', '.join(KINDS)}")
+        if status not in STATUSES:
+            raise RequestError(f"status must be one of {', '.join(STATUSES)}")
+        waits = status == "pending"
         request_id = secrets.token_hex(8)
+        now = time.time()
         with self._open() as conn:
             self._expire(conn)
-            waiting = conn.execute(
-                "SELECT COUNT(*) FROM request WHERE status = 'pending'").fetchone()[0]
-            if waiting >= MAX_PENDING:
-                raise RequestError(
-                    f"{waiting} requests are already waiting for an answer; "
-                    "try again once the wallet's owner has looked at them")
+            if waits:
+                waiting = conn.execute(
+                    "SELECT COUNT(*) FROM request WHERE status = 'pending'").fetchone()[0]
+                if waiting >= MAX_PENDING:
+                    raise RequestError(
+                        f"{waiting} requests are already waiting for an answer; "
+                        "try again once the wallet's owner has looked at them")
             conn.execute(
                 "INSERT INTO request(id, network, kind, origin, label, note, fromaddress, "
                 "toaddress, totag, units, amount, propertyid, propertyname, inscription, "
-                "number, created, offer, page, peer) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "number, created, offer, page, peer, status, decided, txid, error) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (request_id, network, kind, origin, _text(label), _text(note),
                  fromaddress, toaddress, totag, int(units), amount, propertyid,
-                 propertyname, inscription, number, time.time(),
-                 json.dumps(offer) if offer else "", page, peer))
+                 propertyname, inscription, number, now,
+                 json.dumps(offer) if offer else "", page, peer,
+                 status, None if waits else now, txid, _text(error, 500)))
         return request_id
+
+    def record(self, network: str, kind: str, origin: str, toaddress: str, *,
+               status: str = "sent", txid: str = "", error: str = "",
+               **fields: Any) -> str:
+        """Write down a send this wallet made without being asked.
+
+        A shop sells what its inscription lists and the shopkeeper signs it;
+        nobody is asked, and nothing here can be refused, because it has
+        already happened. It is written to the same queue so that Approvals
+        is one place to see everything a page or a shop moved, and it skips
+        the MAX_PENDING check for the same reason -- it is not waiting.
+        """
+        if status == "pending":
+            raise RequestError("a record is of something already done")
+        return self.file(network, kind, origin, toaddress, status=status,
+                         txid=txid, error=error, **fields)
 
     def get(self, request_id: str) -> dict | None:
         with self._open() as conn:
@@ -271,6 +308,9 @@ def summary(row: dict) -> str:
     if row["kind"] == "swap":
         from .swap import describe_leg
         offer = json.loads(row["offer"])
+        if row["origin"] == "shop":
+            # The shop's own side: it hands over `give` and is paid `take`.
+            return f"sold {describe_leg(offer['give'])} for {describe_leg(offer['take'])}"
         return f"swap {describe_leg(offer['take'])} for {describe_leg(offer['give'])}"
     return f"inscription #{row['number']} to {to}"
 

@@ -321,7 +321,7 @@ class LedgerIndex:
 
     def inscriptions(self, owner: str | None = None, creator: str | None = None,
                      limit: int = 100, after: int = -1,
-                     offset: int = 0) -> list[dict]:
+                     offset: int = 0, owners: list[str] | None = None) -> list[dict]:
         """One page, newest first. Never the content: a listing of a hundred
         files would be a hundred files.
 
@@ -333,6 +333,13 @@ class LedgerIndex:
         where, args = [], []
         if owner:
             where.append("i.owner = ?"); args.append(owner)
+        if owners is not None:
+            # A wallet is many addresses: what it holds is asked for in one
+            # query, not page by page (D-028).
+            if not owners:
+                return []
+            where.append("i.owner IN (%s)" % ",".join("?" * len(owners)))
+            args.extend(owners)
         if creator:
             where.append("i.creator = ?"); args.append(creator)
         if after >= 0:
@@ -370,11 +377,17 @@ class LedgerIndex:
             return row["content_type"], bytes(row["content"])
 
     def inscription_count(self, owner: str | None = None,
-                          creator: str | None = None) -> int:
+                          creator: str | None = None,
+                          owners: list[str] | None = None) -> int:
         sql, args = "SELECT COUNT(*) FROM inscription", []
         where = []
         if owner:
             where.append("owner = ?"); args.append(owner)
+        if owners is not None:
+            if not owners:
+                return 0
+            where.append("owner IN (%s)" % ",".join("?" * len(owners)))
+            args.extend(owners)
         if creator:
             where.append("creator = ?"); args.append(creator)
         if where:

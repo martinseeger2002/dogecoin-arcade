@@ -2,7 +2,7 @@
 {% block title %}Approvals · DogecoinArcade{% endblock %}
 {% block body %}
 {% macro who(r) -%}
-  {%- if r.origin == 'page' %}an inscribed page{% elif r.origin == 'own page' %}a page of your own, which sends without asking{% else %}a program on the bot RPC{% endif -%}
+  {%- if r.origin == 'page' %}an inscribed page{% elif r.origin == 'own page' %}a page of your own, which sends without asking{% elif r.origin == 'shop' %}a shop of your own, which sells what its inscription lists without asking{% else %}a program on the bot RPC{% endif -%}
   {%- if r.label %} calling itself <q>{{ r.label }}</q>{% endif -%}
 {%- endmacro %}
 {% macro age(seconds) -%}
@@ -11,8 +11,10 @@
 {%- endmacro %}
 <h1>Approvals</h1>
 <p class="sub">Sends that a page or a program asked this wallet for. Nothing
-  here has been spent: each one waits for you to look at the transaction it
-  would be and say yes or no.</p>
+  waiting has been spent: each one waits for you to look at the transaction
+  it would be and say yes or no. Below them is what has already gone,
+  including the sales your own shops made on their own &mdash; those were
+  never asked, because you said yes to them when you inscribed the shop.</p>
 
 <h2>Waiting{% if pending %} &mdash; {{ pending|length }}{% endif %}</h2>
 {% if not pending %}

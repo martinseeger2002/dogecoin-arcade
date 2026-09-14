@@ -144,6 +144,7 @@ class Shopkeeper:
                 txid = swaplib.countersign(rpc, index, offers, offer,
                                            str(question.get("hex") or ""))
                 reply.update(ok=True, txid=txid)
+                _write_it_down(state, chain, offer, txid)
                 state.bump_generation()
         except (swaplib.SwapError, ValueError) as exc:
             reply["error"] = str(exc)
@@ -166,6 +167,25 @@ class Shopkeeper:
         return sender.broadcast(prepared)
 
 
+def _write_it_down(state: Any, chain: Any, offer: dict, txid: str) -> None:
+    """A sale the shopkeeper made goes in the approvals book, already done.
+
+    Nobody was asked -- the owner said yes when they inscribed the shop
+    (D-024) -- but Approvals is where a person looks to see what this wallet
+    signed for something other than a person, so a sale belongs there beside
+    the sends a page asked for. It is written after the broadcast: a sale
+    that happened and was not written down is worse than the other way round,
+    and a book that cannot be written must not undo a sale (D-029).
+    """
+    try:
+        state.approvals.record(
+            chain.network, "swap", "shop", offer["buyer"], txid=txid,
+            fromaddress=offer["seller"], offer=offer, page=offer["shop"],
+            peer=offer.get("buyer_pubkey", ""))
+    except Exception:
+        log.warning("a sale was made but could not be written down", exc_info=True)
+
+
 def _swap_message(row: Any) -> dict | None:
     """The question in an inbox row, if it is a swap question at all."""
     # The stored body is the message after its stamp (scanner.py); the
@@ -175,5 +195,12 @@ def _swap_message(row: Any) -> dict | None:
     except (ValueError, UnicodeDecodeError):
         return None
     if not isinstance(data, dict) or data.get("swap") not in ("offer", "sign"):
+        return None
+    if "re" in data or "ok" in data:
+        # An answer, not an order. Answers carry `re` (the txid they answer)
+        # and `ok`; a question carries neither. Without this, two shopkeepers
+        # answer each other's answers for ever -- each refusal is read as a
+        # fresh order and refused in turn, a message a block out of each
+        # wallet until somebody stops a node (D-027).
         return None
     return data

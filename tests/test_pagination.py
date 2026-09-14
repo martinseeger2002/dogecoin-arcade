@@ -96,6 +96,17 @@ def test_inscriptions_are_paged_by_number(tmp_path):
     index = LedgerIndex(path, NETWORKS["regtest"], rpc_factory=lambda: None)
     assert index.inscription_count() == 50
 
+    # Yours is asked of the whole index, not filtered out of the page on
+    # show: the wallet's own pieces are usually the old ones (D-028).
+    db = Database(path)
+    db.conn.execute("UPDATE inscription SET owner='nMine' WHERE number IN (0, 1, 49)")
+    db.conn.commit()
+    db.close()
+    index = LedgerIndex(path, NETWORKS["regtest"], rpc_factory=lambda: None)
+    assert index.inscription_count(owners=["nMine", "nElse"]) == 3
+    assert [r["number"] for r in index.inscriptions(owners=["nMine"], limit=24)] == [49, 1, 0]
+    assert index.inscriptions(owners=[]) == [] and index.inscription_count(owners=[]) == 0
+
     first = index.inscriptions(limit=24, offset=0)
     second = index.inscriptions(limit=24, offset=24)
     last = index.inscriptions(limit=24, offset=48)

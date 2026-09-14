@@ -2149,7 +2149,7 @@ def create_app(state: AppState) -> FastAPI:
             "index": index.status(node_tip=state.ledger_tips.get(chain.network)),
             "inscriptions": [], "mine": [], "unfinished": [], "owned": set(),
             "funded": [], "error": error, "plan": plan, "node_error": None,
-            "my_tag": None, "tags": {},
+            "my_tag": None, "tags": {}, "my_total": 0,
             "page": page, "pages": 1, "per_page": PAGE_INSCRIPTIONS, "total": 0,
         }
         try:
@@ -2172,7 +2172,17 @@ def create_app(state: AppState) -> FastAPI:
             data["node_error"] = str(exc)
             owned = set()
         data["owned"] = owned
-        data["mine"] = [row for row in data["inscriptions"] if row["owner"] in owned]
+        # What this wallet holds is asked of the whole index, not filtered out
+        # of the page on show: once there were more than a page of
+        # inscriptions, everything of yours was older than page one and Yours
+        # said "nothing yet" (D-028).
+        try:
+            addresses = sorted(owned)
+            data["my_total"] = index.inscription_count(owners=addresses)
+            data["mine"] = index.inscriptions(owners=addresses,
+                                              limit=PAGE_INSCRIPTIONS)
+        except Exception as exc:
+            data["node_error"] = data["node_error"] or f"the index could not be read: {exc}"
         senders = {row["owner"] for row in data["inscriptions"]}
         senders |= {row["creator"] for row in data["inscriptions"]}
         try:

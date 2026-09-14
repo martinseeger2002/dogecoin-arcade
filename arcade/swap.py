@@ -610,6 +610,7 @@ def countersign(rpc: Any, index: Any, offers: Offers, offer: dict, hex_: str) ->
                         f"signed: {signed.get('errors')}")
     txid = str(rpc.call("sendrawtransaction", signed["hex"]))
     offers.close(offer["id"], "sent", txid=txid)
+    _unlock(rpc, offer)     # the lock has done its job; the outpoint is spent
     return txid
 
 
