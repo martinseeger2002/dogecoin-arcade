@@ -28,6 +28,7 @@ from .envelope import (
     EnvelopeError,
     Header,
     open_ciphertext,
+    TYPE_API,
     TYPE_CHUNK,
     TYPE_KEY_ANNOUNCE,
     TYPE_SINGLE,
@@ -303,7 +304,7 @@ class Scanner:
                 result.announcements += 1
                 continue
 
-            if header.type in (TYPE_SINGLE, TYPE_CHUNK):
+            if header.type in (TYPE_SINGLE, TYPE_CHUNK, TYPE_API):
                 self.store.add_candidate(
                     atx.txid, height, position, block_time, atx.sender, body,
                     header.type,
@@ -347,10 +348,22 @@ class Scanner:
                 self.store.mark_opened(row["txid"])
                 continue
 
-            self._store_message(
-                None, row["txid"], row["txid"], row["height"], row["block_time"],
-                row["sender_addr"], sender_pk, me, plaintext,
-            )
+            if header.type == TYPE_API:
+                # Addressed to a program, not to a person. It never reaches the
+                # conversation: a chat full of machine chatter the reader cannot
+                # act on is worse than no chat at all.
+                from .api import read_stamp
+                protocol, fingerprint, body = read_stamp(plaintext)
+                self.store.add_api_message(
+                    self.params.name, row["txid"], row["height"],
+                    row["block_time"], row["sender_addr"], sender_pk, me,
+                    body, protocol=protocol, fingerprint=fingerprint)
+            else:
+                self._store_message(
+                    None, row["txid"], row["txid"], row["height"],
+                    row["block_time"], row["sender_addr"], sender_pk, me,
+                    plaintext,
+                )
             opened += 1
             self.store.mark_opened(row["txid"])
         return opened

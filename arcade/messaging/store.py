@@ -139,6 +139,31 @@ CREATE TABLE IF NOT EXISTS attachment (
 -- a node the moment it was mined, and is stored in the clear because that is
 -- what it already is. Kept per network, because the same channel name on
 -- testnet and on mainnet is two different rooms with two different costs.
+-- Node-to-node API messages. A separate table from `message` on purpose: these
+-- are addressed to a program, not to a person, and putting them in the
+-- conversation would fill somebody's chat with machine chatter they cannot read
+-- and did not ask for. Same encryption, same chain, different destination.
+CREATE TABLE IF NOT EXISTS api_message (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    network       TEXT    NOT NULL,
+    txid          TEXT    NOT NULL,
+    height        INTEGER NOT NULL,
+    block_time    INTEGER NOT NULL,
+    sender_addr   TEXT    NOT NULL DEFAULT '',
+    sender_pubkey BLOB    NOT NULL,
+    recipient_fp  TEXT    NOT NULL,
+    body          BLOB    NOT NULL,
+    -- What API the sender was speaking. Kept rather than checked once, so a
+    -- program can decide for itself what to do about a mismatch: refuse, warn,
+    -- or carry on because the command it cares about has not changed.
+    protocol      INTEGER NOT NULL DEFAULT 0,
+    fingerprint   BLOB    NOT NULL DEFAULT x'',
+    mine          INTEGER NOT NULL DEFAULT 0,
+    read_at       INTEGER,
+    UNIQUE (txid, recipient_fp)
+);
+CREATE INDEX IF NOT EXISTS api_message_time ON api_message(id DESC);
+
 CREATE TABLE IF NOT EXISTS group_post (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     network    TEXT NOT NULL,
@@ -1051,6 +1076,51 @@ class MessageStore:
             stored = ""
         found = [t for t in stored.split(",") if t]
         return found or ([fallback] if fallback else [])
+
+    # --- node to node ---------------------------------------------------------
+
+    def add_api_message(self, network: str, txid: str, height: int,
+                        block_time: int, sender_addr: str, sender_pubkey: bytes,
+                        recipient_fp: str, body: bytes, mine: bool = False,
+                        protocol: int = 0, fingerprint: bytes = b"") -> int:
+        cur = self.conn.execute(
+            "INSERT OR IGNORE INTO api_message"
+            "(network,txid,height,block_time,sender_addr,sender_pubkey,"
+            "recipient_fp,body,mine,protocol,fingerprint) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (network, txid, height, block_time, sender_addr, sender_pubkey,
+             recipient_fp, body, 1 if mine else 0, protocol, fingerprint))
+        return cur.lastrowid or 0
+
+    def api_messages(self, recipient_fp: str, network: str | None = None,
+                     after_id: int = 0, limit: int = 50,
+                     unread_only: bool = False) -> list[sqlite3.Row]:
+        """Messages addressed to this node, oldest first.
+
+        `after_id` rather than a timestamp: a program reading a queue needs a
+        cursor it can store and resume from exactly, and two messages can share
+        a block time.
+        """
+        sql = ("SELECT * FROM api_message WHERE recipient_fp=? AND id>? "
+               "AND mine=0")
+        args: list[Any] = [recipient_fp, after_id]
+        if network is not None:
+            sql += " AND network=?"
+            args.append(network)
+        if unread_only:
+            sql += " AND read_at IS NULL"
+        sql += " ORDER BY id LIMIT ?"
+        args.append(max(1, min(limit, 500)))
+        return list(self.conn.execute(sql, args))
+
+    def mark_api_read(self, ids: list[int]) -> int:
+        if not ids:
+            return 0
+        marks = ",".join("?" * len(ids))
+        cur = self.conn.execute(
+            f"UPDATE api_message SET read_at=? WHERE id IN ({marks}) "
+            f"AND read_at IS NULL", [int(time.time()), *ids])
+        return cur.rowcount
 
     def unconfirmed_posts(self, network: str | None = None) -> list[sqlite3.Row]:
         """Posts of our own with no block yet -- height 0 means unconfirmed.

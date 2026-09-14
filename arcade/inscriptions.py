@@ -66,10 +66,13 @@ MANIFEST_FIXED_LEN = 39
 MAX_CONTENT_TYPE = 255
 MAX_JSON = 65_535
 
-#: A ceiling, not a judgement. Nothing in the format stops a larger file; this
-#: is the point past which the cost stops being something anybody types by
-#: accident. At 7,646 bytes a transaction, 5 MB is ~690 transactions.
-MAX_CONTENT = 5 * 1024 * 1024
+#: There is no policy ceiling on an inscription: what it costs is the creator's
+#: to decide, and the interface shows that cost before anything is spent. What
+#: remains is arithmetic. The countdown field is two bytes, so a set is at most
+#: 65,536 chunks -- about 498 MB, which is some 99,000 coins and seven hours of
+#: blocks at one chunk a transaction. Nothing anybody reaches; everything short
+#: of it is allowed.
+MAX_CHUNKS = 0x10000
 
 
 class InscriptionError(Exception):
@@ -226,10 +229,6 @@ def plan(content: bytes, content_type: str, json_text: str = "",
 
     if not content:
         raise InscriptionError("there is nothing to inscribe.")
-    if len(content) > MAX_CONTENT:
-        raise InscriptionError(
-            f"that file is {len(content) / 1_048_576:.1f} MB and an inscription "
-            f"is limited to {MAX_CONTENT // 1_048_576} MB here.")
     json_text = validate_json(json_text)
     inscription_id = inscription_id or secrets.token_bytes(8)
 
@@ -242,6 +241,12 @@ def plan(content: bytes, content_type: str, json_text: str = "",
 
     stream = manifest + content
     count = -(-len(stream) // room)
+    if count > MAX_CHUNKS:
+        raise InscriptionError(
+            f"that file needs {count:,} transactions and the format carries at "
+            f"most {MAX_CHUNKS:,}: the countdown that marks the last chunk is "
+            f"two bytes. About {MAX_CHUNKS * room / 1_048_576:.0f} MB is the "
+            f"ceiling, and it is arithmetic rather than policy.")
     even = -(-len(stream) // count)
     pieces = [stream[i:i + even] for i in range(0, len(stream), even)]
     return [Chunk(inscription_id=inscription_id, countdown=len(pieces) - 1 - n,

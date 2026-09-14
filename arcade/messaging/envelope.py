@@ -39,6 +39,8 @@ TYPE_CHUNK = 2        # one link of a chained multi-transaction message
 TYPE_KEY_ANNOUNCE = 3 # an X25519 public key announcement
 TYPE_GROUP = 4        # a public group post -- NOT encrypted, readable by anyone
 TYPE_GROUP_CHUNK = 5  # one link of a public post too large for one transaction
+TYPE_API = 6          # one node talking to another: sealed exactly like a private
+                      # message, but addressed to a program rather than a person
 
 # Cleartext header lengths. Both message types carry `clen`, the exact number of
 # ciphertext bytes in this payload.
@@ -102,6 +104,9 @@ class Header:
             # announcement is fixed-length and a group post is plain text, where
             # a trailing NUL is never meaningful.
             return self.bound_bytes()
+        # TYPE_SINGLE and TYPE_API share this shape: both are one sealed payload
+        # in one transaction, and both need `clen` to undo Class B's padding
+        # before the box will open.
         if self.clen > 0xFFFF:
             raise EnvelopeError(f"ciphertext length {self.clen} exceeds a uint16")
         head = self.bound_bytes() + self.clen.to_bytes(2, "big")
@@ -174,7 +179,9 @@ class Header:
                 clen=int.from_bytes(payload[14:16], "big"),
                 countdown=int.from_bytes(payload[16:18], "big"),
             )
-        if msg_type == TYPE_SINGLE:
+        if msg_type in (TYPE_SINGLE, TYPE_API):
+            # The same shape: one sealed payload in one transaction, with the
+            # ciphertext length that undoes Class B's padding.
             if len(payload) < HEADER_SINGLE_LEN:
                 raise EnvelopeError("payload too short to contain a header")
             return cls(type=msg_type, clen=int.from_bytes(payload[6:8], "big"))
@@ -399,7 +406,7 @@ def open_message(recipient: Identity, payload: bytes) -> tuple[bytes, bytes, Hea
     normal case: almost every payload belongs to someone else.
     """
     header = Header.decode(payload)
-    if header.type not in (TYPE_SINGLE, TYPE_CHUNK):
+    if header.type not in (TYPE_SINGLE, TYPE_CHUNK, TYPE_API):
         raise EnvelopeError(f"type {header.type} is not an encrypted message")
 
     blob = payload[header.length :]

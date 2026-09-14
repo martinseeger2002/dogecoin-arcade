@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import base64
 import inspect
+import json
 import os
 import secrets
 import time
@@ -45,6 +46,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from .. import __version__, tokens as tokenlib
+from ..messaging import api as apilib
 from ..ledger import COIN, AmountError, LedgerIndex, parse_amount
 from ..state import ECOSYSTEM_MAIN, ECOSYSTEM_TEST
 
@@ -163,8 +165,10 @@ class OmniRpc:
     # -- dispatch --------------------------------------------------------------
 
     def methods(self) -> dict[str, Callable]:
+        # `omni_` is Omni Core's vocabulary; `da_` is ours, for the things Omni
+        # has no word for -- one arcade talking to another.
         return {name: getattr(self, name) for name in dir(self)
-                if name == "help" or name.startswith("omni_")}
+                if name == "help" or name.startswith(("omni_", "da_"))}
 
     def call(self, method: str, params: Any) -> Any:
         fn = self.methods().get(method)
@@ -399,6 +403,153 @@ class OmniRpc:
             raise RpcError(INVALID_PARAMETER, "that address is already the issuer")
         return self._prepare("change issuer", sender,
                              tokenlib.change_issuer_payload(prop["property_id"]), to)
+
+    # -- node to node ----------------------------------------------------------
+    # One arcade talking to another, for marketplaces and anything else built on
+    # top. The same sealed envelope as a private message, so the same guarantees
+    # -- addressed to one key, authenticated as from ours -- with its own type so
+    # it never lands in a human's conversation, and its own cursor so a program
+    # can resume a queue exactly where it stopped. Testnet only, like every
+    # encrypted message here (D-010).
+
+    def da_identity(self) -> dict[str, Any]:
+        """da_identity -- this node's public key and contact code: what others address."""
+        identity = self._identity()
+        from ..messaging import contact as contactlib
+        from ..messaging.keys import fingerprint_of
+        return {
+            "pubkey": identity.public_bytes.hex(),
+            "fingerprint": fingerprint_of(identity.public_bytes),
+            "contactcode": contactlib.encode(self.chain.network,
+                                             identity.public_bytes),
+            "address": self.state.derived_address or "",
+            "network": self.chain.network,
+            "maxbytes": apilib.MAX_API_PAYLOAD,
+            # What another node has to match to be speaking the same API.
+            "protocol": apilib.PROTOCOL,
+            "apihash": apilib.api_fingerprint().hex(),
+            "arcadeversion": __version__,
+        }
+
+    def da_send(self, to: Any, body: Any, fromaddress: Any = "") -> dict[str, Any]:
+        """da_send "topubkey" "body" ( "fromaddress" ) -- prepare a node-to-node message; NOT sent until da_broadcast."""
+        identity = self._identity()
+        to_key = self._pubkey(to)
+        payload = apilib.seal(identity, to_key, self._body(body))
+        sender = (self._own_address(fromaddress) if fromaddress
+                  else self._sending_address())
+        return self._prepare_message("api message", sender, payload)
+
+    def da_broadcast(self, txid: Any) -> str:
+        """da_broadcast "txid" -- send a message da_send prepared; returns the txid."""
+        return self.omni_broadcast(txid)
+
+    def da_inbox(self, after: Any = 0, count: Any = 20,
+                 unreadonly: Any = False) -> list[dict[str, Any]]:
+        """da_inbox ( after count unreadonly ) -- messages addressed to this node, oldest first."""
+        identity = self._identity()
+        from ..messaging.keys import fingerprint_of
+        with self.state.store() as store:
+            rows = store.api_messages(
+                fingerprint_of(identity.public_bytes), self.chain.network,
+                after_id=_int(after, "after"), limit=_int(count, "count"),
+                unread_only=bool(unreadonly))
+            return [self._api_message(row) for row in rows]
+
+    def da_markread(self, ids: Any) -> int:
+        """da_markread [id,...] -- mark messages read; returns how many changed."""
+        if not isinstance(ids, list):
+            raise RpcError(TYPE_ERROR, "ids must be a list of message ids")
+        with self.state.store() as store:
+            return store.mark_api_read([_int(i, "id") for i in ids])
+
+    def _api_message(self, row: Any) -> dict[str, Any]:
+        message = apilib.ApiMessage(
+            id=row["id"], txid=row["txid"], height=row["height"],
+            block_time=row["block_time"], sender_pubkey=bytes(row["sender_pubkey"]),
+            sender_address=row["sender_addr"], body=bytes(row["body"]))
+        return {
+            "id": message.id,
+            "txid": message.txid,
+            "block": message.height,
+            "blocktime": message.block_time,
+            "frompubkey": message.sender_pubkey.hex(),
+            "fromaddress": message.sender_address,
+            "body": message.text,
+            "json": message.json(),
+            "read": row["read_at"] is not None,
+            # What the sender was speaking, and whether we agree. Reported
+            # rather than enforced: only the program reading this knows whether
+            # the command it cares about has changed between the two versions.
+            "protocol": row["protocol"],
+            "apihash": bytes(row["fingerprint"]).hex(),
+            "compatible": apilib.compatible(row["protocol"],
+                                            bytes(row["fingerprint"])),
+        }
+
+    def _identity(self) -> Any:
+        if self.chain.is_mainnet:
+            raise RpcError(MISC_ERROR,
+                           "node-to-node messages are testnet only: use /rpc/test")
+        try:
+            return self.state.ensure_identity()
+        except Exception as exc:
+            raise RpcError(MISC_ERROR, f"no identity on this node yet: {exc}")
+
+    def _pubkey(self, value: Any) -> bytes:
+        """A 32-byte X25519 key, given as hex or as a contact code."""
+        text = _str(value, "to").strip()
+        from ..messaging import contact as contactlib
+        if not text:
+            raise RpcError(INVALID_PARAMETER, "name who it is for")
+        try:
+            return contactlib.decode(text)[1]
+        except Exception:
+            pass
+        try:
+            raw = bytes.fromhex(text)
+        except ValueError:
+            raise RpcError(INVALID_PARAMETER,
+                           "a recipient is a contact code or 64 hex characters")
+        if len(raw) != 32:
+            raise RpcError(INVALID_PARAMETER, "a public key is 32 bytes")
+        return raw
+
+    @staticmethod
+    def _body(value: Any) -> bytes:
+        """Text, or anything JSON-shaped, which is sent as compact JSON."""
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, separators=(",", ":")).encode()
+        if isinstance(value, str):
+            return value.encode()
+        raise RpcError(TYPE_ERROR, "body must be a string or a JSON object")
+
+    def _sending_address(self) -> str:
+        with self._rpc() as rpc:
+            from ..web.app import funded_address
+            return funded_address(rpc, prefer=self.state.derived_address)
+
+    def _prepare_message(self, what: str, sender: str, payload: bytes) -> dict[str, Any]:
+        """Build the transaction and hold it, exactly as a token send is held."""
+        from ..messaging.sender import MessageSender
+        with self._rpc() as rpc:
+            prepared = MessageSender(rpc, self.chain.params).prepare(sender, payload)
+        prepared.what = what
+        cache = self.state.prepared_tokens
+        cache[(self.chain.network, prepared.txid)] = prepared
+        while len(cache) > KEEP_PREPARED:
+            del cache[next(iter(cache))]
+        return {
+            "txid": prepared.txid,
+            "hex": prepared.hex,
+            "sendingaddress": sender,
+            "class": "B",
+            "size": prepared.size,
+            "fee": omni_amount(prepared.fee_sats, True),
+            "outputscost": omni_amount(prepared.dust_sats, True),
+            "total": omni_amount(prepared.total_sats, True),
+            "broadcast": False,
+        }
 
     def omni_broadcast(self, txid: Any) -> str:
         """omni_broadcast "txid" -- send a transaction an omni_send* call prepared; returns the txid."""

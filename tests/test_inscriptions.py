@@ -148,9 +148,18 @@ def test_nothing_is_not_an_inscription():
         I.plan(b"", "text/plain")
 
 
-def test_a_file_past_the_ceiling_says_so_in_megabytes():
-    with pytest.raises(I.InscriptionError, match="limited to 5 MB"):
-        I.plan(b"x" * (I.MAX_CONTENT + 1), "text/plain")
+def test_there_is_no_policy_ceiling(monkeypatch):
+    """What an inscription costs is the creator's to decide. The only limit is
+    arithmetic: the countdown that marks the last chunk is two bytes."""
+    # 40 MB, far past anything a policy would have allowed, planned without
+    # complaint -- at the real per-transaction capacity, so the count is real.
+    bodies = I.plan(b"x" * (40 * 1024 * 1024), "video/mp4")
+    assert len(bodies) == 5_499
+    assert I.parse(bodies[-1]).countdown == 0
+
+    # The one limit there is, and it is arithmetic: 65,536 chunks.
+    with pytest.raises(I.InscriptionError, match="two bytes"):
+        I.plan(b"y" * 6_000_000, "video/mp4", capacity=100)
 
 
 def test_the_split_is_even_so_no_transaction_is_the_largest_possible():
