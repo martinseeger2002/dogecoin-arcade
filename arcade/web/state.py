@@ -513,6 +513,33 @@ class AppState:
             self._ledger_indexes[chain.network] = index
         return index
 
+    # --- collections ----------------------------------------------------------
+
+    _collections: tuple = ()
+
+    def chain_named(self, network: str) -> ChainContext:
+        for chain in self.token_chains:
+            if chain.network == network:
+                return chain
+        raise ValueError(f"no chain named {network!r} is indexed")
+
+    @property
+    def collections(self) -> tuple:
+        """(jobs, runner) for collection runs, built on first use.
+
+        The store is a file under the home, so a run survives the process:
+        `runner.resume_interrupted()` at startup picks up whatever was cut off.
+        """
+        if not self._collections:
+            from ..collections import Jobs, Runner
+            jobs = Jobs(self.home / "collections.sqlite")
+            runner = Runner(
+                jobs, chain_for=self.chain_named,
+                index_for=lambda network: self.token_index(self.chain_named(network)),
+                send_lock=(self.begin_send, self.end_send))
+            self._collections = (jobs, runner)
+        return self._collections
+
     # --- identity, derived from the wallet ------------------------------------
     #
     # There is no passphrase and no key file. The messaging identity is derived

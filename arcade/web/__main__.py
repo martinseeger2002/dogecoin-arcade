@@ -118,6 +118,15 @@ def main(argv: list[str] | None = None) -> int:
     # Watch for new blocks and scan when one lands, so a message that arrives
     # while somebody is looking at the conversation actually appears.
     BlockWatcher(state).start()
+
+    # A collection that was being inscribed when the process last stopped
+    # carries on from the piece after the last one written down.
+    try:
+        jobs, runner = state.collections
+        for job_id in runner.resume_interrupted():
+            print(f"  resuming collection {jobs.get(job_id)['name']!r} ({job_id})")
+    except Exception as exc:
+        print(f"  collections could not be resumed: {exc}")
     print("  watching for new blocks")
 
     # The remote-access page points cloudflared at this port, so it has to know.

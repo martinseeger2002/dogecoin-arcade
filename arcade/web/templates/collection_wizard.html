@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% import "_chains.html" as chains %}
+{% block title %}Inscribe a collection · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Inscribe a collection</h1>
+<p class="sub">A whole HashLips build, one inscription per item, with each
+  item's own metadata in its JSON field.</p>
+
+<div class="chainbar">
+  {{ chains.card(chain, node, "The collection goes here.",
+                 "Wallet disabled on this node." if not node.wallet else None) }}
+</div>
+
+{% if error %}<div class="msg err">{{ error }}</div>{% endif %}
+{% if node_error %}<div class="msg err">{{ node_error }}</div>{% endif %}
+
+{% if build %}
+  <h2>Step 2 of 3 &mdash; what it costs</h2>
+  <div class="panel" {% if chain.is_mainnet %}style="border-color:var(--bad);border-width:2px"{% endif %}>
+    {% if chain.is_mainnet %}
+      <p style="color:var(--bad);font-weight:600;margin-top:0">
+        This is mainnet. Every item is permanent, cannot be taken back, and is
+        paid for as it goes.</p>
+    {% endif %}
+    <table>
+      <tr><td class="muted" style="width:150px">Folder</td>
+          <td class="mono" style="word-break:break-all">{{ build.folder }}</td></tr>
+      <tr><td class="muted">Collection</td>
+          <td>{{ build.collection or '(no name in the metadata)' }}</td></tr>
+      <tr><td class="muted">Items</td>
+          <td>{{ "{:,}".format(cost['items']) }}
+            <span class="muted">&mdash; editions
+              {{ build.items[0].edition }} to {{ build.items[-1].edition }}</span></td></tr>
+      <tr><td class="muted">Bytes</td>
+          <td>{{ "{:,}".format(cost['bytes']) }}, uncompressed</td></tr>
+      <tr><td class="muted">Transactions</td>
+          <td>{{ "{:,}".format(cost['chunks']) }}</td></tr>
+      <tr><td class="muted">Fee</td><td>{{ "%.2f"|format(cost['fee']) }}</td></tr>
+      <tr><td class="muted">Dust</td>
+          <td>{{ "%.2f"|format(cost['dust']) }}
+            <span class="muted">&mdash; in outputs you can sweep back later</span></td></tr>
+      <tr><td class="muted">Total</td>
+          <td><strong>{{ "%.2f"|format(cost['total']) }}</strong>
+            <span class="muted">&mdash; spent item by item as the run goes,
+              from {{ sender }}</span></td></tr>
+    </table>
+    {% if build.problems %}
+      <div class="msg err" style="margin-top:12px">
+        <strong>Check these before you start:</strong>
+        <ul style="margin:6px 0 0 18px">
+          {% for p in build.problems %}<li>{{ p }}</li>{% endfor %}
+        </ul>
+        Items listed here are left out; the rest go up as shown.
+      </div>
+    {% endif %}
+    <h3 style="margin:16px 0 6px">The first items, as they will be inscribed</h3>
+    <div style="overflow-x:auto">
+    <table>
+      <tr><th>Edition</th><th>Name</th><th>File</th><th>JSON</th></tr>
+      {% for item in preview %}
+      <tr><td>{{ item.edition }}</td><td>{{ item.name }}</td>
+          <td class="mono">{{ item.image }}
+            <span class="muted">{{ "{:,}".format(item.size) }} B</span></td>
+          <td><code style="word-break:break-all;font-size:.78rem">{{ item.json[:220] }}{% if item.json|length > 220 %}…{% endif %}</code></td></tr>
+      {% endfor %}
+    </table>
+    </div>
+    <form method="post" action="/inscriptions/collection/start" class="row" style="margin-top:14px">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="folder" value="{{ build.folder }}">
+      <input type="hidden" name="fromaddress" value="{{ sender }}">
+      <input type="hidden" name="name" value="{{ build.collection }}">
+      <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">
+        Inscribe {{ "{:,}".format(cost['items']) }} items</button>
+      <a class="btn ghost" href="/inscriptions/collection">Back</a>
+    </form>
+    <p class="muted" style="margin:10px 0 0">
+      The run can be paused and resumed at any time, and carries on by itself
+      after a restart or a crash from the piece after the last one it wrote down.</p>
+  </div>
+{% else %}
+  <h2>Step 1 of 3 &mdash; the build</h2>
+  <div class="panel">
+    <form method="post" action="/inscriptions/collection/review" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <div class="field">
+        <label for="folder">The HashLips <code>build</code> folder on this machine</label>
+        <input autocomplete="off" type="text" name="folder" id="folder"
+               placeholder="/home/you/hashlips-art-engine/build"
+               value="{{ folder or '' }}" style="width:100%">
+        <p class="muted" style="margin:6px 0 0">
+          It holds <code>json/_metadata.json</code> and <code>images/1.png …</code>.
+          Pointing at the project folder or at <code>_metadata.json</code> itself works too.</p>
+      </div>
+      <div class="field">
+        <label for="files">&hellip; or choose the folder from this browser</label>
+        <input autocomplete="off" type="file" name="files" id="files" multiple
+               webkitdirectory directory>
+        <p class="muted" style="margin:6px 0 0">
+          Copies the build to this machine first. For a large collection the
+          folder path above is quicker.</p>
+      </div>
+      {% if funded|length > 1 %}
+      <div class="field">
+        <label for="fromaddress">Pay from</label>
+        <select autocomplete="off" name="fromaddress" id="fromaddress">
+          {% for f in funded %}
+          <option value="{{ f.address }}">{{ f.address }} &mdash; {{ "%.2f"|format(f.coins) }}</option>
+          {% endfor %}
+        </select>
+        <p class="muted" style="margin:6px 0 0">
+          A collection takes hours. An address of its own means messages can
+          still be sent from the other while it runs.</p>
+      </div>
+      {% endif %}
+      <button type="submit">Read it and price it</button>
+      <p class="muted" style="margin-bottom:0">
+        Nothing is spent until you see the cost and press again.</p>
+    </form>
+  </div>
+{% endif %}
+
+{% if jobs %}
+<h2>Runs on {{ chain.label }}</h2>
+<div class="panel">
+  <table>
+    <tr><th>Collection</th><th>Items</th><th>Status</th><th>From</th><th></th></tr>
+    {% for job in jobs %}
+    <tr>
+      <td>{{ job.name or '(unnamed)' }}</td>
+      <td>{{ "{:,}".format(job.sent) }} of {{ "{:,}".format(job["items"]) }}</td>
+      <td><span class="pill {{ 'ok' if job.status == 'done' else ('bad' if job.status == 'failed' else ('warn' if job.status == 'running' else '')) }}">{{ job.status }}</span>
+        {% if job.error %}<span class="muted"> {{ job.error[:80] }}</span>{% endif %}</td>
+      <td class="mono" style="word-break:break-all">{{ job.sender[:12] }}…</td>
+      <td><a class="btn ghost small" href="/inscriptions/collection/{{ job.id }}">Open</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+{% endblock %}

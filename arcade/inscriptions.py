@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import hashlib
 import json as jsonlib
+import re
 from dataclasses import dataclass, field
 
 MAGIC = b"INSC"
@@ -144,6 +145,49 @@ def validate_json(text: str) -> str:
     if len(text.encode()) > MAX_JSON:
         raise InscriptionError(f"the JSON field is limited to {MAX_JSON:,} bytes.")
     return text
+
+
+#: HashLips names every item `<prefix> #<edition>`; this is how a name is
+#: split back into the two.
+_EDITION_NAME = re.compile(r"^(.*\S)\s*#\s*(\d+)\s*$")
+
+
+def collection_of(json_text: str) -> tuple[str, int | None, str] | None:
+    """Which collection an inscription's JSON says it belongs to, if any.
+
+    Returns (collection, edition, name) or None. The rule is the one the
+    HashLips Art Engine's metadata follows, because that is what people
+    actually have on disk: an object with a `name` of the form `Prefix #12`
+    and an integer `edition`. An explicit `collection` string wins over the
+    name, so a set made some other way can say so outright. Deterministic
+    from the bytes on the chain alone -- two nodes must agree on what is in
+    a collection the same way they agree on what number an inscription got.
+    """
+    if not json_text:
+        return None
+    try:
+        data = jsonlib.loads(json_text)
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    name = data.get("name")
+    name = name.strip() if isinstance(name, str) else ""
+    edition = data.get("edition")
+    if isinstance(edition, bool) or not isinstance(edition, int):
+        edition = None
+    collection = data.get("collection")
+    collection = collection.strip() if isinstance(collection, str) else ""
+    if not collection:
+        match = _EDITION_NAME.match(name)
+        if match is None:
+            return None
+        collection = match.group(1).strip()
+        if edition is None:
+            edition = int(match.group(2))
+    if not collection or len(collection) > 200:
+        return None
+    return collection, edition, name[:200]
 
 
 def chunk_header(inscription_id: bytes, countdown: int, clen: int,

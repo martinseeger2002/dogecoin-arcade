@@ -147,6 +147,22 @@ CREATE TABLE IF NOT EXISTS inscription_chunk (
     PRIMARY KEY (sender, inscription_id, countdown)
 );
 
+-- Collections. Which set an inscription belongs to, read off its JSON by one
+-- rule (`inscriptions.collection_of`) at the moment it completes, so every
+-- node files it the same way. A set from the HashLips Art Engine lands here
+-- with no extra work: its metadata already says `name: "Prefix #12"` and
+-- `edition: 12`, and that is the rule.
+CREATE TABLE IF NOT EXISTS collection_item (
+    txid          TEXT    PRIMARY KEY,
+    creator       TEXT    NOT NULL,
+    collection    TEXT    NOT NULL,
+    edition       INTEGER,
+    name          TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS collection_item_idx
+    ON collection_item(creator, collection, edition);
+
 -- @tags. One name to an address and one address to a name: a name that points
 -- at two people is not a name, and an address with two gives a reader two
 -- answers to the same question. Both are enforced by the keys here rather than
@@ -175,6 +191,32 @@ def install_schema(db: Database) -> None:
     register_journalled_table("inscription", ("txid",))
     register_journalled_table("inscription_chunk",
                               ("sender", "inscription_id", "countdown"))
+    register_journalled_table("collection_item", ("txid",))
+    _file_collections(db)
+
+
+def _file_collections(db: Database) -> None:
+    """File inscriptions indexed before collections were, once.
+
+    The rule is a pure function of the JSON already in the row, so an index
+    built by an older version is brought level here rather than by a rescan.
+    Nothing is journalled: these rows are as old as the inscriptions they
+    describe, and a reorg deep enough to remove those removes the whole
+    index's recent history anyway.
+    """
+    rows = db.conn.execute(
+        "SELECT i.txid, i.creator, i.json FROM inscription i "
+        "LEFT JOIN collection_item c ON c.txid = i.txid "
+        "WHERE c.txid IS NULL AND i.json != ''").fetchall()
+    for row in rows:
+        member = I.collection_of(row["json"])
+        if member is None:
+            continue
+        collection, edition, name = member
+        db.conn.execute(
+            "INSERT OR IGNORE INTO collection_item "
+            "(txid, creator, collection, edition, name) VALUES (?, ?, ?, ?, ?)",
+            (row["txid"], row["creator"], collection, edition, name))
 
 
 class InvalidTransaction(Exception):
@@ -665,6 +707,12 @@ class Engine:
             "chunks": len(assembly.pieces),
             "content": content if self.keep_content(rtx.sender) else None,
         })
+        member = I.collection_of(manifest.json)
+        if member is not None:
+            collection, edition, name = member
+            self.state.insert("collection_item", {
+                "txid": first["txid"], "creator": rtx.sender,
+                "collection": collection, "edition": edition, "name": name})
         for row in rows:
             self.state.delete("inscription_chunk", {
                 "sender": row["sender"], "inscription_id": row["inscription_id"],

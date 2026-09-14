@@ -159,6 +159,23 @@ def describe(row: dict) -> dict:
         "held": bool(row["held"]),
         "json": parsed,
         "rawjson": raw,
+        "collection": row.get("collection"),
+        "edition": row.get("edition"),
+    }
+
+
+def describe_collection(row: dict) -> dict:
+    """One collection: who made it, what it is called, how much of it there is."""
+    return {
+        "creator": row["creator"],
+        "name": row["collection"],
+        "count": row["count"],
+        "firstnumber": row["first_number"],
+        "lastnumber": row["last_number"],
+        "firstedition": row["first_edition"],
+        "lastedition": row["last_edition"],
+        "cover": row.get("cover_txid"),
+        "covertype": row.get("cover_type"),
     }
 
 

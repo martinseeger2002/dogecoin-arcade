@@ -69,6 +69,16 @@ class Stopped:
     at: float
 
 
+#: Every listing of inscriptions reads the same columns, never the content:
+#: a page of a hundred files would be a hundred files. The collection columns
+#: come along by a join, NULL for an inscription that is in no set.
+_INSCRIPTION_SELECT = (
+    "SELECT i.txid, i.number, i.creator, i.owner, i.block_height, i.position, "
+    "i.content_type, i.content_len, i.sha256, i.json, i.chunks, "
+    "i.content IS NOT NULL AS held, c.collection, c.edition "
+    "FROM inscription i LEFT JOIN collection_item c ON c.txid = i.txid")
+
+
 class LedgerIndex:
     """The token index for one chain: sync it, ask it questions."""
 
@@ -319,19 +329,17 @@ class LedgerIndex:
         of inscriptions has a page number people can jump to, and jumping to
         page 40 with a cursor means walking 39 pages to find it.
         """
-        sql = ("SELECT txid, number, creator, owner, block_height, position, "
-               "content_type, content_len, sha256, json, chunks, "
-               "content IS NOT NULL AS held FROM inscription")
+        sql = _INSCRIPTION_SELECT
         where, args = [], []
         if owner:
-            where.append("owner = ?"); args.append(owner)
+            where.append("i.owner = ?"); args.append(owner)
         if creator:
-            where.append("creator = ?"); args.append(creator)
+            where.append("i.creator = ?"); args.append(creator)
         if after >= 0:
-            where.append("number > ?"); args.append(after)
+            where.append("i.number > ?"); args.append(after)
         if where:
             sql += " WHERE " + " AND ".join(where)
-        sql += " ORDER BY number DESC LIMIT ? OFFSET ?"
+        sql += " ORDER BY i.number DESC LIMIT ? OFFSET ?"
         args.append(max(1, min(limit, 500)))
         args.append(max(0, offset))
         with self.open() as db:
@@ -342,10 +350,7 @@ class LedgerIndex:
         with self.open() as db:
             column = "number" if isinstance(key, int) else "txid"
             row = db.conn.execute(
-                f"SELECT txid, number, creator, owner, block_height, position, "
-                f"content_type, content_len, sha256, json, chunks, "
-                f"content IS NOT NULL AS held FROM inscription WHERE {column}=?",
-                (key,)).fetchone()
+                f"{_INSCRIPTION_SELECT} WHERE i.{column}=?", (key,)).fetchone()
             return dict(row) if row else None
 
     def inscription_content(self, key: str | int) -> tuple[str, bytes] | None:
@@ -376,6 +381,134 @@ class LedgerIndex:
             sql += " WHERE " + " AND ".join(where)
         with self.open() as db:
             return int(db.conn.execute(sql, args).fetchone()[0])
+
+    def chunks_seen(self, sender: str, inscription_id: str) -> list[dict]:
+        """Pieces of one unfinished set already on the chain, by countdown.
+
+        What a collection run asks before sending the rest after a crash: a
+        piece that went out and was never written down is still a piece, and
+        the index is the one place it can be found again.
+        """
+        with self.open() as db:
+            return [dict(row) for row in db.conn.execute(
+                "SELECT countdown, txid, block_height FROM inscription_chunk "
+                "WHERE sender = ? AND inscription_id = ? ORDER BY countdown DESC",
+                (sender, inscription_id))]
+
+    # --- collections ----------------------------------------------------------
+
+    def collections(self, limit: int = 100, offset: int = 0,
+                    creator: str | None = None) -> list[dict]:
+        """Every collection, newest first, with how many it holds and a cover.
+
+        The cover is the lowest edition -- #1 of a HashLips set -- so a wall
+        of collections shows each one's first face rather than whatever
+        happened to confirm last.
+        """
+        sql = ("SELECT c.creator, c.collection, COUNT(*) AS count, "
+               "MIN(i.number) AS first_number, MAX(i.number) AS last_number, "
+               "MIN(c.edition) AS first_edition, MAX(c.edition) AS last_edition "
+               "FROM collection_item c JOIN inscription i ON i.txid = c.txid")
+        args: list = []
+        if creator:
+            sql += " WHERE c.creator = ?"
+            args.append(creator)
+        sql += (" GROUP BY c.creator, c.collection ORDER BY MIN(i.number) DESC "
+                "LIMIT ? OFFSET ?")
+        args += [max(1, min(limit, 500)), max(0, offset)]
+        with self.open() as db:
+            out = []
+            for row in db.conn.execute(sql, args):
+                entry = dict(row)
+                cover = db.conn.execute(
+                    "SELECT i.txid, i.content_type FROM collection_item c "
+                    "JOIN inscription i ON i.txid = c.txid "
+                    "WHERE c.creator = ? AND c.collection = ? "
+                    "ORDER BY c.edition IS NULL, c.edition, i.number LIMIT 1",
+                    (entry["creator"], entry["collection"])).fetchone()
+                entry["cover_txid"] = cover["txid"] if cover else None
+                entry["cover_type"] = cover["content_type"] if cover else None
+                out.append(entry)
+            return out
+
+    def collection_count(self, creator: str | None = None) -> int:
+        sql = "SELECT COUNT(*) FROM (SELECT 1 FROM collection_item"
+        args: list = []
+        if creator:
+            sql += " WHERE creator = ?"
+            args.append(creator)
+        sql += " GROUP BY creator, collection)"
+        with self.open() as db:
+            return int(db.conn.execute(sql, args).fetchone()[0])
+
+    def collection(self, creator: str, name: str) -> dict | None:
+        """One collection's summary, or None if nobody has inscribed it."""
+        rows = self._collection_rows(creator, name)
+        return rows[0] if rows else None
+
+    def _collection_rows(self, creator: str, name: str) -> list[dict]:
+        with self.open() as db:
+            row = db.conn.execute(
+                "SELECT c.creator, c.collection, COUNT(*) AS count, "
+                "MIN(i.number) AS first_number, MAX(i.number) AS last_number, "
+                "MIN(c.edition) AS first_edition, MAX(c.edition) AS last_edition "
+                "FROM collection_item c JOIN inscription i ON i.txid = c.txid "
+                "WHERE c.creator = ? AND c.collection = ? "
+                "GROUP BY c.creator, c.collection", (creator, name)).fetchone()
+            if row is None or row["count"] == 0:
+                return []
+            entry = dict(row)
+            cover = db.conn.execute(
+                "SELECT i.txid, i.content_type FROM collection_item c "
+                "JOIN inscription i ON i.txid = c.txid "
+                "WHERE c.creator = ? AND c.collection = ? "
+                "ORDER BY c.edition IS NULL, c.edition, i.number LIMIT 1",
+                (creator, name)).fetchone()
+            entry["cover_txid"] = cover["txid"] if cover else None
+            entry["cover_type"] = cover["content_type"] if cover else None
+            return [entry]
+
+    def collection_items(self, creator: str, name: str, limit: int = 100,
+                         offset: int = 0) -> list[dict]:
+        """A collection's inscriptions in edition order -- #1 first."""
+        with self.open() as db:
+            return [dict(row) for row in db.conn.execute(
+                f"{_INSCRIPTION_SELECT} WHERE c.creator = ? AND c.collection = ? "
+                f"ORDER BY c.edition IS NULL, c.edition, i.number LIMIT ? OFFSET ?",
+                (creator, name, max(1, min(limit, 500)), max(0, offset)))]
+
+    def collection_traits(self, creator: str, name: str) -> dict[str, dict[str, int]]:
+        """How often each trait value occurs across the collection.
+
+        Read from every item's JSON, HashLips style: `attributes` as a list of
+        `{"trait_type": ..., "value": ...}`. That is what rarity is: how many
+        of the set share a value, and nothing more.
+        """
+        import json as jsonlib
+        counts: dict[str, dict[str, int]] = {}
+        with self.open() as db:
+            rows = db.conn.execute(
+                "SELECT i.json FROM collection_item c JOIN inscription i "
+                "ON i.txid = c.txid WHERE c.creator = ? AND c.collection = ?",
+                (creator, name)).fetchall()
+        for row in rows:
+            try:
+                data = jsonlib.loads(row["json"])
+            except ValueError:
+                continue
+            attributes = data.get("attributes") if isinstance(data, dict) else None
+            if not isinstance(attributes, list):
+                continue
+            for trait in attributes:
+                if not isinstance(trait, dict):
+                    continue
+                kind = str(trait.get("trait_type", ""))[:100]
+                value = str(trait.get("value", ""))[:100]
+                if not kind:
+                    continue
+                bucket = counts.setdefault(kind, {})
+                bucket[value] = bucket.get(value, 0) + 1
+        return counts
 
     def unfinished_inscriptions(self, sender: str | None = None) -> list[dict]:
         """Sets that have pieces on chain and are not complete.

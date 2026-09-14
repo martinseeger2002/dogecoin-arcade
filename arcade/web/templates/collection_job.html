@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}{{ job.name or 'Collection' }} · DogecoinArcade{% endblock %}
+{% block body %}
+<style>
+.run-bar{height:12px;border-radius:6px;background:var(--line);overflow:hidden;margin:10px 0 6px}
+.run-fill{height:100%;background:var(--accent);width:0;transition:width .4s}
+.run-note{font-size:.9rem;color:var(--muted);min-height:1.3em}
+</style>
+<h1>{{ job.name or 'Collection' }}</h1>
+<p class="sub">Step 3 of 3 &mdash; the run. Every piece is written down the
+  moment the node takes it; leave this page, restart, or lose power and it
+  carries on from there.</p>
+
+{% if job.error %}<div class="msg err">{{ job.error }}</div>{% endif %}
+
+<div class="panel">
+  <div class="row" style="align-items:baseline">
+    <strong id="run-count">{{ "{:,}".format(job.sent) }} of {{ "{:,}".format(job["items"]) }} items on their way</strong>
+    <span class="pill {{ 'ok' if job.status == 'done' else ('bad' if job.status == 'failed' else ('warn' if job.status == 'running' else '')) }}" id="run-status">{{ job.status }}</span>
+    <span class="muted" style="margin-left:auto" id="run-chunks">
+      {{ "{:,}".format(job.sent_chunks) }} of {{ "{:,}".format(job.chunks) }} transactions</span>
+  </div>
+  <div class="run-bar"><div class="run-fill" id="run-fill"
+       style="width:{{ (100 * job.sent_chunks / job.chunks) if job.chunks else 0 }}%"></div></div>
+  <div class="run-note" id="run-note">{{ job.note }}</div>
+  <table style="margin-top:12px">
+    <tr><td class="muted" style="width:130px">Chain</td><td>{{ chain.label }}</td></tr>
+    <tr><td class="muted">From</td><td class="mono" style="word-break:break-all">{{ job.sender }}</td></tr>
+    <tr><td class="muted">Folder</td><td class="mono" style="word-break:break-all">{{ job.folder }}</td></tr>
+    <tr><td class="muted">Cost</td>
+        <td>about {{ "%.2f"|format(job.fee + job.dust) }} in all,
+          {{ "%.2f"|format(job.fee) }} once the dust is swept back</td></tr>
+  </table>
+  <div class="row" style="margin-top:14px">
+    {% if job.status in ('running', 'pausing') %}
+      <form method="post" action="/inscriptions/collection/{{ job.id }}/pause">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <button type="submit" class="ghost" {% if job.status == 'pausing' %}disabled{% endif %}>
+          {{ 'Pausing…' if job.status == 'pausing' else 'Pause' }}</button>
+      </form>
+    {% elif job.status in ('paused', 'failed') and (job.pending or job.sending or job.failed_items) %}
+      <form method="post" action="/inscriptions/collection/{{ job.id }}/resume">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <button type="submit">{{ 'Retry the rest' if job.status == 'failed' else 'Resume' }}</button>
+      </form>
+    {% endif %}
+    {% if not running %}
+      <form method="post" action="/inscriptions/collection/{{ job.id }}/delete"
+            onsubmit="return confirm('Forget this run? What is on the chain stays there.')">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <button type="submit" class="ghost">Remove</button>
+      </form>
+    {% endif %}
+    <a class="btn ghost" href="/inscriptions/collection" style="margin-left:auto">All runs</a>
+    {% if job.name %}
+    <a class="btn ghost" href="/collections/{{ job.sender }}/{{ job.name|urlencode }}">View the collection</a>
+    {% endif %}
+  </div>
+</div>
+
+<h2>Items</h2>
+<div class="panel" style="overflow-x:auto">
+  <table>
+    <tr><th>Edition</th><th>Name</th><th>Pieces</th><th>Status</th><th>Inscription</th></tr>
+    {% for item in items %}
+    {% set pieces = item.txids|fromjson %}
+    <tr>
+      <td>{{ item.edition }}</td>
+      <td>{{ item.name }}</td>
+      <td>{{ pieces|length }} of {{ item.chunks }}</td>
+      <td>{% if item.status == 'sent' %}<span class="pill ok">sent</span>
+          {% elif item.status == 'failed' %}<span class="pill bad">failed</span>
+            <span class="muted">{{ item.error[:100] }}</span>
+          {% elif item.status == 'sending' %}<span class="pill warn">sending</span>
+          {% else %}<span class="pill">waiting</span>{% endif %}</td>
+      <td>{% if item.txid in numbers %}
+            <a href="/inscriptions/{{ item.txid }}/view">#{{ "{:,}".format(numbers[item.txid]) }}</a>
+          {% elif item.txid %}<span class="muted mono">{{ item.txid[:16] }}… unconfirmed</span>
+          {% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% if pages > 1 %}
+  <nav class="pager">
+    {% if page > 1 %}<a class="btn ghost small" href="?page={{ page - 1 }}">Previous</a>{% endif %}
+    <span class="muted">page {{ page }} of {{ pages }}</span>
+    {% if page < pages %}<a class="btn ghost small" href="?page={{ page + 1 }}">Next</a>{% endif %}
+  </nav>
+  {% endif %}
+</div>
+
+<script>
+(function(){
+  var status = "{{ job.status }}";
+  if (status !== 'running' && status !== 'pausing') return;
+  var total = {{ job.chunks or 0 }};
+  var seen = {{ job.sent_chunks }};
+  function tick(){
+    fetch('/inscriptions/collection/{{ job.id }}/status', {cache: 'no-store'})
+      .then(function(r){ return r.json(); })
+      .then(function(job){
+        document.getElementById('run-count').textContent =
+          job.sent.toLocaleString() + ' of ' + job["items"].toLocaleString() + ' items on their way';
+        document.getElementById('run-chunks').textContent =
+          job.sent_chunks.toLocaleString() + ' of ' + total.toLocaleString() + ' transactions';
+        document.getElementById('run-fill').style.width =
+          (total ? 100 * job.sent_chunks / total : 0) + '%';
+        document.getElementById('run-note').textContent = job.note || '';
+        document.getElementById('run-status').textContent = job.status;
+        // The table and the buttons are the server's; redraw them when the
+        // shape of things changed rather than on every tick.
+        if (job.status !== status || job.sent_chunks - seen >= 20) location.reload();
+        else setTimeout(tick, 4000);
+      })
+      .catch(function(){ setTimeout(tick, 8000); });
+  }
+  setTimeout(tick, 4000);
+})();
+</script>
+{% endblock %}

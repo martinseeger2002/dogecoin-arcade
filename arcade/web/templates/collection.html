@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}{{ summary.collection }} · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>{{ summary.collection }}</h1>
+<p class="sub">{{ "{:,}".format(summary.count) }} inscription{{ '' if summary.count == 1 else 's' }}
+  on {{ chain.label }} by
+  {% if tags.get(summary.creator) %}@{{ tags[summary.creator] }}{% else %}<span class="mono">{{ summary.creator }}</span>{% endif %},
+  editions {{ summary.first_edition }} to {{ summary.last_edition }},
+  numbers #{{ "{:,}".format(summary.first_number) }} to #{{ "{:,}".format(summary.last_number) }}.</p>
+
+<div class="row" style="margin-bottom:14px">
+  <a class="btn ghost small" href="/collections">All collections</a>
+  <a class="btn ghost small" href="/r/collection/{{ summary.creator }}/{{ summary.collection|urlencode }}?traits=1">API</a>
+</div>
+
+<div class="cards">
+  {% for row in inscriptions %}
+  {% set data = row.json|fromjson %}
+  <div class="card">
+    <div class="row" style="align-items:baseline">
+      <strong>{{ data.name if data and data.name else ('#' ~ row.edition) }}</strong>
+      <span class="muted" style="margin-left:auto">#{{ "{:,}".format(row.number) }}</span>
+    </div>
+    {% if row.held and row.content_type.startswith('image/') %}
+      <a class="media" href="/content/{{ row.txid }}?download=1"
+         onclick="arcadeOpenImage('/content/{{ row.txid }}', '#{{ row.number }}',
+                  '/content/{{ row.txid }}?download=1'); return false">
+        <img src="/content/{{ row.txid }}" alt="{{ row.edition }}" loading="lazy"
+             style="max-width:100%;border-radius:8px;margin:8px 0"></a>
+    {% endif %}
+    {% if data and data.attributes is iterable and data.attributes is not string %}
+    <table>
+      {% for trait in data.attributes %}
+      {% if trait is mapping %}
+      <tr><td class="muted" style="width:40%">{{ trait.trait_type }}</td>
+          <td>{{ trait.value }}
+            {% set kind = traits.get(trait.trait_type|string, {}) %}
+            {% set n = kind.get(trait.value|string, 0) %}
+            {% if n %}<span class="muted"> · {{ "%.1f"|format(100 * n / summary.count) }}%</span>{% endif %}</td></tr>
+      {% endif %}
+      {% endfor %}
+    </table>
+    {% endif %}
+    <table>
+      <tr><td class="muted" style="width:74px">Owner</td>
+          <td class="mono" style="word-break:break-all">
+            {% if tags.get(row.owner) %}<strong>@{{ tags[row.owner] }}</strong>
+            {%- else %}{{ row.owner }}{% endif %}</td></tr>
+    </table>
+    <div class="row" style="margin-top:8px">
+      <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view">Open</a>
+      {% if row.owner in owned %}
+      <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/send">Send</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% if pages > 1 %}
+<nav class="pager">
+  {% if page > 1 %}<a class="btn ghost small" href="?page={{ page - 1 }}">Previous</a>{% endif %}
+  <span class="muted">page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}<a class="btn ghost small" href="?page={{ page + 1 }}">Next</a>{% endif %}
+  <form method="get" class="row" style="gap:6px;margin-left:auto">
+    <label class="muted" for="jump" style="margin:0">Page</label>
+    <input autocomplete="off" type="number" name="page" id="jump" min="1"
+           max="{{ pages }}" value="{{ page }}" style="width:5.5rem">
+    <button class="ghost small" type="submit">Go</button>
+  </form>
+</nav>
+{% endif %}
+
+{% if traits %}
+<h2>Traits</h2>
+<div class="panel" style="overflow-x:auto">
+  <table>
+    <tr><th>Trait</th><th>Value</th><th>Items</th><th>Share</th></tr>
+    {% for kind, values in traits.items() %}
+      {% for value, n in values.items()|sort(attribute='1') %}
+      <tr><td>{{ kind }}</td><td>{{ value }}</td><td>{{ n }}</td>
+          <td>{{ "%.1f"|format(100 * n / summary.count) }}%</td></tr>
+      {% endfor %}
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+{% endblock %}

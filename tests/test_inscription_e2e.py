@@ -226,3 +226,29 @@ def test_a_reorg_is_proven_at_the_engine_rather_than_here():
     source = _p.Path("tests/test_inscription_ledger.py").read_text()
     assert "def test_a_reorg_takes_it_all_back" in source
     assert "rollback_block" in source
+
+
+def test_a_hashlips_set_is_filed_as_a_collection_from_the_chain(inscribing):
+    """Two items with HashLips JSON, no other hint: the index reads the set
+    from what is on the chain, so every node files it the same way."""
+    import json
+
+    node, alice, _, params, follower, path = inscribing
+    for edition in (2, 1):                        # out of order on purpose
+        item = {"name": f"Doge Punks #{edition}", "edition": edition,
+                "attributes": [{"trait_type": "Hat", "value": "Cap"}]}
+        plan = inscribe.plan(bytes([edition]) * 40, "image/png",
+                             json.dumps(item, separators=(",", ":")))
+        _put(node, params, alice, plan.payloads)
+        # A block between them: the second would otherwise wait for the
+        # first's change to confirm, and nothing mines here unasked.
+        _sync(node, follower)
+
+    index = LedgerIndex(path, params, rpc_factory=lambda: node.rpc)
+    sets = index.collections()
+    assert [(s["creator"], s["collection"], s["count"]) for s in sets] == [
+        (alice, "Doge Punks", 2)]
+    items = index.collection_items(alice, "Doge Punks")
+    assert [i["edition"] for i in items] == [1, 2], "by edition, not by arrival"
+    assert items[0]["number"] == 1, "edition 1 arrived second"
+    assert index.collection_traits(alice, "Doge Punks") == {"Hat": {"Cap": 2}}

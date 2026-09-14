@@ -31,6 +31,7 @@ from .. import backup, media, tokens as tokenlib, wallet as walletlib
 from ..ledger import AmountError, format_amount, parse_amount
 from ..config import NETWORKS, MainnetRefused, WrongChain
 from .. import inscribe as inscribelib
+from .. import collections as collectionlib
 from .. import payload as P
 from .. import inscriptions as inscriptionlib
 from . import guide as guidelib
@@ -57,6 +58,18 @@ from . import rpc as botrpc
 from .state import AppState
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+
+def _fromjson(text: str):
+    """A template filter: the parsed JSON, or None for anything that is not."""
+    import json as _json
+    try:
+        return _json.loads(text) if text else None
+    except ValueError:
+        return None
+
+
+TEMPLATES.env.filters["fromjson"] = _fromjson
 
 # Sections that exist, and sections that do not. Shown honestly rather than
 # hidden, so the shape of the finished product is visible.
@@ -2152,6 +2165,223 @@ def create_app(state: AppState) -> FastAPI:
             raise ValueError("that address is not in this node's wallet.")
         return address
 
+    # --- collections ----------------------------------------------------------
+
+    @app.get("/collections", response_class=HTMLResponse)
+    def collections_page(request: Request, page: int = 1):
+        chain, index = _token_chain()
+        data: dict[str, Any] = {"chain": chain, "node": chain.status(),
+                                "collections": [], "node_error": None, "tags": {},
+                                "page": page, "pages": 1, "total": 0}
+        try:
+            data["total"] = index.collection_count()
+            data["pages"] = max(1, -(-data["total"] // PAGE_INSCRIPTIONS))
+            page = max(1, min(page, data["pages"]))
+            data["page"] = page
+            data["collections"] = index.collections(
+                limit=PAGE_INSCRIPTIONS, offset=(page - 1) * PAGE_INSCRIPTIONS)
+            data["tags"] = index.tags_for(sorted({c["creator"] for c in data["collections"]}))
+        except Exception as exc:
+            data["node_error"] = f"the index could not be read: {exc}"
+        return render(request, "collections.html", **data)
+
+    @app.get("/collections/{creator}/{name}", response_class=HTMLResponse)
+    def collection_page(request: Request, creator: str, name: str, page: int = 1):
+        chain, index = _token_chain()
+        summary = index.collection(creator, name)
+        if summary is None:
+            state.flash("no such collection on this chain", "err")
+            return RedirectResponse("/collections", status_code=303)
+        pages = max(1, -(-summary["count"] // PAGE_INSCRIPTIONS))
+        page = max(1, min(page, pages))
+        rows = index.collection_items(creator, name, limit=PAGE_INSCRIPTIONS,
+                                      offset=(page - 1) * PAGE_INSCRIPTIONS)
+        try:
+            with chain.rpc() as rpc:
+                owned = set(_ledger_addresses(rpc))
+        except Exception:
+            owned = set()
+        senders = {r["owner"] for r in rows} | {creator}
+        return render(request, "collection.html", chain=chain, node=chain.status(),
+                      summary=summary, inscriptions=rows, owned=owned,
+                      tags=index.tags_for(sorted(senders)),
+                      traits=index.collection_traits(creator, name),
+                      page=page, pages=pages, per_page=PAGE_INSCRIPTIONS)
+
+    # --- inscribing a whole collection ----------------------------------------
+    #
+    # A wizard in three pages: where the build is, what it will cost, and the
+    # run itself. The run is a job on disk (arcade/collections.py), so it can
+    # be paused, resumed, and picked up after a crash.
+
+    def _collection_upload_dir() -> Path:
+        where = state.home / "collections"
+        where.mkdir(parents=True, exist_ok=True, mode=0o700)
+        return where
+
+    def _collection_page_data(**extra: Any) -> dict[str, Any]:
+        chain, _ = _token_chain()
+        jobs, runner = state.collections
+        data: dict[str, Any] = {"chain": chain, "node": chain.status(),
+                                "funded": [], "node_error": None,
+                                "jobs": jobs.list(chain.network)}
+        try:
+            with chain.rpc() as rpc:
+                data["funded"] = _funded_addresses(rpc)
+        except Exception as exc:
+            data["node_error"] = str(exc)
+        data.update(extra)
+        return data
+
+    @app.get("/inscriptions/collection", response_class=HTMLResponse)
+    def collection_wizard(request: Request):
+        return render(request, "collection_wizard.html", **_collection_page_data())
+
+    @app.post("/inscriptions/collection/review", response_class=HTMLResponse)
+    def collection_review(request: Request, csrf_token: str = Form(""),
+                          folder: str = Form(""), fromaddress: str = Form(""),
+                          files: list[UploadFile] = File([])):
+        """Read the build and price it. Nothing is written down yet."""
+        check_csrf(csrf_token)
+        try:
+            uploaded = [f for f in files if f.filename]
+            if uploaded:
+                folder = str(_save_upload(uploaded))
+            if not folder.strip():
+                raise ValueError("point at the build folder, or choose its files.")
+            build = collectionlib.read_build(Path(folder.strip()))
+            if not build.items:
+                raise ValueError("no items with both metadata and an image.")
+            cost = collectionlib.estimate_build(build)
+            chain, _ = _token_chain()
+            with chain.rpc() as rpc:
+                sender = (_check_own_address(rpc, fromaddress) if fromaddress
+                          else funded_address(rpc, mainnet=chain.is_mainnet))
+            return render(request, "collection_wizard.html",
+                          **_collection_page_data(build=build, cost=cost,
+                                                  sender=sender, preview=build.items[:12]))
+        except HTTPException:
+            raise
+        except Exception as exc:
+            return render(request, "collection_wizard.html",
+                          **_collection_page_data(error=str(exc), folder=folder))
+
+    def _save_upload(files: list[UploadFile]) -> Path:
+        """Lay uploaded files out the way HashLips does, by name.
+
+        A browser sends a chosen folder as a flat list of files, so the
+        layout is rebuilt from the names: `_metadata.json` and `<n>.json` go
+        under json/, pictures under images/. Anything else is not part of a
+        build and is left out.
+        """
+        root = _collection_upload_dir() / secrets.token_hex(4)
+        (root / "json").mkdir(parents=True)
+        (root / "images").mkdir()
+        kept = 0
+        for upload in files:
+            name = Path(upload.filename or "").name
+            if not name or name.startswith("."):
+                continue
+            if name == "_metadata.json" or (name.endswith(".json") and name[:-5].isdigit()):
+                target = root / "json" / name
+            elif name.lower().endswith(collectionlib.IMAGE_SUFFIXES):
+                target = root / "images" / name
+            else:
+                continue
+            with target.open("wb") as out:
+                while True:
+                    block = upload.file.read(1 << 20)
+                    if not block:
+                        break
+                    out.write(block)
+            kept += 1
+        if not kept:
+            raise ValueError("none of the chosen files were metadata or images.")
+        return root
+
+    @app.post("/inscriptions/collection/start")
+    def collection_start(request: Request, csrf_token: str = Form(""),
+                         folder: str = Form(""), fromaddress: str = Form(""),
+                         name: str = Form("")):
+        """The second press: write the job down and start it."""
+        check_csrf(csrf_token)
+        chain, _ = _token_chain()
+        jobs, runner = state.collections
+        try:
+            build = collectionlib.read_build(Path(folder.strip()))
+            with chain.rpc() as rpc:
+                sender = _check_own_address(rpc, fromaddress)
+            job_id = jobs.create(chain.network, sender, build, name=name.strip())
+            runner.start(job_id)
+        except Exception as exc:
+            state.flash(str(exc), "err")
+            return RedirectResponse("/inscriptions/collection", status_code=303)
+        state.flash(f"Inscribing {len(build.items):,} items. This page follows "
+                    f"the run; it carries on if you leave.", "ok")
+        return RedirectResponse(f"/inscriptions/collection/{job_id}", status_code=303)
+
+    @app.get("/inscriptions/collection/{job_id}", response_class=HTMLResponse)
+    def collection_job(request: Request, job_id: str, page: int = 1):
+        jobs, runner = state.collections
+        job = jobs.get(job_id)
+        if job is None:
+            state.flash("no such collection run", "err")
+            return RedirectResponse("/inscriptions/collection", status_code=303)
+        per_page = 100
+        pages = max(1, -(-job["items"] // per_page))
+        page = max(1, min(page, pages))
+        items = jobs.items(job_id, limit=per_page, offset=(page - 1) * per_page)
+        numbers: dict[str, int] = {}
+        try:
+            index = state.token_index(state.chain_named(job["network"]))
+            for item in items:
+                if item["txid"]:
+                    row = index.inscription(item["txid"])
+                    if row:
+                        numbers[item["txid"]] = row["number"]
+        except Exception:
+            pass
+        chain = state.chain_named(job["network"])
+        return render(request, "collection_job.html", job=job, items=items,
+                      numbers=numbers, running=runner.running(job_id),
+                      chain=chain, page=page, pages=pages)
+
+    @app.get("/inscriptions/collection/{job_id}/status")
+    def collection_status(job_id: str):
+        jobs, runner = state.collections
+        job = jobs.get(job_id)
+        if job is None:
+            raise HTTPException(404, "no such collection run")
+        return JSONResponse({**job, "running": runner.running(job_id)})
+
+    @app.post("/inscriptions/collection/{job_id}/pause")
+    def collection_pause(job_id: str, csrf_token: str = Form("")):
+        check_csrf(csrf_token)
+        _, runner = state.collections
+        runner.pause(job_id)
+        return RedirectResponse(f"/inscriptions/collection/{job_id}", status_code=303)
+
+    @app.post("/inscriptions/collection/{job_id}/resume")
+    def collection_resume(job_id: str, csrf_token: str = Form("")):
+        check_csrf(csrf_token)
+        jobs, runner = state.collections
+        if jobs.get(job_id) is None:
+            raise HTTPException(404, "no such collection run")
+        runner.start(job_id)
+        return RedirectResponse(f"/inscriptions/collection/{job_id}", status_code=303)
+
+    @app.post("/inscriptions/collection/{job_id}/delete")
+    def collection_delete(job_id: str, csrf_token: str = Form("")):
+        """Forget a run. Only one that is not running: what is on the chain
+        stays there either way, but a run mid-flight is the record of it."""
+        check_csrf(csrf_token)
+        jobs, runner = state.collections
+        if runner.running(job_id):
+            state.flash("pause the run before removing it.", "err")
+            return RedirectResponse(f"/inscriptions/collection/{job_id}", status_code=303)
+        jobs.delete(job_id)
+        return RedirectResponse("/inscriptions/collection", status_code=303)
+
     # --- what an inscribed page can ask ---------------------------------------
     # Read-only, every one of them, and the only URLs in this application that
     # answer a cross-origin request. See web/content.py for why that is safe
@@ -2217,6 +2447,39 @@ def create_app(state: AppState) -> FastAPI:
         rows = _content_index().inscriptions(owner=address, limit=limit,
                                              offset=offset)
         return contentlib._json([contentlib.describe(row) for row in rows])
+
+    @app.get("/r/collections")
+    def r_collections(limit: int = 100, offset: int = 0, creator: str = ""):
+        """Every collection, newest first. A collection is what the JSON says
+        it is (`inscriptions.collection_of`), so a HashLips set is one the
+        moment its items are indexed."""
+        rows = _content_index().collections(limit=limit, offset=offset,
+                                            creator=creator or None)
+        return contentlib._json([contentlib.describe_collection(r) for r in rows])
+
+    @app.get("/r/collections/count")
+    def r_collections_count(creator: str = ""):
+        return contentlib._json({
+            "count": _content_index().collection_count(creator=creator or None)})
+
+    @app.get("/r/collection/{creator}/{name}")
+    def r_collection(creator: str, name: str, limit: int = 100, offset: int = 0,
+                     traits: int = 0):
+        """One collection and a page of its items in edition order.
+
+        `traits=1` adds how often every trait value occurs -- what rarity
+        is -- read from the items' own JSON.
+        """
+        index = _content_index()
+        summary = index.collection(creator, name)
+        if summary is None:
+            return contentlib._missing("no such collection")
+        out = contentlib.describe_collection(summary)
+        out["items"] = [contentlib.describe(r) for r in
+                        index.collection_items(creator, name, limit=limit, offset=offset)]
+        if traits:
+            out["traits"] = index.collection_traits(creator, name)
+        return contentlib._json(out)
 
     @app.get("/r/balances/{address}")
     def r_balances(address: str):

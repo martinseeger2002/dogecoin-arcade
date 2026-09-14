@@ -93,6 +93,26 @@ SECTIONS: list[dict] = [
         ],
     },
     {
+        "title": "Collections",
+        "blurb": "A set of inscriptions that belong together -- a HashLips "
+                 "build, or anything that names itself the same way.",
+        "points": [
+            ("Filed from the chain: JSON with a name like 'Doge Punks #12' is "
+             "edition 12 of Doge Punks, by its creator. Every node files the "
+             "same sets, and a set cannot be edited or hijacked afterwards."),
+            ("One set is one creator's, so nobody can slip their own items "
+             "into somebody else's."),
+            ("Ordered by edition, with traits counted across the set."),
+            ("A wizard inscribes a whole HashLips build: point it at the "
+             "build folder, see every item priced, and confirm once. Each "
+             "item's own JSON goes into its inscription."),
+            ("Pause, resume, survive a crash: every transaction is written "
+             "down the moment the node takes it, and a run left running "
+             "carries on at the next start without paying for a piece twice."),
+            ("Messages still go through while a run is on."),
+        ],
+    },
+    {
         "title": "@tags",
         "blurb": "A handle that belongs to an address.",
         "points": [

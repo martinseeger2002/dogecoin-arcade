@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% import "_chains.html" as chains %}
+{% block title %}Collections · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Collections</h1>
+<p class="sub">Sets of inscriptions, filed by what their own JSON says:
+  a name like <code>Doge Punks #12</code> and an <code>edition</code>.</p>
+
+<div class="chainbar">
+  {{ chains.card(chain, node, "Collections live here.") }}
+</div>
+{% if node_error %}<div class="msg err">{{ node_error }}</div>{% endif %}
+
+<div class="row" style="margin-bottom:14px">
+  <a class="btn ghost small" href="/inscriptions">All inscriptions</a>
+  <a class="btn small" href="/inscriptions/collection">Inscribe a collection</a>
+</div>
+
+{% if not collections %}
+  <p class="muted">No collections indexed on {{ chain.label }} yet.</p>
+{% else %}
+<div class="cards">
+  {% for c in collections %}
+  <div class="card">
+    {% if c.cover_txid and c.cover_type and c.cover_type.startswith('image/') %}
+      <a href="/collections/{{ c.creator }}/{{ c.collection|urlencode }}">
+        <img src="/content/{{ c.cover_txid }}" alt="{{ c.collection }}" loading="lazy"
+             style="max-width:100%;border-radius:8px;margin-bottom:8px"></a>
+    {% endif %}
+    <div class="row" style="align-items:baseline">
+      <strong>{{ c.collection }}</strong>
+      <span class="muted" style="margin-left:auto">{{ "{:,}".format(c.count) }} item{{ '' if c.count == 1 else 's' }}</span>
+    </div>
+    <table>
+      <tr><td class="muted" style="width:74px">By</td>
+          <td class="mono" style="word-break:break-all">
+            {% if tags.get(c.creator) %}<strong>@{{ tags[c.creator] }}</strong>
+            {%- else %}{{ c.creator }}{% endif %}</td></tr>
+      <tr><td class="muted">Numbers</td>
+          <td>#{{ "{:,}".format(c.first_number) }} to #{{ "{:,}".format(c.last_number) }}</td></tr>
+    </table>
+    <div class="row" style="margin-top:8px">
+      <a class="btn ghost small" href="/collections/{{ c.creator }}/{{ c.collection|urlencode }}">Open</a>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% if pages > 1 %}
+<nav class="pager">
+  {% if page > 1 %}<a class="btn ghost small" href="/collections?page={{ page - 1 }}">Newer</a>{% endif %}
+  <span class="muted">page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}<a class="btn ghost small" href="/collections?page={{ page + 1 }}">Older</a>{% endif %}
+</nav>
+{% endif %}
+{% endif %}
+{% endblock %}

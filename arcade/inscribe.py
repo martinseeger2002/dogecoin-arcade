@@ -113,7 +113,8 @@ class Plan:
         return len(self.payloads)
 
 
-def plan(content: bytes, content_type: str, json_text: str = "") -> Plan:
+def plan(content: bytes, content_type: str, json_text: str = "",
+         inscription_id: bytes | None = None) -> Plan:
     """Everything that has to go on chain, and what it will cost.
 
     The payloads are the inscription bodies THEMSELVES, not wrapped in AnyData:
@@ -123,8 +124,13 @@ def plan(content: bytes, content_type: str, json_text: str = "") -> Plan:
     inscription simply never appeared -- because the outer body started with a
     payload header rather than with INSC. Nothing complained anywhere; the file
     was paid for and invisible. Found by putting one through a real node.
+
+    `inscription_id` is normally drawn fresh. A collection run passes the one
+    it wrote down, so a piece sent before a crash and a piece sent after it
+    belong to the same inscription.
     """
-    bodies = I.plan(content, content_type, json_text, capacity=CHUNK_CAPACITY)
+    bodies = I.plan(content, content_type, json_text, capacity=CHUNK_CAPACITY,
+                    inscription_id=inscription_id)
     return Plan(payloads=bodies,
                 estimate=estimate(content, content_type,
                                   I.validate_json(json_text)),
@@ -145,7 +151,12 @@ def piece_size(plan: "Plan") -> int:
     a 2.0 piece came up four hundredths short. Sized from the plan instead, with
     a margin, so this cannot drift when either number changes.
     """
-    per_chunk = plan.estimate.total / max(1, plan.chunks)
+    return piece_size_for(plan.estimate)
+
+
+def piece_size_for(est: Estimate) -> int:
+    """`piece_size` from an estimate alone, for a file not yet read."""
+    per_chunk = est.total / max(1, est.chunks)
     return sats(per_chunk * 1.25 + 0.5)
 
 
