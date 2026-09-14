@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from . import fees
 from . import inscriptions as I
 from .encoding import MAX_CLASS_B_PAYLOAD
 from .ledger import COIN
@@ -34,8 +35,10 @@ PACKETS_PER_OUTPUT = 2
 #: the encoder puts their own key in every one of them -- see `sweep`.
 DUST = 0.01
 
-#: What a transaction of this shape costs per kilobyte, at the node's ordinary
-#: rate. Measured, not assumed: a 14,669-byte chunk paid 0.1467.
+#: What a transaction costs per kilobyte at the node's ordinary rate -- of
+#: its VIRTUAL size, which for a multisig chunk is about 3.5x its bytes
+#: (fees.py). A 14,669-byte chunk paid 0.1467 on its bytes and then sat in
+#: every mempool, one per block, until it was repriced.
 FEE_PER_KB = 0.01
 
 #: Bytes on the wire per data output: a 1-of-3 bare multisig with two fake
@@ -92,7 +95,9 @@ def estimate(content: bytes | int, content_type: str = "application/octet-stream
     outputs_each = -(-(-(-even // PACKET_DATA) // PACKETS_PER_OUTPUT))
     outputs = outputs_each * chunks
     chain_bytes = chunks * BASE_TX_BYTES + outputs * BYTES_PER_OUTPUT
-    fee = round(chain_bytes / 1000 * FEE_PER_KB, 8)
+    fee = sum(fees.fee_for(BASE_TX_BYTES + outputs_each * BYTES_PER_OUTPUT,
+                           outputs_each * fees.SIGOPS_PER_MULTISIG + 2)
+              for _ in range(chunks)) / COIN
     dust = round((outputs + chunks) * DUST, 8)     # +1 marker output per chunk
     return Estimate(content_bytes=size, chunks=chunks, outputs=outputs,
                     chain_bytes=chain_bytes, fee=fee, dust=dust)

@@ -171,6 +171,13 @@ class AppState:
     #: so that the one confirmed is exactly the one that was shown.
     prepared_tokens: dict = field(default_factory=dict)
 
+    #: The block being mined from the wallet page, while one is: started (time)
+    #: and address. Mining is a minute or more of one core's work, and a
+    #: button that goes quiet for a minute gets pressed again; this is what
+    #: the page shows instead, and what stops a second press from starting
+    #: a second miner (D-025).
+    mining: dict | None = None
+
     #: Incremented whenever a scan finds something a page would show. Open pages
     #: poll this and refresh when it moves; a block with nothing in it for us
     #: must not reload every browser.
@@ -519,6 +526,7 @@ class AppState:
     _approvals: Any = None
     _pagestore: Any = None
     _talk: Any = None
+    _offers: Any = None
 
     def chain_named(self, network: str) -> ChainContext:
         for chain in self.token_chains:
@@ -566,6 +574,14 @@ class AppState:
             from ..nodetalk import Talk
             self._talk = Talk(self.home / "nodetalk.sqlite")
         return self._talk
+
+    @property
+    def offers(self):
+        """The shops' book: every offer this wallet has made (arcade/swap.py)."""
+        if self._offers is None:
+            from ..swap import Offers
+            self._offers = Offers(self.home / "swaps.sqlite")
+        return self._offers
 
     # --- identity, derived from the wallet ------------------------------------
     #

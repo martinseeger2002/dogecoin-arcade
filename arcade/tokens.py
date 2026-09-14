@@ -43,6 +43,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from . import fees
 from . import payload as P
 from .config import Params
 from .encoding import (
@@ -176,7 +177,7 @@ class TokenSender:
             raise TokenError(str(exc)) from exc
 
         raw = build_raw_tx(inputs, outputs)
-        funded = self.rpc.call("fundrawtransaction", raw, {"changeAddress": sender})
+        funded = fees.fund(self.rpc, raw, {"changeAddress": sender})
         if not funded or "hex" not in funded:
             raise TokenError("fundrawtransaction failed; is the wallet funded?")
         fee_sats = int(round(float(funded.get("fee", 0)) * COIN))

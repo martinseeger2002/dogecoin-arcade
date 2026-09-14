@@ -18,6 +18,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from .. import fees
 from ..config import Params, require_messaging_network
 from ..encoding import MAX_CLASS_B_PAYLOAD, encode_class_b, encode_class_c, max_class_c_payload
 from ..payload import AnyData
@@ -165,7 +166,7 @@ def plan_message(
         return MessagePlan(
             payload_bytes=len(single), transactions=1, chunked=False,
             packets=packets, multisig_outputs=outs, est_size=size,
-            est_fee_sats=int(size / 1000 * COIN / 100),
+            est_fee_sats=fees.fee_for(size, outs * fees.SIGOPS_PER_MULTISIG + 2),
             est_dust_sats=(outs + 1) * OUTPUT_VALUE,
             chunk_payloads=[single],
         )
@@ -215,7 +216,7 @@ def _plan_chunked(sender: Identity, recipient_public: bytes,
         payload_bytes=len(body), transactions=total, chunked=True,
         packets=-(-len(body) // 30), multisig_outputs=outs_each * total,
         est_size=size_each * total,
-        est_fee_sats=int(size_each * total / 1000 * COIN / 100),
+        est_fee_sats=fees.fee_for(size_each, outs_each * fees.SIGOPS_PER_MULTISIG + 2) * total,
         est_dust_sats=(outs_each + 1) * OUTPUT_VALUE * total,
         chunk_payloads=payloads,
     )
@@ -303,8 +304,7 @@ class MessageSender:
         inputs = self._select_inputs(address, needed)
 
         raw = build_raw_tx(inputs, outputs)
-        funded = self.rpc.call("fundrawtransaction", raw,
-                               {"changeAddress": address})
+        funded = fees.fund(self.rpc, raw, {"changeAddress": address})
         if not funded or "hex" not in funded:
             raise SendError("could not fund the split")
         signed = self.rpc.call("signrawtransaction", funded["hex"])
@@ -322,10 +322,11 @@ class MessageSender:
             # coins when it costs a fraction of one.
         )
 
-    #: What one Class B chunk costs: about 110 outputs of dust plus a fee. Split
-    #: pieces are sized from this rather than a round number, because a large
-    #: file needs thousands of them and 10 coins apiece would need more than a
-    #: wallet is likely to hold.
+    #: What one Class B chunk costs: up to 129 outputs of dust (1.29) plus the
+    #: fee on their sigops (0.51 for a full chunk, fees.py). Split pieces are
+    #: sized from this rather than a round number, because a large file needs
+    #: thousands of them and 10 coins apiece would need more than a wallet is
+    #: likely to hold.
     CHUNK_COST_SATS = 2 * COIN
 
     def ensure_outputs(self, address: str, wanted: int,
@@ -507,18 +508,22 @@ class MessageSender:
         Why the fallback waits rather than spending unconfirmed change
         -------------------------------------------------------------
         Spending 0-conf change would be faster and works for short messages, but
-        it fails outright past about six chunks. A Class B chunk is roughly
-        14.8 KB, and `DEFAULT_ANCESTOR_SIZE_LIMIT` is 101 KB
-        (dogecoin/src/validation.h:76), so a seventh unconfirmed link is rejected
-        by the node -- not merely at risk of eviction, but refused. An approach
-        that works up to six chunks and then breaks is worse than one that is
-        uniformly slow, because a partial send is permanently unreadable: the
-        chunks already on chain cannot be taken back, and nothing can complete
-        the message later.
+        it fails outright past two chunks. A Class B chunk is roughly 14.8 KB
+        on the wire but 40-50 KB to the mempool, which sizes it by its sigops
+        (fees.py), and `DEFAULT_ANCESTOR_SIZE_LIMIT` is 101 KB of that
+        (validation.h:76), so a third unconfirmed link is rejected by the node
+        -- not merely at risk of eviction, but refused (-26
+        too-long-mempool-chain). An approach that works up to two chunks and
+        then breaks is worse than one that is uniformly slow, because a
+        partial send is permanently unreadable: the chunks already on chain
+        cannot be taken back, and nothing can complete the message later.
 
-        Input selection itself still allows unconfirmed coins, so sending two
-        separate messages in a row does not make the second wait on the first's
-        change. It is only *within* a message that the wait is required.
+        The first chunk prefers a confirmed output too, and takes unconfirmed
+        change only when there is nothing else: so sending two messages in a
+        row does not make the second wait on the first's change, and a hundred
+        inscriptions in a row, each funded ahead (collections.py), do not
+        chain into one another either. It is only *within* a message that
+        the wait is required.
         """
         txids: list[str] = []
         total = len(payloads)
@@ -563,8 +568,12 @@ class MessageSender:
 
             if prepared is None:
                 try:
-                    prepared = self.prepare(sender_address, payload,
-                                            exclude=frozenset(used))
+                    try:
+                        prepared = self.prepare(sender_address, payload, minconf=1,
+                                                exclude=frozenset(used))
+                    except SendError:
+                        prepared = self.prepare(sender_address, payload,
+                                                exclude=frozenset(used))
                 except Exception as exc:
                     if txids:
                         raise PartialSend(
@@ -691,9 +700,8 @@ class MessageSender:
         # message then either fails outright or silently resolves to a different
         # sender. It also keeps the messaging identity's funds in one place.
         # (fundrawtransaction options, rpcwallet.cpp:2791.)
-        funded = self.rpc.call(
-            "fundrawtransaction", raw,
-            {"changeAddress": change_address or sender_address})
+        funded = fees.fund(self.rpc, raw,
+                           {"changeAddress": change_address or sender_address})
         if not funded or "hex" not in funded:
             raise SendError("fundrawtransaction failed; is the wallet funded?")
         fee_sats = int(round(float(funded.get("fee", 0)) * COIN))

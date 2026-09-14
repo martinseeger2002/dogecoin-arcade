@@ -1,0 +1,765 @@
+"""A shop that is an inscription, and the swap that buys from it.
+
+Why it exists
+-------------
+A marketplace needs two things a send does not have: a way to say what is for
+sale, and a way for two parties to exchange without either trusting the other
+to go second. This gives both, and the engine gives the second its teeth: a
+swap is ONE transaction that both parties have signed (inscriptions.Swap,
+state.Engine._swap). Both legs move or neither does, so there is no block in
+which the buyer has paid and the seller has not delivered.
+
+The shop is an inscription
+--------------------------
+What a store sells is written in the inscription's own JSON, the field that
+travels with the content and is covered by its hash (inscribe.py). So the
+terms are on the chain, immutable, and identical on every node: a buyer's
+wallet reads them from its own ledger before anything is asked of the seller,
+and the seller's wallet reads the same bytes before it offers anything.
+Nobody's page is trusted about the price.
+
+    {"shop": {"node": "arcade:test:...",
+              "listings": [
+                {"give": {"token": 3, "amount": "100"}, "take": {"coins": "2"}},
+                {"give": {"collection": "Goofball", "pick": "random"},
+                 "take": {"token": 3, "amount": "10"}},
+                {"give": {"inscription": 57}, "take": {"inscription": 58}}]}}
+
+`node` is where the seller's wallet listens (its contact code or public key).
+A listing's `give` is what the seller hands over, `take` what the seller gets.
+`collection` names a set of the shop's creator's and hands over a random
+item of it the shop still holds -- a minting event is exactly this listing.
+
+Who may sell from a shop
+------------------------
+The wallet that CREATED the inscription and still HOLDS it. Creating it means
+the terms are the owner's own words; holding it means the shop can be
+closed by sending the inscription away, and that a shop cannot be
+copied -- a second inscription with the same JSON belongs to whoever made it
+and sells from THEIR wallet, not this one. The shopkeeper (shopkeeper.py)
+answers for every such inscription without anybody pressing anything: an
+order is a question about an item and a price the owner already wrote down.
+
+The exchange, step by step
+--------------------------
+1. The buyer's wallet sends the shop's node a node-to-node message (nodetalk)
+   naming the shop, the listing and the address that will pay and receive.
+2. The shop's node checks it still holds what the listing gives and that the
+   buyer holds what it takes, picks the item if the listing is random, LOCKS
+   one of its own outputs so nothing else in that wallet spends it, and
+   answers with an offer: the two legs made concrete, and the outpoint.
+3. The buyer's wallet builds the transaction -- the seller's outpoint first,
+   its own inputs after, the swap in OP_RETURN, the seller made whole -- and
+   shows it to the buyer in the approvals pop-up. Approve signs the buyer's
+   half; the seller's input cannot be signed here, and the node says so.
+4. The half-signed transaction goes back to the shop's node in a second
+   message. The node checks it against the offer it made -- its own outpoint
+   in first place, exactly the legs it offered, paid what it asked -- and only
+   then signs and broadcasts. One transaction; one block; both sides.
+
+An offer that is not taken up expires and unlocks the output. A buyer who
+sends something other than what was offered is refused and nothing is
+signed. The engine checks everything again when the block arrives, on every
+node, so a shop's node that lied would only be recorded as having sent an
+invalid transaction.
+
+Testnet only, because the messages are (D-010).
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import secrets
+import sqlite3
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Iterator
+
+from . import inscriptions as I
+from . import payload as P
+from .encoding import decode_class_c, encode_class_c
+from .ledger import COIN, format_amount, parse_amount as parse_token_amount
+from .messaging.sender import OUTPUT_VALUE
+from .txbuild import build_raw_tx, op_return_script, p2pkh_script
+from .wallet import parse_amount as parse_coin_amount
+
+#: How long an offer stands. Long enough to read the pop-up on a phone, short
+#: enough that an output is not locked for an afternoon by a buyer who left.
+OFFER_TTL = 900
+
+#: The fee per kilobyte, RECOMMENDED_MIN_TX_FEE (policy/policy.h:23), and the
+#: least the buyer's change may be without being dust the node refuses.
+FEE_PER_KB = COIN // 100
+MIN_CHANGE = OUTPUT_VALUE
+
+#: How many listings a shop may have. A page can show more than this; it
+#: cannot ask a node to price them all.
+MAX_LISTINGS = 200
+
+STATUSES = ("open", "sent", "expired", "refused", "failed")
+
+#: What the messages between the two wallets speak. Every one carries it as
+#: `swapv`, and a wallet answers only its own: a buyer on an older release
+#: is told so in words, rather than offered something it will build wrongly.
+PROTOCOL = 1
+
+
+class SwapError(ValueError):
+    """What was asked cannot be offered, built or signed."""
+
+
+# --- the shop: what an inscription says it sells ------------------------------
+
+def shop_of(row: dict) -> dict:
+    """The shop an inscription describes, or a SwapError saying why not."""
+    try:
+        data = json.loads(row.get("json") or "")
+    except (TypeError, ValueError):
+        raise SwapError("this inscription has no JSON, so it is not a shop") from None
+    shop = data.get("shop") if isinstance(data, dict) else None
+    if not isinstance(shop, dict):
+        raise SwapError("this inscription's JSON has no \"shop\" in it")
+    listings = shop.get("listings")
+    if not isinstance(listings, list) or not listings:
+        raise SwapError("a shop needs a list of listings")
+    if len(listings) > MAX_LISTINGS:
+        raise SwapError(f"a shop may list {MAX_LISTINGS} things at most")
+    out = []
+    for n, entry in enumerate(listings):
+        if not isinstance(entry, dict) or not isinstance(entry.get("give"), dict) \
+                or not isinstance(entry.get("take"), dict):
+            raise SwapError(f"listing {n} needs a \"give\" and a \"take\"")
+        _check_spec(entry["give"], n, giving=True)
+        _check_spec(entry["take"], n, giving=False)
+        out.append({"give": entry["give"], "take": entry["take"]})
+    node = shop.get("node")
+    return {"node": str(node).strip() if node else None, "listings": out}
+
+
+def _check_spec(spec: dict, n: int, *, giving: bool) -> None:
+    kinds = [k for k in ("inscription", "collection", "token", "coins") if k in spec]
+    if len(kinds) != 1:
+        raise SwapError(f"listing {n}: name one of inscription, collection, token or coins")
+    kind = kinds[0]
+    if kind == "collection" and not giving:
+        raise SwapError(f"listing {n}: a shop can give a random item, not take one")
+    if kind == "token":
+        try:
+            int(spec["token"])
+        except (TypeError, ValueError):
+            raise SwapError(f"listing {n}: token must be a property id") from None
+    if kind == "token" and not str(spec.get("amount", "")).strip():
+        raise SwapError(f"listing {n}: a token needs an amount")
+    if kind == "coins" and not str(spec.get("coins", "")).strip():
+        raise SwapError(f"listing {n}: coins is the amount, like {{\"coins\": \"2\"}}")
+
+
+def leg_of(spec: dict, index: Any) -> I.Leg:
+    """A listing's spec as a concrete leg. Not for `collection`: that is
+    picked by the seller at offer time (pick_item)."""
+    if "inscription" in spec:
+        key = spec["inscription"]
+        row = index.inscription(int(key) if isinstance(key, int) or str(key).isdigit()
+                                else str(key))
+        if row is None:
+            raise SwapError(f"there is no inscription {key}")
+        return I.Leg(I.LEG_INSCRIPTION, txid=bytes.fromhex(row["txid"]))
+    if "token" in spec:
+        pid = int(spec["token"])
+        prop = index.property(pid)
+        if prop is None:
+            raise SwapError(f"there is no token {pid}")
+        try:
+            units = parse_token_amount(str(spec["amount"]), bool(prop["divisible"]))
+        except Exception as exc:
+            raise SwapError(f"token amount: {exc}") from None
+        if units <= 0:
+            raise SwapError("a token amount must be more than zero")
+        return I.Leg(I.LEG_TOKEN, property_id=pid, amount=units)
+    if "coins" in spec:
+        try:
+            sats = parse_coin_amount(str(spec["coins"]))
+        except Exception as exc:
+            raise SwapError(f"coin amount: {exc}") from None
+        if sats <= 0:
+            raise SwapError("a coin amount must be more than zero")
+        return I.Leg(I.LEG_COINS, amount=sats)
+    raise SwapError("a collection is picked at offer time")
+
+
+def pick_item(index: Any, creator: str, name: str, owner: str,
+              exclude: set[str] = frozenset()) -> dict:
+    """A random item of the collection that `owner` still holds.
+
+    Random rather than next-in-line, because a mint whose order is known is
+    a mint whose best pieces are known. `exclude` is what is already in an
+    open offer."""
+    held = [row for row in index.collection_items(creator, name, limit=500)
+            if row["owner"] == owner and row["txid"] not in exclude]
+    if not held:
+        raise SwapError(f"nothing of {name} is left to give")
+    return held[secrets.randbelow(len(held))]
+
+
+def leg_json(leg: I.Leg, index: Any) -> dict:
+    """A leg as pages and people see it."""
+    if leg.kind == I.LEG_INSCRIPTION:
+        row = index.inscription(leg.txid.hex())
+        return {"kind": "inscription", "txid": leg.txid.hex(),
+                "number": row["number"] if row else None,
+                "collection": row.get("collection") if row else None,
+                "edition": row.get("edition") if row else None}
+    if leg.kind == I.LEG_TOKEN:
+        prop = index.property(leg.property_id)
+        divisible = bool(prop["divisible"]) if prop else True
+        return {"kind": "token", "propertyid": leg.property_id,
+                "name": prop["name"] if prop else None,
+                "amount": format_amount(leg.amount, divisible), "units": leg.amount}
+    if leg.kind == I.LEG_COINS:
+        return {"kind": "coins", "amount": f"{leg.amount / COIN:.8f}", "sats": leg.amount}
+    raise SwapError("a leg has to be an inscription, a token or coins")
+
+
+def leg_from_json(data: Any) -> I.Leg:
+    if not isinstance(data, dict):
+        raise SwapError("a leg is an object")
+    kind = data.get("kind")
+    try:
+        if kind == "inscription":
+            return I.Leg(I.LEG_INSCRIPTION, txid=bytes.fromhex(str(data["txid"])))
+        if kind == "token":
+            return I.Leg(I.LEG_TOKEN, property_id=int(data["propertyid"]),
+                         amount=int(data["units"]))
+        if kind == "coins":
+            return I.Leg(I.LEG_COINS, amount=int(data["sats"]))
+    except (KeyError, TypeError, ValueError):
+        raise SwapError(f"a malformed {kind} leg") from None
+    raise SwapError("a leg has to be an inscription, a token or coins")
+
+
+def describe_leg(data: dict) -> str:
+    """One phrase, for the person deciding."""
+    if data.get("kind") == "random":
+        return f"a random {data.get('collection')} ({data.get('left', 0)} left)"
+    if data.get("kind") == "inscription":
+        what = f"inscription #{data['number']}" if data.get("number") is not None \
+            else f"inscription {str(data.get('txid', ''))[:16]}…"
+        if data.get("collection"):
+            what += f" ({data['collection']}"
+            what += f" #{data['edition']})" if data.get("edition") is not None else ")"
+        return what
+    if data.get("kind") == "token":
+        return f"{data.get('amount')} {data.get('name') or 'token ' + str(data.get('propertyid'))}"
+    return f"{data.get('amount')} coins"
+
+
+def listings_json(shop_row: dict, index: Any) -> list[dict]:
+    """A shop's listings as a page shows them: each leg made concrete where
+    it can be, and whether the shop can give it right now. A random listing
+    stays random -- what it will be is picked when it is bought -- and says
+    how many are left. Nothing here is the seller's word: it is this node's
+    own ledger, read the same way the seller's reads it."""
+    shop = shop_of(shop_row)
+    seller = shop_row["owner"]
+    out = []
+    for n, listing in enumerate(shop["listings"]):
+        entry: dict[str, Any] = {"n": n}
+        give = listing["give"]
+        if "collection" in give:
+            left = [r for r in index.collection_items(shop_row["creator"], give["collection"],
+                                                      limit=500) if r["owner"] == seller]
+            entry["give"] = {"kind": "random", "collection": give["collection"],
+                             "left": len(left)}
+            entry["available"] = None if left else f"nothing of {give['collection']} is left"
+        else:
+            try:
+                leg = leg_of(give, index)
+                entry["give"] = leg_json(leg, index)
+                entry["available"] = holds(index, None, seller, leg)
+            except SwapError as exc:
+                entry["give"] = {"kind": "unknown", "spec": give}
+                entry["available"] = str(exc)
+        try:
+            entry["take"] = leg_json(leg_of(listing["take"], index), index)
+        except SwapError as exc:
+            entry["take"] = {"kind": "unknown", "spec": listing["take"]}
+            entry["available"] = entry["available"] or str(exc)
+        entry["text"] = f"{describe_leg(entry['give'])} for {describe_leg(entry['take'])}"
+        out.append(entry)
+    return out
+
+
+def holds(index: Any, rpc: Any, address: str, leg: I.Leg) -> str | None:
+    """Why `address` cannot give `leg`, or None if it can.
+
+    Coins are not checked against the ledger: they are paid inside the swap
+    itself, and the wallet building it either has them or fails to build."""
+    if leg.kind == I.LEG_INSCRIPTION:
+        row = index.inscription(leg.txid.hex())
+        if row is None:
+            return "no such inscription"
+        if row["owner"] != address:
+            return f"inscription #{row['number']} is held by {row['owner']}, not {address}"
+        return None
+    if leg.kind == I.LEG_TOKEN:
+        prop = index.property(leg.property_id)
+        if prop is None:
+            return f"there is no token {leg.property_id}"
+        held = index.balance(address, leg.property_id)
+        if held < leg.amount:
+            return (f"{address} holds {format_amount(held, bool(prop['divisible']))} "
+                    f"of {prop['name']}, not {format_amount(leg.amount, bool(prop['divisible']))}")
+        return None
+    return None
+
+
+# --- offers: what a shop's node has promised, and to whom ---------------------
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS offer (
+    id            TEXT PRIMARY KEY,
+    network       TEXT NOT NULL,
+    shop          TEXT NOT NULL,
+    listing       INTEGER NOT NULL,
+    seller        TEXT NOT NULL,
+    buyer         TEXT NOT NULL,
+    buyer_pubkey  TEXT NOT NULL DEFAULT '',
+    give          TEXT NOT NULL,
+    take          TEXT NOT NULL,
+    outpoint_txid TEXT NOT NULL,
+    outpoint_vout INTEGER NOT NULL,
+    outpoint_value INTEGER NOT NULL,
+    created       REAL NOT NULL,
+    expires       REAL NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'open',
+    txid          TEXT NOT NULL DEFAULT '',
+    error         TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS offer_open ON offer(status, network);
+CREATE TABLE IF NOT EXISTS cursor (
+    network TEXT PRIMARY KEY,
+    last    INTEGER NOT NULL
+);
+"""
+
+
+class Offers:
+    """The seller's book: every offer made, open or closed, in one file."""
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self._open() as conn:
+            conn.executescript(SCHEMA)
+
+    @contextmanager
+    def _open(self) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(self.path, timeout=30)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=FULL")
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
+
+    def add(self, offer: dict) -> None:
+        with self._open() as conn:
+            conn.execute(
+                "INSERT INTO offer(id, network, shop, listing, seller, buyer, buyer_pubkey, "
+                "give, take, outpoint_txid, outpoint_vout, outpoint_value, created, expires) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (offer["id"], offer["network"], offer["shop"], int(offer["listing"]),
+                 offer["seller"], offer["buyer"], offer.get("buyer_pubkey", ""),
+                 json.dumps(offer["give"]), json.dumps(offer["take"]),
+                 offer["outpoint"]["txid"], int(offer["outpoint"]["vout"]),
+                 int(offer["outpoint"]["value"]), offer["created"], offer["expires"]))
+
+    def get(self, offer_id: str) -> dict | None:
+        with self._open() as conn:
+            row = conn.execute("SELECT * FROM offer WHERE id = ?",
+                               (str(offer_id),)).fetchone()
+            return _offer_row(row) if row else None
+
+    def open_offers(self, network: str) -> list[dict]:
+        with self._open() as conn:
+            return [_offer_row(r) for r in conn.execute(
+                "SELECT * FROM offer WHERE status = 'open' AND network = ? ORDER BY created",
+                (network,))]
+
+    def close(self, offer_id: str, status: str, txid: str = "", error: str = "") -> bool:
+        if status not in STATUSES or status == "open":
+            raise ValueError(f"not a closing status: {status!r}")
+        with self._open() as conn:
+            done = conn.execute(
+                "UPDATE offer SET status = ?, txid = ?, error = ? "
+                "WHERE id = ? AND status = 'open'",
+                (status, txid, error[:500], str(offer_id)))
+            return done.rowcount == 1
+
+    def recent(self, network: str, limit: int = 50) -> list[dict]:
+        with self._open() as conn:
+            return [_offer_row(r) for r in conn.execute(
+                "SELECT * FROM offer WHERE network = ? ORDER BY created DESC LIMIT ?",
+                (network, int(limit)))]
+
+    # The shopkeeper's place in the inbox: the id of the last message it read.
+    # Its own cursor rather than the read flags, which a bot on the RPC may
+    # set on anything it fetches -- a message it marked read is still an
+    # order. None before the shopkeeper has ever run on this chain.
+
+    def cursor(self, network: str) -> int | None:
+        with self._open() as conn:
+            row = conn.execute("SELECT last FROM cursor WHERE network = ?",
+                               (network,)).fetchone()
+            return int(row["last"]) if row else None
+
+    def set_cursor(self, network: str, last: int) -> None:
+        with self._open() as conn:
+            conn.execute("INSERT INTO cursor(network, last) VALUES(?,?) "
+                         "ON CONFLICT(network) DO UPDATE SET last = excluded.last",
+                         (network, int(last)))
+
+
+def _offer_row(row: sqlite3.Row) -> dict:
+    data = dict(row)
+    return {
+        "id": data["id"], "network": data["network"], "shop": data["shop"],
+        "listing": data["listing"], "seller": data["seller"], "buyer": data["buyer"],
+        "buyer_pubkey": data["buyer_pubkey"],
+        "give": json.loads(data["give"]), "take": json.loads(data["take"]),
+        "outpoint": {"txid": data["outpoint_txid"], "vout": data["outpoint_vout"],
+                     "value": data["outpoint_value"]},
+        "created": data["created"], "expires": data["expires"],
+        "status": data["status"], "txid": data["txid"] or None,
+        "error": data["error"] or None,
+    }
+
+
+def public(offer: dict) -> dict:
+    """The offer as it is sent to the buyer: everything but the bookkeeping."""
+    return {k: offer[k] for k in ("id", "network", "shop", "listing", "seller", "buyer",
+                                  "give", "take", "outpoint", "created", "expires")}
+
+
+# --- the seller's side --------------------------------------------------------
+
+def coins_in(leg: I.Leg) -> int:
+    return leg.amount if leg.kind == I.LEG_COINS else 0
+
+
+def make_offer(rpc: Any, index: Any, offers: Offers, network: str, shop_row: dict,
+               listing_no: int, buyer: str, buyer_pubkey: str, own: list[str]) -> dict:
+    """Price one listing for one buyer, lock an output, and write it down.
+
+    Everything that can be refused here is: a shop this wallet cannot sell
+    from, a listing that is not there, a give the shop no longer holds, a
+    take the buyer does not hold. What is left is an offer the buyer can act
+    on as it stands."""
+    seller = shop_row["owner"]
+    if shop_row["creator"] != seller or seller not in own:
+        raise SwapError("this wallet did not create this shop, or no longer holds it")
+    if buyer == seller:
+        raise SwapError("a shop cannot sell to its own wallet")
+    if buyer in own:
+        raise SwapError("the buyer's address is in this wallet")
+    shop = shop_of(shop_row)
+    try:
+        listing = shop["listings"][int(listing_no)]
+    except (IndexError, TypeError, ValueError):
+        raise SwapError(f"there is no listing {listing_no}") from None
+
+    expire(rpc, offers, network)
+    standing = offers.open_offers(network)
+    locked_items = {o["give"]["txid"] for o in standing if o["give"].get("kind") == "inscription"}
+    locked_outs = {(o["outpoint"]["txid"], o["outpoint"]["vout"]) for o in standing}
+
+    give_spec = listing["give"]
+    if "collection" in give_spec:
+        item = pick_item(index, shop_row["creator"], str(give_spec["collection"]), seller,
+                         exclude=locked_items)
+        give = I.Leg(I.LEG_INSCRIPTION, txid=bytes.fromhex(item["txid"]))
+    else:
+        give = leg_of(give_spec, index)
+        if give.kind == I.LEG_INSCRIPTION and give.txid.hex() in locked_items:
+            raise SwapError("that item is already offered to somebody else")
+    take = leg_of(listing["take"], index)
+    for who, leg, name in ((seller, give, "the shop"), (buyer, take, "the buyer")):
+        problem = holds(index, rpc, who, leg)
+        if problem:
+            raise SwapError(f"{name} cannot give that: {problem}")
+    if give.kind == I.LEG_TOKEN and take.kind == I.LEG_TOKEN \
+            and give.property_id == take.property_id:
+        raise SwapError("a swap of a token for itself is not a swap")
+
+    # The seller's output comes back to the seller, plus what the buyer pays
+    # in coins, less what the seller pays in coins. It has to stay above
+    # dust once that is done, so an output is picked that can carry it.
+    floor = coins_in(give) + MIN_CHANGE - coins_in(take)
+    unspent = [u for u in (rpc.call("listunspent", 1, 9_999_999, [seller]) or [])
+               if (u["txid"], int(u["vout"])) not in locked_outs
+               and u.get("spendable", True)]
+    fitting = sorted((u for u in unspent if int(round(float(u["amount"]) * COIN)) >= floor),
+                     key=lambda u: float(u["amount"]))
+    if not fitting:
+        raise SwapError(f"{seller} has no output worth {max(floor, 0) / COIN:.8f} to swap from"
+                        + (" (all are in open offers)" if unspent != fitting and locked_outs
+                           else ""))
+    chosen = fitting[0]
+    outpoint = {"txid": chosen["txid"], "vout": int(chosen["vout"]),
+                "value": int(round(float(chosen["amount"]) * COIN))}
+    if not rpc.call("lockunspent", False, [{"txid": outpoint["txid"], "vout": outpoint["vout"]}]):
+        raise SwapError("the node would not lock the output")
+    now = time.time()
+    offer = {"id": secrets.token_hex(8), "network": network, "shop": shop_row["txid"],
+             "listing": int(listing_no), "seller": seller, "buyer": buyer,
+             "buyer_pubkey": buyer_pubkey, "give": leg_json(give, index),
+             "take": leg_json(take, index), "outpoint": outpoint,
+             "created": now, "expires": now + OFFER_TTL}
+    offers.add(offer)
+    return public(offer)
+
+
+def expire(rpc: Any, offers: Offers, network: str) -> int:
+    """Close offers past their time and unlock what they held."""
+    closed = 0
+    for offer in offers.open_offers(network):
+        if offer["expires"] <= time.time():
+            offers.close(offer["id"], "expired")
+            _unlock(rpc, offer)
+            closed += 1
+    return closed
+
+
+def _unlock(rpc: Any, offer: dict) -> None:
+    try:
+        rpc.call("lockunspent", True, [{"txid": offer["outpoint"]["txid"],
+                                        "vout": offer["outpoint"]["vout"]}])
+    except Exception:
+        pass        # spent already, or the node restarted and forgot the lock
+
+
+def countersign(rpc: Any, index: Any, offers: Offers, offer: dict, hex_: str) -> str:
+    """Check the buyer's half against the offer, sign the seller's, broadcast.
+
+    The seller signs nothing it did not offer. Its own outpoint must be the
+    first input (that makes it the sender, and so the seller, to the engine);
+    no other input may be the seller's; the OP_RETURN must carry exactly the
+    two legs offered; and the seller's outputs must return its input plus
+    what the buyer owes in coins. What the buyer does with its own inputs and
+    change is the buyer's business -- the engine holds the buyer to its leg.
+    """
+    if offer["status"] != "open":
+        raise SwapError(f"that offer is {offer['status']}")
+    if offer["expires"] <= time.time():
+        offers.close(offer["id"], "expired")
+        _unlock(rpc, offer)
+        raise SwapError("that offer has expired")
+    try:
+        decoded = rpc.call("decoderawtransaction", str(hex_))
+    except Exception as exc:
+        raise SwapError(f"that is not a transaction: {exc}") from None
+    vin = decoded.get("vin") or []
+    if len(vin) < 2:
+        raise SwapError("a swap has the seller's input and the buyer's")
+    first = vin[0]
+    if first.get("txid") != offer["outpoint"]["txid"] \
+            or int(first.get("vout", -1)) != offer["outpoint"]["vout"]:
+        raise SwapError("the seller's output is not the first input")
+    seller, buyer = offer["seller"], offer["buyer"]
+    for n, entry in enumerate(vin[1:], 1):
+        prev = rpc.call("gettxout", entry.get("txid"), int(entry.get("vout", -1)), True)
+        if not prev:
+            raise SwapError(f"input {n} is spent or unknown")
+        addresses = prev.get("scriptPubKey", {}).get("addresses") or []
+        if seller in addresses:
+            raise SwapError(f"input {n} is the seller's; only the offered output may be")
+        if n == 1 and buyer not in addresses:
+            raise SwapError("the first input after the seller's is not the buyer's")
+
+    give, take = leg_from_json(offer["give"]), leg_from_json(offer["take"])
+    swaps, paid = [], 0
+    for out in decoded.get("vout") or []:
+        script = out.get("scriptPubKey", {})
+        if script.get("type") == "nulldata":
+            swaps.append(_swap_in(script.get("hex", "")))
+            continue
+        if seller in (script.get("addresses") or []):
+            paid += int(round(float(out.get("value", 0)) * COIN))
+    if len(swaps) != 1:
+        raise SwapError("a swap has exactly one OP_RETURN")
+    swap = swaps[0]
+    if swap is None or swap.give != give or swap.take != take:
+        raise SwapError("the transaction does not carry the legs that were offered")
+    owed = offer["outpoint"]["value"] + coins_in(take) - coins_in(give)
+    if paid < owed:
+        raise SwapError(f"the seller is paid {paid / COIN:.8f}, not the "
+                        f"{owed / COIN:.8f} the offer says")
+    for who, leg in ((seller, give), (buyer, take)):
+        problem = holds(index, rpc, who, leg)
+        if problem:
+            raise SwapError(problem)
+
+    signed = rpc.call("signrawtransaction", str(hex_))
+    if not signed.get("complete"):
+        raise SwapError(f"the transaction is still not complete after the seller "
+                        f"signed: {signed.get('errors')}")
+    txid = str(rpc.call("sendrawtransaction", signed["hex"]))
+    offers.close(offer["id"], "sent", txid=txid)
+    return txid
+
+
+def _swap_in(script_hex: str) -> I.Swap | None:
+    """The swap an OP_RETURN script carries, or None if it carries something else."""
+    try:
+        raw = bytes.fromhex(script_hex)
+        if not raw or raw[0] != 0x6a:
+            return None
+        at, push = 1, raw[1]
+        if push == 0x4c:
+            at, push = 3, raw[2]
+        else:
+            at = 2
+        data = decode_class_c(raw[at:at + push])
+        if data is None:
+            return None
+        parsed = P.decode(data)
+        if not isinstance(parsed, P.AnyData):
+            return None
+        found = I.parse(parsed.data)
+        return found if isinstance(found, I.Swap) else None
+    except Exception:
+        return None
+
+
+# --- the buyer's side ---------------------------------------------------------
+
+@dataclass
+class Built:
+    """The buyer's half: signed by the buyer, waiting for the seller."""
+
+    hex: str
+    txid: str               # of the half-signed transaction; the seller's signature changes it
+    fee_sats: int
+    size: int
+    buyer: str
+    seller: str
+    give: dict
+    take: dict
+    outputs: list[dict] = field(default_factory=list)
+
+    @property
+    def what(self) -> str:
+        return f"{describe_leg(self.take)} for {describe_leg(self.give)}"
+
+
+def check_offer(offer: Any, *, shop: str, own: list[str], height: int | None,
+                params: Any) -> dict:
+    """An offer as a page handed it back, checked before it is shown to anyone."""
+    if not isinstance(offer, dict):
+        raise SwapError("an offer is an object")
+    try:
+        out = {"id": str(offer["id"]), "network": str(offer["network"]),
+               "shop": str(offer["shop"]), "listing": int(offer["listing"]),
+               "seller": str(offer["seller"]), "buyer": str(offer["buyer"]),
+               "give": dict(offer["give"]), "take": dict(offer["take"]),
+               "outpoint": {"txid": str(offer["outpoint"]["txid"]),
+                            "vout": int(offer["outpoint"]["vout"]),
+                            "value": int(offer["outpoint"]["value"])},
+               "created": float(offer["created"]), "expires": float(offer["expires"])}
+    except (KeyError, TypeError, ValueError):
+        raise SwapError("that is not an offer") from None
+    if out["shop"] != shop:
+        raise SwapError("that offer is from a different shop")
+    if out["buyer"] not in own:
+        raise SwapError(f"the offer is to {out['buyer']}, which this wallet cannot sign for")
+    if out["seller"] in own:
+        raise SwapError("the seller's address is in this wallet")
+    if out["expires"] <= time.time():
+        raise SwapError("that offer has expired; ask for another")
+    if params.swaps_from is None:
+        raise SwapError("swaps are not read on this chain")
+    if height is not None and height < params.swaps_from:
+        raise SwapError(f"swaps are read from block {params.swaps_from:,}; "
+                        f"the chain is at {height:,}")
+    leg_from_json(out["give"]), leg_from_json(out["take"])
+    return out
+
+
+def build(rpc: Any, index: Any, offer: dict, own: list[str]) -> Built:
+    """The buyer's transaction, signed by the buyer only.
+
+    The seller's outpoint first, then the buyer's own outputs, from the one
+    address that pays and receives. Outputs: the swap, the seller made whole
+    (its input back, plus the coins it is owed, less any it gives), and the
+    buyer's change. The buyer pays the fee: the buyer is the one asking."""
+    buyer, seller = offer["buyer"], offer["seller"]
+    if buyer not in own:
+        raise SwapError(f"{buyer} is not this wallet's")
+    give, take = leg_from_json(offer["give"]), leg_from_json(offer["take"])
+    for who, leg, name in ((seller, give, "the shop"), (buyer, take, "this wallet")):
+        problem = holds(index, rpc, who, leg)
+        if problem:
+            raise SwapError(f"{name} cannot give that: {problem}")
+    owes = coins_in(take) - coins_in(give)          # buyer to seller, may be negative
+    seller_out = offer["outpoint"]["value"] + owes
+    if seller_out < MIN_CHANGE:
+        raise SwapError("the seller's output would be dust; ask for another offer")
+
+    payload = P.AnyData(data=I.Swap(give=give, take=take).encode()).encode()
+    unspent = sorted((u for u in (rpc.call("listunspent", 1, 9_999_999, [buyer]) or [])
+                      if u.get("spendable", True)),
+                     key=lambda u: -float(u["amount"]))
+    chosen: list[tuple[str, int]] = []
+    total = 0
+    for utxo in unspent:
+        chosen.append((utxo["txid"], int(utxo["vout"])))
+        total += int(round(float(utxo["amount"]) * COIN))
+        fee = _fee(len(chosen) + 1, 3, len(payload))
+        if total - max(owes, 0) - fee >= 0:
+            break
+    else:
+        need = max(owes, 0) + _fee(len(chosen) + 1, 3, len(payload))
+        raise SwapError(f"{buyer} holds {total / COIN:.8f} spendable, and this swap "
+                        f"needs {need / COIN:.8f} (what is owed plus the fee)")
+    fee = _fee(len(chosen) + 1, 3, len(payload))
+    change = total - owes - fee
+    outputs = [(0, op_return_script(encode_class_c(payload))),
+               (seller_out, p2pkh_script(seller))]
+    if change >= MIN_CHANGE:
+        outputs.append((change, p2pkh_script(buyer)))
+    else:
+        fee += max(change, 0)       # too small to be worth an output; the miner has it
+    raw = build_raw_tx([(offer["outpoint"]["txid"], offer["outpoint"]["vout"])] + chosen,
+                       outputs)
+    signed = rpc.call("signrawtransaction", raw)
+    for problem in signed.get("errors") or []:
+        if int(problem.get("vout", -1)) != offer["outpoint"]["vout"] \
+                or problem.get("txid") != offer["outpoint"]["txid"]:
+            raise SwapError(f"the wallet could not sign its own input: {problem.get('error')}")
+    if signed.get("complete"):
+        raise SwapError("the wallet signed the seller's input too: the seller is this wallet")
+    decoded = rpc.call("decoderawtransaction", signed["hex"])
+    shown = []
+    for out in decoded.get("vout") or []:
+        script = out.get("scriptPubKey", {})
+        addresses = script.get("addresses") or []
+        where = addresses[0] if addresses else script.get("type", "unknown")
+        shown.append({"value": float(out.get("value", 0)), "where": where,
+                      "is_change": bool(addresses) and addresses[0] == buyer,
+                      "is_recipient": bool(addresses) and addresses[0] == seller})
+    return Built(hex=signed["hex"], txid=decoded["txid"], fee_sats=fee,
+                 size=len(signed["hex"]) // 2, buyer=buyer, seller=seller,
+                 give=offer["give"], take=offer["take"], outputs=shown)
+
+
+def _fee(inputs: int, outputs: int, payload_len: int) -> int:
+    """FEE_PER_KB for each started kilobyte of the signed transaction, sized
+    in advance: 148 bytes an input, 34 an output, the OP_RETURN as long as
+    its payload plus the marker and pushes."""
+    size = 10 + 148 * inputs + 34 * outputs + payload_len + 8
+    return math.ceil(size / 1000) * FEE_PER_KB

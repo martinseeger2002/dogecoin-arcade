@@ -10,6 +10,7 @@ with the node unreachable, which is also the state a new user starts in.
 """
 
 import re
+import time
 import pathlib
 import dataclasses
 from pathlib import Path
@@ -2417,3 +2418,103 @@ def test_a_single_transaction_message_just_says_unconfirmed(client):
     body = app.get(f"/messages/{peer.hex()}").text
     assert ">unconfirmed<" in body
     assert "of 1 transactions" not in body
+
+
+# --- mining a block from the wallet page --------------------------------------
+
+def test_mine_one_block_is_always_offered_and_says_when_it_is_at_it(client, monkeypatch):
+    """The button began as a way to fund an empty wallet and vanished once it
+    had coins. On a test chain a block is also the only way anything confirms,
+    so it stays -- and while a block is being mined (twenty minutes or more on
+    a small machine) the page says so, and how far it has got, instead of
+    showing a button that would start a second miner."""
+    import contextlib
+    import threading
+
+    from arcade.messaging import miner as minerlib
+
+    http, state = client
+    finding = threading.Event()
+    batches = []
+
+    class FakeRpc:
+        def call(self, method, *args):
+            if method == "getwalletinfo":
+                return {"balance": 12.5, "immature_balance": 0}
+            if method == "getblockcount":
+                return 100
+            if method == "getnewaddress":
+                return "nNew"
+            if method == "getconnectioncount":
+                return 3
+            if method == "getdifficulty":
+                return 0.0005
+            if method == "generatetoaddress":
+                # The node hashes for as long as it is told and answers only
+                # then: batches, so the wallet is never left waiting past
+                # the RPC timeout (miner.py).
+                batches.append(args[2])
+                time.sleep(0.01)
+                return ["ab" * 32] if finding.wait(0.2) else []
+            raise AssertionError(method)
+
+        def get_block_count(self):
+            return 100
+
+        def get_blockchain_info(self):
+            return {"chain": "test", "blocks": 100, "headers": 100}
+
+    @contextlib.contextmanager
+    def fake_rpc():
+        yield FakeRpc()
+
+    monkeypatch.setattr(state.messaging, "rpc", fake_rpc)
+    monkeypatch.setattr("arcade.messaging.miner.require_messaging_network", lambda params: None)
+    monkeypatch.setattr(type(state), "derived_address", property(lambda self: "nMine"))
+
+    page = http.get("/wallet").text
+    assert "Mine one block" in page, "funded, and still offered"
+
+    http.post("/fund", data={"csrf_token": state.csrf_token})
+    assert state.mining is not None and state.mining["address"] == "nMine"
+    page = http.get("/wallet").text
+    assert "Mining a block on this machine" in page
+    assert "Mine one block" not in page, "no button to press twice"
+    assert http.get("/wallet/mining").json()["mining"] is True
+
+    # The post lands on the wallet page, where the notice is.
+    assert "Already mining" in http.post("/fund", data={"csrf_token": state.csrf_token}).text
+
+    for _ in range(100):
+        if state.mining and state.mining["tries"]:
+            break
+        time.sleep(0.05)
+    watched = http.get("/wallet/mining").json()
+    assert watched["tries"] >= minerlib.FIRST_TRIES and watched["rate"] > 0
+    assert watched["expected"] == int(0.0005 * 2 ** 32) and watched["expected_seconds"] > 0
+    assert batches[0] == minerlib.FIRST_TRIES and batches[1] >= minerlib.TRIES_PER_CALL[0]
+    assert "Stop mining" in http.get("/wallet").text
+
+    finding.set()
+    for _ in range(100):
+        if state.mining is None:
+            break
+        time.sleep(0.05)
+    assert state.mining is None
+    assert http.get("/wallet/mining").json()["mining"] is False
+    page = http.get("/wallet").text
+    assert "Mined block abababababababab" in page and "12.50 PEP spendable" in page, page
+    assert "Mine one block" in page, "and it can be pressed again"
+
+    # Stopped: the node finishes the batch it is on, and no more.
+    finding.clear()
+    http.post("/fund", data={"csrf_token": state.csrf_token})
+    assert "Not mining" not in http.post("/fund/stop", data={"csrf_token": state.csrf_token}).text
+    assert state.mining is None or state.mining["stop"] is True
+    for _ in range(100):
+        if state.mining is None:
+            break
+        time.sleep(0.05)
+    page = http.get("/wallet").text
+    assert "Stopped mining after" in page and "no block" in page, page
+    assert "Not mining" in http.post("/fund/stop", data={"csrf_token": state.csrf_token}).text

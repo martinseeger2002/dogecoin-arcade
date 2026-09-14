@@ -15,6 +15,8 @@ from arcade.web.watcher import BlockWatcher
 
 
 class FakeChain:
+    can_spend = False               # a watcher without a wallet keeps no shop
+
     def __init__(self, network="regtest", tip=100, fails=False):
         self.network = network
         self.params = NETWORKS[network]

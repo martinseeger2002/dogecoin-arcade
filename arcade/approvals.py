@@ -50,6 +50,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
+from . import fees
 from . import inscriptions as inscriptionlib
 from . import payload as P
 from . import tokens as tokenlib
@@ -57,8 +58,10 @@ from . import wallet as walletlib
 from .ledger import COIN, parse_amount as parse_token_amount
 from .txbuild import build_raw_tx, p2pkh_script
 
-#: What a request may be for.
-KINDS = ("coins", "token", "inscription")
+#: What a request may be for. A swap is the buyer's half of an exchange with
+#: a shop (arcade/swap.py): approving signs it and hands it to the shop's
+#: node, which signs the other half and broadcasts.
+KINDS = ("coins", "token", "inscription", "swap")
 
 #: How long a request waits for an answer. An hour: long enough to notice on
 #: a phone, short enough that a request filed by a page somebody looked at
@@ -106,6 +109,13 @@ CREATE TABLE IF NOT EXISTS request (
 CREATE INDEX IF NOT EXISTS request_status ON request(status, created);
 """
 
+#: Columns added after the first release; a queue made before them gets them
+#: on open. Each is what a swap carries: the offer the shop made (JSON), the
+#: inscribed page that is buying, and the shop node's key to answer to.
+LATER_COLUMNS = (("offer", "TEXT NOT NULL DEFAULT ''"),
+                 ("page", "TEXT NOT NULL DEFAULT ''"),
+                 ("peer", "TEXT NOT NULL DEFAULT ''"))
+
 
 class Requests:
     """The queue, on disk."""
@@ -115,6 +125,10 @@ class Requests:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._open() as conn:
             conn.executescript(SCHEMA)
+            have = {r["name"] for r in conn.execute("PRAGMA table_info(request)")}
+            for name, spec in LATER_COLUMNS:
+                if name not in have:
+                    conn.execute(f"ALTER TABLE request ADD COLUMN {name} {spec}")
 
     @contextmanager
     def _open(self) -> Iterator[sqlite3.Connection]:
@@ -132,7 +146,8 @@ class Requests:
              fromaddress: str = "", totag: str = "", units: int = 0, amount: str = "",
              propertyid: int | None = None, propertyname: str = "",
              inscription: str = "", number: int | None = None,
-             label: str = "", note: str = "") -> str:
+             label: str = "", note: str = "", offer: dict | None = None,
+             page: str = "", peer: str = "") -> str:
         """Put a request in the queue; returns its id.
 
         The caller's text is cut to length rather than refused: a note is for
@@ -152,10 +167,11 @@ class Requests:
             conn.execute(
                 "INSERT INTO request(id, network, kind, origin, label, note, fromaddress, "
                 "toaddress, totag, units, amount, propertyid, propertyname, inscription, "
-                "number, created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "number, created, offer, page, peer) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (request_id, network, kind, origin, _text(label), _text(note),
                  fromaddress, toaddress, totag, int(units), amount, propertyid,
-                 propertyname, inscription, number, time.time()))
+                 propertyname, inscription, number, time.time(),
+                 json.dumps(offer) if offer else "", page, peer))
         return request_id
 
     def get(self, request_id: str) -> dict | None:
@@ -240,6 +256,8 @@ def describe(row: dict) -> dict:
         "decided": row["decided"],
         "txid": row["txid"] or None,
         "error": row["error"] or None,
+        "offer": json.loads(row["offer"]) if row["offer"] else None,
+        "page": row["page"] or None,
     }
 
 
@@ -250,6 +268,10 @@ def summary(row: dict) -> str:
         return f"{row['amount']} coins to {to}"
     if row["kind"] == "token":
         return f"{row['amount']} {row['propertyname'] or 'token ' + str(row['propertyid'])} to {to}"
+    if row["kind"] == "swap":
+        from .swap import describe_leg
+        offer = json.loads(row["offer"])
+        return f"swap {describe_leg(offer['take'])} for {describe_leg(offer['give'])}"
     return f"inscription #{row['number']} to {to}"
 
 
@@ -267,6 +289,9 @@ def validate(kind: str, index: Any, own: list[str], *, mainnet: bool,
     then, not now.
     """
     from .web.app import _check_address
+    if kind == "swap":
+        raise RequestError("a swap is asked for through the shop it buys from "
+                           "(arcade.swap in an inscribed page), not filed as a send")
     fields: dict[str, Any] = {}
     to = str(to or "").strip()
     if to.startswith("@"):
@@ -377,6 +402,12 @@ def prepare(row: dict, rpc: Any, params: Any, index: Any, own: list[str]) -> Pre
         prepared = tokenlib.TokenSender(rpc, params).prepare(
             sender, tokenlib.send_payload(pid, units), to)
         return _from_token(prepared, f"{row['amount']} {row['propertyname']}")
+    if row["kind"] == "swap":
+        from . import swap as swaplib
+        built = swaplib.build(rpc, index, json.loads(row["offer"]), own)
+        return Prepared(hex=built.hex, txid=built.txid, what=built.what,
+                        sender=built.buyer, fee_sats=built.fee_sats, dust_sats=0,
+                        size=built.size, outputs=built.outputs)
     if row["kind"] == "inscription":
         found = index.inscription(row["inscription"])
         if found is None:
@@ -422,7 +453,7 @@ def _prepare_coins(rpc: Any, params: Any, sender: str, to: str, sats: int) -> Pr
     except SendError as exc:
         raise RequestError(str(exc)) from None
     raw = build_raw_tx(inputs, [(sats, p2pkh_script(to))])
-    funded = rpc.call("fundrawtransaction", raw, {"changeAddress": sender})
+    funded = fees.fund(rpc, raw, {"changeAddress": sender})
     if not funded or "hex" not in funded:
         raise RequestError("fundrawtransaction failed; is the wallet funded?")
     signed = rpc.call("signrawtransaction", funded["hex"])

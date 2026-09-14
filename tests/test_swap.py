@@ -1,0 +1,449 @@
+"""The shop, the offer and the two signatures (arcade/swap.py).
+
+Two wallets, neither trusting the other: the seller offers exactly what the
+inscription's JSON says, the buyer signs only what it was shown, the seller
+signs only what it offered. A fake node decodes the real bytes, so what these
+check is the transaction as it would go out.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import time
+
+import pytest
+
+from arcade import inscriptions as I
+from arcade import swap as S
+from arcade.config import NETWORKS
+from arcade.ledger import COIN
+from arcade.script import b58check_encode
+
+TEST = NETWORKS["test"]
+
+
+def addr(n: int) -> str:
+    return b58check_encode(TEST.pubkeyhash_version, bytes([n]) * 20)
+
+
+SELLER, BUYER, OTHER = addr(1), addr(2), addr(3)
+SHOP = "5" * 64
+PIECE = "a" * 64          # an inscription the seller holds
+PIECE2 = "b" * 64         # one the buyer holds
+GOOF = ["c" * 63 + str(i) for i in range(4)]   # a collection the seller made
+
+
+class FakeIndex:
+    def __init__(self):
+        self.props = {3: {"property_id": 3, "name": "Arcade Test", "divisible": True}}
+        self.balances = {(BUYER, 3): 50 * 10 ** 8, (SELLER, 3): 1000 * 10 ** 8}
+        self.rows = {
+            SHOP: {"txid": SHOP, "number": 1, "creator": SELLER, "owner": SELLER,
+                   "json": json.dumps({"shop": {"node": "ab" * 32, "listings": [
+                       {"give": {"token": 3, "amount": "100"}, "take": {"coins": "2"}},
+                       {"give": {"collection": "Goofball", "pick": "random"},
+                        "take": {"token": 3, "amount": "10"}},
+                       {"give": {"inscription": PIECE}, "take": {"inscription": PIECE2}},
+                       {"give": {"coins": "1.5"}, "take": {"token": 3, "amount": "1"}},
+                   ]}})},
+            PIECE: {"txid": PIECE, "number": 2, "creator": OTHER, "owner": SELLER, "json": ""},
+            PIECE2: {"txid": PIECE2, "number": 3, "creator": OTHER, "owner": BUYER, "json": ""},
+        }
+        for i, txid in enumerate(GOOF):
+            self.rows[txid] = {"txid": txid, "number": 10 + i, "creator": SELLER,
+                               "owner": SELLER if i < 3 else OTHER, "json": "",
+                               "collection": "Goofball", "edition": i + 1}
+
+    def property(self, pid):
+        return self.props.get(pid)
+
+    def balance(self, address, pid):
+        return self.balances.get((address, pid), 0)
+
+    def inscription(self, key):
+        if isinstance(key, int):
+            return next((r for r in self.rows.values() if r["number"] == key), None)
+        return self.rows.get(key)
+
+    def collection_items(self, creator, name, limit=100, offset=0):
+        return [r for r in self.rows.values()
+                if r.get("collection") == name and r["creator"] == creator]
+
+    def indexed_height(self):
+        return 100
+
+    def address_of(self, tag):
+        return None
+
+
+def _p2pkh_address(script: bytes) -> str | None:
+    if len(script) == 25 and script[:3] == b"\x76\xa9\x14" and script[-2:] == b"\x88\xac":
+        return b58check_encode(TEST.pubkeyhash_version, script[3:23])
+    return None
+
+
+def decode(raw_hex: str) -> dict:
+    """Enough of decoderawtransaction to check a swap: inputs, outputs, txid."""
+    raw = bytes.fromhex(raw_hex)
+    at = 4
+    n, at = raw[at], at + 1
+    vin = []
+    for _ in range(n):
+        txid = raw[at:at + 32][::-1].hex(); vout = int.from_bytes(raw[at + 32:at + 36], "little")
+        at += 36
+        slen, at = raw[at], at + 1
+        at += slen + 4
+        vin.append({"txid": txid, "vout": vout})
+    n, at = raw[at], at + 1
+    vout = []
+    for i in range(n):
+        value = int.from_bytes(raw[at:at + 8], "little"); at += 8
+        slen, at = raw[at], at + 1
+        script = raw[at:at + slen]; at += slen
+        address = _p2pkh_address(script)
+        vout.append({"value": value / COIN, "n": i, "scriptPubKey": {
+            "hex": script.hex(),
+            "type": "pubkeyhash" if address else ("nulldata" if script[:1] == b"\x6a" else "?"),
+            "addresses": [address] if address else []}})
+    txid = hashlib.sha256(hashlib.sha256(raw).digest()).digest()[::-1].hex()
+    return {"txid": txid, "vin": vin, "vout": vout}
+
+
+class FakeNode:
+    """One wallet's node. `mine` is the addresses it can sign for."""
+
+    def __init__(self, mine: set[str], unspent: list[tuple[str, int, str, int]]):
+        self.mine = mine
+        # outpoint -> (address, sats); everybody's, since gettxout sees the chain
+        self.chain = {(t, v): (a, s) for t, v, a, s in unspent}
+        self.locked: set[tuple[str, int]] = set()
+        self.sent: list[str] = []
+        self.calls: list[tuple] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def get_block_count(self):
+        return 100
+
+    def call(self, method, *args):
+        self.calls.append((method, *args))
+        if method == "listunspent":
+            addresses = args[2] if len(args) > 2 else None
+            return [{"txid": t, "vout": v, "address": a, "amount": s / COIN, "spendable": True}
+                    for (t, v), (a, s) in self.chain.items()
+                    if (addresses is None or a in addresses) and a in self.mine
+                    and (t, v) not in self.locked]
+        if method == "listreceivedbyaddress":
+            return [{"address": a} for a in self.mine]
+        if method == "lockunspent":
+            unlock, points = args
+            for p in points:
+                (self.locked.discard if unlock else self.locked.add)((p["txid"], p["vout"]))
+            return True
+        if method == "gettxout":
+            txid, vout, _ = args
+            found = self.chain.get((txid, vout))
+            return {"scriptPubKey": {"addresses": [found[0]]}, "value": found[1] / COIN} \
+                if found else None
+        if method == "decoderawtransaction":
+            return decode(args[0])
+        if method == "signrawtransaction":
+            # The bytes are not changed -- there is no key here -- but the
+            # verdict is real: an input this wallet cannot sign is reported,
+            # and `complete` says whether every input has been signed by the
+            # wallets the hex passed through (marked in a side table).
+            raw = args[0]
+            signed_by = _SIGNED.setdefault(raw, set()) | self.mine
+            _SIGNED[raw] = signed_by
+            errors = []
+            for entry in decode(raw)["vin"]:
+                owner = self.chain[(entry["txid"], entry["vout"])][0]
+                if owner not in signed_by:
+                    errors.append({"txid": entry["txid"], "vout": entry["vout"],
+                                   "error": "Input not found or already spent"})
+            return {"hex": raw, "complete": not errors, "errors": errors}
+        if method == "sendrawtransaction":
+            self.sent.append(args[0])
+            return decode(args[0])["txid"]
+        raise AssertionError(f"unexpected rpc {method}")
+
+
+_SIGNED: dict[str, set[str]] = {}
+
+
+@pytest.fixture
+def world(tmp_path):
+    _SIGNED.clear()
+    index = FakeIndex()
+    unspent = [("1" * 64, 0, SELLER, 3 * COIN), ("1" * 64, 1, SELLER, int(0.5 * COIN)),
+               ("1" * 64, 2, SELLER, int(0.02 * COIN)), ("1" * 64, 3, SELLER, int(0.02 * COIN)),
+               ("1" * 64, 4, SELLER, 2 * COIN),
+               ("2" * 64, 0, BUYER, 5 * COIN), ("2" * 64, 1, BUYER, 1 * COIN),
+               ("3" * 64, 0, OTHER, 9 * COIN)]
+    seller = FakeNode({SELLER}, unspent)
+    buyer = FakeNode({BUYER}, unspent)
+    offers = S.Offers(tmp_path / "swaps.sqlite")
+    return index, seller, buyer, offers
+
+
+def shop_row(index):
+    return index.rows[SHOP]
+
+
+# --- the shop ----------------------------------------------------------------
+
+def test_a_shop_is_read_from_the_inscriptions_json(world):
+    index, *_ = world
+    shop = S.shop_of(shop_row(index))
+    assert shop["node"] == "ab" * 32 and len(shop["listings"]) == 4
+    for bad, why in ((json.dumps({"shop": {"listings": []}}), "list of listings"),
+                     (json.dumps({"shop": {"listings": [{"give": {"coins": "1"}}]}}), "take"),
+                     (json.dumps({"shop": {"listings": [{"give": {"coins": "1"},
+                                                          "take": {"collection": "x"}}]}}),
+                      "random item, not take"),
+                     (json.dumps({"shop": {"listings": [{"give": {"token": 3},
+                                                          "take": {"coins": "1"}}]}}),
+                      "needs an amount"),
+                     ("", "no JSON"), (json.dumps({"x": 1}), "no \"shop\"")):
+        with pytest.raises(S.SwapError, match=why):
+            S.shop_of({"json": bad})
+
+
+def test_legs_are_made_concrete_from_the_ledger(world):
+    index, *_ = world
+    leg = S.leg_of({"token": 3, "amount": "100"}, index)
+    assert leg == I.Leg(I.LEG_TOKEN, property_id=3, amount=100 * 10 ** 8)
+    assert S.leg_of({"coins": "2"}, index) == I.Leg(I.LEG_COINS, amount=2 * COIN)
+    assert S.leg_of({"inscription": 2}, index).txid.hex() == PIECE
+    assert S.leg_of({"inscription": PIECE}, index).txid.hex() == PIECE
+    with pytest.raises(S.SwapError, match="no token 9"):
+        S.leg_of({"token": 9, "amount": "1"}, index)
+    shown = S.leg_json(leg, index)
+    assert shown == {"kind": "token", "propertyid": 3, "name": "Arcade Test",
+                     "amount": "100", "units": 100 * 10 ** 8}
+    assert S.leg_from_json(shown) == leg
+    assert S.describe_leg(shown) == "100 Arcade Test"
+    assert S.describe_leg(S.leg_json(S.leg_of({"inscription": GOOF[0]}, index), index)) \
+        == "inscription #10 (Goofball #1)"
+
+
+# --- the seller offers ------------------------------------------------------
+
+def test_an_offer_locks_an_output_and_prices_the_listing(world):
+    index, seller, _, offers = world
+    offer = S.make_offer(seller, index, offers, "test", shop_row(index), 0, BUYER, "ff" * 32,
+                         own=[SELLER])
+    assert offer["seller"] == SELLER and offer["buyer"] == BUYER and offer["shop"] == SHOP
+    assert offer["give"]["kind"] == "token" and offer["give"]["amount"] == "100"
+    assert offer["take"] == {"kind": "coins", "amount": "2.00000000", "sats": 2 * COIN}
+    # The smallest output that can carry its own value back: 0.02 fits.
+    assert offer["outpoint"] == {"txid": "1" * 64, "vout": 2, "value": int(0.02 * COIN)}
+    assert ("1" * 64, 2) in seller.locked, "nothing else in the wallet may spend it"
+    assert offer["expires"] - offer["created"] == S.OFFER_TTL
+    assert offers.get(offer["id"])["status"] == "open"
+    assert "buyer_pubkey" not in offer, "bookkeeping stays in the book"
+
+    # A second offer cannot take the same output; it takes the next one, and
+    # so on until the wallet has nothing left to offer from.
+    taken = [offer["outpoint"]["vout"]]
+    for _ in range(4):
+        again = S.make_offer(seller, index, offers, "test", shop_row(index), 0, OTHER, "",
+                             own=[SELLER])
+        taken.append(again["outpoint"]["vout"])
+    assert taken == [2, 3, 1, 4, 0], "smallest first, never the same one twice"
+    with pytest.raises(S.SwapError, match="no output"):
+        S.make_offer(seller, index, offers, "test", shop_row(index), 0, OTHER, "", own=[SELLER])
+
+
+def test_only_the_creator_who_still_holds_the_shop_may_sell(world):
+    index, seller, _, offers = world
+    row = dict(shop_row(index), owner=OTHER)
+    with pytest.raises(S.SwapError, match="did not create this shop, or no longer holds"):
+        S.make_offer(seller, index, offers, "test", row, 0, BUYER, "", own=[SELLER, OTHER])
+    with pytest.raises(S.SwapError, match="did not create"):
+        S.make_offer(seller, index, offers, "test", shop_row(index), 0, BUYER, "", own=[BUYER])
+    with pytest.raises(S.SwapError, match="own wallet"):
+        S.make_offer(seller, index, offers, "test", shop_row(index), 0, SELLER, "", own=[SELLER])
+    with pytest.raises(S.SwapError, match="no listing 9"):
+        S.make_offer(seller, index, offers, "test", shop_row(index), 9, BUYER, "", own=[SELLER])
+
+
+def test_what_neither_side_holds_is_not_offered(world):
+    index, seller, _, offers = world
+    index.balances[(BUYER, 3)] = 0
+    with pytest.raises(S.SwapError, match="the buyer cannot give that.*holds 0"):
+        S.make_offer(seller, index, offers, "test", shop_row(index), 1, BUYER, "", own=[SELLER])
+    index.rows[PIECE]["owner"] = OTHER
+    with pytest.raises(S.SwapError, match="the shop cannot give that.*held by"):
+        S.make_offer(seller, index, offers, "test", shop_row(index), 2, BUYER, "", own=[SELLER])
+    assert seller.locked == set(), "nothing was locked for an offer that was not made"
+
+
+def test_a_random_listing_picks_what_the_shop_still_holds(world):
+    index, seller, _, offers = world
+    picked = set()
+    for _ in range(3):
+        offer = S.make_offer(seller, index, offers, "test", shop_row(index), 1, BUYER, "",
+                             own=[SELLER])
+        assert offer["give"]["kind"] == "inscription"
+        assert offer["give"]["collection"] == "Goofball"
+        picked.add(offer["give"]["txid"])
+    assert picked == set(GOOF[:3]), "each open offer holds a different item; the fourth is not ours"
+    with pytest.raises(S.SwapError, match="nothing of Goofball is left"):
+        S.make_offer(seller, index, offers, "test", shop_row(index), 1, BUYER, "", own=[SELLER])
+
+
+def test_an_offer_expires_and_unlocks(world, monkeypatch):
+    index, seller, _, offers = world
+    offer = S.make_offer(seller, index, offers, "test", shop_row(index), 0, BUYER, "",
+                         own=[SELLER])
+    later = time.time() + S.OFFER_TTL + 1
+    monkeypatch.setattr(S.time, "time", lambda: later)
+    assert S.expire(seller, offers, "test") == 1
+    assert offers.get(offer["id"])["status"] == "expired"
+    assert seller.locked == set()
+
+
+# --- the buyer builds, the seller countersigns -------------------------------
+
+def _offer(world, listing=0):
+    index, seller, _, offers = world
+    return S.make_offer(seller, index, offers, "test", shop_row(index), listing, BUYER,
+                        "ff" * 32, own=[SELLER])
+
+
+def test_the_buyer_signs_half_and_the_seller_completes_it(world):
+    index, seller, buyer, offers = world
+    offer = _offer(world, 0)               # 100 Arcade Test for 2 coins
+    checked = S.check_offer(offer, shop=SHOP, own=[BUYER], height=TEST.swaps_from, params=TEST)
+    built = S.build(buyer, index, checked, own=[BUYER])
+    assert built.what == "2.00000000 coins for 100 Arcade Test"
+    assert built.buyer == BUYER and built.seller == SELLER
+    decoded = decode(built.hex)
+    assert decoded["vin"][0] == {"txid": "1" * 64, "vout": 2}, "the seller's output is first"
+    assert all(buyer.chain[(v["txid"], v["vout"])][0] == BUYER for v in decoded["vin"][1:])
+    paid_seller = sum(o["value"] for o in decoded["vout"]
+                      if o["scriptPubKey"]["addresses"] == [SELLER])
+    assert paid_seller == pytest.approx(0.02 + 2.0), "its input back, plus the price"
+    assert [o["scriptPubKey"]["type"] for o in decoded["vout"]][0] == "nulldata"
+    assert built.fee_sats == S.FEE_PER_KB and built.outputs[1]["is_recipient"]
+    assert built.outputs[2]["is_change"] and built.outputs[2]["where"] == BUYER
+    assert _SIGNED[built.hex] == {BUYER}, "signed by the buyer only"
+
+    txid = S.countersign(seller, index, offers, offers.get(offer["id"]), built.hex)
+    assert seller.sent == [built.hex]
+    assert offers.get(offer["id"])["status"] == "sent"
+    assert offers.get(offer["id"])["txid"] == txid == decode(built.hex)["txid"]
+    with pytest.raises(S.SwapError, match="that offer is sent"):
+        S.countersign(seller, index, offers, offers.get(offer["id"]), built.hex)
+
+
+def test_every_kind_of_leg_builds(world):
+    index, seller, buyer, offers = world
+    for listing, phrase in ((1, "10 Arcade Test for inscription #1"),
+                            (2, "inscription #3 for inscription #2"),
+                            (3, "1 Arcade Test for 1.50000000 coins")):
+        offer = _offer(world, listing)
+        built = S.build(buyer, index, offer, own=[BUYER])
+        assert built.what.startswith(phrase.split(" for ")[0]), built.what
+        decoded = decode(built.hex)
+        paid_seller = sum(o["value"] for o in decoded["vout"]
+                          if o["scriptPubKey"]["addresses"] == [SELLER])
+        owed = offer["outpoint"]["value"] + S.coins_in(S.leg_from_json(offer["take"])) \
+            - S.coins_in(S.leg_from_json(offer["give"]))
+        assert round(paid_seller * COIN) == owed
+        S.countersign(seller, index, offers, offers.get(offer["id"]), built.hex)
+
+
+def test_the_seller_signs_nothing_it_did_not_offer(world):
+    """Every way a buyer might edit the transaction after the offer."""
+    index, seller, buyer, offers = world
+    from arcade import payload as P
+    from arcade.encoding import encode_class_c
+    from arcade.txbuild import build_raw_tx, op_return_script, p2pkh_script
+    offer = _offer(world, 0)
+    give, take = S.leg_from_json(offer["give"]), S.leg_from_json(offer["take"])
+    ret = op_return_script(encode_class_c(P.AnyData(data=I.Swap(give=give, take=take).encode()).encode()))
+    seller_in = (offer["outpoint"]["txid"], offer["outpoint"]["vout"])
+    buyer_in = ("2" * 64, 0)
+    fair = [(0, ret), (int(2.02 * COIN), p2pkh_script(SELLER)), (int(2.9 * COIN), p2pkh_script(BUYER))]
+
+    def signed_by_buyer(inputs, outputs):
+        return buyer.call("signrawtransaction", build_raw_tx(inputs, outputs))["hex"]
+
+    def refused(inputs, outputs, why):
+        with pytest.raises(S.SwapError, match=why):
+            S.countersign(seller, index, offers, offers.get(offer["id"]),
+                          signed_by_buyer(inputs, outputs))
+        assert seller.sent == []
+
+    refused([buyer_in, seller_in], fair, "not the first input")
+    refused([seller_in], fair, "seller's input and the buyer's")
+    refused([seller_in, ("1" * 64, 0), buyer_in], fair, "is the seller's")
+    refused([seller_in, ("3" * 64, 0)], fair, "not the buyer's")
+    refused([seller_in, buyer_in], [(0, ret), (int(1.9 * COIN), p2pkh_script(SELLER))],
+            "paid 1.90000000, not the 2.02000000")
+    refused([seller_in, buyer_in], fair[1:], "exactly one OP_RETURN")
+    cheaper = op_return_script(encode_class_c(P.AnyData(
+        data=I.Swap(give=give, take=I.Leg(I.LEG_COINS, amount=1)).encode()).encode()))
+    refused([seller_in, buyer_in], [(0, cheaper)] + fair[1:], "not carry the legs")
+    refused([seller_in, buyer_in], [(0, ret), (0, ret)] + fair[1:], "exactly one OP_RETURN")
+    refused([seller_in, buyer_in], [(0, b"\x6a\x03abc")] + fair[1:], "not carry the legs")
+
+    # And what it did offer, it signs.
+    S.countersign(seller, index, offers, offers.get(offer["id"]),
+                  signed_by_buyer([seller_in, buyer_in], fair))
+    assert len(seller.sent) == 1
+
+
+def test_the_buyer_refuses_an_offer_that_is_not_for_it(world):
+    index, seller, buyer, offers = world
+    offer = _offer(world, 0)
+    ok = dict(offer)
+    S.check_offer(ok, shop=SHOP, own=[BUYER], height=None, params=TEST)
+    for change, why in ((dict(shop="6" * 64), "different shop"),
+                        (dict(buyer=OTHER), "cannot sign for"),
+                        (dict(seller=BUYER), "seller's address is in this wallet"),
+                        (dict(expires=time.time() - 1), "expired"),
+                        (dict(give={"kind": "token"}), "malformed token leg")):
+        with pytest.raises(S.SwapError, match=why):
+            S.check_offer(dict(ok, **change), shop=SHOP, own=[BUYER], height=None, params=TEST)
+    with pytest.raises(S.SwapError, match="read from block"):
+        S.check_offer(ok, shop=SHOP, own=[BUYER], height=TEST.swaps_from - 1, params=TEST)
+    with pytest.raises(S.SwapError, match="not read on this chain"):
+        S.check_offer(ok, shop=SHOP, own=[BUYER], height=None, params=NETWORKS["main"])
+    with pytest.raises(S.SwapError, match="not an offer"):
+        S.check_offer({"id": 1}, shop=SHOP, own=[BUYER], height=None, params=TEST)
+    with pytest.raises(S.SwapError, match="is not this wallet's"):
+        S.build(buyer, index, offer, own=[OTHER])
+
+
+def test_a_buyer_short_of_coins_is_told_what_it_needs(world):
+    index, seller, buyer, offers = world
+    offer = _offer(world, 0)
+    for point in [("2" * 64, 0)]:
+        del buyer.chain[point]
+    with pytest.raises(S.SwapError, match="holds 1.00000000 spendable, and this swap needs 2.01"):
+        S.build(buyer, index, offer, own=[BUYER])
+
+
+def test_a_page_sees_the_listings_as_this_nodes_ledger_reads_them(world):
+    index, *_ = world
+    shown = S.listings_json(shop_row(index), index)
+    assert [e["text"] for e in shown] == [
+        "100 Arcade Test for 2.00000000 coins",
+        "a random Goofball (3 left) for 10 Arcade Test",
+        "inscription #2 for inscription #3",
+        "1.50000000 coins for 1 Arcade Test"]
+    assert all(e["available"] is None for e in shown)
+    index.rows[PIECE]["owner"] = OTHER
+    for row in GOOF:
+        index.rows[row]["owner"] = OTHER
+    shown = S.listings_json(shop_row(index), index)
+    assert shown[1]["available"] == "nothing of Goofball is left"
+    assert shown[2]["available"].startswith("inscription #2 is held by")

@@ -38,8 +38,25 @@ COINBASE_MATURITY = 240          # chainparams.cpp:258 (testnet, digishield)
 DEFAULT_TARGET_COINS = 100
 
 # The RPC default of 1,000,000 usually gives up empty: at the difficulty seen on
-# testnet a block needs roughly 2.8 million scrypt hashes.
+# testnet a block needs roughly 2.2 million scrypt hashes on average
+# (getdifficulty x 2^32; rpc/blockchain.cpp GetDifficulty). This is the most
+# one mine_one will try before giving up -- twenty-odd expected blocks' worth,
+# so in practice it finds one.
 MAX_TRIES = 50_000_000
+
+# `generatetoaddress` hashes in the RPC thread and answers only when it is done,
+# and the client stops waiting after 120 s (rpc.py). One machine measured
+# 1,600 hashes/s, so a 50-million-try call is hours long and the client hangs
+# up while the node hashes on, unheard. So: a short first call to measure the
+# rate, then calls sized to about SECONDS_PER_CALL of hashing, which keeps each
+# inside the timeout and lets the caller count progress and stop in between.
+FIRST_TRIES = 20_000
+SECONDS_PER_CALL = 30
+TRIES_PER_CALL = (5_000, 5_000_000)
+
+# Difficulty 1 is the 0x1d00ffff target (rpc/blockchain.cpp GetDifficulty);
+# a block at difficulty d needs d * 2^32 hashes on average.
+HASHES_PER_DIFFICULTY = 2 ** 32
 
 
 class MiningError(Exception):
@@ -106,18 +123,44 @@ class Miner:
             blocks_to_maturity=remaining, height=height,
         )
 
-    def mine_one(self, address: str) -> str | None:
+    def expected_hashes(self) -> int:
+        """How many hashes a block takes on average at the chain's difficulty now."""
+        return int(float(self.rpc.call("getdifficulty")) * HASHES_PER_DIFFICULTY) or 1
+
+    def mine_one(
+        self,
+        address: str,
+        on_progress: Callable[[int, float], None] | None = None,
+        stop: Callable[[], bool] | None = None,
+        max_tries: int = MAX_TRIES,
+    ) -> str | None:
         """Attempt a single block. Returns its hash, or None if the attempt failed.
 
         `generatetoaddress` mines in the calling thread and returns an empty list
         when it exhausts `maxtries` without finding a block, so an empty result
-        is a normal outcome to retry rather than an error.
+        is a normal outcome to try again rather than an error. It is asked in
+        batches (see FIRST_TRIES); after each, `on_progress(tries, rate)` is
+        told how many hashes have been tried and how fast, and `stop()` may
+        say to give up.
         """
-        try:
-            result = self.rpc.call("generatetoaddress", 1, address, MAX_TRIES)
-        except RpcError as exc:
-            raise MiningError(f"the node refused to mine: {exc}") from exc
-        return result[0] if result else None
+        tries, batch = 0, FIRST_TRIES
+        while tries < max_tries:
+            started = time.monotonic()
+            try:
+                result = self.rpc.call("generatetoaddress", 1, address, batch)
+            except RpcError as exc:
+                raise MiningError(f"the node refused to mine: {exc}") from exc
+            tries += batch
+            if result:
+                return result[0]
+            rate = batch / max(time.monotonic() - started, 0.001)
+            low, high = TRIES_PER_CALL
+            batch = int(min(max(rate * SECONDS_PER_CALL, low), high))
+            if on_progress:
+                on_progress(tries, rate)
+            if stop and stop():
+                return None
+        return None
 
     def bootstrap(
         self,

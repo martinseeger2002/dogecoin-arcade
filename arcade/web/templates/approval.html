@@ -5,7 +5,7 @@
   <a class="back-link" href="/approvals">&#8592; Approvals</a>
   <h1 style="margin:0;overflow-wrap:anywhere">{{ summary }}</h1>
 </div>
-<p class="sub">Asked by {% if row.origin == 'page' %}an inscribed page{% else %}a program on the bot RPC{% endif %}
+<p class="sub">Asked by {% if row.origin == 'page' %}an inscribed page{% elif row.origin == 'own page' %}a page of your own, which sends without asking{% else %}a program on the bot RPC{% endif %}
   {%- if row.label %} calling itself <q>{{ row.label }}</q>{% endif %}, on {{ chain.label }}.
   {% if row.note %}It says: <q>{{ row.note }}</q>{% endif %}</p>
 
@@ -13,7 +13,8 @@
 
 {% if row.status != 'pending' %}
   <div class="msg info">This request is {{ row.status }}
-    {%- if row.txid %} as <code class="mono">{{ row.txid }}</code>{% endif %}
+    {%- if row.txid and row.kind == 'swap' %}: your half is signed and went to the shop's node in message <code class="mono">{{ row.txid }}</code>; the shop signs the other half and sends the swap
+    {%- elif row.txid %} as <code class="mono">{{ row.txid }}</code>{% endif %}
     {%- if row.error %}: {{ row.error }}{% endif %}.</div>
   {% if embed %}
   <script>
@@ -33,6 +34,30 @@
         This is mainnet. Somebody else asked for this, and once it is sent it
         cannot be taken back.</p>
     {% endif %}
+    {% if row.kind == 'swap' %}
+    {% set offer = row.offer|fromjson %}
+    <p style="margin-top:0">A swap: one transaction both sides sign, so both
+      legs move or neither does. Approving signs your half and hands it to the
+      shop's node, which signs its half and sends it. Nothing here sends.</p>
+    <table>
+      <tr><td class="muted" style="width:120px">You give</td>
+          <td><strong>{{ offer.take|describe_leg }}</strong></td></tr>
+      <tr><td class="muted">You get</td>
+          <td><strong>{{ offer.give|describe_leg }}</strong>
+            {% if offer.give.kind == 'inscription' %}<br><a href="/inscriptions/{{ offer.give.txid }}" target="_blank" class="muted">look at it</a>{% endif %}</td></tr>
+      <tr><td class="muted">From</td>
+          <td class="mono" style="word-break:break-all">{{ prepared.sender }}
+            <span class="muted">&mdash; pays, and receives</span></td></tr>
+      <tr><td class="muted">Seller</td>
+          <td class="mono" style="word-break:break-all">{{ row.toaddress }}</td></tr>
+      <tr><td class="muted">Offer</td>
+          <td class="mono">{{ offer.id }} <span class="muted">&mdash; good for
+            {{ ((offer.expires - now) / 60)|round|int }} more minutes</span></td></tr>
+      <tr><td class="muted">Fee</td><td>{{ "%.8f"|format(prepared.fee_coins) }}
+            <span class="muted">&mdash; paid by you, the one asking</span></td></tr>
+      <tr><td class="muted">Size</td><td>{{ "{:,}".format(prepared.size) }} bytes</td></tr>
+    </table>
+    {% else %}
     <table>
       <tr><td class="muted" style="width:120px">Sending</td>
           <td><strong>{{ prepared.what }}</strong></td></tr>
@@ -51,20 +76,22 @@
       <tr><td class="muted">Transaction</td>
           <td class="mono" style="word-break:break-all">{{ prepared.txid }}</td></tr>
     </table>
+    {% endif %}
     <h3 style="margin-bottom:6px">Outputs</h3>
     <table>
       <tr><th>Value</th><th>To</th></tr>
       {% for o in prepared.outputs %}
       <tr><td style="white-space:nowrap">{{ "%.8f"|format(o.value) }}</td>
           <td class="mono" style="word-break:break-all">{{ o.where }}
-            {% if o.is_recipient %}<span class="muted">&mdash; the recipient</span>
+            {% if o.is_recipient and row.kind == 'swap' %}<span class="muted">&mdash; the seller: its own input back, plus what you pay</span>
+            {% elif o.is_recipient %}<span class="muted">&mdash; the recipient</span>
             {% elif o.is_change %}<span class="muted">&mdash; change, back to you</span>{% endif %}</td></tr>
       {% endfor %}
     </table>
     <form method="post" action="/approvals/{{ row.id }}{{ '?embed=1' if embed }}" class="row" style="margin-top:14px">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="confirmed" value="{{ prepared.txid }}">
-      <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">Approve and send</button>
+      <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">{{ 'Approve and sign' if row.kind == 'swap' else 'Approve and send' }}</button>
       <button type="submit" name="decision" value="deny" class="ghost">Refuse</button>
     </form>
   </div>

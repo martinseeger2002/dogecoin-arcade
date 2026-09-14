@@ -11,6 +11,7 @@ import contextlib
 import base64
 import datetime as dt
 import hashlib
+import json
 import threading
 import time
 import html
@@ -72,6 +73,15 @@ def _fromjson(text: str):
 
 
 TEMPLATES.env.filters["fromjson"] = _fromjson
+
+
+def _describe_leg(data) -> str:
+    """A template filter: one leg of a swap, in words (arcade/swap.py)."""
+    from ..swap import describe_leg
+    return describe_leg(data) if isinstance(data, dict) else "?"
+
+
+TEMPLATES.env.filters["describe_leg"] = _describe_leg
 
 # Sections that exist, and sections that do not. Shown honestly rather than
 # hidden, so the shape of the finished product is visible.
@@ -1879,7 +1889,8 @@ def create_app(state: AppState) -> FastAPI:
     @app.get("/wallet", response_class=HTMLResponse)
     def wallet(request: Request):
         return render(request, "wallet.html", messaging=messaging_status(),
-                      ledger=ledger_status(), prepared=None, which=None)
+                      ledger=ledger_status(), prepared=None, which=None, now=time.time(),
+                      mining=_mining_json())
 
     @app.post("/wallet/receive")
     def wallet_receive(request: Request, which: str = Form(""), csrf_token: str = Form("")):
@@ -1975,23 +1986,97 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/fund")
     def fund(request: Request, csrf_token: str = Form("")):
+        """Mine one testnet block, funded or not.
+
+        It began as the way an empty wallet got its first coins, and refused
+        once it had any. But on a test chain a block is also the only way
+        anything confirms, and when nobody else is mining, a swap or a
+        message can sit in the mempool for an hour -- so the button stays,
+        and mines one block whenever it is pressed. The reward goes to the
+        messaging address, so a wallet funded this way pays messages from
+        the address it hands out (funded_address).
+
+        Mined on a thread: at testnet's difficulty a block is twenty minutes
+        or so of hashing on a small machine (miner.py), and the page comes
+        straight back saying so, with the button gone until the block is
+        found and a count of what has been tried meanwhile. Pressed again, it
+        says it is already at it.
+        """
         try:
             check_csrf(csrf_token)
+            if state.mining is not None:
+                state.flash("Already mining a block; it will say when one is found.")
+                return RedirectResponse("/wallet", status_code=303)
             with state.messaging.rpc() as rpc:
-                miner = Miner(rpc, state.messaging.params)
-                status = miner.status()
-                if status.funded or status.pending:
-                    state.flash(status.describe())
-                else:
-                    address = rpc.call("getnewaddress")
-                    status = miner.bootstrap(address)
-                    state.flash(status.describe())
+                miner = Miner(rpc, state.messaging.params)      # refuses mainnet
+                address = state.derived_address or rpc.call("getnewaddress")
+                expected = miner.expected_hashes()
+            state.mining = {"started": time.time(), "address": address, "tries": 0,
+                            "rate": 0.0, "expected": expected, "stop": False}
+            threading.Thread(target=_mine_one, args=(address,), name="arcade-mine",
+                             daemon=True).start()
+            state.flash(f"Mining one block to {address}. This takes a minute or "
+                        "more; the page will say when it is found.")
         except HTTPException:
             raise          # a rejected form is a 400, not an error page
         except (MiningError, Exception) as exc:
             state.flash(f"Mining failed: {exc}", "err")
         return RedirectResponse("/wallet", status_code=303)
 
+    def _mine_one(address: str) -> None:
+        """The thread behind /fund: one block, counting as it goes, then a notice."""
+        def progress(tries: int, rate: float) -> None:
+            if state.mining:
+                state.mining.update(tries=tries, rate=rate)
+
+        def stopped() -> bool:
+            return bool(state.mining and state.mining.get("stop"))
+
+        try:
+            with state.messaging.rpc() as rpc:
+                miner = Miner(rpc, state.messaging.params)
+                block = miner.mine_one(address, on_progress=progress, stop=stopped)
+                tries = (state.mining or {}).get("tries", 0)
+                if block:
+                    state.flash(f"Mined block {block[:16]}… to {address}. "
+                                f"{miner.status().describe()}.", "ok")
+                elif stopped():
+                    state.flash(f"Stopped mining after {tries:,} hashes; no block.")
+                else:
+                    state.flash(f"No block in {tries:,} hashes; press it again.", "err")
+        except Exception as exc:
+            state.flash(f"Mining failed: {exc}", "err")
+        finally:
+            state.mining = None
+            state.bump_generation()
+
+    @app.post("/fund/stop")
+    def fund_stop(csrf_token: str = Form(...)):
+        """Give up on the block after the batch the node is hashing now."""
+        check_csrf(csrf_token)
+        if state.mining is None:
+            state.flash("Not mining.")
+        else:
+            state.mining["stop"] = True
+            state.flash("Stopping: the node finishes the batch it is on (under a minute).")
+        return RedirectResponse("/wallet", status_code=303)
+
+    @app.get("/wallet/mining")
+    def wallet_mining():
+        """What the mining thread is up to, for the wallet page to watch."""
+        return JSONResponse(_mining_json())
+
+    def _mining_json() -> dict[str, Any]:
+        mining = state.mining
+        if mining is None:
+            return {"mining": False}
+        rate = float(mining.get("rate") or 0)
+        return {"mining": True, "seconds": int(time.time() - mining["started"]),
+                "tries": int(mining.get("tries", 0)), "rate": int(rate),
+                "expected": int(mining.get("expected", 0)),
+                # At the rate seen so far; 0 until the first batch is in.
+                "expected_seconds": int(mining["expected"] / rate) if rate else 0,
+                "stopping": bool(mining.get("stop"))}
 
     # --- tokens ---------------------------------------------------------------
     # Shown for one chain at a time: mainnet, the ledger (D-012), or testnet,
@@ -2691,6 +2776,20 @@ def create_app(state: AppState) -> FastAPI:
             elif held is None:
                 error = ("what was shown is no longer held (the server restarted, "
                          "or it was shown too long ago); look at it again.")
+            elif row["kind"] == "swap":
+                # The buyer's half, signed here; the shop's node signs the
+                # other and broadcasts. What goes out from here is a message.
+                try:
+                    sent = _hand_to_shop(row, held)
+                except Exception as exc:
+                    error = str(exc)
+                    queue.decide(request_id, "failed", error=error)
+                state.prepared_tokens.pop((chain.network, confirmed), None)
+                if sent:
+                    queue.decide(request_id, "sent", txid=sent)
+                    state.flash(f"Approved: {approvalslib.summary(row)}, signed and "
+                                f"handed to the shop's node in message {sent}.", "ok")
+                    return RedirectResponse(back, status_code=303)
             else:
                 try:
                     with chain.rpc() as rpc:
@@ -2720,6 +2819,16 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "approval.html", row=row, chain=chain,
                       summary=approvalslib.summary(row), prepared=prepared,
                       error=error, now=time.time(), embed=embedded)
+
+    def _hand_to_shop(row: dict, held) -> str:
+        """The approved half of a swap goes back to the shop's node, sealed
+        to the key the shop's JSON names -- never one the page supplied."""
+        from .. import swap as swaplib
+        offer = json.loads(row["offer"])
+        text = json.dumps({"swap": "sign", "swapv": swaplib.PROTOCOL,
+                           "offer": offer["id"], "hex": held.hex}).encode()
+        return _page_send(row["page"], state.messaging, bytes.fromhex(row["peer"]),
+                          text)["txid"]
 
     @app.post("/r/send")
     def r_send(request: Request, body: dict = Body(default={})):
@@ -2783,7 +2892,7 @@ def create_app(state: AppState) -> FastAPI:
     def _described(row: dict) -> dict:
         """A request as a caller sees it, with confirmations once it is sent."""
         told = approvalslib.describe(row)
-        if row["status"] == "sent" and row["txid"]:
+        if row["status"] == "sent" and row["txid"] and row["kind"] != "swap":
             told["confirmations"] = None
             status = _tx_status(state.chain_named(row["network"]), row["txid"])
             if status is not None:
@@ -2850,6 +2959,55 @@ def create_app(state: AppState) -> FastAPI:
         return Response(body, media_type="application/javascript",
                         headers={**contentlib.CORS, "Cache-Control": "public, max-age=3600"})
 
+    def _page_send(page: str, chain, to: bytes, text: bytes) -> dict:
+        """One node-to-node message from an inscribed page, as this wallet.
+
+        Counted against the page's hour (nodetalk.MAX_PER_HOUR) and recorded
+        under the page, which is what lets it read the reply. The swap door
+        sends through here too, so a shop's traffic and a page's own share
+        one cap and one record.
+        """
+        from .. import nodetalk
+        if state.talk.sent_lately(page, chain.network) >= nodetalk.MAX_PER_HOUR:
+            raise nodetalk.TalkError(
+                f"this page has sent {nodetalk.MAX_PER_HOUR} messages in the "
+                "last hour; that is the most it may")
+        identity = state.ensure_identity()
+        try:
+            payload = nodetalk.apilib.seal(identity, to, text)
+        except nodetalk.apilib.ApiMessageError as exc:
+            raise nodetalk.TalkError(str(exc)) from None
+        with chain.rpc() as rpc:
+            sender = MessageSender(rpc, chain.params)
+            address = funded_address(rpc, prefer=state.derived_address)
+            try:
+                prepared = sender.prepare(address, payload)
+            except SendError:
+                other = funded_address(rpc)
+                if other == address:
+                    raise
+                address, prepared = other, sender.prepare(other, payload)
+            sent = sender.broadcast(prepared)
+        with state.store() as store:
+            newest = store.conn.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM api_message").fetchone()[0]
+        state.talk.record(page, chain.network, to.hex(), sent, newest)
+        return {"ok": True, "txid": sent, "to": to.hex(),
+                "fromaddress": address, "size": prepared.size,
+                "fee": f"{prepared.fee_sats / COIN:.8f}",
+                "total": f"{prepared.total_sats / COIN:.8f}"}
+
+    def _page_replies(page: str, chain, body: dict) -> list[dict]:
+        """What the nodes this page wrote to have said back (nodetalk.replies)."""
+        from .. import nodetalk
+        identity = state.ensure_identity()
+        with state.store() as store:
+            return nodetalk.replies(
+                store, state.talk, page, chain.network,
+                fingerprint_of(identity.public_bytes),
+                after=int(body.get("after") or 0),
+                limit=int(body.get("limit") or nodetalk.MAX_REPLIES))
+
     @app.post("/node/{txid}")
     def node_talk(txid: str, body: dict = Body(default={})):
         """A page sends a message to another node, or reads what came back.
@@ -2880,48 +3038,211 @@ def create_app(state: AppState) -> FastAPI:
                 return JSONResponse({"ok": True,
                                      "sent": state.talk.letters(page, chain.network)})
             if op == "replies":
-                identity = state.ensure_identity()
-                with state.store() as store:
-                    found = nodetalk.replies(
-                        store, state.talk, page, chain.network,
-                        fingerprint_of(identity.public_bytes),
-                        after=int(body.get("after") or 0),
-                        limit=int(body.get("limit") or nodetalk.MAX_REPLIES))
-                return JSONResponse({"ok": True, "replies": found})
+                return JSONResponse({"ok": True, "replies": _page_replies(page, chain, body)})
             if op != "send":
                 raise nodetalk.TalkError("op must be identity, send, replies or sent")
             to = nodetalk.parse_pubkey(body.get("to"))
             text = nodetalk.body_bytes(body.get("body"))
-            if state.talk.sent_lately(page, chain.network) >= nodetalk.MAX_PER_HOUR:
-                raise nodetalk.TalkError(
-                    f"this page has sent {nodetalk.MAX_PER_HOUR} messages in the "
-                    "last hour; that is the most it may")
-            identity = state.ensure_identity()
-            try:
-                payload = nodetalk.apilib.seal(identity, to, text)
-            except nodetalk.apilib.ApiMessageError as exc:
-                raise nodetalk.TalkError(str(exc)) from None
-            with chain.rpc() as rpc:
-                sender = MessageSender(rpc, chain.params)
-                address = funded_address(rpc, prefer=state.derived_address)
-                try:
-                    prepared = sender.prepare(address, payload)
-                except SendError:
-                    other = funded_address(rpc)
-                    if other == address:
-                        raise
-                    address, prepared = other, sender.prepare(other, payload)
-                sent = sender.broadcast(prepared)
-            with state.store() as store:
-                newest = store.conn.execute(
-                    "SELECT COALESCE(MAX(id), 0) FROM api_message").fetchone()[0]
-            state.talk.record(page, chain.network, to.hex(), sent, newest)
-            return JSONResponse({"ok": True, "txid": sent, "to": to.hex(),
-                                 "fromaddress": address, "size": prepared.size,
-                                 "fee": f"{prepared.fee_sats / COIN:.8f}",
-                                 "total": f"{prepared.total_sats / COIN:.8f}"})
+            return JSONResponse(_page_send(page, chain, to, text))
         except (nodetalk.TalkError, SendError, ValueError) as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": f"the node could not do it: {exc}"},
+                                status_code=503)
+
+    # --- shops: an inscription that sells, and the page that buys from it ----
+    #
+    # The terms are in the shop inscription's JSON (arcade/swap.py); the
+    # buyer's wallet reads them from its own ledger, asks the shop's node for
+    # an offer, shows the buyer the transaction, and hands the signed half
+    # back. The seller's half is the shopkeeper (arcade/shopkeeper.py), which
+    # needs nobody: it sells only what the owner wrote down.
+
+    @app.get("/r/swap.js")
+    def r_swap_js():
+        body = (TEMPLATE_DIR / "swap.js").read_text()
+        return Response(body, media_type="application/javascript",
+                        headers={**contentlib.CORS, "Cache-Control": "public, max-age=3600"})
+
+    def _shop_page(txid: str, chain) -> dict:
+        """The shop inscription a swap call is about, on the messaging chain."""
+        key = contentlib._key(txid)
+        row = state.token_index(chain).inscription(key) if isinstance(key, str) else None
+        if row is None:
+            raise HTTPException(404, "no such inscription on the chain shops live on")
+        return row
+
+    @app.post("/swap/{txid}")
+    def swap_door(txid: str, body: dict = Body(default={})):
+        """A page buys from the shop it is: same origin, viewer-sent, CSRF.
+
+        `shop` reads the listings; `offer` asks the shop's node for one;
+        `accept` puts the offer in the approvals queue, where the buyer sees
+        the transaction and says yes; `status` follows the request; `replies`
+        is the node door's, so the page can hear the shop's answers. The
+        page's word is never the price: the offer is checked against the
+        shop's JSON on this node before anybody is asked to approve it.
+        """
+        from .. import nodetalk
+        from .. import swap as swaplib
+        check_csrf(str(body.get("csrf_token", "")))
+        chain = state.messaging
+        op = body.get("op")
+        try:
+            if chain.network == "main" or chain.params.swaps_from is None:
+                raise swaplib.SwapError("shops are testnet only")
+            index = state.token_index(chain)
+            row = _shop_page(txid, chain)
+            page = row["txid"]
+            shop = swaplib.shop_of(row)
+            node = nodetalk.parse_pubkey(shop["node"])
+            if op == "shop":
+                with chain.rpc() as rpc:
+                    own = _ledger_addresses(rpc)
+                height = index.indexed_height()
+                return JSONResponse({
+                    "ok": True, "shop": page, "node": node.hex(),
+                    "seller": row["owner"], "network": chain.network,
+                    "mine": row["creator"] == row["owner"] and row["owner"] in own,
+                    "open": row["creator"] == row["owner"],
+                    "listings": swaplib.listings_json(row, index),
+                    "height": height, "from": chain.params.swaps_from,
+                    "ready": height is not None and height >= chain.params.swaps_from})
+            if op == "replies":
+                return JSONResponse({"ok": True, "replies": _page_replies(page, chain, body)})
+            if op == "offer":
+                listing_no = int(body.get("listing", -1))
+                if not 0 <= listing_no < len(shop["listings"]):
+                    raise swaplib.SwapError(f"no listing {listing_no}")
+                take = swaplib.leg_of(shop["listings"][listing_no]["take"], index)
+                with chain.rpc() as rpc:
+                    own = _ledger_addresses(rpc)
+                    if row["owner"] in own:
+                        raise swaplib.SwapError("this is your own shop")
+                    buyer = _buyer_for(rpc, index, own, take)
+                text = json.dumps({"swap": "offer", "swapv": swaplib.PROTOCOL, "shop": page,
+                                   "listing": listing_no, "buyer": buyer}).encode()
+                sent = _page_send(page, chain, node, text)
+                return JSONResponse({"ok": True, "txid": sent["txid"], "buyer": buyer,
+                                     "to": node.hex(), "listing": listing_no})
+            if op == "accept":
+                with chain.rpc() as rpc:
+                    own = _ledger_addresses(rpc)
+                offer = swaplib.check_offer(body.get("offer"), shop=page, own=own,
+                                            height=index.indexed_height(),
+                                            params=chain.params)
+                if offer["seller"] != row["owner"]:
+                    raise swaplib.SwapError("the offer is not from the wallet that holds "
+                                            "this shop")
+                request_id = state.approvals.file(
+                    chain.network, "swap", "page", offer["seller"],
+                    fromaddress=offer["buyer"], label=str(body.get("label") or ""),
+                    note=str(body.get("note") or ""), offer=offer, page=page,
+                    peer=node.hex())
+                return JSONResponse({"ok": True, "request": request_id,
+                                     "offer": offer["id"]})
+            if op == "status":
+                found = state.approvals.get(str(body.get("request") or ""))
+                if found is None or found["page"] != page:
+                    raise swaplib.SwapError("no such request from this page")
+                told = approvalslib.describe(found)
+                told["message"] = told.pop("txid")   # for a swap, the message it went in
+                return JSONResponse({"ok": True, "request": told})
+            raise swaplib.SwapError("op must be shop, offer, accept, status or replies")
+        except (swaplib.SwapError, nodetalk.TalkError, approvalslib.RequestError,
+                SendError, ValueError) as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": f"the node could not do it: {exc}"},
+                                status_code=503)
+
+    def _buyer_for(rpc, index, own: list[str], take) -> str:
+        """The address in this wallet that pays: it must hold what the shop
+        takes, and it receives what the shop gives."""
+        from .. import inscriptions as I
+        from .. import swap as swaplib
+        if take.kind == I.LEG_TOKEN:
+            for address in own:
+                if index.balance(address, take.property_id) >= take.amount:
+                    return address
+            raise swaplib.SwapError(f"no address in this wallet holds "
+                                    f"{swaplib.describe_leg(swaplib.leg_json(take, index))}")
+        if take.kind == I.LEG_INSCRIPTION:
+            found = index.inscription(take.txid.hex())
+            if found is None or found["owner"] not in own:
+                raise swaplib.SwapError("this wallet does not hold the inscription the "
+                                        "shop takes")
+            return found["owner"]
+        return funded_address(rpc, prefer=state.derived_address,
+                              need=take.amount + swaplib.FEE_PER_KB * 2)
+
+    @app.get("/r/owner.js")
+    def r_owner_js():
+        body = (TEMPLATE_DIR / "owner.js").read_text()
+        return Response(body, media_type="application/javascript",
+                        headers={**contentlib.CORS, "Cache-Control": "public, max-age=3600"})
+
+    @app.post("/owner/{txid}")
+    def owner_door(txid: str, body: dict = Body(default={})):
+        """A page this wallet made and holds sends without being asked.
+
+        The owner wrote the page and still holds it, so what it sends is what
+        they told it to send: a shop paying out, a game handing over a prize.
+        Filed and answered in one step -- the request is in the queue as
+        sent, with its origin, so the record is the same as for a page that
+        had to ask. Anybody else's page, or one this wallet sold on, goes
+        through the queue and waits for a yes. Testnet only: nothing sends
+        from mainnet without a person looking at it.
+        """
+        check_csrf(str(body.get("csrf_token", "")))
+        chain, index = _token_chain()
+        try:
+            key = contentlib._key(txid)
+            row = index.inscription(key) if isinstance(key, str) else None
+            if row is None:
+                raise HTTPException(404, "no such inscription")
+            page = row["txid"]
+            with chain.rpc() as rpc:
+                own = _ledger_addresses(rpc)
+            op = body.get("op")
+            if op == "identity":
+                return JSONResponse({"ok": True,
+                                     "owner": row["creator"] == row["owner"] and row["owner"] in own,
+                                     "creator": row["creator"], "holder": row["owner"],
+                                     "network": chain.network})
+            if op != "send":
+                raise approvalslib.RequestError("op must be identity or send")
+            if chain.is_mainnet:
+                raise approvalslib.RequestError("a page sends without approval on testnet "
+                                                "only; on mainnet it asks")
+            if row["creator"] != row["owner"] or row["owner"] not in own:
+                raise approvalslib.RequestError(
+                    "only a page this wallet created and still holds sends without "
+                    "asking; this one has to ask (arcade.send)")
+            told = _file_request("own page", body)
+            queue = state.approvals
+            request = queue.get(told["id"])
+            try:
+                with chain.rpc() as rpc:
+                    prepared = approvalslib.prepare(request, rpc, chain.params, index,
+                                                    _ledger_addresses(rpc))
+                    sent = approvalslib.broadcast(rpc, prepared)
+            except Exception as exc:
+                queue.decide(told["id"], "failed", error=str(exc))
+                raise approvalslib.RequestError(f"could not send: {exc}") from None
+            queue.decide(told["id"], "sent", txid=sent)
+            state.pending_tokens.append({"txid": sent, "what": prepared.what,
+                                         "at": time.time(), "network": chain.network})
+            state.bump_generation()
+            return JSONResponse({"ok": True, "txid": sent, "request": told["id"],
+                                 "what": prepared.what,
+                                 "fee": f"{prepared.fee_coins:.8f}"})
+        except approvalslib.RequestError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        except HTTPException:
+            raise
         except Exception as exc:
             return JSONResponse({"ok": False, "error": f"the node could not do it: {exc}"},
                                 status_code=503)

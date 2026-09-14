@@ -55,6 +55,21 @@ class ArcadeTransaction:
     reference: str | None
     payload: bytes
     fee: int
+    # Every input's (address, value) and every output's, in order. A swap
+    # needs to know who signed and who was paid, which the sender and the
+    # reference alone cannot say. Empty for a transaction built by hand in a
+    # test that has no use for them.
+    inputs: tuple[tuple[str | None, int], ...] = ()
+    outputs: tuple[tuple[str | None, int], ...] = ()
+
+    def paid_to(self, address: str) -> int:
+        """Satoshis this transaction leaves at `address`, net of what it took."""
+        return (sum(value for where, value in self.outputs if where == address)
+                - sum(value for where, value in self.inputs if where == address))
+
+    def signed_by(self, address: str) -> bool:
+        """Did `address` contribute an input, and so a signature?"""
+        return any(where == address for where, _ in self.inputs)
 
     def __repr__(self) -> str:
         return (
@@ -249,6 +264,10 @@ def extract(
     payload = extract_payload(outputs, encoding_class, sender)
 
     value_out = sum(output.value for output in outputs)
+    # determine_sender already fetched every input, so these are cache hits.
+    inputs = tuple((prev.address, prev.value)
+                   for prev in (lookup(vin["txid"], int(vin["vout"]))
+                                for vin in tx.get("vin", [])))
     return ArcadeTransaction(
         txid=tx["txid"],
         block_height=block_height,
@@ -258,4 +277,6 @@ def extract(
         reference=reference,
         payload=payload,
         fee=value_in - value_out,
+        inputs=inputs,
+        outputs=tuple((output.address, output.value) for output in outputs),
     )

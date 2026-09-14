@@ -1,0 +1,78 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shop</title>
+<!--
+  A storefront. Inscribe this page with a "shop" in its JSON field (see
+  docs/inscription-api.md, "A shop, and buying from one") and it sells what
+  the JSON says: the listings are read from the chain by the wallet looking
+  at it, and a Buy ends in one transaction both wallets signed. Nothing in
+  this file names a price, an address or a key; the same page serves a
+  token counter, an NFT minting event or a one-off trade.
+-->
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; min-height:100vh; display:flex; flex-direction:column; align-items:center;
+         gap:14px; padding:24px 16px; font:15px/1.5 system-ui,sans-serif; color:#e9e7e2;
+         background:#0b0b0e; }
+  h1 { font-size:1.3rem; margin:0; }
+  .item { width:min(520px,100%); background:rgba(255,255,255,.06);
+          border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:14px 16px;
+          display:flex; justify-content:space-between; align-items:center; gap:12px; }
+  .item b { display:block; }
+  .item small, #status, #foot { color:rgba(255,255,255,.55); }
+  button { font:inherit; padding:8px 16px; border-radius:8px; border:0; cursor:pointer;
+           background:#e0b23a; color:#111; font-weight:700; white-space:nowrap; }
+  button:disabled { background:rgba(255,255,255,.15); color:rgba(255,255,255,.5); cursor:default; }
+  #status { width:min(520px,100%); min-height:1.5em; }
+  #foot { font-size:.8rem; text-align:center; max-width:520px; }
+</style>
+<h1 id="title">Shop</h1>
+<div id="list"></div>
+<div id="status"></div>
+<div id="foot"></div>
+<script src="/r/swap.js"></script>
+<script>
+(function () {
+  var list = document.getElementById('list'), status = document.getElementById('status'),
+      foot = document.getElementById('foot'), busy = false, D = arcade.swap.describe;
+
+  function say(t) { status.textContent = t; }
+
+  function draw(s) {
+    list.innerHTML = '';
+    s.listings.forEach(function (l) {
+      var row = document.createElement('div'), text = document.createElement('div'),
+          btn = document.createElement('button');
+      row.className = 'item';
+      text.innerHTML = '<b></b><small></small>';
+      text.firstChild.textContent = l.text || D(l.give);
+      text.lastChild.textContent = 'for ' + D(l.take) + (l.available ? ' — ' + l.available : '');
+      btn.textContent = 'Buy';
+      btn.disabled = !!l.available || !s.open || !s.ready || s.mine || busy;
+      btn.onclick = function () { buy(l.n); };
+      row.appendChild(text); row.appendChild(btn); list.appendChild(row);
+    });
+    foot.textContent = !s.ready ? 'This chain reads swaps from block ' + s.from + '; it is at ' + s.height + '.'
+      : !s.open ? 'This shop is closed: its creator no longer holds it.'
+      : s.mine ? 'This is your shop. Others see Buy buttons here.'
+      : 'Sold by ' + s.seller + '. Every step but your own yes travels as a message on the ' +
+        'chain, so a purchase takes a few blocks. One transaction, both sides, or nothing.';
+  }
+
+  function refresh() {
+    return arcade.swap.shop().then(draw).catch(function (e) { say(e.message); });
+  }
+
+  function buy(n) {
+    busy = true; refresh();
+    arcade.swap.buy(n, {step: say})
+      .then(function (r) { say('Done: ' + D(r.give) + ' is yours, in ' + r.txid); })
+      .catch(function (e) { say(e.message); })
+      .then(function () { busy = false; refresh(); });
+  }
+
+  refresh();
+  setInterval(function () { if (!busy) refresh(); }, 60000);
+})();
+</script>

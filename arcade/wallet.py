@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from . import fees
 from .rpc import RpcClient
 
 COIN = 100_000_000
@@ -119,8 +120,7 @@ def prepare_send(rpc: RpcClient, destination: str, amount_sats: int,
     if subtract_fee:
         options["subtractFeeFromOutputs"] = [0]
     try:
-        funded = rpc.call("fundrawtransaction", raw, options) if options \
-            else rpc.call("fundrawtransaction", raw)
+        funded = fees.fund(rpc, raw, options)
     except Exception as exc:
         raise WalletError(
             f"could not fund the transaction: {exc}. The wallet may not hold "
@@ -141,8 +141,7 @@ def prepare_send(rpc: RpcClient, destination: str, amount_sats: int,
                   for vin in rpc.call("decoderawtransaction", funded["hex"])["vin"]]
         raw = rpc.call("createrawtransaction", chosen, {destination: float(amount)})
         try:
-            funded = rpc.call("fundrawtransaction", raw,
-                              {**options, "changeAddress": change_to})
+            funded = fees.fund(rpc, raw, {**options, "changeAddress": change_to})
         except Exception as exc:
             raise WalletError(f"could not fund the transaction: {exc}") from None
 

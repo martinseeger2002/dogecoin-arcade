@@ -217,11 +217,14 @@ def test_an_estimate_needs_only_a_length():
 
 def test_the_dust_is_counted_separately_because_it_comes_back():
     """Every data output carries the creator's own key, so it is spendable
-    again. Reporting one number would overstate the cost by ten times."""
+    again. Reporting one number would overstate the cost several times over."""
     from arcade import inscribe
 
     one_mb = inscribe.estimate(1_048_576, "image/png")
-    assert one_mb.dust > one_mb.fee * 5, "dust dominates, which is the point"
+    assert one_mb.dust > one_mb.fee * 2, "dust dominates, which is the point"
+    # The fee is on the virtual size (fees.py): 0.01 per 20 sigops per output,
+    # so 0.004 per data output and a little for the rest of each chunk.
+    assert one_mb.fee == pytest.approx(one_mb.outputs * 0.004, rel=0.02)
     assert one_mb.total == one_mb.fee + one_mb.dust
     assert one_mb.net == one_mb.fee
     assert one_mb.recoverable == one_mb.dust

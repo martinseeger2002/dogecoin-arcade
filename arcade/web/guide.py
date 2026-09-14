@@ -113,12 +113,39 @@ SECTIONS: list[dict] = [
         ],
     },
     {
+        "title": "Shops and swaps",
+        "blurb": "A shop is an inscription. Its JSON says what it sells; the "
+                 "page inscribed with it is the storefront.",
+        "points": [
+            ("The terms are on the chain: what each listing gives and takes -- "
+             "coins, a token amount, an inscription, or a random item of the "
+             "owner's collection, which is what a minting event is. Both "
+             "wallets read them from their own ledgers; no page is trusted "
+             "about a price."),
+            ("One transaction or nothing: both parties sign the same "
+             "transaction, and the engine moves both legs when the block "
+             "lands or refuses the whole thing."),
+            ("The seller is not asked. The shopkeeper answers every order "
+             "from the block watcher: offers exactly what the listing says, "
+             "checks the buyer's half against exactly that offer, and only "
+             "then signs. It cannot sell what the JSON does not list, or "
+             "from a shop this wallet did not create and hold."),
+            ("The buyer is asked once, in the approvals pop-up, with the "
+             "transaction as built. Approve signs the buyer's half only."),
+            ("A page this wallet created and still holds is your own words: "
+             "it may send from this wallet without asking, and the send is "
+             "listed with the approvals as one from a page of your own."),
+            ("Testnet only, like the messages it travels on."),
+        ],
+    },
+    {
         "title": "Approvals",
         "blurb": "A page or a program can ask this wallet to send something. "
                  "It cannot send.",
         "points": [
-            ("One queue for coins, tokens and inscriptions, asked for by an "
-             "inscribed page in its sandbox or by a program on the bot RPC."),
+            ("One queue for coins, tokens, inscriptions and the buyer's half "
+             "of a swap, asked for by an inscribed page in its sandbox or by "
+             "a program on the bot RPC."),
             ("Nothing is built on the caller's word: when you look, the "
              "transaction is shown with its fee and every output, and goes "
              "out only when you press Approve. Refusing costs nothing."),
@@ -208,6 +235,15 @@ SECTIONS: list[dict] = [
              "cannot quietly empty your messaging identity."),
             ("Split for fast sending cuts the wallet into many small outputs so "
              "the pieces of a long message go at once."),
+            ("Fees are what the miner counts: the node prices a transaction "
+             "by its virtual size, twenty bytes per signature operation, and "
+             "every funding call raises the rate until a block would take "
+             "it. A plain send is unchanged; an inscription pays about "
+             "0.004 PEP per data output."),
+            ("Mine a testnet block from the wallet page, any time. The page "
+             "says how many hashes so far and how long a block takes at "
+             "today's difficulty, and Stop mining stops after the batch it "
+             "is on."),
             ("Back up wallet.dat and everything comes back with it: coins, "
              "messages and your published key."),
         ],
@@ -221,8 +257,8 @@ SECTIONS: list[dict] = [
             "No encrypted messaging on mainnet.",
             ("No send-to-owners: the engine does not implement it and such a "
              "transaction would stop the index."),
-            ("No NFTs or exchange yet -- both are marked unbuilt rather than "
-             "half-present."),
+            ("No order book: a shop sells at the price its inscription says, "
+             "to whoever comes. Nothing matches bids to asks."),
             ("It cannot read your sent messages back off the chain. Nothing "
              "can. That is what sealing to the recipient means."),
         ],

@@ -89,6 +89,25 @@ class BlockWatcher:
         # scanner decrypts nothing, so it is safe there (D-014).
         self._check(self.state.ledger, public_only=True)
         self._sync_ledgers()
+        self._keep_shop()
+
+    _shopkeeper = None
+
+    def _keep_shop(self) -> None:
+        """Answer orders at this wallet's shops (arcade/shopkeeper.py).
+
+        After the scan and the ledger sync on purpose: an order is in a
+        message the scan just found, and it is about items and balances the
+        sync just brought up to date. A wallet that cannot spend (D-021)
+        keeps no shop.
+        """
+        if not self.state.messaging.can_spend:
+            return
+        if self._shopkeeper is None:
+            from ..shopkeeper import Shopkeeper
+            self._shopkeeper = Shopkeeper(self.state)
+        if self._shopkeeper.tick():
+            self.state.bump_generation()
 
     def _sync_ledgers(self) -> None:
         """Keep the token indexes in step with their chains.

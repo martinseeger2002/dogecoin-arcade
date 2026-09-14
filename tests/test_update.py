@@ -194,3 +194,56 @@ def test_a_scope_that_owns_nothing_is_still_offered_last(monkeypatch):
 
     scopes = update._scopes_for_port()
     assert scopes == [["--user"], []], "both scopes exist, neither owns the port"
+
+
+def test_the_second_half_runs_in_the_code_just_installed(tmp_path, monkeypatch, capsys):
+    """An updater fix took effect one update late: the process that pip had just
+    replaced on disk carried on running the copy it had imported, so the shim
+    the new code knew to write was written by the *next* run. After the
+    reinstall, the rest of the update is handed to the fresh install."""
+    home = tmp_path / ".dogecoinarcade"
+    venv = home / "venv"
+    src = home / "src"
+    (venv / "bin").mkdir(parents=True)
+    (src / ".git").mkdir(parents=True)
+    (src / "arcade").mkdir()
+    (src / "pyproject.toml").write_text("[project]\nname='dogecoinarcade'\n")
+    monkeypatch.setattr(update, "HOME", home)
+    monkeypatch.setattr(update, "_find_git", lambda: "git")
+    monkeypatch.setattr(update, "current_revision", lambda _c: "abc1234")
+
+    class Done:
+        returncode = 0
+        stdout = stderr = ""
+
+    ran = []
+    monkeypatch.setattr(update, "_run", lambda *a, **k: ran.append(a) or Done())
+    handed_off = []
+    monkeypatch.setattr(update.subprocess, "run",
+                        lambda argv, **k: handed_off.append(argv) or Done())
+    monkeypatch.setattr(update, "_update_services",
+                        lambda *a: pytest.fail("the old copy must not run the services half"))
+
+    assert update.update(dry_run=False) == 0
+    assert any(a[1:3] == ("install", "-q") for a in ran), ran
+    assert handed_off == [[str(venv / "bin" / "python"), "-m", "arcade.update",
+                           "--services-only"]]
+    assert "installed" in capsys.readouterr().out
+
+
+def test_services_only_is_the_second_half_and_installs_nothing(tmp_path, monkeypatch):
+    home = tmp_path / ".dogecoinarcade"
+    venv = home / "venv"
+    src = home / "src"
+    (venv / "bin").mkdir(parents=True)
+    (src / "arcade").mkdir(parents=True)
+    (src / "pyproject.toml").write_text("[project]\nname='dogecoinarcade'\n")
+    monkeypatch.setattr(update, "HOME", home)
+    monkeypatch.setattr(update, "_run", lambda *a, **k: pytest.fail("nothing to fetch or install"))
+    monkeypatch.setattr(update.subprocess, "run", lambda *a, **k: pytest.fail("no third half"))
+    seen = []
+    monkeypatch.setattr(update, "_update_services",
+                        lambda checkout, v, dry_run: seen.append((checkout, v, dry_run)) or 0)
+
+    assert update.main(["--services-only"]) == 0
+    assert seen == [(src, venv, False)]

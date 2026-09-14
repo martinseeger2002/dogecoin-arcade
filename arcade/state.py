@@ -28,7 +28,7 @@ from .config import (
     Params,
 )
 from .db import Database, StateDB, register_journalled_table
-from .tx import ArcadeTransaction
+from .tx import ArcadeTransaction, EncodingClass
 
 # Omni's MAX_INT_8_BYTES -- amounts are signed 64-bit on the wire despite being
 # carried in a uint64 field.
@@ -606,6 +606,8 @@ class Engine:
 
         if isinstance(parsed, I.Transfer):
             self._inscription_transfer(rtx, parsed)
+        elif isinstance(parsed, I.Swap):
+            self._swap(rtx, parsed)
         else:
             self._inscription_chunk(rtx, parsed)
 
@@ -739,6 +741,82 @@ class Engine:
         if rtx.reference == existing["owner"]:
             raise InvalidTransaction("that inscription is already there")
         self.state.update("inscription", {"txid": txid}, {"owner": rtx.reference})
+
+    # --- swaps ----------------------------------------------------------------
+
+    def _swap(self, rtx: ArcadeTransaction, swap: I.Swap) -> None:
+        """Two parties trade in one transaction, or nothing moves.
+
+        The seller is the sender -- Class C, so the first input, which a
+        buyer building the transaction cannot shift by adding bigger inputs
+        of their own. The buyer is the first input that is not the seller's:
+        an input is a signature, since nobody else can spend it, and the
+        payload has no room to name the buyer (inscriptions.Swap). Both legs
+        are checked before either moves, so a swap is never half done. Coins
+        are counted on the transaction itself: what the receiving side ends
+        up with, net of what it put in, must cover the leg.
+        """
+        since = self.params.swaps_from
+        if since is None:
+            raise InvalidTransaction("swaps are not read on this chain")
+        if rtx.block_height < since:
+            raise InvalidTransaction(f"swaps are read from block {since}")
+        if rtx.encoding_class is not EncodingClass.C:
+            raise InvalidTransaction("a swap must be Class C so its seller is the first input")
+        seller = rtx.sender
+        buyer = next((where for where, _ in rtx.inputs
+                      if where is not None and where != seller), None)
+        if buyer is None:
+            raise InvalidTransaction("a swap needs two parties: every input is the seller's")
+        if swap.give.kind == I.LEG_NONE or swap.take.kind == I.LEG_NONE:
+            raise InvalidTransaction("a swap has two sides")
+
+        self._check_leg(rtx, swap.give, seller, buyer)
+        self._check_leg(rtx, swap.take, buyer, seller)
+        self._move_leg(swap.give, seller, buyer)
+        self._move_leg(swap.take, buyer, seller)
+
+    def _check_leg(self, rtx: ArcadeTransaction, leg: I.Leg, giver: str, taker: str) -> None:
+        if leg.kind == I.LEG_INSCRIPTION:
+            row = self.state.db.conn.execute(
+                "SELECT owner FROM inscription WHERE txid=?", (leg.txid.hex(),)).fetchone()
+            if row is None:
+                raise InvalidTransaction("no such inscription")
+            if row["owner"] != giver:
+                raise InvalidTransaction(f"inscription {leg.txid.hex()[:12]} is not {giver}'s to give")
+            return
+        if leg.kind == I.LEG_TOKEN:
+            if not 0 < leg.amount <= MAX_AMOUNT:
+                raise InvalidTransaction(f"amount {leg.amount} out of range")
+            prop = self.get_property(leg.property_id)
+            if prop is None:
+                raise InvalidTransaction(f"property {leg.property_id} does not exist")
+            if prop["property_type"] == PROPERTY_NONFUNGIBLE:
+                raise InvalidTransaction(f"property {leg.property_id} is non-fungible")
+            held = self.get_balance(giver, leg.property_id)["balance"]
+            if held < leg.amount:
+                raise InvalidTransaction(
+                    f"insufficient balance: {giver} holds {held} of property "
+                    f"{leg.property_id}, needs {leg.amount}")
+            return
+        if leg.kind == I.LEG_COINS:
+            if leg.amount <= 0:
+                raise InvalidTransaction("a coin leg needs an amount")
+            paid = rtx.paid_to(taker)
+            if paid < leg.amount:
+                raise InvalidTransaction(
+                    f"{taker} is paid {paid} satoshis by this transaction, "
+                    f"the swap says {leg.amount}")
+            return
+        raise InvalidTransaction(f"unknown swap leg {leg.kind}")
+
+    def _move_leg(self, leg: I.Leg, giver: str, taker: str) -> None:
+        if leg.kind == I.LEG_INSCRIPTION:
+            self.state.update("inscription", {"txid": leg.txid.hex()}, {"owner": taker})
+        elif leg.kind == I.LEG_TOKEN:
+            self.debit(giver, leg.property_id, leg.amount)
+            self.credit(taker, leg.property_id, leg.amount)
+        # Coins moved when the transaction did; the ledger only checked.
 
     # --- system messages ------------------------------------------------------
 

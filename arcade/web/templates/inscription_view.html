@@ -112,7 +112,7 @@
   (function(){
     var sandbox = document.querySelector('.inscription-frame');
     var here = {{ row.txid|tojson }}, csrf = {{ csrf|tojson }};
-    var doors = {storage: '/storage/', node: '/node/'};
+    var doors = {storage: '/storage/', node: '/node/', swap: '/swap/', owner: '/owner/'};
     window.addEventListener('message', function(e){
       if (!sandbox || e.source !== sandbox.contentWindow) return;
       var m = e.data || {};

@@ -201,6 +201,14 @@ def update(dry_run: bool = False) -> int:
         if result.returncode != 0:
             raise UpdateError(f"reinstall failed:\n{result.stderr[-1200:]}")
         print("  installed")
+        # The rest of the update runs in the code that was just installed, not
+        # in this already-imported copy. Otherwise a fix to the updater itself
+        # -- a new shim to write, a unit file to migrate -- takes effect one
+        # update late: the machine that most needs it runs the old logic once
+        # more and gets it next time. Stdout is inherited so the second half
+        # prints in line with the first.
+        python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        return subprocess.run([str(python), "-m", "arcade.update", "--services-only"]).returncode
 
     return _update_services(checkout, venv, dry_run)
 
@@ -453,6 +461,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true",
                         help="report whether an update is available, and change nothing")
     parser.add_argument("--dry-run", action="store_true", help="show what would happen")
+    parser.add_argument("--services-only", action="store_true",
+                        help=argparse.SUPPRESS)  # the updater's own second half
     args = parser.parse_args(argv)
 
     try:
@@ -466,6 +476,9 @@ def main(argv: list[str] | None = None) -> int:
             print("An update is available. Run dogecoinarcade-update." if available
                   else "You are up to date.")
             return 0
+        if args.services_only:
+            venv, checkout, _fetchable = _layout()
+            return _update_services(checkout, venv, args.dry_run)
         return update(args.dry_run)
     except UpdateError as exc:
         print(f"\nERROR: {exc}\n", file=sys.stderr)

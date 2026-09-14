@@ -2,7 +2,7 @@
 {% block title %}Approvals · DogecoinArcade{% endblock %}
 {% block body %}
 {% macro who(r) -%}
-  {%- if r.origin == 'page' %}an inscribed page{% else %}a program on the bot RPC{% endif -%}
+  {%- if r.origin == 'page' %}an inscribed page{% elif r.origin == 'own page' %}a page of your own, which sends without asking{% else %}a program on the bot RPC{% endif -%}
   {%- if r.label %} calling itself <q>{{ r.label }}</q>{% endif -%}
 {%- endmacro %}
 {% macro age(seconds) -%}

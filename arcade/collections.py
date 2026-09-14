@@ -62,6 +62,12 @@ SPLIT_BATCH = 120
 #: Between checks while waiting on a block or on the send lock.
 POLL = 3.0
 
+#: How long a run waits for what it sent to confirm before it pauses rather
+#: than send on top of it. Blocks fit about nine pieces (fees.py: 20,000
+#: sigops a block, 2,000-odd a piece), so a batch of SPLIT_BATCH takes a
+#: dozen blocks or more, and testnet's are a minute or so apart.
+FUND_WAIT = 1800
+
 
 class CollectionError(Exception):
     """The folder is not a collection this understands."""
@@ -390,6 +396,12 @@ class Jobs:
         with self._open() as conn:
             conn.execute("UPDATE job SET note = ? WHERE id = ?", (note, job_id))
 
+    def retry_failed(self, job_id: str) -> int:
+        """Failed items back to pending, their pieces kept. For a resume."""
+        with self._open() as conn:
+            return conn.execute("UPDATE item SET status = 'pending' WHERE job_id = ? "
+                                "AND status = 'failed'", (job_id,)).rowcount
+
     def item_status(self, job_id: str, edition: int, status: str,
                     error: str = "") -> None:
         with self._open() as conn:
@@ -457,11 +469,17 @@ class Runner:
         return thread is not None and thread.is_alive()
 
     def start(self, job_id: str) -> bool:
-        """Run (or resume) a job. False if it is already running."""
+        """Run (or resume) a job. False if it is already running.
+
+        Items that failed go again: what failed them was the node or the
+        wallet at the time, and an item's recorded pieces are reused, so
+        nothing already on the chain is paid for twice (_send_item).
+        """
         with self._lock:
             if self.running(job_id):
                 return False
             self._stop.discard(job_id)
+            self.jobs.retry_failed(job_id)
             self.jobs.set_status(job_id, "running", note="starting", error="")
             thread = threading.Thread(target=self._run, args=(job_id,),
                                       name=f"arcade-collection-{job_id}", daemon=True)
@@ -509,6 +527,7 @@ class Runner:
             index = self.index_for(job["network"])
             with chain.rpc() as rpc:
                 sender_obj = self.make_sender(rpc, chain.params)
+                waits: dict[int, float] = {}   # edition -> when it first had to wait
                 while True:
                     if self._stopping(job_id):
                         self.jobs.set_status(job_id, "paused", note="paused")
@@ -528,10 +547,29 @@ class Runner:
                     if outcome == "paused":
                         self.jobs.set_status(job_id, "paused", note="paused")
                         return
+                    if outcome == "wait":
+                        # The node will not chain another piece on what is
+                        # unconfirmed. That is a block's wait, not a fault:
+                        # wait for one and try the same item again.
+                        since = waits.setdefault(item["edition"], time.time())
+                        if not self._wait_for_block(job_id, sender_obj, since + FUND_WAIT):
+                            if self._stopping(job_id):
+                                self.jobs.set_status(job_id, "paused", note="paused")
+                            else:
+                                self.jobs.set_status(
+                                    job_id, "paused",
+                                    note=f"{item['name']}: the node did not take a piece",
+                                    error=self.jobs.items(job_id, status="pending",
+                                                          limit=1)[0]["error"])
+                            return
+                        continue
+                    waits.pop(item["edition"], None)
             failed = self.jobs.get(job_id)["failed_items"]
             if failed:
+                first = self.jobs.items(job_id, status="failed", limit=1)
                 self.jobs.set_status(job_id, "failed",
-                                     note=f"{failed} item(s) could not be sent")
+                                     note=f"{failed} item(s) could not be sent",
+                                     error=first[0]["error"] if first else "")
             else:
                 self.jobs.set_status(job_id, "done", note="every item is on its way")
         except Exception as exc:
@@ -624,13 +662,36 @@ class Runner:
                 return "paused"
             raise
         except Exception as exc:
-            self.jobs.item_status(job_id, edition, "failed", str(exc))
-            self.jobs.note(job_id, f"{label}: {exc}")
-            return "failed"
+            # The node would not take a piece, or could not be asked: the
+            # wallet is short, the mempool's chain limit is hit, the node is
+            # down. None of that is the item's fault, and every one of them
+            # is the next item's problem too -- so the job pauses on the
+            # error rather than failing this item and the thirty-nine after
+            # it, which is what one afternoon of one-chunk-per-block did.
+            # The pieces already recorded stay recorded; Resume sends the rest.
+            # A chain limit in particular is cleared by the next block, so
+            # that one is waited out (_run) rather than paused on.
+            self.jobs.item_status(job_id, edition, "pending", str(exc))
+            if "too-long-mempool-chain" in str(exc):
+                self.jobs.note(job_id, f"{label}: waiting for a block; the node will not "
+                                       "chain another piece on what is unconfirmed")
+                return "wait"
+            self.jobs.set_status(job_id, "paused", note=f"{label}: the node did not take a piece",
+                                 error=str(exc))
+            return "paused"
         if not txids and self._stopping(job_id):
             return "paused"
         self.jobs.item_status(job_id, edition, "sent")
         return "sent"
+
+    def _wait_for_block(self, job_id: str, sender_obj: Any, deadline: float) -> bool:
+        """True once the chain has moved; False when stopped or out of time."""
+        start = sender_obj.rpc.get_block_count()
+        while sender_obj.rpc.get_block_count() == start:
+            if self._stopping(job_id) or time.time() > deadline:
+                return False
+            time.sleep(POLL)
+        return True
 
     def _fund(self, job: dict, plan: Any, sender_obj: Any, address: str,
               need: int) -> None:
@@ -646,12 +707,19 @@ class Runner:
         piece = max(piece, inscribelib.piece_size(plan))
         if sender_obj.spendable_outputs(address, at_least=piece // 2, minconf=1) >= need:
             return
-        deadline = time.time() + 1800
+        deadline = time.time() + FUND_WAIT
         while (sender_obj.spendable_outputs(address, minconf=0)
                > sender_obj.spendable_outputs(address, minconf=1)):
             self.jobs.note(job_id, "waiting for a block before splitting the wallet again")
-            if self._stopping(job_id) or time.time() > deadline:
+            if self._stopping(job_id):
                 return
+            if time.time() > deadline:
+                # Sending anyway would spend the unconfirmed outputs and
+                # chain on them, and the node refuses a chain of three
+                # pieces (sender.send_all). Pause, and say what for.
+                raise RuntimeError(
+                    f"waited {FUND_WAIT // 60} minutes for a block to confirm what this "
+                    "job already sent, and none came. Resume when the chain has moved.")
             time.sleep(POLL)
         wanted = max(need, min(SPLIT_BATCH, ahead))
         sender_obj.ensure_outputs(

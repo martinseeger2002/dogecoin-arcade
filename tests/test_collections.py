@@ -128,6 +128,12 @@ class FakeSender:
         self.splits = 0
         self.outputs = 1000
         self.lock = threading.Lock()
+        self.rpc = self                # get_block_count, like the real one's node
+
+    height = 100
+
+    def get_block_count(self):
+        return self.height
 
     def spendable_outputs(self, address, at_least=0, minconf=0):
         return self.outputs
@@ -339,3 +345,110 @@ def test_the_send_lock_is_taken_per_item(tmp_path):
     runner.start(job_id)
     wait(runner, job_id)
     assert held == [], "released after every item"
+
+
+def test_a_refusal_by_the_node_pauses_the_job_and_resume_goes_on(tmp_path, monkeypatch):
+    """One afternoon on testnet: pieces confirmed one a block, the wallet's
+    change stayed unconfirmed, the third piece to spend it was refused
+    (-26 too-long-mempool-chain) -- and so was every item after it, 39 in a
+    row, each marked failed for good. The node refusing a piece is the
+    job's problem, not the item's: pause on it, and send the rest on Resume."""
+    build = C.read_build(hashlips(tmp_path, count=4))
+    sender = FakeSender()
+    refusing = {"on": True}
+    real_send_all = sender.send_all
+
+    def send_all(address, payloads, approve=None, on_broadcast=None, on_progress=None):
+        if refusing["on"] and len(sender.sent) >= 1:
+            raise RuntimeError("sendrawtransaction: [-26] 64: too-long-mempool-chain")
+        return real_send_all(address, payloads, approve=approve, on_broadcast=on_broadcast)
+
+    sender.send_all = send_all
+    monkeypatch.setattr(C, "FUND_WAIT", 0)     # no block is coming in this test
+    monkeypatch.setattr(C, "POLL", 0.01)
+    jobs, runner = runner_for(tmp_path, sender)
+    job_id = jobs.create("regtest", "nSender", build)
+    runner.start(job_id)
+    wait(runner, job_id)
+    job = jobs.get(job_id)
+    assert job["status"] == "paused" and "too-long-mempool-chain" in job["error"]
+    assert job["failed_items"] == 0 and job["sent"] == 1
+    second = jobs.items(job_id)[1]
+    assert second["status"] == "pending" and "too-long-mempool-chain" in second["error"]
+
+    refusing["on"] = False
+    runner.start(job_id)
+    wait(runner, job_id)
+    assert jobs.get(job_id)["status"] == "done" and jobs.get(job_id)["sent"] == 4
+    assert len(sender.sent) == 4, "the first item was not sent twice"
+
+    # A job from before this, with items marked failed: Resume tries them again.
+    jobs.item_status(job_id, 3, "failed", "sendrawtransaction: [-26] 64: too-long-mempool-chain")
+    jobs.item_status(job_id, 4, "failed", "sendrawtransaction: [-26] 64: too-long-mempool-chain")
+    jobs.set_status(job_id, "failed", note="2 item(s) could not be sent")
+    runner.start(job_id)
+    wait(runner, job_id)
+    assert jobs.get(job_id)["status"] == "done"
+    assert len(sender.sent) == 4, "their recorded pieces are reused, not paid for again"
+
+
+def test_funding_that_never_confirms_pauses_rather_than_chains(tmp_path, monkeypatch):
+    build = C.read_build(hashlips(tmp_path, count=2))
+    sender = FakeSender()
+    sender.outputs = 0
+    sender.spendable_outputs = lambda address, at_least=0, minconf=0: 5 if minconf == 0 else 0
+    jobs, runner = runner_for(tmp_path, sender)
+    monkeypatch.setattr(C, "FUND_WAIT", 0)
+    monkeypatch.setattr(C, "POLL", 0.01)
+    job_id = jobs.create("regtest", "nSender", build)
+    runner.start(job_id)
+    wait(runner, job_id)
+    job = jobs.get(job_id)
+    assert job["status"] == "paused" and "waited 0 minutes for a block" in job["error"]
+    assert sender.sent == [] and sender.splits == 0, "nothing sent on top of the unconfirmed"
+
+
+def test_a_failed_job_says_why(tmp_path):
+    build = C.read_build(hashlips(tmp_path, count=3))
+    sender = FakeSender()
+    jobs, runner = runner_for(tmp_path, sender)
+    job_id = jobs.create("regtest", "nSender", build)
+    (build.folder / "images" / "2.png").unlink()
+    runner.start(job_id)
+    wait(runner, job_id)
+    job = jobs.get(job_id)
+    assert job["status"] == "failed" and "2.png" in job["error"], job["error"]
+
+
+def test_a_chain_limit_is_waited_out_rather_than_paused_on(tmp_path, monkeypatch):
+    """The node's -26 says 'not until a block': the run waits for one and
+    tries the same item again, and nobody has to press Resume."""
+    build = C.read_build(hashlips(tmp_path, count=3))
+    sender = FakeSender()
+    real_send_all = sender.send_all
+    refusals = []
+
+    def send_all(address, payloads, approve=None, on_broadcast=None, on_progress=None):
+        if len(sender.sent) >= 1 and sender.height == 100:
+            refusals.append(len(sender.sent))
+            raise RuntimeError("sendrawtransaction: [-26] 64: too-long-mempool-chain")
+        return real_send_all(address, payloads, approve=approve, on_broadcast=on_broadcast)
+
+    sender.send_all = send_all
+    monkeypatch.setattr(C, "POLL", 0.01)
+    jobs, runner = runner_for(tmp_path, sender)
+    job_id = jobs.create("regtest", "nSender", build)
+    runner.start(job_id)
+    deadline = time.time() + 5
+    while not refusals and time.time() < deadline:
+        time.sleep(0.01)
+    assert refusals == [1]
+    while "waiting for a block" not in jobs.get(job_id)["note"] and time.time() < deadline:
+        time.sleep(0.01)
+    job = jobs.get(job_id)
+    assert job["status"] == "running" and "waiting for a block" in job["note"], job["note"]
+    sender.height = 101                       # the block comes
+    wait(runner, job_id)
+    job = jobs.get(job_id)
+    assert job["status"] == "done" and job["sent"] == 3 and job["error"] == ""
+    assert refusals == [1], "asked once more only after the block"

@@ -54,6 +54,13 @@ VERSION = 1
 
 KIND_CHUNK = 1        # a piece of an inscription's content
 KIND_TRANSFER = 2     # hand an inscription to the reference address
+KIND_SWAP = 5         # two parties trade in one transaction (3 and 4 are tags)
+
+#: What one side of a swap hands over.
+LEG_NONE = 0
+LEG_INSCRIPTION = 1   # a 32-byte txid
+LEG_TOKEN = 2         # property id (4 bytes) and units (8 bytes)
+LEG_COINS = 3         # satoshis (8 bytes), paid inside the same transaction
 
 #: magic4 + version1 + kind1 + id8 + countdown2 + clen2
 CHUNK_HEADER_LEN = 18
@@ -226,12 +233,97 @@ class Transfer:
         return MAGIC + bytes([VERSION, KIND_TRANSFER]) + self.txid
 
 
+@dataclass(frozen=True)
+class Leg:
+    """One side of a swap: what one party gives the other."""
+
+    kind: int
+    txid: bytes = b""       # LEG_INSCRIPTION
+    property_id: int = 0    # LEG_TOKEN
+    amount: int = 0         # LEG_TOKEN units, or LEG_COINS satoshis
+
+    def encode(self) -> bytes:
+        if self.kind == LEG_INSCRIPTION:
+            if len(self.txid) != 32:
+                raise InscriptionError("an inscription is named by a 32-byte txid")
+            return bytes([self.kind]) + self.txid
+        if self.kind == LEG_TOKEN:
+            if not 0 < self.property_id < 2 ** 32 or not 0 < self.amount < 2 ** 64:
+                raise InscriptionError("a token leg needs a property and an amount")
+            return (bytes([self.kind]) + self.property_id.to_bytes(4, "big")
+                    + self.amount.to_bytes(8, "big"))
+        if self.kind == LEG_COINS:
+            if not 0 < self.amount < 2 ** 64:
+                raise InscriptionError("a coin leg needs an amount")
+            return bytes([self.kind]) + self.amount.to_bytes(8, "big")
+        raise InscriptionError(f"unknown swap leg {self.kind}")
+
+    @classmethod
+    def decode(cls, raw: bytes, at: int) -> tuple["Leg", int]:
+        if at >= len(raw):
+            raise InscriptionError("truncated swap")
+        kind = raw[at]
+        if kind == LEG_INSCRIPTION:
+            body = raw[at + 1:at + 33]
+            if len(body) != 32:
+                raise InscriptionError("truncated swap")
+            return cls(kind, txid=body), at + 33
+        if kind == LEG_TOKEN:
+            body = raw[at + 1:at + 13]
+            if len(body) != 12:
+                raise InscriptionError("truncated swap")
+            return (cls(kind, property_id=int.from_bytes(body[:4], "big"),
+                        amount=int.from_bytes(body[4:], "big")), at + 13)
+        if kind == LEG_COINS:
+            body = raw[at + 1:at + 9]
+            if len(body) != 8:
+                raise InscriptionError("truncated swap")
+            return cls(kind, amount=int.from_bytes(body, "big")), at + 9
+        raise InscriptionError(f"unknown swap leg {kind}")
+
+    def describe(self) -> str:
+        if self.kind == LEG_INSCRIPTION:
+            return f"inscription {self.txid.hex()}"
+        if self.kind == LEG_TOKEN:
+            return f"{self.amount} units of property {self.property_id}"
+        if self.kind == LEG_COINS:
+            return f"{self.amount / 100_000_000:.8f} coins"
+        return "nothing"
+
+
+@dataclass(frozen=True)
+class Swap:
+    """Two parties trade in one transaction.
+
+    The sender (the first input, so this is Class C only) is the SELLER and
+    gives `give` to the buyer; the buyer is the first input that is not the
+    seller's, and gives `take` to the seller. Both have signed the
+    transaction -- an input is a signature, and SIGHASH_ALL covers every
+    input and output, so neither party can change what the other agreed to.
+    Both legs move or neither does. That is what makes it a swap rather than
+    two sends that hope to land in the same block: there is one transaction,
+    so there is no block in which one side has happened and the other has not.
+
+    The buyer is not named in the payload, on purpose: an OP_RETURN carries
+    76 bytes here (encoding.max_class_c_payload), and two inscription legs
+    are 66 of them. Naming the buyer would put an NFT-for-NFT swap 21 bytes
+    over. The inputs already say who the buyer is.
+    """
+
+    give: Leg               # from the seller to the buyer
+    take: Leg               # from the buyer to the seller
+
+    def encode(self) -> bytes:
+        return (MAGIC + bytes([VERSION, KIND_SWAP])
+                + self.give.encode() + self.take.encode())
+
+
 def is_inscription(payload: bytes) -> bool:
     """Does this AnyData body belong to us? Cheap enough to ask of everything."""
     return len(payload) >= 6 and payload[:4] == MAGIC
 
 
-def parse(payload: bytes) -> Chunk | Transfer:
+def parse(payload: bytes) -> Chunk | Transfer | Swap:
     """Read one inscription payload. Raises `InscriptionError` if malformed."""
     if not is_inscription(payload):
         raise InscriptionError("not an inscription payload")
@@ -243,6 +335,13 @@ def parse(payload: bytes) -> Chunk | Transfer:
         if len(payload) < TRANSFER_LEN:
             raise InscriptionError("truncated transfer")
         return Transfer(txid=payload[6:38])
+
+    if kind == KIND_SWAP:
+        give, at = Leg.decode(payload, 6)
+        take, at = Leg.decode(payload, at)
+        if at != len(payload):
+            raise InscriptionError("a swap has nothing after its two legs")
+        return Swap(give=give, take=take)
 
     if kind != KIND_CHUNK:
         raise InscriptionError(f"unknown inscription kind {kind}")

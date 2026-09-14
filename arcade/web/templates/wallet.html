@@ -97,15 +97,54 @@
 
 {{ panel('messaging', state.messaging, messaging, 'testnet') }}
 
-{% if messaging.online and messaging.funding and not messaging.funding.funded %}
+{% if messaging.online and messaging.funding %}
 <div class="panel" style="margin-top:-8px">
   <p style="margin:0 0 8px">{{ messaging.funding.describe() }}</p>
-  {% if not messaging.funding.pending %}
-    <p class="muted" style="font-size:.88rem">One block pays 10,000 PEP, enough for
-      roughly 68,000 of the largest possible messages. This mines one block and stops.</p>
-    <form method="post" action="/fund">
-      <input type="hidden" name="csrf_token" value="{{ csrf }}"><button type="submit">Mine one block</button>
-    </form>
+  <p class="muted" style="font-size:.88rem">
+    {% if messaging.funding.funded %}
+      Testnet blocks come when somebody mines one. This mines one block on this
+      machine and stops: anything waiting in the mempool goes in, and the block
+      pays 10,000 PEP that ripen over the next 240 blocks.
+    {% else %}
+      One block pays 10,000 PEP, enough for roughly 68,000 of the largest
+      possible messages. This mines one block and stops.
+    {% endif %}</p>
+  {% if mining.mining %}
+  <div class="msg info" id="mining" style="margin:0 0 8px">
+    <strong>Mining a block on this machine&hellip;</strong>
+    <span id="mining-so-far"></span>
+    This page refreshes itself when one is found.</div>
+  <form method="post" action="/fund/stop">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}"><button type="submit"
+      {% if mining.stopping %}disabled{% endif %}>{{ 'Stopping…' if mining.stopping else 'Stop mining' }}</button>
+  </form>
+  <script>
+  (function(){
+    var shown = document.getElementById('mining-so-far');
+    function minutes(s){ return s < 90 ? s + ' s' : Math.round(s / 60) + ' min'; }
+    function say(j){
+      var t = minutes(j.seconds) + ' so far';
+      if (j.tries) t += ': ' + j.tries.toLocaleString() + ' hashes at ' + j.rate.toLocaleString() + '/s.';
+      else t += '; measuring how fast this machine hashes.';
+      if (j.expected_seconds) t += ' At today\'s difficulty a block takes about ' +
+        minutes(j.expected_seconds) + ' on average, sooner or later by luck.';
+      if (j.stopping) t += ' Stopping after this batch.';
+      shown.textContent = t;
+    }
+    say({{ mining|tojson }});
+    function look(){
+      fetch('/wallet/mining').then(function(r){ return r.json(); }).then(function(j){
+        if (!j.mining) { location.reload(); return; }
+        say(j); setTimeout(look, 3000);
+      }).catch(function(){ setTimeout(look, 5000); });
+    }
+    setTimeout(look, 3000);
+  })();
+  </script>
+  {% else %}
+  <form method="post" action="/fund">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}"><button type="submit">Mine one block</button>
+  </form>
   {% endif %}
 </div>
 {% endif %}

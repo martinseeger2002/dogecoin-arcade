@@ -60,7 +60,7 @@ dogecoinarcade-update = "arcade.update:main"
 packages = ["arcade", "arcade.messaging", "arcade.web"]
 
 [tool.setuptools.package-data]
-"arcade.web" = ["templates/*.html"]
+"arcade.web" = ["templates/*.html", "templates/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
