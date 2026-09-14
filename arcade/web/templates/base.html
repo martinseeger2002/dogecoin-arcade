@@ -370,6 +370,22 @@ a.thread.on{background:var(--code);box-shadow:inset 3px 0 0 var(--accent)}
   min-height:0;max-height:160px}
 .composer button{border-radius:19px;flex:none}
 .composer-note{font-size:.76rem;padding:0 16px 11px;margin:0;background:var(--bg)}
+
+/* A picture, opened. Fixed to the viewport rather than grown in place: a chat
+   scrolls, and a picture that pushes the conversation around while you look at
+   it loses your place in it. */
+.lightbox{display:none;position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.86);
+  align-items:center;justify-content:center;flex-direction:column;gap:10px;padding:14px}
+.lightbox.on{display:flex}
+.lightbox img{max-width:100%;max-height:calc(100vh - 90px);object-fit:contain;
+  border-radius:8px;background:#fff}
+.lightbox-bar{display:flex;align-items:center;gap:12px;color:#fff;font-size:.85rem;
+  max-width:100%}
+.lightbox-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.85}
+.lightbox-save{color:var(--accent);font-weight:600}
+.lightbox-close{background:transparent;border:1px solid rgba(255,255,255,.4);
+  color:#fff;border-radius:7px;padding:7px 13px;font-size:.85rem;min-height:40px}
+a.media img{cursor:zoom-in}
 /* The three sizes a picture can be sent at. Each button carries what that
    choice costs, because the cost is the reason the choice exists. */
 .sizes{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
@@ -520,6 +536,54 @@ form.composer button[type=submit]{background:var(--sent);border-color:var(--sent
 // costs 0.16 and displayed as "about 0 in dust", so ANY cost under half a coin
 // read as free. a test machine met the 102-byte case; the rest of the range was the same
 // bug with a less obvious face.
+// --- looking at a picture ------------------------------------------------------
+// Clicking one used to download it. That is the rarer thing to want and the
+// more annoying to undo -- a folder full of files you only meant to look at --
+// so a click opens it and the saving stays one deliberate press away.
+function arcadeOpenImage(src, name, saveHref){
+  var box = document.getElementById('lightbox');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'lightbox';
+    box.className = 'lightbox';
+    box.innerHTML =
+      '<img alt="">' +
+      '<div class="lightbox-bar">' +
+        '<span class="lightbox-name"></span>' +
+        '<a class="lightbox-save" download>Save</a>' +
+        '<button type="button" class="lightbox-close" title="Close">Close</button>' +
+      '</div>';
+    document.body.appendChild(box);
+    // Anywhere but the picture itself closes it, which is what every phone
+    // does and what a finger expects.
+    box.addEventListener('click', function (event) {
+      if (event.target === box || event.target.className === 'lightbox-close')
+        arcadeCloseImage();
+    });
+  }
+  box.querySelector('img').src = src;
+  box.querySelector('.lightbox-name').textContent = name || '';
+  var save = box.querySelector('.lightbox-save');
+  save.href = saveHref || src;
+  save.setAttribute('download', name || '');
+  box.classList.add('on');
+  document.body.style.overflow = 'hidden';
+  document.addEventListener('keydown', arcadeLightboxKey);
+}
+
+function arcadeCloseImage(){
+  var box = document.getElementById('lightbox');
+  if (!box) return;
+  box.classList.remove('on');
+  box.querySelector('img').src = '';        // stop it holding the bytes
+  document.body.style.overflow = '';
+  document.removeEventListener('keydown', arcadeLightboxKey);
+}
+
+function arcadeLightboxKey(event){
+  if (event.key === 'Escape') arcadeCloseImage();
+}
+
 function arcadeSize(bytes){
   if (bytes < 1024) return bytes.toLocaleString() + ' bytes';
   if (bytes < 10 * 1024) return (bytes / 1024).toFixed(1) + ' KB';

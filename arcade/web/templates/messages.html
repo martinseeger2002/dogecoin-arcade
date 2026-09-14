@@ -93,8 +93,13 @@
             {% if m.body %}<div class="text">{{ m.body.decode('utf-8', 'replace') }}</div>{% endif %}
             {% if m.file %}
               {% if m.file.kind == 'image' %}
+                {# Still an anchor, so it works with no JavaScript and the
+                   middle-click and right-click menus behave. The click itself
+                   opens it instead. #}
                 <a class="media" href="{{ m.file.url }}?download=1"
-                   title="{{ m.file.name }} — click to save">
+                   title="{{ m.file.name }} — click to open"
+                   onclick="arcadeOpenImage('{{ m.file.url }}', '{{ m.file.name }}',
+                            '{{ m.file.url }}?download=1'); return false">
                   <img src="{{ m.file.url }}" alt="{{ m.file.name }}" loading="lazy"></a>
               {% elif m.file.kind == 'audio' %}
                 <audio class="media" controls preload="none"

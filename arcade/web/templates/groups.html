@@ -233,7 +233,9 @@
             {% if p.file_size %}
               {% if p.kind == 'image' %}
                 <a class="media" href="/groups/media/{{ p.id }}?download=1"
-                   title="{{ p.file_name }} — click to save">
+                   title="{{ p.file_name }} — click to open"
+                   onclick="arcadeOpenImage('/groups/media/{{ p.id }}', '{{ p.file_name }}',
+                            '/groups/media/{{ p.id }}?download=1'); return false">
                   <img src="/groups/media/{{ p.id }}" alt="{{ p.file_name }}" loading="lazy"></a>
               {% elif p.kind == 'video' %}
                 <video class="media" controls preload="metadata"

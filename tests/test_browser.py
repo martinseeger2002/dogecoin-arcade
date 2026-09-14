@@ -929,3 +929,63 @@ def test_a_picture_can_be_posted_to_the_board_with_nothing_typed(phone):
         assert ("node" in page or "Post this" in page or "wallet" in page), page[:300]
     finally:
         browser.switch_to.default_content()
+
+
+def test_clicking_a_picture_opens_it_rather_than_downloading_it(phone):
+    """Downloading is the rarer thing to want and the more annoying to undo --
+    a folder full of files you only meant to look at."""
+    visit, peer = phone
+    browser = visit(f"/messages/{peer}")
+    try:
+        # Put a picture in the conversation the way a received one looks.
+        browser.execute_script("""
+            const row = document.createElement('div');
+            row.className = 'bubble-row theirs';
+            row.innerHTML = '<div class="bubble"><a class="media" id="shot"' +
+              ' href="/x?download=1" onclick="arcadeOpenImage(\\'/x\\', \\'cat.jpg\\',' +
+              ' \\'/x?download=1\\'); return false">' +
+              '<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="cat.jpg">' +
+              '</a></div>';
+            (document.querySelector('.bubbles') || document.body)
+              .appendChild(row);""")
+        browser.find_element(By.ID, "shot").click()
+        time.sleep(0.4)
+
+        state = browser.execute_script("""
+            const box = document.getElementById('lightbox');
+            return box && {
+              open: box.classList.contains('on'),
+              shown: getComputedStyle(box).display,
+              name: box.querySelector('.lightbox-name').textContent,
+              save: box.querySelector('.lightbox-save').getAttribute('href'),
+              downloads: box.querySelector('.lightbox-save').hasAttribute('download'),
+              frozen: document.body.style.overflow,
+            };""")
+        assert state, "no lightbox was opened"
+        assert state["open"] and state["shown"] != "none"
+        assert state["name"] == "cat.jpg"
+        assert state["save"] == "/x?download=1", "saving is still one press away"
+        assert state["downloads"]
+        assert state["frozen"] == "hidden", "the page behind must not scroll"
+
+        # Escape closes it, and so does a click on the ground behind.
+        browser.execute_script(
+            "document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape'}))")
+        time.sleep(0.3)
+        assert browser.execute_script(
+            "return document.getElementById('lightbox').classList.contains('on')") is False
+        assert browser.execute_script("return document.body.style.overflow") == ""
+    finally:
+        browser.switch_to.default_content()
+
+
+def test_a_picture_still_works_without_javascript():
+    """The anchor stays an anchor: middle-click, right-click and a browser with
+    scripting off all behave as they did."""
+    import pathlib as _p
+
+    for name in ("messages.html", "groups.html"):
+        source = _p.Path("arcade/web/templates", name).read_text()
+        assert 'class="media" href=' in source, name
+        assert "?download=1" in source, name
+        assert "return false" in source, name

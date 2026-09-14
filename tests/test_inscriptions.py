@@ -191,3 +191,67 @@ def test_one_transaction_is_enough_for_a_small_file():
     assembly.add(I.parse(bodies[0]))
     assert assembly.complete()
     assert assembly.join()[1] == b"hello world"
+
+
+# --- what it will cost ---------------------------------------------------------
+# An inscription is permanent and paid for in advance. A number shown afterwards
+# is a number shown too late.
+
+
+def test_the_estimate_matches_what_a_real_send_did():
+    """135,150 bytes went out as 18 transactions on testnet. The estimate has
+    to say 18, or it is not an estimate of anything."""
+    from arcade import inscribe
+
+    assert inscribe.estimate(135_150, "image/jpeg").chunks == 18
+
+
+def test_an_estimate_needs_only_a_length():
+    """So a page can price a file the moment it is chosen, without holding a
+    second copy of it in memory."""
+    from arcade import inscribe
+
+    data = b"x" * 50_000
+    assert inscribe.estimate(data, "text/plain") == inscribe.estimate(50_000, "text/plain")
+
+
+def test_the_dust_is_counted_separately_because_it_comes_back():
+    """Every data output carries the creator's own key, so it is spendable
+    again. Reporting one number would overstate the cost by ten times."""
+    from arcade import inscribe
+
+    one_mb = inscribe.estimate(1_048_576, "image/png")
+    assert one_mb.dust > one_mb.fee * 5, "dust dominates, which is the point"
+    assert one_mb.total == one_mb.fee + one_mb.dust
+    assert one_mb.net == one_mb.fee
+    assert one_mb.recoverable == one_mb.dust
+
+
+def test_a_bigger_file_costs_more_in_every_direction():
+    from arcade import inscribe
+
+    small = inscribe.estimate(10_000)
+    large = inscribe.estimate(100_000)
+    assert large.chunks > small.chunks
+    assert large.outputs > small.outputs
+    assert large.fee > small.fee and large.dust > small.dust
+
+
+def test_planning_gives_payloads_ready_for_the_chain():
+    from arcade import inscribe
+    from arcade.payload import AnyData, decode
+
+    plan = inscribe.plan(b"a picture" * 2000, "image/png", '{"n":1}')
+    assert plan.chunks == plan.estimate.chunks
+    assert plan.content_len == len(b"a picture" * 2000)
+    assert plan.json == '{"n":1}'
+    for payload in plan.payloads:
+        assert isinstance(decode(payload), AnyData)
+        assert len(payload) <= 7_650, "one Class B transaction's worth"
+
+
+def test_the_json_is_checked_before_anything_is_priced():
+    from arcade import inscribe
+
+    with pytest.raises(I.InscriptionError, match="not valid JSON"):
+        inscribe.plan(b"x", "text/plain", "{oops")
