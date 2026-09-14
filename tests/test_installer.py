@@ -670,3 +670,25 @@ def test_force_core_installs_ours_anyway(tmp_path, monkeypatch):
 
     assert install.main(["--coin", "pepecoin", "--no-browser", "--force-core"]) == 0
     assert fetched, "--force-core must download ours"
+
+
+def test_every_command_is_written_and_the_updater_knows_their_names(tmp_path, monkeypatch):
+    """`arcade-rpc` was on the venv's PATH and nowhere else after an install.
+
+    The bot RPC command is part of what the installer promises, so it is written
+    beside the launcher, and the updater asks the installer what it writes rather
+    than keeping its own list that would drift the same way.
+    """
+    monkeypatch.setattr(install, "info", lambda *a, **k: None)
+    venv = tmp_path / "venv"
+    target = tmp_path / "bin"
+    install.write_launcher(venv, target, "Linux")
+    assert sorted(f.name for f in target.iterdir()) == sorted(install.shim_names("Linux"))
+    rpc = target / "arcade-rpc"
+    assert rpc.stat().st_mode & 0o111
+    assert f'exec "{venv}/bin/arcade-rpc" "$@"' in rpc.read_text()
+
+    win = tmp_path / "winbin"
+    install.write_launcher(venv, win, "Windows")
+    assert sorted(f.name for f in win.iterdir()) == sorted(install.shim_names("Windows"))
+    assert "arcade-rpc.exe" in (win / "arcade-rpc.cmd").read_text()

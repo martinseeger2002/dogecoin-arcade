@@ -272,12 +272,14 @@ def _update_services(checkout: Path, venv: Path, dry_run: bool) -> int:
 
 
 def _ensure_launcher(checkout: Path, venv: Path) -> Path | None:
-    """Write the `dogecoinarcade` and `dogecoinarcade-update` shims if missing.
+    """Write the command shims if any of them is missing.
 
     Same reasoning as registering the service: a machine set up before these
-    existed, or set up from a checkout rather than by the installer, has neither
-    on its PATH. The user ran `dogecoinarcade-update` and got `command not
-    found` -- on the machine running the application. Written from the
+    existed, or set up from a checkout rather than by the installer, has none
+    of them on its PATH. The user ran `dogecoinarcade-update` and got `command
+    not found` -- on the machine running the application. Later `arcade-rpc`
+    went the same way on a machine whose installer predated it, so every shim
+    the installer knows about is checked, not only the first. Written from the
     installer's own templates so there is one definition of what they contain.
     """
     import platform
@@ -285,8 +287,8 @@ def _ensure_launcher(checkout: Path, venv: Path) -> Path | None:
     target = _call_installer(checkout, "bindir", system)
     if target is None:
         return None
-    name = "dogecoinarcade.cmd" if system == "Windows" else "dogecoinarcade"
-    if (Path(target) / name).exists():
+    names = _call_installer(checkout, "shim_names", system) or ["dogecoinarcade"]
+    if all((Path(target) / name).exists() for name in names):
         return None
     written = _call_installer(checkout, "write_launcher", venv, Path(target), system)
     return Path(written) if written else None

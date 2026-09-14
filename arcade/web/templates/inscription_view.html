@@ -103,27 +103,34 @@
     look(); setInterval(look, 3000);
   })();
 
-  // What the wallet remembers for this page. The sandbox has no storage of
-  // its own; it asks this page over postMessage and this page keeps it on the
-  // wallet's disk under THIS inscription's id -- taken from the frame it came
-  // out of, never from the message, so a page can only ever reach its own.
+  // What the wallet remembers for this page, and what it says to other
+  // nodes for it. The sandbox has neither storage nor a way off this
+  // machine; it asks this page over postMessage and this page asks the
+  // wallet, under THIS inscription's id -- taken from the frame it came out
+  // of, never from the message, so a page can only ever reach its own data
+  // and its own conversations.
   (function(){
     var sandbox = document.querySelector('.inscription-frame');
     var here = {{ row.txid|tojson }}, csrf = {{ csrf|tojson }};
+    var doors = {storage: '/storage/', node: '/node/'};
     window.addEventListener('message', function(e){
       if (!sandbox || e.source !== sandbox.contentWindow) return;
       var m = e.data || {};
-      if (m.arcade !== 'storage' || typeof m.seq !== 'number') return;
+      if (!doors[m.arcade] || typeof m.seq !== 'number') return;
       function answer(body){
-        body.arcade = 'storage'; body.seq = m.seq;
+        body.arcade = m.arcade; body.seq = m.seq;
         e.source.postMessage(body, '*');   // an opaque origin cannot be named
       }
-      var call = m.op === 'load'
-        ? fetch('/storage/' + here)
-        : fetch('/storage/' + here, {method: 'POST', headers: {'Content-Type': 'application/json'},
-                 body: JSON.stringify({csrf_token: csrf, op: m.op, key: m.key, value: m.value})});
+      var body = {};
+      for (var k in m) if (k !== 'arcade' && k !== 'seq') body[k] = m[k];
+      body.csrf_token = csrf;
+      var call = (m.arcade === 'storage' && m.op === 'load')
+        ? fetch(doors[m.arcade] + here)
+        : fetch(doors[m.arcade] + here, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                 body: JSON.stringify(body)});
       call.then(function(r){ return r.json(); }).then(function(j){
-        answer(j.ok ? {ok: true, items: j.items} : {ok: false, error: j.error || j.detail || 'refused'});
+        if (j.ok) answer(j);
+        else answer({ok: false, error: j.error || j.detail || 'refused'});
       }).catch(function(){ answer({ok: false, error: 'the wallet did not answer'}); });
     });
   })();

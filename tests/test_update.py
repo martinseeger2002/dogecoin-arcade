@@ -95,10 +95,13 @@ def test_the_launcher_is_written_when_it_is_missing(tmp_path, monkeypatch, check
         calls.append(function)
         if function == "bindir":
             return bindir
+        if function == "shim_names":
+            return ["dogecoinarcade", "dogecoinarcade-update", "arcade-rpc"]
         if function == "write_launcher":
             target = Path(args[1])
             target.mkdir(parents=True, exist_ok=True)
-            (target / "dogecoinarcade").write_text("#!/bin/sh\n")
+            for name in ("dogecoinarcade", "dogecoinarcade-update", "arcade-rpc"):
+                (target / name).write_text("#!/bin/sh\n")
             return target / "dogecoinarcade"
         return None
 
@@ -112,6 +115,14 @@ def test_the_launcher_is_written_when_it_is_missing(tmp_path, monkeypatch, check
     calls.clear()
     assert update._ensure_launcher(checkout, checkout / ".venv") is None
     assert "write_launcher" not in calls
+
+    # A machine installed before `arcade-rpc` existed has the first two and not
+    # the third; that is exactly the `command not found` this is for.
+    (bindir / "arcade-rpc").unlink()
+    calls.clear()
+    assert update._ensure_launcher(checkout, checkout / ".venv") == bindir / "dogecoinarcade"
+    assert "write_launcher" in calls
+    assert (bindir / "arcade-rpc").exists()
 
 
 def test_check_reads_the_checkout_it_actually_has(tmp_path, monkeypatch, checkout):

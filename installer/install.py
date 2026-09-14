@@ -1224,6 +1224,24 @@ UPDATER = """\
 exec "{venv}/bin/python" -m arcade.update "$@"
 """
 
+BOT_RPC = """\
+#!/bin/sh
+# Call the running DogecoinArcade's bot RPC from a script or a shell.
+# Authenticates with the cookie the interface writes; never carries a password.
+exec "{venv}/bin/arcade-rpc" "$@"
+"""
+
+#: Every command the installer puts on the PATH, in the order it writes them.
+#: The updater checks each of these, so a machine installed before one of them
+#: existed gets it at its next update rather than `command not found`.
+SHIMS = ("dogecoinarcade", "dogecoinarcade-update", "arcade-rpc")
+
+
+def shim_names(system: str) -> list[str]:
+    """The file names `write_launcher` leaves in the bin directory on `system`."""
+    suffix = ".cmd" if system == "Windows" else ""
+    return [name + suffix for name in SHIMS]
+
 
 def write_launcher(venv: Path, target: Path, system: str) -> Path:
     target.mkdir(parents=True, exist_ok=True)
@@ -1232,6 +1250,8 @@ def write_launcher(venv: Path, target: Path, system: str) -> Path:
         path.write_text(f'@echo off\r\n"{venv}\\Scripts\\arcade-web.exe" %*\r\n')
         (target / "dogecoinarcade-update.cmd").write_text(
             f'@echo off\r\n"{venv}\\Scripts\\python.exe" -m arcade.update %*\r\n')
+        (target / "arcade-rpc.cmd").write_text(
+            f'@echo off\r\n"{venv}\\Scripts\\arcade-rpc.exe" %*\r\n')
     else:
         path = target / "dogecoinarcade"
         path.write_text(LAUNCHER.format(venv=venv))
@@ -1240,6 +1260,10 @@ def write_launcher(venv: Path, target: Path, system: str) -> Path:
         update.write_text(UPDATER.format(venv=venv))
         update.chmod(0o755)
         info(f"wrote updater {update}")
+        rpc = target / "arcade-rpc"
+        rpc.write_text(BOT_RPC.format(venv=venv))
+        rpc.chmod(0o755)
+        info(f"wrote bot RPC command {rpc}")
     info(f"wrote launcher {path}")
     return path
 

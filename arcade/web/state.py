@@ -518,6 +518,7 @@ class AppState:
     _collections: tuple = ()
     _approvals: Any = None
     _pagestore: Any = None
+    _talk: Any = None
 
     def chain_named(self, network: str) -> ChainContext:
         for chain in self.token_chains:
@@ -557,6 +558,14 @@ class AppState:
             from ..pagestore import PageStore
             self._pagestore = PageStore(self.home / "pagedata.sqlite")
         return self._pagestore
+
+    @property
+    def talk(self):
+        """What each inscribed page has said to other nodes (arcade/nodetalk.py)."""
+        if self._talk is None:
+            from ..nodetalk import Talk
+            self._talk = Talk(self.home / "nodetalk.sqlite")
+        return self._talk
 
     # --- identity, derived from the wallet ------------------------------------
     #

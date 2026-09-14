@@ -192,6 +192,10 @@ SECTIONS: list[dict] = [
              "where it stopped."),
             ("Every message says what API it speaks, inside the ciphertext "
              "where it cannot be edited in flight."),
+            ("An inscribed page can use it too: it sends as this wallet and "
+             "reads only the answers to what it sent. No approval -- a "
+             "message moves nothing and lives on testnet -- and thirty an "
+             "hour per page."),
         ],
     },
     {

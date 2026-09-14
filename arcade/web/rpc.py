@@ -532,29 +532,11 @@ class OmniRpc:
             raise RpcError(INVALID_PARAMETER, str(exc)) from None
         return approvalslib.describe(self.state.approvals.get(request_id))
 
-    def _api_message(self, row: Any) -> dict[str, Any]:
-        message = apilib.ApiMessage(
-            id=row["id"], txid=row["txid"], height=row["height"],
-            block_time=row["block_time"], sender_pubkey=bytes(row["sender_pubkey"]),
-            sender_address=row["sender_addr"], body=bytes(row["body"]))
-        return {
-            "id": message.id,
-            "txid": message.txid,
-            "block": message.height,
-            "blocktime": message.block_time,
-            "frompubkey": message.sender_pubkey.hex(),
-            "fromaddress": message.sender_address,
-            "body": message.text,
-            "json": message.json(),
-            "read": row["read_at"] is not None,
-            # What the sender was speaking, and whether we agree. Reported
-            # rather than enforced: only the program reading this knows whether
-            # the command it cares about has changed between the two versions.
-            "protocol": row["protocol"],
-            "apihash": bytes(row["fingerprint"]).hex(),
-            "compatible": apilib.compatible(row["protocol"],
-                                            bytes(row["fingerprint"])),
-        }
+    @staticmethod
+    def _api_message(row: Any) -> dict[str, Any]:
+        # One shape for a bot here and for a page reading its replies.
+        from ..nodetalk import describe
+        return describe(row)
 
     def _identity(self) -> Any:
         if self.chain.is_mainnet:

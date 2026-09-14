@@ -28,7 +28,7 @@ from fastapi.responses import (
 from fastapi.templating import Jinja2Templates
 
 from .. import backup, media, tokens as tokenlib, wallet as walletlib
-from ..ledger import AmountError, format_amount, parse_amount
+from ..ledger import COIN, AmountError, format_amount, parse_amount
 from ..config import NETWORKS, MainnetRefused, WrongChain
 from .. import inscribe as inscribelib
 from .. import collections as collectionlib
@@ -2842,6 +2842,89 @@ def create_app(state: AppState) -> FastAPI:
         except StoreError as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
         return JSONResponse({"ok": True})
+
+    @app.get("/r/node.js")
+    def r_node_js():
+        """The node-to-node shim an inscribed page loads (see nodetalk.py)."""
+        body = (TEMPLATE_DIR / "node.js").read_text()
+        return Response(body, media_type="application/javascript",
+                        headers={**contentlib.CORS, "Cache-Control": "public, max-age=3600"})
+
+    @app.post("/node/{txid}")
+    def node_talk(txid: str, body: dict = Body(default={})):
+        """A page sends a message to another node, or reads what came back.
+
+        Same origin only, like /storage: the viewer asks on the page's
+        behalf, with the wallet's CSRF token the page never sees, and names
+        the inscription it framed -- so a page can only ever read the
+        replies to what it sent itself. Sending goes out at once, on the
+        messaging chain, which is testnet only (D-010); see nodetalk.py for
+        why nobody is asked.
+        """
+        from .. import nodetalk
+        check_csrf(str(body.get("csrf_token", "")))
+        page = _stored_page(txid)
+        chain = state.messaging
+        op = body.get("op")
+        try:
+            if chain.network == "main":
+                raise nodetalk.TalkError("node-to-node messages are testnet only")
+            if op == "identity":
+                identity = state.ensure_identity()
+                return JSONResponse({"ok": True, "pubkey": identity.public_bytes.hex(),
+                                     "contactcode": contact.encode(chain.network,
+                                                                   identity.public_bytes),
+                                     "network": chain.network,
+                                     "maxbytes": nodetalk.apilib.MAX_API_PAYLOAD})
+            if op == "sent":
+                return JSONResponse({"ok": True,
+                                     "sent": state.talk.letters(page, chain.network)})
+            if op == "replies":
+                identity = state.ensure_identity()
+                with state.store() as store:
+                    found = nodetalk.replies(
+                        store, state.talk, page, chain.network,
+                        fingerprint_of(identity.public_bytes),
+                        after=int(body.get("after") or 0),
+                        limit=int(body.get("limit") or nodetalk.MAX_REPLIES))
+                return JSONResponse({"ok": True, "replies": found})
+            if op != "send":
+                raise nodetalk.TalkError("op must be identity, send, replies or sent")
+            to = nodetalk.parse_pubkey(body.get("to"))
+            text = nodetalk.body_bytes(body.get("body"))
+            if state.talk.sent_lately(page, chain.network) >= nodetalk.MAX_PER_HOUR:
+                raise nodetalk.TalkError(
+                    f"this page has sent {nodetalk.MAX_PER_HOUR} messages in the "
+                    "last hour; that is the most it may")
+            identity = state.ensure_identity()
+            try:
+                payload = nodetalk.apilib.seal(identity, to, text)
+            except nodetalk.apilib.ApiMessageError as exc:
+                raise nodetalk.TalkError(str(exc)) from None
+            with chain.rpc() as rpc:
+                sender = MessageSender(rpc, chain.params)
+                address = funded_address(rpc, prefer=state.derived_address)
+                try:
+                    prepared = sender.prepare(address, payload)
+                except SendError:
+                    other = funded_address(rpc)
+                    if other == address:
+                        raise
+                    address, prepared = other, sender.prepare(other, payload)
+                sent = sender.broadcast(prepared)
+            with state.store() as store:
+                newest = store.conn.execute(
+                    "SELECT COALESCE(MAX(id), 0) FROM api_message").fetchone()[0]
+            state.talk.record(page, chain.network, to.hex(), sent, newest)
+            return JSONResponse({"ok": True, "txid": sent, "to": to.hex(),
+                                 "fromaddress": address, "size": prepared.size,
+                                 "fee": f"{prepared.fee_sats / COIN:.8f}",
+                                 "total": f"{prepared.total_sats / COIN:.8f}"})
+        except (nodetalk.TalkError, SendError, ValueError) as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": f"the node could not do it: {exc}"},
+                                status_code=503)
 
     @app.get("/r/tx/{txid}")
     def r_tx(txid: str):

@@ -287,3 +287,82 @@ def test_a_page_remembers_through_the_wallet(browser, served):
     assert browser.execute_script("return arcade.storage.length") == 1
     browser.switch_to.default_content()
     assert state.pagestore.items(STORING) == {"visits": "2"}
+
+
+# --- talking to another node ---------------------------------------------------
+
+TALKING = "12" * 32
+#: A page that tells a shop's node what it wants and waits to be answered.
+TALKER = (b"<!doctype html><title>talker</title><script src='/r/node.js'></script><script>"
+          b"arcade.node.identity().then(function(me){"
+          b"  window.me = me.pubkey;"
+          b"  return arcade.node.send('%s', {order: 'hat'});"
+          b"}).then(function(r){"
+          b"  document.title = 'sent ' + r.txid;"
+          b"  arcade.node.listen(function(reply){ document.title = 'heard ' + reply.body; },"
+          b"                     {after: 0, every: 500});"
+          b"}).catch(function(e){ document.title = 'error ' + e.message; });"
+          b"</script>" % (b"ef" * 32))
+
+
+def test_a_page_talks_to_another_node_through_the_wallet(browser, served, monkeypatch):
+    """The sandbox cannot leave this machine. arcade.node sends a node-to-node
+    message as this wallet and hands back what that node says -- no approval,
+    because it is testnet and moves nothing."""
+    from arcade.messaging.keys import Identity, fingerprint_of
+
+    base, state = served
+    from arcade.db import Database
+    db = Database(state.home / "main-ledger.sqlite")
+    db.conn.execute(
+        "INSERT OR IGNORE INTO inscription(txid,number,creator,owner,block_height,position,"
+        "content_type,content_len,sha256,json,chunks,content) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        (TALKING, 3, "nMe", "nMe", 102, 0, "text/html", len(TALKER), "13" * 32, "", 1, TALKER))
+    db.conn.commit()
+    db.close()
+
+    sent = {}
+
+    class FakeSender:
+        def __init__(self, *a, **k):
+            pass
+
+        def prepare(self, address, payload):
+            sent["payload"] = payload
+            return type("P", (), {"fee_sats": 1000, "total_sats": 1000, "size": 300,
+                                  "txid": "tx"})()
+
+        def broadcast(self, prepared):
+            return "f" * 64
+
+    class FakeRpc:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr("arcade.web.app.MessageSender", FakeSender)
+    monkeypatch.setattr("arcade.web.app.funded_address", lambda *a, **k: "nAddr")
+    monkeypatch.setattr(type(state.messaging), "rpc", lambda self: FakeRpc())
+    state.identity = Identity.generate()
+    state.ensure_identity = lambda: state.identity
+
+    browser.get(f"{base}/inscriptions/{TALKING}/view")
+    browser.switch_to.frame(browser.find_element(By.CSS_SELECTOR, ".inscription-frame"))
+    try:
+        WebDriverWait(browser, 10).until(lambda b: b.execute_script(
+            "return document.title").startswith(("sent", "error")))
+        assert browser.execute_script("return document.title") == "sent " + "f" * 64
+        assert browser.execute_script("return window.me") == state.identity.public_bytes.hex()
+        # Sealed to the shop, and it is the page's order.
+        from arcade.messaging import api
+        shop_key = bytes.fromhex("ef" * 32)
+        assert sent["payload"], "went through the wallet's sender"
+        assert state.talk.peers(TALKING, state.messaging.network) == {shop_key.hex(): 0}
+
+        # The shop answers; the listener hears it within a poll.
+        with state.store() as store:
+            store.add_api_message(state.messaging.network, "t9", 7, 7, "nShop", shop_key,
+                                  fingerprint_of(state.identity.public_bytes), b"hat is on its way")
+        WebDriverWait(browser, 10).until(lambda b: b.execute_script(
+            "return document.title").startswith("heard"))
+        assert browser.execute_script("return document.title") == "heard hat is on its way"
+    finally:
+        browser.switch_to.default_content()
