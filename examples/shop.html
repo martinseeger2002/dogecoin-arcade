@@ -46,7 +46,7 @@
           btn = document.createElement('button');
       row.className = 'item';
       text.innerHTML = '<b></b><small></small>';
-      text.firstChild.textContent = l.text || D(l.give);
+      text.firstChild.textContent = D(l.give);
       text.lastChild.textContent = 'for ' + D(l.take) + (l.available ? ' — ' + l.available : '');
       btn.textContent = 'Buy';
       btn.disabled = !!l.available || !s.open || !s.ready || s.mine || busy;

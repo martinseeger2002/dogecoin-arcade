@@ -164,6 +164,11 @@
     }
   };
 
+  function tidy(amount) {
+    // '1.00000000' reads as 1; '2.50000000' as 2.5. The ledger's string is exact.
+    return String(amount).replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
+  }
+
   function describe(leg) {
     if (!leg) return '?';
     if (leg.kind === 'random') return 'a random ' + leg.collection;
@@ -171,8 +176,8 @@
       return 'inscription #' + leg.number + (leg.collection ? ' (' + leg.collection +
         (leg.edition != null ? ' #' + leg.edition : '') + ')' : '');
     }
-    if (leg.kind === 'token') return leg.amount + ' ' + (leg.name || 'token ' + leg.propertyid);
-    return leg.amount + ' coins';
+    if (leg.kind === 'token') return tidy(leg.amount) + ' ' + (leg.name || 'token ' + leg.propertyid);
+    return tidy(leg.amount) + (tidy(leg.amount) === '1' ? ' coin' : ' coins');
   }
   swap.describe = describe;
 
