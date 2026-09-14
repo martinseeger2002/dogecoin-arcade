@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}#{{ row.number }} · DogecoinArcade{% endblock %}
+{% block body %}
+<div class="row" style="align-items:baseline">
+  <a class="back-link" href="/inscriptions">&#8592; Inscriptions</a>
+  <h1 style="margin:0">#{{ "{:,}".format(row.number) }}</h1>
+</div>
+<p class="sub">{{ row.content_type }} &middot;
+  {{ "{:,}".format(row.content_len) }} bytes &middot;
+  {{ row.chunks }} transaction{{ '' if row.chunks == 1 else 's' }}</p>
+
+{% if not row.held %}
+  <div class="msg info">This node did not keep the content of this one. It
+    describes it &mdash; {{ "{:,}".format(row.content_len) }} bytes hashing to
+    <code class="mono" style="font-size:.8rem">{{ row.sha256[:24] }}…</code>
+    &mdash; and the bytes are still on the chain.</div>
+{% elif renders %}
+  {# Sandboxed, and deliberately not `allow-same-origin`: with it, inscribed
+     code would share this wallet's origin and could read every page in it.
+     Without it the frame gets an opaque origin -- no cookies, no reach into
+     this page, and it can only load what CORS lets it. #}
+  <div class="panel" style="padding:0;overflow:hidden">
+    <iframe class="inscription-frame" src="/content/{{ row.txid }}"
+            sandbox="allow-scripts allow-pointer-lock"
+            referrerpolicy="no-referrer" loading="lazy"
+            title="inscription {{ row.number }}"></iframe>
+  </div>
+  <p class="muted" style="margin-top:8px">
+    Running in a sandbox: it has no cookies, cannot reach this page, and cannot
+    load anything from outside this machine.</p>
+{% else %}
+  <div class="msg info">Nothing here renders {{ row.content_type }} in a page.
+    <a href="/content/{{ row.txid }}?download=1">Save it</a> and open it with
+    something that does.</div>
+{% endif %}
+
+<h2>What it is</h2>
+<div class="panel">
+  <table>
+    <tr><td class="muted" style="width:120px">Owner</td>
+        <td class="mono" style="word-break:break-all">
+          {% if tag %}<strong>@{{ tag }}</strong> &middot; {% endif %}{{ row.owner }}</td></tr>
+    <tr><td class="muted">Creator</td>
+        <td class="mono" style="word-break:break-all">{{ row.creator }}</td></tr>
+    <tr><td class="muted">Inscribed</td>
+        <td>block {{ "{:,}".format(row.block_height) }}</td></tr>
+    <tr><td class="muted">Id</td>
+        <td class="mono" style="word-break:break-all">{{ row.txid }}</td></tr>
+    <tr><td class="muted">SHA-256</td>
+        <td class="mono" style="word-break:break-all">{{ row.sha256 }}</td></tr>
+  </table>
+  <div class="row" style="margin-top:12px">
+    <a class="btn ghost small" href="/content/{{ row.txid }}">Open the bytes</a>
+    <a class="btn ghost small" href="/content/{{ row.txid }}?download=1">Save</a>
+    <a class="btn ghost small" href="/r/inscription/{{ row.txid }}">JSON</a>
+    <a class="btn ghost small" href="/r/metadata/{{ row.txid }}">Metadata</a>
+  </div>
+</div>
+
+{% if row.json %}
+<h2>Its JSON</h2>
+<div class="panel"><pre style="margin:0">{{ row.json }}</pre></div>
+{% endif %}
+
+<style>
+  .inscription-frame{display:block;width:100%;height:min(70vh,620px);border:0;
+    background:#fff}
+  .back-link{font-weight:600}
+</style>
+{% endblock %}

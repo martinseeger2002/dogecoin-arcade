@@ -67,3 +67,60 @@ def test_the_written_guide_covers_what_the_navigation_offers():
             continue
         stem = label.lower().rstrip("s")
         assert stem in text, f"{label} is in the navigation and not in the guide"
+
+
+# --- the inscription reference ------------------------------------------------
+
+API_DOC = pathlib.Path("/home/you/docs/inscription-api.md")
+
+
+@pytest.mark.skipif(not API_DOC.exists(), reason="the written docs are not here")
+def test_every_endpoint_the_reference_promises_exists():
+    """Documentation that describes an endpoint nobody built is worse than
+    none: somebody writes against it and finds out at run time."""
+    from arcade.web.app import create_app
+    from arcade.web.state import AppState, ChainContext
+
+    text = API_DOC.read_text()
+    promised = set(re.findall(r"`?GET (/[a-z/<>?=&\w.]+)", text))
+    promised |= set(re.findall(r"fetch\('(/[^']+)'\)", text))
+    # An ellipsis means "a path of this shape", not a path. Those are prose.
+    promised = {path for path in promised if "\u2026" not in path}
+
+    nowhere = pathlib.Path("/nonexistent")
+    app = create_app(AppState(
+        home=pathlib.Path("/tmp"),
+        messaging=ChainContext(network="regtest", role="messaging",
+                               label="T", datadir=nowhere),
+        ledger=ChainContext(network="main", role="ledger",
+                            label="M", datadir=nowhere)))
+    routes = {getattr(route, "path", "") for route in app.routes}
+
+    def known(path: str) -> bool:
+        path = path.split("?")[0].rstrip("/")
+        for route in routes:
+            shape = re.sub(r"\{[^}]+\}", "<>", route)
+            if re.sub(r"<[^>]+>", "<>", path) == shape:
+                return True
+        return False
+
+    missing = sorted(p for p in promised if not known(p))
+    assert missing == [], f"the reference promises endpoints that do not exist: {missing}"
+
+
+@pytest.mark.skipif(not API_DOC.exists(), reason="the written docs are not here")
+def test_the_reference_states_the_sandbox_that_is_actually_set():
+    """The claims about what an inscribed page cannot do are the load-bearing
+    part of that document. They must match the headers the code sends."""
+    from arcade.web import content
+
+    text = API_DOC.read_text()
+    policy = content.CONTENT_HEADERS["Content-Security-Policy"]
+    for directive in ("sandbox allow-scripts", "connect-src 'self'",
+                      "object-src 'none'", "form-action 'none'"):
+        assert directive in policy, f"{directive} is not in the policy any more"
+        assert directive in text, f"{directive} is claimed nowhere in the reference"
+
+    assert "allow-same-origin" not in policy
+    assert "allow-same-origin" not in content.CONTENT_HEADERS.get("sandbox", "")
+    assert "cannot phone home" in text or "cannot phone home." in text

@@ -2258,6 +2258,25 @@ def create_app(state: AppState) -> FastAPI:
         """
         return render(request, "guide.html", sections=guidelib.SECTIONS)
 
+    @app.get("/inscriptions/{key}/view", response_class=HTMLResponse)
+    def inscription_view(request: Request, key: str):
+        """Look at an inscription, including one that is a page of its own.
+
+        The content is NOT rendered into this page. It goes in a frame with
+        `sandbox` and no `allow-same-origin`, so whatever a stranger inscribed
+        runs in an opaque origin: no cookies, no reach into this page, no
+        navigating the window it sits in. The wallet around it is a wallet that
+        can spend, and inscribed code is code somebody else wrote.
+        """
+        _, index = _token_chain()
+        row = index.inscription(contentlib._key(key))
+        if row is None:
+            state.flash("no such inscription", "err")
+            return RedirectResponse("/inscriptions", status_code=303)
+        return render(request, "inscription_view.html", row=row,
+                      tag=index.tag_of(row["owner"]),
+                      renders=row["content_type"].startswith(contentlib.RENDERABLE))
+
     @app.get("/tokens", response_class=HTMLResponse)
     def tokens(request: Request):
         return render(request, "tokens.html", prepared=None, **_token_page_data())

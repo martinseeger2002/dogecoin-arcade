@@ -2,6 +2,78 @@
 {% import "_chains.html" as chains %}
 {% block title %}Inscriptions · DogecoinArcade{% endblock %}
 {% block body %}
+{# Macros first: Jinja does not hoist them, and one
+   defined below its first use is undefined there. #}
+{% macro card(row, tags) %}
+<div class="card">
+  <div class="row" style="align-items:baseline">
+    <strong>#{{ "{:,}".format(row.number) }}</strong>
+    <span class="muted">{{ row.contenttype if row.contenttype else row.content_type }}</span>
+    <span class="muted" style="margin-left:auto">
+      {{ "{:,}".format(row.content_len) }} bytes</span>
+  </div>
+  {% if row.held and row.content_type.startswith('image/') %}
+    <a class="media" href="/content/{{ row.txid }}?download=1"
+       title="{{ row.txid }} — click to open"
+       onclick="arcadeOpenImage('/content/{{ row.txid }}', '#{{ row.number }}',
+                '/content/{{ row.txid }}?download=1'); return false">
+      <img src="/content/{{ row.txid }}" alt="inscription {{ row.number }}"
+           loading="lazy" style="max-width:100%;border-radius:8px;margin:8px 0"></a>
+  {% endif %}
+  <table>
+    <tr><td class="muted" style="width:74px">Owner</td>
+        <td class="mono" style="word-break:break-all">
+          {% if tags.get(row.owner) %}<strong>@{{ tags[row.owner] }}</strong>
+          {%- else %}{{ row.owner }}{% endif %}</td></tr>
+    <tr><td class="muted">Block</td>
+        <td>{{ "{:,}".format(row.block_height) }}</td></tr>
+  </table>
+  <div class="row" style="margin-top:8px">
+    <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view">Open</a>
+    {% if row.owner in owned %}
+    <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/send">Send</a>
+    {% endif %}
+  </div>
+</div>
+{% endmacro %}
+
+{% macro pager(page, pages) %}
+{% if pages > 1 %}
+{# Numbered, because inscriptions are numbered: page 40 is a place you can mean
+   to go, and walking 39 pages of cursors to reach it is not paging. #}
+<nav class="pager">
+  {% if page > 1 %}
+    <a class="btn ghost small" href="/inscriptions?page={{ page - 1 }}">Newer</a>
+  {% endif %}
+  {% set window = 2 %}
+  {% if page - window > 1 %}
+    <a class="btn ghost small" href="/inscriptions?page=1">1</a>
+    {% if page - window > 2 %}<span class="muted">…</span>{% endif %}
+  {% endif %}
+  {% for n in range(page - window, page + window + 1) %}
+    {% if 1 <= n <= pages %}
+      {% if n == page %}<span class="btn small on">{{ n }}</span>
+      {%- else %}<a class="btn ghost small" href="/inscriptions?page={{ n }}">{{ n }}</a>
+      {%- endif %}
+    {% endif %}
+  {% endfor %}
+  {% if page + window < pages %}
+    {% if page + window < pages - 1 %}<span class="muted">…</span>{% endif %}
+    <a class="btn ghost small" href="/inscriptions?page={{ pages }}">{{ pages }}</a>
+  {% endif %}
+  {% if page < pages %}
+    <a class="btn ghost small" href="/inscriptions?page={{ page + 1 }}">Older</a>
+  {% endif %}
+  <form method="get" action="/inscriptions" class="row" style="gap:6px;margin-left:auto">
+    <label class="muted" for="jump" style="margin:0">Page</label>
+    <input autocomplete="off" type="number" name="page" id="jump" min="1"
+           max="{{ pages }}" value="{{ page }}" style="width:5.5rem">
+    <button class="ghost small" type="submit">Go</button>
+  </form>
+</nav>
+{% endif %}
+{% endmacro %}
+
 <h1>Inscriptions</h1>
 <p class="sub">A file written onto the chain in full, owned by an address.</p>
 
@@ -115,77 +187,6 @@
   </div>
   {{ pager(page, pages) }}
 {% endif %}
-
-{% macro pager(page, pages) %}
-{% if pages > 1 %}
-{# Numbered, because inscriptions are numbered: page 40 is a place you can mean
-   to go, and walking 39 pages of cursors to reach it is not paging. #}
-<nav class="pager">
-  {% if page > 1 %}
-    <a class="btn ghost small" href="/inscriptions?page={{ page - 1 }}">Newer</a>
-  {% endif %}
-  {% set window = 2 %}
-  {% if page - window > 1 %}
-    <a class="btn ghost small" href="/inscriptions?page=1">1</a>
-    {% if page - window > 2 %}<span class="muted">…</span>{% endif %}
-  {% endif %}
-  {% for n in range(page - window, page + window + 1) %}
-    {% if 1 <= n <= pages %}
-      {% if n == page %}<span class="btn small on">{{ n }}</span>
-      {%- else %}<a class="btn ghost small" href="/inscriptions?page={{ n }}">{{ n }}</a>
-      {%- endif %}
-    {% endif %}
-  {% endfor %}
-  {% if page + window < pages %}
-    {% if page + window < pages - 1 %}<span class="muted">…</span>{% endif %}
-    <a class="btn ghost small" href="/inscriptions?page={{ pages }}">{{ pages }}</a>
-  {% endif %}
-  {% if page < pages %}
-    <a class="btn ghost small" href="/inscriptions?page={{ page + 1 }}">Older</a>
-  {% endif %}
-  <form method="get" action="/inscriptions" class="row" style="gap:6px;margin-left:auto">
-    <label class="muted" for="jump" style="margin:0">Page</label>
-    <input autocomplete="off" type="number" name="page" id="jump" min="1"
-           max="{{ pages }}" value="{{ page }}" style="width:5.5rem">
-    <button class="ghost small" type="submit">Go</button>
-  </form>
-</nav>
-{% endif %}
-{% endmacro %}
-
-{% macro card(row, tags) %}
-<div class="card">
-  <div class="row" style="align-items:baseline">
-    <strong>#{{ "{:,}".format(row.number) }}</strong>
-    <span class="muted">{{ row.contenttype if row.contenttype else row.content_type }}</span>
-    <span class="muted" style="margin-left:auto">
-      {{ "{:,}".format(row.content_len) }} bytes</span>
-  </div>
-  {% if row.held and row.content_type.startswith('image/') %}
-    <a class="media" href="/content/{{ row.txid }}?download=1"
-       title="{{ row.txid }} — click to open"
-       onclick="arcadeOpenImage('/content/{{ row.txid }}', '#{{ row.number }}',
-                '/content/{{ row.txid }}?download=1'); return false">
-      <img src="/content/{{ row.txid }}" alt="inscription {{ row.number }}"
-           loading="lazy" style="max-width:100%;border-radius:8px;margin:8px 0"></a>
-  {% endif %}
-  <table>
-    <tr><td class="muted" style="width:74px">Owner</td>
-        <td class="mono" style="word-break:break-all">
-          {% if tags.get(row.owner) %}<strong>@{{ tags[row.owner] }}</strong>
-          {%- else %}{{ row.owner }}{% endif %}</td></tr>
-    <tr><td class="muted">Block</td>
-        <td>{{ "{:,}".format(row.block_height) }}</td></tr>
-  </table>
-  <div class="row" style="margin-top:8px">
-    <a class="btn ghost small" href="/content/{{ row.txid }}">Open</a>
-    <a class="btn ghost small" href="/r/inscription/{{ row.txid }}">Details</a>
-    {% if row.owner in owned %}
-    <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/send">Send</a>
-    {% endif %}
-  </div>
-</div>
-{% endmacro %}
 
 <script>
 function priceInscription(input){

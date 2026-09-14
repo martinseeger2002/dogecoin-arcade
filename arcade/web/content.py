@@ -53,7 +53,21 @@ CORS = {"Access-Control-Allow-Origin": "*"}
 #: so it holds even if somebody opens the URL directly in a tab.
 CONTENT_HEADERS = {
     **CORS,
-    "Content-Security-Policy": "sandbox allow-scripts; default-src 'self' data: blob:",
+    # `sandbox` is what matters: an opaque origin, no cookies, no reach into
+    # the page around it. The source rules are about where the page may FETCH
+    # from -- this machine and nowhere else, so an inscription cannot phone
+    # home about who looked at it. Inline script and style are allowed because
+    # an inscribed page is normally one file, and in an opaque origin an inline
+    # script is no more dangerous than a same-origin one: there is nothing of
+    # ours for it to reach.
+    "Content-Security-Policy": (
+        "sandbox allow-scripts allow-pointer-lock; "
+        "default-src 'self' data: blob:; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; "
+        "style-src 'self' 'unsafe-inline' data:; "
+        "img-src 'self' data: blob:; media-src 'self' data: blob:; "
+        "font-src 'self' data:; connect-src 'self'; "
+        "frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"),
     "X-Content-Type-Options": "nosniff",
     "Cache-Control": "public, max-age=31536000, immutable",
 }
@@ -76,9 +90,21 @@ def _missing(what: str) -> JSONResponse:
     return _json({"error": what}, status=404)
 
 
+#: A transaction id, and the reason a number cannot be mistaken for one.
+TXID_LENGTH = 64
+
+
 def _key(value: str) -> str | int:
-    """An inscription is named by its txid, or by the number people say."""
+    """An inscription is named by its txid, or by the number people say.
+
+    Length decides, not shape: a transaction id is 64 characters and a hex
+    string can be all digits. Asking `isdigit()` first sent
+    `0000...0001` -- a perfectly ordinary txid -- to be looked up as
+    inscription number 1.
+    """
     text = str(value).strip()
+    if len(text) == TXID_LENGTH:
+        return text.lower()
     if text.isdigit():
         return int(text)
     return text.lower()
