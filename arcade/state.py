@@ -16,8 +16,9 @@ how meta-layers silently diverge:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
+from . import inscriptions as I
 from . import payload as P
 from .config import (
     FIRST_PROPERTY_ID_MAIN,
@@ -99,6 +100,52 @@ CREATE TABLE IF NOT EXISTS arcade_tx (
     invalid_reason TEXT
 );
 
+-- Inscriptions. A file written onto the chain in full, owned by an address and
+-- moved only by its owner saying so.
+--
+-- `number` is assigned in chain order when the LAST piece arrives, which is the
+-- moment the inscription exists. Two nodes replaying the same chain therefore
+-- agree without having to talk to each other: the order is the chain's, not
+-- anybody's opinion.
+--
+-- `content` may be NULL. The hash and the length are always kept, so a body
+-- that was not stored can be fetched back off the chain and proved to be the
+-- right one -- which is what lets a node keep its own inscriptions in full
+-- without also keeping every megabyte a stranger ever wrote.
+CREATE TABLE IF NOT EXISTS inscription (
+    txid          TEXT    PRIMARY KEY,
+    number        INTEGER NOT NULL,
+    creator       TEXT    NOT NULL,
+    owner         TEXT    NOT NULL,
+    block_height  INTEGER NOT NULL,
+    position      INTEGER NOT NULL,
+    content_type  TEXT    NOT NULL,
+    content_len   INTEGER NOT NULL,
+    sha256        TEXT    NOT NULL,
+    json          TEXT    NOT NULL DEFAULT '',
+    chunks        INTEGER NOT NULL,
+    content       BLOB
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS inscription_number_idx ON inscription(number);
+CREATE INDEX IF NOT EXISTS inscription_owner_idx ON inscription(owner);
+CREATE INDEX IF NOT EXISTS inscription_creator_idx ON inscription(creator);
+
+-- Pieces seen so far, keyed by who sent them as well as by the id in the
+-- payload. The id is in the clear on the chain, so anyone can publish a chunk
+-- claiming somebody else's -- grouping by sender is what stops one injected
+-- piece making a real inscription permanently incomplete.
+CREATE TABLE IF NOT EXISTS inscription_chunk (
+    sender        TEXT    NOT NULL,
+    inscription_id TEXT   NOT NULL,
+    countdown     INTEGER NOT NULL,
+    txid          TEXT    NOT NULL,
+    block_height  INTEGER NOT NULL,
+    position      INTEGER NOT NULL,
+    body          BLOB    NOT NULL,
+    PRIMARY KEY (sender, inscription_id, countdown)
+);
+
 CREATE INDEX IF NOT EXISTS ribbit_tx_block_idx ON arcade_tx(block_height, position);
 CREATE INDEX IF NOT EXISTS balance_property_idx ON balance(property_id);
 """
@@ -111,6 +158,9 @@ def install_schema(db: Database) -> None:
     register_journalled_table("balance", ("address", "property_id"))
     register_journalled_table("activation", ("feature_id",))
     register_journalled_table("arcade_tx", ("txid",))
+    register_journalled_table("inscription", ("txid",))
+    register_journalled_table("inscription_chunk",
+                              ("sender", "inscription_id", "countdown"))
 
 
 class InvalidTransaction(Exception):
@@ -134,9 +184,16 @@ class Result:
 class Engine:
     """Applies Arcade messages to protocol state."""
 
-    def __init__(self, state: StateDB, params: Params):
+    def __init__(self, state: StateDB, params: Params,
+                 keep_content: Callable[[str], bool] | None = None):
         self.state = state
         self.params = params
+        # Whether an inscription's bytes are worth keeping, asked of its
+        # creator's address. A node keeps its own in full and describes
+        # everybody else's -- the hash and the length are always stored, so a
+        # body that was not kept can be fetched back off the chain later and
+        # proved to be the right one.
+        self.keep_content = keep_content or (lambda address: True)
 
     # --- balance helpers ------------------------------------------------------
 
@@ -464,8 +521,111 @@ class Engine:
         Every Messenger transaction is one of these, so when testnet stands in
         for the ledger (D-016) the indexer walks through thousands of them. They
         are recorded like any other transaction and touch no balance.
+
+        Inscriptions ride in here too, behind their own magic. That is the whole
+        reason they do: a client that predates them reads this method, finds
+        nothing it knows, and carries on -- where an unrecognised payload TYPE
+        would have stopped it dead.
         """
-        return None
+        if not I.is_inscription(msg.data):
+            return None
+        try:
+            parsed = I.parse(msg.data)
+        except I.InscriptionError as exc:
+            # Malformed, and that is all it is: the transaction is recorded as
+            # invalid and the index carries on. A stranger's broken payload must
+            # never be able to halt anybody's node.
+            raise InvalidTransaction(f"malformed inscription: {exc}") from None
+
+        if isinstance(parsed, I.Transfer):
+            self._inscription_transfer(rtx, parsed)
+        else:
+            self._inscription_chunk(rtx, parsed)
+
+    # --- inscriptions ---------------------------------------------------------
+
+    def _inscription_chunk(self, rtx: ArcadeTransaction, chunk: I.Chunk) -> None:
+        """One piece of an inscription. The last one to arrive completes it."""
+        key = {"sender": rtx.sender,
+               "inscription_id": chunk.inscription_id.hex(),
+               "countdown": chunk.countdown}
+        seen = self.state.db.conn.execute(
+            "SELECT 1 FROM inscription_chunk WHERE sender=? AND inscription_id=? "
+            "AND countdown=?", (key["sender"], key["inscription_id"],
+                                key["countdown"])).fetchone()
+        if seen is not None:
+            raise InvalidTransaction("that piece of the inscription is already on chain")
+
+        self.state.insert("inscription_chunk", {
+            **key, "txid": rtx.txid, "block_height": rtx.block_height,
+            "position": rtx.position, "body": chunk.body})
+
+        rows = self.state.db.conn.execute(
+            "SELECT * FROM inscription_chunk WHERE sender=? AND inscription_id=?",
+            (rtx.sender, chunk.inscription_id.hex())).fetchall()
+        assembly = I.Assembly(inscription_id=chunk.inscription_id)
+        first = None
+        for row in rows:
+            assembly.pieces[row["countdown"]] = bytes(row["body"])
+            if first is None or row["countdown"] > first["countdown"]:
+                first = row
+        if not assembly.complete():
+            return None
+
+        try:
+            manifest, content = assembly.join()
+        except I.InscriptionError as exc:
+            # Every piece is here and they do not make the file the manifest
+            # describes. Leave the pieces: a later, correct set from the same
+            # sender under a different id still works, and throwing away chain
+            # data on a hunch is worse than keeping it.
+            raise InvalidTransaction(f"inscription does not assemble: {exc}") from None
+
+        self.state.insert("inscription", {
+            # Named by the piece that carried the manifest, which is fixed the
+            # moment it is broadcast and does not depend on what order the rest
+            # confirmed in.
+            "txid": first["txid"],
+            "number": self._next_inscription_number(),
+            "creator": rtx.sender,
+            "owner": rtx.sender,
+            # Where it BECAME an inscription, which is what the numbering and
+            # every replay agree on.
+            "block_height": rtx.block_height,
+            "position": rtx.position,
+            "content_type": manifest.content_type,
+            "content_len": manifest.total,
+            "sha256": manifest.sha256.hex(),
+            "json": manifest.json,
+            "chunks": len(assembly.pieces),
+            "content": content if self.keep_content(rtx.sender) else None,
+        })
+        for row in rows:
+            self.state.delete("inscription_chunk", {
+                "sender": row["sender"], "inscription_id": row["inscription_id"],
+                "countdown": row["countdown"]})
+
+    def _next_inscription_number(self) -> int:
+        row = self.state.db.conn.execute(
+            "SELECT MAX(number) AS n FROM inscription").fetchone()
+        highest = row["n"] if row and row["n"] is not None else -1
+        return highest + 1
+
+    def _inscription_transfer(self, rtx: ArcadeTransaction, move: I.Transfer) -> None:
+        """Hand an inscription to the reference address. Only the owner may."""
+        txid = move.txid.hex()
+        existing = self.state.db.conn.execute(
+            "SELECT owner FROM inscription WHERE txid=?", (txid,)).fetchone()
+        if existing is None:
+            raise InvalidTransaction("no such inscription")
+        if existing["owner"] != rtx.sender:
+            raise InvalidTransaction(
+                "only the owner of an inscription can send it")
+        if not rtx.reference:
+            raise InvalidTransaction("a transfer needs a reference address")
+        if rtx.reference == existing["owner"]:
+            raise InvalidTransaction("that inscription is already there")
+        self.state.update("inscription", {"txid": txid}, {"owner": rtx.reference})
 
     # --- system messages ------------------------------------------------------
 

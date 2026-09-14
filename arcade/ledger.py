@@ -270,6 +270,82 @@ class LedgerIndex:
             ).fetchone()
         return int(row["balance"]) if row is not None else 0
 
+    # --- inscriptions ---------------------------------------------------------
+
+    def inscriptions(self, owner: str | None = None, creator: str | None = None,
+                     limit: int = 100, after: int = -1) -> list[dict]:
+        """Newest first, or from a number onwards. Never the content: a listing
+        of a hundred files would be a hundred files."""
+        sql = ("SELECT txid, number, creator, owner, block_height, position, "
+               "content_type, content_len, sha256, json, chunks, "
+               "content IS NOT NULL AS held FROM inscription")
+        where, args = [], []
+        if owner:
+            where.append("owner = ?"); args.append(owner)
+        if creator:
+            where.append("creator = ?"); args.append(creator)
+        if after >= 0:
+            where.append("number > ?"); args.append(after)
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY number DESC LIMIT ?"
+        args.append(max(1, min(limit, 500)))
+        with self.open() as db:
+            return [dict(row) for row in db.conn.execute(sql, args)]
+
+    def inscription(self, key: str | int) -> dict | None:
+        """By txid or by number -- a number is what people say out loud."""
+        with self.open() as db:
+            column = "number" if isinstance(key, int) else "txid"
+            row = db.conn.execute(
+                f"SELECT txid, number, creator, owner, block_height, position, "
+                f"content_type, content_len, sha256, json, chunks, "
+                f"content IS NOT NULL AS held FROM inscription WHERE {column}=?",
+                (key,)).fetchone()
+            return dict(row) if row else None
+
+    def inscription_content(self, key: str | int) -> tuple[str, bytes] | None:
+        """(content type, bytes) if this node kept them, else None.
+
+        None means "not held here", never "does not exist": the row says how
+        long it is and what it hashes to, so it can be fetched back off the
+        chain and proved.
+        """
+        with self.open() as db:
+            column = "number" if isinstance(key, int) else "txid"
+            row = db.conn.execute(
+                f"SELECT content_type, content FROM inscription WHERE {column}=?",
+                (key,)).fetchone()
+            if row is None or row["content"] is None:
+                return None
+            return row["content_type"], bytes(row["content"])
+
+    def inscription_count(self) -> int:
+        with self.open() as db:
+            return int(db.conn.execute("SELECT COUNT(*) FROM inscription").fetchone()[0])
+
+    def unfinished_inscriptions(self, sender: str | None = None) -> list[dict]:
+        """Sets that have pieces on chain and are not complete.
+
+        Worth showing: an abandoned set is paid for and will never become
+        anything, and the owner is the only one who can finish it.
+        """
+        sql = ("SELECT sender, inscription_id, COUNT(*) AS have, "
+               "MAX(countdown) AS highest, MIN(block_height) AS first_block "
+               "FROM inscription_chunk")
+        args = []
+        if sender:
+            sql += " WHERE sender = ?"
+            args.append(sender)
+        sql += " GROUP BY sender, inscription_id"
+        with self.open() as db:
+            out = []
+            for row in db.conn.execute(sql, args):
+                entry = dict(row)
+                entry["expected"] = entry["highest"] + 1
+                out.append(entry)
+            return out
+
     def history(self, property_id: int | None = None, address: str | None = None,
                 limit: int = 200) -> list[dict[str, Any]]:
         """Recorded transactions, newest first, decoded for display.

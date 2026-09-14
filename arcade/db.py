@@ -13,6 +13,7 @@ Rules this module enforces:
 
 from __future__ import annotations
 
+import base64
 import json
 import sqlite3
 from contextlib import contextmanager
@@ -75,6 +76,33 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT NOT NULL
 );
 """
+
+
+#: The journal stores a row as JSON so it can be replayed against any table.
+#: JSON has no bytes, and a BLOB column is an ordinary thing for a table to
+#: have -- an inscription's content is one. Rather than forbid blobs in
+#: journalled tables, or make every such column hex and double its size on
+#: disk, bytes are tagged on the way in and restored on the way out. The tag is
+#: a two-key object no natural JSON value collides with.
+_BYTES_TAG = "__bytes__"
+
+
+def _to_json(row: dict[str, Any]) -> str:
+    def default(value: Any) -> Any:
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            return {_BYTES_TAG: base64.b64encode(bytes(value)).decode("ascii")}
+        raise TypeError(f"cannot journal a {type(value).__name__}")
+
+    return json.dumps(row, sort_keys=True, default=default)
+
+
+def _from_json(text: str) -> dict[str, Any]:
+    def hook(obj: dict[str, Any]) -> Any:
+        if len(obj) == 1 and _BYTES_TAG in obj:
+            return base64.b64decode(obj[_BYTES_TAG])
+        return obj
+
+    return json.loads(text, object_hook=hook)
 
 
 class StateError(Exception):
@@ -217,8 +245,8 @@ class StateDB:
                 self._require_context(),
                 table,
                 op,
-                json.dumps(pk, sort_keys=True),
-                json.dumps(old, sort_keys=True) if old is not None else None,
+                _to_json(pk),
+                _to_json(old) if old is not None else None,
             ),
         )
 
@@ -299,8 +327,8 @@ class StateDB:
 
             for entry in entries:
                 table = entry["tbl"]
-                pk = json.loads(entry["pk_json"])
-                old = json.loads(entry["old_json"]) if entry["old_json"] is not None else None
+                pk = _from_json(entry["pk_json"])
+                old = _from_json(entry["old_json"]) if entry["old_json"] is not None else None
                 where = " AND ".join(f"{col} = ?" for col in pk)
 
                 if entry["op"] == "insert":
