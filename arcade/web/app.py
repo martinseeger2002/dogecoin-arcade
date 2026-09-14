@@ -335,7 +335,7 @@ def create_app(state: AppState) -> FastAPI:
                     store.finish_pending_send(plan.msg_id)
                     record_sent(store, txids[0], peer_key,
                                 state.identity.fingerprint, own_copy,
-                                **(attachment or {}))
+                                txids=txids, **(attachment or {}))
                 state.note_send(digest)
                 state.finish_progress()
             except Exception as exc:
@@ -347,7 +347,7 @@ def create_app(state: AppState) -> FastAPI:
 
         threading.Thread(target=work, name="arcade-send", daemon=True).start()
 
-    def _record_post(store, txid, local):
+    def _record_post(store, txid, local, txids=None):
         """Keep our own copy of a post. One definition, three callers.
 
         The route, the background thread and the resume path all have to write
@@ -359,7 +359,7 @@ def create_app(state: AppState) -> FastAPI:
             local["network"], local["channel"], txid, 0, int(time.time()),
             local["address"], local["nickname"], local["text"], mine=True,
             file_name=local["file_name"], file_type=local["file_type"],
-            file_data=local["file_data"])
+            file_data=local["file_data"], txids=txids or [txid])
 
     def _post_in_background(sender, address, plan, local):
         """Post a chunked public post on a thread, reporting as it goes.
@@ -395,7 +395,7 @@ def create_app(state: AppState) -> FastAPI:
                                         on_progress=note, on_broadcast=sent_one)
                 with state.store() as store:
                     store.finish_pending_send(plan.msg_id)
-                    _record_post(store, txids[0], local)
+                    _record_post(store, txids[0], local, txids)
                 state.finish_progress()
             except Exception as exc:
                 # Says what is already on the chain: a part-sent post cannot be
@@ -681,7 +681,7 @@ def create_app(state: AppState) -> FastAPI:
                         record_sent(store, txids[0], peer_key,
                                     state.identity.fingerprint, own_copy,
                                     file_name=file_name, file_type=file_type,
-                                    file_data=file_bytes or None)
+                                    file_data=file_bytes or None, txids=txids)
                     # No flash: the message itself appears in the conversation,
                     # marked unconfirmed until it is in a block. A green banner
                     # saying "Sent." on top of a bubble that says the same thing
@@ -1575,7 +1575,7 @@ def create_app(state: AppState) -> FastAPI:
                     if plan.transactions == 1:
                         txids = [sender.broadcast(prepared)]
                         with state.store() as store:
-                            _record_post(store, txids[0], local)
+                            _record_post(store, txids[0], local, txids)
                         state.flash(
                             f"Posted to #{channel} in 1 transaction. "
                             f"It is public and permanent.", "ok")

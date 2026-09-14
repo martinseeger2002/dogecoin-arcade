@@ -159,15 +159,14 @@ class BlockWatcher:
                     return
                 with self.state.messaging.rpc() as rpc:
                     for row in pending:
-                        try:
-                            raw = rpc.call("getrawtransaction", row["txid"], 1)
-                        except Exception:
-                            continue          # not ours, or not indexed yet
-                        if int(raw.get("confirmations") or 0) < 1:
+                        done, first = self._count_confirmed(rpc, store, row)
+                        if done is None:
                             continue
+                        if done < len(store.txid_list(row, row["txid"])):
+                            continue          # some of it is still in the mempool
                         store.mark_sent_confirmed(
-                            row["txid"], int(raw.get("blocktime") or 0),
-                            self._height_of(rpc, raw.get("blockhash")))
+                            row["txid"], int(first.get("blocktime") or 0),
+                            self._height_of(rpc, first.get("blockhash")))
                         self.state.bump_generation()
         except Exception:
             log.debug("could not confirm sent messages", exc_info=True)
@@ -193,19 +192,47 @@ class BlockWatcher:
                         continue
                     with chain.rpc() as rpc:
                         for row in pending:
-                            try:
-                                raw = rpc.call("getrawtransaction", row["txid"], 1)
-                            except Exception:
-                                continue      # not indexed yet, or not ours
-                            if int(raw.get("confirmations") or 0) < 1:
+                            done, first = self._count_confirmed(
+                                rpc, store, row, table="group_post")
+                            if done is None:
                                 continue
+                            if done < len(store.txid_list(row, row["txid"])):
+                                continue      # some of it is still in the mempool
                             store.mark_post_confirmed(
                                 row["id"],
-                                self._height_of(rpc, raw.get("blockhash")),
-                                int(raw.get("blocktime") or 0))
+                                self._height_of(rpc, first.get("blockhash")),
+                                int(first.get("blocktime") or 0))
                             self.state.bump_generation()
             except Exception:
                 log.debug("could not confirm posts on %s", network, exc_info=True)
+
+    def _count_confirmed(self, rpc: Any, store: Any, row: Any,
+                         table: str = "sent") -> tuple[int | None, dict]:
+        """How many of a send's transactions are in blocks, and the first one.
+
+        A picture is dozens of transactions and they are independent of each
+        other -- a split wallet funds each from its own output -- so the miner
+        takes them in whatever order it likes and the FIRST one can be the last
+        to land. Asking only about that one made a message with forty of its
+        fifty transactions in blocks read "unconfirmed", with nothing to say
+        how far along it was. This counts them, so the interface can.
+        """
+        txids = store.txid_list(row, row["txid"])
+        first_raw: dict = {}
+        done = 0
+        for index, txid in enumerate(txids):
+            try:
+                raw = rpc.call("getrawtransaction", txid, 1)
+            except Exception:
+                return (None, {})            # node busy; leave it for next tick
+            if index == 0:
+                first_raw = raw
+            if int(raw.get("confirmations") or 0) >= 1:
+                done += 1
+        if done != (row["confirmed_count"] if "confirmed_count" in row.keys() else 0):
+            store.record_send_progress(table, row["id"], done)
+            self.state.bump_generation()
+        return (done, first_raw)
 
     @staticmethod
     def _height_of(rpc: Any, blockhash: str | None) -> int:

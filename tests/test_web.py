@@ -2387,3 +2387,42 @@ def test_every_template_says_so_too():
         for tag in _fields_that_remember(template.read_text()):
             offenders.append(f"{template.name}: {' '.join(tag.split())[:70]}")
     assert offenders == [], offenders
+
+
+def test_a_long_send_shows_its_progress_in_the_bubble(client):
+    """"I sent a larger image and it's been a few minutes and it still says
+    unconfirmed." It was: 36 of its 51 transactions were in blocks and the
+    bubble had no way to say so."""
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    state.identity = Identity.generate()
+    peer = b"\xc1" * 32
+    with state.store() as store:
+        store.save_contact(pubkey=peer, name="Them")
+        store.add_sent("tx0", peer, "", state.identity.fingerprint,
+                       b"[sent photo.jpg]", file_name="photo.jpg",
+                       file_type="image/jpeg", file_data=b"\xff\xd8" * 20,
+                       txids=[f"tx{i}" for i in range(51)])
+        store.conn.execute("UPDATE sent SET confirmed_count=36")
+
+    body = app.get(f"/messages/{peer.hex()}").text
+    assert "36 of 51" in body
+    assert "transactions in blocks" in body
+
+
+def test_a_single_transaction_message_just_says_unconfirmed(client):
+    """One transaction has no progress to report, and "0 of 1" would be a
+    worse way of saying the same thing."""
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    state.identity = Identity.generate()
+    peer = b"\xc2" * 32
+    with state.store() as store:
+        store.save_contact(pubkey=peer, name="Them")
+        store.add_sent("only", peer, "", state.identity.fingerprint, b"hello")
+
+    body = app.get(f"/messages/{peer.hex()}").text
+    assert ">unconfirmed<" in body
+    assert "of 1 transactions" not in body

@@ -120,7 +120,15 @@
                  this computer pressed send, which is not when the message exists
                  for anyone else -- and a timestamp implies it does. #}
               {% if m.mine and not m.get('confirmed') %}
-                <span class="unconfirmed">unconfirmed</span>
+                {% if m.get('parts', 1) > 1 %}
+                  {# Dozens of transactions confirm in whatever order the miner
+                     chooses, so a bare "unconfirmed" says nothing about whether
+                     this is nearly done or has not started. #}
+                  <span class="unconfirmed">{{ m.parts_done }} of {{ m.parts }}
+                    transactions in blocks</span>
+                {% else %}
+                  <span class="unconfirmed">unconfirmed</span>
+                {% endif %}
               {% else %}
                 {{ when(m.when) }}
                 {%- if m.height %} &middot; block {{ "{:,}".format(m.height) }}{% endif %}

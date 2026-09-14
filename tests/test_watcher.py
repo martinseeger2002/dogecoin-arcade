@@ -321,3 +321,99 @@ def test_the_tip_is_only_marked_seen_once_a_scan_has_reached_it():
     mark = source.index("self.state.tips[name] = tip")
     scan = source.index("scanner.scan(")
     assert scan < mark, "the tip is recorded before the scan that justifies it"
+
+
+# --- how far along a long send is ----------------------------------------------
+# A picture is dozens of transactions. A split wallet funds each from its own
+# output, so they are independent and the miner takes them in whatever order it
+# likes -- the FIRST one can be the last to land. Asking only about that one
+# made a message with forty of its fifty transactions in blocks read
+# "unconfirmed", with nothing to say how far along it was.
+
+
+def _rpc_where(confirmed: set[str]):
+    class FakeRpc:
+        def call(self, method, *args):
+            if method == "getrawtransaction":
+                txid = args[0]
+                if txid in confirmed:
+                    return {"confirmations": 2, "blockhash": "bh", "blocktime": 99}
+                return {"confirmations": 0}
+            if method == "getblock":
+                return {"height": 1486700}
+            raise AssertionError(method)
+    return FakeRpc()
+
+
+def test_a_long_send_reports_how_much_of_it_is_in_blocks(tmp_path):
+    from arcade.messaging.store import MessageStore
+    from arcade.web.watcher import BlockWatcher
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    txids = [f"tx{i}" for i in range(50)]
+    store.add_sent(txids[0], b"\x01" * 32, "", "fp", b"a picture", txids=txids)
+
+    # Forty landed; the first is not among them, which is the case that used to
+    # read "unconfirmed" with nothing else to say.
+    state = _Stored(store, _rpc_where(set(txids[10:])))
+    BlockWatcher(state)._confirm_sent()
+
+    row = store.conn.execute("SELECT confirmed, confirmed_count FROM sent").fetchone()
+    assert row["confirmed"] == 0, "it is not finished until all of it is"
+    assert row["confirmed_count"] == 40
+    store.close()
+
+
+def test_the_last_transaction_finishes_it(tmp_path):
+    from arcade.messaging.store import MessageStore
+    from arcade.web.watcher import BlockWatcher
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    txids = ["a", "b", "c"]
+    store.add_sent("a", b"\x01" * 32, "", "fp", b"x", txids=txids)
+
+    state = _Stored(store, _rpc_where({"a", "b", "c"}))
+    BlockWatcher(state)._confirm_sent()
+
+    row = store.conn.execute("SELECT confirmed, height, confirmed_count "
+                             "FROM sent").fetchone()
+    assert row["confirmed"] == 1 and row["confirmed_count"] == 3
+    assert row["height"] == 1486700, "the block the first transaction reached"
+    store.close()
+
+
+def test_a_send_from_before_this_existed_still_works(tmp_path):
+    """Rows written by an older version know only their first transaction."""
+    from arcade.messaging.store import MessageStore
+    from arcade.web.watcher import BlockWatcher
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    store.add_sent("only", b"\x01" * 32, "", "fp", b"x")
+    store.conn.execute("UPDATE sent SET txids=''")          # as the old code left it
+
+    row = store.unconfirmed_sent()[0]
+    assert store.txid_list(row, row["txid"]) == ["only"]
+
+    state = _Stored(store, _rpc_where({"only"}))
+    BlockWatcher(state)._confirm_sent()
+    assert store.conn.execute("SELECT confirmed FROM sent").fetchone()[0] == 1
+    store.close()
+
+
+def test_a_busy_node_leaves_the_count_alone(tmp_path):
+    """Half an answer is worse than none: it would report going backwards."""
+    from arcade.messaging.store import MessageStore
+    from arcade.web.watcher import BlockWatcher
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    store.add_sent("a", b"\x01" * 32, "", "fp", b"x", txids=["a", "b", "c"])
+    store.conn.execute("UPDATE sent SET confirmed_count=2")
+
+    class Refuses:
+        def call(self, method, *args):
+            raise RuntimeError("node busy")
+
+    BlockWatcher(_Stored(store, Refuses()))._confirm_sent()
+    row = store.conn.execute("SELECT confirmed, confirmed_count FROM sent").fetchone()
+    assert row["confirmed_count"] == 2 and row["confirmed"] == 0
+    store.close()

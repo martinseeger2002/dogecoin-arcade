@@ -269,6 +269,15 @@ class MessageStore:
         ("sent", "file_name", "TEXT NOT NULL DEFAULT ''"),
         ("sent", "file_type", "TEXT NOT NULL DEFAULT ''"),
         ("sent", "file_data", "BLOB"),
+        # Every transaction of a send, not only the first. A picture is dozens
+        # of them, they confirm in whatever order the miner chooses, and until
+        # this existed the interface could only ask about the first -- so a
+        # message with forty of its fifty transactions in blocks still read
+        # "unconfirmed", and read it for as long as that one lagged.
+        ("sent", "txids", "TEXT NOT NULL DEFAULT ''"),
+        ("sent", "confirmed_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("group_post", "txids", "TEXT NOT NULL DEFAULT ''"),
+        ("group_post", "confirmed_count", "INTEGER NOT NULL DEFAULT 0"),
         ("sent", "height", "INTEGER NOT NULL DEFAULT 0"),
         # '' = the user typed it, 'profile' = they told us in a message,
         # 'announce' = read off a public announcement, where names are cut to 12
@@ -792,7 +801,8 @@ class MessageStore:
     def add_group_post(self, network: str, channel: str, txid: str, height: int,
                        block_time: int, sender: str, nickname: str, text: str,
                        mine: bool = False, file_name: str = "",
-                       file_type: str = "", file_data: bytes | None = None) -> int:
+                       file_type: str = "", file_data: bytes | None = None,
+                       txids: list[str] | None = None) -> int:
         # A post this machine made is recorded optimistically at broadcast, with
         # height 0, so it appears straight away. The scan then sees the same txid
         # on chain. INSERT OR IGNORE kept the optimistic row and the real height
@@ -802,8 +812,8 @@ class MessageStore:
         cur = self.conn.execute(
             "INSERT INTO group_post"
             "(network,channel,txid,height,block_time,sender,nickname,text,mine,"
-            "file_name,file_type,file_data) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?) "
+            "file_name,file_type,file_data,txids) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(network,txid) DO UPDATE SET "
             "  height=CASE WHEN excluded.height > 0 THEN excluded.height "
             "              ELSE group_post.height END, "
@@ -816,9 +826,14 @@ class MessageStore:
             "              ELSE group_post.file_name END, "
             "  file_type=CASE WHEN excluded.file_type != '' THEN excluded.file_type "
             "              ELSE group_post.file_type END, "
-            "  file_data=COALESCE(excluded.file_data, group_post.file_data)",
+            "  file_data=COALESCE(excluded.file_data, group_post.file_data), "
+            # A scan re-reading the post from the chain knows only the txid it
+            # found; it must not wipe the list of every transaction we sent.
+            "  txids=CASE WHEN excluded.txids != '' THEN excluded.txids "
+            "              ELSE group_post.txids END",
             (network, channel, txid, height, block_time, sender, nickname, text,
-             1 if mine else 0, file_name, file_type, file_data))
+             1 if mine else 0, file_name, file_type, file_data,
+             ",".join(txids or [])))
         return cur.lastrowid or 0
 
     def group_posts(self, network: str, channel: str,
@@ -968,7 +983,8 @@ class MessageStore:
 
     def add_sent(self, txid: str, recipient_key: bytes, recipient_addr: str,
                  sender_fp: str, body: bytes, file_name: str = "",
-                 file_type: str = "", file_data: bytes | None = None) -> None:
+                 file_type: str = "", file_data: bytes | None = None,
+                 txids: list[str] | None = None) -> None:
         """Keep our own plaintext copy of a message we sent.
 
         Not an optimisation -- it is the only copy we will ever have. A message
@@ -985,9 +1001,10 @@ class MessageStore:
         self.conn.execute(
             "INSERT OR IGNORE INTO sent"
             "(txid,created,recipient_key,recipient_addr,sender_fp,body,"
-            "file_name,file_type,file_data) VALUES(?,?,?,?,?,?,?,?,?)",
+            "file_name,file_type,file_data,txids) VALUES(?,?,?,?,?,?,?,?,?,?)",
             (txid, int(time.time()), recipient_key, recipient_addr, sender_fp,
-             body, file_name, file_type, file_data),
+             body, file_name, file_type, file_data,
+             ",".join(txids or [txid])),
         )
 
     def sent_file(self, sent_id: int) -> sqlite3.Row | None:
@@ -1016,7 +1033,24 @@ class MessageStore:
     def unconfirmed_sent(self) -> list[sqlite3.Row]:
         """Messages we have sent that are not in a block yet."""
         return list(self.conn.execute(
-            "SELECT id, txid FROM sent WHERE confirmed=0"))
+            "SELECT id, txid, txids, confirmed_count FROM sent WHERE confirmed=0"))
+
+    def record_send_progress(self, table: str, row_id: int, confirmed: int) -> None:
+        """How many of a send's transactions are in blocks so far."""
+        if table not in ("sent", "group_post"):        # never interpolate freely
+            raise ValueError(table)
+        self.conn.execute(
+            f"UPDATE {table} SET confirmed_count=? WHERE id=?", (confirmed, row_id))
+
+    @staticmethod
+    def txid_list(row: sqlite3.Row, fallback: str = "") -> list[str]:
+        """The transactions of a send. Older rows only ever knew their first."""
+        try:
+            stored = row["txids"] or ""
+        except (IndexError, KeyError):
+            stored = ""
+        found = [t for t in stored.split(",") if t]
+        return found or ([fallback] if fallback else [])
 
     def unconfirmed_posts(self, network: str | None = None) -> list[sqlite3.Row]:
         """Posts of our own with no block yet -- height 0 means unconfirmed.
@@ -1027,7 +1061,8 @@ class MessageStore:
         transaction confirmed in a minute could sit marked pending for ten --
         with every byte of it already paid for and in a block.
         """
-        sql = "SELECT id, network, txid FROM group_post WHERE mine=1 AND height=0"
+        sql = ("SELECT id, network, txid, txids, confirmed_count FROM group_post "
+               "WHERE mine=1 AND height=0")
         args: list[Any] = []
         if network is not None:
             sql += " AND network=?"
@@ -1201,13 +1236,20 @@ class MessageStore:
                           "unread": row["read_at"] is None})
         for row in self.conn.execute(
             "SELECT id, body, created, txid, confirmed, height, file_name, "
-            "       file_type, LENGTH(file_data) AS file_size FROM sent "
+            "       file_type, LENGTH(file_data) AS file_size, txids, "
+            "       confirmed_count FROM sent "
             "WHERE sender_fp=? AND recipient_key=?", (recipient_fp, peer_key)
         ):
+            parts = len(self.txid_list(row, row["txid"]))
             items.append({"id": row["id"], "body": row["body"], "when": row["created"],
                           "mine": True, "txid": row["txid"],
                           "height": row["height"] or None,
                           "confirmed": bool(row["confirmed"]),
+                          # A picture is dozens of transactions, so "unconfirmed"
+                          # on its own says nothing about whether it is nearly
+                          # done or has not started.
+                          "parts": parts,
+                          "parts_done": row["confirmed_count"] or 0,
                           "file_name": row["file_name"],
                           "file_type": row["file_type"],
                           "file_size": row["file_size"] or 0})
