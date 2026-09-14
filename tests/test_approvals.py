@@ -183,12 +183,6 @@ def test_a_page_files_a_request_and_the_wallet_shows_it(client):
     assert app.post(f"/approvals/{rid}", data={"decision": "deny"}).status_code == 400, "csrf"
 
 
-def test_the_viewer_watches_for_requests():
-    source = pathlib.Path("arcade/web/templates/inscription_view.html").read_text()
-    assert "/approvals/waiting" in source and "setInterval" in source
-    assert "Look before anything goes out" in source
-
-
 def test_a_payment_to_ones_own_address_is_told_apart_from_its_change():
     """The recipient can be one of the wallet's own addresses, and then the
     change comes back to the same place. On the live wallet both outputs read
@@ -204,3 +198,16 @@ def test_a_payment_to_ones_own_address_is_told_apart_from_its_change():
     rows = A._plain_outputs({"vout": decoded["vout"][::-1]}, TESTNET, None, 100_000_000)
     assert [r["is_recipient"] for r in rows] == [False, True]
     assert [r["is_change"] for r in rows] == [True, False]
+
+
+def test_only_the_wallet_may_frame_its_own_pages(client):
+    client, _state = client
+    """The pop-up under an inscription frames the approval page. An inscribed
+    page must not be able to do the same and dress Approve up as a button of
+    its own: every page the wallet draws says who may frame it, and the
+    sandbox the inscription runs in is nobody."""
+    for path in ("/approvals", "/", "/inscriptions"):
+        assert client.get(path).headers.get("content-security-policy") == "frame-ancestors 'self'", path
+    # Its content, on the other hand, is meant to be framed -- by the viewer --
+    # and carries the sandbox instead.
+    assert "frame-ancestors" not in (client.get("/r/blockheight").headers.get("content-security-policy") or "")

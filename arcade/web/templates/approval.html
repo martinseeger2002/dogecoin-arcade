@@ -15,6 +15,16 @@
   <div class="msg info">This request is {{ row.status }}
     {%- if row.txid %} as <code class="mono">{{ row.txid }}</code>{% endif %}
     {%- if row.error %}: {{ row.error }}{% endif %}.</div>
+  {% if embed %}
+  <script>
+  // Decided: tell the page holding this pop-up, which closes it. Same origin
+  // on both sides, and said so, because a message to '*' is a message to
+  // anybody who managed to put this page in a frame.
+  window.parent.postMessage({arcade: 'approval', id: {{ row.id|tojson }},
+                             status: {{ row.status|tojson }},
+                             txid: {{ (row.txid or '')|tojson }}}, location.origin);
+  </script>
+  {% endif %}
 {% elif prepared %}
   <h2>This is what would go out</h2>
   <div class="panel" {% if chain.is_mainnet %}style="border-color:var(--bad);border-width:2px"{% endif %}>
@@ -51,7 +61,7 @@
             {% elif o.is_change %}<span class="muted">&mdash; change, back to you</span>{% endif %}</td></tr>
       {% endfor %}
     </table>
-    <form method="post" action="/approvals/{{ row.id }}" class="row" style="margin-top:14px">
+    <form method="post" action="/approvals/{{ row.id }}{{ '?embed=1' if embed }}" class="row" style="margin-top:14px">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="confirmed" value="{{ prepared.txid }}">
       <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">Approve and send</button>
@@ -63,11 +73,11 @@
     <p style="margin-top:0">The transaction could not be built, so there is
       nothing to approve. You can still refuse it, or leave it: it expires on
       its own.</p>
-    <form method="post" action="/approvals/{{ row.id }}" class="row">
+    <form method="post" action="/approvals/{{ row.id }}{{ '?embed=1' if embed }}" class="row">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="decision" value="deny">
       <button type="submit" class="ghost">Refuse</button>
-      <a class="btn ghost" href="/approvals/{{ row.id }}">Try again</a>
+      <a class="btn ghost" href="/approvals/{{ row.id }}{{ '?embed=1' if embed }}">Try again</a>
     </form>
   </div>
 {% endif %}

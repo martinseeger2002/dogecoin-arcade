@@ -52,6 +52,10 @@ nav a:hover{background:var(--code);text-decoration:none}
 nav a.on{background:var(--accent);color:var(--accent-fg)}
 nav a.off{opacity:.4;cursor:not-allowed}
 main{max-width:1000px;margin:0 auto;padding:26px 20px 60px}
+/* Drawn inside the pop-up under a running inscription: no chrome, and the
+   room the chrome took goes to the transaction. */
+body.embed main{padding:14px 14px 18px}
+body.embed .back-link{display:none}
 h1{font-size:1.5rem;margin:0 0 4px;letter-spacing:-.02em}
 .sub{color:var(--muted);margin:0 0 24px;font-size:.95rem}
 h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);
@@ -508,7 +512,8 @@ form.composer button[type=submit]{background:var(--sent);border-color:var(--sent
 }
 </style>
 </head>
-<body>
+<body{% if embed %} class="embed"{% endif %}>
+{% if not embed %}
 <header><div class="bar">
   <span class="brand">DogecoinArcade</span>
   <nav>
@@ -522,6 +527,7 @@ form.composer button[type=submit]{background:var(--sent);border-color:var(--sent
   {%- endfor %}
   </nav>
 </div></header>
+{% endif %}
 <main>
 {% if state.is_stale %}
 <div class="msg err stale">
@@ -534,7 +540,7 @@ form.composer button[type=submit]{background:var(--sent);border-color:var(--sent
 </div>
 {% endif %}
 {% if notice %}<div class="msg {{ notice_kind }}">{{ notice }}</div>{% endif %}
-{% if approvals_waiting and not path.startswith('/approvals') %}
+{% if approvals_waiting and not embed and not path.startswith('/approvals') %}
 <div class="msg info" id="approvals-banner">
   <strong>{{ approvals_waiting }} send{{ '' if approvals_waiting == 1 else 's' }} waiting for your approval.</strong> A page or a program asked; nothing goes
   out until you say so. <a href="/approvals">Look at {{ 'it' if approvals_waiting == 1 else 'them' }}</a>
@@ -820,9 +826,11 @@ function arcadeFileCost(bytes){
   setInterval(poll, 5000);
 })();
 </script>
+{% if not embed %}
 <footer class="version">
   {% if state.running_version %}running {{ state.running_version }}{% endif %}
   &middot; <a href="/backup">back up your wallet</a>
 </footer>
+{% endif %}
 </body>
 </html>

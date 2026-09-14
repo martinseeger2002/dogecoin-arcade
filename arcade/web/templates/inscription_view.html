@@ -28,29 +28,96 @@
   <p class="muted" style="margin-top:8px">
     Running in a sandbox: it has no cookies, cannot reach this page, and cannot
     load anything from outside this machine. It can ask this wallet to send
-    something; if it does, the request appears here and nothing goes out until
-    you approve it.</p>
+    something; if it does, the request opens here in front of it, and nothing
+    goes out until you approve it.</p>
   <div class="msg info" id="asked" hidden></div>
+  {# The pop-up is a frame of this wallet's own approval page, held by THIS
+     page -- outside the sandbox, where the inscription cannot reach it, see
+     it, or press anything in it. It shows the transaction as built, and the
+     yes or no is the same form as on /approvals. #}
+  <dialog id="ask" class="ask">
+    <iframe id="ask-frame" title="approve or refuse" src="about:blank"></iframe>
+    <div class="ask-bar">
+      <span id="ask-note" class="muted"></span>
+      <button type="button" class="ghost small" id="ask-close">Close</button>
+    </div>
+  </dialog>
   <script>
   // The page in the frame can file a request at any moment; the person looking
-  // at it should see that without reloading. Polled while this page is open.
+  // at it should see that without reloading. Polled while this page is open:
+  // a new request opens the pop-up, and the pop-up closes itself once it is
+  // decided. Closed by hand, it stays closed for that request -- the notice
+  // below still says what is waiting and how to get back to it.
   (function(){
-    var box = document.getElementById('asked'), shown = 0;
+    var box = document.getElementById('asked'), dialog = document.getElementById('ask'),
+        frame = document.getElementById('ask-frame'), note = document.getElementById('ask-note'),
+        seen = {}, showing = null, closer = null;
+    function esc(t){ return String(t).replace(/</g, '&lt;'); }
+    function open(id){
+      showing = id; seen[id] = true; note.textContent = '';
+      frame.src = '/approvals/' + encodeURIComponent(id) + '?embed=1';
+      if (!dialog.open) dialog.showModal();
+    }
+    function close(){
+      if (closer) { clearTimeout(closer); closer = null; }
+      if (dialog.open) dialog.close();
+      frame.src = 'about:blank'; showing = null;
+    }
+    document.getElementById('ask-close').onclick = close;
+    dialog.addEventListener('cancel', function(e){ e.preventDefault(); close(); });
+    window.addEventListener('message', function(e){
+      if (e.origin !== location.origin || e.source !== frame.contentWindow) return;
+      var m = e.data || {};
+      if (m.arcade !== 'approval' || m.id !== showing) return;
+      note.textContent = m.status === 'sent' ? 'Sent.' : 'Refused, nothing went out.';
+      closer = setTimeout(close, 2500);
+    });
     function look(){
       fetch('/approvals/waiting').then(function(r){ return r.json(); }).then(function(j){
-        if (!j.waiting) { box.hidden = true; shown = 0; return; }
-        if (j.waiting === shown) return;
-        shown = j.waiting;
+        if (!j.waiting) { box.hidden = true; return; }
         var lines = j.requests.map(function(q){
-          return '<li>' + q.summary.replace(/</g, '&lt;') +
-            (q.label ? ' <span class="muted">— asked by “' + q.label.replace(/</g, '&lt;') + '”</span>' : '') + '</li>';
+          return '<li>' + esc(q.summary) +
+            (q.label ? ' <span class="muted">— asked by “' + esc(q.label) + '”</span>' : '') +
+            ' <a href="#" data-ask="' + esc(q.id) + '">look</a></li>';
         }).join('');
         box.innerHTML = '<strong>This wallet has been asked to send:</strong><ul style="margin:6px 0 8px">' +
-          lines + '</ul><a class="btn small" href="/approvals">Look before anything goes out</a>';
+          lines + '</ul><a class="btn small" href="/approvals">All approvals</a>';
         box.hidden = false;
+        box.querySelectorAll('a[data-ask]').forEach(function(a){
+          a.onclick = function(){ open(a.getAttribute('data-ask')); return false; };
+        });
+        if (showing) return;
+        for (var i = 0; i < j.requests.length; i++) {
+          if (!seen[j.requests[i].id]) { open(j.requests[i].id); break; }
+        }
       }).catch(function(){});
     }
     look(); setInterval(look, 3000);
+  })();
+
+  // What the wallet remembers for this page. The sandbox has no storage of
+  // its own; it asks this page over postMessage and this page keeps it on the
+  // wallet's disk under THIS inscription's id -- taken from the frame it came
+  // out of, never from the message, so a page can only ever reach its own.
+  (function(){
+    var sandbox = document.querySelector('.inscription-frame');
+    var here = {{ row.txid|tojson }}, csrf = {{ csrf|tojson }};
+    window.addEventListener('message', function(e){
+      if (!sandbox || e.source !== sandbox.contentWindow) return;
+      var m = e.data || {};
+      if (m.arcade !== 'storage' || typeof m.seq !== 'number') return;
+      function answer(body){
+        body.arcade = 'storage'; body.seq = m.seq;
+        e.source.postMessage(body, '*');   // an opaque origin cannot be named
+      }
+      var call = m.op === 'load'
+        ? fetch('/storage/' + here)
+        : fetch('/storage/' + here, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                 body: JSON.stringify({csrf_token: csrf, op: m.op, key: m.key, value: m.value})});
+      call.then(function(r){ return r.json(); }).then(function(j){
+        answer(j.ok ? {ok: true, items: j.items} : {ok: false, error: j.error || j.detail || 'refused'});
+      }).catch(function(){ answer({ok: false, error: 'the wallet did not answer'}); });
+    });
   })();
   </script>
 {% else %}
@@ -88,6 +155,13 @@
 {% endif %}
 
 <style>
+  .ask{border:0;border-radius:12px;padding:0;width:min(96vw,640px);max-width:96vw;
+    background:var(--panel,#fff);box-shadow:0 20px 60px rgba(0,0,0,.35);overflow:hidden}
+  .ask::backdrop{background:rgba(0,0,0,.55)}
+  .ask iframe{display:block;width:100%;height:min(78vh,720px);border:0}
+  .ask-bar{display:flex;align-items:center;gap:10px;padding:8px 12px;
+    border-top:1px solid var(--line,#ddd)}
+  .ask-bar button{margin-left:auto}
   .inscription-frame{display:block;width:100%;height:min(70vh,620px);border:0;
     background:#fff}
   .back-link{font-weight:600}

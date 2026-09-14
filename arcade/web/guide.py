@@ -122,8 +122,9 @@ SECTIONS: list[dict] = [
             ("Nothing is built on the caller's word: when you look, the "
              "transaction is shown with its fee and every output, and goes "
              "out only when you press Approve. Refusing costs nothing."),
-            ("Shown on every page, live under a running inscription, and on "
-             "the phone over the remote tunnel."),
+            ("Opens in front of the inscription that asked, the moment it "
+             "asks; shown on every other page, and on the phone over the "
+             "remote tunnel. The page cannot see the pop-up or press it."),
             ("A request nobody answers within an hour expires; no more than "
              "twenty wait at once."),
         ],

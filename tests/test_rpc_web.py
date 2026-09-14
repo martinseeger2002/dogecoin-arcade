@@ -358,7 +358,20 @@ def test_a_page_asks_for_an_inscription_and_it_changes_hands(web):
     assert "the recipient" in page, page[page.find("<main>"):page.find("</main>")]
     txid = re.search(r'name="confirmed" value="([0-9a-f]{64})"', page).group(1)
     app.post(f"/approvals/{rid}", data={"csrf_token": state.csrf_token, "confirmed": txid})
-    assert app.get(f"/r/send/{rid}").json()["status"] == "sent"
+    answer = app.get(f"/r/send/{rid}").json()
+    assert answer["status"] == "sent" and answer["txid"] == txid
+    # Sent is not final. The page watches the transaction until it is.
+    assert answer["confirmations"] == 0 and answer["confirmed"] is False
+    watched = app.get(f"/r/tx/{txid}").json()
+    assert watched["confirmed"] is False and watched["confirmations"] == 0
+    assert watched["block"] is None and watched["conflicted"] is False
+    assert app.get(f"/r/tx/{txid}").headers["access-control-allow-origin"] == "*"
     mine_and_index(node, state)
     assert index.inscription(row["txid"])["owner"] == bob
     assert app.get(f"/r/inscription/{row['number']}").json()["owner"] == bob
+    watched = app.get(f"/r/tx/{txid}").json()
+    assert watched["confirmed"] is True and watched["confirmations"] == 1
+    assert watched["block"] == node.rpc.get_block_count()
+    assert app.get(f"/r/send/{rid}").json()["confirmations"] == 1
+    assert app.get(f"/r/tx/{'0' * 64}").status_code == 404
+    assert app.get("/r/tx/nonsense").status_code == 400

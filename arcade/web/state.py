@@ -517,6 +517,7 @@ class AppState:
 
     _collections: tuple = ()
     _approvals: Any = None
+    _pagestore: Any = None
 
     def chain_named(self, network: str) -> ChainContext:
         for chain in self.token_chains:
@@ -548,6 +549,14 @@ class AppState:
             from ..approvals import Requests
             self._approvals = Requests(self.home / "approvals.sqlite")
         return self._approvals
+
+    @property
+    def pagestore(self):
+        """What this wallet remembers for each inscribed page."""
+        if self._pagestore is None:
+            from ..pagestore import PageStore
+            self._pagestore = PageStore(self.home / "pagedata.sqlite")
+        return self._pagestore
 
     # --- identity, derived from the wallet ------------------------------------
     #

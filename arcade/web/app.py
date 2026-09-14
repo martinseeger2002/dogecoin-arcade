@@ -58,7 +58,8 @@ from . import content as contentlib
 from . import rpc as botrpc
 from .state import AppState
 
-TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+TEMPLATE_DIR = Path(__file__).parent / "templates"
+TEMPLATES = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
 
 def _fromjson(text: str):
@@ -225,6 +226,14 @@ def create_app(state: AppState) -> FastAPI:
         # has since gone. A page painted mid-send and restored from cache was
         # part of how an interface got stuck looking busy against an idle server.
         response.headers["Cache-Control"] = "no-store, must-revalidate"
+        # Only this wallet may put one of its pages in a frame. The approval
+        # pop-up under a running inscription is one, and that is the reason
+        # for the rule: an inscribed page could otherwise frame the same
+        # approval and dress an Approve button up as part of its game. Its
+        # sandbox already stops that -- an opaque origin is not 'self', and
+        # without allow-forms nothing inside it can submit -- but a rule that
+        # holds on its own is better than one that holds because of another.
+        response.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
         return response
 
     @app.exception_handler(HTTPException)
@@ -2627,13 +2636,22 @@ def create_app(state: AppState) -> FastAPI:
     @app.api_route("/approvals/{request_id}", methods=["GET", "POST"],
                    response_class=HTMLResponse)
     def approval(request: Request, request_id: str, csrf_token: str = Form(""),
-                 confirmed: str = Form(""), decision: str = Form("")):
+                 confirmed: str = Form(""), decision: str = Form(""),
+                 embed: str = ""):
         """Look at one request as the transaction it would be, and decide.
 
         The transaction is built when the page is drawn and broadcast only if
         the yes names the txid that was shown -- the same rule as every other
         send here (D-016). Deciding no costs nothing and builds nothing.
+
+        `embed=1` draws it without the wallet's chrome, for the pop-up that
+        opens under a running inscription the moment it asks. The decision is
+        the same form against the same route; only the frame differs, and
+        after deciding it comes back here instead of to the list so the
+        pop-up can show the answer and close.
         """
+        embedded = embed == "1"
+        back = f"/approvals/{request_id}?embed=1" if embedded else "/approvals"
         queue = state.approvals
         row = queue.get(request_id)
         if row is None:
@@ -2647,7 +2665,7 @@ def create_app(state: AppState) -> FastAPI:
             if decision == "deny":
                 queue.decide(request_id, "denied")
                 state.flash(f"Refused: {approvalslib.summary(row)}.", "ok")
-                return RedirectResponse("/approvals", status_code=303)
+                return RedirectResponse(back, status_code=303)
             held = state.prepared_tokens.get((chain.network, confirmed))
             if row["status"] != "pending":
                 error = f"this request is already {row['status']}."
@@ -2669,7 +2687,7 @@ def create_app(state: AppState) -> FastAPI:
                          "network": chain.network})
                     state.flash(f"Approved and sent: {approvalslib.summary(row)} "
                                 f"as {sent}.", "ok")
-                    return RedirectResponse("/approvals", status_code=303)
+                    return RedirectResponse(back, status_code=303)
         if row["status"] == "pending" and prepared is None and error is None:
             try:
                 with chain.rpc() as rpc:
@@ -2682,7 +2700,7 @@ def create_app(state: AppState) -> FastAPI:
                 error = str(exc)
         return render(request, "approval.html", row=row, chain=chain,
                       summary=approvalslib.summary(row), prepared=prepared,
-                      error=error, now=time.time())
+                      error=error, now=time.time(), embed=embedded)
 
     @app.post("/r/send")
     def r_send(request: Request, body: dict = Body(default={})):
@@ -2712,12 +2730,116 @@ def create_app(state: AppState) -> FastAPI:
             "Access-Control-Allow-Headers": "Content-Type",
             "Access-Control-Max-Age": "600"})
 
+    def _tx_status(chain, txid: str) -> dict | None:
+        """How far along a transaction is, asked of the node.
+
+        A page that was told "sent" needs to know when sent became final:
+        a shop hands over the hat at one confirmation, or six, and that is
+        its call to make. The wallet's own transactions answer through
+        gettransaction; anything else through getrawtransaction, which on a
+        node without -txindex knows only what is in its mempool. None when
+        the node cannot be asked or has never heard of it.
+        """
+        from ..rpc import RpcError
+        try:
+            with chain.rpc() as rpc:
+                try:
+                    tx = rpc.call("gettransaction", txid)
+                except RpcError:
+                    tx = rpc.call("getrawtransaction", txid, 1)
+                confirmations = int(tx.get("confirmations", 0) or 0)
+                height = None
+                if tx.get("blockhash"):
+                    height = rpc.call("getblockheader", tx["blockhash"]).get("height")
+        except Exception:
+            return None
+        return {"txid": txid, "confirmed": confirmations > 0,
+                "confirmations": max(confirmations, 0),
+                # -1 from gettransaction: a conflicting transaction was
+                # confirmed instead, and this one never will be.
+                "conflicted": confirmations < 0,
+                "block": height, "blockhash": tx.get("blockhash"),
+                "time": tx.get("blocktime") or tx.get("time")}
+
+    def _described(row: dict) -> dict:
+        """A request as a caller sees it, with confirmations once it is sent."""
+        told = approvalslib.describe(row)
+        if row["status"] == "sent" and row["txid"]:
+            told["confirmations"] = None
+            status = _tx_status(state.chain_named(row["network"]), row["txid"])
+            if status is not None:
+                told["confirmations"] = status["confirmations"]
+                told["confirmed"] = status["confirmed"]
+        return told
+
     @app.get("/r/send/{request_id}")
     def r_send_status(request_id: str):
         row = state.approvals.get(request_id)
         if row is None:
             return contentlib._missing("no such request")
-        return contentlib._json(approvalslib.describe(row))
+        return contentlib._json(_described(row))
+
+    @app.get("/r/storage.js")
+    def r_storage_js():
+        """The storage shim an inscribed page loads (see pagestore.py).
+
+        Served as a script, with CORS, cached for an hour: it is the same for
+        every page and changes only with the wallet.
+        """
+        body = (TEMPLATE_DIR / "storage.js").read_text()
+        return Response(body, media_type="application/javascript",
+                        headers={**contentlib.CORS, "Cache-Control": "public, max-age=3600"})
+
+    def _stored_page(txid: str) -> str:
+        """The inscription a storage call is about, or a 404."""
+        key = contentlib._key(txid)
+        if not isinstance(key, str) or _content_index().inscription(key) is None:
+            raise HTTPException(404, "no such inscription")
+        return key
+
+    @app.get("/storage/{txid}")
+    def storage_load(txid: str):
+        """Everything remembered for one page. Same origin only -- this is
+        the viewer asking, on the page's behalf, never the page itself."""
+        return JSONResponse({"ok": True, "items": state.pagestore.items(_stored_page(txid))})
+
+    @app.post("/storage/{txid}")
+    def storage_write(txid: str, body: dict = Body(default={})):
+        """One change: set, remove or clear. The viewer sends it with the
+        wallet's CSRF token, which the page in the sandbox never sees."""
+        from ..pagestore import StoreError
+        check_csrf(str(body.get("csrf_token", "")))
+        page = _stored_page(txid)
+        op = body.get("op")
+        try:
+            if op == "set":
+                state.pagestore.set(page, body.get("key", ""), body.get("value", ""))
+            elif op == "remove":
+                state.pagestore.remove(page, body.get("key", ""))
+            elif op == "clear":
+                state.pagestore.clear(page)
+            else:
+                raise StoreError("op must be set, remove or clear")
+        except StoreError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        return JSONResponse({"ok": True})
+
+    @app.get("/r/tx/{txid}")
+    def r_tx(txid: str):
+        """Whether a transaction is confirmed, and how deep.
+
+        The other half of asking: a page that was told its request was sent
+        as some txid watches that txid here until it is buried as deep as it
+        cares about. Any transaction the node knows, not only approved ones.
+        """
+        txid = txid.strip().lower()
+        if len(txid) != contentlib.TXID_LENGTH or any(c not in "0123456789abcdef" for c in txid):
+            return contentlib._json({"error": "a txid is 64 hex characters"}, status=400)
+        chain, _ = _token_chain()
+        status = _tx_status(chain, txid)
+        if status is None:
+            return contentlib._missing("this node does not know that transaction")
+        return contentlib._json(status)
 
     @app.get("/guide", response_class=HTMLResponse)
     def guide(request: Request):
