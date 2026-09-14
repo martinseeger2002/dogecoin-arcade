@@ -1,0 +1,196 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hours — an inscription that knows what time it is</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:flex; flex-direction:column;
+         align-items:center; justify-content:center; gap:18px; padding:20px;
+         font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+         color:#e9e7e2; background:#0a0a0c; transition:background 1.2s linear; }
+  canvas { border-radius:14px; box-shadow:0 18px 60px rgba(0,0,0,.55);
+           max-width:100%; height:auto; }
+  .card { width:min(560px,100%); background:rgba(255,255,255,.055);
+          border:1px solid rgba(255,255,255,.11); border-radius:12px;
+          padding:14px 16px; backdrop-filter:blur(6px); }
+  h2 { font-size:.7rem; text-transform:uppercase; letter-spacing:.11em;
+       color:rgba(255,255,255,.5); margin:0 0 9px; font-weight:600; }
+  table { width:100%; border-collapse:collapse; font-size:.9rem; }
+  td { padding:5px 8px 5px 0; vertical-align:top; word-break:break-word; }
+  td.k { color:rgba(255,255,255,.5); width:132px; white-space:nowrap; }
+  .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.84em; }
+  .tag { font-weight:700; letter-spacing:.01em; }
+  .muted { color:rgba(255,255,255,.45); }
+  footer { font-size:.76rem; color:rgba(255,255,255,.38); text-align:center;
+           max-width:560px; }
+</style>
+
+<canvas id="art" width="560" height="340"></canvas>
+
+<div class="card">
+  <h2 id="hdr">this wallet</h2>
+  <table id="wallet"><tr><td class="muted">asking…</td></tr></table>
+</div>
+
+<div class="card">
+  <h2>this inscription</h2>
+  <table id="self"></table>
+</div>
+
+<footer>
+  Drawn from the block height and the hour, by code inscribed on the chain.
+  Nothing here is loaded from anywhere: this page cannot reach the internet.
+</footer>
+
+<script src="/content/fbac0a9847b8c6cd2a52bc4ebe07d5729e055e6a6750f09c4ab74a8cbfad2f18"></script>
+<script>
+// --- the palette moves with the hour -----------------------------------------
+// Six moods around the day. The page redraws every minute, so an inscription
+// looked at in the morning is not the same picture as one looked at at night --
+// permanent bytes, a different painting.
+const HOURS = [
+  { at: 0,  name: 'small hours', sky: ['#05060f', '#0d1030'], ink: '#6f7bd6', sun: '#c8cdf5' },
+  { at: 5,  name: 'first light', sky: ['#131a36', '#6b4b6a'], ink: '#e39aa0', sun: '#ffd9a0' },
+  { at: 8,  name: 'morning',     sky: ['#2a4a7a', '#a9cbe8'], ink: '#1e2e4a', sun: '#fff3c4' },
+  { at: 12, name: 'midday',      sky: ['#3f7fc1', '#cfe6f7'], ink: '#14304f', sun: '#fffbe6' },
+  { at: 17, name: 'evening',     sky: ['#7a3f57', '#e0915c'], ink: '#3a1d2c', sun: '#ffcf7a' },
+  { at: 21, name: 'night',       sky: ['#0a0e24', '#241a43'], ink: '#8f86d8', sun: '#dcd7ff' },
+];
+const mood = (h) => HOURS.reduce((best, m) => (h >= m.at ? m : best), HOURS[0]);
+
+function mix(a, b, t) {
+  const p = (c) => [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16));
+  const [x, y] = [p(a), p(b)];
+  return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * t)
+    .toString(16).padStart(2, '0')).join('');
+}
+
+// A number from the block height, so the same hour on a different block is a
+// different picture -- and every node drawing it agrees, because the height is
+// the chain's.
+function rng(seed) {
+  let s = (seed >>> 0) || 1;
+  return () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;
+}
+
+function draw(height, count) {
+  const canvas = document.getElementById('art');
+  const ctx = canvas.getContext('2d');
+  const now = new Date();
+  const hour = now.getHours() + now.getMinutes() / 60;
+  const m = mood(hour);
+  const next = HOURS[(HOURS.indexOf(m) + 1) % HOURS.length];
+  const span = ((next.at - m.at) + 24) % 24 || 24;
+  const t = Math.min(1, (hour - m.at + 24) % 24 / span);
+
+  const top = mix(m.sky[0], next.sky[0], t * 0.65);
+  const bottom = mix(m.sky[1], next.sky[1], t * 0.65);
+  const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  sky.addColorStop(0, top); sky.addColorStop(1, bottom);
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  document.body.style.background = top;
+
+  // the sun or the moon, wherever the hour puts it
+  const arc = (hour / 24) * Math.PI * 2 - Math.PI / 2;
+  const cx = canvas.width / 2 + Math.cos(arc) * 190;
+  const cy = canvas.height * 0.62 + Math.sin(arc) * 130;
+  const glow = ctx.createRadialGradient(cx, cy, 2, cx, cy, 74);
+  glow.addColorStop(0, m.sun); glow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = glow;
+  ctx.beginPath(); ctx.arc(cx, cy, 74, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = m.sun;
+  ctx.beginPath(); ctx.arc(cx, cy, 15, 0, Math.PI * 2); ctx.fill();
+
+  // a skyline seeded by the block height
+  const random = rng(height || 1);
+  ctx.fillStyle = m.ink;
+  let x = 0;
+  while (x < canvas.width) {
+    const w = 22 + random() * 40;
+    const h = 40 + random() * 130;
+    ctx.fillRect(x, canvas.height - h, w - 3, h);
+    x += w;
+  }
+
+  // one mark per inscription this wallet holds
+  ctx.fillStyle = m.sun;
+  for (let n = 0; n < Math.min(count || 0, 40); n++) {
+    const px = 16 + (n % 20) * 27;
+    const py = canvas.height - 168 - Math.floor(n / 20) * 16;
+    ctx.fillRect(px, py, 5, 5);
+  }
+
+  ctx.fillStyle = m.sun;
+  ctx.font = '600 15px ui-monospace, monospace';
+  ctx.fillText(m.name, 20, 32);
+  ctx.fillStyle = 'rgba(255,255,255,.62)';
+  ctx.font = '12px ui-monospace, monospace';
+  ctx.fillText('block ' + (height ?? '—') + '  ·  ' +
+    now.toTimeString().slice(0, 5), 20, 52);
+}
+
+// --- what it says underneath --------------------------------------------------
+const rows = (id, pairs) => {
+  document.getElementById(id).innerHTML = pairs.map(
+    ([k, v]) => '<tr><td class="k">' + k + '</td><td>' + v + '</td></tr>').join('');
+};
+const coins = (n) => n === null || n === undefined ? '—'
+  : Number(n).toLocaleString(undefined, {maximumFractionDigits: 4});
+
+(async function () {
+  if (typeof arcade === 'undefined') {
+    rows('wallet', [['library', 'not inscribed yet — see /content/fbac0a9847b8c6cd2a52bc4ebe07d5729e055e6a6750f09c4ab74a8cbfad2f18']]);
+    draw(null, 0);
+    return;
+  }
+
+  const id = arcade.self();
+  const [about, meta, height] = await Promise.all(
+    [arcade.about(id), arcade.metadata(id), arcade.height()]);
+
+  const wallet = await arcade.wallet();
+  let held = 0;
+  if (!wallet.ok) {
+    document.getElementById('hdr').textContent = 'this wallet';
+    rows('wallet', [
+      ['who is looking', '<span class="muted">not shared with inscriptions</span>'],
+      ['the page', 'works anyway — that is the point'],
+    ]);
+  } else {
+    const w = wallet.json;
+    held = w.inscriptions || 0;
+    // ONE chain. An inscription lives on exactly one, and showing a balance
+    // from the other would be a number about a wallet you do not have here.
+    document.getElementById('hdr').textContent =
+      'this wallet · ' + w.network + (w.mainnet ? '' : ' (test coins)');
+    const tokens = (w.tokens || []).length
+      ? w.tokens.map(t => t.balance + ' <span class="muted">' +
+          (t.name || '#' + t.propertyid) + '</span>').join('<br>')
+      : '<span class="muted">none</span>';
+    rows('wallet', [
+      ['@tag', w.tag ? '<span class="tag">@' + w.tag + '</span>'
+                     : '<span class="muted">none claimed</span>'],
+      ['chain', w.network + (w.mainnet ? ' — real coins' : '')],
+      ['spendable', '<span class="mono">' + coins(w.coin && w.coin.spendable) + '</span>'],
+      ['tokens', tokens],
+      ['inscriptions held', held],
+      ['addresses', (w.addresses || []).length],
+    ]);
+  }
+
+  rows('self', [
+    ['number', about.json ? '#' + about.json.number : '—'],
+    ['owner', '<span class="mono">' + ((about.json && about.json.owner) || '—') + '</span>'],
+    ['size', about.json ? about.json.length.toLocaleString() + ' bytes in ' +
+             about.json.transactions + ' transaction' +
+             (about.json.transactions === 1 ? '' : 's') : '—'],
+    ['its JSON', '<span class="mono">' +
+      JSON.stringify((meta.json && meta.json.json) || null) + '</span>'],
+  ]);
+
+  draw(height.json, held);
+  setInterval(() => draw(height.json, held), 60000);
+})();
+</script>

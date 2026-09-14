@@ -2239,15 +2239,39 @@ def create_app(state: AppState) -> FastAPI:
                 {"error": "this wallet does not tell inscriptions who is looking"},
                 status=403)
         chain, index = _token_chain()
+        addresses, spendable = [], None
         try:
             with chain.rpc() as rpc:
                 addresses = _ledger_addresses(rpc)
+                spendable = float(rpc.call("getbalance") or 0)
         except Exception:
-            addresses = []
+            pass
+
+        tokens: list[dict[str, Any]] = []
+        owned = 0
+        for address in addresses:
+            try:
+                for row in index.balances(address):
+                    tokens.append({"propertyid": row["property_id"],
+                                   "name": row.get("name", ""),
+                                   "balance": row.get("display",
+                                                      str(row.get("balance", 0)))})
+                owned += index.inscription_count(owner=address)
+            except Exception:
+                continue
         return contentlib._json({
+            # One chain, said out loud. An inscription lives on exactly one, and
+            # a page that asked for balances and silently got the other chain's
+            # would be showing somebody a number about a wallet they do not have
+            # on the chain they are looking at.
+            "network": chain.network,
+            "mainnet": chain.is_mainnet,
             "addresses": addresses,
             "tag": next((index.tag_of(a) for a in addresses if index.tag_of(a)), None),
-            "network": chain.network,
+            "coin": {"spendable": spendable, "ticker": chain.params.ticker
+                     if hasattr(chain.params, "ticker") else ""},
+            "tokens": tokens,
+            "inscriptions": owned,
         })
 
     @app.get("/guide", response_class=HTMLResponse)

@@ -199,3 +199,133 @@ def test_the_showcase_files_are_what_gets_inscribed():
     assert page.count("__LIBRARY__") >= 1
     assert "http://" not in page and "https://" not in page.replace(
         "https://example.com", ""), "nothing may be loaded from off-chain"
+
+
+# --- the artwork ---------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def hours(tmp_path_factory):
+    """`hours.html` inscribed beside its library, rendered in the viewer."""
+    import uvicorn
+
+    from arcade import inscriptions as I
+    from arcade import payload as P
+    from arcade.config import NETWORKS
+    from arcade.db import Database
+    from arcade.state import Engine, StateDB, install_schema
+    from arcade.tx import ArcadeTransaction, EncodingClass
+    from arcade.web.app import create_app
+    from arcade.web.state import AppState, ChainContext
+
+    home = tmp_path_factory.mktemp("hours")
+    db = Database(home / "regtest-ledger.sqlite")
+    install_schema(db)
+    state_db = StateDB(db)
+    engine = Engine(state_db, NETWORKS["regtest"])
+
+    def inscribe(n, content, content_type, json_text=""):
+        height = 100 + n * 10
+        for index, body in enumerate(I.plan(content, content_type, json_text)):
+            with state_db.block_context(height + index, f"h{height + index}",
+                                        "p", 0, 1, 0):
+                engine.process(ArcadeTransaction(
+                    txid=f"{n * 1000 + index:064x}", block_height=height + index,
+                    position=0, encoding_class=EncodingClass.B, sender="nMe",
+                    reference=None, payload=P.AnyData(data=body).encode(), fee=0))
+        return f"{n * 1000:064x}"
+
+    library_id = inscribe(1, (SHOWCASE / "arcade-lib.js").read_bytes(),
+                          "application/javascript")
+    page = (SHOWCASE / "hours.html").read_text().replace("__LIBRARY__", library_id)
+    page_id = inscribe(2, page.encode(), "text/html", '{"name": "Hours"}')
+    db.close()
+
+    nowhere = Path("/nonexistent")
+    state = AppState(
+        home=home,
+        messaging=ChainContext(network="regtest", role="messaging",
+                               label="Testnet", datadir=nowhere),
+        ledger=ChainContext(network="regtest", role="ledger",
+                            label="Regtest", datadir=nowhere))
+    port = _free_port()
+    server = uvicorn.Server(uvicorn.Config(create_app(state), host="127.0.0.1",
+                                           port=port, log_level="error"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    for _ in range(100):
+        if server.started:
+            break
+        time.sleep(0.1)
+
+    options = Options()
+    options.add_argument("-headless")
+    try:
+        browser = webdriver.Firefox(options=options)
+    except Exception as exc:
+        server.should_exit = True
+        pytest.skip(f"no usable browser: {exc}")
+
+    browser.set_window_size(900, 1100)
+    browser.get(f"http://127.0.0.1:{port}/inscriptions/{page_id}/view")
+    frame = browser.find_elements(By.CSS_SELECTOR, "iframe.inscription-frame")
+    assert frame, "the artwork was not framed"
+    browser.switch_to.frame(frame[0])
+    time.sleep(3)
+
+    def table(name):
+        cells = browser.find_elements(By.CSS_SELECTOR, f"#{name} td")
+        return {cells[n].text.strip(): cells[n + 1].text.strip()
+                for n in range(0, len(cells) - 1, 2)}
+
+    result = {
+        "wallet": table("wallet"),
+        "self": table("self"),
+        "header": browser.find_element(By.ID, "hdr").text,
+        "painted": browser.execute_script(
+            "const c = document.getElementById('art');"
+            "const d = c.getContext('2d').getImageData(0,0,c.width,c.height).data;"
+            "const seen = new Set();"
+            "for (let i = 0; i < d.length; i += 400)"
+            "  seen.add(d[i] + ',' + d[i+1] + ',' + d[i+2]);"
+            "return seen.size;"),
+        "background": browser.execute_script(
+            "return getComputedStyle(document.body).backgroundColor"),
+    }
+    browser.switch_to.default_content()
+    browser.quit()
+    server.should_exit = True
+    yield result
+
+
+def test_the_artwork_paints_itself(hours):
+    """Many colours means a gradient, a sun and a skyline -- not a blank
+    canvas and not one flat fill."""
+    assert hours["painted"] > 40, hours["painted"]
+    assert hours["background"] != "rgba(0, 0, 0, 0)"
+
+
+def test_it_names_the_chain_it_is_on(hours):
+    """One chain. A page showing a balance from the other would be a number
+    about a wallet you do not have where you are looking."""
+    # The heading is upper-cased by the stylesheet, and `.text` in a browser
+    # gives what is on screen rather than what is in the markup.
+    assert "regtest" in hours["header"].lower(), hours["header"]
+    assert hours["wallet"].get("chain", "").startswith("regtest")
+
+
+def test_it_shows_what_the_wallet_holds(hours):
+    for row in ("@tag", "spendable", "tokens", "inscriptions held", "addresses"):
+        assert row in hours["wallet"], (row, hours["wallet"])
+
+
+def test_it_knows_itself(hours):
+    assert hours["self"]["number"] == "#1"
+    assert "bytes in" in hours["self"]["size"]
+    assert "Hours" in hours["self"]["its JSON"]
+
+
+def test_the_artwork_loads_nothing_from_anywhere():
+    page = (SHOWCASE / "hours.html").read_text()
+    assert "http://" not in page and "https://" not in page
+    assert page.count("__LIBRARY__") >= 1
