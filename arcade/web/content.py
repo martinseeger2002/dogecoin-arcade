@@ -147,6 +147,28 @@ def describe(row: dict) -> dict:
     }
 
 
+def holding(row: dict) -> dict:
+    """One token balance, as a page sees it.
+
+    `balance` is the string a person would read -- "10,005" or
+    "1000.00000000" -- and `units` is the integer the ledger actually holds, so
+    a page doing arithmetic never has to parse the display form back.
+    """
+    units = int(row.get("units", row.get("balance", 0)))
+    divisible = bool(row.get("divisible"))
+    display = row.get("display")
+    if display is None:
+        from ..ledger import format_amount
+        display = format_amount(units, divisible)
+    return {
+        "propertyid": row.get("property_id", row.get("propertyid")),
+        "name": row.get("name", ""),
+        "balance": display,
+        "units": units,
+        "divisible": divisible,
+    }
+
+
 def metadata(index: Any, key: str) -> JSONResponse:
     """The JSON the creator inscribed, parsed if it parses.
 

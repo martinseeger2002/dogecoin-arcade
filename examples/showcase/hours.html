@@ -166,9 +166,10 @@ const coins = (n) => n === null || n === undefined ? '—'
     document.getElementById('hdr').textContent =
       'this wallet · ' + w.network + (w.mainnet ? '' : ' (test coins)');
     const tokens = (w.tokens || []).length
-      ? w.tokens.map(t => t.balance + ' <span class="muted">' +
-          (t.name || '#' + t.propertyid) + '</span>').join('<br>')
-      : '<span class="muted">none</span>';
+      ? w.tokens.map(t => '<span class="mono">' + t.balance + '</span> ' +
+          '<span class="muted">' + (t.name || 'token #' + t.propertyid) +
+          '</span>').join('<br>')
+      : '<span class="muted">none held</span>';
     rows('wallet', [
       ['@tag', w.tag ? '<span class="tag">@' + w.tag + '</span>'
                      : '<span class="muted">none claimed</span>'],

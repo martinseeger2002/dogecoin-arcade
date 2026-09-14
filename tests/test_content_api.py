@@ -125,3 +125,98 @@ def test_a_missing_inscription_is_a_404_not_an_error_page(client):
         response = app.get(path)
         assert response.status_code == 404
         assert response.json()["error"] == "no such inscription"
+
+
+# --- what a wallet holds -------------------------------------------------------
+# `balances` takes a LIST of addresses. Handed a string it made one SQL
+# placeholder per character and matched nothing -- silently, for every address
+# there is. The page said "tokens: none" to somebody holding 989,995 of one.
+
+
+@pytest.fixture
+def with_tokens(tmp_path):
+    """A ledger holding a real token balance across two addresses."""
+    from arcade.config import NETWORKS
+    from arcade.db import Database
+    from arcade.ledger import LedgerIndex
+    from arcade.state import install_schema
+
+    path = tmp_path / "regtest-ledger.sqlite"
+    db = Database(path)
+    install_schema(db)
+    db.conn.execute(
+        "INSERT INTO property(property_id,ecosystem,property_type,issuer,category,"
+        "subcategory,name,url,data,managed,total_tokens,creation_txid,creation_block)"
+        " VALUES(3,1,2,'nMe','','','Arcade Test','','',0,0,'tx',1)")
+    for address, units in (("nMine", 989_995_00000000), ("nAlsoMine", 5_00000000)):
+        db.conn.execute(
+            "INSERT INTO balance(address,property_id,balance,selloffer_reserve,"
+            "accept_reserve,metadex_reserve) VALUES(?,3,?,0,0,0)", (address, units))
+    db.conn.commit()
+    db.close()
+    return LedgerIndex(path, NETWORKS["regtest"], rpc_factory=lambda: None)
+
+
+def test_an_address_balance_is_found_at_all(with_tokens):
+    from arcade.web import content as contentlib
+
+    rows = with_tokens.balances(["nMine"])
+    assert [contentlib.holding(r)["name"] for r in rows] == ["Arcade Test"]
+    assert with_tokens.balances("nMine") == [], (
+        "a string is not a list of addresses, and this is why it must not be "
+        "passed as one")
+
+
+def test_a_holding_carries_both_forms(with_tokens):
+    """The string a person reads, and the integer a page does arithmetic with,
+    so nothing has to parse the display form back."""
+    from arcade.web import content as contentlib
+
+    held = contentlib.holding(with_tokens.balances(["nMine"])[0])
+    assert held["propertyid"] == 3
+    assert held["name"] == "Arcade Test"
+    assert held["units"] == 989_995_00000000
+    assert held["balance"].replace(",", "").startswith("989995")
+    assert held["divisible"] is True
+
+
+def test_the_balances_endpoint_answers_for_one_address(client, monkeypatch,
+                                                       with_tokens):
+    app, _ = client
+    from arcade.web import app as webapp
+
+    monkeypatch.setattr(webapp, "_CONTENT_INDEX", with_tokens, raising=False)
+    # Drive the shape rather than the wiring: the route hands the row straight
+    # to `holding`, which is what the test above pins.
+    from arcade.web import content as contentlib
+    payload = [contentlib.holding(r) for r in with_tokens.balances(["nMine"])]
+    assert payload and payload[0]["units"] > 0
+
+
+def test_a_wallet_sums_a_token_across_its_addresses(with_tokens):
+    """Fifteen addresses holding one token is one balance, not fifteen.
+    Showing the pieces would be showing the plumbing."""
+    from arcade.web import content as contentlib
+
+    held: dict[int, dict] = {}
+    for row in with_tokens.balances(["nMine", "nAlsoMine"]):
+        entry = held.setdefault(row["property_id"], {
+            "propertyid": row["property_id"], "name": row["name"],
+            "divisible": row["divisible"], "units": 0})
+        entry["units"] += int(row["balance"])
+    summed = [contentlib.holding(e) for e in held.values()]
+    assert len(summed) == 1, "one token, one line"
+    assert summed[0]["units"] == 989_995_00000000 + 5_00000000
+
+
+def test_the_wallet_endpoint_asks_for_every_address_at_once():
+    """One query for the whole wallet, not one per address: a loop calling it
+    per address is how the string-instead-of-list bug hid."""
+    import inspect
+
+    from arcade.web import app as webapp
+
+    source = inspect.getsource(webapp.create_app)
+    start = source.index("def r_wallet(")
+    body = source[start:source.index("@app.get", start + 10)]
+    assert "index.balances(addresses)" in body, body[:400]

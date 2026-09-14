@@ -2204,15 +2204,14 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/r/balances/{address}")
     def r_balances(address: str):
-        index = _content_index()
+        """What one address holds. A list of addresses, because that is what
+        `balances` takes -- handing it a string made one SQL placeholder per
+        CHARACTER and matched nothing, silently, for every address there is."""
         try:
-            held = index.balances(address)
+            held = _content_index().balances([address])
         except Exception:
             held = []
-        return contentlib._json([
-            {"propertyid": row["property_id"], "name": row.get("name", ""),
-             "balance": row.get("display", str(row.get("balance", 0)))}
-            for row in held])
+        return contentlib._json([contentlib.holding(row) for row in held])
 
     @app.get("/r/tag/{name}")
     def r_tag(name: str):
@@ -2247,15 +2246,25 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             pass
 
+        # One query for every address this wallet has, then summed per token:
+        # a wallet with coins on fifteen addresses holds one balance of each
+        # token, not fifteen, and showing the pieces would be showing the
+        # plumbing.
         tokens: list[dict[str, Any]] = []
         owned = 0
+        try:
+            held: dict[int, dict[str, Any]] = {}
+            for row in index.balances(addresses):
+                entry = held.setdefault(row["property_id"], {
+                    "propertyid": row["property_id"], "name": row["name"],
+                    "divisible": row["divisible"], "units": 0})
+                entry["units"] += int(row["balance"])
+            tokens = [contentlib.holding(entry) for entry in
+                      sorted(held.values(), key=lambda e: e["propertyid"])]
+        except Exception:
+            tokens = []
         for address in addresses:
             try:
-                for row in index.balances(address):
-                    tokens.append({"propertyid": row["property_id"],
-                                   "name": row.get("name", ""),
-                                   "balance": row.get("display",
-                                                      str(row.get("balance", 0)))})
                 owned += index.inscription_count(owner=address)
             except Exception:
                 continue
