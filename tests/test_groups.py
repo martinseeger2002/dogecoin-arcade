@@ -57,7 +57,11 @@ def test_no_encrypted_call_site_passes_public_only():
     import ast
     import pathlib
 
-    allowed = ("group", "post")
+    # Public posts and inscriptions: both are plain, public data on a chain
+    # anyone can read. Nothing sealed may pass the flag, which is the rule this
+    # enforces -- not "only posts may", which was only ever true because posts
+    # were the only public thing there was.
+    allowed = ("group", "post", "inscrib")
     for name in ("arcade/messaging/cli.py", "arcade/web/app.py"):
         tree = ast.parse(pathlib.Path(name).read_text())
 

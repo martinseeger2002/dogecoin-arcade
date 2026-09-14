@@ -30,6 +30,8 @@ from fastapi.templating import Jinja2Templates
 from .. import backup, media, tokens as tokenlib, wallet as walletlib
 from ..ledger import AmountError, format_amount, parse_amount
 from ..config import NETWORKS, MainnetRefused, WrongChain
+from .. import inscribe as inscribelib
+from .. import tags as taglib
 from .. import remote as remotelib
 from ..messaging import contact, content, group
 from ..script import b58check_decode
@@ -47,6 +49,7 @@ from ..messaging.sender import (
     estimate_send_seconds,
     funded_address, plan_message, record_sent, recent_block_seconds,
 )
+from . import content as contentlib
 from . import rpc as botrpc
 from .state import AppState
 
@@ -57,6 +60,13 @@ TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 #: (path, label, chain, built). `chain` is shown in the interface on every page,
 #: because a user who cannot tell whether an action spends testnet or real coins
 #: is one misclick from a bad day (D-012).
+#: How much of a long thing to draw at once. A busy channel or a conversation
+#: years old is not something a phone over a tunnel can be asked to render, and
+#: the part anybody is looking at is the end of it.
+PAGE_POSTS = 40
+PAGE_MESSAGES = 60
+PAGE_INSCRIPTIONS = 24
+
 NAV = [
     ("/",             "Overview",     None,        True),
     ("/messages",     "Messages",     "testnet",   True),
@@ -68,7 +78,7 @@ NAV = [
     ("/tokens",       "Tokens",       "mainnet",   True),
     ("/nfts",         "NFTs",         "mainnet",   False),
     ("/exchange",     "Exchange",     "mainnet",   False),
-    ("/inscriptions", "Inscriptions", "mainnet",   False),
+    ("/inscriptions", "Inscriptions", "mainnet",   True),
     ("/remote",       "Remote",       None,        True),
 ]
 
@@ -453,7 +463,8 @@ def create_app(state: AppState) -> FastAPI:
             with state.store() as store:
                 threads = store.conversations(state.identity.fingerprint)
                 items = _with_attachments(store,
-                    store.thread(state.identity.fingerprint, peer_key))
+                    store.thread(state.identity.fingerprint, peer_key,
+                                 limit=PAGE_MESSAGES))
                 store.mark_thread_read(state.identity.fingerprint, peer_key)
                 peer = {
                     "pubkey": peer_key,
@@ -697,7 +708,8 @@ def create_app(state: AppState) -> FastAPI:
             with state.store() as store:
                 threads = store.conversations(state.identity.fingerprint)
                 items = _with_attachments(store,
-                    store.thread(state.identity.fingerprint, bytes.fromhex(peer_hex)))
+                    store.thread(state.identity.fingerprint, bytes.fromhex(peer_hex),
+                                 limit=PAGE_MESSAGES))
                 peer = {"pubkey": bytes.fromhex(peer_hex), "hex": peer_hex,
                         "name": store.contact_name(bytes.fromhex(peer_hex)),
                         "contact_id": (lambda r: r["id"] if r else None)(
@@ -1468,10 +1480,12 @@ def create_app(state: AppState) -> FastAPI:
     # already reveal, so mainnet is a cost decision rather than a safety one.
 
     @app.get("/groups", response_class=HTMLResponse)
-    def groups(request: Request, which: str = "messaging", channel: str = ""):
+    def groups(request: Request, which: str = "messaging", channel: str = "",
+               before: int | None = None):
         chain = state.ledger if which == "ledger" else state.messaging
         channel = (channel or group.DEFAULT_CHANNEL).strip() or group.DEFAULT_CHANNEL
         posts, channels, balance = [], [], None
+        older = False
         # An interrupted post leaves a record but no progress, so the bubble
         # would sit at 0% with nothing driving it. Offer it as something that
         # can be finished instead -- exactly as the messenger does.
@@ -1486,8 +1500,11 @@ def create_app(state: AppState) -> FastAPI:
                         break
         if state.store_path.exists():
             with state.store() as store:
-                posts = _with_media(store, store.group_posts(chain.network, channel))
+                posts = _with_media(store, store.group_posts(
+                    chain.network, channel, limit=PAGE_POSTS, before_id=before))
                 channels = store.group_channels(chain.network)
+                older = (store.group_has_older(chain.network, channel, posts[0]["id"])
+                         if posts else False)
         try:
             with chain.rpc() as rpc:
                 balance = float(rpc.call("getbalance") or 0)
@@ -1496,6 +1513,7 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             balance = None
         return render(request, "groups.html", which=which, chain=chain,
+                      older=older, before=before,
                       channel=channel, posts=posts, channels=channels,
                       balance=balance, when=_when,
                       room=group.max_text_bytes(channel, state.profile_name),
@@ -1537,6 +1555,9 @@ def create_app(state: AppState) -> FastAPI:
                         attached_type: str = Form(""),
                         attached_b64: str = Form("")):
         """Sync for the same reason as `send_in_thread`: it blocks."""
+        # After posting, the newest page is the one to show: the thing you just
+        # posted is at the end of it.
+        before = None
         chain = state.ledger if which == "ledger" else state.messaging
         channel = (channel or group.DEFAULT_CHANNEL).strip() or group.DEFAULT_CHANNEL
         prepared, error, plan = None, None, None
@@ -1622,6 +1643,7 @@ def create_app(state: AppState) -> FastAPI:
             error = str(exc)
 
         posts, channels, balance = [], [], None
+        older = False
         # An interrupted post leaves a record but no progress, so the bubble
         # would sit at 0% with nothing driving it. Offer it as something that
         # can be finished instead -- exactly as the messenger does.
@@ -1636,8 +1658,11 @@ def create_app(state: AppState) -> FastAPI:
                         break
         if state.store_path.exists():
             with state.store() as store:
-                posts = _with_media(store, store.group_posts(chain.network, channel))
+                posts = _with_media(store, store.group_posts(
+                    chain.network, channel, limit=PAGE_POSTS, before_id=before))
                 channels = store.group_channels(chain.network)
+                older = (store.group_has_older(chain.network, channel, posts[0]["id"])
+                         if posts else False)
         try:
             with chain.rpc() as rpc:
                 balance = float(rpc.call("getbalance") or 0)
@@ -1646,6 +1671,7 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             balance = None
         return render(request, "groups.html", which=which, chain=chain,
+                      older=older, before=before,
                       channel=channel, posts=posts, channels=channels,
                       balance=balance, when=_when, prepared=prepared, error=error,
                       plan=plan, draft=text, room=group.max_text_bytes(channel, state.profile_name),
@@ -2024,6 +2050,248 @@ def create_app(state: AppState) -> FastAPI:
         data["pending"] = [i for i in still if i["network"] == chain.network]
         return data
 
+    # --- inscriptions ---------------------------------------------------------
+
+    def _inscription_page_data(error: str | None = None, plan: Any = None,
+                               page: int = 1) -> dict[str, Any]:
+        chain, index = _token_chain()
+        data: dict[str, Any] = {
+            "chain": chain, "node": chain.status(),
+            "other_chains": [c for c in state.token_chains if c is not chain],
+            "index": index.status(node_tip=state.ledger_tips.get(chain.network)),
+            "inscriptions": [], "mine": [], "unfinished": [], "owned": set(),
+            "funded": [], "error": error, "plan": plan, "node_error": None,
+            "my_tag": None, "tags": {},
+            "page": page, "pages": 1, "per_page": PAGE_INSCRIPTIONS, "total": 0,
+        }
+        try:
+            data["total"] = index.inscription_count()
+            data["pages"] = max(1, -(-data["total"] // PAGE_INSCRIPTIONS))
+            page = max(1, min(page, data["pages"]))
+            data["page"] = page
+            data["inscriptions"] = index.inscriptions(
+                limit=PAGE_INSCRIPTIONS, offset=(page - 1) * PAGE_INSCRIPTIONS)
+        except Exception as exc:
+            data["node_error"] = f"the index could not be read: {exc}"
+            return data
+        try:
+            with chain.rpc() as rpc:
+                owned = set(_ledger_addresses(rpc))
+                data["funded"] = _funded_addresses(rpc)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            data["node_error"] = str(exc)
+            owned = set()
+        data["owned"] = owned
+        data["mine"] = [row for row in data["inscriptions"] if row["owner"] in owned]
+        senders = {row["owner"] for row in data["inscriptions"]}
+        senders |= {row["creator"] for row in data["inscriptions"]}
+        try:
+            data["tags"] = index.tags_for(sorted(senders))
+            for address in owned:
+                found = index.tag_of(address)
+                if found:
+                    data["my_tag"] = found
+                    break
+            data["unfinished"] = [u for u in index.unfinished_inscriptions()
+                                  if u["sender"] in owned]
+        except Exception:
+            pass
+        return data
+
+    @app.get("/inscriptions", response_class=HTMLResponse)
+    def inscriptions_page(request: Request, page: int = 1):
+        return render(request, "inscriptions.html", **_inscription_page_data(page=page))
+
+    @app.post("/inscriptions/create", response_class=HTMLResponse)
+    def inscribe(request: Request, csrf_token: str = Form(""),
+                 json_field: str = Form(""), confirmed: str = Form(""),
+                 fromaddress: str = Form(""),
+                 attachment: UploadFile | None = File(None),
+                 attached_name: str = Form(""), attached_type: str = Form(""),
+                 attached_b64: str = Form("")):
+        """Two steps, like every other thing here that spends.
+
+        An inscription is permanent and paid for in advance, so the first press
+        prices it and the second pays. Sync, because building and broadcasting
+        dozens of transactions blocks for as long as it blocks.
+        """
+        error, plan = None, None
+        try:
+            check_csrf(csrf_token)
+            content, name, kind = b"", attached_name, attached_type
+            if attachment is not None and attachment.filename:
+                content = attachment.file.read()
+                name = attachment.filename
+                kind = attachment.content_type or "application/octet-stream"
+            elif attached_b64:
+                content = base64.b64decode(attached_b64)
+            if not content:
+                raise ValueError("choose a file to inscribe.")
+
+            plan = inscribelib.plan(content, kind or "application/octet-stream",
+                                    json_field)
+            if confirmed == "yes":
+                chain, _ = _token_chain()
+                with chain.rpc() as rpc:
+                    sender = (_check_own_address(rpc, fromaddress) if fromaddress
+                              else funded_address(rpc, mainnet=chain.is_mainnet))
+                    sent = _inscribe_in_background(chain, sender, plan, name)
+                state.flash(f"Inscribing {name} in {plan.chunks} transactions.", "ok")
+                return RedirectResponse("/inscriptions", status_code=303)
+            return render(request, "inscriptions.html",
+                          **_inscription_page_data(plan=plan),
+                          attached_b64=base64.b64encode(content).decode(),
+                          attached_name=name, attached_type=kind,
+                          json_field=json_field)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            error = str(exc)
+        return render(request, "inscriptions.html",
+                      **_inscription_page_data(error=error), json_field=json_field)
+
+    def _inscribe_in_background(chain: Any, sender: str, plan: Any, name: str):
+        """Broadcast the pieces on a thread, reporting as it goes.
+
+        The same shape as a long message: the request returns the moment the
+        work starts, because holding it open for a hundred transactions is what
+        makes an interface look hung and a second click look sensible.
+        """
+        def inscribe_work():
+            try:
+                with chain.rpc() as rpc:
+                    # public_only=True: an inscription is public, uncompressed,
+                    # unencrypted data. Nothing sealed passes this flag (D-014).
+                    sender_obj = MessageSender(rpc, chain.params, public_only=True)
+                    sender_obj.ensure_outputs(
+                        sender, plan.chunks,
+                        on_progress=lambda text, done, total:
+                            state.update_progress(note=text))
+                    sender_obj.send_all(
+                        sender, plan.payloads,
+                        on_progress=lambda text, done, total:
+                            state.update_progress(note=text),
+                        on_broadcast=lambda index, total, txid:
+                            state.update_progress(done=index,
+                                                  note=f"sent {index} of {total}"))
+                state.finish_progress()
+            except Exception as exc:
+                state.finish_progress(error=str(exc))
+            finally:
+                state.end_send()
+
+        if not state.begin_send():
+            raise ValueError("something is already being sent. Wait for it to finish.")
+        state.start_progress("inscription", plan.chunks, "a few minutes")
+        threading.Thread(target=inscribe_work, name="arcade-inscribe",
+                         daemon=True).start()
+        return True
+
+    def _check_own_address(rpc: Any, address: str) -> str:
+        if address not in _ledger_addresses(rpc):
+            raise ValueError("that address is not in this node's wallet.")
+        return address
+
+    # --- what an inscribed page can ask ---------------------------------------
+    # Read-only, every one of them, and the only URLs in this application that
+    # answer a cross-origin request. See web/content.py for why that is safe
+    # and what it deliberately does not do.
+
+    def _content_index():
+        _, index = _token_chain()
+        return index
+
+    @app.get("/content/{key}")
+    def inscription_content(key: str, download: int = 0):
+        return contentlib.content(_content_index(), key, download=bool(download))
+
+    @app.get("/r/inscription/{key}")
+    def r_inscription(key: str):
+        row = _content_index().inscription(contentlib._key(key))
+        if row is None:
+            return contentlib._missing("no such inscription")
+        return contentlib._json(contentlib.describe(row))
+
+    @app.get("/r/metadata/{key}")
+    def r_metadata(key: str):
+        return contentlib.metadata(_content_index(), key)
+
+    @app.get("/r/blockheight")
+    def r_blockheight():
+        chain, _ = _token_chain()
+        return contentlib._json(state.ledger_tips.get(chain.network))
+
+    @app.get("/r/blocktime")
+    def r_blocktime():
+        chain, _ = _token_chain()
+        try:
+            with chain.rpc() as rpc:
+                tip = rpc.get_block_count()
+                return contentlib._json(
+                    int(rpc.call("getblock", rpc.get_block_hash(tip)).get("time", 0)))
+        except Exception:
+            return contentlib._json(None)
+
+    @app.get("/r/inscriptions")
+    def r_inscriptions(after: int = -1, limit: int = 100):
+        rows = _content_index().inscriptions(limit=limit, after=after)
+        return contentlib._json([contentlib.describe(row) for row in rows])
+
+    @app.get("/r/inscriptions/{address}")
+    def r_inscriptions_of(address: str):
+        rows = _content_index().inscriptions(owner=address, limit=200)
+        return contentlib._json([contentlib.describe(row) for row in rows])
+
+    @app.get("/r/balances/{address}")
+    def r_balances(address: str):
+        index = _content_index()
+        try:
+            held = index.balances(address)
+        except Exception:
+            held = []
+        return contentlib._json([
+            {"propertyid": row["property_id"], "name": row.get("name", ""),
+             "balance": row.get("display", str(row.get("balance", 0)))}
+            for row in held])
+
+    @app.get("/r/tag/{name}")
+    def r_tag(name: str):
+        address = _content_index().address_of(name)
+        return contentlib._json({"tag": taglib.normalise(name), "address": address})
+
+    @app.get("/r/address/{address}")
+    def r_address(address: str):
+        index = _content_index()
+        return contentlib._json({"address": address,
+                                 "tag": index.tag_of(address)})
+
+    @app.get("/r/wallet")
+    def r_wallet():
+        """This wallet, as an inscribed page sees it.
+
+        A balance is public -- anyone with an index can look one up -- but
+        WHICH address is yours is not, and that is the one thing a page cannot
+        learn from the chain. So it can be turned off, and what it says when it
+        is off is that it is off, rather than that there is nothing there.
+        """
+        if not state.inscription_wallet_access:
+            return contentlib._json(
+                {"error": "this wallet does not tell inscriptions who is looking"},
+                status=403)
+        chain, index = _token_chain()
+        try:
+            with chain.rpc() as rpc:
+                addresses = _ledger_addresses(rpc)
+        except Exception:
+            addresses = []
+        return contentlib._json({
+            "addresses": addresses,
+            "tag": next((index.tag_of(a) for a in addresses if index.tag_of(a)), None),
+            "network": chain.network,
+        })
+
     @app.get("/tokens", response_class=HTMLResponse)
     def tokens(request: Request):
         return render(request, "tokens.html", prepared=None, **_token_page_data())
@@ -2372,7 +2640,7 @@ def create_app(state: AppState) -> FastAPI:
         "/exchange": ("Exchange", "M3",
                       "Two-sided MetaDEx order book: bids, asks, on-chain matching, "
                       "partial fills and price charts."),
-        "/inscriptions": ("Inscriptions", "M5",
+        "/inscriptions-unused": ("Inscriptions", "M5",
                           "Chunked file inscription over Class B, with a sandboxed "
                           "viewer that verifies content hashes before display."),
     }
@@ -2390,9 +2658,7 @@ def create_app(state: AppState) -> FastAPI:
     def exchange(request: Request):
         return _unbuilt(request, "/exchange")
 
-    @app.get("/inscriptions", response_class=HTMLResponse)
-    def inscriptions(request: Request):
-        return _unbuilt(request, "/inscriptions")
+
 
     return app
 

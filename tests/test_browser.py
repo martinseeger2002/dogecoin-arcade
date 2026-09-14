@@ -574,8 +574,11 @@ def test_the_navigation_does_not_eat_the_screen(phone):
             return [Math.round(document.querySelector('header')
                      .getBoundingClientRect().height), tops.size];
         """)
-        assert rows <= 2, f"the navigation wraps onto {rows} rows"
-        assert height <= 150, f"the header takes {height}px of the screen"
+        # One scrolling row, so the header costs the same at nine sections as at
+        # twenty -- which is the point: every feature still to come used to make
+        # this worse.
+        assert rows == 1, f"the navigation is on {rows} rows"
+        assert height <= 110, f"the header takes {height}px of the screen"
     finally:
         browser.switch_to.default_content()
 

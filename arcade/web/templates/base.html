@@ -388,6 +388,9 @@ a.thread.on{background:var(--code);box-shadow:inset 3px 0 0 var(--accent)}
 a.media img{cursor:zoom-in}
 /* The three sizes a picture can be sent at. Each button carries what that
    choice costs, because the cost is the reason the choice exists. */
+.pager{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:16px 0 4px}
+.pager .on{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);
+  cursor:default}
 .sizes{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .sizes button.size{font-size:.76rem;padding:6px 9px;line-height:1.25;text-align:left}
 .sizes button.size strong{display:block;font-size:.8rem}
@@ -455,11 +458,19 @@ form.composer button[type=submit]{background:var(--sent);border-color:var(--sent
   h1{font-size:1.35rem}
   .panel{padding:14px}
 
-  nav{margin-left:0;width:100%;gap:2px;row-gap:4px}
-  nav a{padding:9px;font-size:.83rem;min-height:40px;display:flex;align-items:center}
-  /* The pages that are not built yet are not links, and a dead row of them is
-     a whole row of a small screen. They are still there on a desktop, where
-     saying what is coming costs nothing. */
+  /* One scrolling row rather than three wrapped ones. Nine sections wrapped to
+     184px of an 844px screen before any page began, and every feature still to
+     come makes that worse -- a strip that scrolls costs the same at nine as at
+     twenty. The edge of the next item is what says there is more. */
+  nav{margin-left:0;width:100%;gap:2px;flex-wrap:nowrap;overflow-x:auto;
+    scrollbar-width:none;-webkit-overflow-scrolling:touch;
+    margin-right:-14px;padding-right:14px}
+  nav::-webkit-scrollbar{display:none}
+  nav a{padding:9px 11px;font-size:.83rem;min-height:40px;display:flex;
+    align-items:center;white-space:nowrap;flex:none}
+  /* The pages that are not built yet are not links, and a dead item is dead
+     space. They are still there on a desktop, where saying what is coming
+     costs nothing. */
   nav a.off{display:none}
 
   /* Four one-line figures as four full-width cards is four screens of
@@ -583,6 +594,19 @@ function arcadeCloseImage(){
 function arcadeLightboxKey(event){
   if (event.key === 'Escape') arcadeCloseImage();
 }
+
+// The page you are on, brought into view: a strip that scrolls is only honest
+// if the thing it is showing you is the thing you are looking at.
+(function () {
+  function show() {
+    var here = document.querySelector('nav a.on');
+    if (here && here.scrollIntoView)
+      here.scrollIntoView({block: 'nearest', inline: 'center'});
+  }
+  if (document.readyState === 'loading')
+    document.addEventListener('DOMContentLoaded', show);
+  else show();
+})();
 
 function arcadeSize(bytes){
   if (bytes < 1024) return bytes.toLocaleString() + ' bytes';

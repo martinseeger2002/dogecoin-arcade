@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% import "_chains.html" as chains %}
+{% block title %}Inscriptions · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Inscriptions</h1>
+<p class="sub">A file written onto the chain in full, owned by an address.</p>
+
+<div class="chainbar">
+  {{ chains.card(chain, node, "Inscriptions live here.",
+                 "Wallet disabled on this node." if not node.wallet else None) }}
+</div>
+
+{% if error %}<div class="msg err">{{ error }}</div>{% endif %}
+{% if node_error %}<div class="msg err">{{ node_error }}</div>{% endif %}
+
+{% if plan %}
+  <h2>Confirm before inscribing</h2>
+  <div class="panel" {% if chain.is_mainnet %}style="border-color:var(--bad);border-width:2px"{% endif %}>
+    {% if chain.is_mainnet %}
+      <p style="color:var(--bad);font-weight:600;margin-top:0">
+        This is mainnet. It is permanent, it cannot be taken back, and it is
+        paid for now.</p>
+    {% endif %}
+    <table>
+      <tr><td class="muted" style="width:130px">File</td>
+          <td>{{ attached_name }} <span class="muted">{{ attached_type }}</span></td></tr>
+      <tr><td class="muted">Size</td>
+          <td>{{ "{:,}".format(plan.content_len) }} bytes, uncompressed</td></tr>
+      <tr><td class="muted">Transactions</td>
+          <td>{{ "{:,}".format(plan.chunks) }}</td></tr>
+      <tr><td class="muted">Fee</td><td>{{ "%.2f"|format(plan.estimate.fee) }}</td></tr>
+      <tr><td class="muted">Dust</td>
+          <td>{{ "%.2f"|format(plan.estimate.dust) }}
+            <span class="muted">&mdash; in outputs you can sweep back later</span></td></tr>
+      <tr><td class="muted">Total now</td>
+          <td><strong>{{ "%.2f"|format(plan.estimate.total) }}</strong></td></tr>
+      <tr><td class="muted">Net after sweeping</td>
+          <td>{{ "%.2f"|format(plan.estimate.net) }}</td></tr>
+      {% if plan.json %}
+      <tr><td class="muted">JSON</td>
+          <td><code style="word-break:break-all">{{ plan.json }}</code></td></tr>
+      {% endif %}
+    </table>
+    <form method="post" action="/inscriptions/create" class="row" style="margin-top:14px">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="attached_b64" value="{{ attached_b64 }}">
+      <input type="hidden" name="attached_name" value="{{ attached_name }}">
+      <input type="hidden" name="attached_type" value="{{ attached_type }}">
+      <input type="hidden" name="json_field" value="{{ json_field or '' }}">
+      <input type="hidden" name="confirmed" value="yes">
+      <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">
+        Inscribe it</button>
+      <a class="btn ghost" href="/inscriptions">Cancel</a>
+    </form>
+  </div>
+{% else %}
+  <h2>Inscribe a file</h2>
+  <div class="panel">
+    <form method="post" action="/inscriptions/create" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <div class="field">
+        <label for="file">The file</label>
+        <input autocomplete="off" type="file" name="attachment" id="file"
+               onchange="priceInscription(this)">
+        <p class="muted" id="priced" hidden style="margin:8px 0 0"></p>
+      </div>
+      <div class="field">
+        <label for="json_field">JSON, optional &mdash; inscribed with it and never editable</label>
+        <textarea autocomplete="off" name="json_field" id="json_field" rows="3"
+                  placeholder='{"name": "Sunrise", "collection": "first"}'
+                  style="min-height:70px">{{ json_field or '' }}</textarea>
+      </div>
+      <button type="submit">Price it</button>
+      <p class="muted" style="margin-bottom:0">
+        Nothing is spent until you see the cost and press again. It goes on
+        uncompressed, exactly as it is.</p>
+    </form>
+  </div>
+{% endif %}
+
+{% if unfinished %}
+<h2>Unfinished</h2>
+<div class="panel">
+  <p style="margin-top:0">Pieces of yours are on the chain and the set is not
+    complete. They are paid for and will never become an inscription until the
+    rest goes out.</p>
+  <table>
+    <tr><th>Id</th><th>Pieces</th><th>First seen</th></tr>
+    {% for u in unfinished %}
+    <tr><td class="mono">{{ u.inscription_id[:16] }}…</td>
+        <td>{{ u.have }} of {{ u.expected }}</td>
+        <td>block {{ "{:,}".format(u.first_block) }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+<h2>Yours{% if my_tag %} &mdash; @{{ my_tag }}{% endif %}</h2>
+{% if not mine %}
+  <p class="muted">Nothing yet on {{ chain.label }}.</p>
+{% else %}
+  <div class="cards">
+    {% for row in mine %}{{ card(row, tags) }}{% endfor %}
+  </div>
+{% endif %}
+
+<h2>Everything on {{ chain.label }}
+  {% if total %}<span class="muted" style="text-transform:none;letter-spacing:0">
+    &mdash; {{ "{:,}".format(total) }}</span>{% endif %}</h2>
+{% if not inscriptions %}
+  <p class="muted">None indexed yet.</p>
+{% else %}
+  <div class="cards">
+    {% for row in inscriptions %}{{ card(row, tags) }}{% endfor %}
+  </div>
+  {{ pager(page, pages) }}
+{% endif %}
+
+{% macro pager(page, pages) %}
+{% if pages > 1 %}
+{# Numbered, because inscriptions are numbered: page 40 is a place you can mean
+   to go, and walking 39 pages of cursors to reach it is not paging. #}
+<nav class="pager">
+  {% if page > 1 %}
+    <a class="btn ghost small" href="/inscriptions?page={{ page - 1 }}">Newer</a>
+  {% endif %}
+  {% set window = 2 %}
+  {% if page - window > 1 %}
+    <a class="btn ghost small" href="/inscriptions?page=1">1</a>
+    {% if page - window > 2 %}<span class="muted">…</span>{% endif %}
+  {% endif %}
+  {% for n in range(page - window, page + window + 1) %}
+    {% if 1 <= n <= pages %}
+      {% if n == page %}<span class="btn small on">{{ n }}</span>
+      {%- else %}<a class="btn ghost small" href="/inscriptions?page={{ n }}">{{ n }}</a>
+      {%- endif %}
+    {% endif %}
+  {% endfor %}
+  {% if page + window < pages %}
+    {% if page + window < pages - 1 %}<span class="muted">…</span>{% endif %}
+    <a class="btn ghost small" href="/inscriptions?page={{ pages }}">{{ pages }}</a>
+  {% endif %}
+  {% if page < pages %}
+    <a class="btn ghost small" href="/inscriptions?page={{ page + 1 }}">Older</a>
+  {% endif %}
+  <form method="get" action="/inscriptions" class="row" style="gap:6px;margin-left:auto">
+    <label class="muted" for="jump" style="margin:0">Page</label>
+    <input autocomplete="off" type="number" name="page" id="jump" min="1"
+           max="{{ pages }}" value="{{ page }}" style="width:5.5rem">
+    <button class="ghost small" type="submit">Go</button>
+  </form>
+</nav>
+{% endif %}
+{% endmacro %}
+
+{% macro card(row, tags) %}
+<div class="card">
+  <div class="row" style="align-items:baseline">
+    <strong>#{{ "{:,}".format(row.number) }}</strong>
+    <span class="muted">{{ row.contenttype if row.contenttype else row.content_type }}</span>
+    <span class="muted" style="margin-left:auto">
+      {{ "{:,}".format(row.content_len) }} bytes</span>
+  </div>
+  {% if row.held and row.content_type.startswith('image/') %}
+    <a class="media" href="/content/{{ row.txid }}?download=1"
+       title="{{ row.txid }} — click to open"
+       onclick="arcadeOpenImage('/content/{{ row.txid }}', '#{{ row.number }}',
+                '/content/{{ row.txid }}?download=1'); return false">
+      <img src="/content/{{ row.txid }}" alt="inscription {{ row.number }}"
+           loading="lazy" style="max-width:100%;border-radius:8px;margin:8px 0"></a>
+  {% endif %}
+  <table>
+    <tr><td class="muted" style="width:74px">Owner</td>
+        <td class="mono" style="word-break:break-all">
+          {% if tags.get(row.owner) %}<strong>@{{ tags[row.owner] }}</strong>
+          {%- else %}{{ row.owner }}{% endif %}</td></tr>
+    <tr><td class="muted">Block</td>
+        <td>{{ "{:,}".format(row.block_height) }}</td></tr>
+  </table>
+  <div class="row" style="margin-top:8px">
+    <a class="btn ghost small" href="/content/{{ row.txid }}">Open</a>
+    <a class="btn ghost small" href="/r/inscription/{{ row.txid }}">Details</a>
+    {% if row.owner in owned %}
+    <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/send">Send</a>
+    {% endif %}
+  </div>
+</div>
+{% endmacro %}
+
+<script>
+function priceInscription(input){
+  var note = document.getElementById('priced');
+  var file = input.files && input.files[0];
+  if (!file) { note.hidden = true; return; }
+  // Priced from the length alone, so choosing a 40 MB file does not mean
+  // holding a second copy of it to find out what it costs.
+  var perChunk = 7628, perOutput = 60, dust = 0.01, feePerKb = 0.01;
+  var chunks = Math.max(1, Math.ceil(file.size / perChunk));
+  var outputs = Math.ceil(file.size / perOutput) + chunks;
+  var chainKb = (chunks * 300 + outputs * 114) / 1000;
+  var fee = chainKb * feePerKb, dustTotal = outputs * dust;
+  note.hidden = false;
+  note.innerHTML = '<strong>' + file.name + '</strong> — ' + arcadeSize(file.size) +
+    ', about <strong>' + chunks.toLocaleString() + '</strong> transaction' +
+    (chunks === 1 ? '' : 's') + ', ' + arcadeCoins(fee + dustTotal) +
+    ' to send and ' + arcadeCoins(fee) + ' once the dust is swept back.';
+}
+</script>
+{% endblock %}

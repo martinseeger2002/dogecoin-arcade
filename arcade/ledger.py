@@ -310,9 +310,15 @@ class LedgerIndex:
     # --- inscriptions ---------------------------------------------------------
 
     def inscriptions(self, owner: str | None = None, creator: str | None = None,
-                     limit: int = 100, after: int = -1) -> list[dict]:
-        """Newest first, or from a number onwards. Never the content: a listing
-        of a hundred files would be a hundred files."""
+                     limit: int = 100, after: int = -1,
+                     offset: int = 0) -> list[dict]:
+        """One page, newest first. Never the content: a listing of a hundred
+        files would be a hundred files.
+
+        `offset` rather than a cursor here, because these are NUMBERED: a page
+        of inscriptions has a page number people can jump to, and jumping to
+        page 40 with a cursor means walking 39 pages to find it.
+        """
         sql = ("SELECT txid, number, creator, owner, block_height, position, "
                "content_type, content_len, sha256, json, chunks, "
                "content IS NOT NULL AS held FROM inscription")
@@ -325,8 +331,9 @@ class LedgerIndex:
             where.append("number > ?"); args.append(after)
         if where:
             sql += " WHERE " + " AND ".join(where)
-        sql += " ORDER BY number DESC LIMIT ?"
+        sql += " ORDER BY number DESC LIMIT ? OFFSET ?"
         args.append(max(1, min(limit, 500)))
+        args.append(max(0, offset))
         with self.open() as db:
             return [dict(row) for row in db.conn.execute(sql, args)]
 
@@ -357,9 +364,18 @@ class LedgerIndex:
                 return None
             return row["content_type"], bytes(row["content"])
 
-    def inscription_count(self) -> int:
+    def inscription_count(self, owner: str | None = None,
+                          creator: str | None = None) -> int:
+        sql, args = "SELECT COUNT(*) FROM inscription", []
+        where = []
+        if owner:
+            where.append("owner = ?"); args.append(owner)
+        if creator:
+            where.append("creator = ?"); args.append(creator)
+        if where:
+            sql += " WHERE " + " AND ".join(where)
         with self.open() as db:
-            return int(db.conn.execute("SELECT COUNT(*) FROM inscription").fetchone()[0])
+            return int(db.conn.execute(sql, args).fetchone()[0])
 
     def unfinished_inscriptions(self, sender: str | None = None) -> list[dict]:
         """Sets that have pieces on chain and are not complete.

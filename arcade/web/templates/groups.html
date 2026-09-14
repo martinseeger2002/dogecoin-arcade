@@ -225,6 +225,21 @@
          conversation. Reversed here rather than in the query because
          group_posts() is oldest-first for the scanner and the chunk
          assembler, which both depend on that order. #}
+      {# A page at a time. A channel a year old is not a thing a phone over a
+         tunnel can draw, and the part anybody is looking at is the end. #}
+      {% if older %}
+      <div class="row" style="justify-content:center;padding:10px 0">
+        <a class="btn ghost small"
+           href="/groups?which={{ which }}&channel={{ channel }}&before={{ posts[0].id }}">
+          Older posts</a>
+      </div>
+      {% endif %}
+      {% if before %}
+      <div class="row" style="justify-content:center;padding:0 0 10px">
+        <a class="btn ghost small"
+           href="/groups?which={{ which }}&channel={{ channel }}">Back to the newest</a>
+      </div>
+      {% endif %}
       {% for p in posts|reverse %}
         <div class="bubble-row {{ 'mine' if p.mine else 'theirs' }}">
           <div class="bubble">

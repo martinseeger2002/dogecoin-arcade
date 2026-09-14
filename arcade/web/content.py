@@ -73,7 +73,7 @@ def _json(payload: Any, status: int = 200) -> JSONResponse:
 
 
 def _missing(what: str) -> JSONResponse:
-    return _json({"error": what}, status_code=404)
+    return _json({"error": what}, status=404)
 
 
 def _key(value: str) -> str | int:

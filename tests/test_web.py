@@ -180,7 +180,7 @@ def test_wallet_receive_fails_cleanly_without_a_node(client):
 
 
 def test_unbuilt_sections_say_so(client):
-    for path, milestone in (("/exchange", "M3"), ("/nfts", "M4"), ("/inscriptions", "M5")):
+    for path, milestone in (("/exchange", "M3"), ("/nfts", "M4")):
         body = client[0].get(path).text
         assert "Not built yet" in body and milestone in body
 

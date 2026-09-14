@@ -861,23 +861,46 @@ class MessageStore:
              ",".join(txids or [])))
         return cur.lastrowid or 0
 
-    def group_posts(self, network: str, channel: str,
-                    limit: int = 200) -> list[sqlite3.Row]:
-        """Posts in one channel, oldest first, so a channel reads like a room.
+    def group_posts(self, network: str, channel: str, limit: int = 50,
+                    before_id: int | None = None) -> list[sqlite3.Row]:
+        """One page of a channel, oldest first, so it reads like a room.
 
         It was newest-first for a while, as a feed. A channel presented beside a
         private conversation should behave like one: you read downward and the
         newest is at the bottom, where the composer is.
 
+        A page rather than everything, because a busy channel is not a thing you
+        can render: loading a year of posts to show the last twenty is slow on
+        this machine and hopeless on a phone over a tunnel. `before_id` walks
+        backwards through the older ones -- an id rather than a block time,
+        because two posts can share a time and a page that overlaps or skips at
+        the seam is worse than no paging at all.
+
         The file bytes are deliberately not selected: a channel listing must not
         pull every attachment in it into memory to render a page.
         """
-        rows = list(self.conn.execute(
-            "SELECT id,network,channel,txid,height,block_time,sender,nickname,text,"
-            "mine,file_name,file_type,LENGTH(file_data) AS file_size "
-            "FROM group_post WHERE network=? AND channel=? "
-            "ORDER BY block_time DESC, id DESC LIMIT ?", (network, channel, limit)))
-        return list(reversed(rows))
+        sql = ("SELECT id,network,channel,txid,height,block_time,sender,nickname,"
+               "text,mine,file_name,file_type,LENGTH(file_data) AS file_size "
+               "FROM group_post WHERE network=? AND channel=?")
+        args: list[Any] = [network, channel]
+        if before_id is not None:
+            sql += " AND id < ?"
+            args.append(before_id)
+        sql += " ORDER BY block_time DESC, id DESC LIMIT ?"
+        args.append(max(1, min(limit, 500)))
+        return list(reversed(list(self.conn.execute(sql, args))))
+
+    def group_post_count(self, network: str, channel: str) -> int:
+        return int(self.conn.execute(
+            "SELECT COUNT(*) FROM group_post WHERE network=? AND channel=?",
+            (network, channel)).fetchone()[0])
+
+    def group_has_older(self, network: str, channel: str, before_id: int) -> bool:
+        """Is there anything before this page? Asked rather than counted: the
+        answer is one row, and the count is the whole table."""
+        return self.conn.execute(
+            "SELECT 1 FROM group_post WHERE network=? AND channel=? AND id<? "
+            "LIMIT 1", (network, channel, before_id)).fetchone() is not None
 
     def add_group_chunk(self, network: str, msg_id: bytes, countdown: int,
                         txid: str, height: int, block_time: int, sender: str,
@@ -1279,7 +1302,8 @@ class MessageStore:
             entry["name"] = self.contact_name(key)
         return sorted(peers.values(), key=lambda e: e["last"], reverse=True)
 
-    def thread(self, recipient_fp: str, peer_key: bytes) -> list[dict]:
+    def thread(self, recipient_fp: str, peer_key: bytes,
+               limit: int | None = None) -> list[dict]:
         """Every message with one correspondent, oldest first.
 
         A message is shown once even when both halves of it are held here. That
@@ -1323,7 +1347,11 @@ class MessageStore:
                           "file_name": row["file_name"],
                           "file_type": row["file_type"],
                           "file_size": row["file_size"] or 0})
-        return sorted(items, key=lambda i: i["when"])
+        items.sort(key=lambda i: i["when"])
+        # The newest `limit` of them, still in reading order. A conversation
+        # years long is not something a phone should be asked to draw to show
+        # you the last thing somebody said.
+        return items[-limit:] if limit else items
 
     def mark_thread_read(self, recipient_fp: str, peer_key: bytes) -> None:
         self.conn.execute(

@@ -147,6 +147,10 @@ class AppState:
     #: the button would start a second cloudflared that nothing afterwards knows
     #: about or can close. The claim is what makes the button one press.
     tunnel_opening: bool = False
+    #: Whether an inscribed page may ask which wallet is looking at it. The
+    #: balances themselves are public either way -- anyone with an index can
+    #: look one up -- so this is about the one thing the chain does not say.
+    inscription_wallet_access: bool = True
 
     #: Latest known tip per network, and when each was last successfully asked.
     #: Kept so the interface can distinguish "nothing new" from "not looking",
