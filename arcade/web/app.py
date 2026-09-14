@@ -2193,13 +2193,29 @@ def create_app(state: AppState) -> FastAPI:
             return contentlib._json(None)
 
     @app.get("/r/inscriptions")
-    def r_inscriptions(after: int = -1, limit: int = 100):
-        rows = _content_index().inscriptions(limit=limit, after=after)
+    def r_inscriptions(limit: int = 100, offset: int = 0, after: int = -1,
+                       creator: str = "", owner: str = ""):
+        """A page of inscriptions, newest first, each with its JSON.
+
+        `offset` walks back through pages; `after` filters to numbers above one
+        you have already seen, which is what a page polling for new work wants.
+        """
+        rows = _content_index().inscriptions(
+            limit=limit, offset=offset, after=after,
+            creator=creator or None, owner=owner or None)
         return contentlib._json([contentlib.describe(row) for row in rows])
 
+    @app.get("/r/inscriptions/count")
+    def r_inscription_count(owner: str = "", creator: str = ""):
+        """How many there are, so a page can size its own paging."""
+        return contentlib._json({
+            "count": _content_index().inscription_count(
+                owner=owner or None, creator=creator or None)})
+
     @app.get("/r/inscriptions/{address}")
-    def r_inscriptions_of(address: str):
-        rows = _content_index().inscriptions(owner=address, limit=200)
+    def r_inscriptions_of(address: str, limit: int = 200, offset: int = 0):
+        rows = _content_index().inscriptions(owner=address, limit=limit,
+                                             offset=offset)
         return contentlib._json([contentlib.describe(row) for row in rows])
 
     @app.get("/r/balances/{address}")

@@ -132,7 +132,20 @@ def content(index: Any, key: str, download: bool = False) -> Response:
 
 
 def describe(row: dict) -> dict:
-    """One inscription, as a page sees it. Never the bytes."""
+    """One inscription, as a page sees it. Never the bytes.
+
+    The creator's JSON comes with it, parsed. It was not here at first, which
+    meant a gallery of a hundred inscriptions had to make a hundred more calls
+    to find out what any of them were -- and the obvious endpoint, the one
+    named after the inscription, was the one that did not answer the obvious
+    question. It is small by design and the caller chose how many rows to ask
+    for, so it costs what the caller asked for.
+    """
+    raw = row.get("json") or ""
+    try:
+        parsed = json.loads(raw) if raw else None
+    except ValueError:
+        parsed = None          # inscribed as something that is not JSON
     return {
         "id": row["txid"],
         "number": row["number"],
@@ -144,6 +157,8 @@ def describe(row: dict) -> dict:
         "sha256": row["sha256"],
         "transactions": row["chunks"],
         "held": bool(row["held"]),
+        "json": parsed,
+        "rawjson": raw,
     }
 
 

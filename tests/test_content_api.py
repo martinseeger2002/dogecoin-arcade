@@ -220,3 +220,91 @@ def test_the_wallet_endpoint_asks_for_every_address_at_once():
     start = source.index("def r_wallet(")
     body = source[start:source.index("@app.get", start + 10)]
     assert "index.balances(addresses)" in body, body[:400]
+
+
+# --- a list, and the creator's JSON with it ------------------------------------
+
+
+@pytest.fixture
+def inscribed_rows(tmp_path):
+    from arcade.config import NETWORKS
+    from arcade.db import Database
+    from arcade.ledger import LedgerIndex
+    from arcade.state import install_schema
+
+    path = tmp_path / "regtest-ledger.sqlite"
+    db = Database(path)
+    install_schema(db)
+    rows = [
+        (0, "nMe", '{"name": "Hours", "collection": "first"}'),
+        (1, "nMe", '{"name": "arcade-lib", "kind": "library"}'),
+        (2, "nThem", ""),
+        (3, "nThem", "not json at all"),
+    ]
+    for number, owner, meta in rows:
+        db.conn.execute(
+            "INSERT INTO inscription(txid,number,creator,owner,block_height,"
+            "position,content_type,content_len,sha256,json,chunks,content) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (f"{number:064x}", number, "nMe", owner, 100 + number, 0,
+             "text/html", 10, "ab" * 32, meta, 1, b"hi"))
+    db.conn.commit()
+    db.close()
+    return LedgerIndex(path, NETWORKS["regtest"], rpc_factory=lambda: None)
+
+
+def test_a_listing_carries_each_inscriptions_json(inscribed_rows):
+    """A gallery of a hundred should not need a hundred more calls to find out
+    what any of them are."""
+    from arcade.web import content as contentlib
+
+    listed = [contentlib.describe(row) for row in inscribed_rows.inscriptions()]
+    assert [row["number"] for row in listed] == [3, 2, 1, 0], "newest first"
+    by_number = {row["number"]: row for row in listed}
+    assert by_number[0]["json"] == {"name": "Hours", "collection": "first"}
+    assert by_number[1]["json"]["kind"] == "library"
+
+
+def test_the_endpoint_named_after_an_inscription_answers_about_it(inscribed_rows):
+    """Including the question anybody asks first: what is it?"""
+    from arcade.web import content as contentlib
+
+    described = contentlib.describe(inscribed_rows.inscription(0))
+    assert described["json"] == {"name": "Hours", "collection": "first"}
+    assert described["rawjson"].startswith("{")
+    assert described["number"] == 0 and described["length"] == 10
+
+
+def test_no_json_is_null_and_broken_json_is_null_with_the_bytes_kept(inscribed_rows):
+    """`raw` is always exactly what is on the chain, because that is a fact and
+    our ability to parse it is not."""
+    from arcade.web import content as contentlib
+
+    none = contentlib.describe(inscribed_rows.inscription(2))
+    assert none["json"] is None and none["rawjson"] == ""
+
+    broken = contentlib.describe(inscribed_rows.inscription(3))
+    assert broken["json"] is None
+    assert broken["rawjson"] == "not json at all", "kept verbatim"
+
+
+def test_a_listing_can_be_paged_and_filtered(inscribed_rows):
+    first = inscribed_rows.inscriptions(limit=2)
+    second = inscribed_rows.inscriptions(limit=2, offset=2)
+    assert [r["number"] for r in first] == [3, 2]
+    assert [r["number"] for r in second] == [1, 0]
+
+    assert [r["number"] for r in inscribed_rows.inscriptions(owner="nThem")] == [3, 2]
+    assert [r["number"] for r in inscribed_rows.inscriptions(after=2)] == [3]
+    assert inscribed_rows.inscription_count() == 4
+    assert inscribed_rows.inscription_count(owner="nMe") == 2
+
+
+def test_the_list_endpoints_are_all_reachable(client):
+    app, _ = client
+    for path in ("/r/inscriptions", "/r/inscriptions?limit=5&offset=0",
+                 "/r/inscriptions?after=3", "/r/inscriptions/count",
+                 "/r/inscriptions/nSomebody"):
+        response = app.get(path)
+        assert response.status_code == 200, path
+        assert response.headers["access-control-allow-origin"] == "*"
