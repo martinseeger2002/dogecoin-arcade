@@ -24,9 +24,11 @@ class FakeTunnel:
     """A tunnel without a cloudflared behind it."""
 
     def __init__(self, token="the-key", url="https://four-words.trycloudflare.com",
-                 seconds=900):
+                 seconds=900, pages_url="https://other-four-words.trycloudflare.com"):
         self.token = token
         self.url = url
+        self.pages_url = pages_url
+        self.pages_process = None
         self.opened = time.time()
         self.closes = time.time() + seconds
         self.process = None
@@ -162,6 +164,84 @@ def test_closing_it_shuts_every_phone_out(client):
 
     state.set_tunnel(None)
     assert app.get("/", headers=EDGE).status_code == 403
+
+
+# --- the pages' own door -------------------------------------------------------
+
+
+def test_an_inscribed_page_cannot_carry_the_cookie_so_it_gets_a_door_of_its_own(client):
+    """Measured over a real tunnel: a page in the sandbox has an opaque origin,
+    sends no cookie, and every fetch it made came back 403. The second
+    hostname serves the content and the page API without one, and nothing
+    else -- not with the cookie, not without."""
+    app, state = client
+    tunnel = FakeTunnel()
+    state.set_tunnel(tunnel)
+    pages = {"host": "other-four-words.trycloudflare.com", **EDGE}
+
+    assert app.get("/r/blockheight", headers=pages).status_code == 200
+    assert app.get("/r/storage.js", headers=pages).status_code == 200
+    assert app.post("/r/send", headers=pages, json={}).status_code == 400, "reached the route"
+    assert app.get("/content/" + "a" * 64, headers=pages).status_code == 404, "reached the route"
+
+    for path in ("/", "/approvals", "/remote", "/inscriptions", "/storage/" + "a" * 64,
+                 f"/remote/unlock?k={tunnel.token}"):
+        shut = app.get(path, headers=pages)
+        assert shut.status_code == 404 and "Nothing is served" in shut.text, path
+    assert app.post("/rpc/test", headers=pages, json={"method": "da_requests"}).status_code == 404
+    app.cookies.set(remotelib.COOKIE_NAME, tunnel.token)
+    assert app.get("/", headers=pages).status_code == 404, "the cookie is no key to this door"
+
+    # The wallet's own hostname still wants the cookie for the same paths.
+    app.cookies.clear()
+    assert app.get("/r/blockheight", headers=EDGE).status_code == 403
+    assert app.get("/content/" + "a" * 64, headers=EDGE).status_code == 403
+
+
+def test_over_the_tunnel_the_viewer_frames_the_page_from_its_own_door(client):
+    from arcade.db import Database
+    from arcade.state import install_schema
+    app, state = client
+    txid = "b" * 64
+    db = Database(state.home / "main-ledger.sqlite")
+    install_schema(db)
+    db.conn.execute(
+        "INSERT OR IGNORE INTO inscription(txid,number,creator,owner,block_height,position,"
+        "content_type,content_len,sha256,json,chunks,content) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        (txid, 5, "nMe", "nMe", 100, 0, "text/html", 5, "c" * 64, "", 1, b"<p>hi"))
+    db.conn.commit()
+    db.close()
+
+    tunnel = FakeTunnel()
+    state.set_tunnel(tunnel)
+    app.cookies.set(remotelib.COOKIE_NAME, tunnel.token)
+    over = app.get(f"/inscriptions/{txid}/view", headers=EDGE).text
+    assert f'src="{tunnel.pages_url}/content/{txid}"' in over
+    here = app.get(f"/inscriptions/{txid}/view").text
+    assert f'src="/content/{txid}"' in here, "on this machine there is no door and no second name"
+
+
+def test_a_tunnel_is_open_only_while_both_its_doors_are():
+    import subprocess
+
+    live = subprocess.Popen(["sleep", "30"])
+    dead = subprocess.Popen(["true"])
+    dead.wait()
+    try:
+        now = time.time()
+        assert remotelib.Tunnel("u", "t", now, now + 60, process=live).alive()
+        assert remotelib.Tunnel("u", "t", now, now + 60, process=live,
+                                pages_url="p", pages_process=live).alive()
+        assert not remotelib.Tunnel("u", "t", now, now + 60, process=live,
+                                    pages_url="p", pages_process=dead).alive()
+        both = remotelib.Tunnel("u", "t", now, now + 60, process=live,
+                                pages_url="p", pages_process=subprocess.Popen(["sleep", "30"]))
+        remotelib.close_tunnel(both)
+        assert both.process.poll() is not None and both.pages_process.poll() is not None
+    finally:
+        if live.poll() is None:
+            live.kill()
+            live.wait()
 
 
 def test_the_guard_covers_routes_nobody_has_written_yet():

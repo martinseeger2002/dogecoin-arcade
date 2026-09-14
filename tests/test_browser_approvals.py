@@ -172,6 +172,57 @@ def test_what_was_waiting_before_the_page_opened_does_not_pop_up_over_it(browser
     state.approvals.decide(stale, "denied"); state.approvals.decide(fresh, "denied")
 
 
+# --- over the tunnel ------------------------------------------------------------
+
+def test_over_the_tunnel_a_page_still_reaches_the_wallet(browser, served):
+    """Found on the live wallet: over the tunnel an inscribed page sat there
+    saying "..." -- its opaque origin sends no cookie, so every fetch it
+    made met the locked door. Stood in for here by two names for loopback:
+    the wallet at wallet.localhost, the pages at pages.localhost, and the
+    guard telling them apart by Host exactly as it does the real ones."""
+    import subprocess
+
+    from arcade.remote import COOKIE_NAME, Tunnel
+
+    base, state = served
+    port = base.rsplit(":", 1)[1]
+    _add_counter_page(state)
+    state.pagestore.clear(STORING)
+    sleeper = subprocess.Popen(["sleep", "120"])
+    tunnel = Tunnel(url="http://wallet.localhost", token="k" * 32, opened=time.time(),
+                    closes=time.time() + 120, process=sleeper,
+                    pages_url=f"http://pages.localhost:{port}", pages_process=sleeper)
+    state.set_tunnel(tunnel)
+    try:
+        wallet = f"http://wallet.localhost:{port}"
+        browser.get(f"{wallet}/remote/unlock?k={tunnel.token}")
+        assert [c["name"] for c in browser.get_cookies()] == [COOKIE_NAME], (
+            "Firefox keeps a Secure cookie for localhost, which it counts as secure")
+        browser.get(f"{wallet}/inscriptions/{STORING}/view")
+        frame = browser.find_element(By.CSS_SELECTOR, "iframe.inscription-frame")
+        assert frame.get_attribute("src") == f"{tunnel.pages_url}/content/{STORING}"
+        browser.switch_to.frame(frame)
+        WebDriverWait(browser, 10).until(lambda b: b.execute_script(
+            "return document.title").startswith("visits "))
+        assert browser.execute_script("return document.title") == "visits 1", (
+            "storage.js loaded from the pages' door and the bridge answered")
+        browser.set_script_timeout(10)
+        status = browser.execute_async_script(
+            "var done = arguments[0];"
+            "fetch('/r/blockheight').then(function(r){ done(r.status); })"
+            ".catch(function(e){ done('ERR ' + e.message); });")
+        assert status == 200, "the page API, cookie-less, from inside the sandbox"
+        browser.switch_to.default_content()
+        # And the pages' name is good for nothing else.
+        browser.get(f"{tunnel.pages_url}/approvals")
+        assert "Nothing is served" in browser.page_source
+    finally:
+        browser.switch_to.default_content()
+        state.set_tunnel(None)
+        sleeper.kill()
+        sleeper.wait()
+
+
 # --- storage ------------------------------------------------------------------
 
 STORING = "cd" * 32

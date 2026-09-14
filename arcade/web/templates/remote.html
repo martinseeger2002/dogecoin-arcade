@@ -82,6 +82,9 @@
         <table>
           <tr><td class="muted">Address</td>
               <td class="mono" style="word-break:break-all">{{ tunnel.url }}</td></tr>
+          <tr><td class="muted">Pages</td>
+              <td class="muted">a second address, not shown: inscribed pages
+                run from it, and it serves nothing else</td></tr>
           <tr><td class="muted">Closes in</td>
               <td id="left" data-seconds="{{ tunnel.seconds_left }}">
                 {% set h = tunnel.seconds_left // 3600 %}

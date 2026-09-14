@@ -20,6 +20,18 @@ So the tunnel is not the security. These are:
 * **No bot RPC.** `/rpc/*` is refused through the tunnel outright. It has its
   own key, meant for programs on this machine, and it can spend.
 
+Why there are two hostnames
+---------------------------
+An inscribed page runs in a sandbox with an opaque origin, and a document with
+an opaque origin sends no cookies: not the key, nothing. Measured -- over a real
+tunnel every `fetch('/r/...')` from inside the frame came back 403 and the
+page sat there saying "...". So the inscribed pages get a door of their own: a
+second quick tunnel, whose hostname is handed out only inside the viewer's own
+page (cookie-guarded) as the frame's address, and which serves nothing but
+`/content/*` and the page API `/r/*` -- what a page may reach anyway, and
+nothing that can spend or show the wallet. That hostname is the whole of its
+key, which is why it is never shown and lives exactly as long as the tunnel.
+
 Why the token cannot be replaced by "is this request local"
 -----------------------------------------------------------
 It cannot be told apart by address: cloudflared runs on this machine and
@@ -94,6 +106,11 @@ class Tunnel:
     opened: float
     closes: float
     process: subprocess.Popen | None = field(default=None, repr=False)
+    #: The inscribed pages' own door: a second hostname, served cookie-less
+    #: and restricted to `/content/*` and `/r/*`. None means the pages are
+    #: framed from the wallet's own hostname, as they are on this machine.
+    pages_url: str | None = None
+    pages_process: subprocess.Popen | None = field(default=None, repr=False)
 
     @property
     def link(self) -> str:
@@ -109,7 +126,10 @@ class Tunnel:
         return time.time() >= self.closes
 
     def alive(self) -> bool:
+        # Both doors or neither: a wallet whose pages cannot answer is not
+        # "open", and the page saying so beats a frame that quietly hangs.
         return (self.process is not None and self.process.poll() is None
+                and (self.pages_process is None or self.pages_process.poll() is None)
                 and not self.expired)
 
 
@@ -130,6 +150,20 @@ def open_tunnel(port: int, minutes: int = DEFAULT_MINUTES,
             "https://github.com/cloudflare/cloudflared/releases and put it on "
             "your PATH.")
 
+    process, url = _start(cloudflared, port)
+    try:
+        pages_process, pages_url = _start(cloudflared, port)
+    except TunnelError:
+        process.terminate()
+        raise
+    now = time.time()
+    return Tunnel(url=url, token=secrets.token_urlsafe(24), opened=now,
+                  closes=now + minutes * 60, process=process,
+                  pages_url=pages_url, pages_process=pages_process)
+
+
+def _start(cloudflared: str, port: int) -> tuple[subprocess.Popen, str]:
+    """One cloudflared, and the address the edge gave it."""
     process = subprocess.Popen(
         [cloudflared, "tunnel", "--url", f"http://127.0.0.1:{port}",
          "--no-autoupdate"],
@@ -161,9 +195,7 @@ def open_tunnel(port: int, minutes: int = DEFAULT_MINUTES,
                ". Check this machine can reach the internet."))
 
     _drain(process)
-    now = time.time()
-    return Tunnel(url=url, token=secrets.token_urlsafe(24), opened=now,
-                  closes=now + minutes * 60, process=process)
+    return process, url
 
 
 def _drain(process: subprocess.Popen) -> None:
@@ -181,17 +213,19 @@ def _drain(process: subprocess.Popen) -> None:
 
 def close_tunnel(tunnel: Tunnel | None) -> None:
     """Shut the door. Safe to call on one already shut."""
-    if tunnel is None or tunnel.process is None:
+    if tunnel is None:
         return
-    process = tunnel.process
-    try:
-        process.terminate()
+    for process in (tunnel.process, tunnel.pages_process):
+        if process is None:
+            continue
         try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.kill()
-    except Exception:
-        pass
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        except Exception:
+            pass
     tunnel.closes = min(tunnel.closes, time.time())
 
 
@@ -213,10 +247,15 @@ def is_remote(headers, host: str = "", tunnel_url: str | None = None) -> bool:
     """
     if any(header in headers for header in EDGE_HEADERS):
         return True
-    if tunnel_url:
-        name = (host or "").split(":")[0].strip().lower()
-        return name != "" and name == tunnel_url.split("://")[-1].split("/")[0].lower()
-    return False
+    return same_host(host, tunnel_url)
+
+
+def same_host(host: str, url: str | None) -> bool:
+    """Is this Host header the hostname of `url`? Exact, ports aside."""
+    if not url:
+        return False
+    name = (host or "").split(":")[0].strip().lower()
+    return name != "" and name == url.split("://")[-1].split("/")[0].split(":")[0].lower()
 
 
 def qr_svg(text: str, scale: int = 5) -> str:

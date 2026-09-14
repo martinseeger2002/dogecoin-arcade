@@ -120,6 +120,10 @@ def locked(title: str, detail: str, status: int = 403) -> HTMLResponse:
     return HTMLResponse(LOCKED_PAGE % (title, detail), status_code=status)
 
 
+#: What the pages' hostname serves: what a page in the sandbox may reach.
+PAGES_DOOR = ("/content/", "/r/")
+
+
 def remote_guard(state: AppState):
     """Refuse anything that arrived from outside without the key.
 
@@ -129,7 +133,17 @@ def remote_guard(state: AppState):
     """
     async def guard(request: Request, call_next):
         tunnel = state.remote_tunnel()
-        if not remotelib.is_remote(request.headers, request.headers.get("host", ""),
+        host = request.headers.get("host", "")
+        if tunnel is not None and remotelib.same_host(host, tunnel.pages_url):
+            # The inscribed pages' door. A page in the sandbox has an opaque
+            # origin and sends no cookie, so this hostname is its whole key:
+            # given out only as the frame's address inside the viewer, and
+            # good for nothing but the content and the page API.
+            if request.url.path.startswith(PAGES_DOOR):
+                return await call_next(request)
+            return locked("Not here", "Nothing is served at this address but "
+                          "inscribed pages.", status=404)
+        if not remotelib.is_remote(request.headers, host,
                                    tunnel.url if tunnel else None):
             return await call_next(request)
 
@@ -2938,8 +2952,14 @@ def create_app(state: AppState) -> FastAPI:
         if row is None:
             state.flash("no such inscription", "err")
             return RedirectResponse("/inscriptions", status_code=303)
+        # Over the tunnel the frame is addressed to the pages' own hostname:
+        # from inside the sandbox nothing carries the cookie, and that door
+        # needs none. On this machine there is no door, and no second name.
+        tunnel = state.remote_tunnel()
+        pages = (tunnel.pages_url or "") if tunnel is not None and remotelib.is_remote(
+            request.headers, request.headers.get("host", ""), tunnel.url) else ""
         return render(request, "inscription_view.html", row=row,
-                      tag=index.tag_of(row["owner"]),
+                      tag=index.tag_of(row["owner"]), pages=pages,
                       renders=row["content_type"].startswith(contentlib.RENDERABLE))
 
     @app.get("/tokens", response_class=HTMLResponse)

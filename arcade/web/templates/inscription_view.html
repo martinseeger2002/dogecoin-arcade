@@ -20,7 +20,7 @@
      Without it the frame gets an opaque origin -- no cookies, no reach into
      this page, and it can only load what CORS lets it. #}
   <div class="panel" style="padding:0;overflow:hidden">
-    <iframe class="inscription-frame" src="/content/{{ row.txid }}"
+    <iframe class="inscription-frame" src="{{ pages }}/content/{{ row.txid }}"
             sandbox="allow-scripts allow-pointer-lock"
             referrerpolicy="no-referrer" loading="lazy"
             title="inscription {{ row.number }}"></iframe>

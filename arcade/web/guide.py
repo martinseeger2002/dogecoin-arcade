@@ -166,6 +166,8 @@ SECTIONS: list[dict] = [
             ("The random address is not the secret. The QR carries a key; the "
              "address alone opens a locked page."),
             "It closes itself, and the bot RPC is never reachable through it.",
+            ("Inscribed pages get a second, unnamed address of their own, "
+             "good for nothing but their content and the page API."),
         ],
     },
     {
