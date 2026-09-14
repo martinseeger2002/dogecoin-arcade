@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from . import inscriptions as I
+from . import tags as T
 from . import payload as P
 from .config import (
     FIRST_PROPERTY_ID_MAIN,
@@ -146,6 +147,18 @@ CREATE TABLE IF NOT EXISTS inscription_chunk (
     PRIMARY KEY (sender, inscription_id, countdown)
 );
 
+-- @tags. One name to an address and one address to a name: a name that points
+-- at two people is not a name, and an address with two gives a reader two
+-- answers to the same question. Both are enforced by the keys here rather than
+-- by the code that writes them.
+CREATE TABLE IF NOT EXISTS tag (
+    tag           TEXT    PRIMARY KEY,
+    address       TEXT    NOT NULL UNIQUE,
+    claimed_txid  TEXT    NOT NULL,
+    block_height  INTEGER NOT NULL,
+    position      INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS ribbit_tx_block_idx ON arcade_tx(block_height, position);
 CREATE INDEX IF NOT EXISTS balance_property_idx ON balance(property_id);
 """
@@ -158,6 +171,7 @@ def install_schema(db: Database) -> None:
     register_journalled_table("balance", ("address", "property_id"))
     register_journalled_table("activation", ("feature_id",))
     register_journalled_table("arcade_tx", ("txid",))
+    register_journalled_table("tag", ("tag",))
     register_journalled_table("inscription", ("txid",))
     register_journalled_table("inscription_chunk",
                               ("sender", "inscription_id", "countdown"))
@@ -529,6 +543,17 @@ class Engine:
         """
         if not I.is_inscription(msg.data):
             return None
+        if len(msg.data) > 5 and msg.data[5] in (T.KIND_CLAIM, T.KIND_TRANSFER):
+            try:
+                kind, tag = T.parse(msg.data)
+            except I.InscriptionError as exc:
+                raise InvalidTransaction(f"malformed tag: {exc}") from None
+            try:
+                T.validate(tag)
+            except T.TagError as exc:
+                raise InvalidTransaction(f"that tag cannot be claimed: {exc}") from None
+            return self._tag(rtx, kind, tag)
+
         try:
             parsed = I.parse(msg.data)
         except I.InscriptionError as exc:
@@ -541,6 +566,46 @@ class Engine:
             self._inscription_transfer(rtx, parsed)
         else:
             self._inscription_chunk(rtx, parsed)
+
+    def _tag(self, rtx: ArcadeTransaction, kind: int, tag: str) -> None:
+        """Claim a tag, or hand one to the reference address."""
+        held = self.state.db.conn.execute(
+            "SELECT tag, address FROM tag WHERE tag=?", (tag,)).fetchone()
+        mine = self.state.db.conn.execute(
+            "SELECT tag FROM tag WHERE address=?", (rtx.sender,)).fetchone()
+
+        if kind == T.KIND_TRANSFER:
+            if held is None or held["address"] != rtx.sender:
+                raise InvalidTransaction("that tag is not yours to send")
+            if not rtx.reference:
+                raise InvalidTransaction("a transfer needs a reference address")
+            if rtx.reference == rtx.sender:
+                raise InvalidTransaction("that tag is already there")
+            taken = self.state.db.conn.execute(
+                "SELECT tag FROM tag WHERE address=?", (rtx.reference,)).fetchone()
+            if taken is not None:
+                # Refused rather than replaced: quietly dropping somebody's
+                # existing name because a stranger sent them another is a way to
+                # lose a name without being asked.
+                raise InvalidTransaction(
+                    f"that address already holds @{taken['tag']}")
+            self.state.update("tag", {"tag": tag}, {"address": rtx.reference,
+                                                    "claimed_txid": rtx.txid,
+                                                    "block_height": rtx.block_height,
+                                                    "position": rtx.position})
+            return
+
+        if held is not None:
+            raise InvalidTransaction(
+                "that tag is already yours" if held["address"] == rtx.sender
+                else "that tag is taken")
+        if mine is not None:
+            # Changing your tag frees the old one: holding names you no longer
+            # use is how a namespace fills up with nothing.
+            self.state.delete("tag", {"tag": mine["tag"]})
+        self.state.insert("tag", {
+            "tag": tag, "address": rtx.sender, "claimed_txid": rtx.txid,
+            "block_height": rtx.block_height, "position": rtx.position})
 
     # --- inscriptions ---------------------------------------------------------
 

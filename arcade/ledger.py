@@ -270,6 +270,43 @@ class LedgerIndex:
             ).fetchone()
         return int(row["balance"]) if row is not None else 0
 
+    # --- @tags ----------------------------------------------------------------
+
+    def tag_of(self, address: str) -> str | None:
+        """The name this address answers to, if it has claimed one."""
+        with self.open() as db:
+            row = db.conn.execute(
+                "SELECT tag FROM tag WHERE address=?", (address,)).fetchone()
+            return row["tag"] if row else None
+
+    def address_of(self, tag: str) -> str | None:
+        """Who holds a name. None means nobody does -- never "not yet indexed",
+        which is why anything spending on the strength of this has to show the
+        address it resolved to before it spends."""
+        from .tags import normalise
+
+        with self.open() as db:
+            row = db.conn.execute(
+                "SELECT address FROM tag WHERE tag=?", (normalise(tag),)).fetchone()
+            return row["address"] if row else None
+
+    def tags(self, limit: int = 200) -> list[dict[str, Any]]:
+        """Every claimed name, newest first."""
+        with self.open() as db:
+            return [dict(row) for row in db.conn.execute(
+                "SELECT * FROM tag ORDER BY block_height DESC, position DESC "
+                "LIMIT ?", (max(1, min(limit, 1000)),))]
+
+    def tags_for(self, addresses: list[str]) -> dict[str, str]:
+        """Names for a batch of addresses: one query for a page full of posts."""
+        if not addresses:
+            return {}
+        marks = ",".join("?" * len(addresses))
+        with self.open() as db:
+            return {row["address"]: row["tag"] for row in db.conn.execute(
+                f"SELECT address, tag FROM tag WHERE address IN ({marks})",
+                addresses)}
+
     # --- inscriptions ---------------------------------------------------------
 
     def inscriptions(self, owner: str | None = None, creator: str | None = None,
