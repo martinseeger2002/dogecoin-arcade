@@ -155,7 +155,8 @@ def test_a_page_files_a_request_and_the_wallet_shows_it(client):
     assert app.get(f"/r/send/{rid}").json()["status"] == "pending"
 
     assert "1 send waiting for your approval" in app.get("/").text
-    assert app.get("/approvals/waiting").json()["waiting"] == 1
+    waiting = app.get("/approvals/waiting").json()
+    assert waiting["waiting"] == 1 and 0 <= waiting["requests"][0]["age"] < 5
     page = app.get("/approvals").text
     assert "1.5 coins to" in page and "Hat Shop" in page and "one red hat" in page
     assert "an inscribed page" in page

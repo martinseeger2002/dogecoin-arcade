@@ -280,6 +280,9 @@ def test_a_bot_asks_and_the_owner_decides(web):
     assert "a program on the bot RPC" in app.get("/approvals").text
     assert refused(bot, -8, "da_requesttoken", alice, bob, 999, "1") == "there is no token 999"
     assert refused(bot, -8, "da_requestinscription", bob, "0") == "no such inscription"
+    assert refused(bot, -8, "da_requestinscription", bob, 0) == "no such inscription", \
+        "a bare number is a number, as the shell sends it"
+    assert refused(bot, -3, "da_requestinscription", bob, True).startswith("inscription must be")
     assert refused(bot, -8, "da_request", "nope") == "no such request"
 
     page = app.get(f"/approvals/{asked['id']}").text

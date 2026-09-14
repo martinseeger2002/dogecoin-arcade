@@ -2627,10 +2627,15 @@ def create_app(state: AppState) -> FastAPI:
     def approvals_waiting():
         """For a page that wants to notice a new request without reloading."""
         pending = state.approvals.pending()
+        now = time.time()
         return JSONResponse({"waiting": len(pending),
                              "requests": [{"id": r["id"], "kind": r["kind"],
                                            "summary": approvalslib.summary(r),
-                                           "origin": r["origin"], "label": r["label"]}
+                                           "origin": r["origin"], "label": r["label"],
+                                           # Seconds, by this clock, so a page
+                                           # can tell fresh from stale without
+                                           # trusting the browser's.
+                                           "age": round(now - r["created"], 1)}
                                           for r in pending]})
 
     @app.api_route("/approvals/{request_id}", methods=["GET", "POST"],

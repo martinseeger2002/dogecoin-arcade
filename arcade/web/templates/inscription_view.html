@@ -51,7 +51,7 @@
   (function(){
     var box = document.getElementById('asked'), dialog = document.getElementById('ask'),
         frame = document.getElementById('ask-frame'), note = document.getElementById('ask-note'),
-        seen = {}, showing = null, closer = null;
+        seen = {}, showing = null, closer = null, first = true;
     function esc(t){ return String(t).replace(/</g, '&lt;'); }
     function open(id){
       showing = id; seen[id] = true; note.textContent = '';
@@ -86,6 +86,14 @@
         box.querySelectorAll('a[data-ask]').forEach(function(a){
           a.onclick = function(){ open(a.getAttribute('data-ask')); return false; };
         });
+        if (first) {
+          // What was already waiting when this page opened was asked by
+          // something else, earlier: listed above with a link, not opened
+          // over a page that never asked. A request a few seconds old is this
+          // page asking as it loaded, and is the one that pops up.
+          j.requests.forEach(function(q){ if (q.age > 15) seen[q.id] = true; });
+          first = false;
+        }
         if (showing) return;
         for (var i = 0; i < j.requests.length; i++) {
           if (!seen[j.requests[i].id]) { open(j.requests[i].id); break; }

@@ -144,6 +144,34 @@ def test_the_pop_up_is_not_reachable_from_inside_the_sandbox(browser, served):
     state.approvals.decide(rid, "denied")
 
 
+def test_what_was_waiting_before_the_page_opened_does_not_pop_up_over_it(browser, served):
+    """A request filed an hour ago by something else is not this page asking.
+    On the live wallet a stale demo request opened over every inscription
+    one looked at, and its modal swallowed the first click on the page. It
+    is listed, with a link; only a fresh request opens."""
+    base, state = served
+    stale = state.approvals.file("main", "coins", "page", RECIPIENT, units=1,
+                                 amount="0.00000001", label="Earlier")
+    with state.approvals._open() as conn:
+        conn.execute("UPDATE request SET created = created - 600 WHERE id = ?", (stale,))
+    _add_counter_page(state)
+    browser.get(f"{base}/inscriptions/{STORING}/view")   # a page that asks nothing
+    WebDriverWait(browser, 10).until(lambda b: not b.find_element(By.ID, "asked").get_attribute("hidden"))
+    notice = browser.find_element(By.ID, "asked")
+    assert "Earlier" in notice.text and not browser.execute_script(
+        "return document.getElementById('ask').open")
+    time.sleep(3.5)
+    assert not browser.execute_script("return document.getElementById('ask').open")
+    # Fresh, while the page is open: it pops up.
+    fresh = state.approvals.file("main", "coins", "page", RECIPIENT, units=1,
+                                 amount="0.00000001", label="Now")
+    WebDriverWait(browser, 10).until(lambda b: b.execute_script(
+        "return document.getElementById('ask').open"))
+    assert fresh in browser.find_element(By.ID, "ask-frame").get_attribute("src")
+    browser.execute_script("document.getElementById('ask-close').click()")
+    state.approvals.decide(stale, "denied"); state.approvals.decide(fresh, "denied")
+
+
 # --- storage ------------------------------------------------------------------
 
 STORING = "cd" * 32
@@ -156,12 +184,8 @@ COUNTER = (b"<!doctype html><title>counter</title><script src='/r/storage.js'></
            b"</script>")
 
 
-def test_a_page_remembers_through_the_wallet(browser, served):
-    """The sandbox has no localStorage. arcade.storage is the same shape,
-    kept by the wallet under this inscription's id, and still there when the
-    page is opened again."""
+def _add_counter_page(state):
     from arcade.db import Database
-    base, state = served
     db = Database(state.home / "main-ledger.sqlite")
     db.conn.execute(
         "INSERT OR IGNORE INTO inscription(txid,number,creator,owner,block_height,position,"
@@ -169,6 +193,15 @@ def test_a_page_remembers_through_the_wallet(browser, served):
         (STORING, 2, "nMe", "nMe", 101, 0, "text/html", len(COUNTER), "ef" * 32, "", 1, COUNTER))
     db.conn.commit()
     db.close()
+
+
+def test_a_page_remembers_through_the_wallet(browser, served):
+    """The sandbox has no localStorage. arcade.storage is the same shape,
+    kept by the wallet under this inscription's id, and still there when the
+    page is opened again."""
+    base, state = served
+    _add_counter_page(state)
+    state.pagestore.clear(STORING)      # the module shares one wallet
 
     def title():
         browser.switch_to.frame(browser.find_element(By.CSS_SELECTOR, ".inscription-frame"))

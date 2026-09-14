@@ -490,8 +490,12 @@ class OmniRpc:
     def da_requestinscription(self, toaddress: Any, inscription: Any,
                               note: Any = "") -> dict[str, Any]:
         """da_requestinscription "toaddress" "inscription" ( "note" ) -- ask the owner to hand over an inscription, by number or txid."""
+        # "by number or txid": 7 and "7" both mean number 7, the way the shell
+        # and every JSON library will send a bare number.
+        if isinstance(inscription, bool) or not isinstance(inscription, (int, str)):
+            raise RpcError(TYPE_ERROR, "inscription must be a number or a txid")
         return self._ask("inscription", {"to": toaddress,
-                                         "inscription": _str(inscription, "inscription")}, note)
+                                         "inscription": str(inscription)}, note)
 
     def da_request(self, id: Any) -> dict[str, Any]:
         """da_request "id" -- one request: status pending, sent (with txid), denied, failed or expired."""
