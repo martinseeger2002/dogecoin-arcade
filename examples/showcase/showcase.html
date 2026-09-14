@@ -1,0 +1,172 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>DogecoinArcade — inscription API showcase</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 22px; background: #12131a; color: #e8e8ea;
+         font: 15px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  h1 { font-size: 1.3rem; margin: 0 0 4px; letter-spacing: -.02em; }
+  .sub { color: #a0a0ab; margin: 0 0 20px; font-size: .94rem; }
+  h2 { font-size: .74rem; text-transform: uppercase; letter-spacing: .09em;
+       color: #a0a0ab; margin: 26px 0 10px; font-weight: 600; }
+  .panel { background: #191a23; border: 1px solid #2a2b36; border-radius: 10px;
+           padding: 14px 16px; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+  td { padding: 7px 10px 7px 0; border-top: 1px solid #2a2b36;
+       vertical-align: top; word-break: break-word; }
+  td.k { color: #a0a0ab; width: 170px; white-space: nowrap; }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-word;
+        font: .82rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #cfd0da; }
+  .ok { color: #5bbd85; } .no { color: #e07070; } .warn { color: #d99a3e; }
+  canvas { border-radius: 8px; max-width: 100%; display: block; }
+  .thumbs { display: flex; gap: 10px; flex-wrap: wrap; }
+  .thumbs img { height: 92px; border-radius: 6px; background: #fff; }
+  code { background: #22232e; padding: 1px 5px; border-radius: 4px;
+         font-size: .85em; }
+</style>
+
+<h1>Inscription API showcase</h1>
+<p class="sub">This page is inscribed on the chain. Everything below it was
+  fetched from the node it is being read on, with no network access of any
+  kind.</p>
+
+<!-- THE RECURSION. This library is a separate inscription; put its number or
+     txid here when you inscribe this page. Nothing is loaded from off-chain,
+     because nothing can be: connect-src is 'self'. -->
+<script src="/content/__LIBRARY__"></script>
+
+<h2>Recursion</h2>
+<div class="panel">
+  <table id="recursion"></table>
+</div>
+
+<h2>This inscription</h2>
+<div class="panel"><table id="self"></table></div>
+
+<h2>Its JSON field</h2>
+<div class="panel"><pre id="meta">…</pre></div>
+
+<h2>The chain</h2>
+<div class="panel"><table id="chain"></table></div>
+
+<h2>Who is looking</h2>
+<div class="panel"><table id="wallet"></table></div>
+
+<h2>Drawn by the library</h2>
+<div class="panel"><canvas id="plaque" width="560" height="200"></canvas></div>
+
+<h2>Other inscriptions, composed by URL</h2>
+<div class="panel"><div class="thumbs" id="thumbs">…</div></div>
+
+<h2>The sandbox</h2>
+<div class="panel"><table id="sandbox"></table></div>
+
+<script>
+const rows = (el, pairs) => {
+  document.getElementById(el).innerHTML = pairs.map(
+    ([k, v]) => '<tr><td class="k">' + k + '</td><td>' + v + '</td></tr>').join('');
+};
+// `show` produces HTML for a table cell. `plain` does not -- canvas text is
+// text, and a <pre> drawn into a picture is a <pre> drawn into a picture.
+const plain = (value) => value === null || value === undefined ? '—'
+  : typeof value === 'object' ? JSON.stringify(value) : String(value);
+const show = (value) => value === undefined || value === null
+    ? '<span class="warn">—</span>'
+  : typeof value === 'object' ? '<pre>' + JSON.stringify(value, null, 1) + '</pre>'
+  : String(value);
+
+(async function () {
+  // --- recursion: did the library arrive off the chain? --------------------
+  const loaded = typeof arcade !== 'undefined';
+  rows('recursion', [
+    ['library inscription', '<code>/content/__LIBRARY__</code>'],
+    ['loaded', loaded ? '<span class="ok">yes</span>'
+                      : '<span class="no">no — inscribe the library first</span>'],
+    ['version', loaded ? arcade.VERSION : '—'],
+    ['what it gave us', loaded ? Object.keys(arcade).join(', ') : '—'],
+  ]);
+  if (!loaded) return;
+
+  // --- this inscription, found without being told --------------------------
+  const id = arcade.self();
+  const about = await arcade.about(id);
+  rows('self', [
+    ['id (from location)', '<code>' + id + '</code>'],
+    ['number', show(about.json && about.json.number)],
+    ['owner', show(about.json && about.json.owner)],
+    ['content type', show(about.json && about.json.contenttype)],
+    ['length', show(about.json && about.json.length) + ' bytes'],
+    ['transactions', show(about.json && about.json.transactions)],
+    ['sha256', '<code>' + ((about.json && about.json.sha256) || '') + '</code>'],
+  ]);
+
+  const meta = await arcade.metadata(id);
+  document.getElementById('meta').textContent =
+    JSON.stringify(meta.json && meta.json.json, null, 2) || 'none inscribed';
+
+  // --- the chain -----------------------------------------------------------
+  const [height, time] = await Promise.all([arcade.height(), arcade.time()]);
+  const when = time.json ? new Date(time.json * 1000).toISOString() : null;
+  rows('chain', [
+    ['block height', show(height.json)],
+    ['newest block time', show(when)],
+  ]);
+
+  // --- who is looking, and what they hold ----------------------------------
+  const wallet = await arcade.wallet();
+  if (!wallet.ok) {
+    rows('wallet', [['/r/wallet', '<span class="warn">' +
+      (wallet.json && wallet.json.error) + '</span>'],
+      ['so this page', 'works anyway, which is the point']]);
+  } else {
+    const address = (wallet.json.addresses || [])[0];
+    const [balances, owned] = await Promise.all([
+      address ? arcade.balances(address) : {json: []},
+      address ? arcade.owned(address) : {json: []},
+    ]);
+    rows('wallet', [
+      ['network', show(wallet.json.network)],
+      ['@tag', wallet.json.tag ? '@' + wallet.json.tag : '<span class="warn">none claimed</span>'],
+      ['addresses', show((wallet.json.addresses || []).length)],
+      ['first address', '<code>' + (address || '—') + '</code>'],
+      ['token balances', show(balances.json)],
+      ['inscriptions owned', show((owned.json || []).length)],
+    ]);
+  }
+
+  // --- something drawn by the library --------------------------------------
+  arcade.plaque(document.getElementById('plaque'), [
+    'inscription ' + (about.json ? '#' + about.json.number : id.slice(0, 12)),
+    'block ' + plain(height.json),
+    'library ' + arcade.VERSION + ' from /content/' + '__LIBRARY__'.slice(0, 12),
+  ]);
+
+  // --- composing other inscriptions by URL ---------------------------------
+  const all = await arcade.list(40);
+  const pictures = (all.json || []).filter(
+    row => row.held && row.contenttype.startsWith('image/')).slice(0, 8);
+  document.getElementById('thumbs').innerHTML = pictures.length
+    ? pictures.map(row => '<img src="' + arcade.contentUrl(row.id) +
+        '" alt="#' + row.number + '" title="#' + row.number + '">').join('')
+    : '<span class="warn">no pictures inscribed on this chain yet</span>';
+
+  // --- what the sandbox actually stops -------------------------------------
+  const tried = [];
+  const attempt = async (label, fn) => {
+    try { tried.push([label, '<span class="no">' + (await fn()) + '</span>']); }
+    catch (e) { tried.push([label, '<span class="ok">blocked</span>']); }
+  };
+  await attempt('read the wallet’s cookies',
+                async () => document.cookie === '' ? 'empty' : 'READ THEM');
+  await attempt('reach the page around it', async () => String(parent.document.title));
+  await attempt('keep something between visits',
+                async () => { localStorage.setItem('x', '1'); return 'ALLOWED'; });
+  await attempt('read another page of the wallet',
+                async () => { await (await fetch('/guide')).text(); return 'READ IT'; });
+  await attempt('phone home',
+                async () => { await fetch('https://example.com/'); return 'REACHED IT'; });
+  tried.push(['read /r/blockheight', '<span class="ok">allowed — that is the job</span>']);
+  rows('sandbox', tried);
+})();
+</script>

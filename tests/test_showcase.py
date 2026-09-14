@@ -1,0 +1,201 @@
+"""The showcase inscriptions, inscribed and rendered for real.
+
+Two inscriptions, because that is what recursion is: a library on the chain
+once, and a page that loads it by id. If this passes, a page inscribed by
+anybody can pull in code inscribed by somebody else and read this node -- which
+is the whole claim of `docs/inscription-api.md`.
+"""
+
+import json
+import socket
+import threading
+import time
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip("selenium", reason="browser tests need selenium: pip install .[dev]")
+
+from selenium import webdriver                                       # noqa: E402
+from selenium.webdriver.common.by import By                          # noqa: E402
+from selenium.webdriver.firefox.options import Options               # noqa: E402
+
+SHOWCASE = Path("examples/showcase")
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+@pytest.fixture(scope="module")
+def showcased(tmp_path_factory):
+    """A node with the library inscribed, then the page that uses it."""
+    import uvicorn
+
+    from arcade import inscriptions as I
+    from arcade import payload as P
+    from arcade.config import NETWORKS
+    from arcade.db import Database
+    from arcade.state import Engine, StateDB, install_schema
+    from arcade.tx import ArcadeTransaction, EncodingClass
+    from arcade.web.app import create_app
+    from arcade.web.state import AppState, ChainContext
+
+    home = tmp_path_factory.mktemp("showcase")
+    db = Database(home / "regtest-ledger.sqlite")
+    install_schema(db)
+    state_db = StateDB(db)
+    engine = Engine(state_db, NETWORKS["regtest"])
+
+    def inscribe(n, content, content_type, json_text=""):
+        height = 100 + n * 10
+        for index, body in enumerate(I.plan(content, content_type, json_text)):
+            with state_db.block_context(height + index, f"h{height + index}",
+                                        "p", 0, 1, 0):
+                engine.process(ArcadeTransaction(
+                    txid=f"{n * 1000 + index:064x}", block_height=height + index,
+                    position=0, encoding_class=EncodingClass.B, sender="nMe",
+                    reference=None, payload=P.AnyData(data=body).encode(), fee=0))
+        return f"{n * 1000:064x}"
+
+    library_id = inscribe(1, (SHOWCASE / "arcade-lib.js").read_bytes(),
+                          "application/javascript",
+                          '{"name": "arcade-lib", "version": "1.0.0"}')
+    # A picture, so the page has something to compose by URL.
+    inscribe(2, b"\x89PNG\r\n\x1a\n" + bytes(64), "image/png")
+    # The page, with the library's real id in it -- the step that makes it
+    # recursion rather than two unrelated files.
+    page = (SHOWCASE / "showcase.html").read_text().replace("__LIBRARY__", library_id)
+    page_id = inscribe(3, page.encode(), "text/html",
+                       '{"name": "API showcase", "uses": "arcade-lib"}')
+    db.close()
+
+    nowhere = Path("/nonexistent")
+    state = AppState(
+        home=home,
+        messaging=ChainContext(network="regtest", role="messaging",
+                               label="Testnet", datadir=nowhere),
+        ledger=ChainContext(network="regtest", role="ledger",
+                            label="Regtest", datadir=nowhere))
+    port = _free_port()
+    server = uvicorn.Server(uvicorn.Config(create_app(state), host="127.0.0.1",
+                                           port=port, log_level="error"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    for _ in range(100):
+        if server.started:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.skip("test server did not start")
+
+    yield f"http://127.0.0.1:{port}", library_id, page_id
+    server.should_exit = True
+    thread.join(timeout=5)
+
+
+@pytest.fixture(scope="module")
+def rendered(showcased):
+    base, library_id, page_id = showcased
+    options = Options()
+    options.add_argument("-headless")
+    try:
+        browser = webdriver.Firefox(options=options)
+    except Exception as exc:
+        pytest.skip(f"no usable browser: {exc}")
+
+    browser.set_window_size(1100, 1000)
+    browser.get(f"{base}/inscriptions/{page_id}/view")
+    frames = browser.find_elements(By.CSS_SELECTOR, "iframe.inscription-frame")
+    assert frames, "the viewer did not frame the showcase"
+    browser.switch_to.frame(frames[0])
+
+    def table(name):
+        cells = browser.find_elements(By.CSS_SELECTOR, f"#{name} td")
+        out, keys = {}, None
+        for n in range(0, len(cells) - 1, 2):
+            out[cells[n].text.strip()] = cells[n + 1].text.strip()
+        return out
+
+    for _ in range(60):
+        if table("sandbox"):
+            break
+        time.sleep(0.3)
+    result = {name: table(name) for name in
+              ("recursion", "self", "chain", "wallet", "sandbox")}
+    result["meta"] = browser.find_element(By.ID, "meta").text
+    result["thumbs"] = browser.find_elements(By.CSS_SELECTOR, "#thumbs img")
+    result["plaque"] = browser.execute_script(
+        "const c = document.getElementById('plaque');"
+        "return c.getContext('2d').getImageData(0,0,c.width,c.height)"
+        ".data.some(v => v !== 0);")
+    browser.switch_to.default_content()
+    browser.quit()
+    yield result, library_id, page_id
+
+
+def test_the_library_arrives_off_the_chain(rendered):
+    """A <script src="/content/<id>"> pulling code inscribed separately. No
+    CDN, nothing outside the machine, and it still runs."""
+    result, _, _ = rendered
+    assert result["recursion"]["loaded"] == "yes", result["recursion"]
+    assert result["recursion"]["version"] == "1.0.0"
+    assert "plaque" in result["recursion"]["what it gave us"]
+
+
+def test_the_page_knows_which_inscription_it_is(rendered):
+    """From location.pathname alone -- nothing tells it."""
+    result, _, page_id = rendered
+    assert page_id in result["self"]["id (from location)"]
+    assert result["self"]["content type"] == "text/html"
+    assert result["self"]["transactions"].isdigit()
+    assert len(result["self"]["sha256"]) == 64
+
+
+def test_it_reads_its_own_immutable_json(rendered):
+    result, _, _ = rendered
+    assert json.loads(result["meta"]) == {"name": "API showcase",
+                                          "uses": "arcade-lib"}
+
+
+def test_it_reads_the_chain_and_the_wallet(rendered):
+    result, _, _ = rendered
+    assert "block height" in result["chain"]
+    assert result["wallet"], "the wallet section said nothing at all"
+
+
+def test_it_composes_another_inscription_by_url(rendered):
+    """The picture inscribed beside it, pulled in as an ordinary <img src>."""
+    result, _, _ = rendered
+    assert result["thumbs"], "no inscription was composed into the page"
+
+
+def test_the_library_drew_something(rendered):
+    """Proof the library is not merely loaded but usable: the canvas has
+    pixels in it, and only the inscribed library puts them there."""
+    result, _, _ = rendered
+    assert result["plaque"] is True
+
+
+def test_the_showcase_demonstrates_its_own_sandbox(rendered):
+    """The page tries each thing it should not be able to do and reports.
+    Everything but the API must come back blocked."""
+    result, _, _ = rendered
+    sandbox = result["sandbox"]
+    assert sandbox, "the sandbox section never ran"
+    for label, outcome in sandbox.items():
+        if label.startswith("read /r/"):
+            assert "allowed" in outcome, (label, outcome)
+        else:
+            assert outcome == "blocked", (label, outcome)
+
+
+def test_the_showcase_files_are_what_gets_inscribed():
+    """The placeholder has to be the only thing that changes between the file
+    in the repository and the bytes on the chain."""
+    page = (SHOWCASE / "showcase.html").read_text()
+    assert page.count("__LIBRARY__") >= 1
+    assert "http://" not in page and "https://" not in page.replace(
+        "https://example.com", ""), "nothing may be loaded from off-chain"
