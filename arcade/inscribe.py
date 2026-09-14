@@ -14,12 +14,14 @@ advance, and a number shown afterwards is a number shown too late.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from . import inscriptions as I
 from .encoding import MAX_CLASS_B_PAYLOAD
 from .ledger import COIN
 
-#: What one Class B transaction carries, after the 4-byte AnyData header.
+#: What one Class B transaction carries, after the 4-byte AnyData header the
+#: sender adds around whatever it is handed.
 CHUNK_CAPACITY = MAX_CLASS_B_PAYLOAD - 4
 
 #: Every 30-byte packet is half of a multisig output, and each of those costs
@@ -112,12 +114,18 @@ class Plan:
 
 
 def plan(content: bytes, content_type: str, json_text: str = "") -> Plan:
-    """Everything that has to go on chain, and what it will cost."""
-    from . import payload as P
+    """Everything that has to go on chain, and what it will cost.
 
+    The payloads are the inscription bodies THEMSELVES, not wrapped in AnyData:
+    `MessageSender` wraps whatever it is given (sender.py `_class_b_outputs`),
+    so wrapping here too put an AnyData inside an AnyData. The chain accepted
+    it, the index recorded it as a valid type-200 transaction, and the
+    inscription simply never appeared -- because the outer body started with a
+    payload header rather than with INSC. Nothing complained anywhere; the file
+    was paid for and invisible. Found by putting one through a real node.
+    """
     bodies = I.plan(content, content_type, json_text, capacity=CHUNK_CAPACITY)
-    payloads = [P.AnyData(data=body).encode() for body in bodies]
-    return Plan(payloads=payloads,
+    return Plan(payloads=bodies,
                 estimate=estimate(content, content_type,
                                   I.validate_json(json_text)),
                 content_type=content_type or "application/octet-stream",
@@ -126,3 +134,28 @@ def plan(content: bytes, content_type: str, json_text: str = "") -> Plan:
 
 def sats(coins: float) -> int:
     return int(round(coins * COIN))
+
+
+def piece_size(plan: "Plan") -> int:
+    """What one output has to be worth to fund one piece of THIS inscription.
+
+    The messenger splits into a fixed 2 coins per piece, which is right for a
+    message chunk and marginally too small for an inscription one: a full Class
+    B transaction here carries 128 data outputs at 0.01 each plus its fee, and
+    a 2.0 piece came up four hundredths short. Sized from the plan instead, with
+    a margin, so this cannot drift when either number changes.
+    """
+    per_chunk = plan.estimate.total / max(1, plan.chunks)
+    return sats(per_chunk * 1.25 + 0.5)
+
+
+def prepare_wallet(sender: Any, address: str, plan: "Plan",
+                   on_progress: Any = None) -> bool:
+    """Give the address one confirmed output per piece, so they all go at once.
+
+    Without this each piece waits for the one before it to confirm -- a block
+    each, which for a megabyte is over two hours. With it the split confirms
+    once and then everything goes in one pass.
+    """
+    return sender.ensure_outputs(address, plan.chunks, each_sats=piece_size(plan),
+                                 on_progress=on_progress)

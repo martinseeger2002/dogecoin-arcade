@@ -31,6 +31,8 @@ from .. import backup, media, tokens as tokenlib, wallet as walletlib
 from ..ledger import AmountError, format_amount, parse_amount
 from ..config import NETWORKS, MainnetRefused, WrongChain
 from .. import inscribe as inscribelib
+from .. import payload as P
+from .. import inscriptions as inscriptionlib
 from . import guide as guidelib
 from .. import tags as taglib
 from .. import remote as remotelib
@@ -2121,8 +2123,8 @@ def create_app(state: AppState) -> FastAPI:
                     # public_only=True: an inscription is public, uncompressed,
                     # unencrypted data. Nothing sealed passes this flag (D-014).
                     sender_obj = MessageSender(rpc, chain.params, public_only=True)
-                    sender_obj.ensure_outputs(
-                        sender, plan.chunks,
+                    inscribelib.prepare_wallet(
+                        sender_obj, sender, plan,
                         on_progress=lambda text, done, total:
                             state.update_progress(note=text))
                     sender_obj.send_all(
@@ -2257,6 +2259,73 @@ def create_app(state: AppState) -> FastAPI:
         thing in front of them can do.
         """
         return render(request, "guide.html", sections=guidelib.SECTIONS)
+
+    @app.api_route("/inscriptions/{key}/send", methods=["GET", "POST"],
+                   response_class=HTMLResponse)
+    def inscription_send(request: Request, key: str, to: str = Form(""),
+                         csrf_token: str = Form(""), confirmed: str = Form("")):
+        """Hand an inscription to somebody else.
+
+        Two steps like every other thing that spends, and for a stronger reason
+        than usual: this one cannot be undone by sending it back unless the
+        person on the other end agrees to. The decoded transaction is shown
+        before anything is broadcast.
+        """
+        chain, index = _token_chain()
+        row = index.inscription(contentlib._key(key))
+        if row is None:
+            state.flash("no such inscription", "err")
+            return RedirectResponse("/inscriptions", status_code=303)
+
+        error, prepared, sent = None, None, None
+        if request.method == "POST":
+            try:
+                check_csrf(csrf_token)
+                with chain.rpc() as rpc:
+                    if row["owner"] not in _ledger_addresses(rpc):
+                        raise ValueError("this inscription is not yours to send.")
+                    # A @tag is a name, not an address: resolve it and SHOW what
+                    # it resolved to, because a tag can have moved since the
+                    # last block this node read.
+                    destination = to.strip()
+                    resolved = None
+                    if destination.startswith("@"):
+                        resolved = index.address_of(destination)
+                        if not resolved:
+                            raise ValueError(f"nobody holds {destination}.")
+                        destination = resolved
+                    problem = _check_address(destination,
+                                             mainnet=chain.is_mainnet)
+                    if problem:
+                        raise ValueError(problem)
+
+                    sender = tokenlib.TokenSender(rpc, chain.params)
+                    payload = P.AnyData(data=inscriptionlib.Transfer(
+                        txid=bytes.fromhex(row["txid"])).encode()).encode()
+                    held = state.prepared_tokens.get((chain.network, confirmed))
+                    if held is None:
+                        prepared = sender.prepare(row["owner"], payload, destination)
+                        prepared.what = f"inscription #{row['number']}"
+                        state.prepared_tokens[(chain.network, prepared.txid)] = prepared
+                        while len(state.prepared_tokens) > 20:
+                            del state.prepared_tokens[next(iter(state.prepared_tokens))]
+                    else:
+                        sent = sender.broadcast(held)
+                        state.prepared_tokens.pop((chain.network, confirmed), None)
+                        state.pending_tokens.append(
+                            {"txid": sent, "what": f"inscription #{row['number']}",
+                             "at": time.time(), "network": chain.network})
+                        state.flash(f"Inscription #{row['number']} sent as {sent}. "
+                                    f"It moves here once its block is indexed.", "ok")
+            except HTTPException:
+                raise
+            except Exception as exc:
+                error = str(exc)
+        if sent:
+            return RedirectResponse("/inscriptions", status_code=303)
+        return render(request, "inscription_send.html", row=row, chain=chain,
+                      prepared=prepared, error=error, to=to,
+                      tag=index.tag_of(row["owner"]))
 
     @app.get("/inscriptions/{key}/view", response_class=HTMLResponse)
     def inscription_view(request: Request, key: str):

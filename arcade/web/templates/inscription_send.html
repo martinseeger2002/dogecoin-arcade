@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Send #{{ row.number }} · DogecoinArcade{% endblock %}
+{% block body %}
+<div class="row" style="align-items:baseline">
+  <a class="back-link" href="/inscriptions/{{ row.txid }}/view">&#8592; Back</a>
+  <h1 style="margin:0">Send #{{ "{:,}".format(row.number) }}</h1>
+</div>
+<p class="sub">{{ row.content_type }} &middot;
+  {{ "{:,}".format(row.content_len) }} bytes</p>
+
+{% if error %}<div class="msg err">{{ error }}</div>{% endif %}
+
+{% if prepared %}
+  <h2>Confirm before sending</h2>
+  <div class="panel" {% if chain.is_mainnet %}style="border-color:var(--bad);border-width:2px"{% endif %}>
+    {% if chain.is_mainnet %}
+      <p style="color:var(--bad);font-weight:600;margin-top:0">
+        This is mainnet. Once it is theirs it is theirs: it comes back only if
+        they send it back.</p>
+    {% endif %}
+    <table>
+      <tr><td class="muted" style="width:120px">Inscription</td>
+          <td>#{{ "{:,}".format(row.number) }}</td></tr>
+      <tr><td class="muted">From</td>
+          <td class="mono" style="word-break:break-all">{{ prepared.sender }}</td></tr>
+      <tr><td class="muted">To</td>
+          <td class="mono" style="word-break:break-all">
+            <strong>{{ prepared.reference }}</strong>
+            {% if to.startswith('@') %}<br><span class="muted">{{ to }} resolves
+              to this address now. If the tag has moved since the last block
+              this node read, this is where it goes.</span>{% endif %}</td></tr>
+      <tr><td class="muted">Fee</td>
+          <td>{{ "%.8f"|format(prepared.fee_sats / 100000000) }}</td></tr>
+      <tr><td class="muted">Total</td>
+          <td><strong>{{ "%.8f"|format(prepared.total_sats / 100000000) }}</strong></td></tr>
+      <tr><td class="muted">Transaction</td>
+          <td class="mono" style="word-break:break-all">{{ prepared.txid }}</td></tr>
+    </table>
+    <form method="post" action="/inscriptions/{{ row.txid }}/send" class="row"
+          style="margin-top:14px">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="to" value="{{ to }}">
+      <input type="hidden" name="confirmed" value="{{ prepared.txid }}">
+      <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">
+        Send it</button>
+      <a class="btn ghost" href="/inscriptions/{{ row.txid }}/view">Cancel</a>
+    </form>
+  </div>
+{% else %}
+  <div class="panel">
+    <form method="post" action="/inscriptions/{{ row.txid }}/send">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <div class="field">
+        <label for="to">To an address, or a @tag</label>
+        <input autocomplete="off" name="to" id="to" value="{{ to or '' }}"
+               class="mono" spellcheck="false"
+               placeholder="{{ 'address on mainnet' if chain.is_mainnet else 'address, or @somebody' }}"
+               required>
+      </div>
+      <button type="submit">Review the transfer</button>
+      <p class="muted" style="margin-bottom:0">
+        Nothing moves until you see the transaction and press again. Moving one
+        costs a single small transaction &mdash; not what making it cost.</p>
+    </form>
+  </div>
+{% endif %}
+{% endblock %}

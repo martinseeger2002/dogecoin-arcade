@@ -238,6 +238,11 @@ def test_a_bigger_file_costs_more_in_every_direction():
 
 
 def test_planning_gives_payloads_ready_for_the_chain():
+    """The bodies themselves, NOT wrapped in AnyData: the sender wraps whatever
+    it is handed, and wrapping here as well produced an AnyData inside an
+    AnyData -- accepted by the chain, recorded as valid, and never an
+    inscription, because the outer body started with a payload header rather
+    than with INSC. Paid for and invisible."""
     from arcade import inscribe
     from arcade.payload import AnyData, decode
 
@@ -246,8 +251,10 @@ def test_planning_gives_payloads_ready_for_the_chain():
     assert plan.content_len == len(b"a picture" * 2000)
     assert plan.json == '{"n":1}'
     for payload in plan.payloads:
-        assert isinstance(decode(payload), AnyData)
-        assert len(payload) <= 7_650, "one Class B transaction's worth"
+        assert I.is_inscription(payload), "a bare inscription body"
+        # What the sender will make of it is what the engine has to read.
+        assert I.is_inscription(decode(AnyData(data=payload).encode()).data)
+        assert len(payload) + 4 <= 7_650, "one Class B transaction's worth"
 
 
 def test_the_json_is_checked_before_anything_is_priced():
