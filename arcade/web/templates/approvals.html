@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Approvals · DogecoinArcade{% endblock %}
+{% block body %}
+{% macro who(r) -%}
+  {%- if r.origin == 'page' %}an inscribed page{% else %}a program on the bot RPC{% endif -%}
+  {%- if r.label %} calling itself <q>{{ r.label }}</q>{% endif -%}
+{%- endmacro %}
+{% macro age(seconds) -%}
+  {%- if seconds < 90 %}just now{% elif seconds < 5400 %}{{ (seconds / 60)|round|int }} min ago
+  {%- elif seconds < 172800 %}{{ (seconds / 3600)|round|int }} h ago{% else %}{{ (seconds / 86400)|round|int }} d ago{% endif -%}
+{%- endmacro %}
+<h1>Approvals</h1>
+<p class="sub">Sends that a page or a program asked this wallet for. Nothing
+  here has been spent: each one waits for you to look at the transaction it
+  would be and say yes or no.</p>
+
+<h2>Waiting{% if pending %} &mdash; {{ pending|length }}{% endif %}</h2>
+{% if not pending %}
+  <p class="muted">Nothing is waiting. A request that nobody answers within an
+    hour expires on its own.</p>
+{% else %}
+  <div class="cards">
+  {% for r in pending %}
+    <div class="card" {% if r.network in ('main', 'doge-main') %}style="border-color:var(--bad)"{% endif %}>
+      <div class="row" style="align-items:baseline">
+        <strong>{{ r.summary }}</strong>
+        <span class="muted" style="margin-left:auto">{{ age(now - r.created) }}</span>
+      </div>
+      <p class="muted" style="margin:6px 0">Asked by {{ who(r) }}
+        on {{ 'mainnet' if r.network in ('main', 'doge-main') else 'testnet' }}.</p>
+      {% if r.note %}<p style="margin:6px 0"><q>{{ r.note }}</q></p>{% endif %}
+      <div class="row" style="margin-top:8px">
+        <a class="btn small" href="/approvals/{{ r.id }}">Look at it</a>
+        <form method="post" action="/approvals/{{ r.id }}" style="margin:0">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <input type="hidden" name="decision" value="deny">
+          <button type="submit" class="ghost small">Refuse</button>
+        </form>
+      </div>
+    </div>
+  {% endfor %}
+  </div>
+{% endif %}
+
+{% if recent %}
+<h2>Decided</h2>
+<div class="panel">
+  <table>
+    <tr><th>What</th><th>Asked by</th><th>Outcome</th></tr>
+    {% for r in recent %}
+    <tr><td>{{ r.summary }}</td>
+        <td class="muted">{{ who(r) }}</td>
+        <td>{% if r.status == 'sent' %}<span style="color:var(--ok)">sent</span>
+              <span class="mono muted" style="font-size:.8rem;word-break:break-all">{{ r.txid[:16] }}…</span>
+            {% elif r.status == 'failed' %}<span style="color:var(--bad)">failed</span>
+              <span class="muted">{{ r.error }}</span>
+            {% else %}<span class="muted">{{ r.status }}</span>{% endif %}
+            <span class="muted" style="white-space:nowrap">&middot; {{ age(now - (r.decided or r.created)) }}</span></td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+{% endblock %}

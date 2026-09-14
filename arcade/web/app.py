@@ -32,6 +32,7 @@ from ..ledger import AmountError, format_amount, parse_amount
 from ..config import NETWORKS, MainnetRefused, WrongChain
 from .. import inscribe as inscribelib
 from .. import collections as collectionlib
+from .. import approvals as approvalslib
 from .. import payload as P
 from .. import inscriptions as inscriptionlib
 from . import guide as guidelib
@@ -95,6 +96,7 @@ NAV = [
     ("/nfts",         "NFTs",         "mainnet",   False),
     ("/exchange",     "Exchange",     "mainnet",   False),
     ("/inscriptions", "Inscriptions", "mainnet",   True),
+    ("/approvals",    "Approvals",    None,        True),
     ("/remote",       "Remote",       None,        True),
     ("/guide",        "Guide",        None,        True),
 ]
@@ -212,6 +214,7 @@ def create_app(state: AppState) -> FastAPI:
             "notice_kind": notice_kind,
             "msg_net": state.messaging.label,
             "ledger_net": state.ledger.label,
+            "approvals_waiting": _approvals_waiting(),
         }
         base.update(context)
         # Request first: the older (name, context) signature is deprecated.
@@ -239,6 +242,12 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
         return HTMLResponse(REFUSED_PAGE.format(detail=html.escape(str(exc.detail))),
                             status_code=exc.status_code)
+
+    def _approvals_waiting() -> int:
+        try:
+            return state.approvals.waiting()
+        except Exception:
+            return 0
 
     def check_csrf(token: str) -> None:
         """Reject a request whose form token does not match this process's.
@@ -2561,6 +2570,154 @@ def create_app(state: AppState) -> FastAPI:
             "tokens": tokens,
             "inscriptions": owned,
         })
+
+
+    # --- approvals: sends that a page or a bot asked for ----------------------
+    #
+    # Neither may spend. Each files a request (arcade/approvals.py); the person
+    # who owns the wallet sees the transaction it would be, built and decoded,
+    # and says yes or no here. These pages work over the remote tunnel, so the
+    # answer can be given from a phone.
+
+    def _own_addresses(chain) -> list[str]:
+        try:
+            with chain.rpc() as rpc:
+                return _ledger_addresses(rpc)
+        except Exception:
+            return []
+
+    def _given(value) -> str:
+        # Inscription 0 is an inscription; `value or ""` would lose it.
+        return "" if value is None else str(value)
+
+    def _file_request(origin: str, body: dict, label: str = "") -> dict:
+        """Validate and queue one request; the caller's words go in quotes."""
+        chain, index = _token_chain()
+        kind = str(body.get("kind") or "").strip().lower()
+        fields = approvalslib.validate(
+            kind, index, _own_addresses(chain), mainnet=chain.is_mainnet,
+            to=str(body.get("to") or ""), amount=_given(body.get("amount")),
+            propertyid=body.get("propertyid"),
+            inscription=_given(body.get("inscription")),
+            fromaddress=str(body.get("from") or ""))
+        request_id = state.approvals.file(
+            chain.network, kind, origin, fields.pop("toaddress"),
+            label=label or str(body.get("label") or ""),
+            note=str(body.get("note") or ""), **fields)
+        return approvalslib.describe(state.approvals.get(request_id))
+
+    @app.get("/approvals", response_class=HTMLResponse)
+    def approvals(request: Request):
+        queue = state.approvals
+        pending = [dict(r, summary=approvalslib.summary(r)) for r in queue.pending()]
+        recent = [dict(r, summary=approvalslib.summary(r)) for r in queue.recent()]
+        return render(request, "approvals.html", pending=pending, recent=recent,
+                      now=time.time())
+
+    @app.get("/approvals/waiting")
+    def approvals_waiting():
+        """For a page that wants to notice a new request without reloading."""
+        pending = state.approvals.pending()
+        return JSONResponse({"waiting": len(pending),
+                             "requests": [{"id": r["id"], "kind": r["kind"],
+                                           "summary": approvalslib.summary(r),
+                                           "origin": r["origin"], "label": r["label"]}
+                                          for r in pending]})
+
+    @app.api_route("/approvals/{request_id}", methods=["GET", "POST"],
+                   response_class=HTMLResponse)
+    def approval(request: Request, request_id: str, csrf_token: str = Form(""),
+                 confirmed: str = Form(""), decision: str = Form("")):
+        """Look at one request as the transaction it would be, and decide.
+
+        The transaction is built when the page is drawn and broadcast only if
+        the yes names the txid that was shown -- the same rule as every other
+        send here (D-016). Deciding no costs nothing and builds nothing.
+        """
+        queue = state.approvals
+        row = queue.get(request_id)
+        if row is None:
+            state.flash("no such request", "err")
+            return RedirectResponse("/approvals", status_code=303)
+        chain = state.chain_named(row["network"])
+        index = state.token_index(chain)
+        error, prepared, sent = None, None, None
+        if request.method == "POST":
+            check_csrf(csrf_token)
+            if decision == "deny":
+                queue.decide(request_id, "denied")
+                state.flash(f"Refused: {approvalslib.summary(row)}.", "ok")
+                return RedirectResponse("/approvals", status_code=303)
+            held = state.prepared_tokens.get((chain.network, confirmed))
+            if row["status"] != "pending":
+                error = f"this request is already {row['status']}."
+            elif held is None:
+                error = ("what was shown is no longer held (the server restarted, "
+                         "or it was shown too long ago); look at it again.")
+            else:
+                try:
+                    with chain.rpc() as rpc:
+                        sent = approvalslib.broadcast(rpc, held)
+                except Exception as exc:
+                    error = str(exc)
+                    queue.decide(request_id, "failed", error=error)
+                state.prepared_tokens.pop((chain.network, confirmed), None)
+                if sent:
+                    queue.decide(request_id, "sent", txid=sent)
+                    state.pending_tokens.append(
+                        {"txid": sent, "what": held.what, "at": time.time(),
+                         "network": chain.network})
+                    state.flash(f"Approved and sent: {approvalslib.summary(row)} "
+                                f"as {sent}.", "ok")
+                    return RedirectResponse("/approvals", status_code=303)
+        if row["status"] == "pending" and prepared is None and error is None:
+            try:
+                with chain.rpc() as rpc:
+                    prepared = approvalslib.prepare(row, rpc, chain.params, index,
+                                                    _ledger_addresses(rpc))
+                state.prepared_tokens[(chain.network, prepared.txid)] = prepared
+                while len(state.prepared_tokens) > 20:
+                    del state.prepared_tokens[next(iter(state.prepared_tokens))]
+            except Exception as exc:
+                error = str(exc)
+        return render(request, "approval.html", row=row, chain=chain,
+                      summary=approvalslib.summary(row), prepared=prepared,
+                      error=error, now=time.time())
+
+    @app.post("/r/send")
+    def r_send(request: Request, body: dict = Body(default={})):
+        """An inscribed page asks this wallet to send something.
+
+        It gets a request id and a promise that somebody will be asked -- not
+        a transaction. Any origin may file (the frame it runs in has none), so
+        what it files is a question, never an action, and there is a cap on
+        how many questions can wait. It polls /r/send/<id> for the answer.
+        """
+        if not isinstance(body, dict):
+            return contentlib._json({"error": "send a JSON object"}, status=400)
+        try:
+            filed = _file_request("page", body)
+        except approvalslib.RequestError as exc:
+            return contentlib._json({"error": str(exc)}, status=400)
+        except Exception as exc:
+            return contentlib._json({"error": f"could not file the request: {exc}"},
+                                    status=503)
+        return contentlib._json(filed, status=202)
+
+    @app.options("/r/send")
+    def r_send_preflight():
+        return Response(status_code=204, headers={
+            **contentlib.CORS,
+            "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+            "Access-Control-Max-Age": "600"})
+
+    @app.get("/r/send/{request_id}")
+    def r_send_status(request_id: str):
+        row = state.approvals.get(request_id)
+        if row is None:
+            return contentlib._missing("no such request")
+        return contentlib._json(approvalslib.describe(row))
 
     @app.get("/guide", response_class=HTMLResponse)
     def guide(request: Request):

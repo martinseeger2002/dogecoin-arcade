@@ -208,6 +208,8 @@ class OmniRpc:
         lines.append("")
         lines.append("Sending is two calls: an omni_send* method returns the prepared "
                      "transaction unsent; omni_broadcast <txid> sends it.")
+        lines.append("Asking is one call: da_request* files a request the wallet's owner "
+                     "approves or refuses in the interface; da_request <id> says which.")
         return "\n".join(lines)
 
     # -- reading ---------------------------------------------------------------
@@ -462,6 +464,69 @@ class OmniRpc:
             raise RpcError(TYPE_ERROR, "ids must be a list of message ids")
         with self.state.store() as store:
             return store.mark_api_read([_int(i, "id") for i in ids])
+
+    # -- asking the wallet's owner ---------------------------------------------
+    #
+    # A program on this RPC can build and broadcast with the omni_send* calls,
+    # because holding the cookie is holding the wallet. These are for the other
+    # arrangement: a program that is NOT trusted to spend on its own -- a
+    # marketplace bot, a game -- files a request and the person is asked.
+    # Nothing is built, let alone sent, until they say yes on the Approvals
+    # page (arcade/approvals.py).
+
+    def da_requestsend(self, fromaddress: Any, toaddress: Any, amount: Any,
+                       note: Any = "") -> dict[str, Any]:
+        """da_requestsend "fromaddress" "toaddress" "amount" ( "note" ) -- ask the owner to send coins; "" as fromaddress lets the wallet choose. Returns the request; poll da_request."""
+        return self._ask("coins", {"from": fromaddress, "to": toaddress,
+                                   "amount": amount}, note)
+
+    def da_requesttoken(self, fromaddress: Any, toaddress: Any, propertyid: Any,
+                        amount: Any, note: Any = "") -> dict[str, Any]:
+        """da_requesttoken "fromaddress" "toaddress" propertyid "amount" ( "note" ) -- ask the owner to send tokens; "" as fromaddress lets the wallet choose."""
+        return self._ask("token", {"from": fromaddress, "to": toaddress,
+                                   "propertyid": _int(propertyid, "propertyid"),
+                                   "amount": amount}, note)
+
+    def da_requestinscription(self, toaddress: Any, inscription: Any,
+                              note: Any = "") -> dict[str, Any]:
+        """da_requestinscription "toaddress" "inscription" ( "note" ) -- ask the owner to hand over an inscription, by number or txid."""
+        return self._ask("inscription", {"to": toaddress,
+                                         "inscription": _str(inscription, "inscription")}, note)
+
+    def da_request(self, id: Any) -> dict[str, Any]:
+        """da_request "id" -- one request: status pending, sent (with txid), denied, failed or expired."""
+        from .. import approvals as approvalslib
+        row = self.state.approvals.get(_str(id, "id"))
+        if row is None:
+            raise RpcError(INVALID_PARAMETER, "no such request")
+        return approvalslib.describe(row)
+
+    def da_requests(self, count: Any = 20) -> list[dict[str, Any]]:
+        """da_requests ( count ) -- requests on this chain: the ones waiting, then the newest decided."""
+        from .. import approvals as approvalslib
+        queue = self.state.approvals
+        rows = queue.pending(self.chain.network) + queue.recent(
+            _int(count, "count"), self.chain.network)
+        return [approvalslib.describe(r) for r in rows[:max(1, _int(count, "count"))]]
+
+    def _ask(self, kind: str, body: dict[str, Any], note: Any) -> dict[str, Any]:
+        from .. import approvals as approvalslib
+        with self._rpc() as rpc:
+            own = _wallet_addresses(rpc)
+        try:
+            fields = approvalslib.validate(
+                kind, self.index, own, mainnet=self.chain.is_mainnet,
+                to=_str(body.get("to"), "toaddress"),
+                amount=str(body.get("amount", "")),
+                propertyid=body.get("propertyid"),
+                inscription=str(body.get("inscription", "")),
+                fromaddress=str(body.get("from") or ""))
+            request_id = self.state.approvals.file(
+                self.chain.network, kind, "rpc", fields.pop("toaddress"),
+                note=_str(note, "note") if note else "", **fields)
+        except approvalslib.RequestError as exc:
+            raise RpcError(INVALID_PARAMETER, str(exc)) from None
+        return approvalslib.describe(self.state.approvals.get(request_id))
 
     def _api_message(self, row: Any) -> dict[str, Any]:
         message = apilib.ApiMessage(

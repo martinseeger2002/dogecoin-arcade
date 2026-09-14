@@ -113,6 +113,22 @@ SECTIONS: list[dict] = [
         ],
     },
     {
+        "title": "Approvals",
+        "blurb": "A page or a program can ask this wallet to send something. "
+                 "It cannot send.",
+        "points": [
+            ("One queue for coins, tokens and inscriptions, asked for by an "
+             "inscribed page in its sandbox or by a program on the bot RPC."),
+            ("Nothing is built on the caller's word: when you look, the "
+             "transaction is shown with its fee and every output, and goes "
+             "out only when you press Approve. Refusing costs nothing."),
+            ("Shown on every page, live under a running inscription, and on "
+             "the phone over the remote tunnel."),
+            ("A request nobody answers within an hour expires; no more than "
+             "twenty wait at once."),
+        ],
+    },
+    {
         "title": "@tags",
         "blurb": "A handle that belongs to an address.",
         "points": [

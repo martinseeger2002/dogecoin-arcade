@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Approve · DogecoinArcade{% endblock %}
+{% block body %}
+<div class="row" style="align-items:baseline">
+  <a class="back-link" href="/approvals">&#8592; Approvals</a>
+  <h1 style="margin:0;overflow-wrap:anywhere">{{ summary }}</h1>
+</div>
+<p class="sub">Asked by {% if row.origin == 'page' %}an inscribed page{% else %}a program on the bot RPC{% endif %}
+  {%- if row.label %} calling itself <q>{{ row.label }}</q>{% endif %}, on {{ chain.label }}.
+  {% if row.note %}It says: <q>{{ row.note }}</q>{% endif %}</p>
+
+{% if error %}<div class="msg err">{{ error }}</div>{% endif %}
+
+{% if row.status != 'pending' %}
+  <div class="msg info">This request is {{ row.status }}
+    {%- if row.txid %} as <code class="mono">{{ row.txid }}</code>{% endif %}
+    {%- if row.error %}: {{ row.error }}{% endif %}.</div>
+{% elif prepared %}
+  <h2>This is what would go out</h2>
+  <div class="panel" {% if chain.is_mainnet %}style="border-color:var(--bad);border-width:2px"{% endif %}>
+    {% if chain.is_mainnet %}
+      <p style="color:var(--bad);font-weight:600;margin-top:0">
+        This is mainnet. Somebody else asked for this, and once it is sent it
+        cannot be taken back.</p>
+    {% endif %}
+    <table>
+      <tr><td class="muted" style="width:120px">Sending</td>
+          <td><strong>{{ prepared.what }}</strong></td></tr>
+      <tr><td class="muted">From</td>
+          <td class="mono" style="word-break:break-all">{{ prepared.sender }}</td></tr>
+      <tr><td class="muted">To</td>
+          <td class="mono" style="word-break:break-all"><strong>{{ row.toaddress }}</strong>
+            {% if row.totag %}<br><span class="muted">@{{ row.totag }} resolved to this
+              address when the request was filed.</span>{% endif %}</td></tr>
+      <tr><td class="muted">Fee</td><td>{{ "%.8f"|format(prepared.fee_coins) }}</td></tr>
+      <tr><td class="muted">Total</td>
+          <td><strong>{{ "%.8f"|format(prepared.total_coins) }}</strong>
+            <span class="muted">&mdash; fee plus what the outputs carry</span></td></tr>
+      <tr><td class="muted">Size</td><td>{{ "{:,}".format(prepared.size) }} bytes</td></tr>
+      <tr><td class="muted">Transaction</td>
+          <td class="mono" style="word-break:break-all">{{ prepared.txid }}</td></tr>
+    </table>
+    <h3 style="margin-bottom:6px">Outputs</h3>
+    <table>
+      <tr><th>Value</th><th>To</th></tr>
+      {% for o in prepared.outputs %}
+      <tr><td style="white-space:nowrap">{{ "%.8f"|format(o.value) }}</td>
+          <td class="mono" style="word-break:break-all">{{ o.where }}
+            {% if o.is_recipient %}<span class="muted">&mdash; the recipient</span>
+            {% elif o.is_change %}<span class="muted">&mdash; change, back to you</span>{% endif %}</td></tr>
+      {% endfor %}
+    </table>
+    <form method="post" action="/approvals/{{ row.id }}" class="row" style="margin-top:14px">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="confirmed" value="{{ prepared.txid }}">
+      <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">Approve and send</button>
+      <button type="submit" name="decision" value="deny" class="ghost">Refuse</button>
+    </form>
+  </div>
+{% else %}
+  <div class="panel">
+    <p style="margin-top:0">The transaction could not be built, so there is
+      nothing to approve. You can still refuse it, or leave it: it expires on
+      its own.</p>
+    <form method="post" action="/approvals/{{ row.id }}" class="row">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="decision" value="deny">
+      <button type="submit" class="ghost">Refuse</button>
+      <a class="btn ghost" href="/approvals/{{ row.id }}">Try again</a>
+    </form>
+  </div>
+{% endif %}
+{% endblock %}

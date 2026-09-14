@@ -516,6 +516,7 @@ class AppState:
     # --- collections ----------------------------------------------------------
 
     _collections: tuple = ()
+    _approvals: Any = None
 
     def chain_named(self, network: str) -> ChainContext:
         for chain in self.token_chains:
@@ -539,6 +540,14 @@ class AppState:
                 send_lock=(self.begin_send, self.end_send))
             self._collections = (jobs, runner)
         return self._collections
+
+    @property
+    def approvals(self):
+        """Sends asked for by pages and bots, waiting for the user's yes."""
+        if self._approvals is None:
+            from ..approvals import Requests
+            self._approvals = Requests(self.home / "approvals.sqlite")
+        return self._approvals
 
     # --- identity, derived from the wallet ------------------------------------
     #

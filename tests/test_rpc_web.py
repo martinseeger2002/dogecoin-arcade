@@ -251,3 +251,114 @@ def test_arcade_rpc_speaks_the_cookie(tmp_path, monkeypatch, capsys):
     assert seen["url"].endswith("/rpc/main")
     assert rpccli.main(["--home", str(tmp_path / "nowhere"), "omni_getinfo"]) == 1
     assert "cannot read" in capsys.readouterr().err
+
+
+def test_a_bot_asks_and_the_owner_decides(web):
+    """A program that is not trusted to spend files a request; the person
+    sees the transaction it would be and says yes or no. Nothing reaches the
+    mempool on the bot's word."""
+    import re
+
+    app, state, node, alice, bob = web
+    bot = Bot(app, state)
+    csrf = state.csrf_token
+    prepared = bot("omni_sendissuancefixed", alice, 1, 1, 0, "Games", "Arcade",
+                   "Ask Token", "", "", "100")
+    bot("omni_broadcast", prepared["txid"])
+    mine_and_index(node, state)
+    (prop,) = bot("omni_listproperties")
+    pid = prop["propertyid"]
+
+    # Tokens: asked for, with the wallet choosing which address pays.
+    asked = bot("da_requesttoken", "", bob, pid, "5", "for the tournament")
+    assert asked["status"] == "pending" and asked["origin"] == "rpc"
+    assert asked["propertyname"] == "Ask Token" and asked["amount"] == "5"
+    assert asked["note"] == "for the tournament"
+    assert node.rpc.call("getrawmempool") == [], "asking builds nothing"
+    assert bot("da_request", asked["id"])["status"] == "pending"
+    assert "5 Ask Token to" in app.get("/approvals").text
+    assert "a program on the bot RPC" in app.get("/approvals").text
+    assert refused(bot, -8, "da_requesttoken", alice, bob, 999, "1") == "there is no token 999"
+    assert refused(bot, -8, "da_requestinscription", bob, "0") == "no such inscription"
+    assert refused(bot, -8, "da_request", "nope") == "no such request"
+
+    page = app.get(f"/approvals/{asked['id']}").text
+    assert "Approve and send" in page and "for the tournament" in page
+    txid = re.search(r'name="confirmed" value="([0-9a-f]{64})"', page).group(1)
+    assert node.rpc.call("getrawmempool") == [], "looking builds; it does not send"
+    done = app.post(f"/approvals/{asked['id']}", data={"csrf_token": csrf, "confirmed": txid})
+    assert "Approved and sent" in done.text
+    assert node.rpc.call("getrawmempool") == [txid], "exactly what was shown"
+    answer = bot("da_request", asked["id"])
+    assert answer["status"] == "sent" and answer["txid"] == txid
+    mine_and_index(node, state)
+    assert bot("omni_getbalance", bob, pid)["balance"] == "5"
+
+    # Coins from a named address, looked at and refused: nothing moves.
+    asked = bot("da_requestsend", alice, bob, "2.5")
+    page = app.get(f"/approvals/{asked['id']}").text
+    assert "2.50000000" in page and alice in page and "change, back to you" in page
+    app.post(f"/approvals/{asked['id']}", data={"csrf_token": csrf, "decision": "deny"})
+    assert bot("da_request", asked["id"])["status"] == "denied"
+    assert node.rpc.call("getrawmempool") == []
+
+    # Coins with the wallet choosing, approved: they arrive.
+    had = float(node.rpc.call("getreceivedbyaddress", bob, 0))
+    asked = bot("da_requestsend", "", bob, "2.5")
+    page = app.get(f"/approvals/{asked['id']}").text
+    txid = re.search(r'name="confirmed" value="([0-9a-f]{64})"', page).group(1)
+    app.post(f"/approvals/{asked['id']}", data={"csrf_token": csrf, "confirmed": txid})
+    mine_and_index(node, state)
+    assert float(node.rpc.call("getreceivedbyaddress", bob, 0)) == had + 2.5
+    assert bot("da_request", asked["id"])["txid"] == txid
+
+    listing = bot("da_requests")
+    assert sorted(r["status"] for r in listing) == ["denied", "sent", "sent"]
+    assert "da_requestsend" in bot("help") and "Asking is one call" in bot("help")
+
+
+def test_a_page_asks_for_an_inscription_and_it_changes_hands(web):
+    """The same queue from the other door: an inscribed page (any origin,
+    no cookie) asks, and the owner hands the inscription over."""
+    import re
+
+    from arcade import inscribe
+    from arcade.messaging.sender import MessageSender
+
+    app, state, node, alice, bob = web
+    plan = inscribe.plan(b"a small thing worth asking for", "text/plain",
+                         '{"name": "Askers #1"}')
+    MessageSender(node.rpc, state.ledger.params, public_only=True).send_all(
+        alice, plan.payloads)
+    mine_and_index(node, state)
+    index = state.token_index(state.ledger)
+    (row,) = index.inscriptions()
+    assert row["owner"] == alice
+
+    # Somebody else's inscription cannot even be asked for. (Alice's coins
+    # went into inscribing; the hand-over needs one small confirmed output.)
+    node.rpc.call("sendtoaddress", bob, 5)
+    node.rpc.call("sendtoaddress", alice, 5)
+    mine_and_index(node, state)
+    refused_ = app.post("/r/send", json={"kind": "inscription", "to": alice,
+                                         "inscription": row["number"]})
+    assert refused_.status_code == 400 and "already holds" in refused_.json()["error"]
+
+    filed = app.post("/r/send", json={"kind": "inscription", "to": bob,
+                                      "inscription": row["number"],
+                                      "label": "Askers", "note": "you won it"})
+    assert filed.status_code == 202, filed.text
+    rid = filed.json()["id"]
+    assert filed.json()["number"] == row["number"] and filed.json()["from"] == alice
+
+    view = app.get(f"/inscriptions/{row['txid']}/view").text
+    assert "1 send waiting for your approval" in view
+    page = app.get(f"/approvals/{rid}").text
+    assert f"inscription #{row['number']}" in page and "you won it" in page
+    assert "the recipient" in page, page[page.find("<main>"):page.find("</main>")]
+    txid = re.search(r'name="confirmed" value="([0-9a-f]{64})"', page).group(1)
+    app.post(f"/approvals/{rid}", data={"csrf_token": state.csrf_token, "confirmed": txid})
+    assert app.get(f"/r/send/{rid}").json()["status"] == "sent"
+    mine_and_index(node, state)
+    assert index.inscription(row["txid"])["owner"] == bob
+    assert app.get(f"/r/inscription/{row['number']}").json()["owner"] == bob

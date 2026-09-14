@@ -514,7 +514,8 @@ form.composer button[type=submit]{background:var(--sent);border-color:var(--sent
   <nav>
   {%- for href, label, chain, built in nav %}
     {%- if built %}
-    <a class="{{ 'on' if path == href else '' }}" href="{{ href }}">{{ label }}</a>
+    <a class="{{ 'on' if path == href else '' }}" href="{{ href }}">{{ label
+      }}{% if href == '/approvals' and approvals_waiting %}<strong style="margin-left:6px">{{ approvals_waiting }}</strong>{% endif %}</a>
     {%- else %}
     <a class="off" href="{{ href }}" title="not built yet">{{ label }}</a>
     {%- endif %}
@@ -533,6 +534,12 @@ form.composer button[type=submit]{background:var(--sent);border-color:var(--sent
 </div>
 {% endif %}
 {% if notice %}<div class="msg {{ notice_kind }}">{{ notice }}</div>{% endif %}
+{% if approvals_waiting and not path.startswith('/approvals') %}
+<div class="msg info" id="approvals-banner">
+  <strong>{{ approvals_waiting }} send{{ '' if approvals_waiting == 1 else 's' }} waiting for your approval.</strong> A page or a program asked; nothing goes
+  out until you say so. <a href="/approvals">Look at {{ 'it' if approvals_waiting == 1 else 'them' }}</a>
+</div>
+{% endif %}
 {% block body %}{% endblock %}
 </main>
 

@@ -27,7 +27,32 @@
   </div>
   <p class="muted" style="margin-top:8px">
     Running in a sandbox: it has no cookies, cannot reach this page, and cannot
-    load anything from outside this machine.</p>
+    load anything from outside this machine. It can ask this wallet to send
+    something; if it does, the request appears here and nothing goes out until
+    you approve it.</p>
+  <div class="msg info" id="asked" hidden></div>
+  <script>
+  // The page in the frame can file a request at any moment; the person looking
+  // at it should see that without reloading. Polled while this page is open.
+  (function(){
+    var box = document.getElementById('asked'), shown = 0;
+    function look(){
+      fetch('/approvals/waiting').then(function(r){ return r.json(); }).then(function(j){
+        if (!j.waiting) { box.hidden = true; shown = 0; return; }
+        if (j.waiting === shown) return;
+        shown = j.waiting;
+        var lines = j.requests.map(function(q){
+          return '<li>' + q.summary.replace(/</g, '&lt;') +
+            (q.label ? ' <span class="muted">— asked by “' + q.label.replace(/</g, '&lt;') + '”</span>' : '') + '</li>';
+        }).join('');
+        box.innerHTML = '<strong>This wallet has been asked to send:</strong><ul style="margin:6px 0 8px">' +
+          lines + '</ul><a class="btn small" href="/approvals">Look before anything goes out</a>';
+        box.hidden = false;
+      }).catch(function(){});
+    }
+    look(); setInterval(look, 3000);
+  })();
+  </script>
 {% else %}
   <div class="msg info">Nothing here renders {{ row.content_type }} in a page.
     <a href="/content/{{ row.txid }}?download=1">Save it</a> and open it with
