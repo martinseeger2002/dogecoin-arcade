@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Guide · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Guide</h1>
+<p class="sub">Everything this does, what it costs, and what it deliberately
+  does not do.</p>
+
+<div class="panel" style="margin-bottom:20px">
+  <p style="margin:0">
+    Jump to:
+    {% for section in sections %}
+      <a href="#{{ loop.index }}">{{ section.title }}</a>{% if not loop.last %} ·
+      {% endif %}
+    {% endfor %}
+  </p>
+</div>
+
+{% for section in sections %}
+<h2 id="{{ loop.index }}" style="text-transform:none;letter-spacing:0;font-size:1.05rem">
+  {{ section.title }}</h2>
+<div class="panel">
+  <p class="muted" style="margin-top:0">{{ section.blurb }}</p>
+  <ul style="margin:0;padding-left:20px;line-height:1.75">
+    {% for point in section.points %}<li>{{ point }}</li>{% endfor %}
+  </ul>
+</div>
+{% endfor %}
+
+<p class="muted">
+  The same thing in longer form, with the arithmetic, is at
+  <a href="https://dogecoinarcade.com/docs/features.html">dogecoinarcade.com/docs</a>.
+</p>
+{% endblock %}

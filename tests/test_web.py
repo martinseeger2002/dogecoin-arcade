@@ -1047,11 +1047,14 @@ def test_a_reset_can_drop_contacts_when_asked(tmp_path):
     assert store.contacts() == []
 
 
-def test_the_reset_needs_the_acknowledgement(client):
-    app, state = client
-    app.post("/reset-history", data={"csrf_token": state.csrf_token},
-             follow_redirects=False)
-    assert "tick the box" in (state.notice or "")
+def test_there_is_no_way_to_clear_the_history_from_the_interface(client):
+    """The button is gone. `MessageStore.reset_history` stays -- the tests below
+    use it, and it is the right tool for a machine being set up for testing --
+    but nothing in the interface offers to throw somebody's messages away."""
+    app, _ = client
+    assert app.post("/reset-history").status_code == 404
+    assert "Start fresh" not in app.get("/").text
+    assert "Clear and start from this block" not in app.get("/").text
 
 
 def test_an_interrupted_send_is_offered_for_finishing(client):
@@ -2287,33 +2290,21 @@ def test_publishing_asks_the_chain_before_it_spends(monkeypatch, client):
     )
 
 
-def test_the_reset_dialog_does_not_promise_a_row_it_may_not_keep(client):
-    """Copy has outrun the code three times today; this pins one of them.
+def test_no_dialog_can_promise_what_the_reset_could_not_keep():
+    """The dialog is gone with the feature it belonged to.
 
-    The dialog said "your address book, your wallet and your own published key
-    are left alone". Whether that announcement row survives depends on the
-    identity being loadable, and on a machine where it was not the reset took
-    three announcements to none -- which is exactly what a test machine measured, an hour
-    after I promised it otherwise.
-
-    The guarantee the sentence was really making is a different one and it does
-    hold: publishing consults the chain, so a cleared list cannot cost a second
-    fee. That is what the page should say, because a reader who takes the
-    stronger reading -- "the Keys page will still show my key" -- is reading
-    something false.
+    It is worth keeping the lesson: it said "your address book, your wallet and
+    your own published key are left alone", and whether that announcement row
+    survived depended on the identity being loadable. On a machine where it was
+    not, the reset took three announcements to none -- which is what a test machine
+    measured, an hour after I promised otherwise. Copy that outruns the code is
+    the failure this file has pinned more than once.
     """
-    app, _ = client
-    body = app.get("/").text
+    import pathlib as _p
 
-    assert "published key</strong> are left" not in body, (
-        "the dialog promises the announcement row survives; it may not"
-    )
-    assert "cannot cost you twice" in body, (
-        "the dialog should state the guarantee that actually holds"
-    )
-    assert "checks the chain rather than that" in body, (
-        "and say what makes it hold, so the claim can be checked"
-    )
+    overview = _p.Path("arcade/web/templates/overview.html").read_text()
+    assert "published key</strong> are left" not in overview
+    assert "Start fresh" not in overview
 
 
 # --- the tokens chain switch --------------------------------------------------

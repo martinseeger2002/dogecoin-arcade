@@ -31,6 +31,7 @@ from .. import backup, media, tokens as tokenlib, wallet as walletlib
 from ..ledger import AmountError, format_amount, parse_amount
 from ..config import NETWORKS, MainnetRefused, WrongChain
 from .. import inscribe as inscribelib
+from . import guide as guidelib
 from .. import tags as taglib
 from .. import remote as remotelib
 from ..messaging import contact, content, group
@@ -80,6 +81,7 @@ NAV = [
     ("/exchange",     "Exchange",     "mainnet",   False),
     ("/inscriptions", "Inscriptions", "mainnet",   True),
     ("/remote",       "Remote",       None,        True),
+    ("/guide",        "Guide",        None,        True),
 ]
 
 
@@ -1879,52 +1881,6 @@ def create_app(state: AppState) -> FastAPI:
                       ledger=ledger_status(), prepared=prepared, which=which,
                       error=error, destination=destination, amount=amount)
 
-    @app.post("/reset-history")
-    def reset_history(request: Request, understand: str = Form(""),
-                      csrf_token: str = Form("")):
-        """Forget everything scanned so far and start from the current block.
-
-        Nothing on the chain changes -- those transactions are permanent and
-        whoever they were addressed to can still read them. This clears only what
-        this installation remembers, which is what makes it useful for clearing
-        out test traffic.
-        """
-        try:
-            check_csrf(csrf_token)
-            if understand != "yes":
-                raise ValueError("tick the box to confirm.")
-            # Back to the protocol's shared start, not this machine's current
-            # block: clearing should put an installation back in step with
-            # everyone else on this version, not pin it to wherever it happened
-            # to be. Falls back to the tip on a chain with no shared start.
-            start = state.messaging.params.messaging_start_height
-            if not start:
-                with state.messaging.rpc() as rpc:
-                    start = rpc.get_block_count()
-            with state.store() as store:
-                # No `if state.unlocked` here. The store keeps everything below
-                # the new floor regardless, because that is what cannot be
-                # recovered; this only adds the identity's own key when it is
-                # known, and must never be the thing standing between a user and
-                # their published announcement.
-                counts = store.reset_history(
-                    state.messaging.network, start,
-                    keep_key=(state.identity.public_bytes
-                              if state.identity is not None else None))
-            state.clear_progress()
-            removed = sum(counts.values())
-            state.flash(
-                f"Cleared {removed:,} stored record"
-                f"{'' if removed == 1 else 's'} and set the starting point to "
-                f"block {start:,}, which is where every installation on this "
-                f"version begins. Your address book, your wallet and your own "
-                f"published key are untouched; so is the chain.", "ok")
-        except HTTPException:
-            raise          # a rejected form is a 400, not an error page
-        except Exception as exc:
-            state.flash(f"Could not reset: {exc}", "err")
-        return RedirectResponse("/", status_code=303)
-
     @app.post("/scan")
     def scan(request: Request, csrf_token: str = Form("")):
         try:
@@ -2291,6 +2247,16 @@ def create_app(state: AppState) -> FastAPI:
             "tag": next((index.tag_of(a) for a in addresses if index.tag_of(a)), None),
             "network": chain.network,
         })
+
+    @app.get("/guide", response_class=HTMLResponse)
+    def guide(request: Request):
+        """Everything this does, in the application rather than only on a site.
+
+        A user who is offline, or behind the remote tunnel, or simply does not
+        know there is a website, still has to be able to find out what the
+        thing in front of them can do.
+        """
+        return render(request, "guide.html", sections=guidelib.SECTIONS)
 
     @app.get("/tokens", response_class=HTMLResponse)
     def tokens(request: Request):

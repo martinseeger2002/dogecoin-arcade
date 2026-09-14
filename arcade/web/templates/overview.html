@@ -104,44 +104,4 @@ function copyOf(id, ev){
   });
 }
 </script>
-<h2>Start fresh <span class="tag testnet">test</span></h2>
-<div class="panel">
-  <p>Forget every message, post and key this installation has scanned, and begin
-     watching from the current block. Useful for clearing out testing.</p>
-  <div class="note">
-    <strong>The chain is not affected.</strong> Those transactions are permanent,
-    and anyone they were addressed to can still read them &mdash; this clears only
-    what is remembered here. Your <strong>address book</strong> and your
-    <strong>wallet</strong> are left alone.
-    {# Deliberately NOT "your published key is left alone". Whether that row
-       survives depends on the identity being loadable, and on a machine where
-       it was not the reset took three announcements to none -- a test machine measured
-       exactly that. What IS guaranteed is the thing the sentence was really
-       promising: you cannot be charged twice, because publishing asks the
-       chain rather than this list. Say that instead of implying a row is
-       there. #}
-  </div>
-  <div class="note">
-    <strong>What is cleared is discarded, not just forgotten.</strong> The new
-    starting point is later than the messages you are clearing, so nothing on
-    this version will read that far back again and a later scan will not bring
-    them back. The transactions themselves stay on the chain for ever, and
-    anyone holding their ids can still read them.
-    <br><br>
-    <strong>Your published key cannot cost you twice.</strong> The Keys page may
-    show nothing afterwards &mdash; an announcement below the new starting point
-    is not scanned again &mdash; but publishing checks the chain rather than that
-    list, so it will tell you the key is already out there instead of charging
-    you a second fee for it.
-  </div>
-  <form method="post" action="/reset-history"
-        onsubmit="return confirm('Forget everything scanned so far?')">
-    <input type="hidden" name="csrf_token" value="{{ csrf }}">
-    <label style="display:flex;gap:9px;align-items:flex-start;font-size:.89rem;color:var(--fg)">
-      <input type="checkbox" name="understand" value="yes" style="width:auto;margin-top:3px" required>
-      <span>I understand the conversations here will be emptied.</span>
-    </label>
-    <button class="danger" type="submit" style="margin-top:11px">Clear and start from this block</button>
-  </form>
-</div>
 {% endblock %}
