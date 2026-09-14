@@ -24,20 +24,31 @@ from pathlib import Path
 from .config import NETWORKS, Params, RpcCredentials, read_node_conf
 from .rpc import RpcClient, RpcTransportError
 
-#: Where Pepecoin Core keeps its datadir, per platform.
+#: Where Pepecoin Core keeps its datadir, per platform -- BOTH of them.
+#:
+#: The testnet directory has to be listed for every platform, not only the one
+#: the author happened to be on. The installer writes testnet to a sibling of
+#: the mainnet directory (`installer/install.py: datadirs`), and this only knew
+#: the Linux spelling of that: a Windows user with a synced testnet node at
+#: %APPDATA%\Pepecoin-testnet was told "Testnet NOT FOUND" while its RPC port
+#: answered perfectly well, and had to pass --msg-datadir by hand. Two places
+#: encoding the same convention, and only one of them kept up.
 def _platform_datadirs() -> list[Path]:
     system = platform.system()
     home = Path.home()
     if system == "Windows":
         appdata = os.environ.get("APPDATA")
         base = Path(appdata) / "Pepecoin" if appdata else home / "AppData/Roaming/Pepecoin"
-        return [base]
+        return [base, base.with_name("Pepecoin-testnet")]
     if system == "Darwin":
-        return [home / "Library/Application Support/Pepecoin"]
-    return [home / ".pepecoin"]
+        base = home / "Library/Application Support/Pepecoin"
+        return [base, base.with_name("Pepecoin-testnet")]
+    return [home / ".pepecoin", home / ".pepecoin-testnet"]
 
 
-#: Additional places worth looking: our own conventions, and a system service.
+#: Additional places worth looking: a system service, and the Linux convention
+#: again for anyone running the app on one platform against a datadir copied
+#: from another.
 EXTRA_DATADIRS = [
     Path.home() / ".pepecoin-testnet",
     Path("/var/lib/pepecoind"),

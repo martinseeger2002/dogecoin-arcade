@@ -82,3 +82,48 @@ def test_discover_returns_reachable_candidates_first():
     if len(results) > 1:
         flags = [c.reachable for c in results]
         assert flags == sorted(flags, reverse=True)
+
+
+# --- both datadirs, on every platform -----------------------------------------
+# A Windows user with a synced testnet node was told "Testnet NOT FOUND" while
+# its RPC port answered perfectly well: the installer writes testnet to a
+# sibling of the mainnet directory on every platform, and discovery only knew
+# the Linux spelling of that. Two places encoding one convention, and only one
+# of them kept up.
+
+
+@pytest.mark.parametrize("system,appdata,expected", [
+    ("Windows", r"C:\Users\Darrell\AppData\Roaming", "Pepecoin-testnet"),
+    ("Darwin", None, "Pepecoin-testnet"),
+    ("Linux", None, ".pepecoin-testnet"),
+])
+def test_the_testnet_datadir_is_looked_for_on_every_platform(
+        monkeypatch, system, appdata, expected):
+    from arcade import discovery
+
+    monkeypatch.setattr(discovery.platform, "system", lambda: system)
+    if appdata:
+        monkeypatch.setenv("APPDATA", appdata)
+    found = [str(p) for p in discovery._platform_datadirs()]
+    assert any(p.endswith(expected) for p in found), found
+    assert len(found) >= 2, "mainnet and testnet, both"
+
+
+def test_discovery_agrees_with_what_the_installer_writes(monkeypatch):
+    """The two must not drift again: whatever the installer creates is exactly
+    what discovery has to look in."""
+    import pathlib as _pathlib
+    import sys
+
+    sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent / "installer"))
+    import install
+
+    from arcade import discovery
+
+    for system in ("Windows", "Darwin", "Linux"):
+        monkeypatch.setattr(discovery.platform, "system", lambda s=system: s)
+        written = {str(p) for p in install.datadirs(system, install.PEPECOIN)}
+        looked_in = {str(p) for p in discovery._platform_datadirs()}
+        assert written <= looked_in, (
+            f"{system}: the installer writes {written - looked_in} and nothing "
+            f"looks there")
