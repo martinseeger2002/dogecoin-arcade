@@ -411,7 +411,7 @@ def _prepare_coins(rpc: Any, params: Any, sender: str, to: str, sats: int) -> Pr
     """
     if not sender:
         plain = walletlib.prepare_send(rpc, to, sats)
-        outputs = _plain_outputs(plain.decoded, to, None)
+        outputs = _plain_outputs(plain.decoded, to, None, sats)
         return Prepared(hex=plain.hex, txid=plain.txid, what=f"{sats / COIN:.8f} coins",
                         sender=next((o["where"] for o in outputs if o["is_change"]), ""),
                         fee_sats=plain.fee_sats, dust_sats=sats, size=plain.size,
@@ -432,17 +432,31 @@ def _prepare_coins(rpc: Any, params: Any, sender: str, to: str, sats: int) -> Pr
     return Prepared(hex=signed["hex"], txid=decoded["txid"], what=f"{sats / COIN:.8f} coins",
                     sender=sender, fee_sats=int(round(float(funded.get("fee", 0)) * COIN)),
                     dust_sats=sats, size=len(signed["hex"]) // 2,
-                    outputs=_plain_outputs(decoded, to, sender))
+                    outputs=_plain_outputs(decoded, to, sender, sats))
 
 
-def _plain_outputs(decoded: dict, to: str, sender: str | None) -> list[dict]:
+def _plain_outputs(decoded: dict, to: str, sender: str | None,
+                   sats: int | None = None) -> list[dict]:
+    """Each output, and which one is the payment.
+
+    Matched by amount as well as address, because the recipient can be one of
+    this wallet's own addresses -- a page asking the owner to move a coin
+    within the wallet, or the live demo of exactly that -- and then the change
+    goes back to the same address. Matching on address alone called both
+    outputs "the recipient" and left "From" blank.
+    """
     rows = []
+    paid = False
     for vout in decoded.get("vout", []):
         addresses = vout.get("scriptPubKey", {}).get("addresses") or []
         address = addresses[0] if addresses else None
-        rows.append({"value": float(vout.get("value", 0)),
+        value = float(vout.get("value", 0))
+        payment = (address == to and not paid
+                   and (sats is None or int(round(value * COIN)) == sats))
+        paid = paid or payment
+        rows.append({"value": value,
                      "where": address or vout.get("scriptPubKey", {}).get("type", "unknown"),
-                     "is_change": address is not None and address != to
+                     "is_change": address is not None and not payment
                                   and (sender is None or address == sender),
-                     "is_recipient": address == to})
+                     "is_recipient": payment})
     return rows

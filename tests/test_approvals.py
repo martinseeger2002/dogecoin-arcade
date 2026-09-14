@@ -187,3 +187,20 @@ def test_the_viewer_watches_for_requests():
     source = pathlib.Path("arcade/web/templates/inscription_view.html").read_text()
     assert "/approvals/waiting" in source and "setInterval" in source
     assert "Look before anything goes out" in source
+
+
+def test_a_payment_to_ones_own_address_is_told_apart_from_its_change():
+    """The recipient can be one of the wallet's own addresses, and then the
+    change comes back to the same place. On the live wallet both outputs read
+    "the recipient" and From was blank; the amount is what tells them apart."""
+    decoded = {"vout": [
+        {"value": 1.0, "scriptPubKey": {"addresses": [TESTNET]}},
+        {"value": 0.32434, "scriptPubKey": {"addresses": [TESTNET]}},
+    ]}
+    rows = A._plain_outputs(decoded, TESTNET, None, 100_000_000)
+    assert [r["is_recipient"] for r in rows] == [True, False]
+    assert [r["is_change"] for r in rows] == [False, True]
+    # And with the change first, since the node orders outputs as it likes.
+    rows = A._plain_outputs({"vout": decoded["vout"][::-1]}, TESTNET, None, 100_000_000)
+    assert [r["is_recipient"] for r in rows] == [False, True]
+    assert [r["is_change"] for r in rows] == [True, False]

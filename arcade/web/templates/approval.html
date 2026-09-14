@@ -27,7 +27,8 @@
       <tr><td class="muted" style="width:120px">Sending</td>
           <td><strong>{{ prepared.what }}</strong></td></tr>
       <tr><td class="muted">From</td>
-          <td class="mono" style="word-break:break-all">{{ prepared.sender }}</td></tr>
+          <td class="mono" style="word-break:break-all">{{ prepared.sender
+            or "the wallet chose the coins" }}</td></tr>
       <tr><td class="muted">To</td>
           <td class="mono" style="word-break:break-all"><strong>{{ row.toaddress }}</strong>
             {% if row.totag %}<br><span class="muted">@{{ row.totag }} resolved to this
