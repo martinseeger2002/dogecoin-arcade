@@ -175,6 +175,21 @@ CREATE TABLE IF NOT EXISTS tag (
     position      INTEGER NOT NULL
 );
 
+-- An offer for somebody's inscription, made in public (D-042). Said on the
+-- chain because a holder who never published a key cannot be messaged, and
+-- never asked to be. Nothing is locked by one: it is an offer.
+CREATE TABLE IF NOT EXISTS nft_offer (
+    txid          TEXT    PRIMARY KEY,
+    block_height  INTEGER NOT NULL,
+    position      INTEGER NOT NULL,
+    inscription   TEXT    NOT NULL,
+    buyer         TEXT    NOT NULL,
+    take_kind     INTEGER NOT NULL,
+    take_property INTEGER,
+    take_amount   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS nft_offer_item_idx ON nft_offer(inscription);
+
 CREATE INDEX IF NOT EXISTS ribbit_tx_block_idx ON arcade_tx(block_height, position);
 CREATE INDEX IF NOT EXISTS balance_property_idx ON balance(property_id);
 """
@@ -189,6 +204,7 @@ def install_schema(db: Database) -> None:
     register_journalled_table("arcade_tx", ("txid",))
     register_journalled_table("tag", ("tag",))
     register_journalled_table("inscription", ("txid",))
+    register_journalled_table("nft_offer", ("txid",))
     register_journalled_table("inscription_chunk",
                               ("sender", "inscription_id", "countdown"))
     register_journalled_table("collection_item", ("txid",))
@@ -608,8 +624,40 @@ class Engine:
             self._inscription_transfer(rtx, parsed)
         elif isinstance(parsed, I.Swap):
             self._swap(rtx, parsed)
+        elif isinstance(parsed, I.Offer):
+            self._offer(rtx, parsed)
         else:
             self._inscription_chunk(rtx, parsed)
+
+    def _offer(self, rtx: ArcadeTransaction, offer: I.Offer) -> None:
+        """Write down an offer for an inscription. Nothing moves.
+
+        Refused when the inscription is not one this chain has, when the
+        offer is for nothing, and when it is the holder offering for their
+        own thing -- none of which anybody could act on. Everything else is
+        recorded: whether the buyer can pay is answered when the holder
+        accepts and the swap is built, not here, because a balance at this
+        block says nothing about a balance three blocks later.
+        """
+        found = self.state.db.conn.execute(
+            "SELECT owner FROM inscription WHERE txid=?",
+            (offer.txid.hex(),)).fetchone()
+        if found is None:
+            raise InvalidTransaction("there is no such inscription on this chain")
+        if found["owner"] == rtx.sender:
+            raise InvalidTransaction("that one is already yours")
+        if not offer.take.amount and offer.take.kind != I.LEG_INSCRIPTION:
+            raise InvalidTransaction("an offer of nothing is not an offer")
+        self.state.insert("nft_offer", {
+            "txid": rtx.txid,
+            "block_height": rtx.block_height,
+            "position": rtx.position,
+            "inscription": offer.txid.hex(),
+            "buyer": rtx.sender,
+            "take_kind": offer.take.kind,
+            "take_property": offer.take.property_id or None,
+            "take_amount": int(offer.take.amount or 0),
+        })
 
     def _tag(self, rtx: ArcadeTransaction, kind: int, tag: str) -> None:
         """Claim a tag, or hand one to the reference address."""

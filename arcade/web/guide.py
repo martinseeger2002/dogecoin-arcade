@@ -165,18 +165,24 @@ SECTIONS: list[dict] = [
              "it mints out."),
             ("Tokens: what tokens are being sold for. Shops at prices their "
              "sellers set, not a book of bids and asks."),
-            ("Marketplace: single NFTs for sale, collection or not. One that "
+            ("NFTs: single NFTs for sale, collection or not. One that "
              "has moved drops off by itself -- nothing is un-listed, because "
              "nothing was listed anywhere but the chain."),
             ("Charts of what actually traded, for tokens and for NFTs: there "
              "is no book to draw, so what is drawn is what people paid. A day "
-             "with no trade is a dot, not a price, and one currency to a "
-             "chart."),
-            ("An offer can be made on any NFT, listed or not. It is not a "
-             "PSBT: the buyer cannot build the transaction, since the "
-             "seller's own output must be its first input. It is a message "
-             "naming the item and the price, and the holder's yes builds the "
-             "rest."),
+             "with no trade is a dot, not a price; one chart per collection, "
+             "and one currency to a chart."),
+            ("An offer is made with what you have: the form lists the tokens "
+             "this wallet holds and their balances, and the door checks again "
+             "when it comes back."),
+            ("An offer can be made on any NFT, listed or not, and is SAID ON "
+             "THE CHAIN rather than sent: a holder never asked to be "
+             "reachable and most have published no key, so their wallet "
+             "finds it by watching their own things. It fits one OP_RETURN "
+             "and locks nothing."),
+            ("Making one needs YOUR key published, because you are the one "
+             "asking for an answer. The holder's Accept builds the seller's "
+             "half and sends it back to you."),
             ("Your wallet signs its half of an answer automatically only if "
              "the answer names the same item and the same price you offered. "
              "An offer on something of YOURS is never answered without you."),

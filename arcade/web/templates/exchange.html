@@ -8,7 +8,7 @@
   <a class="btn {{ 'on' if current == 'offers' else 'ghost' }} small" href="/exchange?tab=offers">Offers</a>
   <a class="btn {{ 'on' if current == 'mintpads' else 'ghost' }} small" href="/exchange?tab=mintpads">Mintpads</a>
   <a class="btn {{ 'on' if current == 'tokens' else 'ghost' }} small" href="/exchange?tab=tokens">Tokens</a>
-  <a class="btn {{ 'on' if current == 'market' else 'ghost' }} small" href="/exchange?tab=market">Marketplace</a>
+  <a class="btn {{ 'on' if current == 'market' else 'ghost' }} small" href="/exchange?tab=market">NFTs</a>
 </nav>
 {% endmacro %}
 
@@ -18,6 +18,11 @@
     <strong>{{ s.name or ('#' ~ '{:,}'.format(s.number)) }}</strong>
     <span class="muted" style="margin-left:auto">#{{ "{:,}".format(s.number) }}</span>
   </div>
+  {% if s.thumb %}
+    <a class="media" href="/inscriptions/{{ s.txid }}/view" title="one of them, at random">
+      <img src="/content/{{ s.thumb }}" alt="one piece of this collection"
+           loading="lazy" style="max-width:100%;border-radius:8px;margin:8px 0"></a>
+  {% endif %}
   <table>
     {% for l in s.listings %}
     <tr><td colspan="2">{{ l.text }}
@@ -51,8 +56,9 @@
   <h2>Offered to you{% if offers_in %} &mdash; {{ offers_in|length }}{% endif %}</h2>
   {% if not offers_in %}
     <div class="panel empty"><p>Nothing yet.</p>
-      <p class="muted" style="font-size:.86rem">An offer arrives as a message on
-        the chain, so it takes a block to appear.</p></div>
+      <p class="muted" style="font-size:.86rem">An offer is written on the chain,
+        so it appears when its block does &mdash; and it reaches you whichever
+        address holds the piece, published key or not.</p></div>
   {% else %}
   <div class="panel">
     <table>
@@ -61,21 +67,20 @@
       <tr>
         <td><a href="/inscriptions/{{ b.inscription }}/view">
           {%- if b.number is not none %}#{{ "{:,}".format(b.number) }}
-          {%- else %}{{ b.inscription[:12] }}…{% endif %}</a></td>
-        <td><strong>{{ b.take.display or b.take.amount }}</strong>
-          {%- if b.note %}<div class="muted" style="font-size:.82rem"><q>{{ b.note }}</q></div>{% endif %}</td>
-        <td class="mono" style="font-size:.8rem;word-break:break-all">{{ b.buyer }}</td>
+          {%- else %}{{ b.inscription[:12] }}…{% endif %}</a>
+          {%- if b.collection %}<div class="muted" style="font-size:.8rem">{{ b.collection }}
+            {%- if b.edition is not none %} #{{ b.edition }}{% endif %}</div>{% endif %}</td>
+        <td><strong>{{ b.price }}</strong>
+          <div class="muted" style="font-size:.8rem">block {{ "{:,}".format(b.block_height) }}</div></td>
+        <td class="mono" style="font-size:.8rem;word-break:break-all">
+          {%- if tags.get(b.buyer) %}<strong>@{{ tags[b.buyer] }}</strong>
+          {%- else %}{{ b.buyer }}{% endif %}</td>
         <td style="text-align:right;white-space:nowrap">
-          {% if b.status == 'open' %}
-          <form method="post" action="/exchange/offers/{{ b.id }}" class="row"
+          <form method="post" action="/exchange/offers/{{ b.txid }}" class="row"
                 style="gap:6px;justify-content:flex-end;margin:0">
             <input type="hidden" name="csrf_token" value="{{ csrf }}">
             <button type="submit" name="decision" value="accept" class="small">Accept</button>
-            <button type="submit" name="decision" value="refuse" class="ghost small">Refuse</button>
-          </form>
-          {% else %}<span class="muted">{{ b.status }}</span>
-            {% if b.error %}<div class="muted" style="font-size:.8rem">{{ b.error }}</div>{% endif %}
-          {% endif %}</td>
+          </form></td>
       </tr>
       {% endfor %}
     </table>
@@ -90,15 +95,18 @@
   {% else %}
   <div class="panel">
     <table>
-      <tr><th>NFT</th><th>You offered</th><th>Holder</th><th>State</th></tr>
+      <tr><th>NFT</th><th>You offered</th><th>Held by</th><th>Made</th></tr>
       {% for b in offers_out %}
       <tr><td><a href="/inscriptions/{{ b.inscription }}/view">
             {%- if b.number is not none %}#{{ "{:,}".format(b.number) }}
-            {%- else %}{{ b.inscription[:12] }}…{% endif %}</a></td>
-          <td>{{ b.take.display or b.take.amount }}</td>
-          <td class="mono" style="font-size:.8rem;word-break:break-all">{{ b.owner }}</td>
-          <td>{{ b.status }}{% if b.txid %}
-            <span class="mono muted" style="font-size:.78rem">{{ b.txid[:16] }}…</span>{% endif %}</td></tr>
+            {%- else %}{{ b.inscription[:12] }}…{% endif %}</a>
+            {%- if b.collection %}<div class="muted" style="font-size:.8rem">{{ b.collection }}
+              {%- if b.edition is not none %} #{{ b.edition }}{% endif %}</div>{% endif %}</td>
+          <td>{{ b.price }}</td>
+          <td class="mono" style="font-size:.8rem;word-break:break-all">
+            {%- if tags.get(b.owner) %}<strong>@{{ tags[b.owner] }}</strong>
+            {%- else %}{{ b.owner }}{% endif %}</td>
+          <td class="muted" style="white-space:nowrap">block {{ "{:,}".format(b.block_height) }}</td></tr>
       {% endfor %}
     </table>
   </div>
@@ -137,8 +145,18 @@
     offered for even when it is not listed — open it and press Make offer.</p>
   {% for c in charts %}
   <div class="panel" style="margin-bottom:14px">
-    <h3 style="margin:0 0 8px">{{ c.title }}</h3>
-    {{ chart.headline(c.stats, c.unit) }}
+    <div class="row" style="gap:12px;align-items:flex-start">
+      {% if c.thumb %}
+      <a class="media" href="/content/{{ c.thumb }}" title="one of them, at random"
+         style="flex:0 0 96px">
+        <img src="/content/{{ c.thumb }}" alt="one piece of this collection"
+             loading="lazy" style="width:96px;border-radius:8px"></a>
+      {% endif %}
+      <div style="flex:1;min-width:0">
+        <h3 style="margin:0 0 8px">{{ c.title }}</h3>
+        {{ chart.headline(c.stats, c.unit) }}
+      </div>
+    </div>
     {{ chart.candles(c.slots, c.unit) }}
   </div>
   {% endfor %}

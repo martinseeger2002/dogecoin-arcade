@@ -3651,17 +3651,23 @@ def create_app(state: AppState) -> FastAPI:
         tunnel = state.remote_tunnel()
         pages = (tunnel.pages_url or "") if tunnel is not None and remotelib.is_remote(
             request.headers, request.headers.get("host", ""), tunnel.url) else ""
-        mine = False
+        mine, held, coins = False, [], 0.0
         try:
             with chain.rpc() as rpc:
-                mine = row["owner"] in _ledger_addresses(rpc)
+                own = _ledger_addresses(rpc)
+                mine = row["owner"] in own
+                # Only what this wallet HOLDS can be offered: an offer for a
+                # token you do not have is a fee spent to be refused, and the
+                # refusal would come from the other side (D-040).
+                held = _purses(index.balances(own))
+                coins = float(rpc.call("getbalance") or 0)
         except HTTPException:
             raise
         except Exception:
-            mine = False
+            mine, held, coins = mine, [], 0.0
         return render(request, "inscription_view.html", row=row, chain=chain,
                       tag=index.tag_of(row["owner"]), pages=pages, mine=mine,
-                      tokens=_token_props(index),
+                      tokens=held, coins=coins,
                       renders=row["content_type"].startswith(contentlib.RENDERABLE))
 
     @app.get("/tokens", response_class=HTMLResponse)
@@ -4087,8 +4093,24 @@ def create_app(state: AppState) -> FastAPI:
                 name = str(json.loads(row["json"] or "{}").get("name") or "")
             except Exception:
                 name = ""
+            # A face for the card: a random piece of the collection it sells,
+            # or the piece itself when it sells exactly one (D-041).
+            thumb = None
+            for listing in listings:
+                give = listing["give"]
+                if give.get("kind") == "random":
+                    found = index.collection_thumb(row["creator"],
+                                                   give.get("collection") or "")
+                    thumb = (found or {}).get("txid")
+                elif give.get("kind") == "inscription":
+                    piece = index.inscription(give.get("txid") or "")
+                    if piece and piece["held"] and str(
+                            piece["content_type"] or "").startswith("image/"):
+                        thumb = piece["txid"]
+                if thumb:
+                    break
             out.append({"txid": row["txid"], "number": row["number"],
-                        "name": name, "seller": row["owner"],
+                        "name": name, "seller": row["owner"], "thumb": thumb,
                         "mine": False, "listings": listings})
         return out
 
@@ -4118,28 +4140,56 @@ def create_app(state: AppState) -> FastAPI:
                                        int(property_id) if property_id else None),
                     index)
                 buyer = _buyer_for(rpc, index, own, take)
-            to = _key_at(row["owner"])
-            bid_id = secrets.token_hex(8)
-            text = json.dumps({"swap": "bid", "swapv": swaplib.PROTOCOL,
-                               "id": bid_id, "inscription": row["txid"],
-                               "take": swaplib.leg_json(take, index),
-                               "buyer": buyer}).encode()
-            sent = _page_send(row["txid"], chain, to, text)
-            now = time.time()
-            state.offers.add_bid({
-                "id": bid_id, "network": chain.network, "direction": "out",
-                "inscription": row["txid"], "number": row["number"],
-                "owner": row["owner"], "buyer": buyer, "peer_pubkey": to.hex(),
-                "take": swaplib.leg_json(take, index),
-                "created": now, "expires": now + swaplib.OFFER_TTL * 8})
-            state.flash(f"Offer sent in {sent['txid']}. It reaches them when the "
-                        f"block does; their answer comes back the same way.", "ok")
+            # The holder answers by message, so this wallet has to be
+            # reachable before it spends a fee asking (D-042).
+            with state.store() as store:
+                if store.key_for(buyer) is None and not _own_announcement(buyer):
+                    raise swaplib.SwapError(
+                        "publish your key first, from the address book, or "
+                        "whoever holds this cannot answer you. It costs a "
+                        "small fee and is done once.")
+            # Said on the chain, not sent as a message: whoever holds an NFT
+            # never asked to be reachable, and most have published no key at
+            # all. Their own node finds this by watching their own things
+            # (D-042). It fits one OP_RETURN, so it is a flat fee.
+            payload = P.AnyData(data=inscriptionlib.Offer(
+                txid=bytes.fromhex(row["txid"]), take=take).encode()).encode()
+            with chain.rpc() as rpc:
+                sender = tokenlib.TokenSender(rpc, chain.params)
+                prepared = sender.prepare(buyer, payload)
+                txid = sender.broadcast(prepared)
+            state.flash(f"Offer made in {txid}. It stands from the block it is "
+                        f"in; whoever holds it sees it in their own Exchange.", "ok")
             return RedirectResponse("/exchange?tab=offers", status_code=303)
         except HTTPException:
             raise
         except Exception as exc:
             state.flash(str(exc), "err")
             return RedirectResponse(f"/inscriptions/{inscription}/view", status_code=303)
+
+    def _own_announcement(address: str) -> bool:
+        """Whether this wallet has published a key at this address.
+
+        Its own announcement is not in the address book -- that is other
+        people -- so the store is asked about the key itself.
+        """
+        if not state.unlocked:
+            return False
+        with state.store() as store:
+            rows = store.all_keys()
+        mine = state.identity.public_bytes
+        return any(bytes(row["pubkey"]) == mine and row["address"] == address
+                   for row in rows)
+
+    def _take_json(entry: dict[str, Any], index) -> dict[str, Any]:
+        """An offer's price, as the pages and the wallet both say it."""
+        leg = inscriptionlib.Leg(int(entry["take_kind"]),
+                                 property_id=int(entry["take_property"] or 0),
+                                 amount=int(entry["take_amount"] or 0))
+        try:
+            return swaplib.leg_json(leg, index)
+        except Exception:
+            return {"kind": "unknown", "amount": entry["take_amount"]}
 
     def _key_at(address: str) -> bytes:
         """The messaging key the wallet at this address has announced.
@@ -4156,8 +4206,8 @@ def create_app(state: AppState) -> FastAPI:
                 "their address book.")
         return bytes(row["pubkey"])
 
-    @app.post("/exchange/offers/{bid_id}")
-    def decide_offer(request: Request, bid_id: str, decision: str = Form(""),
+    @app.post("/exchange/offers/{offer_txid}")
+    def decide_offer(request: Request, offer_txid: str, decision: str = Form(""),
                      csrf_token: str = Form("")):
         """Accept an offer on something of yours, or refuse it.
 
@@ -4168,28 +4218,36 @@ def create_app(state: AppState) -> FastAPI:
         """
         check_csrf(csrf_token)
         chain, index = _token_chain()
-        bid = state.offers.get_bid(bid_id)
         try:
-            if bid is None or bid["direction"] != "in":
-                raise swaplib.SwapError("no such offer")
-            if decision == "refuse":
-                state.offers.close_bid(bid_id, "refused")
-                _answer_bid(chain, bid, {"ok": False, "error": "refused"})
-                state.flash("Refused.", "ok")
-                return RedirectResponse("/exchange?tab=offers", status_code=303)
             with chain.rpc() as rpc:
                 own = _ledger_addresses(rpc)
+                standing = [o for o in index.offers_on(sorted(own))
+                            if o["txid"] == offer_txid]
+                if not standing:
+                    raise swaplib.SwapError(
+                        "no such offer on anything of yours -- it may have been "
+                        "made for a piece that has since moved")
+                found = standing[0]
+                # The buyer has to be reachable for this to finish: the
+                # seller's half goes back to them as a message. The wallet
+                # refuses to MAKE an offer without a published key for the
+                # same reason, so this is the rare case of an offer made by
+                # something else (D-042).
+                to = _key_at(found["buyer"])
+                bid = {"inscription": found["inscription"],
+                       "take": _take_json(found, index),
+                       "buyer": found["buyer"], "peer_pubkey": to.hex()}
                 offer = swaplib.offer_for_bid(rpc, index, state.offers,
                                               chain.network, bid, own=own)
-            state.offers.close_bid(bid_id, "accepted", offer_id=offer["id"])
-            _answer_bid(chain, bid, {"ok": True, "offer": offer})
-            state.flash(f"Accepted. The buyer's wallet signs its half and it goes "
-                        f"as one transaction.", "ok")
+            _page_send(found["inscription"], chain, to,
+                       json.dumps({"swap": "bid", "swapv": swaplib.PROTOCOL,
+                                   "id": offer_txid, "ok": True,
+                                   "offer": offer}).encode())
+            state.flash("Accepted. Their wallet signs its half and it goes as one "
+                        "transaction; nothing moves unless both halves do.", "ok")
         except HTTPException:
             raise
         except Exception as exc:
-            if bid is not None:
-                state.offers.close_bid(bid_id, "failed", error=str(exc))
             state.flash(str(exc), "err")
         return RedirectResponse("/exchange?tab=offers", status_code=303)
 
@@ -4257,24 +4315,37 @@ def create_app(state: AppState) -> FastAPI:
                         "stats": chartlib.summary(points),
                         "slots": chartlib.candles(points)})
         elif tab == "market":
-            for paid in chartlib.nft_currencies(trades)[:3]:
-                pid = paid["property_id"]
-                points = chartlib.nft_prices(trades, index, property_id=pid)
+            # A collection is a market of its own: what a Goofball goes for
+            # says nothing about what a Doge Punk goes for (D-040).
+            for market in chartlib.nft_markets(trades, index)[:6]:
+                pid = market["property_id"]
+                which = market["collection"] or chartlib.STANDALONE
+                points = chartlib.nft_prices(trades, index, collection=which,
+                                             property_id=pid)
                 if not points:
                     continue
                 unit = f"{chain.label} coins"
                 if pid is not None:
                     prop = index.property(pid)
                     unit = (prop or {}).get("name") or f"token #{pid}"
+                what = market["collection"] or "NFTs in no collection"
+                # A face for the market, picked afresh from the collection
+                # it is a market in (D-041).
+                thumb = None
+                if market["collection"]:
+                    found = index.collection_thumb(None, market["collection"])
+                    thumb = (found or {}).get("txid")
                 data["charts"].append({
-                    "title": f"NFTs paid for in {unit}", "unit": f"{unit} each",
-                    "stats": chartlib.summary(points),
+                    "title": f"{what}, paid in {unit}", "unit": f"{unit} each",
+                    "thumb": thumb, "stats": chartlib.summary(points),
                     "slots": chartlib.candles(points)})
         try:
-            data["offers_in"] = state.offers.bids(chain.network, "in")
-            data["offers_out"] = state.offers.bids(chain.network, "out")
-        except Exception:
-            pass
+            data["offers_in"] = index.offers_on(sorted(data["owned"]))
+            data["offers_out"] = index.offers_by(sorted(data["owned"]))
+            for entry in data["offers_in"] + data["offers_out"]:
+                entry["price"] = swaplib.describe_leg(_take_json(entry, index))
+        except Exception as exc:
+            data["node_error"] = data["node_error"] or str(exc)
         return render(request, "exchange.html", **data)
 
 

@@ -55,6 +55,7 @@ VERSION = 1
 KIND_CHUNK = 1        # a piece of an inscription's content
 KIND_TRANSFER = 2     # hand an inscription to the reference address
 KIND_SWAP = 5         # two parties trade in one transaction (3 and 4 are tags)
+KIND_OFFER = 6        # an offer for somebody's inscription, said out loud
 
 #: What one side of a swap hands over.
 LEG_NONE = 0
@@ -323,7 +324,31 @@ def is_inscription(payload: bytes) -> bool:
     return len(payload) >= 6 and payload[:4] == MAGIC
 
 
-def parse(payload: bytes) -> Chunk | Transfer | Swap:
+@dataclass(frozen=True)
+class Offer:
+    """An offer for one inscription, made in public.
+
+    Said on the chain rather than sent as a message, because there is no way
+    to message a stranger who has not published a key -- and somebody holding
+    an NFT never asked to be reachable. Every node reads it, so the wallet
+    that holds the piece finds the offer by watching its own things (D-042).
+
+    The buyer is the transaction's sender. What they will pay is one leg, the
+    same kind a swap carries. Nothing is locked and nothing is promised: it
+    is an offer, and the answer is a swap that both sides sign.
+    """
+
+    txid: bytes           # the inscription being offered for
+    take: "Leg"           # what the buyer will pay
+
+    def encode(self) -> bytes:
+        if len(self.txid) != 32:
+            raise InscriptionError("an offer names a 32-byte inscription")
+        return (MAGIC + bytes([VERSION, KIND_OFFER]) + self.txid
+                + self.take.encode())
+
+
+def parse(payload: bytes) -> Chunk | Transfer | Swap | Offer:
     """Read one inscription payload. Raises `InscriptionError` if malformed."""
     if not is_inscription(payload):
         raise InscriptionError("not an inscription payload")
@@ -342,6 +367,14 @@ def parse(payload: bytes) -> Chunk | Transfer | Swap:
         if at != len(payload):
             raise InscriptionError("a swap has nothing after its two legs")
         return Swap(give=give, take=take)
+
+    if kind == KIND_OFFER:
+        if len(payload) < 38:
+            raise InscriptionError("truncated offer")
+        take, at = Leg.decode(payload, 38)
+        if at != len(payload):
+            raise InscriptionError("an offer has nothing after its price")
+        return Offer(txid=payload[6:38], take=take)
 
     if kind != KIND_CHUNK:
         raise InscriptionError(f"unknown inscription kind {kind}")

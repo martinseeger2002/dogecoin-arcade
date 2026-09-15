@@ -217,3 +217,53 @@ def test_a_reorg_gives_both_sides_back(engine):
     assert owner_of(db, mine) == BUYER
     state.rollback_block(200)
     assert owner_of(db, mine) == SELLER and owner_of(db, yours) == BUYER
+
+
+def test_an_offer_is_written_down_and_a_bad_one_is_not(engine):
+    """An offer is said on the chain so it reaches whoever holds the piece,
+    published key or not (D-042). Nothing is locked by one."""
+    eng, state, db = engine
+    piece = inscribe(eng, state, 1, SELLER)
+
+    good = I.Offer(txid=piece, take=I.Leg(I.LEG_COINS, amount=3 * 10 ** 8)).encode()
+    feed(eng, state, [tx(2, good, BUYER, height=200)])
+    assert status_of(db, 2) == "valid"
+    (row,) = db.conn.execute("SELECT * FROM nft_offer").fetchall()
+    assert row["inscription"] == piece.hex() and row["buyer"] == BUYER
+    assert row["take_kind"] == I.LEG_COINS and row["take_amount"] == 3 * 10 ** 8
+    assert owner_of(db, piece) == SELLER, "an offer moves nothing"
+
+    # For something this chain has never seen, and for your own piece.
+    missing = I.Offer(txid=bytes(32), take=I.Leg(I.LEG_COINS, amount=1)).encode()
+    feed(eng, state, [tx(3, missing, BUYER)])
+    assert "no such inscription" in status_of(db, 3)
+    mine = I.Offer(txid=piece, take=I.Leg(I.LEG_COINS, amount=1)).encode()
+    feed(eng, state, [tx(4, mine, SELLER)])
+    assert "already yours" in status_of(db, 4)
+    # A price of nothing cannot even be encoded, and a hand-made one that
+    # carries zero anyway is refused by the engine.
+    with pytest.raises(I.InscriptionError, match="needs an amount"):
+        I.Leg(I.LEG_COINS, amount=0).encode()
+    nothing = (I.MAGIC + bytes([I.VERSION, I.KIND_OFFER]) + piece
+               + bytes([I.LEG_COINS]) + (0).to_bytes(8, "big"))
+    feed(eng, state, [tx(5, nothing, BUYER)])
+    assert "not an offer" in status_of(db, 5)
+    assert db.conn.execute("SELECT COUNT(*) FROM nft_offer").fetchone()[0] == 1
+
+    # A reorg takes it back with everything else in its block.
+    state.rollback_block(200)
+    assert db.conn.execute("SELECT COUNT(*) FROM nft_offer").fetchone()[0] == 0
+
+
+def test_an_offer_fits_one_op_return():
+    """So making one costs a flat fee and no dust."""
+    from arcade.encoding import max_class_c_payload
+
+    for take in (I.Leg(I.LEG_COINS, amount=10 ** 8),
+                 I.Leg(I.LEG_TOKEN, property_id=65535, amount=10 ** 12)):
+        raw = I.Offer(txid=bytes(range(32)), take=take).encode()
+        assert len(P.AnyData(data=raw).encode()) <= max_class_c_payload()
+        parsed = I.parse(raw)
+        assert isinstance(parsed, I.Offer) and parsed.take == take
+    with pytest.raises(I.InscriptionError, match="truncated offer"):
+        I.parse(I.Offer(txid=bytes(32), take=I.Leg(I.LEG_COINS, amount=1)).encode()[:20])

@@ -50,8 +50,13 @@ def token_prices(trades: Iterable[dict], property_id: int) -> list[dict]:
     return out
 
 
+#: Passed as `collection` to mean "the pieces that belong to no collection",
+#: which None cannot mean because None already means "every piece".
+STANDALONE = object()
+
+
 def nft_prices(trades: Iterable[dict], index: Any,
-               collection: str | None = None,
+               collection: Any = None,
                property_id: int | None = None) -> list[dict]:
     """Every NFT sale, as what one piece went for in ONE currency.
 
@@ -75,14 +80,52 @@ def nft_prices(trades: Iterable[dict], index: Any,
             continue
         if collection is not None:
             try:
-                row = index.inscription(piece.txid.hex())
+                row = index.inscription(piece.txid.hex()) if index else None
             except Exception:
                 row = None
-            if not row or (row.get("collection") or "") != collection:
+            has = (row or {}).get("collection") or None
+            if collection is STANDALONE:
+                if has is not None:
+                    continue
+            elif has != collection:
                 continue
         out.append({"when": trade["when"], "height": trade["height"],
                     "price": _units(paid), "size": 1, "txid": trade["txid"]})
     return out
+
+
+def nft_markets(trades: Iterable[dict], index: Any) -> list[dict]:
+    """One market per (collection, currency) that has actually traded.
+
+    A collection is a market: what a Goofball goes for says nothing about
+    what a Doge Punk goes for, and one chart of both is a chart of neither.
+    Pieces that belong to no collection are a market of their own -- they
+    are single things, and that is what they have in common (D-040).
+    """
+    seen: dict[tuple[str | None, str, int | None], int] = {}
+    for trade in trades:
+        legs = (trade["give"], trade["take"])
+        piece = next((l for l in legs if l.kind == I.LEG_INSCRIPTION), None)
+        if piece is None:
+            continue
+        collection = None
+        try:
+            row = index.inscription(piece.txid.hex()) if index else None
+            collection = (row or {}).get("collection") or None
+        except Exception:
+            collection = None
+        for leg in legs:
+            if leg.kind == I.LEG_COINS:
+                key = (collection, "coins", None)
+            elif leg.kind == I.LEG_TOKEN:
+                key = (collection, "token", leg.property_id)
+            else:
+                continue
+            seen[key] = seen.get(key, 0) + 1
+    return [{"collection": collection, "kind": kind, "property_id": pid,
+             "trades": n}
+            for (collection, kind, pid), n in sorted(seen.items(),
+                                                     key=lambda kv: -kv[1])]
 
 
 def nft_currencies(trades: Iterable[dict]) -> list[dict]:

@@ -406,39 +406,20 @@ def test_a_shopkeeper_does_not_answer_an_answer(shop):
     assert keeper.tick() == 0 and len(answers) == 1
 
 
-def test_an_offer_on_an_nft_waits_for_a_person_and_its_answer_does_not(shop):
-    """A bid is written down; the answer to one this wallet made is signed.
+def test_an_offer_asked_for_by_message_is_not_answered(shop):
+    """Offers are said on the chain, where they reach anybody (D-042).
 
-    Nobody but the holder can say yes to an offer on their NFT, so the
-    shopkeeper records it and answers nothing. The answer to an offer this
-    wallet MADE is different: the person named the price when they made it,
-    so the wallet signs its half against exactly those terms (D-038).
+    A bid arriving as a message is an older peer talking: there is nothing
+    to answer and nothing to write down, because the Exchange shows what the
+    chain holds rather than what arrived here.
     """
     state, index, node, buyer, answers, keeper = shop
     keeper.tick()                                   # sets the cursor
-
-    # Somebody offers for a piece this wallet holds.
     _ask(state, buyer, {"swap": "bid", "swapv": S.PROTOCOL, "id": "b1",
                         "inscription": PIECE, "buyer": BUYER,
-                        "take": {"kind": "coins", "amount": "2.00000000",
-                                 "sats": 2 * COIN}}, 1)
-    assert keeper.tick() == 0 and answers == [], "an offer is a person's to answer"
-    (bid,) = state.offers.bids("regtest", "in")
-    assert bid["id"] == "b1" and bid["status"] == "open"
-    assert bid["inscription"] == PIECE and bid["buyer"] == BUYER
-
-    # Hearing it twice does not make two offers.
-    _ask(state, buyer, {"swap": "bid", "swapv": S.PROTOCOL, "id": "b1",
-                        "inscription": PIECE, "buyer": BUYER,
-                        "take": {"kind": "coins", "amount": "2.00000000",
-                                 "sats": 2 * COIN}}, 2)
-    assert keeper.tick() == 0 and len(state.offers.bids("regtest", "in")) == 1
-
-    # An offer on something that is not ours is not our business.
-    _ask(state, buyer, {"swap": "bid", "swapv": S.PROTOCOL, "id": "b2",
-                        "inscription": PIECE2, "buyer": BUYER,
-                        "take": {"kind": "coins", "amount": "1", "sats": COIN}}, 3)
-    assert keeper.tick() == 0 and len(state.offers.bids("regtest", "in")) == 1
+                        "take": {"kind": "coins", "amount": "2", "sats": 2 * COIN}}, 1)
+    assert keeper.tick() == 0 and answers == []
+    assert state.offers.bids("regtest", "in") == []
 
 
 def test_the_answer_to_our_own_offer_is_signed_against_the_terms_we_gave(shop):

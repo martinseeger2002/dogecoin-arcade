@@ -182,18 +182,28 @@
              value="{{ offer_amount or '' }}"></div>
     <div style="flex:0 0 150px">
       <select autocomplete="off" name="kind" id="offer-kind" onchange="offerToken(this)">
-        <option value="coins">{{ chain.label }} coins</option>
+        <option value="coins">{{ chain.label }} coins &mdash; {{ "%.4f"|format(coins) }}</option>
+        {% if tokens %}
         <option value="token" {{ 'selected' if offer_kind == 'token' }}>a token</option>
+        {% endif %}
       </select></div>
+    {% if tokens %}
     <div style="flex:1 1 180px" id="offer-token-wrap"
          {{ '' if offer_kind == 'token' else 'hidden' }}>
       <select autocomplete="off" name="property_id">
         {% for t in tokens %}
-        <option value="{{ t.property_id }}">{{ t.name }} &mdash; #{{ t.property_id }}</option>
-        {% else %}<option value="">no tokens on this chain</option>{% endfor %}
+        <option value="{{ t.property_id }}">{{ t.name }} &mdash; {{ t.display }}</option>
+        {% endfor %}
       </select></div>
-    <button type="submit" class="small">Make offer</button>
+    {% endif %}
+    <button type="submit" class="small" {{ 'disabled' if not tokens and not coins }}>Make offer</button>
   </form>
+  <p class="muted" style="font-size:.82rem;margin:8px 0 0">
+    {%- if tokens or coins %}Only what this wallet holds can be offered
+      &mdash; {{ "%.4f"|format(coins) }} {{ chain.label|lower }} coins
+      {%- if tokens %} and {{ tokens|length }}
+        token{{ '' if tokens|length == 1 else 's' }}{% endif %}.
+    {%- else %}This wallet holds nothing on {{ chain.label|lower }} to offer with.{% endif %}</p>
   <script>
   function offerToken(sel){
     document.getElementById('offer-token-wrap').hidden = sel.value !== 'token';

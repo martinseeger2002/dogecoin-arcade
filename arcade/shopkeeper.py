@@ -174,25 +174,11 @@ class Shopkeeper:
         bid_id = str(question.get("id") or "")
         if not bid_id:
             return None
-        if "ok" not in question:                    # somebody's offer to us
-            if offers.get_bid(bid_id):
-                return None                         # heard already
-            found = index.inscription(str(question.get("inscription") or ""))
-            if found is None:
-                return None
-            from .web.app import _ledger_addresses
-            if found["owner"] not in _ledger_addresses(rpc):
-                return None                         # not ours; not our business
-            now = time.time()
-            offers.add_bid({
-                "id": bid_id, "network": chain.network, "direction": "in",
-                "inscription": found["txid"], "number": found["number"],
-                "owner": found["owner"], "buyer": str(question.get("buyer") or ""),
-                "peer_pubkey": bytes(row["sender_pubkey"]).hex(),
-                "take": dict(question.get("take") or {}),
-                "note": str(question.get("note") or ""),
-                "created": now, "expires": now + swaplib.OFFER_TTL * 8})
-            state.bump_generation()
+        if "ok" not in question:
+            # An offer ASKED for by message. Offers are said on the chain now
+            # (D-042), where they reach a holder who never published a key --
+            # so this is an older peer, and there is nothing to answer: the
+            # Exchange shows what the chain holds, not what arrives here.
             return None
 
         mine = offers.get_bid(bid_id)

@@ -288,3 +288,51 @@ def test_an_inscription_named_in_a_post_gets_a_card_not_its_content(web):
         store.add_group_post("regtest", "main", "tx3", 3, 0, alice, "someone",
                              "/content/" + "ab" * 32, mine=False)
     assert app.get("/groups").status_code == 200
+
+
+def test_an_offer_can_only_be_made_with_what_this_wallet_holds(web, monkeypatch):
+    """The form lists your tokens; the door checks them again (D-040)."""
+    app, state, node, alice, bob = web
+    csrf = state.csrf_token
+    index = state.token_index(state.ledger)
+    txid = "ef" * 32
+    with index.open() as db:
+        db.conn.execute(
+            "INSERT INTO block(height, hash, prev_hash, time, tx_count, processed_at) "
+            "VALUES(1,'h','p',0,1,0)")
+        db.conn.execute(
+            "INSERT INTO inscription(txid,number,creator,owner,block_height,position,"
+            "content_type,content_len,sha256,json,chunks) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (txid, 5, "nStranger", "nStranger", 1, 0, "image/png", 10, "ab" * 32,
+             '{"name": "Theirs"}', 1))
+        db.conn.commit()
+
+    page = app.get(f"/inscriptions/{txid}/view").text
+    assert "Make an offer" in page, "it is not ours, so it can be offered for"
+    assert "Only what this wallet holds can be offered" in page
+    assert "no tokens on this chain" not in page, "a token list is not offered at all"
+
+    # A token that exists and belongs to somebody else is refused here,
+    # before a fee is spent finding out from them.
+    with index.open() as db:
+        db.conn.execute(
+            "INSERT INTO property(property_id,ecosystem,property_type,issuer,name,"
+            "creation_txid,creation_block) VALUES(3,2,2,'nStranger','Theirs','ab',1)")
+        db.conn.execute("INSERT INTO balance(address,property_id,balance) "
+                        "VALUES('nStranger',3,100000000000)")
+        db.conn.commit()
+    app.post("/exchange/offer",
+             data={"csrf_token": csrf, "inscription": txid, "amount": "10",
+                   "kind": "token", "property_id": "3"}, follow_redirects=False)
+    assert "no address in this wallet holds" in (state.notice or ""), state.notice
+
+    # More coins than the wallet has, likewise.
+    app.post("/exchange/offer",
+             data={"csrf_token": csrf, "inscription": txid, "amount": "100000000",
+                   "kind": "coins"}, follow_redirects=False)
+    assert state.notice, "it says why rather than sending"
+    assert state.offers.bids("regtest", "out") == [], "nothing was offered"
+
+    # And the form no longer offers a token picker it cannot fill.
+    page = app.get(f"/inscriptions/{txid}/view").text
+    assert 'name="property_id"' not in page, "this wallet holds no tokens"

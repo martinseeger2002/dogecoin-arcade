@@ -540,6 +540,69 @@ class LedgerIndex:
                 f"ORDER BY c.edition IS NULL, c.edition, i.number LIMIT ? OFFSET ?",
                 (creator, name, max(1, min(limit, 500)), max(0, offset)))]
 
+    def offers_on(self, owners: list[str], limit: int = 100) -> list[dict]:
+        """Offers standing against inscriptions these addresses hold.
+
+        Read from the chain, so an offer reaches whoever holds the piece
+        whether or not they have ever published a key, and whichever of
+        their addresses it sits on (D-042). An offer whose item has since
+        moved is not theirs to accept and does not appear.
+        """
+        if not owners:
+            return []
+        marks = ",".join("?" * len(owners))
+        with self.open() as db:
+            rows = db.conn.execute(
+                f"SELECT o.*, i.number, i.owner, i.content_type, "
+                f"       c.collection, c.edition, b.time AS when_ "
+                f"FROM nft_offer o "
+                f"JOIN inscription i ON i.txid = o.inscription "
+                f"LEFT JOIN collection_item c ON c.txid = o.inscription "
+                f"LEFT JOIN block b ON b.height = o.block_height "
+                f"WHERE i.owner IN ({marks}) "
+                f"ORDER BY o.block_height DESC, o.position DESC LIMIT ?",
+                tuple(owners) + (max(1, min(limit, 500)),)).fetchall()
+        return [dict(row) for row in rows]
+
+    def offers_by(self, buyers: list[str], limit: int = 100) -> list[dict]:
+        """Offers these addresses have made, whatever became of them."""
+        if not buyers:
+            return []
+        marks = ",".join("?" * len(buyers))
+        with self.open() as db:
+            rows = db.conn.execute(
+                f"SELECT o.*, i.number, i.owner, c.collection, c.edition, "
+                f"       b.time AS when_ "
+                f"FROM nft_offer o "
+                f"JOIN inscription i ON i.txid = o.inscription "
+                f"LEFT JOIN collection_item c ON c.txid = o.inscription "
+                f"LEFT JOIN block b ON b.height = o.block_height "
+                f"WHERE o.buyer IN ({marks}) "
+                f"ORDER BY o.block_height DESC, o.position DESC LIMIT ?",
+                tuple(buyers) + (max(1, min(limit, 500)),)).fetchall()
+        return [dict(row) for row in rows]
+
+    def collection_thumb(self, creator: str | None, name: str) -> dict | None:
+        """One piece of a collection, picked at random, for a thumbnail.
+
+        Random rather than the cover, so a collection looks like what it is
+        -- a set of different things -- instead of like one picture that
+        happens to be edition #1 (D-041). Only a piece whose bytes this node
+        holds and that a browser will draw: a thumbnail that 404s is worse
+        than no thumbnail.
+        """
+        sql = ("SELECT i.txid, i.number, i.content_type FROM collection_item c "
+               "JOIN inscription i ON i.txid = c.txid "
+               "WHERE c.collection = ? AND i.content IS NOT NULL "
+               "  AND i.content_type LIKE 'image/%' ")
+        args: list[Any] = [name]
+        if creator:
+            sql += "AND c.creator = ? "
+            args.append(creator)
+        with self.open() as db:
+            row = db.conn.execute(sql + "ORDER BY RANDOM() LIMIT 1", args).fetchone()
+            return dict(row) if row else None
+
     def collection_traits(self, creator: str, name: str) -> dict[str, dict[str, int]]:
         """How often each trait value occurs across the collection.
 
