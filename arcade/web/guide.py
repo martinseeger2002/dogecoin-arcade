@@ -111,6 +111,10 @@ SECTIONS: list[dict] = [
             ("A wizard inscribes a whole HashLips build: point it at the "
              "build folder, see every item priced, and confirm once. Each "
              "item's own JSON goes into its inscription."),
+            ("It can sell itself: tick the mintpad at the pricing step, name "
+             "a price in coins or in a token, and the run inscribes a mintpad "
+             "when the last item is on its way -- last, and only if nothing "
+             "failed. Untick it and nothing extra is inscribed."),
             ("Pause, resume, survive a crash: every transaction is written "
              "down the moment the node takes it, and a run left running "
              "carries on at the next start without paying for a piece twice."),

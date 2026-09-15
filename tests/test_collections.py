@@ -452,3 +452,54 @@ def test_a_chain_limit_is_waited_out_rather_than_paused_on(tmp_path, monkeypatch
     job = jobs.get(job_id)
     assert job["status"] == "done" and job["sent"] == 3 and job["error"] == ""
     assert refusals == [1], "asked once more only after the block"
+
+
+def test_a_run_inscribes_the_collection_s_mintpad_last(tmp_path):
+    """The pad goes up when the last item is on its way, not before.
+
+    A pad that offers a random item of a collection half of which was never
+    inscribed would be selling things that do not exist (D-036).
+    """
+    from arcade import mintpad as M
+
+    build = C.read_build(hashlips(tmp_path))
+    sender = FakeSender()
+    jobs, runner = runner_for(tmp_path, sender)
+    pad_json = M.shop_json("arcade:test:abc:1234", "Goofball",
+                           M.take_of("token", "10", 3))
+    job_id = jobs.create("regtest", "nSender", build, pad_json=pad_json)
+
+    items_only = len(expected_payloads(build, jobs, job_id))
+    assert runner.start(job_id)
+    wait(runner, job_id)
+
+    job = jobs.get(job_id)
+    assert job["status"] == "done"
+    assert job["pad_txid"] and not job["pad_error"]
+    assert job["note"].endswith("and the mintpad with them")
+
+    # The pad's own pieces went last, and carry the page, not an item.
+    page = M.page("nSender", "Goofball")
+    pad_pieces = [p for p in sender.sent if b"MINTPAD" in p or b"mintpad" in p]
+    assert pad_pieces, "the mintpad is on the chain"
+    assert len(sender.sent) > items_only
+    assert b"%%" not in page and b"Goofball" in page
+
+    # Running it again does not inscribe a second pad.
+    before = len(sender.sent)
+    runner._inscribe_pad(job_id, sender)
+    assert len(sender.sent) == before, "a pad already sent is not sent twice"
+
+
+def test_a_run_without_a_mintpad_inscribes_nothing_extra(tmp_path):
+    build = C.read_build(hashlips(tmp_path))
+    sender = FakeSender()
+    jobs, runner = runner_for(tmp_path, sender)
+    job_id = jobs.create("regtest", "nSender", build)
+    assert runner.start(job_id)
+    wait(runner, job_id)
+    job = jobs.get(job_id)
+    assert job["status"] == "done" and not job["pad_txid"]
+    assert job["note"] == "every item is on its way"
+    wanted = expected_payloads(build, jobs, job_id)
+    assert sorted(sender.sent) == sorted(p for ps in wanted.values() for p in ps)

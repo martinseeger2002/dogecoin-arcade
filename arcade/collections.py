@@ -48,6 +48,7 @@ from typing import Any, Callable
 
 from . import inscribe as inscribelib
 from . import inscriptions as I
+from . import mintpad as mintpadlib
 
 log = logging.getLogger("arcade.collections")
 
@@ -235,7 +236,13 @@ CREATE TABLE IF NOT EXISTS job (
     items       INTEGER NOT NULL,
     chunks      INTEGER NOT NULL,
     fee         REAL NOT NULL,
-    dust        REAL NOT NULL
+    dust        REAL NOT NULL,
+    -- The mintpad this run inscribes when its last item is on its way: the
+    -- JSON field it will carry, and the txid once it has gone. Empty when
+    -- the collection is not selling itself (D-036).
+    pad_json    TEXT NOT NULL DEFAULT '',
+    pad_txid    TEXT NOT NULL DEFAULT '',
+    pad_error   TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS item (
     job_id        TEXT NOT NULL,
@@ -278,7 +285,7 @@ class Jobs:
         return conn
 
     def create(self, network: str, sender: str, build: Build,
-               name: str = "") -> str:
+               name: str = "", pad_json: str = "") -> str:
         """Write the job down, every item with the id its pieces will carry."""
         cost = estimate_build(build)
         job_id = secrets.token_hex(6)
@@ -286,10 +293,11 @@ class Jobs:
             conn.execute("BEGIN")
             conn.execute(
                 "INSERT INTO job (id, created, network, sender, name, folder, "
-                "status, items, chunks, fee, dust) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "status, items, chunks, fee, dust, pad_json) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (job_id, time.time(), network, sender, name or build.collection,
                  str(build.folder), "paused", cost["items"], cost["chunks"],
-                 cost["fee"], cost["dust"]))
+                 cost["fee"], cost["dust"], pad_json))
             for item in build.items:
                 est = inscribelib.estimate(item.size, item.content_type, item.json)
                 conn.execute(
@@ -391,6 +399,12 @@ class Jobs:
                 sets.append("error = ?"); args.append(error)
             args.append(job_id)
             conn.execute(f"UPDATE job SET {', '.join(sets)} WHERE id = ?", args)
+
+    def set_pad(self, job_id: str, txid: str = "", error: str = "") -> None:
+        """What became of the mintpad this job was asked to inscribe."""
+        with self._open() as conn:
+            conn.execute("UPDATE job SET pad_txid = ?, pad_error = ? WHERE id = ?",
+                         (txid, error, job_id))
 
     def note(self, job_id: str, note: str) -> None:
         with self._open() as conn:
@@ -572,11 +586,44 @@ class Runner:
                                      error=first[0]["error"] if first else "")
             else:
                 self.jobs.set_status(job_id, "done", note="every item is on its way")
+                self._inscribe_pad(job_id, sender_obj)
         except Exception as exc:
             log.exception("collection %s stopped", job_id)
             self.jobs.set_status(job_id, "paused", note="stopped", error=str(exc))
         finally:
             self._stop.discard(job_id)
+
+    def _inscribe_pad(self, job_id: str, sender_obj: Any) -> None:
+        """Put the collection's mintpad on the chain, once every item has gone.
+
+        Last, and only when nothing failed: a pad that offers a random item
+        of a collection half of which was never inscribed would be selling
+        things that do not exist. It is not the run's failure if this does
+        not go -- every item is still up -- so a refusal is written on the
+        job and the job stays done (D-036).
+        """
+        job = self.jobs.get(job_id)
+        if not job or not job["pad_json"] or job["pad_txid"]:
+            return
+        try:
+            data = json.loads(job["pad_json"])
+            collection = str(data.get("shop", {}).get("listings", [{}])[0]
+                             .get("give", {}).get("collection") or job["name"])
+            page = mintpadlib.page(job["sender"], collection)
+            self.jobs.note(job_id, "inscribing the mintpad")
+            plan = inscribelib.plan(page, "text/html", job["pad_json"])
+            txids = sender_obj.send_all(job["sender"], list(plan.payloads))
+            # The FIRST piece carries the manifest (inscriptions.plan splits
+            # manifest + content and counts down from there), and the ledger
+            # names the inscription after it (state.py: "Named by the piece
+            # that carried the manifest"). That is the id a buyer's page is
+            # opened at.
+            txid = txids[0] if txids else ""
+            self.jobs.set_pad(job_id, txid=txid)
+            self.jobs.note(job_id, "every item is on its way, and the mintpad with them")
+        except Exception as exc:                  # noqa: BLE001 -- see docstring
+            log.warning("mintpad for %s could not be inscribed: %s", job_id, exc)
+            self.jobs.set_pad(job_id, error=str(exc))
 
     def _hold_send_lock(self, job_id: str) -> None:
         """Wait for the application's send lock, checking for a pause meanwhile."""

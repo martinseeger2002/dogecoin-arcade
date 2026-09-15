@@ -23,6 +23,18 @@
   <div class="run-bar"><div class="run-fill" id="run-fill"
        style="width:{{ (100 * job.sent_chunks / job.chunks) if job.chunks else 0 }}%"></div></div>
   <div class="run-note" id="run-note">{{ job.note }}</div>
+  {% if job.pad_txid %}
+    <div class="msg ok" style="margin-top:10px">
+      <strong>The mintpad is up.</strong>
+      <a href="/inscriptions/{{ job.pad_txid }}/view">Open it</a> &mdash; anyone
+      with this link can mint from the collection, and the wallet that holds it
+      answers.
+    </div>
+  {% elif job.pad_error %}
+    <div class="msg err" style="margin-top:10px">
+      The collection is up; its mintpad is not: {{ job.pad_error }}
+    </div>
+  {% endif %}
   <table style="margin-top:12px">
     <tr><td class="muted" style="width:130px">Chain</td><td>{{ chain.label }}</td></tr>
     <tr><td class="muted">From</td><td class="mono" style="word-break:break-all">{{ job.sender }}</td></tr>

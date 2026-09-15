@@ -38,6 +38,7 @@ from .. import approvals as approvalslib
 from .. import payload as P
 from .. import inscriptions as inscriptionlib
 from . import guide as guidelib
+from .. import mintpad as mintpadlib
 from .. import tags as taglib
 from .. import remote as remotelib
 from ..messaging import contact, content, group
@@ -2423,7 +2424,16 @@ def create_app(state: AppState) -> FastAPI:
         jobs, runner = state.collections
         data: dict[str, Any] = {"chain": chain, "node": chain.status(),
                                 "funded": [], "node_error": None,
-                                "jobs": jobs.list(chain.network)}
+                                "jobs": jobs.list(chain.network),
+                                # The mintpad offered at step 2: on unless the
+                                # last attempt turned it off (D-036).
+                                "pad_on": True, "pad_amount": "",
+                                "pad_kind": "coins", "pad_token": "",
+                                "tokens": []}
+        try:
+            data["tokens"] = state.token_index(chain).properties()
+        except Exception:
+            data["tokens"] = []
         try:
             with chain.rpc() as rpc:
                 data["funded"] = _funded_addresses(rpc)
@@ -2501,8 +2511,15 @@ def create_app(state: AppState) -> FastAPI:
     @app.post("/inscriptions/collection/start")
     def collection_start(request: Request, csrf_token: str = Form(""),
                          folder: str = Form(""), fromaddress: str = Form(""),
-                         name: str = Form("")):
-        """The second press: write the job down and start it."""
+                         name: str = Form(""), launchpad: str = Form(""),
+                         pad_amount: str = Form(""), pad_kind: str = Form("coins"),
+                         pad_token: str = Form("")):
+        """The second press: write the job down and start it.
+
+        The mintpad is decided here and inscribed by the runner when the last
+        item is on its way, so the price is settled before anything is paid
+        for rather than after (D-036).
+        """
         check_csrf(csrf_token)
         chain, _ = _token_chain()
         jobs, runner = state.collections
@@ -2510,7 +2527,16 @@ def create_app(state: AppState) -> FastAPI:
             build = collectionlib.read_build(Path(folder.strip()))
             with chain.rpc() as rpc:
                 sender = _check_own_address(rpc, fromaddress)
-            job_id = jobs.create(chain.network, sender, build, name=name.strip())
+            pad_json = ""
+            if launchpad == "yes":
+                take = mintpadlib.take_of(pad_kind, pad_amount,
+                                          int(pad_token) if pad_token else None)
+                identity = state.ensure_identity()
+                pad_json = mintpadlib.shop_json(
+                    contact.encode(state.messaging.network, identity.public_bytes),
+                    name.strip() or build.collection, take)
+            job_id = jobs.create(chain.network, sender, build, name=name.strip(),
+                                 pad_json=pad_json)
             runner.start(job_id)
         except Exception as exc:
             state.flash(str(exc), "err")

@@ -65,15 +65,58 @@
       {% endfor %}
     </table>
     </div>
-    <form method="post" action="/inscriptions/collection/start" class="row" style="margin-top:14px">
+    <form method="post" action="/inscriptions/collection/start" style="margin-top:14px">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="folder" value="{{ build.folder }}">
       <input type="hidden" name="fromaddress" value="{{ sender }}">
       <input type="hidden" name="name" value="{{ build.collection }}">
-      <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">
-        Inscribe {{ "{:,}".format(cost['items']) }} items</button>
-      <a class="btn ghost" href="/inscriptions/collection">Back</a>
+
+      <div class="panel" style="margin:0 0 14px">
+        <label class="row" style="gap:8px;align-items:flex-start">
+          <input type="checkbox" name="launchpad" value="yes" id="launchpad"
+                 {{ 'checked' if pad_on }} onchange="padFields(this)">
+          <span><strong>Sell it from a mintpad</strong>
+            <span class="muted">&mdash; inscribed for you when the last item is
+            on its way. A page that shows the collection and hands over a random
+            one for the price below. Anyone can open it; the wallet that holds
+            the collection answers.</span></span>
+        </label>
+        <div id="pad-fields" class="row" style="gap:8px;margin-top:12px"
+             {{ '' if pad_on else 'hidden' }}>
+          <div style="flex:0 0 120px">
+            <input autocomplete="off" name="pad_amount" inputmode="decimal"
+                   placeholder="price" value="{{ pad_amount or '' }}"></div>
+          <div style="flex:0 0 150px">
+            <select autocomplete="off" name="pad_kind" id="pad-kind"
+                    onchange="padToken(this)">
+              <option value="coins" {{ 'selected' if pad_kind != 'token' }}>{{ chain.label }} coins</option>
+              <option value="token" {{ 'selected' if pad_kind == 'token' }}>a token</option>
+            </select></div>
+          <div style="flex:1 1 200px" id="pad-token-wrap"
+               {{ '' if pad_kind == 'token' else 'hidden' }}>
+            <select autocomplete="off" name="pad_token" id="pad-token">
+              {% for t in tokens %}
+              <option value="{{ t.property_id }}" {{ 'selected' if pad_token|string == t.property_id|string }}>
+                {{ t.name }} &mdash; #{{ t.property_id }}</option>
+              {% else %}
+              <option value="">no tokens on this chain yet</option>
+              {% endfor %}
+            </select></div>
+        </div>
+      </div>
+
+      <div class="row">
+        <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">
+          Inscribe {{ "{:,}".format(cost['items']) }} items</button>
+        <a class="btn ghost" href="/inscriptions/collection">Back</a>
+      </div>
     </form>
+    <script>
+    function padFields(box){ document.getElementById('pad-fields').hidden = !box.checked; }
+    function padToken(sel){
+      document.getElementById('pad-token-wrap').hidden = sel.value !== 'token';
+    }
+    </script>
     <p class="muted" style="margin:10px 0 0">
       The run can be paused and resumed at any time, and carries on by itself
       after a restart or a crash from the piece after the last one it wrote down.</p>
