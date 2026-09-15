@@ -462,8 +462,10 @@ forwarding. The mempool already gossips to every node in seconds.
   chain; that is the price, and this ledger is public anyway.
 * **What lands elsewhere walks home by itself** — a few things every couple
   of blocks, coins first, because a token cannot move off an address that
-  cannot pay its own fee. Testnet only: sweeping somebody's mainnet coins
-  without asking is spending their money for them.
+  cannot pay its own fee. It waits for anything else that is sending, so it
+  cannot collide with a collection run part way through, and it never sees
+  an output held for an open offer. Testnet only: sweeping somebody's
+  mainnet coins without asking is spending their money for them.
 * **On a real chain, only the wallet this application made.** A node there is
   usually somebody's own wallet too, and those coins are not the arcade's to
   show, to spend or to gather; what the arcade made is filed under its own

@@ -2506,3 +2506,18 @@ def test_a_real_chains_wallet_is_only_the_arcades_own():
                     {"address": theirs, "account": "savings"}],
                    [{"address": spare, "account": "", "spendable": True}])
     assert _ledger_addresses(mainnet) == [ours], "their own coins stay theirs"
+
+
+def test_gathering_waits_for_whatever_else_is_sending(client, monkeypatch):
+    """Housekeeping must not build a transaction from outputs a collection
+    run or a message is spending at that moment (D-046)."""
+    app, state = client
+    assert state.begin_send(), "nothing is sending yet"
+    try:
+        assert state.gather_once(state.messaging) == [], \
+            "a pass while something else sends does nothing and waits"
+    finally:
+        state.end_send()
+    # And it gives the lock back, so the next pass can have it.
+    assert state.begin_send()
+    state.end_send()

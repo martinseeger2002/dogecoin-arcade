@@ -93,6 +93,10 @@ def stray(rpc: Any, index: Any, home: str, own: list[str]) -> dict[str, list]:
                   if a not in elsewhere and a != home]
     if not elsewhere:
         return found
+    # `listunspent` leaves out what the node has locked, which is how an
+    # output held for an open offer (swap.make_offer) stays out of this: the
+    # gather never sees it, so it can never sweep the thing a sale is about
+    # to spend.
     coins_at: dict[str, int] = {}
     for utxo in rpc.call("listunspent", 1, 9_999_999) or []:
         address = utxo.get("address")

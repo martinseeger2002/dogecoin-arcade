@@ -1992,15 +1992,27 @@ def create_app(state: AppState) -> FastAPI:
         return send_coins, send_token, send_piece
 
     def gather_once(chain, limit: int = gatherlib.PER_PASS) -> list[str]:
-        """Walk one pass of this wallet's strays home. Returns txids."""
-        index = state.token_index(chain)
-        with chain.rpc() as rpc:
-            own = _ledger_addresses(rpc)
-            home = state.home_address(chain)
-            coins, token, piece = _gather_senders(chain, rpc)
-            return gatherlib.walk_home(rpc, index, home, own, send_coins=coins,
-                                       send_token=token, send_piece=piece,
-                                       limit=limit)
+        """Walk one pass of this wallet's strays home. Returns txids.
+
+        Under the application's one-send-at-a-time lock, like everything
+        else that spends. Housekeeping must never build a transaction from
+        the same outputs a collection run or a message is spending at that
+        moment -- and if something else is sending, this simply waits for
+        the next pass rather than queueing (D-046).
+        """
+        if not state.begin_send():
+            return []
+        try:
+            index = state.token_index(chain)
+            with chain.rpc() as rpc:
+                own = _ledger_addresses(rpc)
+                home = state.home_address(chain)
+                coins, token, piece = _gather_senders(chain, rpc)
+                return gatherlib.walk_home(rpc, index, home, own, send_coins=coins,
+                                           send_token=token, send_piece=piece,
+                                           limit=limit)
+        finally:
+            state.end_send()
 
     state.gather_once = gather_once
 
