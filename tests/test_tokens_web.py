@@ -8,6 +8,7 @@ recipient) is what the node saw, not merely that a table was drawn.
 
 import base64
 import dataclasses
+import re as _r
 import re
 from typing import Any
 
@@ -170,11 +171,42 @@ def test_one_balance_a_token_not_one_a_piece(web):
                                               amount="600", recipient=bob)).text
     assert shown(page, "From") == alice, "the only address holding 600"
 
-    # More than any one address holds is refused with the number that matters.
+    # More than any one address holds is not refused: it is several
+    # transactions, all shown before any of them goes (D-043). Sent to
+    # somebody else, so both of this wallet's piles can pay.
+    stranger = node.rpc.call("getnewaddress")
+    # Both piles need coins of their own: every transaction pays its fee from
+    # the address it comes out of, and change from earlier sends went to
+    # addresses of the node's choosing rather than back to these.
+    node.rpc.call("sendtoaddress", alice, 2)
+    node.rpc.call("sendtoaddress", bob, 2)
+    mine_and_index(node, state)
     page = app.post("/tokens/send", data=dict(csrf_token=csrf, property_id=pid,
-                                              amount="900", recipient=bob)).text
-    assert "a send comes out of one address" in page
-    assert "holds 600" in page and "1,000" in page
+                                              amount="900", recipient=stranger)).text
+    assert "Confirm before sending &mdash; 2 transactions" in page
+    assert "a token send comes out of one address at a time" in page
+    assert alice in page and bob in page
+    assert node.rpc.call("getrawmempool") == [], "showing them must not broadcast"
+
+    # One yes sends both, and what goes out is what was shown.
+    plan = _r.findall(r"([0-9a-f]{64})", page)[0]
+    moved = app.post("/tokens/send",
+                     data=dict(csrf_token=csrf, property_id=pid, amount="900",
+                               recipient=stranger, confirmed=plan),
+                     follow_redirects=False)
+    assert moved.status_code == 303 and moved.headers["location"] == "/wallet/tokens"
+    pool = node.rpc.call("getrawmempool")
+    assert len(pool) == 2 and plan in pool
+    mine_and_index(node, state)
+    ledger = state.token_index(state.ledger)
+    assert ledger.balance(stranger, prop["property_id"]) == 900 * 10**8
+    assert ledger.balance(alice, prop["property_id"]) + \
+        ledger.balance(bob, prop["property_id"]) == 100 * 10**8
+
+    # More than the wallet holds altogether still is refused.
+    page = app.post("/tokens/send", data=dict(csrf_token=csrf, property_id=pid,
+                                              amount="1500", recipient=stranger)).text
+    assert "holds 100 Web Token, not 1,500" in page, "what is left, after the 900"
 
 
 def test_a_tag_is_claimed_in_two_steps_and_read_back(web, monkeypatch):

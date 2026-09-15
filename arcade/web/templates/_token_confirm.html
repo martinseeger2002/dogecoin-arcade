@@ -53,6 +53,51 @@
 </div>
 {% endmacro %}
 
+{# Several transactions, one decision. A token send comes out of one address,
+   so a wallet holding a token in several piles sends in several -- shown in
+   full before any of them goes (D-043). #}
+{% macro confirm_many(parts, action, fields, back, chain, csrf) %}
+{% set mainnet = chain.is_mainnet %}
+<h2>Confirm before sending &mdash; {{ parts|length }} transactions</h2>
+<div class="panel confirm" {% if mainnet %}style="border-color:var(--bad);border-width:2px"{% endif %}>
+  {% if mainnet %}
+    <p style="color:var(--bad);font-weight:600;margin-top:0">
+      This is mainnet. It spends real coins and cannot be undone.</p>
+  {% endif %}
+  <p class="muted" style="margin-top:0">This wallet holds the token on several
+    addresses, and a token send comes out of one address at a time. All
+    {{ parts|length }} go when you press Broadcast; they do not depend on each
+    other, and what goes out is what is shown here.</p>
+  <table>
+    <tr class="muted" style="font-size:.78rem;text-transform:uppercase;letter-spacing:.06em">
+      <td>From</td><td>Fee</td><td>txid</td></tr>
+    {% for p in parts %}
+    <tr><td class="mono" style="word-break:break-all;font-size:.82rem">{{ p.sender }}</td>
+        <td style="white-space:nowrap">{{ "%.8f"|format(p.fee_coins) }}</td>
+        <td class="mono" style="font-size:.76rem;word-break:break-all">{{ p.txid }}</td></tr>
+    {% endfor %}
+    <tr><td class="muted">To</td>
+        <td colspan="2" class="mono" style="word-break:break-all">{{ parts[0].reference }}</td></tr>
+    <tr><td class="muted">Fees</td>
+        <td colspan="2"><strong>
+          {{ "%.8f"|format(parts | sum(attribute='fee_coins')) }}</strong>
+          <span class="muted" style="font-size:.84rem">&mdash; one per transaction</span></td></tr>
+  </table>
+  <form method="post" action="{{ action }}" style="margin-top:14px">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    {% for k, v in fields.items() %}
+    <input type="hidden" name="{{ k }}" value="{{ v }}">
+    {% endfor %}
+    <input type="hidden" name="confirmed" value="{{ parts[0].txid }}">
+    <div class="row">
+      <button type="submit" {% if mainnet %}class="danger"{% endif %}>
+        {{ 'Broadcast all on mainnet' if mainnet else 'Broadcast all' }}</button>
+      <a class="muted" href="{{ back }}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endmacro %}
+
 {% macro index_status(index, chain) %}
 {% if not index.enabled %}
   <div class="msg err">{{ chain.label }} has no start block for tokens yet, so nothing is indexed there.</div>

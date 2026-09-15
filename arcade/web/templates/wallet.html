@@ -74,10 +74,16 @@
       <form method="post" action="/wallet/receive">
         <input type="hidden" name="csrf_token" value="{{ csrf }}">
         <input type="hidden" name="which" value="{{ which }}">
-        <button class="ghost" type="submit">Show a receiving address</button>
+        <button class="ghost" type="submit">Show your address</button>
       </form>
-      <span class="muted" style="font-size:.84rem">A fresh one each time, so
-        payments are not linked together on the chain.</span>
+      <span class="muted" style="font-size:.84rem">One address, holding the
+        coins, the tokens and the NFTs.
+        {%- if tag == 'testnet' %} Anything that lands on another address is
+        walked back here by itself, a few things every couple of blocks: a
+        token on an address with no coins cannot be moved at all, so the
+        wallet sends it the fee first and fetches it next.
+        {%- else %} Nothing is moved here without you: these are real coins,
+        so the wallet leaves them where they are.{% endif %}</span>
     </div>
 
     <form method="post" action="/wallet/send">

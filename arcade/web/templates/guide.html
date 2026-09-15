@@ -3,31 +3,42 @@
 {% block body %}
 <h1>Guide</h1>
 <p class="sub">Everything this does, what it costs, and what it deliberately
-  does not do.</p>
+  does not do &mdash; the same document the website publishes, shipped with the
+  application so it is here when the website is not.</p>
 
 <div class="panel" style="margin-bottom:20px">
-  <p style="margin:0">
+  <p style="margin:0 0 8px">
     Jump to:
-    {% for section in sections %}
-      <a href="#{{ loop.index }}">{{ section.title }}</a>{% if not loop.last %} ·
+    {% for section in sections if section.title %}
+      <a href="#s{{ loop.index }}">{{ section.title }}</a>{% if not loop.last %} &middot;
       {% endif %}
     {% endfor %}
   </p>
+  <p style="margin:0">
+    Something wrong? <a href="{{ bugs_url }}" target="_blank" rel="noopener">Report
+    a bug</a> &mdash; it opens the bug page on the website, where you can also read
+    what others have found.</p>
 </div>
 
 {% for section in sections %}
-<h2 id="{{ loop.index }}" style="text-transform:none;letter-spacing:0;font-size:1.05rem">
-  {{ section.title }}</h2>
-<div class="panel">
-  <p class="muted" style="margin-top:0">{{ section.blurb }}</p>
-  <ul style="margin:0;padding-left:20px;line-height:1.75">
-    {% for point in section.points %}<li>{{ point }}</li>{% endfor %}
-  </ul>
-</div>
+  {% if section.title %}
+  <h2 id="s{{ loop.index }}" style="text-transform:none;letter-spacing:0;font-size:1.05rem">
+    {{ section.title }}</h2>
+  {% endif %}
+  <div class="panel guide-doc">{{ section.html|safe }}</div>
 {% endfor %}
 
 <p class="muted">
-  The same thing in longer form, with the arithmetic, is at
-  <a href="https://dogecoinarcade.com/docs/features.html">dogecoinarcade.com/docs</a>.
-</p>
+  The decision log &mdash; why each of these is the way it is &mdash; is at
+  <a href="https://dogecoinarcade.com/docs/DECISIONS.html" target="_blank"
+     rel="noopener">dogecoinarcade.com/docs</a>.</p>
+
+<style>
+  .guide-doc p:first-child{margin-top:0}
+  .guide-doc p:last-child{margin-bottom:0}
+  .guide-doc ul{margin:0 0 10px;padding-left:20px;line-height:1.7}
+  .guide-doc li{margin-bottom:4px}
+  .guide-doc h3{font-size:.95rem;margin:14px 0 6px}
+  .guide-doc code{background:var(--code);padding:1px 4px;border-radius:4px}
+</style>
 {% endblock %}

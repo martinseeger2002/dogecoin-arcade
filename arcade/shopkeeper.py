@@ -102,8 +102,12 @@ class Shopkeeper:
                             handled.append(int(row["id"]))
                             continue
                         try:
+                            bid_id = answer.pop("bid", "")
                             self._reply(rpc, chain, identity, bytes(row["sender_pubkey"]),
                                         answer)
+                            if bid_id:
+                                offers.close_bid(bid_id, "signed")
+                                state.bump_generation()
                             answered += 1
                         except (SendError, apilib.ApiMessageError, ValueError) as exc:
                             log.warning("could not answer a swap message: %s", exc)
@@ -207,9 +211,11 @@ class Shopkeeper:
             offers.close_bid(bid_id, "failed", error=str(exc))
             state.bump_generation()
             return None
-        offers.close_bid(bid_id, "signed", offer_id=offer["id"])
-        state.bump_generation()
-        reply.update(offer=offer["id"], hex=built.hex)
+        # Marked when the answer is handed to the sender, not before: a bid
+        # closed as "signed" whose reply never went out is a lie about what
+        # this wallet did. The tick loop sends what is returned here, so the
+        # bid is closed by the caller once it has.
+        reply.update(offer=offer["id"], hex=built.hex, bid=bid_id)
         return reply
 
     def _reply(self, rpc: Any, chain: Any, identity: Any, to: bytes, body: dict) -> str:
@@ -251,9 +257,19 @@ def _own_addresses(rpc: Any) -> list[str]:
 
 
 def _same_price(offered: dict, wanted: dict) -> bool:
-    """Whether two legs name the same thing and the same amount."""
-    keys = ("kind", "propertyid", "amount", "txid", "sats", "units")
-    return all(str(offered.get(k) or "") == str(wanted.get(k) or "") for k in keys)
+    """Whether two legs name the same thing and the same amount.
+
+    Compared on the numbers, never on the words: "2" and "2.00000000" are
+    the same price, and a check that said otherwise would refuse a
+    perfectly good answer over how it was written down.
+    """
+    for key in ("kind", "propertyid", "txid"):
+        if str(offered.get(key) or "") != str(wanted.get(key) or ""):
+            return False
+    for key in ("sats", "units"):
+        if int(offered.get(key) or 0) != int(wanted.get(key) or 0):
+            return False
+    return True
 
 
 def _swap_message(row: Any) -> dict | None:

@@ -23,8 +23,10 @@ FEATURES = pathlib.Path("/home/you/docs/features.md")
 def test_the_guide_is_in_the_application(client):
     app, _ = client
     body = app.get("/guide").text
-    assert body.count("<h2 id=") == len(guide.SECTIONS)
-    for section in guide.SECTIONS:
+    titled = [s for s in guide.sections() if s["title"]]
+    assert titled, "the shipped document has sections"
+    assert body.count("<h2 id=") == len(titled)
+    for section in titled:
         assert section["title"] in body
 
 
@@ -33,26 +35,40 @@ def test_it_is_reachable_from_every_page(client):
     assert '/guide"' in app.get("/").text
 
 
+def test_a_bug_has_somewhere_to_go(client):
+    """Somebody finding a fault is standing in the application, not on the
+    website, so the way to report one is here (D-047)."""
+    app, _ = client
+    body = app.get("/guide").text
+    assert guide.BUGS_URL in body and "Report" in body
+
+
 def test_every_section_says_something(client):
-    for section in guide.SECTIONS:
-        assert section["title"] and section["blurb"], section
-        assert section["points"], f"{section['title']} has no points"
-        for point in section["points"]:
-            assert len(point) > 20, point
+    for section in guide.sections():
+        assert section["html"].strip(), section["title"]
+        assert "##" not in section["html"], "markdown left unrendered"
+        assert len(section["html"]) > 40, section["title"]
+
+
+def test_markdown_is_text_before_it_is_markup():
+    """The document is rendered here rather than by a library, so the
+    escaping is this module's to get right."""
+    assert guide.inline("a < b & c") == "a &lt; b &amp; c"
+    assert guide.inline("**bold** and `code`") == \
+        "<strong>bold</strong> and <code>code</code>"
+    assert guide.inline("<script>alert(1)</script>") == \
+        "&lt;script&gt;alert(1)&lt;/script&gt;"
+    assert guide.render(["* one", "  wrapped", "* two"]) == \
+        "<ul><li>one wrapped</li><li>two</li></ul>"
 
 
 @pytest.mark.skipif(not FEATURES.exists(), reason="the written docs are not here")
-def test_the_two_copies_have_not_drifted_apart():
-    """One of them must not quietly grow a feature the other has never heard
-    of. Compared by section, which is the level at which a feature either
-    exists or does not."""
-    written = {re.sub(r"[^a-z ]", "", line[3:].strip().lower())
-               for line in FEATURES.read_text().splitlines()
-               if line.startswith("## ")}
-    shown = {re.sub(r"[^a-z ]", "", s["title"].lower()) for s in guide.SECTIONS}
-    assert shown == written, (
-        f"only in the application: {shown - written}\n"
-        f"only in the written docs: {written - shown}")
+def test_the_two_copies_are_the_same_file():
+    """Not "cover the same sections" -- the same bytes. One document, shipped
+    with the application and published by the site (D-047)."""
+    assert guide.GUIDE.read_text() == FEATURES.read_text(), (
+        "arcade/web/templates/guide.md and docs/features.md have drifted; "
+        "copy the written one over the shipped one")
 
 
 @pytest.mark.skipif(not FEATURES.exists(), reason="the written docs are not here")

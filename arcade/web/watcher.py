@@ -48,6 +48,11 @@ log = logging.getLogger(__name__)
 #: How often to ask the node for its height. Cheap: one RPC call per chain.
 POLL_SECONDS = 5.0
 
+#: Blocks between one gather pass and the next. A wallet that has just walked
+#: something home should let it confirm before deciding what is still stray,
+#: or it sends the same thing twice.
+GATHER_EVERY = 2
+
 #: Scanning is bounded per pass so a long catch-up cannot hold the lock for
 #: minutes. The next poll continues from the cursor.
 BLOCKS_PER_PASS = 500
@@ -90,8 +95,39 @@ class BlockWatcher:
         self._check(self.state.ledger, public_only=True)
         self._sync_ledgers()
         self._keep_shop()
+        self._walk_home()
 
     _shopkeeper = None
+    _gathered_at = 0
+
+    def _walk_home(self) -> None:
+        """Bring what this wallet holds elsewhere back to one address.
+
+        A pass at most once every few blocks, and only on a chain where a
+        transaction costs nothing real: sweeping somebody's mainnet coins
+        without asking is spending their money for them, so there the same
+        work waits behind a button (D-046). A wallet that cannot spend
+        (D-021) gathers nothing.
+        """
+        chain = self.state.messaging
+        if not chain.can_spend or chain.is_mainnet:
+            return
+        gather = getattr(self.state, "gather_once", None)
+        if gather is None:
+            return
+        try:
+            height = self.state.ledger_tips.get(chain.network) or 0
+        except Exception:
+            height = 0
+        if height and height - self._gathered_at < GATHER_EVERY:
+            return
+        self._gathered_at = height
+        try:
+            if gather(chain):
+                self.state.bump_generation()
+        except Exception:
+            log.debug("gather pass failed", exc_info=True)
+
 
     def _keep_shop(self) -> None:
         """Answer orders at this wallet's shops (arcade/shopkeeper.py).

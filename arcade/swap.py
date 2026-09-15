@@ -556,10 +556,23 @@ def _lock_output(rpc: Any, seller: str, give: Any, take: Any,
                and u.get("spendable", True)]
     fitting = sorted((u for u in unspent if int(round(float(u["amount"]) * COIN)) >= floor),
                      key=lambda u: float(u["amount"]))
+    if not unspent:
+        # Not "no output worth 0.00000000", which reads as nonsense and was
+        # what a holder with tokens and no coins was told. Every side of a
+        # swap puts one of its own outputs into the transaction; an address
+        # with none cannot take part, whatever it holds (D-045).
+        raise SwapError(
+            f"{seller} holds no spendable coins, and every side of a swap puts "
+            f"one of its own outputs into the transaction. Send it a few coins "
+            f"-- a fraction of one is enough -- and try again once they confirm"
+            + (", or wait for the offers already holding its outputs to expire"
+               if locked_outs else ""))
     if not fitting:
-        raise SwapError(f"{seller} has no output worth {max(floor, 0) / COIN:.8f} to swap from"
-                        + (" (all are in open offers)" if unspent != fitting and locked_outs
-                           else ""))
+        raise SwapError(
+            f"{seller} has no single output worth {max(floor, 0) / COIN:.8f} to "
+            f"swap from; its largest is "
+            f"{max(float(u['amount']) for u in unspent):.8f}"
+            + (" (others are held by open offers)" if locked_outs else ""))
     chosen = fitting[0]
     outpoint = {"txid": chosen["txid"], "vout": int(chosen["vout"]),
                 "value": int(round(float(chosen["amount"]) * COIN))}
@@ -743,7 +756,11 @@ def countersign(rpc: Any, index: Any, offers: Offers, offer: dict, hex_: str) ->
     for n, entry in enumerate(vin[1:], 1):
         prev = rpc.call("gettxout", entry.get("txid"), int(entry.get("vout", -1)), True)
         if not prev:
-            raise SwapError(f"input {n} is spent or unknown")
+            raise SwapError(
+                f"input {n} of the buyer's half is spent or unknown here: either "
+                f"that wallet spent it on something else since the offer was "
+                f"made, or this node has not seen the block it is in. Ask for "
+                f"another offer and it will be built from what is there now")
         addresses = prev.get("scriptPubKey", {}).get("addresses") or []
         if seller in addresses:
             raise SwapError(f"input {n} is the seller's; only the offered output may be")
@@ -896,6 +913,20 @@ def build(rpc: Any, index: Any, offer: dict, own: list[str]) -> Built:
         need = max(owes, 0) + _fee(len(chosen) + 1, 3, len(payload))
         raise SwapError(f"{buyer} holds {total / COIN:.8f} spendable, and this swap "
                         f"needs {need / COIN:.8f} (what is owed plus the fee)")
+    # What is left for the MESSAGE that carries this half. The signed half
+    # travels as a node-to-node message, which is a transaction paying its
+    # own fee out of this same address; with every coin spent here there is
+    # nothing left to send it with, and locking the inputs (below) only turns
+    # a silent failure into a stuck one. Say so now, while it can be fixed.
+    spare = [u for u in unspent if (u["txid"], int(u["vout"])) not in set(chosen)]
+    if not spare:
+        raise SwapError(
+            f"{buyer} has its coins in {len(unspent)} output"
+            f"{'' if len(unspent) == 1 else 's'} and this swap needs "
+            f"{'it' if len(unspent) == 1 else 'all of them'}, leaving nothing to "
+            f"pay for the message that carries it. Split the address into a few "
+            f"outputs first -- Wallet, Fast sending -- and ask for another offer")
+
     fee = _fee(len(chosen) + 1, 3, len(payload))
     change = total - owes - fee
     outputs = [(0, op_return_script(encode_class_c(payload))),
@@ -906,6 +937,16 @@ def build(rpc: Any, index: Any, offer: dict, own: list[str]) -> Built:
         fee += max(change, 0)       # too small to be worth an output; the miner has it
     raw = build_raw_tx([(offer["outpoint"]["txid"], offer["outpoint"]["vout"])] + chosen,
                        outputs)
+    # Hold what this half spends. The offer and the signed half travel as
+    # messages, which take blocks and cost fees out of this same wallet, so
+    # without this the wallet can spend its own swap input on the very
+    # message that carries the swap -- and the seller, checking a block
+    # later, finds the input gone (D-044).
+    try:
+        rpc.call("lockunspent", False,
+                 [{"txid": txid, "vout": vout} for txid, vout in chosen])
+    except Exception:
+        pass            # a node that will not lock is not a reason to refuse
     signed = rpc.call("signrawtransaction", raw)
     for problem in signed.get("errors") or []:
         if int(problem.get("vout", -1)) != offer["outpoint"]["vout"] \

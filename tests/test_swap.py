@@ -143,7 +143,9 @@ class FakeNode:
                     if (addresses is None or a in addresses) and a in self.mine
                     and (t, v) not in self.locked]
         if method == "listreceivedbyaddress":
-            return [{"address": a} for a in self.mine]
+            # Under the arcade's own account: the wallet only sees what this
+            # application made (D-046), and everything in a swap test is its.
+            return [{"address": a, "account": "arcade-identity"} for a in self.mine]
         if method == "lockunspent":
             unlock, points = args
             for p in points:
@@ -260,8 +262,12 @@ def test_an_offer_locks_an_output_and_prices_the_listing(world):
                              own=[SELLER])
         taken.append(again["outpoint"]["vout"])
     assert taken == [2, 3, 1, 4, 0], "smallest first, never the same one twice"
-    with pytest.raises(S.SwapError, match="no output"):
+    # Every output is spoken for. The refusal says so plainly rather than
+    # "no output worth 0.00000000", which is what a holder with tokens and
+    # no coins used to be told (D-045).
+    with pytest.raises(S.SwapError, match="holds no spendable coins") as refused:
         S.make_offer(seller, index, offers, "test", shop_row(index), 0, OTHER, "", own=[SELLER])
+    assert "offers already holding its outputs" in str(refused.value)
 
 
 def test_only_the_creator_who_still_holds_the_shop_may_sell(world):
@@ -364,6 +370,10 @@ def test_every_kind_of_leg_builds(world):
             - S.coins_in(S.leg_from_json(offer["give"]))
         assert round(paid_seller * COIN) == owed
         S.countersign(seller, index, offers, offers.get(offer["id"]), built.hex)
+        # Building holds the buyer's inputs (D-044). This fake node honours
+        # that, and three swaps in a row out of one wallet would run it dry;
+        # a real wallet's coins come back when the swap lands or is dropped.
+        buyer.locked.clear()
 
 
 def test_the_seller_signs_nothing_it_did_not_offer(world):
@@ -541,3 +551,90 @@ def test_a_chart_is_drawn_from_swaps_and_keeps_the_gaps(tmp_path):
     assert sold["price"] == 10
     assert charts.nft_currencies(sales) == [{"kind": "token", "property_id": 3,
                                              "trades": 1}]
+
+
+def test_building_a_half_holds_what_it_spends(world):
+    """The offer and the signed half travel as messages, which take blocks
+    and cost fees out of the same wallet. Without holding them, the buyer's
+    wallet spends its own swap input on the very message carrying the swap,
+    and the seller -- checking a block later -- finds it gone (D-044)."""
+    index, seller, buyer, offers = world
+    offer = _offer(world, 0)
+    checked = S.check_offer(offer, shop=SHOP, own=[BUYER], height=TEST.swaps_from,
+                            params=TEST)
+    built = S.build(buyer, index, checked, own=[BUYER])
+    spent = {(v["txid"], v["vout"]) for v in decode(built.hex)["vin"]}
+    held = {(t, v) for t, v in buyer.locked}
+    assert held, "the buyer's inputs are held"
+    assert held <= spent, "only what this half spends"
+    assert (offer["outpoint"]["txid"], offer["outpoint"]["vout"]) not in held, \
+        "the seller's output is the seller's to hold"
+
+    # And what is held is not offered to the next thing that needs coins.
+    left = [u for u in buyer.call("listunspent", 1, 9_999_999, [BUYER])]
+    assert all((u["txid"], u["vout"]) not in held for u in left)
+
+
+def test_what_is_away_from_home_is_found_and_walked_back():
+    """One address a chain; what lands elsewhere is fetched (D-046)."""
+    from arcade import gather
+
+    class Index:
+        rows = [{"address": "nElse", "property_id": 3, "name": "Arcade Test",
+                 "balance": 250 * COIN, "display": "250"}]
+        pieces = [{"txid": "ab" * 32, "number": 7, "owner": "nElse"}]
+
+        def balances(self, addresses):
+            return [r for r in self.rows if r["address"] in addresses]
+
+        def inscriptions(self, owner=None, limit=50):
+            return [p for p in self.pieces if p["owner"] == owner]
+
+    class Node:
+        def __init__(self, unspent):
+            self.unspent = unspent
+
+        def call(self, method, *args):
+            assert method == "listunspent"
+            return self.unspent
+
+    own = ["nHome", "nElse", "nBroke"]
+    index = Index()
+    index.pieces.append({"txid": "cd" * 32, "number": 8, "owner": "nBroke"})
+
+    # nElse can pay its own way; nBroke holds a piece and no coins.
+    node = Node([{"address": "nElse", "txid": "11" * 32, "vout": 0, "amount": 5.0,
+                  "spendable": True},
+                 {"address": "nHome", "txid": "22" * 32, "vout": 0, "amount": 9.0,
+                  "spendable": True},
+                 {"address": "nElse", "txid": "33" * 32, "vout": 1, "amount": 0.0001,
+                  "spendable": True}])
+    found = gather.stray(node, index, "nHome", own)
+    assert [c["address"] for c in found["coins"]] == ["nElse"], "dust is left alone"
+    assert found["needs_coins"] == ["nBroke"], "it holds a piece and cannot move it"
+    assert len(found["tokens"]) == 1 and len(found["pieces"]) == 2
+    assert all(c["address"] != "nHome" for c in found["coins"]), "home is not stray"
+
+    # First pass: nothing but the seed, because everything else waits on it.
+    sent = []
+    def coins(sender, to, sats, subtract_fee=False):
+        sent.append(("coins", sender, to, sats)); return f"tx{len(sent)}"
+    def token(sender, to, pid, units):
+        sent.append(("token", sender, to, pid, units)); return f"tx{len(sent)}"
+    def piece(sender, to, txid):
+        sent.append(("piece", sender, to, txid)); return f"tx{len(sent)}"
+
+    gather.walk_home(node, index, "nHome", own, send_coins=coins,
+                     send_token=token, send_piece=piece)
+    assert sent == [("coins", "nHome", "nBroke", gather.SEED)], sent
+
+    # Once it can pay, the things themselves travel -- and the stray coins go
+    # last, so a sweep cannot take the fee a token move is about to need.
+    sent.clear()
+    node.unspent.append({"address": "nBroke", "txid": "44" * 32, "vout": 0,
+                         "amount": 0.02, "spendable": True})
+    gather.walk_home(node, index, "nHome", own, send_coins=coins,
+                     send_token=token, send_piece=piece, limit=9)
+    assert [s[0] for s in sent] == ["token", "piece", "piece", "coins", "coins"]
+    assert sent[0][1:] == ("nElse", "nHome", 3, 250 * COIN)
+    assert all(s[2] == "nHome" for s in sent), "everything goes to one address"

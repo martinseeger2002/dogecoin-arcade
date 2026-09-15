@@ -2474,3 +2474,35 @@ def test_mine_one_block_is_always_offered_and_says_when_it_is_at_it(client, monk
     page = http.get("/wallet").text
     assert "Stopped mining after" in page and "no block" in page, page
     assert "Not mining" in http.post("/fund/stop", data={"csrf_token": state.csrf_token}).text
+
+
+def test_a_real_chains_wallet_is_only_the_arcades_own():
+    """On a test chain the node exists to run this, so every address in it is
+    its. On a real chain the node is usually somebody's own wallet too, and
+    those coins are not ours to show or to spend (D-046)."""
+    from arcade.web.app import _ledger_addresses
+
+    class Node:
+        def __init__(self, rows, unspent):
+            self.rows, self.unspent = rows, unspent
+
+        def call(self, method, *args):
+            return self.rows if method == "listreceivedbyaddress" else self.unspent
+
+    from arcade.config import NETWORKS
+    from arcade.script import b58check_encode
+
+    def address(chain: str, n: int) -> str:
+        return b58check_encode(NETWORKS[chain].pubkeyhash_version, bytes([n]) * 20)
+
+    mine, also, change = (address("test", n) for n in (1, 2, 3))
+    testnet = Node([{"address": mine, "account": ""},
+                    {"address": also, "account": "somebody else"}],
+                   [{"address": change, "account": "", "spendable": True}])
+    assert set(_ledger_addresses(testnet)) == {mine, also, change}
+
+    ours, theirs, spare = (address("main", n) for n in (1, 2, 3))
+    mainnet = Node([{"address": ours, "account": "arcade-identity"},
+                    {"address": theirs, "account": "savings"}],
+                   [{"address": spare, "account": "", "spendable": True}])
+    assert _ledger_addresses(mainnet) == [ours], "their own coins stay theirs"

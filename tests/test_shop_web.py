@@ -17,6 +17,7 @@ from test_web import app_state, client                          # noqa: F401,E40
 from test_swap import (FakeIndex, FakeNode, SELLER, BUYER, OTHER, SHOP, PIECE,  # noqa: E402
                        PIECE2, GOOF, decode, _SIGNED)
 from arcade.ledger import COIN                                   # noqa: E402
+from arcade.messaging.sender import SendError                    # noqa: E402
 
 UNSPENT = [("1" * 64, 0, SELLER, 3 * COIN), ("1" * 64, 1, SELLER, int(0.5 * COIN)),
            ("2" * 64, 0, BUYER, 5 * COIN), ("2" * 64, 1, BUYER, 1 * COIN)]
@@ -458,3 +459,30 @@ def test_the_answer_to_our_own_offer_is_signed_against_the_terms_we_gave(shop):
     assert keeper.tick() == 0, "a different price is not what was agreed"
     bid = state.offers.get_bid("o2")
     assert bid["status"] == "failed" and "price" in bid["error"]
+
+
+def test_a_bid_is_marked_signed_only_when_its_answer_goes(shop, monkeypatch):
+    """A bid closed as "signed" whose reply never went out is a lie about
+    what this wallet did, and the reply is what the other side acts on."""
+    state, index, node, seller_identity, answers, keeper = shop
+    keeper.tick()
+    now = __import__("time").time()
+    take = {"kind": "coins", "amount": "2", "sats": 2 * COIN}
+    state.offers.add_bid({"id": "o1", "network": "regtest", "direction": "out",
+                          "inscription": PIECE2, "number": 3, "owner": BUYER,
+                          "buyer": SELLER, "peer_pubkey": "",
+                          "take": take, "created": now, "expires": now + 900})
+    other = FakeNode({BUYER}, UNSPENT)
+    offer = S.offer_for_bid(other, index, S.Offers(state.home / "theirs.sqlite"),
+                            "regtest",
+                            {"inscription": PIECE2, "take": take, "buyer": SELLER,
+                             "peer_pubkey": ""}, own=[BUYER])
+
+    def wont_send(*a, **k):
+        raise SendError("the node would not take it")
+    monkeypatch.setattr(keeper, "_reply", wont_send)
+    _ask(state, seller_identity, {"swap": "bid", "swapv": S.PROTOCOL, "id": "o1",
+                                  "ok": True, "offer": offer}, 1)
+    keeper.tick()
+    assert state.offers.get_bid("o1")["status"] == "open", \
+        "nothing went out, so nothing is signed"

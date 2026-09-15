@@ -40,6 +40,7 @@ from .. import payload as P
 from .. import inscriptions as inscriptionlib
 from . import guide as guidelib
 from .. import charts as chartlib
+from .. import gather as gatherlib
 from .. import mintpad as mintpadlib
 from .. import swap as swaplib
 from .. import tags as taglib
@@ -1937,14 +1938,53 @@ def create_app(state: AppState) -> FastAPI:
         try:
             check_csrf(csrf_token)
             ctx = _context(which)
-            with ctx.rpc() as rpc:
-                address = walletlib.receive_address(rpc, "DogecoinArcade")
-            state.flash(f"{ctx.label} receiving address:  {address}", "reveal")
+            # THE address, not a fresh one: one address a chain holds the
+            # coins, the tokens and the NFTs, so anything sent to it can be
+            # spent, moved and swapped without first funding the address it
+            # happened to land on (D-046).
+            address = state.home_address(ctx)
+            state.flash(f"{ctx.label} address:  {address}", "reveal")
         except HTTPException:
             raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             state.flash(str(exc), "err")
         return RedirectResponse("/wallet", status_code=303)
+
+    def _gather_senders(chain, rpc):
+        """The three ways a thing travels home, for gather.walk_home."""
+        def send_coins(sender_address: str, to: str, sats: int,
+                       subtract_fee: bool = False) -> str:
+            prepared = walletlib.prepare_send(rpc, to, sats,
+                                              subtract_fee=subtract_fee)
+            return walletlib.broadcast(rpc, prepared)
+
+        def send_token(sender_address: str, to: str, pid: int, units: int) -> str:
+            sender = tokenlib.TokenSender(rpc, chain.params)
+            prepared = sender.prepare(sender_address,
+                                      tokenlib.send_payload(pid, units), to)
+            return sender.broadcast(prepared)
+
+        def send_piece(sender_address: str, to: str, txid: str) -> str:
+            payload = P.AnyData(data=inscriptionlib.Transfer(
+                txid=bytes.fromhex(txid)).encode()).encode()
+            sender = tokenlib.TokenSender(rpc, chain.params)
+            prepared = sender.prepare(sender_address, payload, to)
+            return sender.broadcast(prepared)
+
+        return send_coins, send_token, send_piece
+
+    def gather_once(chain, limit: int = gatherlib.PER_PASS) -> list[str]:
+        """Walk one pass of this wallet's strays home. Returns txids."""
+        index = state.token_index(chain)
+        with chain.rpc() as rpc:
+            own = _ledger_addresses(rpc)
+            home = state.home_address(chain)
+            coins, token, piece = _gather_senders(chain, rpc)
+            return gatherlib.walk_home(rpc, index, home, own, send_coins=coins,
+                                       send_token=token, send_piece=piece,
+                                       limit=limit)
+
+    state.gather_once = gather_once
 
     @app.post("/wallet/send", response_class=HTMLResponse)
     def wallet_send(request: Request, which: str = Form(""), destination: str = Form(""),
@@ -3561,7 +3601,8 @@ def create_app(state: AppState) -> FastAPI:
         know there is a website, still has to be able to find out what the
         thing in front of them can do.
         """
-        return render(request, "guide.html", sections=guidelib.SECTIONS)
+        return render(request, "guide.html", sections=guidelib.sections(),
+                      bugs_url=guidelib.BUGS_URL)
 
     @app.api_route("/inscriptions/{key}/send", methods=["GET", "POST"],
                    response_class=HTMLResponse)
@@ -3782,38 +3823,76 @@ def create_app(state: AppState) -> FastAPI:
         return _token_action(request, action="create", confirmed=confirmed, build=build,
                              fields=fields, back="/tokens", form_create=fields)
 
-    def _address_holding(rpc, index, prop: dict, units: int) -> str:
-        """Which of this wallet's addresses the send comes out of.
+    def _send_parts(rpc, index, prop: dict, units: int,
+                    avoid: str = "") -> list[tuple[str, int]]:
+        """Which addresses a token send comes out of, and how much from each.
 
-        The page shows one balance per token, because that is what the wallet
-        holds; the chain keeps it on whichever addresses it arrived at, and a
-        token send comes from exactly one of them. So the wallet picks: the
-        address holding enough, preferring one that also has coins for the
-        fee. When no single address holds enough, say the largest rather than
-        the total, because the total is not what a send can move (D-031).
+        A token send comes out of exactly one address, so a wallet holding a
+        token in several piles cannot always send in one transaction. The
+        wallet works out the pieces instead of refusing:
+
+        * the SMALLEST pile that can cover the whole amount, when one can --
+          it spends a small pile up rather than breaking a large one, which
+          is what leaves a wallet with fewer, bigger pieces over time;
+        * otherwise the largest piles first until what is left can be
+          covered, and the remainder from the smallest pile that covers it,
+          so the send is as few transactions as it can be and the last one
+          does not shatter another big pile (D-043).
+
+        Between piles that can pay, one that also has coins for its own fee
+        wins: a pile with no coins cannot send at all.
         """
         pid = prop["property_id"]
-        pieces = sorted(((index.balance(a, pid), a) for a in _ledger_addresses(rpc)),
-                        reverse=True)
-        pieces = [(held, a) for held, a in pieces if held > 0]
-        if not pieces:
+        piles = [(index.balance(a, pid), a) for a in _ledger_addresses(rpc)
+                 if a != avoid]          # a send to itself moves nothing
+        piles = sorted(((held, a) for held, a in piles if held > 0), reverse=True)
+        if not piles:
             raise tokenlib.TokenError(
-                f"no address in this wallet holds any {prop['name']}.")
-        enough = [(held, a) for held, a in pieces if held >= units]
-        if not enough:
-            biggest, where = pieces[0]
-            total = sum(held for held, _ in pieces)
+                f"no address in this wallet holds any {prop['name']}"
+                + (" other than the one you are sending to." if avoid else "."))
+        total = sum(held for held, _ in piles)
+        if total < units:
             raise tokenlib.TokenError(
                 f"this wallet holds {format_amount(total, prop['divisible'])} "
-                f"{prop['name']}, but a send comes out of one address and the "
-                f"largest, {where}, holds "
-                f"{format_amount(biggest, prop['divisible'])}. Send that much, "
-                f"or move some together first.")
+                f"{prop['name']}, not {format_amount(units, prop['divisible'])}.")
         funded = {row["address"] for row in _funded_addresses(rpc)}
-        for held, where in enough:
-            if where in funded:
-                return where
-        return enough[0][1]
+
+        def smallest_covering(need: int) -> str | None:
+            fitting = sorted((p for p in piles if p[0] >= need))
+            for held, where in fitting:              # one that can pay its fee
+                if where in funded:
+                    return where
+            return fitting[0][1] if fitting else None
+
+        one = smallest_covering(units)
+        if one is not None:
+            return [(one, units)]
+
+        # A pile with no coins cannot pay its own fee, so the ones that can
+        # go first; if they are not enough the rest are used anyway, and
+        # `prepare` says precisely which address needs coins and how many.
+        ordered = ([p for p in piles if p[1] in funded]
+                   + [p for p in piles if p[1] not in funded])
+        parts: list[tuple[str, int]] = []
+        left = units
+        for held, where in ordered:                  # those that can pay, biggest first
+            if left <= 0:
+                break
+            last = smallest_covering(left)
+            if last is not None and not any(where == a for a, _ in parts):
+                parts.append((last, left))
+                left = 0
+                break
+            take = min(held, left)
+            parts.append((where, take))
+            left -= take
+        if left > 0:
+            raise tokenlib.TokenError(
+                f"this wallet holds {format_amount(total, prop['divisible'])} "
+                f"{prop['name']} but cannot reach "
+                f"{format_amount(units, prop['divisible'])} of it from these "
+                f"addresses.")
+        return parts
 
     @app.post("/tokens/send", response_class=HTMLResponse)
     def tokens_send(request: Request, sender: str = Form(""), property_id: str = Form(""),
@@ -3826,21 +3905,97 @@ def create_app(state: AppState) -> FastAPI:
         def build(rpc):
             index = state.token_index(state.token_chain)
             prop, units = _amount_for(index, int(property_id or 0), amount)
-            from_address = sender.strip() or _address_holding(
-                rpc, index, prop, units)
+            to = _recipient(recipient)
+            from_address = sender.strip() or _send_parts(
+                rpc, index, prop, units, avoid=to)[0][0]
             held = index.balance(from_address, prop["property_id"])
             if units > held:
                 raise tokenlib.TokenError(
                     f"{from_address} holds {format_amount(held, prop['divisible'])} "
                     f"{prop['name']}, not {format_amount(units, prop['divisible'])}.")
-            return (from_address, tokenlib.send_payload(prop["property_id"], units),
-                    _recipient(recipient))
+            return (from_address, tokenlib.send_payload(prop["property_id"], units), to)
+
+        # More than one pile means more than one transaction, and they are
+        # shown and broadcast together rather than refused (D-043).
+        parts: list[tuple[str, int]] = []
+        if not sender.strip():
+            try:
+                chain, index = _token_chain()
+                prop, units = _amount_for(index, int(property_id or 0), amount)
+                with chain.rpc() as chain_rpc:
+                    parts = _send_parts(chain_rpc, index, prop, units,
+                                        avoid=_recipient(recipient))
+            except HTTPException:
+                raise
+            except Exception:
+                parts = []          # let the single-send path say why
+        if len(parts) > 1:
+            return _token_send_many(request, parts, property_id, recipient,
+                                    fields, confirmed)
 
         # Sending what you hold is a wallet question, so it is shown and
         # confirmed on the wallet's Tokens tab (D-030).
         return _token_action(request, action="send", confirmed=confirmed, build=build,
                              fields=fields, back="/wallet/tokens",
                              template="wallet_tokens.html", form_send=fields)
+
+    def _token_send_many(request: Request, parts: list[tuple[str, int]],
+                         property_id: str, recipient: str, fields: dict,
+                         confirmed: str):
+        """A send that has to come out of several addresses, in one decision.
+
+        Every transaction is built and shown before any is broadcast, and
+        what goes out is what was shown -- the same rule as a single send
+        (D-016), with one yes for the set. They are independent of each
+        other, so one failing does not invalidate the rest; what did go is
+        named, because a partly-sent amount the person is not told about is
+        the worst outcome there is.
+        """
+        chain, index = _token_chain()
+        error, prepared, sent = None, [], []
+        try:
+            prop = index.property(int(property_id or 0))
+            if prop is None:
+                raise tokenlib.TokenError(f"there is no token {property_id}.")
+            to = _recipient(recipient)
+            held = state.prepared_tokens.get((chain.network, confirmed)) if confirmed \
+                else None
+            with chain.rpc() as rpc:
+                sender_obj = tokenlib.TokenSender(rpc, chain.params)
+                if isinstance(held, list):
+                    for one in held:
+                        sent.append(sender_obj.broadcast(one))
+                        state.pending_tokens.append(
+                            {"txid": sent[-1], "what": "send", "at": time.time(),
+                             "network": chain.network})
+                    state.prepared_tokens.pop((chain.network, confirmed), None)
+                    state.flash(
+                        f"Sent as {len(sent)} transactions, out of "
+                        f"{len(sent)} addresses: {', '.join(t[:12] + '…' for t in sent)}.",
+                        "ok")
+                    return RedirectResponse("/wallet/tokens", status_code=303)
+                for address, units in parts:
+                    prepared.append(sender_obj.prepare(
+                        address, tokenlib.send_payload(prop["property_id"], units), to))
+                    prepared[-1].what = "send"
+            plan = prepared[0].txid
+            state.prepared_tokens[(chain.network, plan)] = prepared
+            while len(state.prepared_tokens) > 20:
+                del state.prepared_tokens[next(iter(state.prepared_tokens))]
+        except HTTPException:
+            raise
+        except (tokenlib.TokenError, AmountError, ValueError, SendError) as exc:
+            error, prepared = str(exc), []
+        except Exception as exc:
+            error, prepared = f"{exc.__class__.__name__}: {exc}", []
+        context = dict(error=error, prepared=None, parts=prepared,
+                       part_amounts=[units for _, units in parts],
+                       confirm_action=request.url.path, confirm_fields=fields,
+                       confirm_what="send", back="/wallet/tokens",
+                       form_send=fields, tab="tokens")
+        context.update(_token_page_data())
+        context["tab"] = "tokens"
+        return render(request, "wallet_tokens.html", **context)
 
     @app.get("/tokens/{property_id}", response_class=HTMLResponse)
     def token(request: Request, property_id: int):
@@ -4522,21 +4677,72 @@ def _contact_view(row: Any) -> dict[str, Any]:
     }
 
 
-def _ledger_addresses(rpc) -> list[str]:
-    """Every address this wallet owns, funded or not.
+#: The node's accounts (labels, on a newer Core) that belong to this
+#: application. A node's wallet is often somebody's own wallet as well, with
+#: coins and addresses that have nothing to do with the arcade; those are not
+#: ours to show, to spend or to gather (D-046). Everything the arcade makes
+#: is filed under one of these.
+ARCADE_ACCOUNTS = ("arcade-identity", "arcade-messaging", "DogecoinArcade")
 
-    `listunspent` alone misses an address that holds tokens but no coins --
-    the usual state of a recipient -- so the address book is asked too. Module
-    level because the bot RPC (rpc.py) asks the same question.
-    """
-    found: dict[str, None] = {}
+
+def _is_arcade_account(name: str | None) -> bool:
+    name = (name or "").strip()
+    return name in ARCADE_ACCOUNTS or name.startswith("arcade")
+
+
+#: Version bytes that mean a real chain. An address says which chain it is
+#: for, so the rule below needs no extra call and no caller has to remember
+#: to pass a flag -- which is the kind of thing that gets forgotten exactly
+#: once, on mainnet.
+_MAINNET_VERSIONS = frozenset(
+    p.pubkeyhash_version for p in NETWORKS.values() if p.name in ("main", "doge-main"))
+
+
+def _on_a_real_chain(address: str) -> bool:
     try:
-        for row in rpc.call("listreceivedbyaddress", 0, True):
-            found.setdefault(row["address"], None)
+        version, _ = b58check_decode(address)
     except Exception:
-        pass
-    for utxo in rpc.call("listunspent", 0, 9_999_999):
-        if utxo.get("address"):
+        return False
+    return version in _MAINNET_VERSIONS
+
+
+def _ledger_addresses(rpc) -> list[str]:
+    """The addresses this wallet owns on a chain, funded or not.
+
+    On a test chain, every address in the node's wallet was made by this
+    application: the node exists to run it. So all of them are its, and
+    anything that landed anywhere can be walked home (D-046).
+
+    On a real chain a node is usually somebody's own wallet as well, with
+    coins that have nothing to do with the arcade. Those are not ours to
+    show, to spend or to gather, so only what the arcade filed under its own
+    accounts counts.
+
+    `listunspent` alone would miss an address holding tokens and no coins --
+    the usual state of a recipient -- so the address book is asked too, and
+    the accounts come from there. Module level because the bot RPC (rpc.py)
+    asks the same question.
+    """
+    rows = []
+    try:
+        rows = list(rpc.call("listreceivedbyaddress", 0, True) or [])
+    except Exception:
+        rows = []
+    spendable = []
+    try:
+        spendable = [u for u in (rpc.call("listunspent", 0, 9_999_999) or [])
+                     if u.get("address")]
+    except Exception:
+        spendable = []
+    every = [row["address"] for row in rows] + [u["address"] for u in spendable]
+    real = any(_on_a_real_chain(a) for a in every[:5])
+
+    found: dict[str, None] = {}
+    for row in rows:
+        if not real or _is_arcade_account(row.get("account", row.get("label"))):
+            found.setdefault(row["address"], None)
+    for utxo in spendable:
+        if not real or _is_arcade_account(utxo.get("account", utxo.get("label"))):
             found.setdefault(utxo["address"], None)
     return list(found)
 

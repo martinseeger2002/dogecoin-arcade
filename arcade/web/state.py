@@ -621,6 +621,29 @@ class AppState:
         with self.store() as store:
             return store.get_meta(f"identity_address:{self.messaging.network}")
 
+    def home_address(self, chain: Any) -> str:
+        """The one address this wallet uses on a chain, for everything.
+
+        One address a chain, holding the coins, the tokens and the NFTs.
+        Every awkward thing a wallet of many addresses does came from the
+        alternative: a token stranded on a receiving address with no coins to
+        move it, an NFT on one address and the published key on another, a
+        send that needed three transactions because the balance was in three
+        piles (D-046). Address reuse links a wallet's activity together for
+        anyone reading the chain, which is the price, and this ledger is
+        address-keyed and public anyway.
+
+        On the messaging chain it is the address the identity is derived
+        from. On the other chain it is a named account address, which a
+        Core wallet keeps for as long as the wallet exists.
+        """
+        if chain.network == self.messaging.network:
+            found = self.derived_address
+            if found:
+                return found
+        with chain.rpc() as rpc:
+            return str(rpc.call("getaccountaddress", "arcade-identity"))
+
     def use_derived_identity(self, address: str) -> Identity:
         """Adopt the identity that belongs to `address`, and remember which.
 

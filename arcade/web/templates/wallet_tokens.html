@@ -16,6 +16,8 @@
 
 {% if prepared %}
   {{ tk.confirm(prepared, confirm_action, confirm_fields, confirm_what, back, chain, csrf) }}
+{% elif parts %}
+  {{ tk.confirm_many(parts, confirm_action, confirm_fields, back, chain, csrf) }}
 {% endif %}
 
 {{ tk.index_status(index, chain) }}
