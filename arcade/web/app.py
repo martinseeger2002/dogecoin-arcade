@@ -40,6 +40,7 @@ from .. import payload as P
 from .. import inscriptions as inscriptionlib
 from . import guide as guidelib
 from .. import charts as chartlib
+from .. import fees
 from .. import gather as gatherlib
 from .. import mintpad as mintpadlib
 from .. import swap as swaplib
@@ -1953,10 +1954,27 @@ def create_app(state: AppState) -> FastAPI:
     def _gather_senders(chain, rpc):
         """The three ways a thing travels home, for gather.walk_home."""
         def send_coins(sender_address: str, to: str, sats: int,
-                       subtract_fee: bool = False) -> str:
-            prepared = walletlib.prepare_send(rpc, to, sats,
-                                              subtract_fee=subtract_fee)
-            return walletlib.broadcast(rpc, prepared)
+                       outpoint: dict | None = None) -> str:
+            """Coins home, or a fee out to an address that has none.
+
+            A sweep names the output it is sweeping. `prepare_send` chooses
+            its own inputs from the whole wallet, which for a sweep is the
+            one thing it must not do -- it would move coins from the home
+            address to itself and leave the stray output exactly where it
+            was (D-046).
+            """
+            if outpoint is None:
+                prepared = walletlib.prepare_send(rpc, to, sats)
+                return walletlib.broadcast(rpc, prepared)
+            raw = rpc.call("createrawtransaction",
+                           [{"txid": outpoint["txid"], "vout": outpoint["vout"]}],
+                           {to: round(sats / 100_000_000, 8)})
+            funded = fees.fund(rpc, raw, {"changeAddress": to,
+                                          "subtractFeeFromOutputs": [0]})
+            signed = rpc.call("signrawtransaction", funded["hex"])
+            if not signed.get("complete"):
+                raise ValueError(f"could not sign the sweep: {signed.get('errors')}")
+            return str(rpc.call("sendrawtransaction", signed["hex"]))
 
         def send_token(sender_address: str, to: str, pid: int, units: int) -> str:
             sender = tokenlib.TokenSender(rpc, chain.params)

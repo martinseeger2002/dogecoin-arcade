@@ -29,6 +29,12 @@ GUIDE = Path(__file__).parent / "templates" / "guide.md"
 #: standing when they find one.
 BUGS_URL = "https://dogecoinarcade.com/bugs"
 
+#: The dashes-and-colons row under a table's header. It has to contain a
+#: dash: a table with no header starts `| | |`, which is pipes and spaces
+#: and would otherwise be eaten as a rule -- and then the first real row
+#: becomes a heading and reads as one.
+_RULE = re.compile(r"^\|[\s:|-]*-[\s:|-]*\|?$")
+
 _INLINE = (
     (re.compile(r"`([^`]+)`"), r"<code>\1</code>"),
     (re.compile(r"\*\*([^*]+)\*\*"), r"<strong>\1</strong>"),
@@ -69,12 +75,27 @@ def render(lines: list[str]) -> str:
     out: list[str] = []
     bullets: list[str] = []
     paragraph: list[str] = []
+    table: list[str] = []
 
     def flush() -> None:
         if bullets:
             out.append("<ul>" + "".join(f"<li>{inline(b)}</li>" for b in bullets)
                        + "</ul>")
             bullets.clear()
+        if table:
+            # A pipe table. The separator row is the one made of dashes and
+            # colons; the row before it, if there is one, is the header.
+            rows = [[cell.strip() for cell in line.strip().strip("|").split("|")]
+                    for line in table if not _RULE.match(line)]
+            header = bool(rows) and any(cell for cell in rows[0])
+            rows = [r for r in rows if any(cell for cell in r)]
+            body = []
+            for n, cells in enumerate(rows):
+                tag = "th" if header and n == 0 else "td"
+                body.append("<tr>" + "".join(
+                    f"<{tag}>{inline(c)}</{tag}>" for c in cells) + "</tr>")
+            out.append("<table>" + "".join(body) + "</table>")
+            table.clear()
         if paragraph:
             out.append(f"<p>{inline(' '.join(paragraph))}</p>")
             paragraph.clear()
@@ -88,6 +109,10 @@ def render(lines: list[str]) -> str:
         elif stripped.startswith("### "):
             flush()
             out.append(f"<h3>{inline(stripped[4:])}</h3>")
+        elif stripped.startswith("|"):
+            if paragraph or bullets:
+                flush()
+            table.append(stripped)
         elif stripped.startswith(("* ", "- ")):
             if paragraph:
                 flush()

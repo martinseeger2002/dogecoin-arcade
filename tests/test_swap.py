@@ -602,22 +602,27 @@ def test_what_is_away_from_home_is_found_and_walked_back():
     index = Index()
     index.pieces.append({"txid": "cd" * 32, "number": 8, "owner": "nBroke"})
 
-    # nElse can pay its own way; nBroke holds a piece and no coins.
+    # nElse can pay its own way; nBroke holds a piece and not enough to move
+    # it. "Has an output" is not the same as "can pay" -- an address with a
+    # hundredth of a coin was asked for 1.01 on every pass (D-046).
     node = Node([{"address": "nElse", "txid": "11" * 32, "vout": 0, "amount": 5.0,
                   "spendable": True},
                  {"address": "nHome", "txid": "22" * 32, "vout": 0, "amount": 9.0,
                   "spendable": True},
+                 {"address": "nBroke", "txid": "55" * 32, "vout": 0, "amount": 0.01,
+                  "spendable": True},
                  {"address": "nElse", "txid": "33" * 32, "vout": 1, "amount": 0.0001,
                   "spendable": True}])
     found = gather.stray(node, index, "nHome", own)
-    assert [c["address"] for c in found["coins"]] == ["nElse"], "dust is left alone"
+    assert found["coins"] == [], \
+        "nElse still holds a token, so its coins are what will move it"
     assert found["needs_coins"] == ["nBroke"], "it holds a piece and cannot move it"
     assert len(found["tokens"]) == 1 and len(found["pieces"]) == 2
     assert all(c["address"] != "nHome" for c in found["coins"]), "home is not stray"
 
     # First pass: nothing but the seed, because everything else waits on it.
     sent = []
-    def coins(sender, to, sats, subtract_fee=False):
+    def coins(sender, to, sats, outpoint=None):
         sent.append(("coins", sender, to, sats)); return f"tx{len(sent)}"
     def token(sender, to, pid, units):
         sent.append(("token", sender, to, pid, units)); return f"tx{len(sent)}"
@@ -632,9 +637,19 @@ def test_what_is_away_from_home_is_found_and_walked_back():
     # last, so a sweep cannot take the fee a token move is about to need.
     sent.clear()
     node.unspent.append({"address": "nBroke", "txid": "44" * 32, "vout": 0,
-                         "amount": 0.02, "spendable": True})
+                         "amount": 3.0, "spendable": True})
     gather.walk_home(node, index, "nHome", own, send_coins=coins,
                      send_token=token, send_piece=piece, limit=9)
-    assert [s[0] for s in sent] == ["token", "piece", "piece", "coins", "coins"]
+    assert [s[0] for s in sent] == ["token", "piece", "piece"], \
+        "coins stay where they are until the things they move have gone"
     assert sent[0][1:] == ("nElse", "nHome", 3, 250 * COIN)
     assert all(s[2] == "nHome" for s in sent), "everything goes to one address"
+
+    # With nothing left on them, their coins come home too.
+    index.rows.clear()
+    index.pieces.clear()
+    sent.clear()
+    gather.walk_home(node, index, "nHome", own, send_coins=coins,
+                     send_token=token, send_piece=piece, limit=9)
+    assert [s[0] for s in sent] == ["coins", "coins"], sent
+    assert {s[1] for s in sent} == {"nElse", "nBroke"}

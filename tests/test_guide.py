@@ -60,6 +60,24 @@ def test_markdown_is_text_before_it_is_markup():
         "&lt;script&gt;alert(1)&lt;/script&gt;"
     assert guide.render(["* one", "  wrapped", "* two"]) == \
         "<ul><li>one wrapped</li><li>two</li></ul>"
+    # The document uses pipe tables; left as pipes they read as line noise.
+    assert guide.render(["| A | B |", "|---|---|", "| one | `two` |"]) == (
+        "<table><tr><th>A</th><th>B</th></tr>"
+        "<tr><td>one</td><td><code>two</code></td></tr></table>")
+    # A table with no header starts with an empty row. Eating that row as a
+    # rule turns the first real row into a heading, which reads as one.
+    assert guide.render(["| | |", "|---|---|", "| Interface | 8420 |"]) == (
+        "<table><tr><td>Interface</td><td>8420</td></tr></table>")
+
+
+def test_the_document_has_no_markdown_left_in_it(client):
+    """Rendered, not printed: a reader should never see a pipe table or a
+    row of dashes where a table belongs (D-047)."""
+    app, _ = client
+    body = app.get("/guide").text
+    shown = body[body.index("<h1>Guide"):]
+    assert "|---" not in shown and "| Interface |" not in shown
+    assert "<table>" in shown, "the document's tables are tables"
 
 
 @pytest.mark.skipif(not FEATURES.exists(), reason="the written docs are not here")

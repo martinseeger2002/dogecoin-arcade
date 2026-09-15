@@ -28,17 +28,26 @@ log = logging.getLogger(__name__)
 
 #: Below this a stray output is left alone: moving it costs more in fee than
 #: it is worth, and a wallet that shuffles dust around for ever is worse than
-#: one with a little dust in it.
-MIN_SWEEP = COIN // 100
+#: one with a little dust in it. Measured against a real refusal: sweeping a
+#: 0.01 output failed with "too small to send after the fee has been
+#: deducted" on every pass, for ever.
+MIN_SWEEP = 2 * COIN
+
+#: What an address needs before it can move a token or a piece off itself.
+#: Having *an* output is not enough -- a token send pays a dust output and a
+#: fee, and an address with 0.01 was asked for 1.01 on every pass and told
+#: the same thing every time.
+CAN_PAY = 3 * COIN // 2
 
 #: What one pass will do. A wallet with a hundred stray pieces walks them home
 #: over a hundred blocks rather than filling a mempool in one go -- and each
 #: pass is written down as it happens, so an interruption loses nothing.
 PER_PASS = 4
 
-#: Enough coins to pay a fee, sent to a stray address that has none so that
-#: what it holds can move at all.
-SEED = COIN // 50
+#: Enough coins to pay a fee, sent to a stray address that cannot, so that
+#: what it holds can move at all. Comfortably more than one send costs, so a
+#: second thing on the same address does not need a second seeding.
+SEED = 3 * COIN
 
 
 def _holding_ours(rpc: Any, index: Any, home: str) -> list[str]:
@@ -84,15 +93,19 @@ def stray(rpc: Any, index: Any, home: str, own: list[str]) -> dict[str, list]:
                   if a not in elsewhere and a != home]
     if not elsewhere:
         return found
-    funded = set()
+    coins_at: dict[str, int] = {}
     for utxo in rpc.call("listunspent", 1, 9_999_999) or []:
         address = utxo.get("address")
         if address in elsewhere and utxo.get("spendable", True):
-            funded.add(address)
-            if int(round(float(utxo["amount"]) * COIN)) >= MIN_SWEEP:
+            sats = int(round(float(utxo["amount"]) * COIN))
+            coins_at[address] = coins_at.get(address, 0) + sats
+            if sats >= MIN_SWEEP:
                 found["coins"].append({"address": address, "txid": utxo["txid"],
-                                       "vout": int(utxo["vout"]),
-                                       "sats": int(round(float(utxo["amount"]) * COIN))})
+                                       "vout": int(utxo["vout"]), "sats": sats})
+    # Able to pay, not merely holding something: an address with a hundredth
+    # of a coin cannot move a token off itself, and telling it to try again
+    # every pass is a loop, not a plan.
+    funded = {a for a, sats in coins_at.items() if sats >= CAN_PAY}
     try:
         for row in index.balances(elsewhere):
             found["tokens"].append({"address": row["address"],
@@ -109,6 +122,11 @@ def stray(rpc: Any, index: Any, home: str, own: list[str]) -> dict[str, list]:
     waiting = {t["address"] for t in found["tokens"]}
     waiting |= {row["owner"] for row in found["pieces"]}
     found["needs_coins"] = sorted(a for a in waiting if a not in funded)
+    # Coins are swept only off an address with nothing left on it. Otherwise
+    # the pass that seeded an address so its token could travel would sweep
+    # the seed back on the next one, and the two would take turns for ever
+    # -- which is what happened, once, at a block apiece.
+    found["coins"] = [c for c in found["coins"] if c["address"] not in waiting]
     return found
 
 
@@ -167,7 +185,7 @@ def walk_home(rpc: Any, index: Any, home: str, own: list[str], *,
             return done
         try:
             done.append(send_coins(coin["address"], home, coin["sats"],
-                                   subtract_fee=True))
+                                   outpoint=coin))
             log.info("gather: %s coins came home from %s",
                      coin["sats"] / COIN, coin["address"])
         except Exception as exc:
