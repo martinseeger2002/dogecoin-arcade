@@ -465,6 +465,42 @@ def test_the_address_and_name_round_trip():
     assert got_name == "robin"
 
 
+def test_both_addresses_and_the_tag_round_trip():
+    """Key, this chain's address, the other chain's, and the @tag (D-032)."""
+    from arcade.messaging.envelope import (build_key_announcement,
+                                           parse_announced_extras,
+                                           parse_announced_identity,
+                                           parse_key_announcement)
+    from arcade.script import b58check_decode, b58check_encode
+
+    here = "nYW2BPLENpu2nGa7WCExvzxD3hQYueULFa"
+    there = "PognhfhGxiSNPrYLQYUaT5bMsVbgumzc6i"
+    key = bytes(range(32))
+    _, here_hash = b58check_decode(here)
+    there_version, there_hash = b58check_decode(there)
+    payload = build_key_announcement(key, here_hash, "", there_hash, "robin")
+
+    found = parse_announced_extras(payload)
+    assert b58check_encode(113, found["hash160"]) == here
+    assert b58check_encode(there_version, found["other_hash160"]) == there
+    assert found["tag"] == "robin" and found["name"] == ""
+
+    # Older readers: the key, and the identity tail, are where they were.
+    assert parse_key_announcement(payload) == key
+    assert parse_announced_identity(payload) == (here_hash, "")
+
+    # Sections are optional and independent.
+    assert parse_announced_extras(
+        build_key_announcement(key, here_hash, "the operator"))["tag"] == ""
+    assert parse_announced_extras(
+        build_key_announcement(key, here_hash, "", tag="robin"))["other_hash160"] == b""
+    # Class B pads with NULs, which end the walk rather than inventing a section.
+    padded = build_key_announcement(key, here_hash, "", there_hash, "robin") + b"\0" * 9
+    assert parse_announced_extras(padded)["tag"] == "robin"
+    # Damaged extras still yield the key and what came before them.
+    assert parse_announced_extras(payload[:-3])["other_hash160"] == there_hash
+
+
 def test_a_full_announcement_still_fits_one_op_return():
     """If it did not, publishing would cost dust instead of a flat fee."""
     from arcade.encoding import max_class_c_payload

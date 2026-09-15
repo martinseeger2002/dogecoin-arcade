@@ -12,6 +12,7 @@ import base64
 import datetime as dt
 import hashlib
 import json
+import re
 import threading
 import time
 import html
@@ -40,7 +41,7 @@ from . import guide as guidelib
 from .. import tags as taglib
 from .. import remote as remotelib
 from ..messaging import contact, content, group
-from ..script import b58check_decode
+from ..script import b58check_decode, b58check_encode
 from ..messaging.derive import DerivationError, derive_identity
 from ..messaging.envelope import (
     MAX_ANNOUNCE_NAME, MAX_ANNOUNCE_NAME_CLASS_B,
@@ -484,7 +485,8 @@ def create_app(state: AppState) -> FastAPI:
             with state.store() as store:
                 threads = store.conversations(state.identity.fingerprint)
         return render(request, "messages.html", threads=threads, thread=None,
-                      peer=None, when=_when, fingerprint_of=fingerprint_of)
+                      peer=None, when=_when, fingerprint_of=fingerprint_of,
+                      tags=_tags_for(t["address"] for t in threads))
 
     @app.get("/messages/{peer_hex}", response_class=HTMLResponse)
     def conversation(request: Request, peer_hex: str):
@@ -539,6 +541,8 @@ def create_app(state: AppState) -> FastAPI:
                       peer=peer, when=_when, fingerprint_of=fingerprint_of,
                       is_new_contact=bool(peer) and not items,
                       unfinished=unfinished,
+                      tags=_tags_for([t["address"] for t in threads]
+                                     + [(peer or {}).get("address", "")]),
                       profile_name=state.profile_name)
 
     @app.post("/messages/start")
@@ -819,6 +823,8 @@ def create_app(state: AppState) -> FastAPI:
                     estimate_readable_seconds(plan.transactions, typical)),
             }
         return render(request, "messages.html", threads=threads, thread=items, peer=peer,
+                      tags=_tags_for([t["address"] for t in threads]
+                                     + [(peer or {}).get("address", "")]),
                       when=_when, fingerprint_of=fingerprint_of, prepared=prepared,
                       plan=plan, draft=body, error=error, timing=timing,
                       cost=(send_cost(prepared[0], plan.transactions)
@@ -1001,6 +1007,12 @@ def create_app(state: AppState) -> FastAPI:
                         "hex": key.hex(),
                         "height": row["height"],
                         "when": row["block_time"],
+                        # What the announcement SAYS its tag is. Checked
+                        # against the chain below, because a tag is the one
+                        # thing in an announcement a reader can check.
+                        "claimed_tag": (row["tag"] if "tag" in row.keys() else "") or "",
+                        "other_address": (row["other_address"]
+                                          if "other_address" in row.keys() else "") or "",
                         # The name as published, read from the announcement
                         # itself rather than from a contact row. Looking it up in
                         # the address book could only ever find names for people
@@ -1008,8 +1020,21 @@ def create_app(state: AppState) -> FastAPI:
                         # out.
                         "name": row["name"] or "",
                     })
+        addresses = [k["address"] for k in published]
+        addresses += [row["testnet_address"] for row in people]
+        found = _tags_for(addresses)
+        for entry in published:
+            # A tag the chain agrees with, or nothing. An announcement that
+            # names a tag held by somebody else is the announcement being
+            # wrong, and showing it would be repeating a false claim.
+            entry["tag"] = (found.get(entry["address"]) or "") \
+                if not entry["claimed_tag"] or \
+                found.get(entry["address"]) == entry["claimed_tag"] else ""
+            entry["tag_disputed"] = bool(
+                entry["claimed_tag"] and found.get(entry["address"]) != entry["claimed_tag"])
         return render(request, "contacts.html", people=people, editing=editing,
-                      published=published, when=_when,
+                      published=published, when=_when, mine=_my_tag(), tags=found,
+                      other_address=_other_chain_address(),
                       announce_limit=MAX_ANNOUNCE_NAME,
                       name_limit=MAX_ANNOUNCE_NAME_CLASS_B, **kwargs)
 
@@ -1511,20 +1536,6 @@ def create_app(state: AppState) -> FastAPI:
                      "Content-Security-Policy": media.MEDIA_CSP,
                      "Cache-Control": "private, max-age=300"})
 
-    @app.post("/profile")
-    def set_profile(request: Request, name: str = Form(""), csrf_token: str = Form("")):
-        try:
-            check_csrf(csrf_token)
-            state.set_profile_name(name)
-            state.flash(
-                f"New contacts will see you as {name.strip()}." if name.strip()
-                else "Your name will no longer be sent to new contacts.", "ok")
-        except HTTPException:
-            raise          # a rejected form is a 400, not an error page
-        except ValueError as exc:
-            state.flash(str(exc), "err")
-        return RedirectResponse("/contacts", status_code=303)
-
     @app.get("/events")
     def events(request: Request):
         """What an open page polls to decide whether to refresh.
@@ -1569,6 +1580,8 @@ def create_app(state: AppState) -> FastAPI:
             with state.store() as store:
                 posts = _with_media(store, store.group_posts(
                     chain.network, channel, limit=PAGE_POSTS, before_id=before))
+                for post in posts:
+                    post["cards"] = _cards_in(post.get("text") or "")
                 channels = store.group_channels(chain.network)
                 older = (store.group_has_older(chain.network, channel, posts[0]["id"])
                          if posts else False)
@@ -1727,6 +1740,8 @@ def create_app(state: AppState) -> FastAPI:
             with state.store() as store:
                 posts = _with_media(store, store.group_posts(
                     chain.network, channel, limit=PAGE_POSTS, before_id=before))
+                for post in posts:
+                    post["cards"] = _cards_in(post.get("text") or "")
                 channels = store.group_channels(chain.network)
                 older = (store.group_has_older(chain.network, channel, posts[0]["id"])
                          if posts else False)
@@ -1825,8 +1840,14 @@ def create_app(state: AppState) -> FastAPI:
                 raise          # a rejected form is a 400, not an error page
             except Exception:
                 home_hash = b""
+            # Key, this address, the same wallet's address on the other chain,
+            # and the @tag that address holds. The tag replaces the name a
+            # person typed: a reader can check a tag against the chain, and
+            # could only ever take a name on trust (D-032).
+            other_hash, tag = _announced_extras()
             payload = build_key_announcement(
-                state.identity.public_bytes, home_hash, state.profile_name)
+                state.identity.public_bytes, home_hash, "",
+                other_hash160=other_hash, tag=tag)
             # A long name will not fit one OP_RETURN, so it goes as Class B --
             # a couple of dust outputs rather than none. Better than publishing
             # half a name, permanently, for the cheaper fee.
@@ -2564,6 +2585,182 @@ def create_app(state: AppState) -> FastAPI:
     # Read-only, every one of them, and the only URLs in this application that
     # answer a cross-origin request. See web/content.py for why that is safe
     # and what it deliberately does not do.
+
+    # --- @tags ----------------------------------------------------------------
+
+    def _tag_chain() -> tuple[Any, Any]:
+        """The chain a tag of your own is claimed on, and its index.
+
+        A tag is how people know who wrote to them, so it belongs on the
+        chain the messages are on. Tags are per-chain -- the same name on two
+        chains is two names -- and the interface claims only on this one
+        (D-032).
+        """
+        for chain in state.token_chains:
+            if chain.network == state.messaging.network:
+                return chain, state.token_index(chain)
+        return _token_chain()
+
+    def _other_chain_address() -> str:
+        """This wallet's address on the chain it does not message on."""
+        other_hash, _ = _announced_extras()
+        if not other_hash:
+            return ""
+        for chain in state.token_chains:
+            if chain.network != state.messaging.network:
+                return b58check_encode(chain.params.pubkeyhash_version, other_hash)
+        return ""
+
+    def _announced_extras() -> tuple[bytes, str]:
+        """The other chain's address (as 20 bytes) and the tag, for publishing.
+
+        Both are best-effort: an announcement that says less is worth more
+        than one that is not made, so a node with no ledger wallet or no tag
+        still publishes its key and its messaging address.
+        """
+        other_hash = b""
+        for chain in state.token_chains:
+            if chain.network == state.messaging.network:
+                continue
+            try:
+                with chain.rpc() as rpc:
+                    found = _funded_addresses(rpc) or [
+                        {"address": a} for a in _ledger_addresses(rpc)]
+                if found:
+                    _, other_hash = b58check_decode(found[0]["address"])
+            except HTTPException:
+                raise
+            except Exception:
+                other_hash = b""
+            break
+        return other_hash, (_my_tag()["tag"] or "")
+
+    def _tags_for(addresses) -> dict[str, str]:
+        """Which of these addresses hold a tag. Empty when nothing is indexed.
+
+        A stale or missing index shows the address, never a name it is not
+        sure about: a wrong name is worse than base58 (tags.display).
+        """
+        wanted = sorted({a for a in addresses if a})
+        if not wanted:
+            return {}
+        try:
+            _, index = _tag_chain()
+            return index.tags_for(wanted)
+        except Exception:
+            return {}
+
+    def _my_tag() -> dict[str, Any]:
+        """Your tag as the chain has it, and the address that would hold one."""
+        chain, index = _tag_chain()
+        home = state.derived_address or ""
+        found = None
+        try:
+            found = index.tag_of(home) if home else None
+        except Exception:
+            found = None
+        return {"tag": found, "address": home, "chain": chain,
+                "min": taglib.MIN_LENGTH, "max": taglib.MAX_LENGTH}
+
+    @app.post("/tags/claim", response_class=HTMLResponse)
+    def claim_tag(request: Request, tag: str = Form(""), csrf_token: str = Form(""),
+                  confirmed: str = Form("")):
+        """Claim a tag, or change the one you have, in two steps like a send.
+
+        Nothing is broadcast until the transaction that was shown is named
+        back (D-016). Refused before it costs anything when the name is not
+        one anybody could have, when it is already somebody's, and when it is
+        already yours.
+        """
+        check_csrf(csrf_token)
+        error, prepared, txid = None, None, None
+        chain, index = _tag_chain()
+        wanted = ""
+        try:
+            wanted = taglib.validate(tag)
+            home = state.derived_address
+            if not home:
+                raise taglib.TagError("this wallet has no identity address yet.")
+            holder = index.address_of(wanted)
+            if holder == home:
+                raise taglib.TagError(f"@{wanted} is already yours.")
+            if holder:
+                raise taglib.TagError(f"@{wanted} is taken.")
+            payload = P.AnyData(data=taglib.encode(wanted)).encode()
+            with chain.rpc() as rpc:
+                sender = tokenlib.TokenSender(rpc, chain.params)
+                prepared = state.prepared_tokens.get((chain.network, confirmed))
+                if prepared is None:
+                    prepared = sender.prepare(home, payload)
+                    prepared.what = f"claim @{wanted}"
+                    state.prepared_tokens[(chain.network, prepared.txid)] = prepared
+                    while len(state.prepared_tokens) > 20:
+                        del state.prepared_tokens[next(iter(state.prepared_tokens))]
+                else:
+                    txid = sender.broadcast(prepared)
+                    state.prepared_tokens.pop((chain.network, confirmed), None)
+                    state.pending_tokens.append(
+                        {"txid": txid, "what": f"claim @{wanted}", "at": time.time(),
+                         "network": chain.network})
+                    state.flash(f"@{wanted} claimed in {txid}. It is yours once its "
+                                f"block is indexed.", "ok")
+                    return RedirectResponse("/contacts", status_code=303)
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
+        except (taglib.TagError, tokenlib.TokenError, ValueError) as exc:
+            error = str(exc)
+        except Exception as exc:
+            error = f"{exc.__class__.__name__}: {exc}"
+        return _contacts_view(request, tag_error=error, tag_prepared=prepared,
+                              tag_wanted=wanted)
+
+    #: An inscription named in a post: a link to its content or its page, or
+    #: the bare txid on a line of its own. Anchored on the 64 hex characters,
+    #: so a sentence that merely contains the word "content" is not a card.
+    INSCRIPTION_IN_TEXT = re.compile(
+        r"(?:/content/|/inscriptions/|/nfts/)?\b([0-9a-f]{64})\b")
+
+    def _cards_in(text: str) -> list[dict[str, Any]]:
+        """The inscriptions a post names, as cards this wallet vouches for.
+
+        Never the content itself: a post is written by a stranger, and an
+        inscription can be a page of scripts. What is shown is what this
+        node's own index says about it -- number, name, type, size -- and a
+        link to the viewer, which is the one place with a sandbox and a
+        wallet bridge (D-035).
+        """
+        if not text:
+            return []
+        try:
+            _, index = _token_chain()
+        except Exception:
+            return []
+        cards, seen = [], set()
+        for txid in INSCRIPTION_IN_TEXT.findall(text):
+            if txid in seen or len(cards) >= 4:
+                continue
+            seen.add(txid)
+            try:
+                row = index.inscription(txid)
+            except Exception:
+                row = None
+            if row is None:
+                continue          # not on this chain, or not indexed yet
+            name = ""
+            try:
+                name = str(json.loads(row["json"] or "{}").get("name") or "")
+            except Exception:
+                name = ""
+            cards.append({
+                "txid": txid, "number": row["number"], "name": name[:80],
+                "content_type": row["content_type"],
+                "content_len": row["content_len"],
+                "collection": row.get("collection"),
+                "edition": row.get("edition"),
+                "image": bool(row["held"]) and str(
+                    row["content_type"] or "").startswith("image/"),
+            })
+        return cards
 
     def _content_index():
         _, index = _token_chain()
@@ -3830,7 +4027,8 @@ def create_app(state: AppState) -> FastAPI:
 def _resolve_recipient(state, recipient: str) -> bytes:
     """Turn whatever the user typed into a public key.
 
-    Accepts a contact code as well as an address with an on-chain announcement.
+    Accepts an @tag, a contact code, or an address with an on-chain
+    announcement.
     Without the first, nobody could send a first message: publishing a key needs
     coins, coins need mining, and mining needs four hours -- so a new network
     would have no way to get started at all.
@@ -3838,6 +4036,25 @@ def _resolve_recipient(state, recipient: str) -> bytes:
     recipient = (recipient or "").strip()
     if not recipient:
         raise ValueError("choose a recipient, or paste their contact code")
+
+    if recipient.startswith("@"):
+        # A tag is a name for an ADDRESS, and messaging needs a key, so this
+        # is two lookups: the chain says which address holds the name, and
+        # that address's announcement says which key lives there (D-032).
+        wanted = taglib.normalise(recipient)
+        address = None
+        for chain in state.token_chains:
+            if chain.network == state.messaging.network:
+                try:
+                    address = state.token_index(chain).address_of(wanted)
+                except Exception:
+                    address = None
+                break
+        if not address:
+            raise ValueError(
+                f"nobody holds @{wanted} on {state.messaging.network}, or this "
+                "node has not indexed the claim yet.")
+        recipient = address
 
     if recipient.lower().startswith(f"{contact.PREFIX}:"):
         network, public_bytes = contact.decode(recipient)

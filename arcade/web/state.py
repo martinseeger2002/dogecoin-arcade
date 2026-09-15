@@ -652,31 +652,26 @@ class AppState:
 
     @property
     def profile_name(self) -> str:
-        """The name sent to a new correspondent. Empty until the user sets one."""
-        if not self.store_path.exists():
-            return ""
-        with self.store() as store:
-            return store.get_meta("profile_name") or ""
+        """How this wallet introduces itself: its @tag, or nothing at all.
 
-    def set_profile_name(self, name: str) -> None:
-        """Store the name, refusing one that cannot be published whole.
-
-        Checked here as well as in the form, because a browser's maxlength is a
-        convenience rather than a guarantee. Refused rather than trimmed: the
-        whole reason this exists is that a name was once cut in silence and
-        published permanently.
+        There used to be a name typed into a box here. Two names for one
+        person is one too many, and the typed one was the weaker: nobody
+        could check it, it had to be published to be useful, and publishing
+        it put an unverifiable claim on the chain for ever. The tag does the
+        same job and can be checked, so it is the only name this wallet
+        gives out for itself (D-034).
         """
-        from ..messaging.envelope import MAX_ANNOUNCE_NAME_CLASS_B
-
-        cleaned = (name or "").strip()
-        encoded = cleaned.encode()
-        if len(encoded) > MAX_ANNOUNCE_NAME_CLASS_B:
-            raise ValueError(
-                f"that name is {len(encoded)} bytes and the limit is "
-                f"{MAX_ANNOUNCE_NAME_CLASS_B}. Shorten it rather than have it "
-                f"cut for you.")
-        with self.store() as store:
-            store.set_meta("profile_name", cleaned)
+        home = self.derived_address or ""
+        if not home:
+            return ""
+        for chain in self.token_chains:
+            if chain.network == self.messaging.network:
+                try:
+                    found = self.token_index(chain).tag_of(home)
+                except Exception:
+                    return ""
+                return f"@{found}" if found else ""
+        return ""
 
     @property
     def has_identity(self) -> bool:

@@ -385,6 +385,18 @@ class Offers:
                                (str(offer_id),)).fetchone()
             return _offer_row(row) if row else None
 
+    def sold_offers(self, network: str) -> list[dict]:
+        """Offers that were signed and broadcast, newest first.
+
+        Not the same as finished: a sale is only settled once its block is
+        indexed, and until then the item it sold still reads as the seller's
+        (D-033).
+        """
+        with self._open() as conn:
+            return [_offer_row(r) for r in conn.execute(
+                "SELECT * FROM offer WHERE status = 'sent' AND network = ? "
+                "ORDER BY created DESC LIMIT 200", (network,))]
+
     def open_offers(self, network: str) -> list[dict]:
         with self._open() as conn:
             return [_offer_row(r) for r in conn.execute(
@@ -452,6 +464,19 @@ def coins_in(leg: I.Leg) -> int:
     return leg.amount if leg.kind == I.LEG_COINS else 0
 
 
+def _unsettled(index: Any, offer: dict) -> bool:
+    """Whether a sold offer's transaction is still out of the index.
+
+    An index that cannot answer is treated as not having it: holding an item
+    back for one more block costs a buyer nothing, and offering it twice
+    costs them a fee.
+    """
+    try:
+        return index.transaction(offer["txid"]) is None
+    except Exception:
+        return True
+
+
 def make_offer(rpc: Any, index: Any, offers: Offers, network: str, shop_row: dict,
                listing_no: int, buyer: str, buyer_pubkey: str, own: list[str]) -> dict:
     """Price one listing for one buyer, lock an output, and write it down.
@@ -474,7 +499,14 @@ def make_offer(rpc: Any, index: Any, offers: Offers, network: str, shop_row: dic
         raise SwapError(f"there is no listing {listing_no}") from None
 
     expire(rpc, offers, network)
-    standing = offers.open_offers(network)
+    # What is spoken for: the offers still open, and the ones already sold
+    # whose transaction has not been indexed yet. Between broadcast and its
+    # block the ledger still names the seller as the owner of what was sold,
+    # so without the second half the same item is offered to a second buyer.
+    # The engine refuses that swap when it lands -- nothing moves -- but the
+    # buyer has paid a message fee to be told no (D-033).
+    standing = offers.open_offers(network) + [
+        offer for offer in offers.sold_offers(network) if _unsettled(index, offer)]
     locked_items = {o["give"]["txid"] for o in standing if o["give"].get("kind") == "inscription"}
     locked_outs = {(o["outpoint"]["txid"], o["outpoint"]["vout"]) for o in standing}
 

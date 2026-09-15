@@ -76,6 +76,14 @@ class Params:
     pubkeyhash_version: int = 56
     scripthash_version: int = 22
 
+    # The version byte of THIS coin's other chain: mainnet for a testnet, and
+    # the other way round. A key announcement can carry the same person's
+    # address on both (D-032), and the 20 bytes on the wire say nothing about
+    # which chain they are for -- so the reader supplies that, from here,
+    # rather than guessing from the bytes. None where there is no counterpart
+    # to name (regtest).
+    other_pubkeyhash_version: int | None = None
+
     # The Class B marker address: every Class B transaction must pay it, exactly
     # as Omni requires an output to Exodus (omnicore.cpp:81). Arcade gives it NO
     # other meaning -- burn-to-mint was dropped in D-007, so it is purely a
@@ -124,6 +132,7 @@ MAINNET = Params(
     datadir_subdir="",
     pubkeyhash_version=56,   # addresses start with "P"
     scripthash_version=22,
+    other_pubkeyhash_version=113,   # its own testnet
     marker_address=None,     # derived and fixed before launch
 )
 
@@ -151,6 +160,7 @@ TESTNET = Params(
     datadir_subdir="testnet3",
     pubkeyhash_version=113,
     scripthash_version=196,
+    other_pubkeyhash_version=56,    # Pepecoin mainnet
 )
 
 REGTEST = Params(
@@ -188,6 +198,7 @@ DOGE_MAINNET = Params(
     datadir_subdir="",
     pubkeyhash_version=30,   # addresses start with "D"
     scripthash_version=22,
+    other_pubkeyhash_version=113,   # its own testnet
     marker_address=None,
 )
 
@@ -200,6 +211,7 @@ DOGE_TESTNET = Params(
     datadir_subdir="testnet3",
     pubkeyhash_version=113,
     scripthash_version=196,
+    other_pubkeyhash_version=30,    # Dogecoin mainnet
 )
 
 DOGE_REGTEST = Params(

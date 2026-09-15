@@ -37,6 +37,7 @@ GOOF = ["c" * 63 + str(i) for i in range(4)]   # a collection the seller made
 class FakeIndex:
     def __init__(self):
         self.props = {3: {"property_id": 3, "name": "Arcade Test", "divisible": True}}
+        self.indexed: dict[str, dict] = {}     # swap txids the ledger has read
         self.balances = {(BUYER, 3): 50 * 10 ** 8, (SELLER, 3): 1000 * 10 ** 8}
         self.rows = {
             SHOP: {"txid": SHOP, "number": 1, "creator": SELLER, "owner": SELLER,
@@ -75,6 +76,9 @@ class FakeIndex:
 
     def address_of(self, tag):
         return None
+
+    def transaction(self, txid):
+        return self.indexed.get(txid)
 
 
 def _p2pkh_address(script: bytes) -> str | None:
@@ -449,3 +453,39 @@ def test_a_page_sees_the_listings_as_this_nodes_ledger_reads_them(world):
     shown = S.listings_json(shop_row(index), index)
     assert shown[1]["available"] == "nothing of Goofball is left"
     assert shown[2]["available"].startswith("inscription #2 is held by")
+
+
+def test_a_sold_item_is_not_offered_again_before_its_block(world):
+    """Between broadcast and indexing, a sold item still reads as the seller's.
+
+    Without holding it back, a second buyer is offered what has just been
+    sold. The engine refuses the second swap when it lands, so nothing moves
+    -- but the buyer has paid a message fee to be told no (D-033).
+    """
+    index, seller, buyer, offers = world
+    # One Goofball left to the shop: put the other two in offers nobody takes.
+    held = [S.make_offer(seller, index, offers, "test", shop_row(index), 1, BUYER, "ff" * 32,
+                         own=[SELLER]) for _ in range(2)]
+    offer = S.make_offer(seller, index, offers, "test", shop_row(index), 1, BUYER, "ff" * 32,
+                         own=[SELLER])
+    sold = offer["give"]["txid"]
+
+    built = S.build(buyer, index, S.check_offer(offer, shop=SHOP, own=[BUYER],
+                                                height=TEST.swaps_from, params=TEST),
+                    own=[BUYER])
+    txid = S.countersign(seller, index, offers, offers.get(offer["id"]), built.hex)
+    assert offers.get(offer["id"])["status"] == "sent"
+    # The ledger has not read the block yet: the seller still owns it.
+    assert index.rows[sold]["owner"] == SELLER
+    with pytest.raises(S.SwapError, match="nothing of Goofball is left"):
+        S.make_offer(seller, index, offers, "test", shop_row(index), 1, BUYER, "ff" * 32,
+                     own=[SELLER])
+
+    # Once the swap is indexed the offer stops reserving anything -- and the
+    # item is genuinely gone, so the answer is the same for a better reason.
+    index.indexed[txid] = {"txid": txid}
+    index.rows[sold]["owner"] = BUYER
+    with pytest.raises(S.SwapError, match="nothing of Goofball is left"):
+        S.make_offer(seller, index, offers, "test", shop_row(index), 1, BUYER, "ff" * 32,
+                     own=[SELLER])
+    assert len(held) == 2

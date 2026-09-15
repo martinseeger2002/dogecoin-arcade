@@ -291,6 +291,8 @@ class MessageStore:
         ("group_post", "file_data", "BLOB"),
         ("key_announcement", "stated", "INTEGER NOT NULL DEFAULT 0"),
         ("key_announcement", "name", "TEXT NOT NULL DEFAULT ''"),
+        ("key_announcement", "tag", "TEXT NOT NULL DEFAULT ''"),
+        ("key_announcement", "other_address", "TEXT NOT NULL DEFAULT ''"),
         ("sent", "file_name", "TEXT NOT NULL DEFAULT ''"),
         ("sent", "file_type", "TEXT NOT NULL DEFAULT ''"),
         ("sent", "file_data", "BLOB"),
@@ -502,10 +504,11 @@ class MessageStore:
             self.conn.execute(
                 "INSERT OR IGNORE INTO key_announcement"
                 "(txid,address,pubkey,fingerprint,height,block_time,seen_at,"
-                "stated,name) VALUES(?,?,?,?,?,?,?,?,?)",
+                "stated,name,tag,other_address) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (row["txid"], row["address"], row["pubkey"], row["fingerprint"],
                  row["height"], row["block_time"], row["seen_at"],
-                 row["stated"], row["name"]))
+                 row["stated"], row["name"], row["tag"] if "tag" in row.keys() else "",
+                 row["other_address"] if "other_address" in row.keys() else ""))
         if own:
             counts["key_announcement"] -= len(own)
 
@@ -540,6 +543,7 @@ class MessageStore:
     def add_key_announcement(
         self, txid: str, address: str, pubkey: bytes, fingerprint: str,
         height: int, block_time: int, stated: bool = False, name: str = "",
+        tag: str = "", other_address: str = "",
     ) -> None:
         """Record an announcement.
 
@@ -551,17 +555,26 @@ class MessageStore:
         """
         self.conn.execute(
             "INSERT INTO key_announcement"
-            "(txid,address,pubkey,fingerprint,height,block_time,seen_at,stated,name) "
-            "VALUES(?,?,?,?,?,?,?,?,?) "
+            "(txid,address,pubkey,fingerprint,height,block_time,seen_at,stated,name,"
+            "tag,other_address) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?) "
             # A longer name replaces a shorter one, so a rescan repairs a name an
             # older parser had cut. INSERT OR IGNORE meant the truncation was
             # permanent in the reader's store however often it was rescanned.
             "ON CONFLICT(txid) DO UPDATE SET "
             "  name=CASE WHEN LENGTH(excluded.name) > LENGTH(key_announcement.name) "
             "            THEN excluded.name ELSE key_announcement.name END, "
-            "  stated=MAX(key_announcement.stated, excluded.stated)",
+            "  stated=MAX(key_announcement.stated, excluded.stated), "
+            # A tag and the other chain's address are read by a parser that
+            # understands them or not at all, so a rescan by a newer reader
+            # fills them in where an older one saw nothing.
+            "  tag=CASE WHEN excluded.tag <> '' THEN excluded.tag "
+            "           ELSE key_announcement.tag END, "
+            "  other_address=CASE WHEN excluded.other_address <> '' "
+            "                     THEN excluded.other_address "
+            "                     ELSE key_announcement.other_address END",
             (txid, address, pubkey, fingerprint, height, block_time,
-             int(time.time()), 1 if stated else 0, name),
+             int(time.time()), 1 if stated else 0, name, tag, other_address),
         )
 
     def superseded_addresses(self, pubkey: bytes) -> list[str]:
@@ -648,7 +661,8 @@ class MessageStore:
         list shrinks as it is used rather than repeating what is known.
         """
         return list(self.conn.execute(
-            "SELECT k.address, k.pubkey, k.fingerprint, k.name, "
+            "SELECT k.address, k.pubkey, k.fingerprint, k.name, k.tag, "
+            "       k.other_address, "
             "       MAX(k.stated) AS stated, MAX(k.height) AS height, "
             "       MAX(k.block_time) AS block_time "
             "FROM key_announcement k "

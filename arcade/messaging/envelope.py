@@ -211,6 +211,17 @@ def is_message_payload(payload: bytes) -> bool:
 #: Class B padding, not a tail, which is why the tag is 0x01 rather than a length.
 ANNOUNCE_TAG_IDENTITY = 0x01
 
+#: The same person's address on the other chain, so one announcement answers
+#: both "where do I message them" and "where do I pay them" (D-032). Sections
+#: come in order and a reader stops at the first byte it does not know, which
+#: is how an older reader still gets the key and the identity address.
+ANNOUNCE_TAG_OTHER_CHAIN = 0x02
+
+#: The @tag this address holds. Unlike a name, a reader can check it: the tag
+#: index says which address holds the name, and disagreement means the
+#: announcement is wrong, not the chain.
+ANNOUNCE_TAG_HANDLE = 0x03
+
 #: What is left for the name once everything else is accounted for. Computed,
 #: not written down: the first attempt hardcoded 16 and was wrong, because it
 #: forgot the 4-byte AnyData wrapper that every Arcade payload carries. A
@@ -237,7 +248,8 @@ MAX_ANNOUNCE_NAME_CLASS_B = 64
 
 
 def build_key_announcement(public_bytes: bytes, hash160: bytes = b"",
-                           name: str = "") -> bytes:
+                           name: str = "", other_hash160: bytes = b"",
+                           tag: str = "") -> bytes:
     """Header + X25519 public key, optionally saying whose key it is.
 
     The bare form is 38 bytes and is what earlier versions publish. The tail adds
@@ -272,7 +284,19 @@ def build_key_announcement(public_bytes: bytes, hash160: bytes = b"",
         raise EnvelopeError(
             f"a published name is limited to {MAX_ANNOUNCE_NAME_CLASS_B} bytes; "
             f"this one is {len(encoded)}")
-    return body + bytes([ANNOUNCE_TAG_IDENTITY]) + hash160 + bytes([len(encoded)]) + encoded
+    out = body + bytes([ANNOUNCE_TAG_IDENTITY]) + hash160 + bytes([len(encoded)]) + encoded
+    if other_hash160:
+        if len(other_hash160) != 20:
+            raise EnvelopeError(
+                f"the other chain's address hash must be 20 bytes, got "
+                f"{len(other_hash160)}")
+        out += bytes([ANNOUNCE_TAG_OTHER_CHAIN]) + other_hash160
+    handle = (tag or "").strip().lstrip("@").encode()
+    if handle:
+        if len(handle) > 255:
+            raise EnvelopeError("that is not a tag")
+        out += bytes([ANNOUNCE_TAG_HANDLE, len(handle)]) + handle
+    return out
 
 
 def announcement_fits_one_output(payload: bytes) -> bool:
@@ -303,27 +327,59 @@ def parse_key_announcement(payload: bytes) -> bytes:
 
 
 def parse_announced_identity(payload: bytes) -> tuple[bytes, str]:
-    """Return (hash160, name) from an announcement's tail, or (b"", "").
+    """Return (hash160, name) from an announcement's tail, or (b"", "")."""
+    extras = parse_announced_extras(payload)
+    return extras["hash160"], extras["name"]
 
-    Never raises on a malformed tail: these bytes came from a stranger, and an
-    announcement whose extras are damaged should still yield its key rather than
-    being discarded.
+
+def parse_announced_extras(payload: bytes) -> dict:
+    """Everything an announcement says about who it belongs to.
+
+    `{"hash160": b"", "name": "", "other_hash160": b"", "tag": ""}` for a bare
+    announcement. Never raises: these bytes came from a stranger, and an
+    announcement whose extras are damaged should still yield its key rather
+    than being discarded. A section it cannot read ends the walk, so what was
+    understood up to that point is kept.
     """
-    start = KEY_ANNOUNCE_HEADER_LEN + 32
-    if len(payload) <= start or payload[start] != ANNOUNCE_TAG_IDENTITY:
-        return b"", ""            # bare announcement, or NUL padding
+    found = {"hash160": b"", "name": "", "other_hash160": b"", "tag": ""}
+    at = KEY_ANNOUNCE_HEADER_LEN + 32
+    if len(payload) <= at or payload[at] != ANNOUNCE_TAG_IDENTITY:
+        return found              # bare announcement, or NUL padding
     try:
-        hash160 = payload[start + 1 : start + 21]
-        if len(hash160) != 20:
-            return b"", ""
-        length = payload[start + 21]
-        name = payload[start + 22 : start + 22 + length].decode("utf-8", "replace")
+        found["hash160"] = payload[at + 1 : at + 21]
+        if len(found["hash160"]) != 20:
+            return {**found, "hash160": b""}
+        length = payload[at + 21]
+        name = payload[at + 22 : at + 22 + length]
+        if len(name) != length:
+            return found
+        # Bounded by the Class B ceiling, not the single-output one: a longer
+        # name is published as Class B, and cutting it here would undo that on
+        # the way in -- the reader would see the truncation the sender paid
+        # extra to avoid.
+        found["name"] = name.decode("utf-8", "replace").strip()[:MAX_ANNOUNCE_NAME_CLASS_B]
+        at = at + 22 + length
+        while at < len(payload):
+            kind = payload[at]
+            if kind == ANNOUNCE_TAG_OTHER_CHAIN:
+                other = payload[at + 1 : at + 21]
+                if len(other) != 20:
+                    break
+                found["other_hash160"] = other
+                at += 21
+            elif kind == ANNOUNCE_TAG_HANDLE:
+                length = payload[at + 1]
+                raw = payload[at + 2 : at + 2 + length]
+                if len(raw) != length:
+                    break
+                found["tag"] = raw.decode("utf-8", "replace").strip()
+                at += 2 + length
+            else:
+                break             # NUL padding, or a section written by a
+                                  # newer sender than this reader
     except IndexError:
-        return b"", ""
-    # Bounded by the Class B ceiling, not the single-output one: a longer name is
-    # published as Class B, and cutting it here would undo that on the way in --
-    # the reader would see the same truncation the sender paid extra to avoid.
-    return hash160, name.strip()[:MAX_ANNOUNCE_NAME_CLASS_B]
+        return found
+    return found
 
 
 # --- sealing and opening ------------------------------------------------------

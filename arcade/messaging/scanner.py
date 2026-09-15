@@ -34,6 +34,7 @@ from .envelope import (
     TYPE_SINGLE,
     is_message_payload,
     open_message,
+    parse_announced_extras,
     parse_announced_identity,
     parse_key_announcement,
 )
@@ -272,7 +273,18 @@ class Scanner:
                 # A newer announcement says which address the key belongs to.
                 # Prefer that over the transaction's sender, which is whichever
                 # address funded it and therefore changes with coin selection.
-                claimed_hash, claimed_name = parse_announced_identity(body)
+                extras = parse_announced_extras(body)
+                claimed_hash, claimed_name = extras["hash160"], extras["name"]
+                claimed_tag = extras["tag"]
+                other_address = ""
+                if extras["other_hash160"]:
+                    # The same person on the chain this node does NOT message
+                    # on: encoded with that chain's version byte, not this
+                    # one's, or the address book would hand out a testnet
+                    # address for a mainnet payment (D-032).
+                    other = self.params.other_pubkeyhash_version
+                    if other is not None:
+                        other_address = b58check_encode(other, extras["other_hash160"])
                 address = atx.sender
                 if claimed_hash:
                     address = b58check_encode(self.params.pubkeyhash_version,
@@ -299,7 +311,8 @@ class Scanner:
                                              source="announce")
                 self.store.add_key_announcement(
                     atx.txid, address, pubkey, fingerprint_of(pubkey), height,
-                    block_time, stated=bool(claimed_hash), name=claimed_name
+                    block_time, stated=bool(claimed_hash), name=claimed_name,
+                    tag=claimed_tag, other_address=other_address,
                 )
                 result.announcements += 1
                 continue

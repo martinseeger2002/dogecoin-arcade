@@ -4,32 +4,54 @@
 <h1>Address book</h1>
 <p class="sub">Who is who, and where to pay them. Stored only on this computer.</p>
 
+{% if tag_error %}<div class="msg err">{{ tag_error }}</div>{% endif %}
+
 <div class="panel" style="margin-bottom:18px">
-  <form method="post" action="/profile">
-    <input type="hidden" name="csrf_token" value="{{ csrf }}">
-    <h3 style="margin:0 0 12px">How you introduce yourself</h3>
-    <div class="row">
-      <div style="flex:1"><input autocomplete="off" name="name" value="{{ state.profile_name }}"
-             id="profile-name" placeholder="Your name" maxlength="{{ name_limit }}"
-             oninput="showPublished(this)"></div>
-      <button type="submit">Save</button>
-    </div>
+  <h3 style="margin:0 0 12px">Your @tag</h3>
+  {% if tag_prepared %}
+    <p class="muted" style="margin:0 0 8px">Claiming <strong>@{{ tag_wanted }}</strong>
+      for <code class="mono">{{ mine.address }}</code> on {{ mine.chain.label|lower }}.</p>
+    <table>
+      <tr><td class="muted" style="width:110px;border:0">txid</td>
+          <td class="mono" style="font-size:.78rem;border:0;word-break:break-all">{{ tag_prepared.txid }}</td></tr>
+      <tr><td class="muted" style="border:0">fee</td>
+          <td style="border:0">{{ "%.8f"|format(tag_prepared.fee_sats / 100000000) }}</td></tr>
+    </table>
+    <form method="post" action="/tags/claim" style="margin-top:12px">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="tag" value="{{ tag_wanted }}">
+      <input type="hidden" name="confirmed" value="{{ tag_prepared.txid }}">
+      <div class="row"><button type="submit">Claim it</button>
+        <a class="muted" href="/contacts">Cancel</a></div>
+    </form>
+  {% else %}
+    {% if mine.tag %}
+      <p style="margin:0 0 10px;font-size:1.1rem"><strong>@{{ mine.tag }}</strong>
+        <span class="muted" style="font-size:.84rem">&mdash; yours on
+          {{ mine.chain.label|lower }}, held by
+          <code class="addr" onclick="copyAddr(this)" title="Click to copy">{{ mine.address }}</code></span></p>
+    {% endif %}
+    <form method="post" action="/tags/claim">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <div class="row">
+        <div style="flex:1;position:relative">
+          <input autocomplete="off" name="tag" spellcheck="false" class="mono"
+                 value="{{ tag_wanted or '' }}"
+                 placeholder="{{ 'a different name' if mine.tag else 'the name people will see' }}"
+                 maxlength="{{ mine.max }}"></div>
+        <button type="submit">{{ 'Change it' if mine.tag else 'Claim it' }}</button>
+      </div>
+    </form>
     <p class="muted" style="font-size:.84rem;margin:9px 0 0">
-      Sent with your <em>first</em> message to someone new, along with your
-      addresses, so they know who is writing before deciding whether to deal with
-      you. Not sent afterwards, and you can untick it on any message.
-      It ties this identity to your mainnet address for whoever receives it.</p>
-    <p class="muted" style="font-size:.84rem;margin:9px 0 0" id="published-as"></p>
-    <p class="muted" style="font-size:.8rem;margin:6px 0 0">
-      Up to {{ name_limit }} characters. The first {{ announce_limit }} fit in a
-      single cheap output; beyond that the announcement costs a little dust.</p>
-    <p class="muted" style="font-size:.84rem;margin:9px 0 0">
-      The first <strong>{{ announce_limit }} characters</strong> are also included
-      when you publish your key on the chain, below, so anyone who finds you there
-      gets a name rather than a row of base58 &mdash; their address book fills
-      itself in. That part is public and permanent, and like any published name it
-      is a claim rather than proof.</p>
-  </form>
+      A name that belongs to your address, claimed on the chain: lower case,
+      a&ndash;z, 0&ndash;9 and underscore, {{ mine.min }} to {{ mine.max }}
+      characters. First claim wins, and it costs a small fee.
+      {% if mine.tag %}Changing it frees <strong>@{{ mine.tag }}</strong> for
+      anybody else.{% endif %}
+      Wherever this wallet shows who somebody is, it shows their @tag if the
+      chain gives them one &mdash; and unlike a name, that is something a
+      reader can check.</p>
+  {% endif %}
 </div>
 
 {% if publish_error %}<div class="msg err">{{ publish_error }}</div>{% endif %}
@@ -61,10 +83,20 @@
         <button type="submit">Publish on chain</button>
       </form>
     </div>
+    <table style="margin-top:10px">
+      <tr><td class="muted" style="width:130px">Your key</td>
+          <td class="muted">so people can write to you</td></tr>
+      <tr><td class="muted">{{ mine.chain.label }} address</td>
+          <td class="mono" style="font-size:.82rem;word-break:break-all">{{ mine.address or '—' }}</td></tr>
+      <tr><td class="muted">Other chain</td>
+          <td class="mono" style="font-size:.82rem;word-break:break-all">{{ other_address or '— none in this wallet' }}</td></tr>
+      <tr><td class="muted">@tag</td>
+          <td>{% if mine.tag %}<strong>@{{ mine.tag }}</strong>{% else %}
+            <span class="muted">— none claimed yet</span>{% endif %}</td></tr>
+    </table>
     <p class="muted" style="margin-top:10px;font-size:.87rem">
-      Publishes your key, this address, and your name. Set the name above first:
-      it is public and cannot be taken back. Anyone who scans then finds you with
-      their address book filled in, instead of a row of base58.</p>
+      Anyone who scans finds you with their address book filled in, instead of a
+      row of base58. It is public and permanent, and it costs a small fee.</p>
   {% else %}
     <p class="muted" style="margin:0">Waiting for the testnet node. Nothing to do.</p>
   {% endif %}
@@ -134,9 +166,14 @@
       {% for k in published %}
       <tr>
         <td style="word-break:break-all">
-          {% if k.name %}<strong>{{ k.name }}</strong>
+          {% if k.tag %}<strong>@{{ k.tag }}</strong>
+            <span class="muted" style="font-size:.75rem">&mdash; the chain agrees</span><br>
+          {% elif k.tag_disputed %}<span class="muted" style="font-size:.75rem">
+            says it holds @{{ k.claimed_tag }}, which the chain gives to somebody else</span><br>
+          {% elif k.name %}<strong>{{ k.name }}</strong>
             <span class="muted" style="font-size:.75rem">says their name is</span><br>{% endif %}
-          <span class="mono" style="font-size:.78rem">{{ k.address }}</span></td>
+          <span class="mono" style="font-size:.78rem">{{ k.address }}</span>
+          {% if k.other_address %}<br><span class="mono muted" style="font-size:.75rem">{{ k.other_address }}</span>{% endif %}</td>
         <td class="muted" style="font-size:.78rem;white-space:nowrap">
           block {{ "{:,}".format(k.height) }}</td>
         <td style="text-align:right">
@@ -170,6 +207,8 @@
   <div class="card{{ ' editing' if editing and editing['id'] == p['id'] }}">
     <div class="row" style="align-items:baseline">
       <h3 class="row-title">{{ p['name'] or "Unnamed" }}</h3>
+      {% set handle = tags.get(p['testnet_address']) if tags else None %}
+      {% if handle %}<span class="muted mono" style="font-size:.84rem">@{{ handle }}</span>{% endif %}
       {% if p['hex'] %}<span class="pill ok" title="You can message this contact">messaging</span>{% endif %}
     </div>
 
@@ -219,24 +258,5 @@ function copyAddr(el){
 }
 </script>
 <script>
-// Say what the chain will carry, before anyone pays for it. An announcement
-// holds 12 bytes of name and used to cut a longer one silently -- "Big Chief
-// Energy" was published, permanently and for a fee, as "Big Chief En".
-function showPublished(box){
-  var limit = {{ announce_limit }};
-  var note = document.getElementById('published-as');
-  var bytes = new TextEncoder().encode(box.value);
-  if (bytes.length <= limit) { note.hidden = true; return; }
-  var cut = new TextDecoder().decode(bytes.slice(0, limit));
-  note.hidden = false;
-  note.innerHTML = 'Your whole name is published — but it is ' + bytes.length +
-    ' bytes and a single cheap output holds ' + limit + ', so the announcement ' +
-    'is carried in multisig outputs instead. That costs a few hundredths of a ' +
-    'coin in dust rather than nothing. A name of ' + limit + ' bytes or fewer ' +
-    'costs only a fee.';
-  note.className = 'muted';
-}
-var nameBox = document.getElementById('profile-name');
-if (nameBox) showPublished(nameBox);
 </script>
 {% endblock %}

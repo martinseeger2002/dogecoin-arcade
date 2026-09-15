@@ -6,6 +6,7 @@ the index then reads back -- and that what the confirm screen says (fee, txid,
 recipient) is what the node saw, not merely that a table was drawn.
 """
 
+import base64
 import dataclasses
 import re
 from typing import Any
@@ -174,3 +175,116 @@ def test_one_balance_a_token_not_one_a_piece(web):
                                               amount="900", recipient=bob)).text
     assert "a send comes out of one address" in page
     assert "holds 600" in page and "1,000" in page
+
+
+def test_a_tag_is_claimed_in_two_steps_and_read_back(web, monkeypatch):
+    """Claiming @tag from the address book: shown, then broadcast, then indexed.
+
+    The chain already decided who holds what (test_tags.py). This is the half
+    that was missing until D-032: a way to claim one without a command line.
+    """
+    app, state, node, alice, bob = web
+    csrf = state.csrf_token
+    monkeypatch.setattr(type(state), "derived_address", property(lambda self: alice))
+
+    # Refused before it costs anything.
+    assert "not" in app.post("/tags/claim", data=dict(csrf_token=csrf, tag="A B")).text
+    assert "arcade" in app.post("/tags/claim",
+                                data=dict(csrf_token=csrf, tag="arcade")).text
+
+    page = app.post("/tags/claim", data=dict(csrf_token=csrf, tag="robin")).text
+    assert "Claiming <strong>@robin</strong>" in page
+    assert node.rpc.call("getrawmempool") == [], "showing it must not spend"
+    txid = re.search(r"txid</td>\s*<td[^>]*>([0-9a-f]{64})", page).group(1)
+
+    response = app.post("/tags/claim", data=dict(csrf_token=csrf, tag="robin",
+                                                 confirmed=txid),
+                        follow_redirects=False)
+    assert response.status_code == 303 and response.headers["location"] == "/contacts"
+    assert txid in node.rpc.call("getrawmempool")
+    mine_and_index(node, state)
+
+    index = state.token_index(state.ledger)
+    assert index.tag_of(alice) == "robin"
+    assert index.address_of("robin") == alice
+    assert "@robin" in app.get("/contacts").text
+
+    # Already yours, and somebody else's, are both refused.
+    assert "already yours" in app.post("/tags/claim",
+                                       data=dict(csrf_token=csrf, tag="robin")).text
+    monkeypatch.setattr(type(state), "derived_address", property(lambda self: bob))
+    assert "taken" in app.post("/tags/claim",
+                               data=dict(csrf_token=csrf, tag="robin")).text
+
+
+def test_a_message_can_be_addressed_to_a_tag(web, monkeypatch):
+    """@tag names an address; the address's announcement names the key."""
+    import pytest
+
+    from arcade.web.app import _resolve_recipient
+
+    app, state, node, alice, bob = web
+    csrf = state.csrf_token
+    monkeypatch.setattr(type(state), "derived_address", property(lambda self: alice))
+    txid = re.search(r"txid</td>\s*<td[^>]*>([0-9a-f]{64})",
+                     app.post("/tags/claim", data=dict(csrf_token=csrf, tag="robin")).text
+                     ).group(1)
+    app.post("/tags/claim", data=dict(csrf_token=csrf, tag="robin", confirmed=txid),
+             follow_redirects=False)
+    mine_and_index(node, state)
+
+    # Nobody has announced a key at that address yet, so it says so about the
+    # key -- not about the tag, which resolved.
+    with pytest.raises(ValueError, match="no announced key"):
+        _resolve_recipient(state, "@robin")
+    with pytest.raises(ValueError, match="nobody holds @nobody"):
+        _resolve_recipient(state, "@nobody")
+
+    key = b"\x04" * 32
+    with state.store() as store:
+        store.add_key_announcement("aa" * 32, alice, key, "fp", 1, 0, stated=True)
+    assert _resolve_recipient(state, "@robin") == key
+    assert _resolve_recipient(state, "@ROBIN") == key, "a tag is not case sensitive"
+
+
+def test_an_inscription_named_in_a_post_gets_a_card_not_its_content(web):
+    """A post can name an inscription; the board shows a card for it.
+
+    Never the content: a post is written by a stranger and an inscription can
+    be a page of scripts. The card is what this node's own index says, and
+    the button opens the viewer, which has the sandbox (D-035).
+    """
+    app, state, node, alice, bob = web
+    index = state.token_index(state.ledger)
+    txid = "cd" * 32
+    page = b"<b>hello</b>" * 20
+    with index.open() as db:
+        db.conn.execute(
+            "INSERT INTO block(height, hash, prev_hash, time, tx_count, processed_at) "
+            "VALUES(1,'h','p',0,1,0)")
+        db.conn.execute(
+            "INSERT INTO inscription(txid,number,creator,owner,block_height,position,"
+            "content_type,content_len,sha256,json,chunks,content) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (txid, 108, alice, alice, 1, 0, "text/html", len(page), "ab" * 32,
+             '{"name": "Goofball Mintpad"}', 1, page))
+        db.conn.commit()
+
+    with state.store() as store:
+        store.add_group_post("regtest", "main", "tx1", 1, 0, alice, "someone",
+                             f"minting here: /content/{txid}", mine=False)
+        store.add_group_post("regtest", "main", "tx2", 2, 0, alice, "someone",
+                             "no inscription in this one", mine=False)
+
+    body = app.get("/groups").text
+    assert "Goofball Mintpad" in body
+    assert f"/inscriptions/{txid}/view" in body, "the button opens the viewer"
+    assert "&lt;b&gt;hello" not in body and "<b>hello</b>" not in body, \
+        "the content itself is never rendered, escaped or otherwise"
+    assert "text/html" in body and "240 bytes" in body
+
+    # An inscription this node does not have is not a card, and nothing breaks.
+    with state.store() as store:
+        store.add_group_post("regtest", "main", "tx3", 3, 0, alice, "someone",
+                             "/content/" + "ab" * 32, mine=False)
+    assert app.get("/groups").status_code == 200

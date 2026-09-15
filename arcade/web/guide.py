@@ -56,6 +56,10 @@ SECTIONS: list[dict] = [
             ("Posts carry a name, text and optionally a file, unsealed, so any "
              "node can reassemble one with no key and no identity."),
             "A picture is a post: you can post one with nothing typed.",
+            ("Name an inscription in a post and the board shows a card for "
+             "it -- number, name, type and size from this node's own index, "
+             "with a button to the viewer. Never the inscription's page: a "
+             "post is a stranger's, and the viewer has the sandbox."),
             "Channels are just names. There is no step to create one.",
             "Loads 40 at a time, with a way back through older posts.",
         ],
@@ -126,6 +130,9 @@ SECTIONS: list[dict] = [
             ("One transaction or nothing: both parties sign the same "
              "transaction, and the engine moves both legs when the block "
              "lands or refuses the whole thing."),
+            ("A sale reserves what it sold until its block is indexed: until "
+             "then the ledger still calls it the seller's, and a second buyer "
+             "would be offered the same piece and pay a fee to be told no."),
             ("The seller is not asked. The shopkeeper answers every order "
              "from the block watcher: offers exactly what the listing says, "
              "checks the buyer's half against exactly that offer, and only "
@@ -177,6 +184,16 @@ SECTIONS: list[dict] = [
             ("Lower case, a-z 0-9 and underscore, 2 to 24 characters. No "
              "hyphens or dots, so two tags can never look alike."),
             "A claim fits an OP_RETURN: naming yourself is one small transaction.",
+            ("Claim or change one from the address book, in two steps like a "
+             "send. A name that is malformed, reserved, already yours or "
+             "already somebody else's is refused before it costs anything."),
+            ("Shown wherever this wallet says who somebody is: a name you "
+             "typed wins, then the @tag, then the address. A stale index "
+             "shows the address, never a name it cannot vouch for."),
+            ("Published with your key, along with your address on this chain "
+             "and the same wallet's address on the other one. The tag is the "
+             "part a reader can check against their own index; the name you "
+             "type is not published at all."),
         ],
     },
     {
@@ -188,8 +205,10 @@ SECTIONS: list[dict] = [
              "contact code and your own notes."),
             ("A name you typed always wins over one read off the chain: a "
              "published name is a claim rather than proof."),
-            ("Introduce myself sends your name and addresses with a first "
-             "message to somebody new. Untick it to stay anonymous."),
+            ("Introduce myself sends your @tag and addresses with a first "
+             "message to somebody new. Untick it to stay anonymous. There is "
+             "no name to type: the @tag is the only name this wallet gives "
+             "out for you, because it is the only one a reader can check."),
             ("Scanning lists people who published a messaging key and are not "
              "already in your book. Publishing is optional."),
         ],

@@ -245,6 +245,24 @@
           <div class="bubble">
             <div class="poster">{{ p.nickname or p.sender or 'anonymous' }}</div>
             {% if p.text %}<div class="text">{{ p.text }}</div>{% endif %}
+            {% for c in p.cards %}
+              {# What this node's own index says about an inscription the post
+                 named -- never the inscription's content, which is a
+                 stranger's code. The button opens the viewer, where there is
+                 a sandbox and a wallet to talk to (D-035). #}
+              <a class="file" href="/inscriptions/{{ c.txid }}/view">
+                <span class="file-icon">{{ '🖼' if c.image else '🧾' }}</span>
+                <span class="file-meta">
+                  <strong>{{ c.name or ('#' ~ '{:,}'.format(c.number)) }}</strong>
+                  <span class="muted">
+                    {%- if c.name %}#{{ "{:,}".format(c.number) }} &middot; {% endif -%}
+                    {{ c.content_type }} &middot; {{ "{:,}".format(c.content_len) }} bytes
+                    {%- if c.collection %} &middot; {{ c.collection }}
+                      {%- if c.edition is not none %} #{{ c.edition }}{% endif %}
+                    {%- endif %} &middot; content</span>
+                </span>
+              </a>
+            {% endfor %}
             {% if p.file_size %}
               {% if p.kind == 'image' %}
                 <a class="media" href="/groups/media/{{ p.id }}?download=1"

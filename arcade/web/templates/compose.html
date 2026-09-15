@@ -59,7 +59,7 @@
   <div class="field">
     <label>Recipient</label>
     <input autocomplete="off" name="recipient" value="{{ recipient or '' }}" list="known"
-           placeholder="paste a contact code, or pick someone below">
+           placeholder="an @tag, a contact code, or pick someone below">
     {% if keys %}
     <datalist id="known">
       {% for k in keys %}<option value="{{ k['address'] }}">{{ k['address'] }}</option>{% endfor %}

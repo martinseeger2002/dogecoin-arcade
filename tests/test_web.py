@@ -494,11 +494,6 @@ def test_you_are_not_a_contact_of_yourself(tmp_path):
     assert store.contacts() == []
 
 
-def test_the_name_field_asks_for_your_name(client):
-    """Not a suggestion, and not somebody else's name."""
-    body = client[0].get("/contacts").text
-    assert 'placeholder="Your name"' in body
-
 
 # --- stated addresses beat inferred ones --------------------------------------
 # An announcement can say which address a key belongs to. An address merely
@@ -739,21 +734,6 @@ def test_an_unnamed_contact_can_still_be_named_from_the_thread(client):
     assert 'placeholder="name them"' in body
     assert "Add to address book" in body
 
-
-def test_a_published_name_travels_with_its_address(client):
-    """The name is read from the announcement, not from the address book.
-
-    Looking it up in the address book could only ever find names for people
-    already in it -- which is exactly who this list leaves out.
-    """
-    app, state = client
-    with state.store() as store:
-        store.add_key_announcement("tx1", "nTheirAddress", b"\x72" * 32, "aa",
-                                   500, 1000, stated=True, name="alice")
-
-    body = app.get("/contacts").text
-    assert "alice" in body
-    assert "nTheirAddress" in body
 
 
 def test_adding_a_published_contact_keeps_their_name(client):
@@ -1217,42 +1197,8 @@ def test_an_unknown_version_is_not_reported_as_stale(client, monkeypatch):
     assert state.is_stale is False
 
 
-def test_the_name_field_shows_what_the_chain_will_carry(client):
-    """An announcement holds 12 bytes cheaply and used to cut a longer name.
-
-    A longer one is published whole now, as Class B, so what the field must say
-    is what it will cost rather than what will be lost.
-    """
-    body = client[0].get("/contacts").text
-    assert "showPublished" in body
-    assert "whole name is published" in body
 
 
-def test_the_name_field_enforces_the_limit(client):
-    from arcade.messaging.envelope import MAX_ANNOUNCE_NAME_CLASS_B
-
-    body = client[0].get("/contacts").text
-    assert f'maxlength="{MAX_ANNOUNCE_NAME_CLASS_B}"' in body
-
-
-def test_an_over_long_name_is_refused_not_trimmed(client):
-    """A browser's maxlength is a convenience, not a guarantee."""
-    app, state = client
-    app.post("/profile", data={"csrf_token": state.csrf_token, "name": "x" * 200},
-             follow_redirects=False)
-
-    assert "limit is" in (state.notice or "")
-    assert state.profile_name == ""
-
-
-def test_a_name_at_the_limit_is_accepted(client):
-    from arcade.messaging.envelope import MAX_ANNOUNCE_NAME_CLASS_B
-
-    app, state = client
-    name = "x" * MAX_ANNOUNCE_NAME_CLASS_B
-    app.post("/profile", data={"csrf_token": state.csrf_token, "name": name},
-             follow_redirects=False)
-    assert state.profile_name == name
 
 
 def test_a_reset_keeps_your_own_published_key(tmp_path):

@@ -22,7 +22,7 @@
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <label>Their contact code</label>
       <input autocomplete="off" name="code" class="mono" spellcheck="false"
-             placeholder="Their address, or their contact code" required>
+             placeholder="@tag, their address, or their contact code" required>
       <label style="margin-top:8px">Name them (optional)</label>
       <input autocomplete="off" name="name" placeholder="e.g. a test machine">
       <div class="row" style="margin-top:9px">
@@ -41,7 +41,11 @@
     {% for t in threads %}
       <a class="thread {{ 'on' if peer and peer.pubkey == t.pubkey }}" href="/messages/{{ t.pubkey.hex() }}">
         <div class="thread-top">
-          <span class="who {{ 'unnamed' if not t.name }}">{{ t.name or t.address or 'Unknown sender' }}</span>
+          {# A name you typed wins: it is yours. Failing that the @tag, which
+             the chain can be asked about, and only then the address. #}
+          {% set handle = tags.get(t.address) if tags else None %}
+          <span class="who {{ 'unnamed' if not (t.name or handle) }}">
+            {{- t.name or ('@' ~ handle if handle else None) or t.address or 'Unknown sender' -}}</span>
           {% if t.unread %}<span class="badge">{{ t.unread }}</span>{% endif %}
         </div>
         <div class="thread-preview">{{ 'You: ' if t.outgoing }}{{ t.preview[:64].decode('utf-8', 'replace') }}</div>
@@ -62,8 +66,14 @@
       <a class="back" href="/messages" title="All conversations"
          aria-label="Back to all conversations">&#8592; Back</a>
       <div>
-        <div class="convo-name">{{ peer.name or peer.address or 'Unnamed contact' }}</div>
-        {% if peer.name and peer.address %}<div class="convo-sub">{{ peer.address }}</div>{% endif %}
+        {% set handle = tags.get(peer.address) if tags and peer.address else None %}
+        <div class="convo-name">
+          {{- peer.name or ('@' ~ handle if handle else None) or peer.address or 'Unnamed contact' -}}</div>
+        {% if peer.address and (peer.name or handle) %}
+          <div class="convo-sub">
+            {%- if handle and peer.name %}@{{ handle }} &middot; {% endif -%}
+            {{ peer.address }}</div>
+        {% endif %}
       </div>
       {# Naming is offered only while there is nothing to show. Once somebody is
          in the address book the field is answering a question that has been
@@ -289,11 +299,12 @@
     </p>
     {% if is_new_contact %}
     <p class="muted composer-note">
-      <strong>Introduce myself</strong> sends {{ profile_name or 'your name' }} and
-      your addresses with this first message, so they know who is writing. It
-      links this identity to your mainnet address for them &mdash; untick it to
-      stay anonymous.
-      {% if not profile_name %}<a href="/contacts">Set your name</a>.{% endif %}
+      <strong>Introduce myself</strong> sends {{ profile_name or 'your addresses' }}
+      {%- if profile_name %} and your addresses{% endif %} with this first message,
+      so they know who is writing. It links this identity to your mainnet address
+      for them &mdash; untick it to stay anonymous.
+      {% if not profile_name %}<a href="/contacts">Claim an @tag</a> and it goes
+      with them.{% endif %}
     </p>
     {% endif %}
     <p class="msg info" id="sending" hidden style="margin:0 16px 10px"></p>
