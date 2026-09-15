@@ -88,10 +88,11 @@
       <form method="post" action="/exchange/order">
         <input type="hidden" name="csrf_token" value="{{ csrf }}">
         <input type="hidden" name="property_id" value="{{ prop.property_id }}">
-        <div style="margin-bottom:10px">
-          <label style="margin-right:14px"><input type="radio" name="side"
-                 value="ask" checked> Sell</label>
-          <label><input type="radio" name="side" value="bid"> Buy</label>
+        <div class="sides">
+          <label><input type="radio" name="side" value="ask" checked>
+            <span>Sell</span></label>
+          <label><input type="radio" name="side" value="bid">
+            <span>Buy</span></label>
         </div>
         <div class="field"><label>Amount of {{ prop.name }}</label>
           <input autocomplete="off" name="amount" inputmode="decimal" placeholder="0"></div>
@@ -135,5 +136,11 @@
   @media (max-width:820px){.pairgrid{grid-template-columns:minmax(0,1fr)}}
   .book td{padding:3px 6px 3px 0;font-size:.85rem}
   .book tr.mine{background:var(--code)}
+  /* base.html makes every label a block, which stacked the radio above its
+     own word and read as two broken rows. */
+  .sides{display:flex;gap:16px;margin-bottom:12px}
+  .sides label{display:inline-flex;align-items:center;gap:6px;margin:0;
+    font-size:.95rem;color:var(--fg);cursor:pointer}
+  .sides input{width:auto;margin:0}
 </style>
 {% endblock %}
