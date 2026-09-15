@@ -326,7 +326,7 @@ def test_the_buyer_signs_half_and_the_seller_completes_it(world):
     offer = _offer(world, 0)               # 100 Arcade Test for 2 coins
     checked = S.check_offer(offer, shop=SHOP, own=[BUYER], height=TEST.swaps_from, params=TEST)
     built = S.build(buyer, index, checked, own=[BUYER])
-    assert built.what == "2.00000000 coins for 100 Arcade Test"
+    assert built.what == "2 coins for 100 Arcade Test"
     assert built.buyer == BUYER and built.seller == SELLER
     decoded = decode(built.hex)
     assert decoded["vin"][0] == {"txid": "1" * 64, "vout": 2}, "the seller's output is first"
@@ -353,7 +353,7 @@ def test_every_kind_of_leg_builds(world):
     index, seller, buyer, offers = world
     for listing, phrase in ((1, "10 Arcade Test for inscription #1"),
                             (2, "inscription #3 for inscription #2"),
-                            (3, "1 Arcade Test for 1.50000000 coins")):
+                            (3, "1 Arcade Test for 1.5 coins")):
         offer = _offer(world, listing)
         built = S.build(buyer, index, offer, own=[BUYER])
         assert built.what.startswith(phrase.split(" for ")[0]), built.what
@@ -442,10 +442,10 @@ def test_a_page_sees_the_listings_as_this_nodes_ledger_reads_them(world):
     index, *_ = world
     shown = S.listings_json(shop_row(index), index)
     assert [e["text"] for e in shown] == [
-        "100 Arcade Test for 2.00000000 coins",
+        "100 Arcade Test for 2 coins",
         "a random Goofball (3 left) for 10 Arcade Test",
         "inscription #2 for inscription #3",
-        "1.50000000 coins for 1 Arcade Test"]
+        "1.5 coins for 1 Arcade Test"]
     assert all(e["available"] is None for e in shown)
     index.rows[PIECE]["owner"] = OTHER
     for row in GOOF:
@@ -489,3 +489,55 @@ def test_a_sold_item_is_not_offered_again_before_its_block(world):
         S.make_offer(seller, index, offers, "test", shop_row(index), 1, BUYER, "ff" * 32,
                      own=[SELLER])
     assert len(held) == 2
+
+
+def test_a_chart_is_drawn_from_swaps_and_keeps_the_gaps(tmp_path):
+    """Prices come from trades, and days with no trade stay empty (D-039)."""
+    from arcade import charts
+
+    day = charts.DAY
+    now = 1_700_000_000
+    trades = [
+        {"when": now - 2 * day, "height": 10, "txid": "a" * 64,
+         "give": I.Leg(I.LEG_TOKEN, property_id=3, amount=100 * COIN),
+         "take": I.Leg(I.LEG_COINS, amount=COIN)},
+        {"when": now - 2 * day + 60, "height": 11, "txid": "b" * 64,
+         "give": I.Leg(I.LEG_COINS, amount=4 * COIN),
+         "take": I.Leg(I.LEG_TOKEN, property_id=3, amount=100 * COIN)},
+        {"when": now, "height": 12, "txid": "c" * 64,
+         "give": I.Leg(I.LEG_TOKEN, property_id=3, amount=1000 * COIN),
+         "take": I.Leg(I.LEG_COINS, amount=8 * COIN)},
+        # Another token's trade is not this token's chart.
+        {"when": now, "height": 13, "txid": "d" * 64,
+         "give": I.Leg(I.LEG_TOKEN, property_id=9, amount=COIN),
+         "take": I.Leg(I.LEG_COINS, amount=COIN)},
+    ]
+    points = charts.token_prices(trades, 3)
+    assert [p["price"] for p in sorted(points, key=lambda p: p["when"])] == [0.01, 0.04, 0.008]
+
+    slots = charts.candles(points, buckets=4, span=day, now=now)
+    assert len(slots) == 4
+    traded = [s for s in slots if s["count"]]
+    assert len(traded) == 2, "two days traded, two did not"
+    first, last = traded
+    assert (first["open"], first["high"], first["low"], first["close"]) == \
+        (0.01, 0.04, 0.01, 0.04)
+    assert first["count"] == 2 and first["volume"] == 200
+    assert last["close"] == 0.008
+    empty = [s for s in slots if not s["count"]]
+    assert empty and all(s["open"] is None and s["close"] is None for s in empty), \
+        "a day with no trade carries no price at all"
+
+    stats = charts.summary(points)
+    assert stats["last"] == 0.008 and stats["trades"] == 3
+    assert round(stats["change"], 1) == -20.0
+
+    # An NFT sale is priced in what it was paid in, and only in one thing.
+    piece = I.Leg(I.LEG_INSCRIPTION, txid=bytes.fromhex(PIECE))
+    sales = [{"when": now, "height": 20, "txid": "e" * 64, "give": piece,
+              "take": I.Leg(I.LEG_TOKEN, property_id=3, amount=10 * COIN)}]
+    assert charts.nft_prices(sales, None) == [], "not paid in coins, so not a coin price"
+    (sold,) = charts.nft_prices(sales, None, property_id=3)
+    assert sold["price"] == 10
+    assert charts.nft_currencies(sales) == [{"kind": "token", "property_id": 3,
+                                             "trades": 1}]

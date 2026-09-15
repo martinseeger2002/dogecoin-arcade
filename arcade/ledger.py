@@ -352,6 +352,41 @@ class LedgerIndex:
         with self.open() as db:
             return [dict(row) for row in db.conn.execute(sql, args)]
 
+    #: A swap, as it sits in `arcade_tx`: the AnyData type, then INSC, then
+    #: version 1 and kind 5 (inscriptions.KIND_SWAP). Matching on the prefix
+    #: is what makes a price history cheap -- messages are type 200 too, and
+    #: there are thousands of them for every trade.
+    SWAP_PREFIX = "000000c8494e53430105"
+
+    def trades(self, limit: int = 500, since_height: int = 0) -> list[dict]:
+        """Every swap this chain has read, newest first, as two legs and a time.
+
+        The chart is drawn from these and from the gaps between them: a day
+        with no trade is a day with no trade, not a straight line to the next
+        one (D-039).
+        """
+        from . import inscriptions as I
+
+        sql = ("SELECT a.txid, a.block_height, a.sender, a.payload_hex, b.time "
+               "FROM arcade_tx a JOIN block b ON b.height = a.block_height "
+               "WHERE a.valid = 1 AND a.payload_hex LIKE ? AND a.block_height >= ? "
+               "ORDER BY a.block_height DESC, a.position DESC LIMIT ?")
+        out = []
+        with self.open() as db:
+            rows = db.conn.execute(sql, (self.SWAP_PREFIX + "%", int(since_height),
+                                         max(1, min(limit, 5000)))).fetchall()
+        for row in rows:
+            try:
+                swap = I.parse(bytes.fromhex(row["payload_hex"])[4:])
+            except Exception:
+                continue          # a payload that starts like a swap and is not
+            if not isinstance(swap, I.Swap):
+                continue
+            out.append({"txid": row["txid"], "height": row["block_height"],
+                        "when": row["time"], "seller": row["sender"],
+                        "give": swap.give, "take": swap.take})
+        return out
+
     def shops(self, limit: int = 200) -> list[dict]:
         """Every inscription on this chain whose JSON names a shop.
 

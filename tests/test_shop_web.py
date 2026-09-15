@@ -80,7 +80,7 @@ def test_a_page_buys_from_the_shop_it_is(shopfront):
     assert front["seller"] == SELLER and front["mine"] is False and front["open"] is True
     assert front["ready"] is True and front["from"] == 0
     assert [l["text"] for l in front["listings"]][:2] == [
-        "100 Arcade Test for 2.00000000 coins", "a random Goofball (3 left) for 10 Arcade Test"]
+        "100 Arcade Test for 2 coins", "a random Goofball (3 left) for 10 Arcade Test"]
 
     # 1. The page asks; the wallet chooses the address that will pay, and
     #    the question goes to the node the SHOP's JSON names.
@@ -113,12 +113,12 @@ def test_a_page_buys_from_the_shop_it_is(shopfront):
     assert row["kind"] == "swap" and row["page"] == SHOP and row["peer"] == shopkey.public_bytes.hex()
     assert row["toaddress"] == SELLER and row["fromaddress"] == BUYER
     waiting = app.get("/approvals/waiting").json()
-    assert waiting["requests"][0]["summary"] == "swap 2.00000000 coins for 100 Arcade Test"
+    assert waiting["requests"][0]["summary"] == "swap 2 coins for 100 Arcade Test"
 
     # 4. The approval page shows the swap, built; approving signs the
     #    buyer's half and hands it to the shop's node -- nothing is broadcast.
     page = app.get(f"/approvals/{filed['request']}?embed=1").text
-    assert "You give" in page and "2.00000000 coins" in page and "100 Arcade Test" in page
+    assert "You give" in page and "2 coins" in page and "100 Arcade Test" in page
     assert "Approve and sign" in page and "the seller: its own input back" in page
     held = next(p for (net, txid), p in state.prepared_tokens.items() if net == "regtest")
     assert _SIGNED[held.hex] == {BUYER}
@@ -348,7 +348,7 @@ def test_the_shopkeeper_sells_what_the_shop_says(shop):
     assert sale["kind"] == "swap" and sale["txid"] == signed["txid"]
     assert sale["toaddress"] == BUYER and sale["fromaddress"] == SELLER
     assert sale["page"] == SHOP and sale["decided"]
-    assert approvalslib.summary(sale) == "sold 100 Arcade Test for 2.00000000 coins"
+    assert approvalslib.summary(sale) == "sold 100 Arcade Test for 2 coins"
     assert state.approvals.pending() == [], "a sale is not waiting for anybody"
 
     # Asking again gets a refusal, not a second sale.

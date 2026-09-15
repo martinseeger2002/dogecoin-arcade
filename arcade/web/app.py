@@ -39,6 +39,7 @@ from .. import approvals as approvalslib
 from .. import payload as P
 from .. import inscriptions as inscriptionlib
 from . import guide as guidelib
+from .. import charts as chartlib
 from .. import mintpad as mintpadlib
 from .. import swap as swaplib
 from .. import tags as taglib
@@ -4240,6 +4241,35 @@ def create_app(state: AppState) -> FastAPI:
         data["mintpads"] = [s for s in data["shops"] if selling(s, "random")]
         data["market"] = [s for s in data["shops"] if selling(s, "inscription")]
         data["tokens"] = [s for s in data["shops"] if selling(s, "token")]
+        # What has actually traded, and what it went for. Read from the swaps
+        # the chain holds, not from a book -- there is no book (D-039).
+        data["charts"] = []
+        try:
+            trades = index.trades()
+        except Exception:
+            trades = []
+        if tab == "tokens":
+            for prop in _token_props(index)[:6]:
+                points = chartlib.token_prices(trades, prop["property_id"])
+                if points:
+                    data["charts"].append({
+                        "title": prop["name"], "unit": f"{chain.label} coins each",
+                        "stats": chartlib.summary(points),
+                        "slots": chartlib.candles(points)})
+        elif tab == "market":
+            for paid in chartlib.nft_currencies(trades)[:3]:
+                pid = paid["property_id"]
+                points = chartlib.nft_prices(trades, index, property_id=pid)
+                if not points:
+                    continue
+                unit = f"{chain.label} coins"
+                if pid is not None:
+                    prop = index.property(pid)
+                    unit = (prop or {}).get("name") or f"token #{pid}"
+                data["charts"].append({
+                    "title": f"NFTs paid for in {unit}", "unit": f"{unit} each",
+                    "stats": chartlib.summary(points),
+                    "slots": chartlib.candles(points)})
         try:
             data["offers_in"] = state.offers.bids(chain.network, "in")
             data["offers_out"] = state.offers.bids(chain.network, "out")

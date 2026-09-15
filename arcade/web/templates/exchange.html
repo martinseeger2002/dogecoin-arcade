@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "_chains.html" as chains %}
+{% import "_chart.html" as chart %}
 {% block title %}Exchange · DogecoinArcade{% endblock %}
 {% block body %}
 {% macro tabs(current) %}
@@ -19,10 +20,10 @@
   </div>
   <table>
     {% for l in s.listings %}
-    <tr><td>{{ l.text }}</td>
-        <td class="muted" style="text-align:right;white-space:nowrap">
-          {%- if l.available %}{{ l.available }}{% elif l.give.left is defined %}
-            {{ "{:,}".format(l.give.left) }} left{% endif -%}</td></tr>
+    <tr><td colspan="2">{{ l.text }}
+      {%- if l.available %} <span class="muted">&mdash; {{ l.available }}</span>
+      {%- elif l.give.left is defined %} <span class="muted">&mdash;
+        {{ "{:,}".format(l.give.left) }} left</span>{% endif %}</td></tr>
     {% endfor %}
     <tr><td class="muted" style="width:74px">Sold by</td>
         <td class="mono" style="word-break:break-all">
@@ -118,6 +119,13 @@
 {% elif tab == 'tokens' %}
   <p class="sub">Tokens being sold, and what for. These are shops: a price the
     seller set, not a book of bids and asks — see the guide.</p>
+  {% for c in charts %}
+  <div class="panel" style="margin-bottom:14px">
+    <h3 style="margin:0 0 8px">{{ c.title }}</h3>
+    {{ chart.headline(c.stats, c.unit) }}
+    {{ chart.candles(c.slots, c.unit) }}
+  </div>
+  {% endfor %}
   {% if not tokens %}
     <div class="panel empty"><p>Nothing on {{ chain.label|lower }} is selling tokens.</p></div>
   {% else %}
@@ -127,6 +135,13 @@
 {% else %}
   <p class="sub">Single NFTs for sale, collection or not. Any NFT can be
     offered for even when it is not listed — open it and press Make offer.</p>
+  {% for c in charts %}
+  <div class="panel" style="margin-bottom:14px">
+    <h3 style="margin:0 0 8px">{{ c.title }}</h3>
+    {{ chart.headline(c.stats, c.unit) }}
+    {{ chart.candles(c.slots, c.unit) }}
+  </div>
+  {% endfor %}
   {% if not market %}
     <div class="panel empty"><p>No NFTs are listed for sale on this chain.</p></div>
   {% else %}

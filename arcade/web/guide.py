@@ -168,6 +168,10 @@ SECTIONS: list[dict] = [
             ("Marketplace: single NFTs for sale, collection or not. One that "
              "has moved drops off by itself -- nothing is un-listed, because "
              "nothing was listed anywhere but the chain."),
+            ("Charts of what actually traded, for tokens and for NFTs: there "
+             "is no book to draw, so what is drawn is what people paid. A day "
+             "with no trade is a dot, not a price, and one currency to a "
+             "chart."),
             ("An offer can be made on any NFT, listed or not. It is not a "
              "PSBT: the buyer cannot build the transaction, since the "
              "seller's own output must be its first input. It is a message "

@@ -240,6 +240,19 @@ def leg_from_json(data: Any) -> I.Leg:
     raise SwapError("a leg has to be an inscription, a token or coins")
 
 
+def _tidy(amount: Any) -> str:
+    """8dp without the zeros nobody reads: 1.00000000 -> 1, 0.50000000 -> 0.5.
+
+    Every place a price is shown says the same thing, so the page shims and
+    the wallet's own screens cannot disagree about what a listing costs.
+    """
+    text = str(amount if amount is not None else "")
+    if "." not in text:
+        return text
+    text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
 def describe_leg(data: dict) -> str:
     """One phrase, for the person deciding."""
     if data.get("kind") == "random":
@@ -253,7 +266,7 @@ def describe_leg(data: dict) -> str:
         return what
     if data.get("kind") == "token":
         return f"{data.get('amount')} {data.get('name') or 'token ' + str(data.get('propertyid'))}"
-    return f"{data.get('amount')} coins"
+    return f"{_tidy(data.get('amount'))} coins"
 
 
 def listings_json(shop_row: dict, index: Any) -> list[dict]:

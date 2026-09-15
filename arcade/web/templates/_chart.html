@@ -1,0 +1,70 @@
+{# A candle chart, drawn as SVG because a wallet should not fetch a charting
+   library from anywhere to say what two trades went for. Empty candles are
+   drawn as empty: a day with no trade is a gap, never a line ruled to the
+   next price (D-039). #}
+{% macro candles(slots, unit='', height=160) %}
+{% set traded = slots | selectattr('count') | list %}
+{% if not traded %}
+  <p class="muted" style="margin:0">No trades yet on this chain.</p>
+{% else %}
+  {% set lo = traded | map(attribute='low') | min %}
+  {% set hi = traded | map(attribute='high') | max %}
+  {% set pad = (hi - lo) * 0.12 if hi > lo else (hi * 0.12 if hi else 1) %}
+  {% set top = hi + pad %}
+  {% set bot = [lo - pad, 0] | max %}
+  {% set range = (top - bot) or 1 %}
+  {% set w = 1000 %}
+  {% set step = w / (slots | length) %}
+  <div style="overflow-x:auto">
+  <svg viewBox="0 0 {{ w }} {{ height }}" width="100%" height="{{ height }}"
+       preserveAspectRatio="none" role="img"
+       aria-label="candles, {{ traded|length }} of {{ slots|length }} periods traded">
+    <line x1="0" y1="{{ height - 1 }}" x2="{{ w }}" y2="{{ height - 1 }}"
+          stroke="currentColor" opacity=".18"/>
+    {% for s in slots %}
+      {% set x = loop.index0 * step + step / 2 %}
+      {% if s.count %}
+        {% set y = { 'hi': height - (s.high - bot) / range * (height - 8) - 4,
+                     'lo': height - (s.low  - bot) / range * (height - 8) - 4,
+                     'o':  height - (s.open - bot) / range * (height - 8) - 4,
+                     'c':  height - (s.close- bot) / range * (height - 8) - 4 } %}
+        {% set up = s.close >= s.open %}
+        {% set colour = 'var(--ok)' if up else 'var(--bad)' %}
+        <line x1="{{ '%.1f'|format(x) }}" y1="{{ '%.1f'|format(y.hi) }}"
+              x2="{{ '%.1f'|format(x) }}" y2="{{ '%.1f'|format(y.lo) }}"
+              stroke="{{ colour }}" stroke-width="2"/>
+        <rect x="{{ '%.1f'|format(x - step * 0.3) }}"
+              y="{{ '%.1f'|format([y.o, y.c] | min) }}"
+              width="{{ '%.1f'|format(step * 0.6) }}"
+              height="{{ '%.1f'|format([(y.o - y.c) | abs, 2] | max) }}"
+              fill="{{ colour }}"/>
+        <title>{{ s.count }} trade{{ '' if s.count == 1 else 's' }} &middot;
+          open {{ s.open }} high {{ s.high }} low {{ s.low }} close {{ s.close }}</title>
+      {% else %}
+        <circle cx="{{ '%.1f'|format(x) }}" cy="{{ height - 4 }}" r="1"
+                fill="currentColor" opacity=".25"/>
+      {% endif %}
+    {% endfor %}
+  </svg>
+  </div>
+  <p class="muted" style="font-size:.8rem;margin:6px 0 0">
+    {{ traded | length }} of {{ slots | length }} days traded &middot; high
+    {{ hi }} &middot; low {{ lo }}{% if unit %} {{ unit }}{% endif %}. A day with
+    no trade is a dot, not a price.</p>
+{% endif %}
+{% endmacro %}
+
+{% macro headline(stats, unit='') %}
+{% if stats.trades %}
+<div class="row" style="align-items:baseline;gap:12px">
+  <strong style="font-size:1.25rem">{{ stats.last }}</strong>
+  <span class="muted">{{ unit }}</span>
+  {% if stats.change is not none %}
+  <span style="color:{{ 'var(--ok)' if stats.change >= 0 else 'var(--bad)' }}">
+    {{ '+' if stats.change >= 0 }}{{ '%.1f'|format(stats.change) }}%</span>
+  {% endif %}
+  <span class="muted" style="margin-left:auto">{{ stats.trades }}
+    trade{{ '' if stats.trades == 1 else 's' }}</span>
+</div>
+{% endif %}
+{% endmacro %}
