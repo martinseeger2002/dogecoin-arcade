@@ -129,5 +129,48 @@ def test_create_confirm_broadcast_and_read_back(web):
     index = state.token_index(state.ledger)
     assert index.balance(alice, prop["property_id"]) == 750 * 10**8
     assert index.balance(bob, prop["property_id"]) == 250 * 10**8
-    page = app.get("/tokens").text
+    # What this wallet holds is the wallet's Tokens tab; /tokens is what exists.
+    page = app.get("/wallet/tokens").text
     assert ">750<" in page and ">250<" in page, "both wallet addresses are 'yours'"
+
+
+def test_one_balance_a_token_not_one_a_piece(web):
+    """A wallet holding a token on two addresses holds one balance of it.
+
+    The addresses are how the node keeps it; the page shows the total, and
+    the send picks the address it comes out of (D-031).
+    """
+    app, state, node, alice, bob = web
+    csrf = state.csrf_token
+    form = dict(csrf_token=csrf, sender=alice, name="Web Token", supply="1000",
+                kind="fixed", units="divisible")
+    txid = shown(app.post("/tokens/create", data=form).text, "txid")
+    app.post("/tokens/create", data={**form, "confirmed": txid}, follow_redirects=False)
+    mine_and_index(node, state)
+    (prop,) = state.token_index(state.ledger).properties()
+    pid = str(prop["property_id"])
+
+    # Move part of it to the wallet's other address: one token, two pieces.
+    send = dict(csrf_token=csrf, sender=alice, property_id=pid)
+    txid = shown(app.post("/tokens/send",
+                          data={**send, "amount": "400", "recipient": bob}).text, "txid")
+    app.post("/tokens/send", data={**send, "amount": "400", "recipient": bob,
+                                   "confirmed": txid}, follow_redirects=False)
+    mine_and_index(node, state)
+
+    page = app.get("/wallet/tokens").text
+    assert page.count(">Web Token</strong>") == 1, "one row, not one per address"
+    assert ">1,000<" in page, "the total, not either piece"
+    assert "on 2 addresses" in page
+    assert alice in page and bob in page, "the pieces are still there to look at"
+
+    # A send that names no address: the wallet finds one holding enough.
+    page = app.post("/tokens/send", data=dict(csrf_token=csrf, property_id=pid,
+                                              amount="600", recipient=bob)).text
+    assert shown(page, "From") == alice, "the only address holding 600"
+
+    # More than any one address holds is refused with the number that matters.
+    page = app.post("/tokens/send", data=dict(csrf_token=csrf, property_id=pid,
+                                              amount="900", recipient=bob)).text
+    assert "a send comes out of one address" in page
+    assert "holds 600" in page and "1,000" in page

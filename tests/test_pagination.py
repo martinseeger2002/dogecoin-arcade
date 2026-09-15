@@ -126,7 +126,7 @@ def test_the_page_offers_numbers_and_a_way_to_jump(client):
     source = pathlib.Path("arcade/web/templates/inscriptions.html").read_text()
     assert "macro pager" in source
     assert 'name="page"' in source, "a box to jump with"
-    assert "/inscriptions?page={{ pages }}" in source, "and a way to the last one"
+    assert "/nfts?page={{ pages }}" in source, "and a way to the last one"
     assert "{% if pages > 1 %}" in source, "and nothing at all when there is one"
 
 

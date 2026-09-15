@@ -1,0 +1,10 @@
+{# The wallet's three tabs. One wallet, three kinds of thing in it: coins,
+   tokens, NFTs. What a tab shows is what YOU hold; /tokens and /nfts show
+   what exists on the chain (D-030). #}
+{% macro tabs(current) %}
+<nav class="row" style="gap:6px;margin:0 0 16px">
+  <a class="btn {{ 'on' if current == 'coins' else 'ghost' }} small" href="/wallet">Wallet</a>
+  <a class="btn {{ 'on' if current == 'tokens' else 'ghost' }} small" href="/wallet/tokens">Tokens</a>
+  <a class="btn {{ 'on' if current == 'nfts' else 'ghost' }} small" href="/wallet/nfts">NFTs</a>
+</nav>
+{% endmacro %}

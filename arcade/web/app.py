@@ -101,12 +101,10 @@ NAV = [
     ("/contacts",     "Address book", None,        True),
     ("/groups",       "Public",       None,        True),
     ("/backup",       "Backup",       None,        True),
-    ("/keys",         "Keys",         "testnet",   True),
-    ("/wallet",       "Wallets",      None,        True),
+    ("/wallet",       "Wallet",       None,        True),
     ("/tokens",       "Tokens",       "mainnet",   True),
-    ("/nfts",         "NFTs",         "mainnet",   False),
+    ("/nfts",         "NFTs",         "mainnet",   True),
     ("/exchange",     "Exchange",     "mainnet",   False),
-    ("/inscriptions", "Inscriptions", "mainnet",   True),
     ("/approvals",    "Approvals",    None,        True),
     ("/remote",       "Remote",       None,        True),
     ("/guide",        "Guide",        None,        True),
@@ -968,6 +966,16 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/contacts", response_class=HTMLResponse)
     def contacts_page(request: Request, edit: int | None = None):
+        return _contacts_view(request, edit)
+
+    def _contacts_view(request: Request, edit: int | None = None, **kwargs: Any):
+        """The address book, and the one control the Keys page used to hold.
+
+        Publishing your key belongs beside the name it publishes, which is
+        here; a page of its own listing keys and fingerprints was plumbing
+        (D-030). Not a route itself: FastAPI reads **kwargs off the query
+        string, so the door and the view are separate functions.
+        """
         people, editing = [], None
         if state.store_path.exists():
             with state.store() as store:
@@ -1003,7 +1011,7 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "contacts.html", people=people, editing=editing,
                       published=published, when=_when,
                       announce_limit=MAX_ANNOUNCE_NAME,
-                      name_limit=MAX_ANNOUNCE_NAME_CLASS_B)
+                      name_limit=MAX_ANNOUNCE_NAME_CLASS_B, **kwargs)
 
     @app.post("/contacts/save")
     def save_contact(request: Request, name: str = Form(""),
@@ -1796,14 +1804,6 @@ def create_app(state: AppState) -> FastAPI:
             state.flash(f"Could not add that: {exc}", "err")
         return RedirectResponse("/contacts", status_code=303)
 
-    @app.get("/keys", response_class=HTMLResponse)
-    def keys_page(request: Request):
-        keys = []
-        if state.store_path.exists():
-            with state.store() as store:
-                keys = store.all_keys()
-        return render(request, "keys.html", keys=keys)
-
     @app.post("/publish-key", response_class=HTMLResponse)
     def publish_key(request: Request, csrf_token: str = Form(""), confirmed: str = Form("")):
         error = None
@@ -1872,12 +1872,8 @@ def create_app(state: AppState) -> FastAPI:
             raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             error = str(exc)
-        keys = []
-        if state.store_path.exists():
-            with state.store() as store:
-                keys = store.all_keys()
-        return render(request, "keys.html", keys=keys, error=error,
-                      prepared=prepared, txid=txid)
+        return _contacts_view(request, publish_error=error, prepared=prepared,
+                              published_txid=txid)
 
     # --- wallet ---------------------------------------------------------------
 
@@ -1890,7 +1886,24 @@ def create_app(state: AppState) -> FastAPI:
     def wallet(request: Request):
         return render(request, "wallet.html", messaging=messaging_status(),
                       ledger=ledger_status(), prepared=None, which=None, now=time.time(),
-                      mining=_mining_json())
+                      mining=_mining_json(), tab="coins")
+
+    @app.get("/wallet/tokens", response_class=HTMLResponse)
+    def wallet_tokens(request: Request):
+        """What this wallet holds in tokens, and the form that sends it.
+
+        One wallet, three tabs: coins, tokens, NFTs. What you HOLD is a
+        question about your wallet; /tokens and /nfts answer the other
+        question, which is what exists on the chain (D-030).
+        """
+        return render(request, "wallet_tokens.html", tab="tokens",
+                      form_send=None, **_token_page_data())
+
+    @app.get("/wallet/nfts", response_class=HTMLResponse)
+    def wallet_nfts(request: Request):
+        """The inscriptions this wallet holds, and the way to send one."""
+        return render(request, "wallet_nfts.html", tab="nfts",
+                      **_inscription_page_data())
 
     @app.post("/wallet/receive")
     def wallet_receive(request: Request, which: str = Form(""), csrf_token: str = Form("")):
@@ -2100,6 +2113,33 @@ def create_app(state: AppState) -> FastAPI:
         chain = state.token_chain
         return chain, state.token_index(chain)
 
+    def _purses(holdings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """One row per token, not one per address.
+
+        A wallet holding a token on four addresses holds one balance of it,
+        not four; the addresses are how the node keeps it, which is plumbing
+        (D-031). The pieces are kept on the row so a send can say which
+        address it would come from, and so a person can see them if they
+        want to.
+        """
+        by_token: dict[int, dict[str, Any]] = {}
+        for row in holdings:
+            purse = by_token.setdefault(row["property_id"], {
+                "property_id": row["property_id"], "name": row["name"],
+                "divisible": row["divisible"],
+                "test_ecosystem": row["test_ecosystem"],
+                "balance": 0, "pieces": []})
+            purse["balance"] += int(row["balance"])
+            purse["pieces"].append({"address": row["address"],
+                                    "balance": int(row["balance"]),
+                                    "display": row["display"]})
+        for purse in by_token.values():
+            purse["display"] = format_amount(purse["balance"], purse["divisible"])
+            purse["pieces"].sort(key=lambda p: -p["balance"])
+            # What one send can move: a token send comes from one address.
+            purse["largest"] = purse["pieces"][0]
+        return [by_token[k] for k in sorted(by_token)]
+
     def _token_page_data() -> dict[str, Any]:
         """Everything /tokens shows, with the node's absence explained, not hidden."""
         chain, index = _token_chain()
@@ -2126,6 +2166,7 @@ def create_app(state: AppState) -> FastAPI:
             owned = []
         data["owned"] = set(owned)
         data["holdings"] = index.balances(owned)
+        data["purses"] = _purses(data["holdings"])
         # A broadcast token transaction is invisible until its block is
         # indexed; say so rather than let the page look as if nothing happened.
         still = []
@@ -2198,9 +2239,19 @@ def create_app(state: AppState) -> FastAPI:
             pass
         return data
 
+    @app.get("/nfts", response_class=HTMLResponse)
+    def nfts_page(request: Request, page: int = 1):
+        """Everything inscribed on this chain. Called NFTs because that is
+        what people call them; the payload is still an inscription (D-030)."""
+        return render(request, "inscriptions.html", **_inscription_page_data(page=page))
+
     @app.get("/inscriptions", response_class=HTMLResponse)
     def inscriptions_page(request: Request, page: int = 1):
-        return render(request, "inscriptions.html", **_inscription_page_data(page=page))
+        """The old name for /nfts. Kept, because links to it are on the chain
+        and in other people's notes; a renamed page that 404s is a broken
+        promise, not a rename."""
+        where = "/nfts" + (f"?page={page}" if page != 1 else "")
+        return RedirectResponse(where, status_code=303)
 
     @app.post("/inscriptions/create", response_class=HTMLResponse)
     def inscribe(request: Request, csrf_token: str = Form(""),
@@ -3440,8 +3491,9 @@ def create_app(state: AppState) -> FastAPI:
         context = dict(error=error, prepared=prepared,
                        confirm_action=request.url.path, confirm_fields=fields,
                        confirm_what=action, back=back)
-        if template == "tokens.html":
+        if template in ("tokens.html", "wallet_tokens.html"):
             context.update(_token_page_data())
+            context["tab"] = "tokens"
         context.update(extra)
         return render(request, template, **context)
 
@@ -3487,6 +3539,39 @@ def create_app(state: AppState) -> FastAPI:
         return _token_action(request, action="create", confirmed=confirmed, build=build,
                              fields=fields, back="/tokens", form_create=fields)
 
+    def _address_holding(rpc, index, prop: dict, units: int) -> str:
+        """Which of this wallet's addresses the send comes out of.
+
+        The page shows one balance per token, because that is what the wallet
+        holds; the chain keeps it on whichever addresses it arrived at, and a
+        token send comes from exactly one of them. So the wallet picks: the
+        address holding enough, preferring one that also has coins for the
+        fee. When no single address holds enough, say the largest rather than
+        the total, because the total is not what a send can move (D-031).
+        """
+        pid = prop["property_id"]
+        pieces = sorted(((index.balance(a, pid), a) for a in _ledger_addresses(rpc)),
+                        reverse=True)
+        pieces = [(held, a) for held, a in pieces if held > 0]
+        if not pieces:
+            raise tokenlib.TokenError(
+                f"no address in this wallet holds any {prop['name']}.")
+        enough = [(held, a) for held, a in pieces if held >= units]
+        if not enough:
+            biggest, where = pieces[0]
+            total = sum(held for held, _ in pieces)
+            raise tokenlib.TokenError(
+                f"this wallet holds {format_amount(total, prop['divisible'])} "
+                f"{prop['name']}, but a send comes out of one address and the "
+                f"largest, {where}, holds "
+                f"{format_amount(biggest, prop['divisible'])}. Send that much, "
+                f"or move some together first.")
+        funded = {row["address"] for row in _funded_addresses(rpc)}
+        for held, where in enough:
+            if where in funded:
+                return where
+        return enough[0][1]
+
     @app.post("/tokens/send", response_class=HTMLResponse)
     def tokens_send(request: Request, sender: str = Form(""), property_id: str = Form(""),
                     amount: str = Form(""), recipient: str = Form(""),
@@ -3498,16 +3583,21 @@ def create_app(state: AppState) -> FastAPI:
         def build(rpc):
             index = state.token_index(state.token_chain)
             prop, units = _amount_for(index, int(property_id or 0), amount)
-            held = index.balance(sender.strip(), prop["property_id"])
+            from_address = sender.strip() or _address_holding(
+                rpc, index, prop, units)
+            held = index.balance(from_address, prop["property_id"])
             if units > held:
                 raise tokenlib.TokenError(
-                    f"{sender.strip()} holds {format_amount(held, prop['divisible'])} "
+                    f"{from_address} holds {format_amount(held, prop['divisible'])} "
                     f"{prop['name']}, not {format_amount(units, prop['divisible'])}.")
-            return (sender.strip(), tokenlib.send_payload(prop["property_id"], units),
+            return (from_address, tokenlib.send_payload(prop["property_id"], units),
                     _recipient(recipient))
 
+        # Sending what you hold is a wallet question, so it is shown and
+        # confirmed on the wallet's Tokens tab (D-030).
         return _token_action(request, action="send", confirmed=confirmed, build=build,
-                             fields=fields, back="/tokens", form_send=fields)
+                             fields=fields, back="/wallet/tokens",
+                             template="wallet_tokens.html", form_send=fields)
 
     @app.get("/tokens/{property_id}", response_class=HTMLResponse)
     def token(request: Request, property_id: int):
@@ -3718,25 +3808,15 @@ def create_app(state: AppState) -> FastAPI:
     # --- not yet built --------------------------------------------------------
 
     UNBUILT = {
-        "/nfts": ("NFTs", "M4",
-                  "Non-fungible properties, range transfers, and the issuer and "
-                  "holder data slots."),
         "/exchange": ("Exchange", "M3",
                       "Two-sided MetaDEx order book: bids, asks, on-chain matching, "
                       "partial fills and price charts."),
-        "/inscriptions-unused": ("Inscriptions", "M5",
-                          "Chunked file inscription over Class B, with a sandboxed "
-                          "viewer that verifies content hashes before display."),
     }
 
     def _unbuilt(request: Request, path: str) -> HTMLResponse:
         section, milestone, detail = UNBUILT[path]
         return render(request, "unbuilt.html", section=section, milestone=milestone,
                       detail=detail, ledger=ledger_status())
-
-    @app.get("/nfts", response_class=HTMLResponse)
-    def nfts(request: Request):
-        return _unbuilt(request, "/nfts")
 
     @app.get("/exchange", response_class=HTMLResponse)
     def exchange(request: Request):

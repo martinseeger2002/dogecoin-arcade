@@ -73,9 +73,10 @@ SECTIONS: list[dict] = [
         ],
     },
     {
-        "title": "Inscriptions",
+        "title": "NFTs",
         "blurb": "A file written onto the chain in full and uncompressed, "
-                 "owned by an address.",
+                 "owned by an address -- an inscription in the code, an NFT "
+                 "in the interface.",
         "points": [
             ("Any file, any size. No policy ceiling -- the only limit is "
              "arithmetic, at about 498 MB."),
@@ -238,6 +239,13 @@ SECTIONS: list[dict] = [
         "title": "Wallets, keys and backup",
         "blurb": "Your wallet is your identity. There is nothing to write down.",
         "points": [
+            ("Three tabs -- Wallet, Tokens, NFTs -- answering what you have: "
+             "coins per chain, token balances with the form that sends them, "
+             "and the inscriptions you hold. The Tokens and NFTs sections "
+             "answer what exists on the chain."),
+            ("One balance a token, not one an address: a wallet holding a "
+             "token on four addresses holds one balance of it. A send comes "
+             "out of one address, and the wallet picks one holding enough."),
             ("Two-step sends: the decoded transaction and its fee are shown "
              "before anything is broadcast."),
             ("Change comes back to the address that paid, so an ordinary send "
@@ -255,6 +263,8 @@ SECTIONS: list[dict] = [
              "is on."),
             ("Back up wallet.dat and everything comes back with it: coins, "
              "messages and your published key."),
+            ("Publishing your key lives on the address book, beside the name "
+             "it publishes. There is no page of keys and fingerprints."),
         ],
     },
     {

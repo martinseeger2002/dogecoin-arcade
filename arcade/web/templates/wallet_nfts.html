@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% import "_chains.html" as chains %}
+{% import "_wallettabs.html" as wt %}
+{% block title %}Your NFTs · DogecoinArcade{% endblock %}
+{% block body %}
+{% macro card(row, tags) %}
+<div class="card">
+  <div class="row" style="align-items:baseline">
+    <strong>#{{ "{:,}".format(row.number) }}</strong>
+    <span class="muted">{{ row.contenttype if row.contenttype else row.content_type }}</span>
+    <span class="muted" style="margin-left:auto">
+      {{ "{:,}".format(row.content_len) }} bytes</span>
+  </div>
+  {% if row.held and row.content_type.startswith('image/') %}
+    <a class="media" href="/content/{{ row.txid }}?download=1"
+       title="{{ row.txid }} — click to open"
+       onclick="arcadeOpenImage('/content/{{ row.txid }}', '#{{ row.number }}',
+                '/content/{{ row.txid }}?download=1'); return false">
+      <img src="/content/{{ row.txid }}" alt="inscription {{ row.number }}"
+           loading="lazy" style="max-width:100%;border-radius:8px;margin:8px 0"></a>
+  {% endif %}
+  <table>
+    <tr><td class="muted" style="width:74px">Held by</td>
+        <td class="mono" style="word-break:break-all">
+          {% if tags.get(row.owner) %}<strong>@{{ tags[row.owner] }}</strong>
+          {%- else %}{{ row.owner }}{% endif %}</td></tr>
+    <tr><td class="muted">Block</td>
+        <td>{{ "{:,}".format(row.block_height) }}</td></tr>
+    {% if row.collection %}
+    <tr><td class="muted">Set</td>
+        <td><a href="/collections/{{ row.creator }}/{{ row.collection|urlencode }}">{{ row.collection }}</a>
+          {% if row.edition is not none %}<span class="muted">#{{ row.edition }}</span>{% endif %}</td></tr>
+    {% endif %}
+  </table>
+  <div class="row" style="margin-top:8px">
+    <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view">Open</a>
+    <a class="btn small" href="/inscriptions/{{ row.txid }}/send">Send</a>
+  </div>
+</div>
+{% endmacro %}
+
+<h1>Wallet</h1>
+{{ wt.tabs('nfts') }}
+<p class="sub">The inscriptions held by an address in this wallet. Everything
+  inscribed on {{ chain.label|lower }}, yours or not, is on the
+  <a href="/nfts">NFTs</a> page.</p>
+
+{% if node_error %}<div class="msg err">{{ node_error }}</div>{% endif %}
+
+{% if not mine %}
+  <div class="panel empty">
+    <p>Nothing yet on {{ chain.label }}.</p>
+    <p class="muted" style="font-size:.86rem">Inscribe one from the
+      <a href="/nfts">NFTs</a> page, or be sent one.</p>
+  </div>
+{% else %}
+  {% if my_total > mine|length %}
+    <p class="muted">Newest {{ mine|length }} of {{ "{:,}".format(my_total) }}.</p>
+  {% endif %}
+  <div class="cards">
+    {% for row in mine %}{{ card(row, tags) }}{% endfor %}
+  </div>
+{% endif %}
+{% endblock %}

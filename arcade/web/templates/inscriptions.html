@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% import "_chains.html" as chains %}
-{% block title %}Inscriptions · DogecoinArcade{% endblock %}
+{% block title %}NFTs · DogecoinArcade{% endblock %}
 {% block body %}
 {# Macros first: Jinja does not hoist them, and one
    defined below its first use is undefined there. #}
@@ -36,7 +36,8 @@
   <div class="row" style="margin-top:8px">
     <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view">Open</a>
     {% if row.owner in owned %}
-    <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/send">Send</a>
+    <span class="muted" style="font-size:.8rem">yours &mdash;
+      <a href="/wallet/nfts">send it from your wallet</a></span>
     {% endif %}
   </div>
 </div>
@@ -48,28 +49,28 @@
    to go, and walking 39 pages of cursors to reach it is not paging. #}
 <nav class="pager">
   {% if page > 1 %}
-    <a class="btn ghost small" href="/inscriptions?page={{ page - 1 }}">Newer</a>
+    <a class="btn ghost small" href="/nfts?page={{ page - 1 }}">Newer</a>
   {% endif %}
   {% set window = 2 %}
   {% if page - window > 1 %}
-    <a class="btn ghost small" href="/inscriptions?page=1">1</a>
+    <a class="btn ghost small" href="/nfts?page=1">1</a>
     {% if page - window > 2 %}<span class="muted">…</span>{% endif %}
   {% endif %}
   {% for n in range(page - window, page + window + 1) %}
     {% if 1 <= n <= pages %}
       {% if n == page %}<span class="btn small on">{{ n }}</span>
-      {%- else %}<a class="btn ghost small" href="/inscriptions?page={{ n }}">{{ n }}</a>
+      {%- else %}<a class="btn ghost small" href="/nfts?page={{ n }}">{{ n }}</a>
       {%- endif %}
     {% endif %}
   {% endfor %}
   {% if page + window < pages %}
     {% if page + window < pages - 1 %}<span class="muted">…</span>{% endif %}
-    <a class="btn ghost small" href="/inscriptions?page={{ pages }}">{{ pages }}</a>
+    <a class="btn ghost small" href="/nfts?page={{ pages }}">{{ pages }}</a>
   {% endif %}
   {% if page < pages %}
-    <a class="btn ghost small" href="/inscriptions?page={{ page + 1 }}">Older</a>
+    <a class="btn ghost small" href="/nfts?page={{ page + 1 }}">Older</a>
   {% endif %}
-  <form method="get" action="/inscriptions" class="row" style="gap:6px;margin-left:auto">
+  <form method="get" action="/nfts" class="row" style="gap:6px;margin-left:auto">
     <label class="muted" for="jump" style="margin:0">Page</label>
     <input autocomplete="off" type="number" name="page" id="jump" min="1"
            max="{{ pages }}" value="{{ page }}" style="width:5.5rem">
@@ -79,8 +80,10 @@
 {% endif %}
 {% endmacro %}
 
-<h1>Inscriptions</h1>
-<p class="sub">A file written onto the chain in full, owned by an address.</p>
+<h1>NFTs</h1>
+<p class="sub">A file written onto the chain in full, owned by an address.
+  The ones <em>you</em> hold, and the way to send them, are on the
+  <a href="/wallet/nfts">wallet's NFTs tab</a>.</p>
 
 <div class="row" style="margin-bottom:14px">
   <a class="btn ghost small" href="/collections">Collections</a>
@@ -132,7 +135,7 @@
       <input type="hidden" name="confirmed" value="yes">
       <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">
         Inscribe it</button>
-      <a class="btn ghost" href="/inscriptions">Cancel</a>
+      <a class="btn ghost" href="/nfts">Cancel</a>
     </form>
   </div>
 {% else %}
@@ -175,17 +178,6 @@
     {% endfor %}
   </table>
 </div>
-{% endif %}
-
-<h2>Yours{% if my_tag %} &mdash; @{{ my_tag }}{% endif %}
-  {% if my_total > mine|length %}<span class="muted" style="text-transform:none;letter-spacing:0">
-    &mdash; newest {{ mine|length }} of {{ "{:,}".format(my_total) }}</span>{% endif %}</h2>
-{% if not mine %}
-  <p class="muted">Nothing yet on {{ chain.label }}.</p>
-{% else %}
-  <div class="cards">
-    {% for row in mine %}{{ card(row, tags) }}{% endfor %}
-  </div>
 {% endif %}
 
 <h2>Everything on {{ chain.label }}

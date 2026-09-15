@@ -5,7 +5,9 @@
 {% block body %}
 {% set tag = 'mainnet' if chain.is_mainnet else 'testnet' %}
 <h1>Tokens {{ tk.chain_switch(chain, other_chains, csrf) }}</h1>
-<p class="sub">Fungible tokens on {{ chain.label|lower }}: create one, hold some, send them on.
+<p class="sub">Every fungible token on {{ chain.label|lower }}: what exists, and how to make one.
+  What <em>you</em> hold, and the form that sends it, is on the
+  <a href="/wallet/tokens">wallet's Tokens tab</a>.
   {% if other_chains %}<span class="muted">Click the {{ 'main' if chain.is_mainnet else 'test' }} tag to switch
   to {{ other_chains[0].label|lower }}.</span>{% endif %}
   <span id="live" data-generation="{{ state.generation }}"></span></p>
@@ -29,45 +31,6 @@
   <div>Your {{ p.what }} <code class="mono" style="font-size:.78rem">{{ p.txid }}</code>
     is broadcast and waiting for its block.</div>
   {% endfor %}
-</div>
-{% endif %}
-
-<h2>Yours</h2>
-{% if holdings %}
-<div class="panel">
-  <table class="wallets">
-  {% for h in holdings %}
-    <tr>
-      <td><a href="/tokens/{{ h.property_id }}"><strong>{{ h.name }}</strong></a>
-        {% if h.test_ecosystem %}<span class="tag testnet">test ecosystem</span>{% endif %}
-        <div class="muted" style="font-size:.78rem">#{{ h.property_id }} on
-          <code class="addr" onclick="copyAddr(this)" title="Click to copy">{{ h.address }}</code></div></td>
-      <td style="text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap">
-        <strong>{{ h.display }}</strong></td>
-      <td style="width:52%">
-        <form method="post" action="/tokens/send" class="row" style="gap:6px">
-          <input type="hidden" name="csrf_token" value="{{ csrf }}">
-          <input type="hidden" name="sender" value="{{ h.address }}">
-          <input type="hidden" name="property_id" value="{{ h.property_id }}">
-          <div style="flex:0 0 110px"><input autocomplete="off" name="amount" placeholder="amount" inputmode="decimal"
-               value="{{ form_send.amount if form_send and form_send.sender == h.address and form_send.property_id|string == h.property_id|string else '' }}"></div>
-          <div style="flex:1 1 200px"><input autocomplete="off" name="recipient" class="mono" spellcheck="false"
-               placeholder="recipient address on {{ chain.label|lower }}"
-               value="{{ form_send.recipient if form_send and form_send.sender == h.address and form_send.property_id|string == h.property_id|string else '' }}"></div>
-          <button type="submit" class="small {{ 'danger' if chain.is_mainnet }}">Review send</button>
-        </form></td>
-    </tr>
-  {% endfor %}
-  </table>
-  <p class="muted" style="font-size:.84rem;margin:10px 0 0">A send spends a small fee
-    from the holding address, so it needs a few coins of its own. Nothing is sent
-    until you have seen the decoded transaction.</p>
-</div>
-{% else %}
-<div class="panel empty">
-  <p>No tokens on any address in this wallet{% if not index.enabled or index.behind %} that the index has seen{% endif %}.</p>
-  <p class="muted" style="font-size:.86rem">Create one below, or give someone a
-    {{ chain.label|lower }} address from the Wallets page to receive theirs.</p>
 </div>
 {% endif %}
 

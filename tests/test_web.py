@@ -43,8 +43,8 @@ def client(app_state):
     return TestClient(create_app(app_state)), app_state
 
 
-GET_ROUTES = ["/", "/inbox", "/compose", "/contacts", "/backup", "/keys", "/wallet",
-              "/tokens", "/nfts", "/exchange", "/inscriptions"]
+GET_ROUTES = ["/", "/inbox", "/compose", "/contacts", "/backup", "/wallet",
+              "/wallet/tokens", "/wallet/nfts", "/tokens", "/nfts", "/exchange"]
 
 
 @pytest.mark.parametrize("path", GET_ROUTES)
@@ -181,7 +181,7 @@ def test_wallet_receive_fails_cleanly_without_a_node(client):
 
 
 def test_unbuilt_sections_say_so(client):
-    for path, milestone in (("/exchange", "M3"), ("/nfts", "M4")):
+    for path, milestone in (("/exchange", "M3"),):
         body = client[0].get(path).text
         assert "Not built yet" in body and milestone in body
 
@@ -1663,7 +1663,7 @@ def test_sending_no_longer_flashes_a_banner(client):
 # One assertion catches the whole class, needs no browser, and would have caught
 # it on the day it was introduced.
 
-TITLED_PAGES = ["/", "/contacts", "/wallet", "/messages", "/groups", "/keys", "/backup"]
+TITLED_PAGES = ["/", "/contacts", "/wallet", "/messages", "/groups", "/backup"]
 
 
 @pytest.mark.parametrize("path", TITLED_PAGES)
@@ -2322,7 +2322,7 @@ def test_the_chain_tag_switches_tokens_between_mainnet_and_testnet(client, tmp_p
     page = app.get("/tokens").text
     assert 'name="chain" value="regtest"' in page, "the tag offers the other chain"
     assert '<button type="submit" class="tag mainnet switch"' in page
-    assert "Fungible tokens on mainnet" in page
+    assert "Every fungible token on mainnet" in page
 
     response = app.post("/tokens/chain", data={"chain": "regtest", "csrf_token": state.csrf_token},
                         follow_redirects=False)
@@ -2330,7 +2330,7 @@ def test_the_chain_tag_switches_tokens_between_mainnet_and_testnet(client, tmp_p
     page = app.get("/tokens").text
     assert '<button type="submit" class="tag testnet switch"' in page
     assert 'name="chain" value="main"' in page
-    assert "Fungible tokens on testnet" in page
+    assert "Every fungible token on testnet" in page
     assert (state.home / "tokens-chain").read_text().strip() == "regtest"
 
     again = AppState(home=state.home, messaging=state.messaging, ledger=state.ledger)

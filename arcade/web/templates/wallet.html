@@ -1,9 +1,12 @@
 {% extends "base.html" %}
 {% import "_chains.html" as chains %}
-{% block title %}Wallets · DogecoinArcade{% endblock %}
+{% import "_wallettabs.html" as wt %}
+{% block title %}Wallet · DogecoinArcade{% endblock %}
 {% block body %}
-<h1>Wallets</h1>
-<p class="sub">One per chain. Testnet coins pay message fees; mainnet coins are real.</p>
+<h1>Wallet</h1>
+{{ wt.tabs('coins') }}
+<p class="sub">Coins, one wallet per chain. Testnet coins pay message fees;
+  mainnet coins are real.</p>
 
 {% if error %}<div class="msg err">{{ error }}</div>{% endif %}
 

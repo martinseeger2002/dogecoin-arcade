@@ -447,8 +447,9 @@ def test_small_costs_and_sizes_do_not_round_away(browser, served):
 #     cards asked for a 330px minimum.
 
 
-PHONE_PAGES = ["/", "/messages", "/contacts", "/groups", "/backup", "/keys",
-               "/wallet", "/tokens", "/compose", "/inbox", "/remote"]
+PHONE_PAGES = ["/", "/messages", "/contacts", "/groups", "/backup",
+               "/wallet", "/wallet/tokens", "/wallet/nfts", "/tokens", "/nfts",
+               "/compose", "/inbox", "/remote"]
 
 
 @pytest.fixture(scope="module")
