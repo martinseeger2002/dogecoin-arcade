@@ -12,6 +12,7 @@ import base64
 import datetime as dt
 import hashlib
 import json
+import logging
 import re
 import threading
 import time
@@ -39,6 +40,7 @@ from .. import payload as P
 from .. import inscriptions as inscriptionlib
 from . import guide as guidelib
 from .. import mintpad as mintpadlib
+from .. import swap as swaplib
 from .. import tags as taglib
 from .. import remote as remotelib
 from ..messaging import contact, content, group
@@ -95,6 +97,8 @@ TEMPLATES.env.filters["describe_leg"] = _describe_leg
 #: the part anybody is looking at is the end of it.
 PAGE_POSTS = 40
 PAGE_MESSAGES = 60
+log = logging.getLogger(__name__)
+
 PAGE_INSCRIPTIONS = 24
 
 NAV = [
@@ -106,7 +110,7 @@ NAV = [
     ("/wallet",       "Wallet",       None,        True),
     ("/tokens",       "Tokens",       "mainnet",   True),
     ("/nfts",         "NFTs",         "mainnet",   True),
-    ("/exchange",     "Exchange",     "mainnet",   False),
+    ("/exchange",     "Exchange",     "mainnet",   True),
     ("/approvals",    "Approvals",    None,        True),
     ("/remote",       "Remote",       None,        True),
     ("/guide",        "Guide",        None,        True),
@@ -3635,7 +3639,7 @@ def create_app(state: AppState) -> FastAPI:
         navigating the window it sits in. The wallet around it is a wallet that
         can spend, and inscribed code is code somebody else wrote.
         """
-        _, index = _token_chain()
+        chain, index = _token_chain()
         row = index.inscription(contentlib._key(key))
         if row is None:
             state.flash("no such inscription", "err")
@@ -3646,8 +3650,17 @@ def create_app(state: AppState) -> FastAPI:
         tunnel = state.remote_tunnel()
         pages = (tunnel.pages_url or "") if tunnel is not None and remotelib.is_remote(
             request.headers, request.headers.get("host", ""), tunnel.url) else ""
-        return render(request, "inscription_view.html", row=row,
-                      tag=index.tag_of(row["owner"]), pages=pages,
+        mine = False
+        try:
+            with chain.rpc() as rpc:
+                mine = row["owner"] in _ledger_addresses(rpc)
+        except HTTPException:
+            raise
+        except Exception:
+            mine = False
+        return render(request, "inscription_view.html", row=row, chain=chain,
+                      tag=index.tag_of(row["owner"]), pages=pages, mine=mine,
+                      tokens=_token_props(index),
                       renders=row["content_type"].startswith(contentlib.RENDERABLE))
 
     @app.get("/tokens", response_class=HTMLResponse)
@@ -4041,9 +4054,198 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "unbuilt.html", section=section, milestone=milestone,
                       detail=detail, ledger=ledger_status())
 
+    # --- the exchange ---------------------------------------------------------
+
+    EXCHANGE_TABS = ("offers", "mintpads", "tokens", "market")
+
+    def _token_props(index) -> list[dict[str, Any]]:
+        try:
+            return index.properties()
+        except Exception:
+            return []
+
+    def _shop_listings(index, chain) -> list[dict[str, Any]]:
+        """Every shop on this chain, with its listings as the pages see them.
+
+        Read from the chain each time rather than from a list somebody
+        keeps: a shop closes by its inscription being sent away, and a
+        directory that had to be told would go on advertising it (D-037).
+        """
+        from .. import swap as swaplib
+        out = []
+        for row in index.shops():
+            try:
+                swaplib.shop_of(row)
+                listings = swaplib.listings_json(row, index)
+            except Exception:
+                continue          # JSON that names a shop and is not one
+            if not listings:
+                continue
+            name = ""
+            try:
+                name = str(json.loads(row["json"] or "{}").get("name") or "")
+            except Exception:
+                name = ""
+            out.append({"txid": row["txid"], "number": row["number"],
+                        "name": name, "seller": row["owner"],
+                        "mine": False, "listings": listings})
+        return out
+
+    @app.post("/exchange/offer", response_class=HTMLResponse)
+    def make_offer_on(request: Request, inscription: str = Form(""),
+                      amount: str = Form(""), kind: str = Form("coins"),
+                      property_id: str = Form(""), csrf_token: str = Form("")):
+        """Offer for an NFT, whoever holds it and whatever they have listed.
+
+        The offer is a message to the wallet that holds it. Accepting is
+        theirs to do, and what they accept is exactly these terms: the
+        wallet checks the shop's answer against them before it signs, so a
+        yes here cannot be turned into a different trade (D-038).
+        """
+        check_csrf(csrf_token)
+        chain, index = _token_chain()
+        try:
+            row = index.inscription(contentlib._key(inscription))
+            if row is None:
+                raise swaplib.SwapError("no such inscription on this node")
+            with chain.rpc() as rpc:
+                own = _ledger_addresses(rpc)
+                if row["owner"] in own:
+                    raise swaplib.SwapError("that one is already yours")
+                take = swaplib.leg_of(
+                    mintpadlib.take_of(kind, amount,
+                                       int(property_id) if property_id else None),
+                    index)
+                buyer = _buyer_for(rpc, index, own, take)
+            to = _key_at(row["owner"])
+            bid_id = secrets.token_hex(8)
+            text = json.dumps({"swap": "bid", "swapv": swaplib.PROTOCOL,
+                               "id": bid_id, "inscription": row["txid"],
+                               "take": swaplib.leg_json(take, index),
+                               "buyer": buyer}).encode()
+            sent = _page_send(row["txid"], chain, to, text)
+            now = time.time()
+            state.offers.add_bid({
+                "id": bid_id, "network": chain.network, "direction": "out",
+                "inscription": row["txid"], "number": row["number"],
+                "owner": row["owner"], "buyer": buyer, "peer_pubkey": to.hex(),
+                "take": swaplib.leg_json(take, index),
+                "created": now, "expires": now + swaplib.OFFER_TTL * 8})
+            state.flash(f"Offer sent in {sent['txid']}. It reaches them when the "
+                        f"block does; their answer comes back the same way.", "ok")
+            return RedirectResponse("/exchange?tab=offers", status_code=303)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            state.flash(str(exc), "err")
+            return RedirectResponse(f"/inscriptions/{inscription}/view", status_code=303)
+
+    def _key_at(address: str) -> bytes:
+        """The messaging key the wallet at this address has announced.
+
+        Without one there is nobody to send an offer to: an address is a
+        place to pay, not somewhere a message can be read.
+        """
+        with state.store() as store:
+            row = store.key_for(address)
+        if row is None:
+            raise swaplib.SwapError(
+                f"{address} has not published a messaging key, so there is "
+                "nobody to send an offer to. Ask them to publish one from "
+                "their address book.")
+        return bytes(row["pubkey"])
+
+    @app.post("/exchange/offers/{bid_id}")
+    def decide_offer(request: Request, bid_id: str, decision: str = Form(""),
+                     csrf_token: str = Form("")):
+        """Accept an offer on something of yours, or refuse it.
+
+        Accepting builds the same half of the same swap a shop would: the
+        item, the price, one of this wallet's outputs locked to carry it.
+        The answer goes back to the buyer, whose wallet signs its half
+        against the terms it offered and hands it back to be broadcast.
+        """
+        check_csrf(csrf_token)
+        chain, index = _token_chain()
+        bid = state.offers.get_bid(bid_id)
+        try:
+            if bid is None or bid["direction"] != "in":
+                raise swaplib.SwapError("no such offer")
+            if decision == "refuse":
+                state.offers.close_bid(bid_id, "refused")
+                _answer_bid(chain, bid, {"ok": False, "error": "refused"})
+                state.flash("Refused.", "ok")
+                return RedirectResponse("/exchange?tab=offers", status_code=303)
+            with chain.rpc() as rpc:
+                own = _ledger_addresses(rpc)
+                offer = swaplib.offer_for_bid(rpc, index, state.offers,
+                                              chain.network, bid, own=own)
+            state.offers.close_bid(bid_id, "accepted", offer_id=offer["id"])
+            _answer_bid(chain, bid, {"ok": True, "offer": offer})
+            state.flash(f"Accepted. The buyer's wallet signs its half and it goes "
+                        f"as one transaction.", "ok")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            if bid is not None:
+                state.offers.close_bid(bid_id, "failed", error=str(exc))
+            state.flash(str(exc), "err")
+        return RedirectResponse("/exchange?tab=offers", status_code=303)
+
+    def _answer_bid(chain, bid: dict, body: dict) -> None:
+        """Tell the buyer what became of their offer."""
+        answer = {"swap": "bid", "swapv": swaplib.PROTOCOL, "id": bid["id"]}
+        answer.update(body)
+        try:
+            _page_send(bid["inscription"], chain,
+                       bytes.fromhex(bid["peer_pubkey"]),
+                       json.dumps(answer).encode())
+        except Exception as exc:
+            log.warning("could not answer offer %s: %s", bid["id"], exc)
+
     @app.get("/exchange", response_class=HTMLResponse)
-    def exchange(request: Request):
-        return _unbuilt(request, "/exchange")
+    def exchange(request: Request, tab: str = "offers"):
+        """Everything for sale on this chain, and what has been offered to you.
+
+        Four questions, four tabs: what somebody has offered for something of
+        yours, which mintpads still have pieces, what tokens are being sold
+        for, and which single NFTs are for sale.
+        """
+        tab = tab if tab in EXCHANGE_TABS else "offers"
+        chain, index = _token_chain()
+        data: dict[str, Any] = {"tab": tab, "chain": chain, "node": chain.status(),
+                                "shops": [], "node_error": None, "owned": set(),
+                                "offers_in": [], "offers_out": [], "tags": {}}
+        try:
+            data["shops"] = _shop_listings(index, chain)
+        except Exception as exc:
+            data["node_error"] = f"the index could not be read: {exc}"
+        try:
+            with chain.rpc() as rpc:
+                data["owned"] = set(_ledger_addresses(rpc))
+        except HTTPException:
+            raise
+        except Exception as exc:
+            data["node_error"] = data["node_error"] or str(exc)
+        for shop in data["shops"]:
+            shop["mine"] = shop["seller"] in data["owned"]
+        data["tags"] = _tags_for([s["seller"] for s in data["shops"]])
+        # Only what can still be bought. A listing whose item has been sold
+        # says so in `available` -- the listings are read from the chain
+        # every time, so a mintpad that has minted out and an NFT that has
+        # moved drop off by themselves, with nobody to tell (D-037).
+        def selling(shop, kind):
+            return any(l["give"].get("kind") == kind and not l["available"]
+                       for l in shop["listings"])
+        data["mintpads"] = [s for s in data["shops"] if selling(s, "random")]
+        data["market"] = [s for s in data["shops"] if selling(s, "inscription")]
+        data["tokens"] = [s for s in data["shops"] if selling(s, "token")]
+        try:
+            data["offers_in"] = state.offers.bids(chain.network, "in")
+            data["offers_out"] = state.offers.bids(chain.network, "out")
+        except Exception:
+            pass
+        return render(request, "exchange.html", **data)
 
 
 

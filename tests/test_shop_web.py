@@ -15,7 +15,7 @@ from arcade.messaging.keys import Identity, fingerprint_of
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_web import app_state, client                          # noqa: F401,E402
 from test_swap import (FakeIndex, FakeNode, SELLER, BUYER, OTHER, SHOP, PIECE,  # noqa: E402
-                       GOOF, decode, _SIGNED)
+                       PIECE2, GOOF, decode, _SIGNED)
 from arcade.ledger import COIN                                   # noqa: E402
 
 UNSPENT = [("1" * 64, 0, SELLER, 3 * COIN), ("1" * 64, 1, SELLER, int(0.5 * COIN)),
@@ -404,3 +404,76 @@ def test_a_shopkeeper_does_not_answer_an_answer(shop):
     # And the answer it just made would not move it, were it sent back.
     _ask(state, buyer, offered, 4)
     assert keeper.tick() == 0 and len(answers) == 1
+
+
+def test_an_offer_on_an_nft_waits_for_a_person_and_its_answer_does_not(shop):
+    """A bid is written down; the answer to one this wallet made is signed.
+
+    Nobody but the holder can say yes to an offer on their NFT, so the
+    shopkeeper records it and answers nothing. The answer to an offer this
+    wallet MADE is different: the person named the price when they made it,
+    so the wallet signs its half against exactly those terms (D-038).
+    """
+    state, index, node, buyer, answers, keeper = shop
+    keeper.tick()                                   # sets the cursor
+
+    # Somebody offers for a piece this wallet holds.
+    _ask(state, buyer, {"swap": "bid", "swapv": S.PROTOCOL, "id": "b1",
+                        "inscription": PIECE, "buyer": BUYER,
+                        "take": {"kind": "coins", "amount": "2.00000000",
+                                 "sats": 2 * COIN}}, 1)
+    assert keeper.tick() == 0 and answers == [], "an offer is a person's to answer"
+    (bid,) = state.offers.bids("regtest", "in")
+    assert bid["id"] == "b1" and bid["status"] == "open"
+    assert bid["inscription"] == PIECE and bid["buyer"] == BUYER
+
+    # Hearing it twice does not make two offers.
+    _ask(state, buyer, {"swap": "bid", "swapv": S.PROTOCOL, "id": "b1",
+                        "inscription": PIECE, "buyer": BUYER,
+                        "take": {"kind": "coins", "amount": "2.00000000",
+                                 "sats": 2 * COIN}}, 2)
+    assert keeper.tick() == 0 and len(state.offers.bids("regtest", "in")) == 1
+
+    # An offer on something that is not ours is not our business.
+    _ask(state, buyer, {"swap": "bid", "swapv": S.PROTOCOL, "id": "b2",
+                        "inscription": PIECE2, "buyer": BUYER,
+                        "take": {"kind": "coins", "amount": "1", "sats": COIN}}, 3)
+    assert keeper.tick() == 0 and len(state.offers.bids("regtest", "in")) == 1
+
+
+def test_the_answer_to_our_own_offer_is_signed_against_the_terms_we_gave(shop):
+    state, index, node, seller_identity, answers, keeper = shop
+    keeper.tick()
+    now = __import__("time").time()
+    take = {"kind": "coins", "amount": "2.00000000", "sats": 2 * COIN}
+    state.offers.add_bid({"id": "o1", "network": "regtest", "direction": "out",
+                          "inscription": PIECE2, "number": 3, "owner": BUYER,
+                          "buyer": SELLER, "peer_pubkey": "",
+                          "take": take, "created": now, "expires": now + 900})
+
+    # The holder's answer, as offer_for_bid would build it.
+    other = FakeNode({BUYER}, UNSPENT)
+    offer = S.offer_for_bid(other, index, S.Offers(state.home / "theirs.sqlite"),
+                            "regtest",
+                            {"inscription": PIECE2, "take": take, "buyer": SELLER,
+                             "peer_pubkey": ""}, own=[BUYER])
+    _ask(state, seller_identity, {"swap": "bid", "swapv": S.PROTOCOL, "id": "o1",
+                                  "ok": True, "offer": offer}, 1)
+    assert keeper.tick() == 1
+    _, signed = _answers(answers, seller_identity)[0]
+    assert signed["swap"] == "sign" and signed["offer"] == offer["id"]
+    assert signed["hex"], "our half, signed"
+    assert state.offers.get_bid("o1")["status"] == "signed"
+
+    # A different price for the same offer id is refused, not signed.
+    state.offers.add_bid({"id": "o2", "network": "regtest", "direction": "out",
+                          "inscription": PIECE2, "number": 3, "owner": BUYER,
+                          "buyer": SELLER, "peer_pubkey": "",
+                          "take": {"kind": "coins", "amount": "1.00000000",
+                                   "sats": COIN},
+                          "created": now, "expires": now + 900})
+    _ask(state, seller_identity, {"swap": "bid", "swapv": S.PROTOCOL, "id": "o2",
+                                  "ok": True, "offer": offer}, 2)
+    assert keeper.tick() == 0, "a different price is not what was agreed"
+    bid = state.offers.get_bid("o2")
+    assert bid["status"] == "failed" and "price" in bid["error"]

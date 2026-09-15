@@ -96,6 +96,11 @@ class Shopkeeper:
                         if question is None:
                             continue
                         answer = self._answer(rpc, index, offers, chain, row, question)
+                        if answer is None:
+                            # Written down, and nobody to answer: an offer on
+                            # something of ours waits for a person (D-038).
+                            handled.append(int(row["id"]))
+                            continue
                         try:
                             self._reply(rpc, chain, identity, bytes(row["sender_pubkey"]),
                                         answer)
@@ -113,7 +118,7 @@ class Shopkeeper:
     # --- answering ---------------------------------------------------------
 
     def _answer(self, rpc: Any, index: Any, offers: Any, chain: Any, row: Any,
-                question: dict) -> dict:
+                question: dict) -> dict | None:
         state = self.state
         kind = question["swap"]
         reply: dict[str, Any] = {"swap": kind, "swapv": swaplib.PROTOCOL,
@@ -123,6 +128,8 @@ class Shopkeeper:
             reply["error"] = (f"this shop speaks swap protocol {swaplib.PROTOCOL}, "
                               f"not {question.get('swapv')!r}; update one of us")
             return reply
+        if kind == "bid":
+            return self._bid(rpc, index, offers, chain, row, question)
         try:
             if kind == "offer":
                 shop = index.inscription(str(question.get("shop") or ""))
@@ -151,6 +158,72 @@ class Shopkeeper:
         except Exception as exc:
             log.warning("swap %s failed: %s", kind, exc, exc_info=True)
             reply["error"] = f"the shop's node could not do it: {exc}"
+        return reply
+
+    def _bid(self, rpc: Any, index: Any, offers: Any, chain: Any, row: Any,
+             question: dict) -> dict | None:
+        """An offer on an NFT, or the answer to one this wallet made.
+
+        A bid is written down and left for a person: it is an offer on
+        something of theirs, and nobody but them can say yes. The ANSWER to
+        a bid is different -- the person already said what they would pay
+        when they made it, so the wallet signs its half without asking
+        again, and only if the terms are the ones it offered (D-038).
+        """
+        state = self.state
+        bid_id = str(question.get("id") or "")
+        if not bid_id:
+            return None
+        if "ok" not in question:                    # somebody's offer to us
+            if offers.get_bid(bid_id):
+                return None                         # heard already
+            found = index.inscription(str(question.get("inscription") or ""))
+            if found is None:
+                return None
+            from .web.app import _ledger_addresses
+            if found["owner"] not in _ledger_addresses(rpc):
+                return None                         # not ours; not our business
+            now = time.time()
+            offers.add_bid({
+                "id": bid_id, "network": chain.network, "direction": "in",
+                "inscription": found["txid"], "number": found["number"],
+                "owner": found["owner"], "buyer": str(question.get("buyer") or ""),
+                "peer_pubkey": bytes(row["sender_pubkey"]).hex(),
+                "take": dict(question.get("take") or {}),
+                "note": str(question.get("note") or ""),
+                "created": now, "expires": now + swaplib.OFFER_TTL * 8})
+            state.bump_generation()
+            return None
+
+        mine = offers.get_bid(bid_id)
+        if mine is None or mine["direction"] != "out" or mine["status"] != "open":
+            return None
+        if not question.get("ok"):
+            offers.close_bid(bid_id, "refused",
+                             error=str(question.get("error") or "refused"))
+            state.bump_generation()
+            return None
+        reply = {"swap": "sign", "swapv": swaplib.PROTOCOL}
+        try:
+            offer = swaplib.check_offer(
+                question.get("offer"), shop=mine["inscription"],
+                own=_own_addresses(rpc), height=index.indexed_height(),
+                params=chain.params)
+            if offer["seller"] != mine["owner"]:
+                raise swaplib.SwapError("that answer is not from the wallet that "
+                                        "holds it")
+            if offer["give"].get("txid") != mine["inscription"]:
+                raise swaplib.SwapError("that is not the item that was offered for")
+            if not _same_price(offer["take"], mine["take"]):
+                raise swaplib.SwapError("that is not the price that was offered")
+            built = swaplib.build(rpc, index, offer, own=_own_addresses(rpc))
+        except (swaplib.SwapError, ValueError) as exc:
+            offers.close_bid(bid_id, "failed", error=str(exc))
+            state.bump_generation()
+            return None
+        offers.close_bid(bid_id, "signed", offer_id=offer["id"])
+        state.bump_generation()
+        reply.update(offer=offer["id"], hex=built.hex)
         return reply
 
     def _reply(self, rpc: Any, chain: Any, identity: Any, to: bytes, body: dict) -> str:
@@ -186,6 +259,17 @@ def _write_it_down(state: Any, chain: Any, offer: dict, txid: str) -> None:
         log.warning("a sale was made but could not be written down", exc_info=True)
 
 
+def _own_addresses(rpc: Any) -> list[str]:
+    from .web.app import _ledger_addresses
+    return _ledger_addresses(rpc)
+
+
+def _same_price(offered: dict, wanted: dict) -> bool:
+    """Whether two legs name the same thing and the same amount."""
+    keys = ("kind", "propertyid", "amount", "txid", "sats", "units")
+    return all(str(offered.get(k) or "") == str(wanted.get(k) or "") for k in keys)
+
+
 def _swap_message(row: Any) -> dict | None:
     """The question in an inbox row, if it is a swap question at all."""
     # The stored body is the message after its stamp (scanner.py); the
@@ -194,8 +278,14 @@ def _swap_message(row: Any) -> dict | None:
         data = json.loads(bytes(row["body"]).decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
         return None
-    if not isinstance(data, dict) or data.get("swap") not in ("offer", "sign"):
+    if not isinstance(data, dict) or data.get("swap") not in ("offer", "sign", "bid"):
         return None
+    if data.get("swap") == "bid":
+        # A bid and its answer are both questions to the wallet that gets
+        # them: one asks a person, the other asks the wallet to sign what
+        # that person already agreed to. Neither can be answered by an
+        # answer, so neither can loop.
+        return data
     if "re" in data or "ok" in data:
         # An answer, not an order. Answers carry `re` (the txid they answer)
         # and `ok`; a question carries neither. Without this, two shopkeepers

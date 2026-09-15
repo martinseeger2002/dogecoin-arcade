@@ -160,8 +160,47 @@
     <a class="btn ghost small" href="/content/{{ row.txid }}">Content</a>
     <a class="btn ghost small" href="/r/inscription/{{ row.txid }}">JSON</a>
     <a class="btn ghost small" href="/r/metadata/{{ row.txid }}">Metadata</a>
+    {% if mine %}
+      <a class="btn small" href="/inscriptions/{{ row.txid }}/send">Send</a>
+    {% endif %}
   </div>
 </div>
+
+{% if not mine %}
+<h2>Make an offer</h2>
+<div class="panel">
+  {% if offer_error %}<div class="msg err">{{ offer_error }}</div>{% endif %}
+  <p class="muted" style="margin:0 0 10px">Offer for it whether or not it is for
+    sale. The offer travels to whoever holds it as a message on the chain; if
+    they accept, one transaction moves the NFT and your payment together, and
+    nothing moves if it fails.</p>
+  <form method="post" action="/exchange/offer" class="row" style="gap:8px">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="inscription" value="{{ row.txid }}">
+    <div style="flex:0 0 120px">
+      <input autocomplete="off" name="amount" inputmode="decimal" placeholder="amount"
+             value="{{ offer_amount or '' }}"></div>
+    <div style="flex:0 0 150px">
+      <select autocomplete="off" name="kind" id="offer-kind" onchange="offerToken(this)">
+        <option value="coins">{{ chain.label }} coins</option>
+        <option value="token" {{ 'selected' if offer_kind == 'token' }}>a token</option>
+      </select></div>
+    <div style="flex:1 1 180px" id="offer-token-wrap"
+         {{ '' if offer_kind == 'token' else 'hidden' }}>
+      <select autocomplete="off" name="property_id">
+        {% for t in tokens %}
+        <option value="{{ t.property_id }}">{{ t.name }} &mdash; #{{ t.property_id }}</option>
+        {% else %}<option value="">no tokens on this chain</option>{% endfor %}
+      </select></div>
+    <button type="submit" class="small">Make offer</button>
+  </form>
+  <script>
+  function offerToken(sel){
+    document.getElementById('offer-token-wrap').hidden = sel.value !== 'token';
+  }
+  </script>
+</div>
+{% endif %}
 
 {% if row.json %}
 <h2>Its JSON</h2>

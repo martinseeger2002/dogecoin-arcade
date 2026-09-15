@@ -44,7 +44,9 @@ def client(app_state):
 
 
 GET_ROUTES = ["/", "/inbox", "/compose", "/contacts", "/backup", "/wallet",
-              "/wallet/tokens", "/wallet/nfts", "/tokens", "/nfts", "/exchange"]
+              "/wallet/tokens", "/wallet/nfts", "/tokens", "/nfts", "/exchange",
+              "/exchange?tab=mintpads", "/exchange?tab=tokens",
+              "/exchange?tab=market"]
 
 
 @pytest.mark.parametrize("path", GET_ROUTES)
@@ -180,10 +182,18 @@ def test_wallet_receive_fails_cleanly_without_a_node(client):
     assert "no attribute" not in (state.notice or "")
 
 
-def test_unbuilt_sections_say_so(client):
-    for path, milestone in (("/exchange", "M3"),):
-        body = client[0].get(path).text
-        assert "Not built yet" in body and milestone in body
+def test_the_exchange_reads_the_chain_rather_than_a_list(client):
+    """Nothing is listed with the exchange: a shop is an inscription, and it
+    closes by being sent away. So an empty chain is an empty exchange, and
+    every tab still draws (D-037)."""
+    app, _ = client
+    for tab, empty in (("mintpads", "No mintpads on this chain yet"),
+                       ("tokens", "is selling tokens"),
+                       ("market", "No NFTs are listed for sale")):
+        body = app.get(f"/exchange?tab={tab}").text
+        assert empty in body, tab
+    offers = app.get("/exchange?tab=offers").text
+    assert "Offered to you" in offers and "Yours, outstanding" in offers
 
 
 # --- address book -------------------------------------------------------------

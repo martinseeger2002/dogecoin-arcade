@@ -352,6 +352,21 @@ class LedgerIndex:
         with self.open() as db:
             return [dict(row) for row in db.conn.execute(sql, args)]
 
+    def shops(self, limit: int = 200) -> list[dict]:
+        """Every inscription on this chain whose JSON names a shop.
+
+        Only those still held by whoever created them: a shop is its
+        creator's word about their own things, and sending the inscription
+        away closes it (swap.py). Read here rather than filtered in the page
+        so that the Exchange asks the chain, not a list somebody keeps
+        (D-037).
+        """
+        sql = (_INSCRIPTION_SELECT
+               + " WHERE i.creator = i.owner AND i.json LIKE '%\"shop\"%'"
+                 " ORDER BY i.number DESC LIMIT ?")
+        with self.open() as db:
+            return [dict(row) for row in db.conn.execute(sql, (max(1, min(limit, 500)),))]
+
     def inscription(self, key: str | int) -> dict | None:
         """By txid or by number -- a number is what people say out loud."""
         with self.open() as db:

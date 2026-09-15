@@ -155,6 +155,30 @@ SECTIONS: list[dict] = [
         ],
     },
     {
+        "title": "The exchange",
+        "blurb": "Everything for sale on a chain, read from the chain itself.",
+        "points": [
+            ("Offers: what somebody has offered for an NFT of yours, and what "
+             "you have offered for somebody else's."),
+            ("Mintpads: every pad with pieces left. It appears because it is "
+             "on the chain, not because anybody listed it, and drops off when "
+             "it mints out."),
+            ("Tokens: what tokens are being sold for. Shops at prices their "
+             "sellers set, not a book of bids and asks."),
+            ("Marketplace: single NFTs for sale, collection or not. One that "
+             "has moved drops off by itself -- nothing is un-listed, because "
+             "nothing was listed anywhere but the chain."),
+            ("An offer can be made on any NFT, listed or not. It is not a "
+             "PSBT: the buyer cannot build the transaction, since the "
+             "seller's own output must be its first input. It is a message "
+             "naming the item and the price, and the holder's yes builds the "
+             "rest."),
+            ("Your wallet signs its half of an answer automatically only if "
+             "the answer names the same item and the same price you offered. "
+             "An offer on something of YOURS is never answered without you."),
+        ],
+    },
+    {
         "title": "Approvals",
         "blurb": "A page or a program can ask this wallet to send something. "
                  "It cannot send.",
@@ -300,7 +324,9 @@ SECTIONS: list[dict] = [
             ("No send-to-owners: the engine does not implement it and such a "
              "transaction would stop the index."),
             ("No order book: a shop sells at the price its inscription says, "
-             "to whoever comes. Nothing matches bids to asks."),
+             "to whoever comes, and an offer is made on one NFT at a time. "
+             "Nothing matches bids to asks; the Exchange's Tokens tab is a "
+             "list of shops, not a book."),
             ("It cannot read your sent messages back off the chain. Nothing "
              "can. That is what sealing to the recipient means."),
         ],

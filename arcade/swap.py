@@ -339,6 +339,28 @@ CREATE TABLE IF NOT EXISTS offer (
     error         TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS offer_open ON offer(status, network);
+-- An offer somebody made on an NFT, in either direction. Not a listing: it
+-- is made on an inscription whatever its owner has or has not put up for
+-- sale, and it is the owner's to accept or refuse (D-038).
+CREATE TABLE IF NOT EXISTS bid (
+    id            TEXT PRIMARY KEY,
+    network       TEXT NOT NULL,
+    direction     TEXT NOT NULL,          -- 'in' offered to me, 'out' I offered
+    inscription   TEXT NOT NULL,
+    number        INTEGER,
+    owner         TEXT NOT NULL,
+    buyer         TEXT NOT NULL,
+    peer_pubkey   TEXT NOT NULL DEFAULT '',
+    take          TEXT NOT NULL,
+    note          TEXT NOT NULL DEFAULT '',
+    created       REAL NOT NULL,
+    expires       REAL NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'open',
+    offer_id      TEXT NOT NULL DEFAULT '',
+    txid          TEXT NOT NULL DEFAULT '',
+    error         TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS bid_open ON bid(network, direction, status);
 CREATE TABLE IF NOT EXISTS cursor (
     network TEXT PRIMARY KEY,
     last    INTEGER NOT NULL
@@ -384,6 +406,49 @@ class Offers:
             row = conn.execute("SELECT * FROM offer WHERE id = ?",
                                (str(offer_id),)).fetchone()
             return _offer_row(row) if row else None
+
+    # --- offers made on an NFT, in either direction ------------------------
+
+    def add_bid(self, bid: dict) -> None:
+        with self._open() as conn:
+            conn.execute(
+                "INSERT INTO bid(id, network, direction, inscription, number, owner, "
+                "buyer, peer_pubkey, take, note, created, expires) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (bid["id"], bid["network"], bid["direction"], bid["inscription"],
+                 bid.get("number"), bid["owner"], bid["buyer"],
+                 bid.get("peer_pubkey", ""), json.dumps(bid["take"]),
+                 str(bid.get("note", ""))[:200], bid["created"], bid["expires"]))
+
+    def bids(self, network: str, direction: str | None = None,
+             status: str | None = None, limit: int = 100) -> list[dict]:
+        sql = "SELECT * FROM bid WHERE network = ?"
+        args: list[Any] = [network]
+        if direction:
+            sql += " AND direction = ?"; args.append(direction)
+        if status:
+            sql += " AND status = ?"; args.append(status)
+        with self._open() as conn:
+            return [_bid_row(r) for r in conn.execute(
+                sql + " ORDER BY created DESC LIMIT ?", args + [int(limit)])]
+
+    def get_bid(self, bid_id: str) -> dict | None:
+        with self._open() as conn:
+            row = conn.execute("SELECT * FROM bid WHERE id = ?",
+                               (str(bid_id),)).fetchone()
+            return _bid_row(row) if row else None
+
+    def close_bid(self, bid_id: str, status: str, offer_id: str = "",
+                  txid: str = "", error: str = "") -> bool:
+        """Close a bid. False if it was not open -- answered twice, or gone."""
+        if status == "open":
+            raise ValueError("that is not a decision")
+        with self._open() as conn:
+            done = conn.execute(
+                "UPDATE bid SET status = ?, offer_id = ?, txid = ?, error = ? "
+                "WHERE id = ? AND status = 'open'",
+                (status, offer_id, txid, str(error)[:500], str(bid_id)))
+            return done.rowcount == 1
 
     def sold_offers(self, network: str) -> list[dict]:
         """Offers that were signed and broadcast, newest first.
@@ -464,6 +529,32 @@ def coins_in(leg: I.Leg) -> int:
     return leg.amount if leg.kind == I.LEG_COINS else 0
 
 
+def _lock_output(rpc: Any, seller: str, give: Any, take: Any,
+                 locked_outs: set) -> dict:
+    """One of the seller's outputs, held until the swap goes or expires.
+
+    It comes back to the seller plus what the buyer pays in coins, less what
+    the seller pays, and has to stay above dust once that is done -- so the
+    smallest output that can carry it is the one taken.
+    """
+    floor = coins_in(give) + MIN_CHANGE - coins_in(take)
+    unspent = [u for u in (rpc.call("listunspent", 1, 9_999_999, [seller]) or [])
+               if (u["txid"], int(u["vout"])) not in locked_outs
+               and u.get("spendable", True)]
+    fitting = sorted((u for u in unspent if int(round(float(u["amount"]) * COIN)) >= floor),
+                     key=lambda u: float(u["amount"]))
+    if not fitting:
+        raise SwapError(f"{seller} has no output worth {max(floor, 0) / COIN:.8f} to swap from"
+                        + (" (all are in open offers)" if unspent != fitting and locked_outs
+                           else ""))
+    chosen = fitting[0]
+    outpoint = {"txid": chosen["txid"], "vout": int(chosen["vout"]),
+                "value": int(round(float(chosen["amount"]) * COIN))}
+    if not rpc.call("lockunspent", False, [{"txid": outpoint["txid"], "vout": outpoint["vout"]}]):
+        raise SwapError("the node would not lock the output")
+    return outpoint
+
+
 def _unsettled(index: Any, offer: dict) -> bool:
     """Whether a sold offer's transaction is still out of the index.
 
@@ -475,6 +566,12 @@ def _unsettled(index: Any, offer: dict) -> bool:
         return index.transaction(offer["txid"]) is None
     except Exception:
         return True
+
+
+def _bid_row(row: Any) -> dict:
+    out = dict(row)
+    out["take"] = json.loads(out["take"]) if out["take"] else {}
+    return out
 
 
 def make_offer(rpc: Any, index: Any, offers: Offers, network: str, shop_row: dict,
@@ -528,30 +625,57 @@ def make_offer(rpc: Any, index: Any, offers: Offers, network: str, shop_row: dic
             and give.property_id == take.property_id:
         raise SwapError("a swap of a token for itself is not a swap")
 
-    # The seller's output comes back to the seller, plus what the buyer pays
-    # in coins, less what the seller pays in coins. It has to stay above
-    # dust once that is done, so an output is picked that can carry it.
-    floor = coins_in(give) + MIN_CHANGE - coins_in(take)
-    unspent = [u for u in (rpc.call("listunspent", 1, 9_999_999, [seller]) or [])
-               if (u["txid"], int(u["vout"])) not in locked_outs
-               and u.get("spendable", True)]
-    fitting = sorted((u for u in unspent if int(round(float(u["amount"]) * COIN)) >= floor),
-                     key=lambda u: float(u["amount"]))
-    if not fitting:
-        raise SwapError(f"{seller} has no output worth {max(floor, 0) / COIN:.8f} to swap from"
-                        + (" (all are in open offers)" if unspent != fitting and locked_outs
-                           else ""))
-    chosen = fitting[0]
-    outpoint = {"txid": chosen["txid"], "vout": int(chosen["vout"]),
-                "value": int(round(float(chosen["amount"]) * COIN))}
-    if not rpc.call("lockunspent", False, [{"txid": outpoint["txid"], "vout": outpoint["vout"]}]):
-        raise SwapError("the node would not lock the output")
+    outpoint = _lock_output(rpc, seller, give, take, locked_outs)
     now = time.time()
     offer = {"id": secrets.token_hex(8), "network": network, "shop": shop_row["txid"],
              "listing": int(listing_no), "seller": seller, "buyer": buyer,
              "buyer_pubkey": buyer_pubkey, "give": leg_json(give, index),
              "take": leg_json(take, index), "outpoint": outpoint,
              "created": now, "expires": now + OFFER_TTL}
+    offers.add(offer)
+    return public(offer)
+
+
+def offer_for_bid(rpc: Any, index: Any, offers: Offers, network: str,
+                  bid: dict, own: list[str]) -> dict:
+    """The seller's half of a swap, for an offer somebody made on an NFT.
+
+    The same offer a shop would make, for an item nobody listed: the holder
+    accepting is the listing. Everything a shop's offer is checked for is
+    checked here too -- the item is still theirs, the buyer holds what they
+    promised, an output is locked to carry it -- because the engine will
+    check the transaction again and an offer that cannot become one is a
+    fee spent on a refusal (D-038).
+    """
+    expire(rpc, offers, network)
+    row = index.inscription(str(bid["inscription"]))
+    if row is None:
+        raise SwapError("no such inscription on this node")
+    seller = row["owner"]
+    if seller not in own:
+        raise SwapError("that is not yours to sell")
+    standing = offers.open_offers(network) + [
+        offer for offer in offers.sold_offers(network) if _unsettled(index, offer)]
+    if row["txid"] in {o["give"]["txid"] for o in standing
+                       if o["give"].get("kind") == "inscription"}:
+        raise SwapError("that item is already offered to somebody else")
+    locked_outs = {(o["outpoint"]["txid"], o["outpoint"]["vout"]) for o in standing}
+
+    give = I.Leg(I.LEG_INSCRIPTION, txid=bytes.fromhex(row["txid"]))
+    take = leg_from_json(bid["take"])
+    buyer = str(bid["buyer"])
+    for who, leg, name in ((seller, give, "you"), (buyer, take, "the buyer")):
+        problem = holds(index, rpc, who, leg)
+        if problem:
+            raise SwapError(f"{name} cannot give that: {problem}")
+    outpoint = _lock_output(rpc, seller, give, take, locked_outs)
+    now = time.time()
+    offer = {"id": secrets.token_hex(8), "network": network,
+             "shop": row["txid"],           # the item stands in for the shop
+             "listing": 0, "seller": seller, "buyer": buyer,
+             "buyer_pubkey": str(bid.get("peer_pubkey", "")),
+             "give": leg_json(give, index), "take": leg_json(take, index),
+             "outpoint": outpoint, "created": now, "expires": now + OFFER_TTL}
     offers.add(offer)
     return public(offer)
 

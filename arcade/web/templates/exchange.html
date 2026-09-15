@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% import "_chains.html" as chains %}
+{% block title %}Exchange · DogecoinArcade{% endblock %}
+{% block body %}
+{% macro tabs(current) %}
+<nav class="row" style="gap:6px;margin:0 0 16px">
+  <a class="btn {{ 'on' if current == 'offers' else 'ghost' }} small" href="/exchange?tab=offers">Offers</a>
+  <a class="btn {{ 'on' if current == 'mintpads' else 'ghost' }} small" href="/exchange?tab=mintpads">Mintpads</a>
+  <a class="btn {{ 'on' if current == 'tokens' else 'ghost' }} small" href="/exchange?tab=tokens">Tokens</a>
+  <a class="btn {{ 'on' if current == 'market' else 'ghost' }} small" href="/exchange?tab=market">Marketplace</a>
+</nav>
+{% endmacro %}
+
+{% macro shopcard(s, what) %}
+<div class="card">
+  <div class="row" style="align-items:baseline">
+    <strong>{{ s.name or ('#' ~ '{:,}'.format(s.number)) }}</strong>
+    <span class="muted" style="margin-left:auto">#{{ "{:,}".format(s.number) }}</span>
+  </div>
+  <table>
+    {% for l in s.listings %}
+    <tr><td>{{ l.text }}</td>
+        <td class="muted" style="text-align:right;white-space:nowrap">
+          {%- if l.available %}{{ l.available }}{% elif l.give.left is defined %}
+            {{ "{:,}".format(l.give.left) }} left{% endif -%}</td></tr>
+    {% endfor %}
+    <tr><td class="muted" style="width:74px">Sold by</td>
+        <td class="mono" style="word-break:break-all">
+          {%- if s.mine %}<strong>you</strong>
+          {%- elif tags.get(s.seller) %}<strong>@{{ tags[s.seller] }}</strong>
+          {%- else %}{{ s.seller }}{% endif %}</td></tr>
+  </table>
+  <div class="row" style="margin-top:8px">
+    <a class="btn {{ 'ghost' if s.mine else '' }} small"
+       href="/inscriptions/{{ s.txid }}/view">{{ 'Open it' if s.mine else what }}</a>
+  </div>
+</div>
+{% endmacro %}
+
+<h1>Exchange</h1>
+{{ tabs(tab) }}
+
+{% if node_error %}<div class="msg err">{{ node_error }}</div>{% endif %}
+
+{% if tab == 'offers' %}
+  <p class="sub">What somebody has offered for an NFT of yours, and what you
+    have offered for somebody else's. An offer can be made on any NFT, whether
+    or not its owner has put it up for sale.</p>
+
+  <h2>Offered to you{% if offers_in %} &mdash; {{ offers_in|length }}{% endif %}</h2>
+  {% if not offers_in %}
+    <div class="panel empty"><p>Nothing yet.</p>
+      <p class="muted" style="font-size:.86rem">An offer arrives as a message on
+        the chain, so it takes a block to appear.</p></div>
+  {% else %}
+  <div class="panel">
+    <table>
+      <tr><th>NFT</th><th>Offered</th><th>By</th><th></th></tr>
+      {% for b in offers_in %}
+      <tr>
+        <td><a href="/inscriptions/{{ b.inscription }}/view">
+          {%- if b.number is not none %}#{{ "{:,}".format(b.number) }}
+          {%- else %}{{ b.inscription[:12] }}…{% endif %}</a></td>
+        <td><strong>{{ b.take.display or b.take.amount }}</strong>
+          {%- if b.note %}<div class="muted" style="font-size:.82rem"><q>{{ b.note }}</q></div>{% endif %}</td>
+        <td class="mono" style="font-size:.8rem;word-break:break-all">{{ b.buyer }}</td>
+        <td style="text-align:right;white-space:nowrap">
+          {% if b.status == 'open' %}
+          <form method="post" action="/exchange/offers/{{ b.id }}" class="row"
+                style="gap:6px;justify-content:flex-end;margin:0">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}">
+            <button type="submit" name="decision" value="accept" class="small">Accept</button>
+            <button type="submit" name="decision" value="refuse" class="ghost small">Refuse</button>
+          </form>
+          {% else %}<span class="muted">{{ b.status }}</span>
+            {% if b.error %}<div class="muted" style="font-size:.8rem">{{ b.error }}</div>{% endif %}
+          {% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+
+  <h2>Yours, outstanding</h2>
+  {% if not offers_out %}
+    <div class="panel empty"><p>You have not offered for anything.</p>
+      <p class="muted" style="font-size:.86rem">Open any NFT you do not own and
+        press <strong>Make offer</strong>.</p></div>
+  {% else %}
+  <div class="panel">
+    <table>
+      <tr><th>NFT</th><th>You offered</th><th>Holder</th><th>State</th></tr>
+      {% for b in offers_out %}
+      <tr><td><a href="/inscriptions/{{ b.inscription }}/view">
+            {%- if b.number is not none %}#{{ "{:,}".format(b.number) }}
+            {%- else %}{{ b.inscription[:12] }}…{% endif %}</a></td>
+          <td>{{ b.take.display or b.take.amount }}</td>
+          <td class="mono" style="font-size:.8rem;word-break:break-all">{{ b.owner }}</td>
+          <td>{{ b.status }}{% if b.txid %}
+            <span class="mono muted" style="font-size:.78rem">{{ b.txid[:16] }}…</span>{% endif %}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+
+{% elif tab == 'mintpads' %}
+  <p class="sub">Every mintpad on {{ chain.label|lower }} with pieces left.
+    A pad is an inscription: it appears here because it is on the chain, not
+    because anybody listed it.</p>
+  {% if not mintpads %}
+    <div class="panel empty"><p>No mintpads on this chain yet.</p>
+      <p class="muted" style="font-size:.86rem">Inscribe a collection with the
+        mintpad box ticked and it appears here by itself.</p></div>
+  {% else %}
+    <div class="cards">{% for s in mintpads %}{{ shopcard(s, 'Mint') }}{% endfor %}</div>
+  {% endif %}
+
+{% elif tab == 'tokens' %}
+  <p class="sub">Tokens being sold, and what for. These are shops: a price the
+    seller set, not a book of bids and asks — see the guide.</p>
+  {% if not tokens %}
+    <div class="panel empty"><p>Nothing on {{ chain.label|lower }} is selling tokens.</p></div>
+  {% else %}
+    <div class="cards">{% for s in tokens %}{{ shopcard(s, 'Buy') }}{% endfor %}</div>
+  {% endif %}
+
+{% else %}
+  <p class="sub">Single NFTs for sale, collection or not. Any NFT can be
+    offered for even when it is not listed — open it and press Make offer.</p>
+  {% if not market %}
+    <div class="panel empty"><p>No NFTs are listed for sale on this chain.</p></div>
+  {% else %}
+    <div class="cards">{% for s in market %}{{ shopcard(s, 'Buy') }}{% endfor %}</div>
+  {% endif %}
+{% endif %}
+{% endblock %}
