@@ -4250,6 +4250,27 @@ def create_app(state: AppState) -> FastAPI:
 
     EXCHANGE_TABS = ("offers", "mintpads", "tokens", "market")
 
+    def _pairs(index, trades) -> list[dict[str, Any]]:
+        """Tokens against the coin, most traded first."""
+        wanted = {p["property_id"]: p for p in _token_props(index)}
+        out = []
+        for pid, prop in wanted.items():
+            points = chartlib.token_prices(trades, pid)
+            book = index.book(pid, limit=1)
+            if not points and not (book["asks"] or book["bids"]):
+                continue
+            stats = chartlib.last_and_change(points)
+            out.append({
+                "property_id": pid, "name": prop["name"],
+                "divisible": prop["divisible"],
+                "last": stats["last"], "change": stats["change"],
+                "trades": stats["trades"], "volume": stats["volume"],
+                "ask": book["asks"][0]["price"] if book["asks"] else None,
+                "bid": book["bids"][0]["price"] if book["bids"] else None,
+            })
+        out.sort(key=lambda p: (-p["trades"], p["name"]))
+        return out
+
     def _token_props(index) -> list[dict[str, Any]]:
         try:
             return index.properties()
@@ -4299,6 +4320,127 @@ def create_app(state: AppState) -> FastAPI:
                         "mine": False, "listings": listings})
         return out
 
+    @app.get("/exchange/pair/{property_id}", response_class=HTMLResponse)
+    def exchange_pair(request: Request, property_id: int):
+        """One pair: its chart, its book, and the form that adds to the book."""
+        chain, index = _token_chain()
+        prop = index.property(property_id)
+        if prop is None:
+            state.flash(f"there is no token {property_id}", "err")
+            return RedirectResponse("/exchange?tab=tokens", status_code=303)
+        try:
+            trades = index.trades()
+        except Exception:
+            trades = []
+        points = chartlib.token_prices(trades, property_id)
+        book = index.book(property_id)
+        owned, held, coins = set(), 0, 0.0
+        try:
+            with chain.rpc() as rpc:
+                owned = set(_ledger_addresses(rpc))
+                coins = float(rpc.call("getbalance") or 0)
+            held = sum(index.balance(a, property_id) for a in owned)
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+        for side in ("asks", "bids"):
+            for order in book[side]:
+                order["mine"] = order["address"] in owned
+                order["price_shown"] = f"{float(order['price']):.8f}".rstrip("0").rstrip(".")
+                order["tokens_shown"] = format_amount(order["tokens"], prop["divisible"])
+                order["coins_shown"] = format_amount(order["coins"], True)
+        return render(request, "pair.html", chain=chain, prop=prop, book=book,
+                      stats=chartlib.last_and_change(points),
+                      slots=chartlib.candles(points),
+                      recent=sorted(points, key=lambda p: -p["when"])[:12],
+                      held=format_amount(held, prop["divisible"]), held_units=held,
+                      coins=coins, mine=index.orders_of(sorted(owned)),
+                      tags=_tags_for([o["address"] for o in book["asks"] + book["bids"]]))
+
+    @app.post("/exchange/order")
+    def place_order(request: Request, property_id: str = Form(""),
+                    side: str = Form("ask"), amount: str = Form(""),
+                    price: str = Form(""), csrf_token: str = Form("")):
+        """Put an order on the book: this much, at this price, until cancelled.
+
+        Two integers, never a float: the amount of token and the amount of
+        coin are what go on the chain, and the price is the ratio between
+        them. What is sold is held back by the engine if it is a token; a bid
+        holds nothing, because coins cannot be reserved (D-048).
+        """
+        check_csrf(csrf_token)
+        chain, index = _token_chain()
+        try:
+            prop = index.property(int(property_id or 0))
+            if prop is None:
+                raise tokenlib.TokenError(f"there is no token {property_id}.")
+            units = parse_amount(amount, prop["divisible"])
+            each = parse_amount(price, True)
+            if units <= 0 or each <= 0:
+                raise tokenlib.TokenError("an amount and a price, both above zero.")
+            coins = units * each // COIN
+            if coins <= 0:
+                raise tokenlib.TokenError(
+                    "that comes to less than a satoshi in coins; raise the price "
+                    "or the amount.")
+            with chain.rpc() as rpc:
+                own = _ledger_addresses(rpc)
+                home = state.home_address(chain)
+                if side == "ask":
+                    held = index.balance(home, prop["property_id"])
+                    if held < units:
+                        raise tokenlib.TokenError(
+                            f"{home} holds "
+                            f"{format_amount(held, prop['divisible'])} "
+                            f"{prop['name']}, not {format_amount(units, prop['divisible'])}.")
+                    message = P.MetaDExTrade(
+                        property_id_for_sale=prop["property_id"], amount_for_sale=units,
+                        property_id_desired=0, amount_desired=coins)
+                else:
+                    message = P.MetaDExTrade(
+                        property_id_for_sale=0, amount_for_sale=coins,
+                        property_id_desired=prop["property_id"], amount_desired=units)
+                sender = tokenlib.TokenSender(rpc, chain.params)
+                prepared = sender.prepare(home, message.encode())
+                txid = sender.broadcast(prepared)
+            state.flash(
+                f"Order on the book in {txid}: "
+                f"{'sell' if side == 'ask' else 'buy'} "
+                f"{format_amount(units, prop['divisible'])} {prop['name']} for "
+                f"{format_amount(coins, True)} coins. It stands until you cancel "
+                f"it.", "ok")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse(f"/exchange/pair/{property_id}", status_code=303)
+
+    @app.post("/exchange/order/cancel")
+    def cancel_orders(request: Request, property_id: str = Form(""),
+                      side: str = Form(""), csrf_token: str = Form("")):
+        """Take this wallet's orders off one side of one pair."""
+        check_csrf(csrf_token)
+        chain, index = _token_chain()
+        try:
+            pid = int(property_id or 0)
+            if index.property(pid) is None:
+                raise tokenlib.TokenError(f"there is no token {property_id}.")
+            sale, want = (pid, 0) if side == "ask" else (0, pid)
+            message = P.MetaDExCancelPair(property_id_for_sale=sale,
+                                          property_id_desired=want)
+            with chain.rpc() as rpc:
+                sender = tokenlib.TokenSender(rpc, chain.params)
+                prepared = sender.prepare(state.home_address(chain), message.encode())
+                txid = sender.broadcast(prepared)
+            state.flash(f"Cancelling in {txid}. What it was holding comes back "
+                        f"when the block lands.", "ok")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse(f"/exchange/pair/{property_id}", status_code=303)
+
     @app.post("/exchange/offer", response_class=HTMLResponse)
     def make_offer_on(request: Request, inscription: str = Form(""),
                       amount: str = Form(""), kind: str = Form("coins"),
@@ -4343,6 +4485,17 @@ def create_app(state: AppState) -> FastAPI:
                 sender = tokenlib.TokenSender(rpc, chain.params)
                 prepared = sender.prepare(buyer, payload)
                 txid = sender.broadcast(prepared)
+            # Written down here as well as on the chain. The chain is what an
+            # answer is checked against (D-049) -- this row is so the wallet
+            # can show what it has asked for before the block lands, and so
+            # a reply that arrives first still finds its terms.
+            now = time.time()
+            state.offers.add_bid({
+                "id": txid, "network": chain.network, "direction": "out",
+                "inscription": row["txid"], "number": row["number"],
+                "owner": row["owner"], "buyer": buyer, "peer_pubkey": "",
+                "take": swaplib.leg_json(take, index),
+                "created": now, "expires": now + swaplib.OFFER_TTL * 24})
             state.flash(f"Offer made in {txid}. It stands from the block it is "
                         f"in; whoever holds it sees it in their own Exchange.", "ok")
             return RedirectResponse("/exchange?tab=offers", status_code=303)
@@ -4484,6 +4637,7 @@ def create_app(state: AppState) -> FastAPI:
         data["mintpads"] = [s for s in data["shops"] if selling(s, "random")]
         data["market"] = [s for s in data["shops"] if selling(s, "inscription")]
         data["tokens"] = [s for s in data["shops"] if selling(s, "token")]
+        data["pairs"] = data.get("pairs", [])
         # What has actually traded, and what it went for. Read from the swaps
         # the chain holds, not from a book -- there is no book (D-039).
         data["charts"] = []
@@ -4492,13 +4646,10 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             trades = []
         if tab == "tokens":
-            for prop in _token_props(index)[:6]:
-                points = chartlib.token_prices(trades, prop["property_id"])
-                if points:
-                    data["charts"].append({
-                        "title": prop["name"], "unit": f"{chain.label} coins each",
-                        "stats": chartlib.summary(points),
-                        "slots": chartlib.candles(points)})
+            # Every token paired against the coin: the ones with a book and
+            # the ones that have traded, last price and the day's move
+            # (D-048). Clicking one opens its own page.
+            data["pairs"] = _pairs(index, trades)
         elif tab == "market":
             # A collection is a market of its own: what a Goofball goes for
             # says nothing about what a Doge Punk goes for (D-040).
@@ -4529,6 +4680,25 @@ def create_app(state: AppState) -> FastAPI:
             data["offers_out"] = index.offers_by(sorted(data["owned"]))
             for entry in data["offers_in"] + data["offers_out"]:
                 entry["price"] = swaplib.describe_leg(_take_json(entry, index))
+            # An offer already accepted is waiting for the buyer's wallet to
+            # sign, not waiting for a second Accept. Drawing the button again
+            # was how somebody pressed it twice and got told their own offer
+            # belonged to somebody else (D-049).
+            standing = {}
+            for offer in state.offers.open_offers(chain.network):
+                if offer["give"].get("kind") == "inscription":
+                    standing[offer["give"]["txid"]] = offer
+            for offer in state.offers.sold_offers(chain.network):
+                if offer["give"].get("kind") == "inscription":
+                    standing.setdefault(offer["give"]["txid"], offer)
+            for entry in data["offers_in"]:
+                held = standing.get(entry["inscription"])
+                entry["accepted"] = bool(held and held["buyer"] == entry["buyer"])
+                entry["held_for"] = held["buyer"] if held else ""
+                entry["until"] = (time.strftime("%H:%M", time.localtime(held["expires"]))
+                                  if held else "")
+                entry["settled"] = bool(held and held.get("status") == "sent")
+                entry["swap_txid"] = (held or {}).get("txid", "")
         except Exception as exc:
             data["node_error"] = data["node_error"] or str(exc)
         return render(request, "exchange.html", **data)

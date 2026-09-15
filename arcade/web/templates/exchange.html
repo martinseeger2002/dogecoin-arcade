@@ -76,11 +76,24 @@
           {%- if tags.get(b.buyer) %}<strong>@{{ tags[b.buyer] }}</strong>
           {%- else %}{{ b.buyer }}{% endif %}</td>
         <td style="text-align:right;white-space:nowrap">
+          {% if b.settled %}
+            <span class="pill ok">sold</span>
+            <div class="mono muted" style="font-size:.76rem">{{ b.swap_txid[:12] }}…</div>
+          {% elif b.accepted %}
+            <span class="muted">accepted &mdash; waiting for
+              {% if tags.get(b.buyer) %}@{{ tags[b.buyer] }}{% else %}their wallet{% endif %}
+              to sign</span>
+            <div class="muted" style="font-size:.76rem">held until {{ b.until }}</div>
+          {% elif b.held_for %}
+            <span class="muted">that piece is reserved for another buyer
+              until {{ b.until }}</span>
+          {% else %}
           <form method="post" action="/exchange/offers/{{ b.txid }}" class="row"
                 style="gap:6px;justify-content:flex-end;margin:0">
             <input type="hidden" name="csrf_token" value="{{ csrf }}">
             <button type="submit" name="decision" value="accept" class="small">Accept</button>
-          </form></td>
+          </form>
+          {% endif %}</td>
       </tr>
       {% endfor %}
     </table>
@@ -125,15 +138,40 @@
   {% endif %}
 
 {% elif tab == 'tokens' %}
-  <p class="sub">Tokens being sold, and what for. These are shops: a price the
-    seller set, not a book of bids and asks — see the guide.</p>
-  {% for c in charts %}
-  <div class="panel" style="margin-bottom:14px">
-    <h3 style="margin:0 0 8px">{{ c.title }}</h3>
-    {{ chart.headline(c.stats, c.unit) }}
-    {{ chart.candles(c.slots, c.unit) }}
+  <p class="sub">Tokens paired against {{ chain.label }} coins. Click a pair for
+    its chart, its book and the form that adds to it.</p>
+  {% if pairs %}
+  <div class="panel">
+    <table class="wallets">
+      <tr class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.06em">
+        <td>Pair</td><td style="text-align:right">Last</td>
+        <td style="text-align:right">24h</td>
+        <td style="text-align:right">Bid / Ask</td></tr>
+      {% for p in pairs %}
+      <tr>
+        <td><a href="/exchange/pair/{{ p.property_id }}"><strong>{{ p.name }}</strong></a>
+          <span class="muted" style="font-size:.78rem">/ coins &middot; #{{ p.property_id }}</span></td>
+        <td class="mono" style="text-align:right">
+          {%- if p.last is not none %}{{ p.last }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td style="text-align:right">
+          {%- if p.change is not none %}<span style="color:{{ 'var(--ok)' if p.change >= 0 else 'var(--bad)' }}">
+            {{ '+' if p.change >= 0 }}{{ "%.1f"|format(p.change) }}%</span>
+          {%- else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="mono muted" style="text-align:right;font-size:.82rem">
+          {%- if p.bid %}{{ "%.8f"|format(p.bid|float) }}{% else %}—{% endif %} /
+          {%- if p.ask %} {{ "%.8f"|format(p.ask|float) }}{% else %} —{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
   </div>
-  {% endfor %}
+  {% else %}
+  <div class="panel empty"><p>No pair has an order or a trade yet on
+    {{ chain.label|lower }}.</p>
+    <p class="muted" style="font-size:.86rem">Open a token from the
+      <a href="/tokens">Tokens</a> page and put an order on its book.</p></div>
+  {% endif %}
+
+  <h2>Shops selling tokens</h2>
   {% if not tokens %}
     <div class="panel empty"><p>Nothing on {{ chain.label|lower }} is selling tokens.</p></div>
   {% else %}

@@ -368,3 +368,67 @@ def test_an_offer_can_only_be_made_with_what_this_wallet_holds(web, monkeypatch)
     # And the form no longer offers a token picker it cannot fill.
     page = app.get(f"/inscriptions/{txid}/view").text
     assert 'name="property_id"' not in page, "this wallet holds no tokens"
+
+
+def test_an_order_goes_on_the_book_and_can_be_taken_off(web):
+    """The book is on the chain: an order rests until it is cancelled, and
+    what it sells is held back meanwhile (D-048)."""
+    app, state, node, alice, bob = web
+    csrf = state.csrf_token
+    form = dict(csrf_token=csrf, sender=alice, name="Web Token", supply="1000",
+                kind="fixed", units="divisible")
+    txid = shown(app.post("/tokens/create", data=form).text, "txid")
+    app.post("/tokens/create", data={**form, "confirmed": txid}, follow_redirects=False)
+    mine_and_index(node, state)
+    index = state.token_index(state.ledger)
+    (prop,) = index.properties()
+    pid = str(prop["property_id"])
+    monkey = type(state)
+    home = index.balances([alice])[0]["address"]
+
+    # The wallet's home address is the one that holds it in these tests.
+    import unittest.mock as mock
+    with mock.patch.object(monkey, "home_address", lambda self, chain: home):
+        page = app.post("/exchange/order",
+                        data=dict(csrf_token=csrf, property_id=pid, side="ask",
+                                  amount="100", price="0.5"),
+                        follow_redirects=False)
+        assert page.status_code == 303
+        assert "Order on the book" in (state.notice or ""), state.notice
+        mine_and_index(node, state)
+
+        book = index.book(prop["property_id"])
+        assert len(book["asks"]) == 1 and not book["bids"]
+        (order,) = book["asks"]
+        assert order["tokens"] == 100 * 10**8 and order["coins"] == 50 * 10**8
+        assert float(order["price"]) == 0.5
+        assert index.balance(home, prop["property_id"]) == 900 * 10**8, \
+            "what is on the book is not also spendable"
+
+        # It shows on the pair page, and on the list of pairs.
+        body = app.get(f"/exchange/pair/{pid}").text
+        assert "Asks" in body and "0.5" in body and "Place an order" in body
+        assert "Web Token" in app.get("/exchange?tab=tokens").text
+
+        # Selling more than is left, counting the order, is refused.
+        app.post("/exchange/order",
+                 data=dict(csrf_token=csrf, property_id=pid, side="ask",
+                           amount="950", price="0.5"), follow_redirects=False)
+        mine_and_index(node, state)
+        assert len(index.book(prop["property_id"])["asks"]) == 1
+
+        # A bid holds nothing back and needs no tokens at all.
+        app.post("/exchange/order",
+                 data=dict(csrf_token=csrf, property_id=pid, side="bid",
+                           amount="10", price="0.4"), follow_redirects=False)
+        mine_and_index(node, state)
+        book = index.book(prop["property_id"])
+        assert len(book["bids"]) == 1 and book["bids"][0]["reserved"] == 0
+
+        # Cancelling gives the tokens back.
+        app.post("/exchange/order/cancel",
+                 data=dict(csrf_token=csrf, property_id=pid, side="ask"),
+                 follow_redirects=False)
+        mine_and_index(node, state)
+        assert index.book(prop["property_id"])["asks"] == []
+        assert index.balance(home, prop["property_id"]) == 1000 * 10**8

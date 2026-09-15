@@ -186,6 +186,13 @@ class Shopkeeper:
             return None
 
         mine = offers.get_bid(bid_id)
+        if mine is None:
+            # No note of it here, but an offer is on the chain and the chain
+            # is what an answer is checked against. A wallet reinstalled
+            # since it made the offer, or one whose note was never written
+            # (it was not, for a day -- D-049), still knows what it asked
+            # for.
+            mine = _bid_from_chain(rpc, index, bid_id)
         if mine is None or mine["direction"] != "out" or mine["status"] != "open":
             return None
         if not question.get("ok"):
@@ -249,6 +256,30 @@ def _write_it_down(state: Any, chain: Any, offer: dict, txid: str) -> None:
             peer=offer.get("buyer_pubkey", ""))
     except Exception:
         log.warning("a sale was made but could not be written down", exc_info=True)
+
+
+def _bid_from_chain(rpc: Any, index: Any, txid: str) -> dict | None:
+    """An offer this wallet made, read back off the chain.
+
+    Returns it in the shape a local bid row has, so the check that follows
+    does not care where the terms came from -- only that they are the terms
+    that were offered.
+    """
+    try:
+        found = index.offer(txid)
+    except Exception:
+        return None
+    if found is None or found["buyer"] not in _own_addresses(rpc):
+        return None
+    take = {"kind": {2: "token", 3: "coins"}.get(int(found["take_kind"]), "unknown"),
+            "propertyid": found["take_property"] or 0}
+    if take["kind"] == "token":
+        take["units"] = int(found["take_amount"])
+    else:
+        take["sats"] = int(found["take_amount"])
+    return {"id": txid, "direction": "out", "status": "open",
+            "inscription": found["inscription"], "owner": found["owner"],
+            "buyer": found["buyer"], "take": take, "peer_pubkey": ""}
 
 
 def _own_addresses(rpc: Any) -> list[str]:

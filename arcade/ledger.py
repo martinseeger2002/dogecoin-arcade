@@ -540,6 +540,52 @@ class LedgerIndex:
                 f"ORDER BY c.edition IS NULL, c.edition, i.number LIMIT ? OFFSET ?",
                 (creator, name, max(1, min(limit, 500)), max(0, offset)))]
 
+    def book(self, property_id: int, limit: int = 50) -> dict[str, list[dict]]:
+        """One pair's book: asks cheapest first, bids dearest first.
+
+        Price is worked out from two integers and kept as a Fraction until
+        the last moment, because a book sorted on floats puts orders in an
+        order nobody can reproduce (D-048).
+        """
+        from fractions import Fraction
+
+        with self.open() as db:
+            rows = [dict(r) for r in db.conn.execute(
+                "SELECT * FROM book_order WHERE sale_property = ? OR want_property = ?",
+                (property_id, property_id))]
+        asks, bids = [], []
+        for row in rows:
+            selling_token = row["sale_property"] == property_id
+            tokens = row["sale_amount"] if selling_token else row["want_amount"]
+            coins = row["want_amount"] if selling_token else row["sale_amount"]
+            if not tokens:
+                continue
+            row["tokens"] = tokens
+            row["coins"] = coins
+            row["price"] = Fraction(coins, tokens)
+            (asks if selling_token else bids).append(row)
+        asks.sort(key=lambda r: (r["price"], r["block_height"], r["position"]))
+        bids.sort(key=lambda r: (-r["price"], r["block_height"], r["position"]))
+        return {"asks": asks[:limit], "bids": bids[:limit]}
+
+    def book_pairs(self) -> list[int]:
+        """Every token with an order standing against the coin."""
+        with self.open() as db:
+            rows = db.conn.execute(
+                "SELECT DISTINCT CASE WHEN sale_property = 0 THEN want_property "
+                "ELSE sale_property END AS pid FROM book_order").fetchall()
+        return [int(r["pid"]) for r in rows if r["pid"]]
+
+    def orders_of(self, addresses: list[str]) -> list[dict]:
+        """This wallet's own standing orders, newest first."""
+        if not addresses:
+            return []
+        marks = ",".join("?" * len(addresses))
+        with self.open() as db:
+            return [dict(r) for r in db.conn.execute(
+                f"SELECT * FROM book_order WHERE address IN ({marks}) "
+                f"ORDER BY block_height DESC, position DESC", tuple(addresses))]
+
     def offers_on(self, owners: list[str], limit: int = 100) -> list[dict]:
         """Offers standing against inscriptions these addresses hold.
 
@@ -563,6 +609,22 @@ class LedgerIndex:
                 f"ORDER BY o.block_height DESC, o.position DESC LIMIT ?",
                 tuple(owners) + (max(1, min(limit, 500)),)).fetchall()
         return [dict(row) for row in rows]
+
+    def offer(self, txid: str) -> dict | None:
+        """One offer, by the transaction that made it.
+
+        The chain is what an answer is checked against: a wallet that has
+        lost its own note of an offer, or was reinstalled since, still knows
+        exactly what it asked for, because it is written down where everyone
+        can see it (D-049).
+        """
+        with self.open() as db:
+            row = db.conn.execute(
+                "SELECT o.*, i.number, i.owner, c.collection, c.edition "
+                "FROM nft_offer o JOIN inscription i ON i.txid = o.inscription "
+                "LEFT JOIN collection_item c ON c.txid = o.inscription "
+                "WHERE o.txid = ?", (str(txid),)).fetchone()
+            return dict(row) if row else None
 
     def offers_by(self, buyers: list[str], limit: int = 100) -> list[dict]:
         """Offers these addresses have made, whatever became of them."""

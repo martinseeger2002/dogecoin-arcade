@@ -255,8 +255,17 @@ questions.
 * **Mintpads** — every mintpad with pieces left. A pad appears because it is
   on the chain, not because anybody listed it, and disappears when it mints
   out.
-* **Tokens** — tokens being sold and for what. These are shops at prices
-  their sellers set, not a book of bids and asks.
+* **Tokens** — every token paired against the chain's coin, with its last
+  price and the day's move. Click a pair for its candle chart, its **order
+  book** — asks and bids, best price first — and the form that puts an order
+  on it. An order rests on the chain until it is cancelled.
+  * **An ask holds its tokens back**, so the book cannot show what the seller
+    has since spent. **A bid holds nothing**: no covenant on this chain can
+    reserve coins and still let a wallet spend, so a bid is an intent and the
+    page says so.
+  * **Nothing is matched by the engine.** A fill is a swap — one transaction
+    carrying both legs, which is the only way a coin leg and a token leg move
+    together. The book is what is on offer; the swap is how it settles.
 * **NFTs** — single NFTs for sale, part of a collection or not. An NFT
   that has moved drops off by itself: the listing is read from the chain
   every time, so there is nothing to un-list.
@@ -283,6 +292,9 @@ somebody holding an NFT never asked to be reachable, and most have published
 no key at all, so the holder's own wallet finds the offer by watching its own
 things — any address, no announcement needed. It fits one OP_RETURN, so it
 costs a flat fee and locks nothing.
+
+An offer already accepted says so, and says who it is waiting for and until
+when, rather than offering to accept it again.
 
 It is not a PSBT — the buyer cannot build the transaction, because the
 seller's own output has to be its first input. The holder's *Accept* builds
@@ -520,8 +532,8 @@ forwarding. The mempool already gossips to every node in seconds.
 * **No encrypted messaging on mainnet.** Testnet only, deliberately (D-010).
 * **No send-to-owners** (Omni type 3). The engine does not implement it and a
   transaction of that type would stop the index.
-* **No order book.** A shop sells at the price its inscription says, to
-  whoever comes, and an offer is made on one NFT at a time. Nothing matches
-  bids to asks; the Exchange's Tokens tab is a list of shops, not a book.
+* **No automatic matching.** There is an order book, but the engine does not
+  cross it: with the chain's own coin on one side, somebody has to sign, so a
+  fill is a swap between two wallets rather than a match made by the rules.
 * **It cannot read your sent messages back off the chain.** Nothing can. That
   is what sealing to the recipient means.

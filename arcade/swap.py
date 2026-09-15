@@ -682,9 +682,22 @@ def offer_for_bid(rpc: Any, index: Any, offers: Offers, network: str,
         raise SwapError("that is not yours to sell")
     standing = offers.open_offers(network) + [
         offer for offer in offers.sold_offers(network) if _unsettled(index, offer)]
-    if row["txid"] in {o["give"]["txid"] for o in standing
-                       if o["give"].get("kind") == "inscription"}:
-        raise SwapError("that item is already offered to somebody else")
+    already = [o for o in standing if o["give"].get("kind") == "inscription"
+               and o["give"]["txid"] == row["txid"]]
+    if already:
+        # Usually this IS the same buyer pressing Accept twice, because the
+        # page drew the button again. Say which it is: "somebody else" when
+        # it is somebody else, and "you already accepted this" when it is
+        # not (D-049).
+        held = already[0]
+        when = time.strftime("%H:%M", time.localtime(held["expires"]))
+        if held["buyer"] == str(bid.get("buyer") or ""):
+            raise SwapError(
+                f"you have already accepted this offer -- it is reserved for "
+                f"{held['buyer']} until {when}, and their wallet has to sign "
+                f"before it can go")
+        raise SwapError(
+            f"that item is offered to somebody else until {when}")
     locked_outs = {(o["outpoint"]["txid"], o["outpoint"]["vout"]) for o in standing}
 
     give = I.Leg(I.LEG_INSCRIPTION, txid=bytes.fromhex(row["txid"]))

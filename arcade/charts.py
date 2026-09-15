@@ -180,6 +180,30 @@ def candles(points: Iterable[dict], buckets: int = DEFAULT_BUCKETS,
     return slots
 
 
+def last_and_change(points: list[dict], now: float | None = None,
+                    window: int = DAY) -> dict[str, Any]:
+    """The last price, and how far it has moved in a day.
+
+    The comparison is the last trade BEFORE the window, not the first inside
+    it: a pair that traded once yesterday and once today has moved, and a
+    pair whose only trade is inside the window has not moved at all -- it has
+    a price and nothing to compare it with (D-048).
+    """
+    import time as _time
+
+    if not points:
+        return {"last": None, "change": None, "trades": 0, "volume": 0.0}
+    now = _time.time() if now is None else now
+    ordered = sorted(points, key=lambda p: (p["when"], p.get("height", 0)))
+    inside = [p for p in ordered if p["when"] >= now - window]
+    before = [p for p in ordered if p["when"] < now - window]
+    last = ordered[-1]["price"]
+    was = before[-1]["price"] if before else (inside[0]["price"] if inside else None)
+    change = None if not was or not before else (last - was) / was * 100
+    return {"last": last, "change": change, "trades": len(inside),
+            "volume": sum(float(p.get("size") or 0) for p in inside)}
+
+
 def summary(points: list[dict]) -> dict[str, Any]:
     """What the chart says in words: last, and the move over its span."""
     if not points:

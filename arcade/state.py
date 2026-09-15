@@ -175,6 +175,28 @@ CREATE TABLE IF NOT EXISTS tag (
     position      INTEGER NOT NULL
 );
 
+-- The order book. An order is a standing, public instruction: this address
+-- will sell (or buy) this much of a token at this price, until it is
+-- cancelled or it can no longer be honoured. Price is a pair of integers and
+-- is never a float: amount_desired / amount_for_sale, exact (D-048).
+--
+-- Property 0 is the chain's own coin. Omni has no such id, because Omni's
+-- MetaDEx pairs two tokens and leaves the native coin to its older DEx; here
+-- the coin is one side of every pair, so it needs a name.
+CREATE TABLE IF NOT EXISTS book_order (
+    txid          TEXT    PRIMARY KEY,
+    block_height  INTEGER NOT NULL,
+    position      INTEGER NOT NULL,
+    address       TEXT    NOT NULL,
+    sale_property INTEGER NOT NULL,
+    sale_amount   INTEGER NOT NULL,     -- what is left of it
+    want_property INTEGER NOT NULL,
+    want_amount   INTEGER NOT NULL,     -- for what is left, at the same price
+    reserved      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS book_order_pair_idx
+    ON book_order(sale_property, want_property);
+
 -- An offer for somebody's inscription, made in public (D-042). Said on the
 -- chain because a holder who never published a key cannot be messaged, and
 -- never asked to be. Nothing is locked by one: it is an offer.
@@ -205,6 +227,7 @@ def install_schema(db: Database) -> None:
     register_journalled_table("tag", ("tag",))
     register_journalled_table("inscription", ("txid",))
     register_journalled_table("nft_offer", ("txid",))
+    register_journalled_table("book_order", ("txid",))
     register_journalled_table("inscription_chunk",
                               ("sender", "inscription_id", "countdown"))
     register_journalled_table("collection_item", ("txid",))
@@ -387,6 +410,9 @@ class Engine:
             P.DeactivateFeature: self._deactivate_feature,
             P.Alert: self._alert,
             P.AnyData: self._any_data,
+            P.MetaDExTrade: self._book_order,
+            P.MetaDExCancelPrice: self._book_cancel_price,
+            P.MetaDExCancelPair: self._book_cancel_pair,
         }.get(type(message))
 
         if handler is None:
@@ -628,6 +654,116 @@ class Engine:
             self._offer(rtx, parsed)
         else:
             self._inscription_chunk(rtx, parsed)
+
+    # --- types 25-27: the order book ------------------------------------------
+
+    #: Property 0 is the chain's own coin, which has no property row and no
+    #: balance to reserve. Omni has no such id; here the coin is one side of
+    #: every pair, so it needs a name (D-048).
+    COIN_PROPERTY = 0
+
+    def _book_order(self, rtx: ArcadeTransaction, msg: P.MetaDExTrade) -> None:
+        """Type 25. A standing order: this much, at this price, until cancelled.
+
+        What is sold is reserved when it is a token, so the book never shows
+        what the seller has since spent. Coins cannot be reserved -- there is
+        no covenant that would hold them and still let the wallet live -- so
+        an order to BUY is an intent, and whether the coins are there is
+        settled when somebody fills it and the transaction either stands up
+        or does not.
+
+        Nothing is matched here. A fill is a swap: one transaction both sides
+        sign, which is the only way a coin leg and a token leg move together
+        (D-048).
+        """
+        sale, want = msg.property_id_for_sale, msg.property_id_desired
+        if sale == want:
+            raise InvalidTransaction("an order has two different sides")
+        if self.COIN_PROPERTY not in (sale, want):
+            raise InvalidTransaction(
+                "one side of an order is this chain's coin (property 0)")
+        if not 0 < msg.amount_for_sale <= MAX_AMOUNT:
+            raise InvalidTransaction(f"amount {msg.amount_for_sale} out of range")
+        if not 0 < msg.amount_desired <= MAX_AMOUNT:
+            raise InvalidTransaction(f"amount {msg.amount_desired} out of range")
+
+        token = want if sale == self.COIN_PROPERTY else sale
+        if self.get_property(token) is None:
+            raise InvalidTransaction(f"property {token} does not exist")
+
+        reserved = 0
+        if sale != self.COIN_PROPERTY:
+            available = self.get_balance(rtx.sender, sale)["balance"]
+            if available < msg.amount_for_sale:
+                raise InvalidTransaction(
+                    f"{rtx.sender} holds {available} of property {sale}, "
+                    f"not {msg.amount_for_sale}")
+            self._move_to_reserve(rtx.sender, sale, msg.amount_for_sale,
+                                  "metadex_reserve")
+            reserved = msg.amount_for_sale
+
+        self.state.insert("book_order", {
+            "txid": rtx.txid, "block_height": rtx.block_height,
+            "position": rtx.position, "address": rtx.sender,
+            "sale_property": sale, "sale_amount": msg.amount_for_sale,
+            "want_property": want, "want_amount": msg.amount_desired,
+            "reserved": reserved,
+        })
+
+    def _book_cancel_price(self, rtx: ArcadeTransaction,
+                           msg: P.MetaDExCancelPrice) -> None:
+        """Type 26. Cancel this sender's orders on one pair at one exact price.
+
+        Exact, as a pair of integers: 3 for 2 and 6 for 4 are the same price
+        and both are cancelled; 3 for 2 and 3 for 2.000001 are not.
+        """
+        self._cancel_orders(
+            rtx, msg.property_id_for_sale, msg.property_id_desired,
+            price=(msg.amount_desired, msg.amount_for_sale))
+
+    def _book_cancel_pair(self, rtx: ArcadeTransaction,
+                          msg: P.MetaDExCancelPair) -> None:
+        """Type 27. Cancel every order this sender has on one pair."""
+        self._cancel_orders(rtx, msg.property_id_for_sale,
+                            msg.property_id_desired, price=None)
+
+    def _cancel_orders(self, rtx: ArcadeTransaction, sale: int, want: int,
+                       price: tuple[int, int] | None) -> None:
+        rows = self.state.db.conn.execute(
+            "SELECT * FROM book_order WHERE address=? AND sale_property=? "
+            "AND want_property=?", (rtx.sender, sale, want)).fetchall()
+        hit = []
+        for row in rows:
+            if price is not None:
+                # a/b == c/d without dividing anything
+                if price[0] * row["sale_amount"] != price[1] * row["want_amount"]:
+                    continue
+            hit.append(row)
+        if not hit:
+            raise InvalidTransaction("no order of yours matches that")
+        for row in hit:
+            self._close_order(row)
+
+    def _close_order(self, row: Any) -> None:
+        """Take an order off the book and give back whatever it was holding."""
+        if row["reserved"]:
+            self._move_from_reserve(row["address"], row["sale_property"],
+                                    row["reserved"], "metadex_reserve")
+        self.state.delete("book_order", {"txid": row["txid"]})
+
+    def _move_to_reserve(self, address: str, property_id: int, amount: int,
+                         column: str) -> None:
+        balance = self.get_balance(address, property_id)
+        self.state.update("balance", {"address": address, "property_id": property_id},
+                          {"balance": balance["balance"] - amount,
+                           column: balance[column] + amount})
+
+    def _move_from_reserve(self, address: str, property_id: int, amount: int,
+                           column: str) -> None:
+        balance = self.get_balance(address, property_id)
+        self.state.update("balance", {"address": address, "property_id": property_id},
+                          {"balance": balance["balance"] + amount,
+                           column: max(0, balance[column] - amount)})
 
     def _offer(self, rtx: ArcadeTransaction, offer: I.Offer) -> None:
         """Write down an offer for an inscription. Nothing moves.

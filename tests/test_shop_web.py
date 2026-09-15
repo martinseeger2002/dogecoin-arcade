@@ -486,3 +486,42 @@ def test_a_bid_is_marked_signed_only_when_its_answer_goes(shop, monkeypatch):
     keeper.tick()
     assert state.offers.get_bid("o1")["status"] == "open", \
         "nothing went out, so nothing is signed"
+
+
+def test_an_answer_is_checked_against_the_chain_when_the_note_is_missing(shop,
+                                                                         monkeypatch):
+    """An offer is on the chain; a wallet's own note of it is a convenience.
+
+    For a day the note was never written at all, so every answer to every
+    offer was silently ignored and every offer timed out. The chain is what
+    an answer is checked against (D-049).
+    """
+    state, index, node, seller_identity, answers, keeper = shop
+    keeper.tick()
+    take = {"kind": "coins", "amount": "2", "sats": 2 * COIN}
+    offer_txid = "9" * 64
+
+    # The chain says: this wallet offered 2 coins for PIECE2.
+    index.offers = {offer_txid: {"txid": offer_txid, "inscription": PIECE2,
+                                 "buyer": SELLER, "owner": BUYER,
+                                 "take_kind": 3, "take_property": 0,
+                                 "take_amount": 2 * COIN}}
+    index.offer = lambda txid: index.offers.get(txid)
+    assert state.offers.get_bid(offer_txid) is None, "no local note of it"
+
+    other = FakeNode({BUYER}, UNSPENT)
+    offer = S.offer_for_bid(other, index, S.Offers(state.home / "theirs.sqlite"),
+                            "regtest",
+                            {"inscription": PIECE2, "take": take, "buyer": SELLER,
+                             "peer_pubkey": ""}, own=[BUYER])
+    _ask(state, seller_identity, {"swap": "bid", "swapv": S.PROTOCOL,
+                                  "id": offer_txid, "ok": True, "offer": offer}, 1)
+    assert keeper.tick() == 1, "the chain told it what it had offered"
+    _, signed = _answers(answers, seller_identity)[0]
+    assert signed["swap"] == "sign" and signed["hex"]
+
+    # An offer somebody ELSE made is not this wallet's to sign.
+    index.offers[offer_txid] = {**index.offers[offer_txid], "buyer": OTHER}
+    _ask(state, seller_identity, {"swap": "bid", "swapv": S.PROTOCOL,
+                                  "id": offer_txid, "ok": True, "offer": offer}, 2)
+    assert keeper.tick() == 0, "not ours, not signed"
