@@ -780,3 +780,40 @@ def test_the_repair_script_never_lands_in_a_checkout(tmp_path, monkeypatch):
     source = {"__name__": "not_main"}
     exec(compile(repair.read_text(), str(repair), "exec"), source)
     assert source["SOURCE"] == checkout, "reinstall from the checkout itself"
+
+
+def test_windows_gets_its_command_directory_onto_the_path(tmp_path, monkeypatch):
+    """Every command the Windows installer wrote was "not recognized".
+
+    %LOCALAPPDATA%\\DogecoinArcade\\bin is not on anybody's PATH, and the
+    installer's answer was a note at the end that told the user to fix it. The
+    registry, not setx, because setx truncates a PATH over 1024 characters.
+    """
+    seen = {}
+
+    class Done:
+        returncode = 0
+        stdout = "added\n"
+        stderr = ""
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        return Done()
+
+    monkeypatch.setattr(install.subprocess, "run", fake_run)
+    target = tmp_path / "DogecoinArcade" / "bin"
+
+    assert install.add_to_user_path(target, "Linux") is None, "Windows only"
+    assert not seen, "nothing to run on a system that already has ~/.local/bin"
+
+    assert install.add_to_user_path(target, "Windows") == "added"
+    script = seen["argv"][-1]
+    assert seen["argv"][0] == "powershell.exe"
+    assert "setx" not in script.lower(), "setx truncates a long PATH"
+    assert "SetEnvironmentVariable('Path'" in script
+    assert "'User'" in script, "the user's PATH, not the machine's"
+    assert str(target) in script
+
+    # An answer that is not one of ours is a failure, not a success.
+    Done.stdout = "powershell is very sorry\n"
+    assert install.add_to_user_path(target, "Windows") is None

@@ -1455,6 +1455,50 @@ def write_launcher(venv: Path, target: Path, system: str) -> Path:
     return written[0]
 
 
+#: Reads the *user* Path out of the registry and writes it back, rather than
+#: `setx`, which truncates a PATH longer than 1024 characters and has eaten
+#: people's environments for years.
+ADD_TO_PATH = """\
+$dir = '{target}'
+$cur = [Environment]::GetEnvironmentVariable('Path','User')
+if (-not $cur) {{ $cur = '' }}
+$parts = @($cur -split ';' | Where-Object {{ $_ -ne '' }})
+if ($parts -contains $dir) {{ Write-Output 'already' }}
+else {{
+  [Environment]::SetEnvironmentVariable('Path', (($parts + $dir) -join ';'), 'User')
+  Write-Output 'added'
+}}
+"""
+
+
+def add_to_user_path(target: Path, system: str) -> str | None:
+    """Put the command directory on the PATH. Windows only; returns what it did.
+
+    Linux and macOS install into ~/.local/bin, which is already on the PATH of
+    every shell that matters. Windows has nothing equivalent: the commands went
+    into %LOCALAPPDATA%\\DogecoinArcade\\bin, which no terminal looks in, so the
+    installer finished by printing a note and every command it had just written
+    was "not recognized".
+    """
+    if system != "Windows":
+        return None
+    script = ADD_TO_PATH.format(target=str(target).replace("'", "''"))
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True, text=True, timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        info(f"could not add {target} to your PATH: {exc}")
+        return None
+    done = result.stdout.strip().splitlines()[-1:] or [""]
+    if done[0] not in ("added", "already"):
+        info(f"could not add {target} to your PATH: "
+             f"{result.stderr.strip()[-200:] or 'no answer from powershell'}")
+        return None
+    return done[0]
+
+
 def shims_current(target: Path, system: str) -> bool:
     """Is every shim in `target` present and written by this version?
 
@@ -1805,8 +1849,12 @@ def main(argv: list[str] | None = None) -> int:
             install_web_service(venv, system)
         if not args.dry_run:
             launcher = write_launcher(venv, target, system)
+            on_path = add_to_user_path(target, system)
+            if on_path == "added":
+                info(f"added {target} to your PATH -- open a new terminal for it")
         else:
             launcher = target / "dogecoinarcade"
+            on_path = None
 
         print()
         print("=" * 58)
@@ -1816,8 +1864,14 @@ def main(argv: list[str] | None = None) -> int:
         print("  Then open:       http://127.0.0.1:8420")
         print()
         if str(target) not in os.environ.get("PATH", ""):
-            print(f"  NOTE: {target} is not on your PATH. Either add it, or run")
-            print(f"        {launcher}")
+            if on_path == "added":
+                # It is on the PATH of every terminal opened from now on. This
+                # one inherited its copy when it started and cannot see it.
+                print(f"  NOTE: {target} was added to your PATH.")
+                print("        Open a new terminal before running the commands.")
+            else:
+                print(f"  NOTE: {target} is not on your PATH. Either add it, or run")
+                print(f"        {launcher}")
             print()
         print("  The nodes will take a while to sync before anything works.")
         print("  Testnet is small; mainnet is larger. The application shows progress.")
