@@ -142,3 +142,35 @@ def test_crowdsale_section_is_empty_and_contributes_nothing(eng):
     assert breakdown.crowdsales == (
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     )
+
+
+def test_the_book_is_in_the_hash(tmp_path):
+    """It was not, and a fill mutates it.
+
+    `metadex_records` looked for a table that was never created, so the order
+    book contributed nothing: two nodes could have disagreed about every price
+    standing on it and reported the same hash. The reserve behind an order was
+    covered, through the balance rows. What it was reserved for was not.
+    """
+    from arcade.consensushash import consensus_breakdown, metadex_records
+
+    db = Database(tmp_path / "ledger.sqlite")
+    install_schema(db)
+    empty = consensus_breakdown(db).metadex_trades
+
+    db.conn.execute(
+        "INSERT INTO book_order(txid,block_height,position,address,sale_property,"
+        "sale_amount,want_property,want_amount,reserved) VALUES(?,?,?,?,?,?,?,?,?)",
+        ("aa" * 32, 500, 0, "nMaker", 3, 1000, 0, 8, 1000))
+    db.conn.commit()
+
+    assert metadex_records(db) == ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                                   "aaaaaaaaaaaaaaaaaaaa|nMaker|3|1000|0|8|1000"]
+    after = consensus_breakdown(db)
+    assert after.metadex_trades != empty, "an order on the book has to move the hash"
+
+    # What a fill changes has to move it too, or a fill could go unnoticed.
+    before = after.metadex_trades
+    db.conn.execute("UPDATE book_order SET sale_amount=700, want_amount=6, reserved=700")
+    db.conn.commit()
+    assert consensus_breakdown(db).metadex_trades != before

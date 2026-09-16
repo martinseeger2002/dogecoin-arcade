@@ -119,20 +119,38 @@ def dex_accept_records(db: Database) -> list[str]:
 
 
 def metadex_records(db: Database) -> list[str]:
-    """`txid|address|propertyidforsale|amountforsale|propertyiddesired|amountdesired|amountremaining`.
+    """`txid|address|saleproperty|saleamount|wantproperty|wantamount|reserved`.
 
-    Ordered by txid. Empty until M3.
+    Ordered by txid: the book, exactly as this node holds it.
+
+    This looked for a table called `metadex_trade` that was never created --
+    the book lives in `book_order` -- so it returned nothing and the order
+    book was not covered by the hash at all. Three orders stood on the live
+    testnet book with 1,500 tokens reserved behind them and this section was
+    the empty digest. A test machine found it by reading the sections rather than
+    the total, which is what a second node is for.
+
+    It matters more from D-062 on. A fill mutates these rows -- what is left
+    of an order, what it still wants, what it still holds -- so two nodes
+    could have disagreed about every price on the book and reported the same
+    consensus hash at the same height. The reserve was covered, through the
+    balance rows; what it was reserved *for* was not.
+
+    Adding a section that was empty changes the hash for everyone, which is
+    fine and is not a fork: the hash is a check value, nothing consumes it
+    automatically, and no ledger reads differently because of it. Balances
+    and properties must be untouched by this change -- that is the thing to
+    verify when two nodes compare across it.
     """
-    if not _table_exists(db, "metadex_trade"):
+    if not _table_exists(db, "book_order"):
         return []
     rows = db.conn.execute(
-        "SELECT txid, address, property_id_for_sale, amount_for_sale, "
-        "property_id_desired, amount_desired, amount_remaining "
-        "FROM metadex_trade WHERE amount_remaining > 0 ORDER BY txid"
+        "SELECT txid, address, sale_property, sale_amount, want_property, "
+        "want_amount, reserved FROM book_order WHERE sale_amount > 0 ORDER BY txid"
     ).fetchall()
     return [
-        f"{r['txid']}|{r['address']}|{r['property_id_for_sale']}|{r['amount_for_sale']}|"
-        f"{r['property_id_desired']}|{r['amount_desired']}|{r['amount_remaining']}"
+        f"{r['txid']}|{r['address']}|{r['sale_property']}|{r['sale_amount']}|"
+        f"{r['want_property']}|{r['want_amount']}|{r['reserved']}"
         for r in rows
     ]
 
