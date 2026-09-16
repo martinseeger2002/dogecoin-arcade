@@ -81,6 +81,27 @@ def served(tmp_path_factory):
     thread.join(timeout=5)
 
 
+def wait_for_title(browser, *prefixes: str, timeout: int = 10) -> str:
+    """The title of the document in the frame, once it starts with one of these.
+
+    `document.title` is None while a document is mid-navigation, and calling
+    .startswith on it raised AttributeError *inside* the wait's lambda, which
+    kills the wait on its first poll rather than retrying: the test then failed
+    on the assertion after it, blaming the page for something the wait had not
+    waited for. It failed only inside a full run, where the machine is busy
+    enough for the second load to be slower than the first poll -- three times
+    across two machines before it was understood. A value that is not a string
+    is "not ready yet", and readyState is asked first so the usual case is a
+    wait rather than a lucky read.
+    """
+    def ready(b):
+        if b.execute_script("return document.readyState") == "loading":
+            return None
+        title = b.execute_script("return document.title")
+        return title if isinstance(title, str) and title.startswith(prefixes) else None
+
+    return WebDriverWait(browser, timeout).until(ready)
+
 def test_an_inscription_that_asks_gets_a_pop_up_and_the_answer(browser, served):
     base, state = served
     browser.get(f"{base}/inscriptions/{TXID}/view")
@@ -89,7 +110,7 @@ def test_an_inscription_that_asks_gets_a_pop_up_and_the_answer(browser, served):
 
     # The page in the sandbox asks; the pop-up opens in front of it.
     WebDriverWait(browser, 10).until(lambda b: b.execute_script(
-        "return document.getElementById('ask').open"))
+        "return document.getElementById('ask')?.open === true"))
     assert dialog.is_displayed()
     frame = browser.find_element(By.ID, "ask-frame")
     assert "?embed=1" in frame.get_attribute("src")
@@ -110,13 +131,13 @@ def test_an_inscription_that_asks_gets_a_pop_up_and_the_answer(browser, served):
     # and closes itself.
     browser.switch_to.default_content()
     WebDriverWait(browser, 10).until(lambda b: b.execute_script(
-        "return !document.getElementById('ask').open"))
+        "return document.getElementById('ask')?.open !== true"))
     assert state.approvals.get(rid)["status"] == "denied"
     assert not dialog.is_displayed()
 
     # And once closed by a decision it does not come back for the same request.
     time.sleep(3.5)
-    assert not browser.execute_script("return document.getElementById('ask').open")
+    assert not browser.execute_script("return document.getElementById('ask')?.open === true")
 
 
 def test_the_pop_up_is_not_reachable_from_inside_the_sandbox(browser, served):
@@ -125,7 +146,7 @@ def test_the_pop_up_is_not_reachable_from_inside_the_sandbox(browser, served):
     base, state = served
     browser.get(f"{base}/inscriptions/{TXID}/view")
     WebDriverWait(browser, 10).until(lambda b: b.execute_script(
-        "return document.getElementById('ask').open"))
+        "return document.getElementById('ask')?.open === true"))
     frame = browser.find_element(By.ID, "ask-frame")
     rid = frame.get_attribute("src").rsplit("/", 1)[1].split("?")[0]
 
@@ -159,14 +180,14 @@ def test_what_was_waiting_before_the_page_opened_does_not_pop_up_over_it(browser
     WebDriverWait(browser, 10).until(lambda b: not b.find_element(By.ID, "asked").get_attribute("hidden"))
     notice = browser.find_element(By.ID, "asked")
     assert "Earlier" in notice.text and not browser.execute_script(
-        "return document.getElementById('ask').open")
+        "return document.getElementById('ask')?.open === true")
     time.sleep(3.5)
-    assert not browser.execute_script("return document.getElementById('ask').open")
+    assert not browser.execute_script("return document.getElementById('ask')?.open === true")
     # Fresh, while the page is open: it pops up.
     fresh = state.approvals.file("main", "coins", "page", RECIPIENT, units=1,
                                  amount="0.00000001", label="Now")
     WebDriverWait(browser, 10).until(lambda b: b.execute_script(
-        "return document.getElementById('ask').open"))
+        "return document.getElementById('ask')?.open === true"))
     assert fresh in browser.find_element(By.ID, "ask-frame").get_attribute("src")
     browser.execute_script("document.getElementById('ask-close').click()")
     state.approvals.decide(stale, "denied"); state.approvals.decide(fresh, "denied")
@@ -202,9 +223,7 @@ def test_over_the_tunnel_a_page_still_reaches_the_wallet(browser, served):
         frame = browser.find_element(By.CSS_SELECTOR, "iframe.inscription-frame")
         assert frame.get_attribute("src") == f"{tunnel.pages_url}/content/{STORING}"
         browser.switch_to.frame(frame)
-        WebDriverWait(browser, 10).until(lambda b: b.execute_script(
-            "return document.title").startswith("visits "))
-        assert browser.execute_script("return document.title") == "visits 1", (
+        assert wait_for_title(browser, "visits ") == "visits 1", (
             "storage.js loaded from the pages' door and the bridge answered")
         browser.set_script_timeout(10)
         status = browser.execute_async_script(
@@ -259,9 +278,7 @@ def test_a_page_remembers_through_the_wallet(browser, served):
         try:
             # document.title, not browser.title: the driver's title is always
             # the top document's, whichever frame is switched to.
-            WebDriverWait(browser, 10).until(lambda b: b.execute_script(
-                "return document.title").startswith(("visits", "error")))
-            return browser.execute_script("return document.title")
+            return wait_for_title(browser, "visits", "error")
         finally:
             browser.switch_to.default_content()
 
@@ -347,9 +364,7 @@ def test_a_page_talks_to_another_node_through_the_wallet(browser, served, monkey
     browser.get(f"{base}/inscriptions/{TALKING}/view")
     browser.switch_to.frame(browser.find_element(By.CSS_SELECTOR, ".inscription-frame"))
     try:
-        WebDriverWait(browser, 10).until(lambda b: b.execute_script(
-            "return document.title").startswith(("sent", "error")))
-        assert browser.execute_script("return document.title") == "sent " + "f" * 64
+        assert wait_for_title(browser, "sent", "error") == "sent " + "f" * 64
         assert browser.execute_script("return window.me") == state.identity.public_bytes.hex()
         # Sealed to the shop, and it is the page's order.
         from arcade.messaging import api
@@ -361,8 +376,6 @@ def test_a_page_talks_to_another_node_through_the_wallet(browser, served, monkey
         with state.store() as store:
             store.add_api_message(state.messaging.network, "t9", 7, 7, "nShop", shop_key,
                                   fingerprint_of(state.identity.public_bytes), b"hat is on its way")
-        WebDriverWait(browser, 10).until(lambda b: b.execute_script(
-            "return document.title").startswith("heard"))
-        assert browser.execute_script("return document.title") == "heard hat is on its way"
+        assert wait_for_title(browser, "heard") == "heard hat is on its way"
     finally:
         browser.switch_to.default_content()
