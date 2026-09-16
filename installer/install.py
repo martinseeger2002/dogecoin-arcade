@@ -1231,7 +1231,7 @@ def build_failure_hint(output: str) -> str:
 #: comment, and an update rewrites the whole set when the machine's copies are
 #: older. Without that a fix to a command reached only people installing for the
 #: first time, because the updater rewrote shims only when one was missing.
-SHIM_VERSION = 2
+SHIM_VERSION = 3
 
 LAUNCHER = """\
 #!/bin/sh
@@ -1366,9 +1366,31 @@ if __name__ == "__main__":
 '''
 
 
+def repair_source(venv: Path) -> Path:
+    """What `repair.py` reinstalls from: the fetched source, or the checkout.
+
+    The installer's own layout is ~/.dogecoinarcade/{venv,src}. A developer
+    machine instead has its environment inside the checkout, and there the
+    source to reinstall is the checkout itself.
+    """
+    venv = Path(venv)
+    if (venv.parent / "pyproject.toml").is_file():
+        return venv.parent
+    return venv.parent / "src"
+
+
 def repair_path(venv: Path) -> Path:
-    """Where `write_repair` puts the repair script: beside the environment."""
-    return Path(venv).parent / "repair.py"
+    """Where `write_repair` puts the repair script: beside the environment.
+
+    Except when the environment lives inside a checkout, where "beside" is
+    somebody's repository -- the first run of this left an untracked repair.py
+    in the working tree, on its way to being committed and published. The
+    application's own directory is the one place that is always ours.
+    """
+    venv = Path(venv)
+    if (venv.parent / "pyproject.toml").is_file():
+        return Path.home() / ".dogecoinarcade" / "repair.py"
+    return venv.parent / "repair.py"
 
 
 def write_repair(venv: Path, system: str | None = None) -> Path:
@@ -1385,7 +1407,7 @@ def write_repair(venv: Path, system: str | None = None) -> Path:
     path.write_text(
         REPAIR.replace("@@VENV@@", str(venv))
               .replace("@@PYTHON@@", str(python))
-              .replace("@@SOURCE@@", str(venv.parent / "src"))
+              .replace("@@SOURCE@@", str(repair_source(venv)))
               .replace("@@SITE@@", "https://dogecoinarcade.com")
     )
     return path

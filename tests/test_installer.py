@@ -733,7 +733,7 @@ def test_an_outdated_shim_is_rewritten(tmp_path, monkeypatch):
     contents. `shims_current` is what the updater asks before rewriting.
     """
     monkeypatch.setattr(install, "info", lambda *a, **k: None)
-    venv = tmp_path / "venv"
+    venv = tmp_path / ".dogecoinarcade" / "venv"
     target = tmp_path / "bin"
     install.write_launcher(venv, target, "Linux")
     assert install.shims_current(target, "Linux")
@@ -749,7 +749,7 @@ def test_an_outdated_shim_is_rewritten(tmp_path, monkeypatch):
 def test_windows_shims_are_batch_files_with_crlf(tmp_path, monkeypatch):
     """cmd.exe reads these; LF-only line endings and stray CRs both bite."""
     monkeypatch.setattr(install, "info", lambda *a, **k: None)
-    venv = tmp_path / "venv"
+    venv = tmp_path / ".dogecoinarcade" / "venv"
     target = tmp_path / "winbin"
     install.write_launcher(venv, target, "Windows")
     text = (target / "dogecoinarcade-update.cmd").read_bytes()
@@ -757,3 +757,26 @@ def test_windows_shims_are_batch_files_with_crlf(tmp_path, monkeypatch):
     assert b"\r\r\n" not in text
     assert text.count(b"\n") == text.count(b"\r\n"), "every line ends CRLF"
     assert b"exit /b 1" in text
+
+
+def test_the_repair_script_never_lands_in_a_checkout(tmp_path, monkeypatch):
+    """The first run of this left an untracked repair.py in the repository.
+
+    A development machine keeps its environment inside the checkout, so "beside
+    the environment" is somebody's working tree -- and the source it would have
+    reinstalled from, the sibling `src`, is not there either. Both answers come
+    from the checkout instead.
+    """
+    monkeypatch.setattr(install, "info", lambda *a, **k: None)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    checkout = tmp_path / "dogecoin-arcade"
+    (checkout / ".venv" / "bin").mkdir(parents=True)
+    (checkout / "pyproject.toml").write_text("[project]\nname='dogecoin-arcade'\n")
+
+    install.write_launcher(checkout / ".venv", tmp_path / "bin", "Linux")
+    assert not (checkout / "repair.py").exists(), "not in the working tree"
+    repair = tmp_path / "home" / ".dogecoinarcade" / "repair.py"
+    assert repair.is_file()
+    source = {"__name__": "not_main"}
+    exec(compile(repair.read_text(), str(repair), "exec"), source)
+    assert source["SOURCE"] == checkout, "reinstall from the checkout itself"
