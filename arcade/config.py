@@ -70,6 +70,13 @@ class Params:
     # what. A height every node has updated before is how they stay agreed.
     # None means swaps are not read on this chain at all yet.
     swaps_from: int | None = None
+    #: From this block a swap may take tokens out of the reserve a standing
+    #: order holds, and reduce that order by what it took. Before it, those
+    #: tokens are locked and an ask can only be filled after it is cancelled.
+    #: Its own height because it makes valid what used to be invalid, so two
+    #: nodes on either side of the change would read the same block
+    #: differently (D-062).
+    fills_from: int | None = None
 
     # base58 version bytes. Verified in source: pepecoin/src/chainparams.cpp
     # (mainnet :92-93, testnet, regtest).
@@ -147,6 +154,11 @@ TESTNET = Params(
     # Set 2026-09-14 at tip 1,488,130 with both known nodes due to update
     # within the day. No swap is sent before it.
     swaps_from=1_488_450,
+    # Set 2026-09-16 at tip 1,492,341. Testnet blocks come about a dozen a
+    # minute at the moment, so this is hours rather than minutes ahead: both
+    # known nodes have to be running this before it, and a node that is not
+    # would read the same block differently. Nothing fills an order before it.
+    fills_from=1_496_000,
     # Set 2026-09-12 at tip 1,484,661. Everything before this is development
     # traffic from building and testing the application -- cross-machine sends,
     # chunked posts, deliberately interrupted sends -- and is not read.
@@ -169,6 +181,7 @@ REGTEST = Params(
     p2p_port=18444,
     activation_height=0,
     swaps_from=0,
+    fills_from=0,
     datadir_subdir="regtest",
     pubkeyhash_version=111,
     scripthash_version=196,
@@ -208,6 +221,7 @@ DOGE_TESTNET = Params(
     p2p_port=44556,
     activation_height=0,
     swaps_from=0,
+    fills_from=0,
     datadir_subdir="testnet3",
     pubkeyhash_version=113,
     scripthash_version=196,
@@ -220,6 +234,7 @@ DOGE_REGTEST = Params(
     p2p_port=18444,
     activation_height=0,
     swaps_from=0,
+    fills_from=0,
     datadir_subdir="regtest",
     pubkeyhash_version=111,
     scripthash_version=196,

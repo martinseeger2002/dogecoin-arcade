@@ -955,12 +955,95 @@ class Engine:
         if swap.give.kind == I.LEG_NONE or swap.take.kind == I.LEG_NONE:
             raise InvalidTransaction("a swap has two sides")
 
-        self._check_leg(rtx, swap.give, seller, buyer)
+        # What the seller has on the book, this swap may take out of. Worked
+        # out before anything is checked and applied after everything is, so a
+        # swap is still never half done.
+        fills = self._fills_for(rtx, seller, swap.give, swap.take)
+        self._check_leg(rtx, swap.give, seller, buyer,
+                        extra=sum(taken for _, taken, _ in fills))
         self._check_leg(rtx, swap.take, buyer, seller)
+        for row, taken, want in fills:
+            self._fill_order(row, taken, want)
         self._move_leg(swap.give, seller, buyer)
         self._move_leg(swap.take, buyer, seller)
 
-    def _check_leg(self, rtx: ArcadeTransaction, leg: I.Leg, giver: str, taker: str) -> None:
+    def _fills_for(self, rtx: ArcadeTransaction, seller: str,
+                   give: I.Leg, take: I.Leg) -> list[tuple[dict, int, int]]:
+        """The seller's orders this swap fills: (order, tokens, coins) each.
+
+        A resting ask holds its tokens in `metadex_reserve`, where a swap
+        cannot reach them, so before this the only way to fill one was to
+        cancel it first -- which takes a block, and tells everybody the price
+        is gone before the trade that was meant to take it.
+
+        Which orders are consumed is a pure function of indexed state, so
+        every node picks the same ones in the same order: cheapest first,
+        then oldest, then by txid. The swap does not name them and does not
+        need to -- what it names is what moves, and the price guard below is
+        what protects the maker.
+
+        The guard: this swap must pay at least the order's own price for what
+        it takes. An order is a public promise to sell at a price, and the
+        reserve behind it may be spent at that price or better, never worse.
+        The maker signs the transaction as well -- an input is a signature --
+        so consent is explicit; this is the rule that holds when a wallet
+        signs something it did not read carefully (D-062).
+        """
+        from fractions import Fraction
+
+        since = self.params.fills_from
+        if since is None or rtx.block_height < since:
+            return []
+        if give.kind != I.LEG_TOKEN or take.kind != I.LEG_COINS:
+            return []                     # only a token sold for coins is a fill
+        rows = [dict(r) for r in self.state.db.conn.execute(
+            "SELECT * FROM book_order WHERE address=? AND sale_property=? "
+            "AND want_property=? AND reserved>0",
+            (seller, give.property_id, self.COIN_PROPERTY))]
+        if not rows:
+            return []
+        rows.sort(key=lambda r: (Fraction(r["want_amount"], r["sale_amount"]),
+                                 r["block_height"], r["position"], r["txid"]))
+
+        held = self.get_balance(seller, give.property_id)["balance"]
+        need = give.amount - held         # what the free balance cannot cover
+        out: list[tuple[dict, int, int]] = []
+        for row in rows:
+            if need <= 0:
+                break
+            # take.amount/give.amount >= want/sale, without dividing anything
+            if take.amount * row["sale_amount"] < row["want_amount"] * give.amount:
+                continue
+            taken = min(need, row["reserved"], row["sale_amount"])
+            if taken <= 0:
+                continue
+            # Rounded down, so what is left of the order keeps at least the
+            # price it had. Rounding the other way would let a fill leave a
+            # remainder cheaper than the maker ever offered.
+            want = row["want_amount"] * taken // row["sale_amount"]
+            out.append((row, taken, want))
+            need -= taken
+        return out
+
+    def _fill_order(self, row: dict, taken: int, want: int) -> None:
+        """Take `taken` out of an order's reserve and reduce the order by it."""
+        self._move_from_reserve(row["address"], row["sale_property"], taken,
+                                "metadex_reserve")
+        left = row["sale_amount"] - taken
+        if left <= 0:
+            self.state.delete("book_order", {"txid": row["txid"]})
+            return
+        self.state.update("book_order", {"txid": row["txid"]}, {
+            "sale_amount": left,
+            # max(1): the arithmetic cannot reach zero while `left` is
+            # positive, and an order wanting nothing would be a price of zero.
+            "want_amount": max(1, row["want_amount"] - want),
+            "reserved": row["reserved"] - taken,
+        })
+
+    def _check_leg(self, rtx: ArcadeTransaction, leg: I.Leg, giver: str,
+                   taker: str, extra: int = 0) -> None:
+        """`extra` is what a standing order of the giver's would release."""
         if leg.kind == I.LEG_INSCRIPTION:
             row = self.state.db.conn.execute(
                 "SELECT owner FROM inscription WHERE txid=?", (leg.txid.hex(),)).fetchone()
@@ -977,7 +1060,7 @@ class Engine:
                 raise InvalidTransaction(f"property {leg.property_id} does not exist")
             if prop["property_type"] == PROPERTY_NONFUNGIBLE:
                 raise InvalidTransaction(f"property {leg.property_id} is non-fungible")
-            held = self.get_balance(giver, leg.property_id)["balance"]
+            held = self.get_balance(giver, leg.property_id)["balance"] + extra
             if held < leg.amount:
                 raise InvalidTransaction(
                     f"insufficient balance: {giver} holds {held} of property "
