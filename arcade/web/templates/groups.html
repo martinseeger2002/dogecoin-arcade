@@ -240,6 +240,7 @@
            href="/groups?which={{ which }}&channel={{ channel }}">Back to the newest</a>
       </div>
       {% endif %}
+      <div id="live" data-generation="{{ state.generation }}" class="live"></div>
       {% for p in posts|reverse %}
         <div class="bubble-row {{ 'mine' if p.mine else 'theirs' }}">
           <div class="bubble">

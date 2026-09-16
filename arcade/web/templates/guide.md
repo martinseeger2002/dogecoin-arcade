@@ -68,6 +68,11 @@ deleted — that is the point of them.
   as a private message but unsealed, so any node can reassemble one with no key
   and no identity.
 * **A picture is a post**: you can post one with nothing typed.
+* **No confirmation step on testnet**, for a post or a message: the coins are
+  free and what it cost is reported as it happens. Mainnet still shows the
+  bill first.
+* **A board open on another screen refreshes itself** when something is
+  posted, rather than waiting to be reloaded.
 * **Name an inscription and the board shows a card for it** — its number,
   name, type and size as *this* node's index has them, with a button to the
   viewer. Never the inscription's own page: a post is written by a stranger,

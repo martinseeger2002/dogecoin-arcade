@@ -436,6 +436,10 @@ def create_app(state: AppState) -> FastAPI:
             local["address"], local["nickname"], local["text"], mine=True,
             file_name=local["file_name"], file_type=local["file_type"],
             file_data=local["file_data"], txids=txids or [txid])
+        # So a board open on another screen shows it without being asked. It
+        # was only the watcher that bumped this, so a post made here appeared
+        # on the phone a poll later at best, and after a refresh at worst.
+        state.bump_generation()
 
     def _post_in_background(sender, address, plan, local):
         """Post a chunked public post on a thread, reporting as it goes.
@@ -685,13 +689,13 @@ def create_app(state: AppState) -> FastAPI:
                 # is gone the instant it is broadcast either way -- a review step
                 # only makes sending feel like filing paperwork.
                 #
-                # A file is different and keeps its confirmation: it costs dust
-                # that can never be spent again, and a chunked send waits a block
-                # between transactions, so it can take minutes. Both of those are
-                # worth knowing BEFORE rather than discovering after.
-                immediate = (not file_bytes
-                             and plan.transactions == 1
-                             and not state.messaging.is_mainnet)
+                # On testnet everything goes straight out, files and long
+                # sends included. The confirmation is there so nobody spends
+                # real coins by accident; where the coins are free it is a
+                # step between a person and the thing they just typed, and
+                # what it cost and how long it will take are reported as it
+                # happens anyway (D-052). Mainnet keeps it.
+                immediate = not state.messaging.is_mainnet
                 if immediate or confirmed == "yes":
                     # Only one send at a time. A long one can take minutes, the
                     # browser shows nothing while it waits, and a second click is
@@ -956,7 +960,7 @@ def create_app(state: AppState) -> FastAPI:
 
                 address, first = _prepare_first(address)
                 prepared = [sender.prepare(address, p) for p in plan.chunk_payloads]
-                if confirmed == "yes":
+                if confirmed == "yes" or not state.messaging.is_mainnet:
                     broadcast_txids = [sender.broadcast(p) for p in prepared]
         except HTTPException:
             raise          # a rejected form is a 400, not an error page
@@ -1673,7 +1677,11 @@ def create_app(state: AppState) -> FastAPI:
                 prepared = sender.prepare(address, plan.payloads[0],
                                           class_c=plan.class_c,
                                           change_address=address)
-                if confirmed == "yes":
+                # Testnet posts go straight out. The confirmation exists so
+                # nobody spends real coins by accident; on a chain where the
+                # coins are free it is a step between a person and the thing
+                # they just typed (D-052). Mainnet keeps it.
+                if confirmed == "yes" or not chain.is_mainnet:
                     local = dict(
                         network=chain.network, channel=channel, address=address,
                         nickname=state.profile_name, text=text,
