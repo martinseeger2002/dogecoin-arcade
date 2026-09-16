@@ -88,24 +88,31 @@
             {% elif o.is_change %}<span class="muted">&mdash; change, back to you</span>{% endif %}</td></tr>
       {% endfor %}
     </table>
-    <form method="post" action="/approvals/{{ row.id }}{{ '?embed=1' if embed }}" class="row" style="margin-top:14px">
+    {# In the pop-up the decision is pinned to the bottom of the frame, level
+       with Close: a swap's details are longer than the frame is tall, and the
+       two buttons that answer the question were below the fold. #}
+    <form method="post" action="/approvals/{{ row.id }}{{ '?embed=1' if embed }}"
+          class="row decide{{ ' pinned' if embed }}" style="margin-top:14px">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="confirmed" value="{{ prepared.txid }}">
       <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">{{ 'Approve and sign' if row.kind == 'swap' else 'Approve and send' }}</button>
       <button type="submit" name="decision" value="deny" class="ghost">Refuse</button>
     </form>
+    {% if embed %}<div class="decide-space" aria-hidden="true"></div>{% endif %}
   </div>
 {% else %}
   <div class="panel">
     <p style="margin-top:0">The transaction could not be built, so there is
       nothing to approve. You can still refuse it, or leave it: it expires on
       its own.</p>
-    <form method="post" action="/approvals/{{ row.id }}{{ '?embed=1' if embed }}" class="row">
+    <form method="post" action="/approvals/{{ row.id }}{{ '?embed=1' if embed }}"
+          class="row decide{{ ' pinned' if embed }}">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="decision" value="deny">
       <button type="submit" class="ghost">Refuse</button>
       <a class="btn ghost" href="/approvals/{{ row.id }}{{ '?embed=1' if embed }}">Try again</a>
     </form>
+    {% if embed %}<div class="decide-space" aria-hidden="true"></div>{% endif %}
   </div>
 {% endif %}
 {% endblock %}

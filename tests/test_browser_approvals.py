@@ -193,6 +193,46 @@ def test_what_was_waiting_before_the_page_opened_does_not_pop_up_over_it(browser
     state.approvals.decide(stale, "denied"); state.approvals.decide(fresh, "denied")
 
 
+
+def test_the_decision_is_on_screen_without_scrolling(browser, served):
+    """Approve and Refuse stay at the bottom edge of the pop-up's frame.
+
+    A swap lists two legs, five rows and every output of the transaction. In
+    a frame 640 wide the buttons that answer it were below the fold, so the
+    person deciding had to scroll inside a modal to find them -- with Close,
+    the one button that does nothing, sitting in plain view underneath.
+
+    The window is squeezed here rather than the page lengthened: what matters
+    is that the buttons are on screen when the document scrolls, and a short
+    viewport makes any document scroll.
+    """
+    base, state = served
+    rid = state.approvals.file("main", "coins", "page", RECIPIENT, units=1,
+                               amount="0.00000001", label="Hat Shop")
+    was = browser.get_window_size()
+    try:
+        browser.set_window_size(640, 300)
+        browser.get(f"{base}/approvals/{rid}?embed=1")
+        WebDriverWait(browser, 10).until(lambda b: b.find_elements(
+            By.CSS_SELECTOR, "form.decide"))
+        assert browser.execute_script(
+            "return document.documentElement.scrollHeight > window.innerHeight"
+        ), "the page has to scroll for this to be worth testing"
+        # Painted position, not the rule that produces it: a computed style of
+        # sticky says nothing about where the element ended up.
+        seen = browser.execute_script("""
+            window.scrollTo(0, 0);
+            var f = document.querySelector('form.decide');
+            var b = f.querySelector('button').getBoundingClientRect();
+            return [b.top >= 0 && b.bottom <= window.innerHeight,
+                    window.innerHeight - b.bottom];""")
+        assert seen[0], "the button is off the screen until you scroll"
+        assert seen[1] < 40, f"and it sits at the bottom edge, not {seen[1]}px above it"
+    finally:
+        browser.set_window_size(was["width"], was["height"])
+        state.approvals.decide(rid, "denied")
+
+
 # --- over the tunnel ------------------------------------------------------------
 
 def test_over_the_tunnel_a_page_still_reaches_the_wallet(browser, served):

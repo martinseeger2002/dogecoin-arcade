@@ -56,6 +56,22 @@ main{max-width:1000px;margin:0 auto;padding:26px 20px 60px}
    room the chrome took goes to the transaction. */
 body.embed main{padding:14px 14px 18px}
 body.embed .back-link{display:none}
+/* Approve and Refuse sit at the bottom edge of the pop-up's frame, directly
+   above its Close button, however far down the transaction's details go. A
+   swap lists two legs, five rows and every output; the buttons that answer it
+   were off the bottom of the frame and had to be scrolled to, with Close --
+   the one button that does nothing -- in plain view underneath.
+
+   `fixed` rather than `sticky`, which was tried first and is wrong here: a
+   sticky element may only move within its containing block, so on a short
+   page the panel itself runs out of room and the bar stays exactly where it
+   was. In a framed document `fixed` pins to the frame's own viewport, which
+   is the box we mean. It leaves the flow, so `.decide-space` holds the room
+   it would have taken and nothing ends up underneath it. */
+body.embed .decide.pinned{position:fixed;left:0;right:0;bottom:0;z-index:2;
+  margin:0;padding:12px 14px;background:var(--panel);
+  border-top:1px solid var(--line);box-shadow:0 -6px 18px rgba(0,0,0,.18)}
+body.embed .decide-space{height:62px}
 h1{font-size:1.5rem;margin:0 0 4px;letter-spacing:-.02em}
 .sub{color:var(--muted);margin:0 0 24px;font-size:.95rem}
 h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);
