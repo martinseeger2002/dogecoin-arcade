@@ -14,6 +14,7 @@ forever, which is worse than missing them because they look real.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -69,6 +70,11 @@ class ScanResult:
 class Scanner:
     """Walks the chain, collecting message payloads and key announcements."""
 
+    #: Mempool transactions already read. A pool is looked at every few
+    #: seconds and mostly does not change; without this the scanner would
+    #: fetch every transaction in it, every time.
+    _pool_seen: set
+
     def __init__(self, rpc: RpcClient, params: Params, store: MessageStore,
                  identity: Identity | None = None, *, public_only: bool = False):
         """`public_only` mirrors the same flag on MessageSender (D-014).
@@ -95,6 +101,7 @@ class Scanner:
         self.store = store
         self.identity = identity
         self.prevouts = PrevOutCache(rpc, params)
+        self._pool_seen = set()
 
     # --- reorg safety ---------------------------------------------------------
 
@@ -197,6 +204,42 @@ class Scanner:
             if progress and height % 100 == 0:
                 progress(height, end)
 
+        if self.identity is not None:
+            result.opened += self.open_pending()
+        return result
+
+    def scan_mempool(self, limit: int = 200) -> ScanResult:
+        """Read what is in the mempool and not yet in a block.
+
+        A message costs a block to arrive, and a swap costs several: the
+        order, the offer, the signed half. Watching the mempool turns that
+        into seconds, because a message is carriage -- the thing that
+        settles is the swap transaction itself, and nothing here touches a
+        balance or the ledger (D-050).
+
+        Rows land with height 0, which means "seen, not yet in a block". The
+        block promotes them in place; a transaction that is dropped instead
+        leaves a row that says plainly it never confirmed.
+        """
+        result = ScanResult()
+        try:
+            pool = self.rpc.call("getrawmempool") or []
+        except Exception:
+            return result
+        fresh = [txid for txid in pool if txid not in self._pool_seen][:limit]
+        if not fresh:
+            return result
+        transactions = []
+        for txid in fresh:
+            try:
+                transactions.append(self.rpc.call("getrawtransaction", txid, 1))
+            except Exception:
+                continue          # gone from the pool between the two calls
+        self._pool_seen.update(fresh)
+        if len(self._pool_seen) > 5000:
+            self._pool_seen = set(pool)
+        block = {"time": int(time.time()), "tx": transactions}
+        self._scan_block(0, block, result)
         if self.identity is not None:
             result.opened += self.open_pending()
         return result

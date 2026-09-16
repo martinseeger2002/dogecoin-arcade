@@ -159,3 +159,70 @@ def test_the_shared_height_is_a_release_decision_not_a_guess():
     assert NETWORKS["test"].messaging_start_height > 0
     # Chains with no declared start fall back to their activation height.
     assert NETWORKS["regtest"].messaging_start_height == 0
+
+
+def test_the_mempool_is_read_before_a_block_arrives(tmp_path):
+    """A message costs a block to arrive and a swap costs several. Reading
+    the pool turns that into seconds, and the block promotes the row it
+    already wrote rather than writing a second one (D-050)."""
+    from arcade.config import NETWORKS
+    from arcade.messaging.scanner import Scanner
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    fingerprint = "aa" * 4
+
+    # Seen in the pool: height 0, and it can be read at once.
+    store.add_api_message("regtest", "tx1", 0, 1000, "nSender", b"\x01" * 32,
+                          fingerprint, b"{}", protocol=1, fingerprint=b"\0" * 4)
+    (row,) = store.api_messages(fingerprint, "regtest")
+    assert row["height"] == 0, "not in a block yet, and readable anyway"
+    first_id = row["id"]
+
+    # The block arrives: the same row, promoted in place.
+    store.add_api_message("regtest", "tx1", 500, 1200, "nSender", b"\x01" * 32,
+                          fingerprint, b"{}", protocol=1, fingerprint=b"\0" * 4)
+    rows = store.api_messages(fingerprint, "regtest")
+    assert len(rows) == 1, "one message, not two"
+    assert rows[0]["id"] == first_id, "the same row, so nothing acts on it twice"
+    assert rows[0]["height"] == 500
+
+    # A later pass must never push it back to unconfirmed.
+    store.add_api_message("regtest", "tx1", 0, 9999, "nSender", b"\x01" * 32,
+                          fingerprint, b"{}", protocol=1, fingerprint=b"\0" * 4)
+    assert store.api_messages(fingerprint, "regtest")[0]["height"] == 500
+
+    # The same for the sealed-message candidates.
+    store.add_candidate("tx2", 0, 0, 1000, "nSender", b"body", 1, None, None)
+    assert store.unopened_candidates()[0]["height"] == 0
+    store.add_candidate("tx2", 501, 3, 1200, "nSender", b"body", 1, None, None)
+    found = store.unopened_candidates()
+    assert len(found) == 1 and found[0]["height"] == 501 and found[0]["position"] == 3
+
+
+def test_a_scanner_reads_the_pool_once(tmp_path, monkeypatch):
+    """A pool is looked at every few seconds and mostly does not change."""
+    from arcade.config import NETWORKS
+    from arcade.messaging.scanner import Scanner
+    from arcade.messaging.store import MessageStore
+
+    asked = []
+
+    class Node:
+        def call(self, method, *args):
+            asked.append(method)
+            if method == "getrawmempool":
+                return ["a" * 64, "b" * 64]
+            return {"txid": args[0], "vin": [], "vout": []}
+
+        def get_block_count(self):
+            return 1
+
+    scanner = Scanner(Node(), NETWORKS["regtest"],
+                      MessageStore(tmp_path / "m.sqlite"), public_only=True)
+    scanner.scan_mempool()
+    fetched = asked.count("getrawtransaction")
+    assert fetched == 2, "both, the first time"
+    asked.clear()
+    scanner.scan_mempool()
+    assert asked.count("getrawtransaction") == 0, "and neither, the second"

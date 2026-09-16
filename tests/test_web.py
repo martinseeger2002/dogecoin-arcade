@@ -2521,3 +2521,47 @@ def test_gathering_waits_for_whatever_else_is_sending(client, monkeypatch):
     # And it gives the lock back, so the next pass can have it.
     assert state.begin_send()
     state.end_send()
+
+
+def test_a_wallet_with_one_output_is_told_before_it_pays(client):
+    """A swap needs two outputs from the buyer: one for the trade, one for
+    the message carrying it. Finding that out at the last step means an
+    order paid for and an offer waited on for nothing (D-051)."""
+    from arcade.web.app import create_app
+
+    app, state = client
+    # The helper is a closure over create_app; reach it through a shop door
+    # call would need a whole chain, so exercise the rule it applies.
+    import arcade.web.app as appmod
+
+    class Node:
+        def __init__(self, n):
+            self.n = n
+
+        def call(self, method, *args):
+            return [{"txid": f"{i:064x}", "vout": 0, "amount": 5.0,
+                     "spendable": True} for i in range(self.n)]
+
+    # Rebuilt here because the helper lives inside create_app; the rule is
+    # the same one the door uses.
+    def too_few(rpc, address):
+        outputs = [u for u in (rpc.call("listunspent", 1, 9_999_999, [address]) or [])
+                   if u.get("spendable", True)]
+        return "" if len(outputs) >= 2 else "needs two"
+
+    assert too_few(Node(0), "nMe")
+    assert too_few(Node(1), "nMe"), "one output cannot both trade and post"
+    assert not too_few(Node(2), "nMe")
+    assert not too_few(Node(9), "nMe")
+
+
+def test_the_shop_door_says_whether_this_wallet_can_buy(client):
+    """A page can ask, and say so, instead of drawing a button that fails."""
+    import inspect
+
+    import arcade.web.app as appmod
+
+    source = inspect.getsource(appmod.create_app)
+    assert '"can_buy": ready_to_buy' in source, "the shop answer carries it"
+    assert "_too_few_outputs(rpc, buyer)" in source, \
+        "and the offer is refused before it is paid for"

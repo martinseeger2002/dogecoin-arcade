@@ -3458,9 +3458,19 @@ def create_app(state: AppState) -> FastAPI:
             if op == "shop":
                 with chain.rpc() as rpc:
                     own = _ledger_addresses(rpc)
+                    # A page can say whether this wallet is able to buy,
+                    # before somebody presses a button that cannot work.
+                    ready_to_buy = False
+                    if row["owner"] not in own:
+                        try:
+                            ready_to_buy = not _too_few_outputs(
+                                rpc, funded_address(rpc, prefer=state.derived_address))
+                        except Exception:
+                            ready_to_buy = True     # cannot tell; do not nag
                 height = index.indexed_height()
                 return JSONResponse({
                     "ok": True, "shop": page, "node": node.hex(),
+                    "can_buy": ready_to_buy,
                     "seller": row["owner"], "network": chain.network,
                     "mine": row["creator"] == row["owner"] and row["owner"] in own,
                     "open": row["creator"] == row["owner"],
@@ -3479,6 +3489,13 @@ def create_app(state: AppState) -> FastAPI:
                     if row["owner"] in own:
                         raise swaplib.SwapError("this is your own shop")
                     buyer = _buyer_for(rpc, index, own, take)
+                    # Refused here, before an order is paid for: a wallet whose
+                    # coins are in one output cannot both sign the swap and pay
+                    # for the message carrying it, and would find that out
+                    # three transactions later (D-051).
+                    short = _too_few_outputs(rpc, buyer)
+                    if short:
+                        raise swaplib.SwapError(short)
                 text = json.dumps({"swap": "offer", "swapv": swaplib.PROTOCOL, "shop": page,
                                    "listing": listing_no, "buyer": buyer}).encode()
                 sent = _page_send(page, chain, node, text)
@@ -3736,9 +3753,21 @@ def create_app(state: AppState) -> FastAPI:
             raise
         except Exception:
             mine, held, coins = mine, [], 0.0
+        # Said by the wallet, around the frame, because an inscribed page
+        # cannot be changed to say it (D-051).
+        advice = ""
+        try:
+            with chain.rpc() as rpc:
+                if not mine and (row["json"] or "").find('"shop"') >= 0:
+                    advice = _too_few_outputs(
+                        rpc, funded_address(rpc, prefer=state.derived_address))
+        except HTTPException:
+            raise
+        except Exception:
+            advice = ""
         return render(request, "inscription_view.html", row=row, chain=chain,
                       tag=index.tag_of(row["owner"]), pages=pages, mine=mine,
-                      tokens=held, coins=coins,
+                      tokens=held, coins=coins, advice=advice,
                       renders=row["content_type"].startswith(contentlib.RENDERABLE))
 
     @app.get("/tokens", response_class=HTMLResponse)
@@ -4276,6 +4305,33 @@ def create_app(state: AppState) -> FastAPI:
             return index.properties()
         except Exception:
             return []
+
+    #: What a wallet needs to take part in a swap: one output to spend in the
+    #: swap itself, and another to pay for the message that carries it.
+    OUTPUTS_FOR_A_SWAP = 2
+
+    def _too_few_outputs(rpc, address: str) -> str:
+        """Why this address cannot buy yet, or "" if it can.
+
+        Every swap is two transactions from the buyer's side -- the half they
+        sign, and the message carrying it -- and each needs an output of its
+        own, confirmed. A wallet with one output discovers that at the last
+        step, after paying for an order and waiting for an offer, which is
+        the worst moment to find out (D-051).
+        """
+        try:
+            outputs = [u for u in (rpc.call("listunspent", 1, 9_999_999, [address]) or [])
+                       if u.get("spendable", True)]
+        except Exception:
+            return ""              # cannot tell; let the usual path decide
+        if len(outputs) >= OUTPUTS_FOR_A_SWAP:
+            return ""
+        return (f"{address} has its coins in "
+                f"{len(outputs)} confirmed output{'' if len(outputs) == 1 else 's'}, "
+                f"and a swap needs two: one to put into the trade and one to "
+                f"pay for the message that carries it. Split it first -- "
+                f"Wallet, Fast sending -- and this will go through without "
+                f"waiting for a block between each step")
 
     def _shop_listings(index, chain) -> list[dict[str, Any]]:
         """Every shop on this chain, with its listings as the pages see them.

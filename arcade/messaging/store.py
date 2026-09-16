@@ -680,9 +680,16 @@ class MessageStore:
         msg_id: bytes | None, countdown: int | None,
     ) -> None:
         self.conn.execute(
-            "INSERT OR IGNORE INTO candidate"
+            "INSERT INTO candidate"
             "(txid,height,position,block_time,sender_addr,payload,msg_type,msg_id,countdown) "
-            "VALUES(?,?,?,?,?,?,?,?,?)",
+            "VALUES(?,?,?,?,?,?,?,?,?) "
+            # Height 0 means "seen in the mempool". When the block arrives the
+            # same transaction is read again and the row is promoted rather
+            # than ignored; anything already confirmed is left alone (D-050).
+            "ON CONFLICT(txid) DO UPDATE SET "
+            "  height=excluded.height, position=excluded.position, "
+            "  block_time=excluded.block_time "
+            "WHERE candidate.height = 0 AND excluded.height > 0",
             (txid, height, position, block_time, sender_addr, payload, msg_type, msg_id, countdown),
         )
 
@@ -1121,10 +1128,17 @@ class MessageStore:
                         recipient_fp: str, body: bytes, mine: bool = False,
                         protocol: int = 0, fingerprint: bytes = b"") -> int:
         cur = self.conn.execute(
-            "INSERT OR IGNORE INTO api_message"
+            "INSERT INTO api_message"
             "(network,txid,height,block_time,sender_addr,sender_pubkey,"
             "recipient_fp,body,mine,protocol,fingerprint) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?) "
+            # Promoted, not duplicated, when the block for a message this node
+            # already read out of the mempool finally arrives. The row keeps
+            # its id, so a program that has already acted on it does not see
+            # it a second time (D-050).
+            "ON CONFLICT(txid, recipient_fp) DO UPDATE SET "
+            "  height=excluded.height, block_time=excluded.block_time "
+            "WHERE api_message.height = 0 AND excluded.height > 0",
             (network, txid, height, block_time, sender_addr, sender_pubkey,
              recipient_fp, body, 1 if mine else 0, protocol, fingerprint))
         return cur.lastrowid or 0

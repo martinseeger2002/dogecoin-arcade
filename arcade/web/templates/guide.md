@@ -29,6 +29,12 @@ installations reading the same chain agree without talking to each other.
 Private messages between two people, encrypted end to end and carried on the
 chain.
 
+* **Read from the mempool, not only from blocks.** A message is a
+  transaction, so waiting for a block meant waiting a block; the scanner
+  reads what is on its way as well, and a message usually appears within
+  seconds. It says "in the pool, not in a block yet" until its block lands.
+  Balances, the order book and inscriptions are still read from blocks and
+  only from blocks — those are what two nodes must agree about.
 * **Sealed to one key.** Every message is a `crypto_box_seal` to the
   recipient's X25519 key, with the sender authenticated inside the envelope.
   A forged sender fails inner authentication and is recorded as a forgery
@@ -285,6 +291,11 @@ option; it does not draw a token picker when the wallet holds none. The door
 checks again when the form comes back. Offering something you do not hold is
 a fee spent to be told no by somebody else, a block later, for something
 your own wallet could see at once.
+
+**A wallet is told before it pays.** A buyer's side of a swap is two
+transactions — the half they sign and the message that carries it — so it
+needs two confirmed outputs. A wallet with one is refused before the order
+goes out, not three transactions later, and told to split the address.
 
 **An offer can be made on any NFT**, listed or not: open one you do not own
 and press *Make offer*. It is **said on the chain**, not sent to anybody:

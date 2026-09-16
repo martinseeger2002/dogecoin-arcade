@@ -141,6 +141,15 @@
     something that does.</div>
 {% endif %}
 
+{% if advice %}
+<div class="msg info">
+  <strong>This wallet cannot buy from here yet.</strong> {{ advice }}.
+  <a href="/wallet">Open the wallet</a> and split the address; one transaction
+  and one block, and then every purchase goes at the speed of the chain's
+  memory pool rather than a block a step.
+</div>
+{% endif %}
+
 <h2>What it is</h2>
 <div class="panel">
   <table>

@@ -100,6 +100,10 @@ class BlockWatcher:
     _shopkeeper = None
     _gathered_at = 0
 
+    #: Mempool transactions already read, per chain. Kept on the watcher so
+    #: it survives the Scanner being built fresh every pass.
+    _pools: dict = {}
+
     def _walk_home(self) -> None:
         """Bring what this wallet holds elsewhere back to one address.
 
@@ -298,6 +302,36 @@ class BlockWatcher:
         except Exception:
             return 0
 
+    def _check_mempool(self, chain: Any, public_only: bool) -> None:
+        """What is on its way but not yet in a block.
+
+        Nothing here touches a balance, a book or the ledger -- those are
+        read from blocks and only from blocks. This is carriage: messages,
+        the answers a shop sends, the halves of a swap. A transaction that
+        never confirms leaves a row that says so, and is promoted in place
+        when its block does arrive.
+        """
+        identity = None
+        if not public_only:
+            try:
+                identity = self.state.ensure_identity()
+            except Exception:
+                identity = None
+        try:
+            with chain.rpc() as rpc, self.state.store() as store:
+                scanner = Scanner(rpc, chain.params, store, identity=identity,
+                                  public_only=public_only)
+                pool = self._pools.setdefault(chain.network, set())
+                scanner._pool_seen = pool
+                result = scanner.scan_mempool()
+                self._pools[chain.network] = scanner._pool_seen
+        except Exception:
+            log.debug("mempool scan failed for %s", chain.network, exc_info=True)
+            return
+        if result.opened + result.announcements + result.group_posts:
+            self.state.bump_generation()
+            log.info("in the pool on %s: %s", chain.network, result)
+
     def _check(self, chain: Any, public_only: bool) -> None:
         name = chain.network
         try:
@@ -308,6 +342,11 @@ class BlockWatcher:
 
         seen = self.state.tips.get(name)
         self.state.last_checked[name] = time.time()
+
+        # The mempool first, and every pass, whether or not the tip has moved.
+        # A message costs a block to arrive and a swap costs several; reading
+        # what is in the pool turns that into seconds (D-050).
+        self._check_mempool(chain, public_only)
 
         # Pieces of an unfinished post mean a scan still has work to find, so
         # keep looking even at a tip already seen. A chunk that landed in a

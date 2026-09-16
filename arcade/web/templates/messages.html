@@ -146,7 +146,9 @@
                 {% endif %}
               {% else %}
                 {{ when(m.when) }}
-                {%- if m.height %} &middot; block {{ "{:,}".format(m.height) }}{% endif %}
+                {%- if m.height %} &middot; block {{ "{:,}".format(m.height) }}
+                {%- else %} &middot; <span class="unconfirmed">in the pool, not
+                  in a block yet</span>{% endif %}
               {% endif %}
             </div>
           </div>
