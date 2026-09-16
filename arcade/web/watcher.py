@@ -94,6 +94,7 @@ class BlockWatcher:
         # scanner decrypts nothing, so it is safe there (D-014).
         self._check(self.state.ledger, public_only=True)
         self._sync_ledgers()
+        self._check_pending_offers()
         self._keep_shop()
         self._walk_home()
 
@@ -103,6 +104,10 @@ class BlockWatcher:
     #: Mempool transactions already read, per chain. Kept on the watcher so
     #: it survives the Scanner being built fresh every pass.
     _pools: dict = {}
+
+    #: The offer transactions seen in the pool, per chain, so a new one bumps
+    #: the generation exactly once.
+    _pending_offers: dict = {}
 
     def _walk_home(self) -> None:
         """Bring what this wallet holds elsewhere back to one address.
@@ -180,6 +185,30 @@ class BlockWatcher:
             # Only something a token page would show bumps the generation: a
             # transaction indexed, or the index stopping or resuming.
             if after != before or (result is not None and result.reorged):
+                self.state.bump_generation()
+
+    def _check_pending_offers(self) -> None:
+        """Notice an offer in the pool, so the page holding it refreshes.
+
+        The scanner bumps the generation for a message in the pool; an offer
+        is not a message, it is an arcade transaction, so nothing noticed it
+        and the Exchange sat unchanged until the block landed. That is the
+        same wait the mempool read was meant to remove (D-058).
+
+        Only the set of ids is compared. Reading the offers themselves is
+        cached by txid in the index, so a pass with nothing new costs one
+        getrawmempool.
+        """
+        for chain in self.state.token_chains:
+            index = self.state.token_index(chain)
+            if not index.enabled:
+                continue
+            try:
+                now = {offer["txid"] for offer in index.pending_offers()}
+            except Exception:
+                continue
+            if now != self._pending_offers.get(chain.network, set()):
+                self._pending_offers[chain.network] = now
                 self.state.bump_generation()
 
     _repaired = False

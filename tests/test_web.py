@@ -2565,3 +2565,35 @@ def test_the_shop_door_says_whether_this_wallet_can_buy(client):
     assert '"can_buy": ready_to_buy' in source, "the shop answer carries it"
     assert "_too_few_outputs(rpc, buyer)" in source, \
         "and the offer is refused before it is paid for"
+
+
+def test_the_nav_counts_what_is_waiting(client, monkeypatch):
+    """A red circle beside the page that has something in it.
+
+    Three different questions, one shape: unopened private messages, posts on
+    the board since this wallet last looked, and offers on its pieces that it
+    has not answered. Nothing is drawn when there is nothing waiting -- a
+    permanent zero is noise, and noise is what a badge cannot be.
+    """
+    page, state = client
+    body = page.get("/").text
+    assert '<span class="nav-count">' not in body, "nothing waiting, nothing drawn"
+
+    with state.store() as store:
+        store.add_group_post(state.messaging.network, "main", "a" * 64, 100, 1700,
+                             "nSomebody", "them", "hello")
+    body = page.get("/").text
+    assert 'href="/groups">Public<span class="nav-count">1</span>' in body
+
+    # Opening the board is reading it.
+    page.get("/groups")
+    assert '<span class="nav-count">' not in page.get("/").text
+
+
+def test_a_hundred_waiting_does_not_stretch_the_nav(client):
+    page, state = client
+    with state.store() as store:
+        for n in range(101):
+            store.add_group_post(state.messaging.network, "main", f"{n:064x}",
+                                 100 + n, 1700 + n, "nSomebody", "them", "hi")
+    assert '<span class="nav-count">99+</span>' in page.get("/").text

@@ -4,6 +4,7 @@
 {% block title %}Exchange · DogecoinArcade{% endblock %}
 {% block body %}
 {% macro tabs(current) %}
+<div id="live" data-generation="{{ state.generation }}" class="live"></div>
 <nav class="row" style="gap:6px;margin:0 0 16px">
   <a class="btn {{ 'on' if current == 'offers' else 'ghost' }} small" href="/exchange?tab=offers">Offers</a>
   <a class="btn {{ 'on' if current == 'mintpads' else 'ghost' }} small" href="/exchange?tab=mintpads">Mintpads</a>
@@ -57,8 +58,9 @@
   {% if not offers_in %}
     <div class="panel empty"><p>Nothing yet.</p>
       <p class="muted" style="font-size:.86rem">An offer is written on the chain,
-        so it appears when its block does &mdash; and it reaches you whichever
-        address holds the piece, published key or not.</p></div>
+        and appears here the moment it is broadcast &mdash; before its block,
+        read from the mempool. It reaches you whichever address holds the
+        piece, published key or not.</p></div>
   {% else %}
   <div class="panel">
     <table>
@@ -71,7 +73,8 @@
           {%- if b.collection %}<div class="muted" style="font-size:.8rem">{{ b.collection }}
             {%- if b.edition is not none %} #{{ b.edition }}{% endif %}</div>{% endif %}</td>
         <td><strong>{{ b.price }}</strong>
-          <div class="muted" style="font-size:.8rem">block {{ "{:,}".format(b.block_height) }}</div></td>
+          <div class="muted" style="font-size:.8rem">
+            {%- if b.pending %}in the mempool{% else %}block {{ "{:,}".format(b.block_height) }}{% endif %}</div></td>
         <td class="mono" style="font-size:.8rem;word-break:break-all">
           {%- if tags.get(b.buyer) %}<strong>@{{ tags[b.buyer] }}</strong>
           {%- else %}{{ b.buyer }}{% endif %}</td>
@@ -119,7 +122,8 @@
           <td class="mono" style="font-size:.8rem;word-break:break-all">
             {%- if tags.get(b.owner) %}<strong>@{{ tags[b.owner] }}</strong>
             {%- else %}{{ b.owner }}{% endif %}</td>
-          <td class="muted" style="white-space:nowrap">block {{ "{:,}".format(b.block_height) }}</td></tr>
+          <td class="muted" style="white-space:nowrap">
+            {%- if b.pending %}in the mempool{% else %}block {{ "{:,}".format(b.block_height) }}{% endif %}</td></tr>
       {% endfor %}
     </table>
   </div>

@@ -197,6 +197,14 @@ CREATE TABLE IF NOT EXISTS group_chunk (
     PRIMARY KEY (network, msg_id, countdown)
 );
 
+-- How far the reader has got, per thing that can be behind. The board has no
+-- per-post read mark and does not want one: a post is public, it is not
+-- addressed to anybody, and "read" for a board means "I have looked since".
+CREATE TABLE IF NOT EXISTS seen_mark (
+    name  TEXT PRIMARY KEY,
+    value INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS pending_send (
     msg_id         BLOB PRIMARY KEY,
     recipient_key  BLOB NOT NULL,
@@ -881,6 +889,32 @@ class MessageStore:
              1 if mine else 0, file_name, file_type, file_data,
              ",".join(txids or [])))
         return cur.lastrowid or 0
+
+    def board_unread(self, network: str) -> int:
+        """Public posts, not this wallet's own, since the board was last read."""
+        row = self.conn.execute("SELECT value FROM seen_mark WHERE name=?",
+                                (f"board:{network}",)).fetchone()
+        since = int(row["value"]) if row else 0
+        return int(self.conn.execute(
+            "SELECT COUNT(*) FROM group_post WHERE network=? AND mine=0 AND id>?",
+            (network, since)).fetchone()[0])
+
+    def mark_board_read(self, network: str) -> None:
+        """Everything on the board now counts as seen."""
+        newest = self.conn.execute(
+            "SELECT COALESCE(MAX(id), 0) FROM group_post WHERE network=?",
+            (network,)).fetchone()[0]
+        self.conn.execute(
+            "INSERT INTO seen_mark(name, value) VALUES(?, ?) "
+            "ON CONFLICT(name) DO UPDATE SET value=excluded.value",
+            (f"board:{network}", int(newest)))
+        self.conn.commit()
+
+    def unread_for(self, recipient_fp: bytes) -> int:
+        """Private messages to this identity that have not been opened."""
+        return int(self.conn.execute(
+            "SELECT COUNT(*) FROM message WHERE recipient_fp=? AND read_at IS NULL",
+            (recipient_fp,)).fetchone()[0])
 
     def group_posts(self, network: str, channel: str, limit: int = 50,
                     before_id: int | None = None) -> list[sqlite3.Row]:

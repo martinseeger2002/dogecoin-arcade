@@ -624,7 +624,112 @@ class LedgerIndex:
                 "FROM nft_offer o JOIN inscription i ON i.txid = o.inscription "
                 "LEFT JOIN collection_item c ON c.txid = o.inscription "
                 "WHERE o.txid = ?", (str(txid),)).fetchone()
-            return dict(row) if row else None
+        if row:
+            return dict(row)
+        # Not in a block yet. The terms are readable in the mempool and are
+        # the same terms, so a holder can answer an offer in the minutes
+        # before it confirms rather than after (D-058).
+        return next((o for o in self.pending_offers() if o["txid"] == str(txid)), None)
+
+    def pending_offers(self, limit: int = 200) -> list[dict]:
+        """Offers sitting in the mempool, in the shape `offers_on` returns.
+
+        Read fresh and never written down. The ledger is built from blocks
+        only and stays that way -- an offer that never confirms must leave
+        nothing behind, and two nodes must agree on what the chain says, not
+        on what their own mempool happened to hold. This is the same
+        distinction the messenger already makes: the mempool is read for
+        carriage, and the ledger for what is settled.
+
+        Why at all: an offer is a message to whoever holds a piece, and a
+        block is a minute or ten. Danny made an offer for Goofball #100 and
+        neither wallet showed it until the block landed, so both ends
+        believed it had never been posted -- it was in the mempool the whole
+        time (D-058).
+
+        An offer read here is checked exactly as the indexer would check it:
+        the inscription must exist, it must not already be the offerer's, and
+        an offer of nothing is not an offer. What is not checked is whether
+        the buyer can pay, which is answered when the holder accepts and the
+        swap is built -- the same rule the block path uses, for the same
+        reason.
+        """
+        from .indexer import PrevOutCache
+        from .tx import extract
+
+        try:
+            with self._rpc() as rpc:
+                ids = list(rpc.call("getrawmempool") or [])[:max(0, limit)]
+                if not ids:
+                    self._pool_offers = {}
+                    return []
+                # Keep what was read before: the mempool is asked on every
+                # page load, and re-fetching a transaction that has not
+                # changed is the whole cost of this.
+                known = getattr(self, "_pool_offers", {})
+                cache = PrevOutCache(rpc, self.params)
+                found: dict[str, dict | None] = {}
+                for txid in ids:
+                    if txid in known:
+                        found[txid] = known[txid]
+                        continue
+                    try:
+                        tx = rpc.call("getrawtransaction", txid, True)
+                        rtx = extract(tx, 0, 0, self.params, cache.lookup)
+                    except Exception:                 # gone, or not ours
+                        found[txid] = None
+                        continue
+                    found[txid] = self._offer_row(rtx)
+                self._pool_offers = found
+        except Exception as exc:                      # no node, no mempool
+            log.debug("mempool offers unavailable: %s", exc)
+            return []
+        return [row for row in self._pool_offers.values() if row]
+
+    def _offer_row(self, rtx) -> dict | None:
+        """One mempool transaction as an offer row, or None if it is not one."""
+        from . import inscriptions as I
+
+        if rtx is None or not rtx.payload:
+            return None
+        try:
+            parsed = P.decode(rtx.payload)
+        except (P.PayloadError, P.UnknownMessageType, P.OutOfScopeMessageType):
+            return None
+        # An offer travels as AnyData carrying an inscription payload, which
+        # is how every arcade inscription travels: the meta-layer sees data,
+        # and what the data means is this module's business.
+        data = getattr(parsed, "data", None)
+        if not data or not I.is_inscription(data):
+            return None
+        try:
+            item = I.parse(data)
+        except Exception:
+            return None
+        if not isinstance(item, I.Offer):
+            return None
+        row = self.inscription(item.txid.hex())
+        if row is None or row["owner"] == rtx.sender:
+            return None
+        if not item.take.amount and item.take.kind != I.LEG_INSCRIPTION:
+            return None
+        return {
+            "txid": rtx.txid,
+            "block_height": 0,
+            "position": 0,
+            "inscription": item.txid.hex(),
+            "buyer": rtx.sender,
+            "take_kind": item.take.kind,
+            "take_property": item.take.property_id,
+            "take_amount": item.take.amount,
+            "number": row["number"],
+            "owner": row["owner"],
+            "content_type": row.get("content_type"),
+            "collection": row.get("collection"),
+            "edition": row.get("edition"),
+            "when_": None,
+            "pending": True,
+        }
 
     def offers_by(self, buyers: list[str], limit: int = 100) -> list[dict]:
         """Offers these addresses have made, whatever became of them."""

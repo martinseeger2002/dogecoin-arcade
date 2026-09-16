@@ -247,6 +247,9 @@ def create_app(state: AppState) -> FastAPI:
             "msg_net": state.messaging.label,
             "ledger_net": state.ledger.label,
             "approvals_waiting": _approvals_waiting(),
+            "unread_messages": _unread_messages(),
+            "unread_board": _unread_board(),
+            "offers_waiting": _offers_waiting(),
         }
         base.update(context)
         # Request first: the older (name, context) signature is deprecated.
@@ -288,6 +291,55 @@ def create_app(state: AppState) -> FastAPI:
             return state.approvals.waiting()
         except Exception:
             return 0
+
+    def _unread_messages() -> int:
+        """Private messages waiting, for the badge beside Messages."""
+        if not state.unlocked:
+            return 0
+        try:
+            with state.store() as store:
+                return store.unread_for(fingerprint_of(state.ensure_identity().public_bytes))
+        except Exception:
+            return 0
+
+    def _unread_board() -> int:
+        """Public posts since this wallet last looked at the board."""
+        try:
+            with state.store() as store:
+                return store.board_unread(state.messaging.network)
+        except Exception:
+            return 0
+
+    #: What `_offers_waiting` last worked out, and when. Every page asks, and
+    #: the answer needs the node: the mempool, and which addresses are ours.
+    #: A few seconds of staleness on a badge is not worth an RPC round per
+    #: page, and the Exchange page itself does the work properly.
+    _offers_seen: dict = {"at": 0.0, "n": 0}
+
+    def _offers_waiting() -> int:
+        """Offers on this wallet's pieces that it has not answered."""
+        now = time.time()
+        if now - _offers_seen["at"] < 10:
+            return _offers_seen["n"]
+        _offers_seen["at"] = now
+        try:
+            chain, index = _token_chain()
+            with chain.rpc() as rpc:
+                own = set(_ledger_addresses(rpc))
+            offers = _merge_offers([o for o in index.pending_offers()
+                                    if o["owner"] in own],
+                                   index.offers_on(sorted(own)))
+            # An offer this wallet has already accepted is not waiting for
+            # anything from this end; it is waiting for the buyer to sign.
+            answered = {o["give"]["txid"] for o in
+                        state.offers.open_offers(chain.network)
+                        + state.offers.sold_offers(chain.network)
+                        if o["give"].get("kind") == "inscription"}
+            _offers_seen["n"] = sum(1 for o in offers
+                                    if o["inscription"] not in answered)
+        except Exception:
+            pass                          # keep the last answer; a badge is not worth an error
+        return _offers_seen["n"]
 
     def check_csrf(token: str) -> None:
         """Reject a request whose form token does not match this process's.
@@ -1595,6 +1647,11 @@ def create_app(state: AppState) -> FastAPI:
                 for post in posts:
                     post["cards"] = _cards_in(post.get("text") or "")
                 channels = store.group_channels(chain.network)
+                # Looking at the board is what reading it means: there is no
+                # per-post read mark because a post is not addressed to
+                # anybody. Marked before the page is rendered, so the count
+                # beside Public is gone by the time it is drawn.
+                store.mark_board_read(chain.network)
                 older = (store.group_has_older(chain.network, channel, posts[0]["id"])
                          if posts else False)
         try:
@@ -4505,6 +4562,11 @@ def create_app(state: AppState) -> FastAPI:
             state.flash(str(exc), "err")
         return RedirectResponse(f"/exchange/pair/{property_id}", status_code=303)
 
+    def _merge_offers(pending: list[dict], confirmed: list[dict]) -> list[dict]:
+        """Mempool offers in front of confirmed ones, each transaction once."""
+        seen = {o["txid"] for o in pending}
+        return pending + [o for o in confirmed if o["txid"] not in seen]
+
     @app.post("/exchange/offer", response_class=HTMLResponse)
     def make_offer_on(request: Request, inscription: str = Form(""),
                       amount: str = Form(""), kind: str = Form("coins"),
@@ -4623,7 +4685,10 @@ def create_app(state: AppState) -> FastAPI:
         try:
             with chain.rpc() as rpc:
                 own = _ledger_addresses(rpc)
-                standing = [o for o in index.offers_on(sorted(own))
+                standing = [o for o in _merge_offers(
+                                [p for p in index.pending_offers()
+                                 if p["owner"] in set(own)],
+                                index.offers_on(sorted(own)))
                             if o["txid"] == offer_txid]
                 if not standing:
                     raise swaplib.SwapError(
@@ -4740,8 +4805,19 @@ def create_app(state: AppState) -> FastAPI:
                     "thumb": thumb, "stats": chartlib.summary(points),
                     "slots": chartlib.candles(points)})
         try:
-            data["offers_in"] = index.offers_on(sorted(data["owned"]))
-            data["offers_out"] = index.offers_by(sorted(data["owned"]))
+            # The mempool first, then the blocks, so an offer made a minute
+            # ago is here rather than in ten minutes' time. A transaction is
+            # in exactly one of the two, so there is nothing to dedupe -- but
+            # a block landing between the two reads could show one twice, and
+            # the txid settles it (D-058).
+            pending = index.pending_offers()
+            own = set(data["owned"])
+            data["offers_in"] = _merge_offers(
+                [o for o in pending if o["owner"] in own],
+                index.offers_on(sorted(data["owned"])))
+            data["offers_out"] = _merge_offers(
+                [o for o in pending if o["buyer"] in own],
+                index.offers_by(sorted(data["owned"])))
             for entry in data["offers_in"] + data["offers_out"]:
                 entry["price"] = swaplib.describe_leg(_take_json(entry, index))
             # An offer already accepted is waiting for the buyer's wallet to

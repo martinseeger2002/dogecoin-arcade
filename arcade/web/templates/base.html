@@ -293,6 +293,12 @@ a.thread.on{background:var(--code);box-shadow:inset 3px 0 0 var(--accent)}
   text-overflow:ellipsis;white-space:nowrap}
 .badge{background:var(--accent);color:var(--accent-fg);border-radius:999px;
   padding:1px 7px;font-size:.72rem;font-weight:700;flex:none}
+/* The count beside a nav item: red, because it is the one thing in the nav
+   that is asking to be looked at rather than describing where you are.
+   min-width with centred text so 1 and 12 are the same circle. */
+.nav-count{display:inline-block;margin-left:6px;background:#d6483b;color:#fff;
+  border-radius:999px;min-width:1.25em;padding:1px 5px;font-size:.7rem;
+  font-weight:700;line-height:1.35;text-align:center;vertical-align:1px}
 .thread-preview{font-size:.8rem;color:var(--muted);margin-top:3px;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
 .thread-when{font-size:.72rem;color:var(--muted);margin-top:3px}
@@ -519,8 +525,10 @@ form.composer button[type=submit]{background:var(--sent);border-color:var(--sent
   <nav>
   {%- for href, label, chain, built in nav %}
     {%- if built %}
+    {%- set waiting = {'/approvals': approvals_waiting, '/messages': unread_messages,
+                       '/groups': unread_board, '/exchange': offers_waiting}.get(href) %}
     <a class="{{ 'on' if path == href else '' }}" href="{{ href }}">{{ label
-      }}{% if href == '/approvals' and approvals_waiting %}<strong style="margin-left:6px">{{ approvals_waiting }}</strong>{% endif %}</a>
+      }}{% if waiting %}<span class="nav-count">{{ waiting if waiting < 100 else '99+' }}</span>{% endif %}</a>
     {%- else %}
     <a class="off" href="{{ href }}" title="not built yet">{{ label }}</a>
     {%- endif %}
