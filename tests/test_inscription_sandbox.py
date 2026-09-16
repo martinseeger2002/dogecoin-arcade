@@ -18,6 +18,8 @@ import pytest
 pytest.importorskip("selenium", reason="browser tests need selenium: pip install .[dev]")
 
 from selenium import webdriver                                       # noqa: E402
+
+import browsers                                                      # noqa: E402
 from selenium.webdriver.common.by import By                          # noqa: E402
 from selenium.webdriver.firefox.options import Options               # noqa: E402
 
@@ -110,12 +112,7 @@ def viewer(inscribed):
     import json
 
     base, txid = inscribed
-    options = Options()
-    options.add_argument("-headless")
-    try:
-        browser = webdriver.Firefox(options=options)
-    except Exception as exc:
-        pytest.skip(f"no usable browser: {exc}")
+    browser = browsers.launch()
 
     browser.set_window_size(1000, 900)
     browser.get(f"{base}/inscriptions/{txid}/view")

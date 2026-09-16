@@ -17,6 +17,8 @@ import pytest
 pytest.importorskip("selenium", reason="browser tests need selenium: pip install .[dev]")
 
 from selenium import webdriver                                       # noqa: E402
+
+import browsers                                                      # noqa: E402
 from selenium.webdriver.common.by import By                          # noqa: E402
 from selenium.webdriver.firefox.options import Options               # noqa: E402
 
@@ -99,12 +101,7 @@ def showcased(tmp_path_factory):
 @pytest.fixture(scope="module")
 def rendered(showcased):
     base, library_id, page_id = showcased
-    options = Options()
-    options.add_argument("-headless")
-    try:
-        browser = webdriver.Firefox(options=options)
-    except Exception as exc:
-        pytest.skip(f"no usable browser: {exc}")
+    browser = browsers.launch()
 
     browser.set_window_size(1100, 1000)
     browser.get(f"{base}/inscriptions/{page_id}/view")
@@ -258,13 +255,11 @@ def hours(tmp_path_factory):
             break
         time.sleep(0.1)
 
-    options = Options()
-    options.add_argument("-headless")
     try:
-        browser = webdriver.Firefox(options=options)
-    except Exception as exc:
+        browser = browsers.launch()
+    except BaseException:                 # a skip included: stop the server
         server.should_exit = True
-        pytest.skip(f"no usable browser: {exc}")
+        raise
 
     browser.set_window_size(900, 1100)
     browser.get(f"http://127.0.0.1:{port}/inscriptions/{page_id}/view")

@@ -26,6 +26,8 @@ import pytest
 pytest.importorskip("selenium", reason="browser tests need selenium: pip install .[dev]")
 
 from selenium import webdriver                                       # noqa: E402
+
+import browsers                                                      # noqa: E402
 from selenium.webdriver.common.by import By                          # noqa: E402
 from selenium.webdriver.firefox.options import Options               # noqa: E402
 from selenium.webdriver.firefox.service import Service as FirefoxService  # noqa: E402
@@ -39,38 +41,10 @@ def _free_port() -> int:
 
 @pytest.fixture(scope="module")
 def browser():
-    """Headless Firefox, with the binary and driver overridable.
-
-    ARCADE_GECKODRIVER and ARCADE_FIREFOX_BINARY exist because the default
-    lookup does not find a snap-packaged Firefox: /usr/bin/firefox is a shell
-    wrapper and geckodriver rejects it with "binary is not a Firefox
-    executable", so the whole file skipped on a machine that had a perfectly
-    good browser. These are the tests that catch the bugs nothing else can -- a
-    skip here is a real loss, not a tidy fallback.
-
-    Try ARCADE_GECKODRIVER alone first. On a snap install the driver knows where
-    its own Firefox lives, so it is the only variable needed; a test machine confirmed
-    that on Ubuntu with ARCADE_GECKODRIVER=/snap/bin/firefox.geckodriver and
-    nothing else. ARCADE_FIREFOX_BINARY is for the other shape of odd install,
-    where the driver is findable and the browser is not.
-    """
-    options = Options()
-    options.add_argument("-headless")
-    binary = os.environ.get("ARCADE_FIREFOX_BINARY")
-    if binary:
-        options.binary_location = binary
-    driver_path = os.environ.get("ARCADE_GECKODRIVER")
-    service = FirefoxService(executable_path=driver_path) if driver_path else None
-    try:
-        driver = webdriver.Firefox(options=options, service=service)
-    except Exception as exc:                      # no firefox, no geckodriver
-        pytest.skip(
-            f"no usable browser: {exc}. If Firefox is installed somewhere the "
-            f"default lookup misses, point ARCADE_GECKODRIVER at the driver -- "
-            f"on a snap install that is /snap/bin/firefox.geckodriver and is "
-            f"enough on its own. ARCADE_FIREFOX_BINARY overrides the browser "
-            f"too, if the driver cannot find it."
-        )
+    """Headless Firefox. These are the tests that catch what nothing else can,
+    so a skip here is a real loss rather than a tidy fallback -- see
+    tests/browsers.py for what to set when the default lookup misses."""
+    driver = browsers.launch()
     yield driver
     driver.quit()
 
