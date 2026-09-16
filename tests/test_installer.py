@@ -692,3 +692,68 @@ def test_every_command_is_written_and_the_updater_knows_their_names(tmp_path, mo
     install.write_launcher(venv, win, "Windows")
     assert sorted(f.name for f in win.iterdir()) == sorted(install.shim_names("Windows"))
     assert "arcade-rpc.exe" in (win / "arcade-rpc.cmd").read_text()
+
+
+def test_a_broken_environment_repairs_itself(tmp_path, monkeypatch):
+    """`dogecoinarcade-update` died with ModuleNotFoundError on a real machine.
+
+    The updater lives inside the package it updates, so an environment that has
+    lost the package has no way back: every command it owns is a traceback. The
+    repair script sits outside the environment for exactly that, and each shim
+    runs it before doing its own job.
+    """
+    monkeypatch.setattr(install, "info", lambda *a, **k: None)
+    venv = tmp_path / ".dogecoinarcade" / "venv"
+    (venv / "bin").mkdir(parents=True)
+    target = tmp_path / "bin"
+    install.write_launcher(venv, target, "Linux")
+
+    repair = install.repair_path(venv)
+    assert repair.is_file(), "written beside the environment, not inside it"
+    updater = (target / "dogecoinarcade-update").read_text()
+    assert "import arcade.update" in updater, "test the package before using it"
+    assert str(repair) in updater
+    for name in ("dogecoinarcade", "arcade-rpc"):
+        assert str(repair) in (target / name).read_text()
+
+    # It has to run in an interpreter that knows nothing about the application.
+    source = {"__name__": "not_main"}
+    exec(compile(repair.read_text(), str(repair), "exec"), source)
+    assert source["SOURCE"] == venv.parent / "src"
+    assert source["PYTHON"] == venv / "bin" / "python"
+    # Nothing to install from: say so in a sentence, not a traceback.
+    assert source["main"]() == 1
+
+
+def test_an_outdated_shim_is_rewritten(tmp_path, monkeypatch):
+    """Presence was the only test, so a corrected shim never reached anyone.
+
+    Every machine that has updated already has a file called
+    `dogecoinarcade-update`; the fix that repairs a broken environment is in its
+    contents. `shims_current` is what the updater asks before rewriting.
+    """
+    monkeypatch.setattr(install, "info", lambda *a, **k: None)
+    venv = tmp_path / "venv"
+    target = tmp_path / "bin"
+    install.write_launcher(venv, target, "Linux")
+    assert install.shims_current(target, "Linux")
+
+    (target / "dogecoinarcade-update").write_text(
+        "#!/bin/sh\n# DogecoinArcade updater (shim 1)\n")
+    assert not install.shims_current(target, "Linux")
+
+    (target / "arcade-rpc").unlink()
+    assert not install.shims_current(target, "Linux")
+
+
+def test_windows_shims_are_batch_files_with_crlf(tmp_path, monkeypatch):
+    """cmd.exe reads these; LF-only line endings and stray CRs both bite."""
+    monkeypatch.setattr(install, "info", lambda *a, **k: None)
+    venv = tmp_path / "venv"
+    target = tmp_path / "winbin"
+    install.write_launcher(venv, target, "Windows")
+    text = (target / "dogecoinarcade-update.cmd").read_bytes()
+    assert text.startswith(b"@echo off\r\n")
+    assert b"\r\r\n" not in text
+    assert text.count(b"\n") == text.count(b"\r\n"), "every line ends CRLF"
+    assert b"exit /b 1" in text

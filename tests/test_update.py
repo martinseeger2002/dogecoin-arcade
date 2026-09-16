@@ -97,6 +97,9 @@ def test_the_launcher_is_written_when_it_is_missing(tmp_path, monkeypatch, check
             return bindir
         if function == "shim_names":
             return ["dogecoinarcade", "dogecoinarcade-update", "arcade-rpc"]
+        if function == "shims_current":
+            return all((Path(args[0]) / name).exists() for name in
+                       ("dogecoinarcade", "dogecoinarcade-update", "arcade-rpc"))
         if function == "write_launcher":
             target = Path(args[1])
             target.mkdir(parents=True, exist_ok=True)
@@ -226,8 +229,9 @@ def test_the_second_half_runs_in_the_code_just_installed(tmp_path, monkeypatch, 
 
     assert update.update(dry_run=False) == 0
     assert any(a[1:3] == ("install", "-q") for a in ran), ran
-    assert handed_off == [[str(venv / "bin" / "python"), "-m", "arcade.update",
-                           "--services-only"]]
+    python = str(venv / "bin" / "python")
+    assert handed_off == [[python, "-c", "import arcade"],
+                          [python, "-m", "arcade.update", "--services-only"]]
     assert "installed" in capsys.readouterr().out
 
 
@@ -247,3 +251,37 @@ def test_services_only_is_the_second_half_and_installs_nothing(tmp_path, monkeyp
 
     assert update.main(["--services-only"]) == 0
     assert seen == [(src, venv, False)]
+
+
+def test_a_reinstall_that_leaves_nothing_importable_says_so(tmp_path, monkeypatch):
+    """pip removes the old version first, so a failure there empties the venv.
+
+    Handing the rest of the update to an environment with no application in it
+    produced ModuleNotFoundError -- a traceback about a module, for a machine
+    whose application had just been deleted.
+    """
+    home = tmp_path / ".dogecoinarcade"
+    venv = home / "venv"
+    src = home / "src"
+    (venv / "bin").mkdir(parents=True)
+    (src / ".git").mkdir(parents=True)
+    (src / "pyproject.toml").write_text("[project]\nname='dogecoinarcade'\n")
+    monkeypatch.setattr(update, "HOME", home)
+    monkeypatch.setattr(update, "_find_git", lambda: "git")
+    monkeypatch.setattr(update, "current_revision", lambda _c: "abc1234")
+
+    class Done:
+        returncode = 0
+        stdout = stderr = ""
+
+    class Missing:
+        returncode = 1
+        stdout = stderr = ""
+
+    monkeypatch.setattr(update, "_run", lambda *a, **k: Done())
+    monkeypatch.setattr(update.subprocess, "run", lambda argv, **k: Missing())
+
+    with pytest.raises(update.UpdateError) as exc:
+        update.update(dry_run=False)
+    assert "no longer imports" in str(exc.value)
+    assert "repair.py" in str(exc.value), "say the command that fixes it"

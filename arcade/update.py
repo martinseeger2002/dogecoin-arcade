@@ -200,6 +200,16 @@ def update(dry_run: bool = False) -> int:
         result = _run(str(pip), "install", "-q", "--upgrade", f"{checkout}[web]")
         if result.returncode != 0:
             raise UpdateError(f"reinstall failed:\n{result.stderr[-1200:]}")
+        python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        # pip removes the old version before unpacking the new one. Interrupt it
+        # in between -- or have it fail there -- and the environment is left with
+        # no application in it, which is how a machine reaches the state where
+        # every command, this one included, is a ModuleNotFoundError.
+        if subprocess.run([str(python), "-c", "import arcade"],
+                          capture_output=True).returncode != 0:
+            raise UpdateError(
+                "pip finished, but the application no longer imports.\n"
+                f"  Repair it with: {python} {venv.parent / 'repair.py'}")
         print("  installed")
         # The rest of the update runs in the code that was just installed, not
         # in this already-imported copy. Otherwise a fix to the updater itself
@@ -207,7 +217,6 @@ def update(dry_run: bool = False) -> int:
         # update late: the machine that most needs it runs the old logic once
         # more and gets it next time. Stdout is inherited so the second half
         # prints in line with the first.
-        python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         return subprocess.run([str(python), "-m", "arcade.update", "--services-only"]).returncode
 
     return _update_services(checkout, venv, dry_run)
@@ -280,23 +289,28 @@ def _update_services(checkout: Path, venv: Path, dry_run: bool) -> int:
 
 
 def _ensure_launcher(checkout: Path, venv: Path) -> Path | None:
-    """Write the command shims if any of them is missing.
+    """Write the command shims if any is missing or was written by an older one.
 
     Same reasoning as registering the service: a machine set up before these
-    existed, or set up from a checkout rather than by the installer, has none
-    of them on its PATH. The user ran `dogecoinarcade-update` and got `command
-    not found` -- on the machine running the application. Later `arcade-rpc`
-    went the same way on a machine whose installer predated it, so every shim
-    the installer knows about is checked, not only the first. Written from the
-    installer's own templates so there is one definition of what they contain.
+    existed, or set up from a checkout rather than by the installer, has none of
+    them on its PATH. The user ran `dogecoinarcade-update` and got `command not
+    found` -- on the machine running the application. Later `arcade-rpc` went
+    the same way on a machine whose installer predated it.
+
+    Presence was the whole test until a shim's *contents* had to change: the
+    updater that repairs a broken environment could never reach a machine that
+    already had a file called `dogecoinarcade-update`, which is every machine
+    that has ever updated. The installer stamps a version into each shim and
+    answers `shims_current`; this rewrites the set whenever that says no.
+    Written from the installer's own templates, so there is one definition of
+    what they contain.
     """
     import platform
     system = platform.system()
     target = _call_installer(checkout, "bindir", system)
     if target is None:
         return None
-    names = _call_installer(checkout, "shim_names", system) or ["dogecoinarcade"]
-    if all((Path(target) / name).exists() for name in names):
+    if _call_installer(checkout, "shims_current", Path(target), system):
         return None
     written = _call_installer(checkout, "write_launcher", venv, Path(target), system)
     return Path(written) if written else None

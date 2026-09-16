@@ -1168,6 +1168,11 @@ def install_app(dry_run: bool) -> Path:
         subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
         info(f"created {venv}")
 
+    # Before the install rather than after it: an environment with no
+    # application in it is exactly the state this repairs, and an install that
+    # stops halfway is one way to reach it.
+    write_repair(venv)
+
     pip = venv / ("Scripts/pip.exe" if os.name == "nt" else "bin/pip")
     # pip needs to be current enough to understand modern metadata; the version
     # shipped inside an older venv often is not.
@@ -1183,6 +1188,17 @@ def install_app(dry_run: bool) -> Path:
     if result.returncode != 0:
         fail(f"installing the application failed:\n{result.stderr[-1500:]}"
              + build_failure_hint(result.stderr + result.stdout))
+
+    # pip has reported success and left nothing importable before, on a machine
+    # where it had already removed the previous version. Everything downstream
+    # -- the launcher, the service, the updater -- then fails with
+    # ModuleNotFoundError, a long way from the step that actually went wrong.
+    python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    check = subprocess.run([str(python), "-c", "import arcade"],
+                           capture_output=True, text=True)
+    if check.returncode != 0:
+        fail(f"pip finished, but {python} still cannot import the "
+             f"application:\n{check.stderr[-800:]}")
     info("installed DogecoinArcade and its dependencies")
     return venv
 
@@ -1211,25 +1227,169 @@ def build_failure_hint(output: str) -> str:
     )
 
 
+#: Bumped whenever the text of a shim changes. Every shim carries it in a
+#: comment, and an update rewrites the whole set when the machine's copies are
+#: older. Without that a fix to a command reached only people installing for the
+#: first time, because the updater rewrote shims only when one was missing.
+SHIM_VERSION = 2
+
 LAUNCHER = """\
 #!/bin/sh
-# DogecoinArcade launcher, written by the installer.
+# DogecoinArcade launcher (shim {version}), written by the installer.
+if [ ! -x "{venv}/bin/arcade-web" ]; then
+    echo "DogecoinArcade is missing from its environment; repairing it first."
+    "{venv}/bin/python" "{repair}" || exit 1
+fi
 exec "{venv}/bin/arcade-web" "$@"
 """
 
 UPDATER = """\
 #!/bin/sh
-# Update DogecoinArcade to the latest published code.
+# Update DogecoinArcade to the latest published code (shim {version}).
 # Touches only the code: never the identity key, messages or chain data.
+# The import test comes first because the updater lives inside the package it
+# updates: with the package gone there is nothing to run, and the command died
+# with ModuleNotFoundError instead of repairing what was wrong.
+if ! "{venv}/bin/python" -c "import arcade.update" 2>/dev/null; then
+    echo "DogecoinArcade is missing from its environment; repairing it first."
+    "{venv}/bin/python" "{repair}" || exit 1
+fi
 exec "{venv}/bin/python" -m arcade.update "$@"
 """
 
 BOT_RPC = """\
 #!/bin/sh
-# Call the running DogecoinArcade's bot RPC from a script or a shell.
+# Call the running DogecoinArcade's bot RPC from a script (shim {version}).
 # Authenticates with the cookie the interface writes; never carries a password.
+if [ ! -x "{venv}/bin/arcade-rpc" ]; then
+    echo "DogecoinArcade is missing from its environment; repairing it first."
+    "{venv}/bin/python" "{repair}" || exit 1
+fi
 exec "{venv}/bin/arcade-rpc" "$@"
 """
+
+#: Windows has no `exec`, and `||` inside a parenthesised block is a trap, so
+#: each of these is the same shape written the long way round.
+WIN_LAUNCHER = """\
+@echo off
+@rem DogecoinArcade launcher (shim {version}), written by the installer.
+if exist "{venv}\\Scripts\\arcade-web.exe" goto run
+echo DogecoinArcade is missing from its environment; repairing it first.
+"{venv}\\Scripts\\python.exe" "{repair}"
+if errorlevel 1 exit /b 1
+:run
+"{venv}\\Scripts\\arcade-web.exe" %*
+"""
+
+WIN_UPDATER = """\
+@echo off
+@rem Update DogecoinArcade to the latest published code (shim {version}).
+@rem Touches only the code: never the identity key, messages or chain data.
+"{venv}\\Scripts\\python.exe" -c "import arcade.update" >NUL 2>&1
+if not errorlevel 1 goto run
+echo DogecoinArcade is missing from its environment; repairing it first.
+"{venv}\\Scripts\\python.exe" "{repair}"
+if errorlevel 1 exit /b 1
+:run
+"{venv}\\Scripts\\python.exe" -m arcade.update %*
+"""
+
+WIN_BOT_RPC = """\
+@echo off
+@rem Call the running DogecoinArcade's bot RPC from a script (shim {version}).
+if exist "{venv}\\Scripts\\arcade-rpc.exe" goto run
+echo DogecoinArcade is missing from its environment; repairing it first.
+"{venv}\\Scripts\\python.exe" "{repair}"
+if errorlevel 1 exit /b 1
+:run
+"{venv}\\Scripts\\arcade-rpc.exe" %*
+"""
+
+#: Written beside the environment rather than inside it, and importing nothing
+#: from the application, because it is what runs when the application will not
+#: import. Filled in with @@ markers rather than str.format: the body is Python,
+#: and Python is full of braces.
+REPAIR = '''\
+#!/usr/bin/env python3
+"""Put DogecoinArcade back into its own environment.
+
+Written by the installer. A virtual environment can end up without the
+application in it -- an update that fails between pip removing the old version
+and unpacking the new one leaves exactly that -- and from there every command
+dies with ModuleNotFoundError, including the updater, which lives inside the
+package it would have repaired. This file is outside it, so it still runs.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+VENV = Path(r"@@VENV@@")
+PYTHON = Path(r"@@PYTHON@@")
+SOURCE = Path(r"@@SOURCE@@")
+SITE = "@@SITE@@"
+
+
+def main() -> int:
+    if not PYTHON.exists():
+        print(f"The environment at {VENV} has no Python left in it.")
+        print(f"Install DogecoinArcade again from {SITE}")
+        return 1
+    if not (SOURCE / "pyproject.toml").is_file():
+        print(f"There is no source to install from at {SOURCE}.")
+        print(f"Install DogecoinArcade again from {SITE}")
+        return 1
+
+    # flush: pip writes straight to the terminal, so an unflushed line here
+    # arrives after everything pip said and reads as a report of its output.
+    print(f"Installing DogecoinArcade from {SOURCE}", flush=True)
+    # `python -m pip`, not the pip executable: on Windows pip.exe cannot always
+    # replace itself, and on a half-removed installation it may not be there.
+    if subprocess.run([str(PYTHON), "-m", "pip", "install", "--upgrade",
+                       f"{SOURCE}[web]"]).returncode != 0:
+        print()
+        print("That did not work; the output above says why.")
+        print(f"Install DogecoinArcade again from {SITE}")
+        return 1
+
+    if subprocess.run([str(PYTHON), "-c", "import arcade"],
+                      capture_output=True).returncode != 0:
+        print("pip finished, but the application still does not import.")
+        print(f"Install DogecoinArcade again from {SITE}")
+        return 1
+
+    print("Repaired. Your wallet, messages and chain data were not touched.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+
+
+def repair_path(venv: Path) -> Path:
+    """Where `write_repair` puts the repair script: beside the environment."""
+    return Path(venv).parent / "repair.py"
+
+
+def write_repair(venv: Path, system: str | None = None) -> Path:
+    """Write the standalone repair script.
+
+    Written as soon as the environment exists, before anything that can fail:
+    the whole point of it is to be there when the install did not finish.
+    """
+    venv = Path(venv)
+    windows = (system or platform.system()) == "Windows"
+    python = venv / ("Scripts/python.exe" if windows else "bin/python")
+    path = repair_path(venv)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        REPAIR.replace("@@VENV@@", str(venv))
+              .replace("@@PYTHON@@", str(python))
+              .replace("@@SOURCE@@", str(venv.parent / "src"))
+              .replace("@@SITE@@", "https://dogecoinarcade.com")
+    )
+    return path
+
 
 #: Every command the installer puts on the PATH, in the order it writes them.
 #: The updater checks each of these, so a machine installed before one of them
@@ -1244,28 +1404,54 @@ def shim_names(system: str) -> list[str]:
 
 
 def write_launcher(venv: Path, target: Path, system: str) -> Path:
+    """Write every command shim, and the repair script they fall back on."""
     target.mkdir(parents=True, exist_ok=True)
+    repair = write_repair(venv, system)
     if system == "Windows":
-        path = target / "dogecoinarcade.cmd"
-        path.write_text(f'@echo off\r\n"{venv}\\Scripts\\arcade-web.exe" %*\r\n')
-        (target / "dogecoinarcade-update.cmd").write_text(
-            f'@echo off\r\n"{venv}\\Scripts\\python.exe" -m arcade.update %*\r\n')
-        (target / "arcade-rpc.cmd").write_text(
-            f'@echo off\r\n"{venv}\\Scripts\\arcade-rpc.exe" %*\r\n')
+        shims = [("dogecoinarcade.cmd", WIN_LAUNCHER),
+                 ("dogecoinarcade-update.cmd", WIN_UPDATER),
+                 ("arcade-rpc.cmd", WIN_BOT_RPC)]
     else:
-        path = target / "dogecoinarcade"
-        path.write_text(LAUNCHER.format(venv=venv))
-        path.chmod(0o755)
-        update = target / "dogecoinarcade-update"
-        update.write_text(UPDATER.format(venv=venv))
-        update.chmod(0o755)
-        info(f"wrote updater {update}")
-        rpc = target / "arcade-rpc"
-        rpc.write_text(BOT_RPC.format(venv=venv))
-        rpc.chmod(0o755)
-        info(f"wrote bot RPC command {rpc}")
-    info(f"wrote launcher {path}")
-    return path
+        shims = [("dogecoinarcade", LAUNCHER),
+                 ("dogecoinarcade-update", UPDATER),
+                 ("arcade-rpc", BOT_RPC)]
+    written = []
+    for name, template in shims:
+        text = template.format(venv=venv, repair=repair, version=SHIM_VERSION)
+        path = target / name
+        if system == "Windows":
+            # newline="" so the CRs written here are the only ones: text mode on
+            # Windows would translate the \n as well and leave \r\r\n.
+            path.write_text(text.replace("\n", "\r\n"), newline="")
+        else:
+            path.write_text(text)
+            path.chmod(0o755)
+        written.append(path)
+    for path in written[1:]:
+        info(f"wrote {path}")
+    info(f"wrote launcher {written[0]}")
+    return written[0]
+
+
+def shims_current(target: Path, system: str) -> bool:
+    """Is every shim in `target` present and written by this version?
+
+    The updater asks before rewriting. Existence alone was the old test, and it
+    meant a corrected shim never reached a machine that already had one by that
+    name -- which is every machine that has ever run an update.
+    """
+    target = Path(target)
+    marker = f"(shim {SHIM_VERSION})"
+    for name in shim_names(system):
+        path = target / name
+        if not path.is_file():
+            return False
+        try:
+            if marker not in path.read_text(errors="replace"):
+                return False
+        except OSError:
+            return False
+    return True
 
 
 # --- update -------------------------------------------------------------------
