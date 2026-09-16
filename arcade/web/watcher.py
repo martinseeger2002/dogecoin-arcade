@@ -188,23 +188,24 @@ class BlockWatcher:
                 self.state.bump_generation()
 
     def _check_pending_offers(self) -> None:
-        """Notice an offer in the pool, so the page holding it refreshes.
+        """Notice an offer or an order in the pool, so the page refreshes.
 
-        The scanner bumps the generation for a message in the pool; an offer
-        is not a message, it is an arcade transaction, so nothing noticed it
-        and the Exchange sat unchanged until the block landed. That is the
-        same wait the mempool read was meant to remove (D-058).
+        The scanner bumps the generation for a message in the pool; neither
+        of these is a message, they are arcade transactions, so nothing
+        noticed them and the Exchange sat unchanged until the block landed.
+        That is the wait the mempool read was meant to remove (D-058, D-061).
 
-        Only the set of ids is compared. Reading the offers themselves is
-        cached by txid in the index, so a pass with nothing new costs one
-        getrawmempool.
+        Only the sets of ids are compared. Reading them is cached by txid in
+        the index, so a pass with nothing new costs one getrawmempool.
         """
         for chain in self.state.token_chains:
             index = self.state.token_index(chain)
             if not index.enabled:
                 continue
             try:
-                now = {offer["txid"] for offer in index.pending_offers()}
+                orders, cancels = index.pending_orders()
+                now = ({offer["txid"] for offer in index.pending_offers()}
+                       | {order["txid"] for order in orders} | cancels)
             except Exception:
                 continue
             if now != self._pending_offers.get(chain.network, set()):

@@ -540,12 +540,21 @@ class LedgerIndex:
                 f"ORDER BY c.edition IS NULL, c.edition, i.number LIMIT ? OFFSET ?",
                 (creator, name, max(1, min(limit, 500)), max(0, offset)))]
 
-    def book(self, property_id: int, limit: int = 50) -> dict[str, list[dict]]:
+    def book(self, property_id: int, limit: int = 50,
+             pool: bool = True) -> dict[str, list[dict]]:
         """One pair's book: asks cheapest first, bids dearest first.
 
         Price is worked out from two integers and kept as a Fraction until
         the last moment, because a book sorted on floats puts orders in an
         order nobody can reproduce (D-048).
+
+        `pool` includes what has been broadcast and not yet mined, marked
+        `pending`, and drops what the pool cancels. An order is a public
+        statement of a price, and a book that is ten minutes behind the
+        prices people are actually offering is a book nobody can trade on
+        (D-061). Nothing read from the pool is written down: the ledger is
+        built from blocks, and the reserve an order holds moves only when its
+        block lands.
         """
         from fractions import Fraction
 
@@ -553,6 +562,11 @@ class LedgerIndex:
             rows = [dict(r) for r in db.conn.execute(
                 "SELECT * FROM book_order WHERE sale_property = ? OR want_property = ?",
                 (property_id, property_id))]
+        if pool:
+            fresh, cancelled = self.pending_orders()
+            rows = [r for r in rows if r["txid"] not in cancelled]
+            rows += [r for r in fresh
+                     if property_id in (r["sale_property"], r["want_property"])]
         asks, bids = [], []
         for row in rows:
             selling_token = row["sale_property"] == property_id
@@ -568,23 +582,155 @@ class LedgerIndex:
         bids.sort(key=lambda r: (-r["price"], r["block_height"], r["position"]))
         return {"asks": asks[:limit], "bids": bids[:limit]}
 
-    def book_pairs(self) -> list[int]:
-        """Every token with an order standing against the coin."""
+    def pending_orders(self) -> tuple[list[dict], set[str]]:
+        """(orders broadcast and not yet mined, txids the pool cancels).
+
+        The same rule as `pending_offers`: read fresh on every call, written
+        down nowhere. A pool order is a claim, not a settled one -- the tokens
+        it sells are reserved when its block lands and not before, so what is
+        shown from here is what somebody has said, exactly as the chain will
+        read it, one confirmation early.
+
+        Validated as the indexer validates it, minus what only a block can
+        answer: two different sides, one of them the coin, amounts in range,
+        and the property exists. Whether the seller still holds what it is
+        selling is settled by the block, and by the swap that fills it.
+        """
+        from .indexer import PrevOutCache
+        from .tx import extract
+
+        try:
+            with self._rpc() as rpc:
+                ids = list(rpc.call("getrawmempool") or [])
+                if not ids:
+                    self._pool_orders = {}
+                    return [], set()
+                known = getattr(self, "_pool_orders", {})
+                cache = PrevOutCache(rpc, self.params)
+                found: dict[str, Any] = {}
+                for txid in ids:
+                    if txid in known:
+                        found[txid] = known[txid]
+                        continue
+                    try:
+                        tx = rpc.call("getrawtransaction", txid, True)
+                        rtx = extract(tx, 0, 0, self.params, cache.lookup)
+                    except Exception:
+                        found[txid] = None
+                        continue
+                    found[txid] = self._order_row(rtx)
+                self._pool_orders = found
+        except Exception as exc:
+            log.debug("mempool orders unavailable: %s", exc)
+            return [], set()
+
+        orders, cancels = [], []
+        for row in self._pool_orders.values():
+            if row is None:
+                continue
+            (cancels if row.get("cancels") else orders).append(row)
+        if not cancels:
+            return orders, set()
+
+        # A cancel in the pool takes an order off the book now. Applied to
+        # both books -- what is already mined and what is beside it in the
+        # pool -- because a price somebody has withdrawn is not a price.
+        standing = {o["txid"]: o for o in orders}
+        with self.open() as db:
+            for mined in db.conn.execute("SELECT * FROM book_order"):
+                standing.setdefault(mined["txid"], dict(mined))
+        gone = set()
+        for cancel in cancels:
+            for txid, order in standing.items():
+                if order["address"] != cancel["address"]:
+                    continue
+                if cancel["cancels"] == "ecosystem":
+                    gone.add(txid)
+                    continue
+                if (order["sale_property"] != cancel["sale_property"]
+                        or order["want_property"] != cancel["want_property"]):
+                    continue
+                if cancel["cancels"] == "price":
+                    # a/b == c/d without dividing anything, as the engine does
+                    if (cancel["want_amount"] * order["sale_amount"]
+                            != cancel["sale_amount"] * order["want_amount"]):
+                        continue
+                gone.add(txid)
+        return [o for o in orders if o["txid"] not in gone], gone
+
+    def _order_row(self, rtx) -> dict | None:
+        """One mempool transaction as a book row, a cancel, or None."""
+        if rtx is None or not rtx.payload:
+            return None
+        try:
+            msg = P.decode(rtx.payload)
+        except (P.PayloadError, P.UnknownMessageType, P.OutOfScopeMessageType):
+            return None
+
+        base = {"txid": rtx.txid, "block_height": 0, "position": 0,
+                "address": rtx.sender, "reserved": 0, "pending": True}
+        if isinstance(msg, P.MetaDExCancelEcosystem):
+            return {**base, "cancels": "ecosystem", "sale_property": 0,
+                    "want_property": 0, "sale_amount": 0, "want_amount": 0}
+        if isinstance(msg, (P.MetaDExCancelPrice, P.MetaDExCancelPair)):
+            price = isinstance(msg, P.MetaDExCancelPrice)
+            return {**base, "cancels": "price" if price else "pair",
+                    "sale_property": msg.property_id_for_sale,
+                    "want_property": msg.property_id_desired,
+                    "sale_amount": getattr(msg, "amount_for_sale", 0),
+                    "want_amount": getattr(msg, "amount_desired", 0)}
+        if not isinstance(msg, P.MetaDExTrade):
+            return None
+
+        sale, want = msg.property_id_for_sale, msg.property_id_desired
+        if sale == want or 0 not in (sale, want):
+            return None
+        if not 0 < msg.amount_for_sale < 2 ** 63 or not 0 < msg.amount_desired < 2 ** 63:
+            return None
+        if self.property(want if sale == 0 else sale) is None:
+            return None
+        return {**base, "cancels": "", "sale_property": sale,
+                "sale_amount": msg.amount_for_sale, "want_property": want,
+                "want_amount": msg.amount_desired}
+
+    def book_pairs(self, pool: bool = True) -> list[int]:
+        """Every token with an order standing against the coin.
+
+        The pool counts: a pair whose first order is still unmined has to
+        appear, or there is nothing to click on and the order is invisible
+        until its block (D-061).
+        """
         with self.open() as db:
             rows = db.conn.execute(
                 "SELECT DISTINCT CASE WHEN sale_property = 0 THEN want_property "
                 "ELSE sale_property END AS pid FROM book_order").fetchall()
-        return [int(r["pid"]) for r in rows if r["pid"]]
+        pairs = {int(r["pid"]) for r in rows if r["pid"]}
+        if pool:
+            fresh, _ = self.pending_orders()
+            pairs |= {o["want_property"] if o["sale_property"] == 0
+                      else o["sale_property"] for o in fresh}
+        return sorted(p for p in pairs if p)
 
-    def orders_of(self, addresses: list[str]) -> list[dict]:
-        """This wallet's own standing orders, newest first."""
+    def orders_of(self, addresses: list[str], pool: bool = True) -> list[dict]:
+        """This wallet's own standing orders, newest first.
+
+        The pool first: an order you have just placed is yours whether or not
+        a miner has got to it, and a list that says "you have no orders" the
+        moment after you placed one is the bug this removes (D-061).
+        """
         if not addresses:
             return []
         marks = ",".join("?" * len(addresses))
         with self.open() as db:
-            return [dict(r) for r in db.conn.execute(
+            mine = [dict(r) for r in db.conn.execute(
                 f"SELECT * FROM book_order WHERE address IN ({marks}) "
                 f"ORDER BY block_height DESC, position DESC", tuple(addresses))]
+        if not pool:
+            return mine
+        fresh, cancelled = self.pending_orders()
+        here = set(addresses)
+        return ([o for o in fresh if o["address"] in here]
+                + [o for o in mine if o["txid"] not in cancelled])
 
     def offers_on(self, owners: list[str], limit: int = 100) -> list[dict]:
         """Offers standing against inscriptions these addresses hold.
