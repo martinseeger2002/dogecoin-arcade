@@ -431,3 +431,32 @@ def test_a_busy_node_leaves_the_count_alone(tmp_path):
     row = store.conn.execute("SELECT confirmed, confirmed_count FROM sent").fetchone()
     assert row["confirmed_count"] == 2 and row["confirmed"] == 0
     store.close()
+
+
+def test_the_update_check_is_not_hourly(monkeypatch):
+    """Six hours was a guess against weekly releases. Nine went out in two
+    hours on the day it shipped, and every machine sat on whichever one it
+    happened to have -- including one holding a consensus rule that had since
+    moved, while its owner was told to update by hand (D-078)."""
+    from arcade.web.watcher import BlockWatcher
+
+    assert BlockWatcher.UPDATE_EVERY <= 15 * 60, \
+        "an automatic update nobody notices is not automatic, it is slow"
+
+
+def test_a_node_that_publishes_nothing_checks_anyway(monkeypatch):
+    """The first tick after a restart has to look: `_update_checked` starting
+    at zero is what makes a machine that has been off for a week current
+    before anybody uses it."""
+    from arcade.web.watcher import BlockWatcher
+
+    state = FakeState(FakeChain(tip=100), FakeChain("main", tip=5))
+    watcher = BlockWatcher(state)
+    assert watcher._update_checked == 0.0
+    looked = []
+    monkeypatch.setattr("arcade.web.watcher.update.check",
+                        lambda: looked.append(1) or (None, None, False))
+    monkeypatch.setattr(type(state), "setting",
+                        lambda self, name, default=None: True, raising=False)
+    watcher._auto_update()
+    assert looked, "it did not even ask"

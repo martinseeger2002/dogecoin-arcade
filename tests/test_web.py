@@ -205,6 +205,20 @@ MAIN_ADDRESS = "PognhfhGxiSNPrYLQYUaT5bMsVbgumzc6i"
 
 
 def _save(app, state, **fields):
+    """Save a contact, having first made them somebody the book will accept.
+
+    The book holds people who have said who they are on the chain (D-079), so
+    a test that saves an address has to give that address a name on the chain
+    the way a real one would -- by publishing a key that carries a @tag.
+    """
+    for address in (fields.get("testnet_address"), fields.get("mainnet_address")):
+        if address and not address.startswith("@"):
+            with state.store() as store:      # opening it is what creates it
+                if not store.tag_announced_at(address):
+                    store.add_key_announcement(
+                        f"{abs(hash(address)) % (16 ** 64):064x}", address,
+                        b"\x01" * 32, "fp", 100, 1700,
+                        tag="them" + str(abs(hash(address)) % 1000))
     fields["csrf_token"] = state.csrf_token
     return app.post("/contacts/save", data=fields, follow_redirects=False)
 
@@ -2641,6 +2655,9 @@ def test_the_address_book_stores_the_address_a_tag_names(client, monkeypatch):
 
     monkeypatch.setattr(type(state), "token_index", lambda self, chain: Index())
     csrf = state.csrf_token
+    with state.store() as store:
+        store.add_key_announcement("cc" * 32, "mgA7SfyBBrVGVSpQ7oqGHPhxpp2gUZWtfc",
+                                   b"\x01" * 32, "fp", 100, 1700, tag="friend")
     answer = page.post("/contacts/save", data={"csrf_token": csrf, "name": "A friend",
                                                "testnet_address": "@friend"},
                        follow_redirects=True)
@@ -2791,3 +2808,24 @@ def test_somebody_can_be_found_and_added_by_tag(client, monkeypatch):
         saved = [dict(r) for r in store.contacts()]
     assert saved[0]["testnet_address"] == "mgA7SfyBBrVGVSpQ7oqGHPhxpp2gUZWtfc"
     assert "already in your book" in page.get("/contacts?find=robin").text
+
+
+def test_somebody_with_no_tag_cannot_be_added(client):
+    """The book holds people who have said who they are on the chain.
+
+    A name you typed beside a row of base58 is the thing an address book
+    exists to stop you relying on: it is checkable by nobody, including you.
+    Refused with what to do about it, because the person being added can fix
+    it with one button on their own machine (D-079).
+    """
+    page, state = client
+    answer = page.post("/contacts/save",
+                       data={"csrf_token": state.csrf_token, "name": "A stranger",
+                             "mainnet_address": MAIN_ADDRESS},
+                       follow_redirects=True)
+    assert answer.status_code == 200
+    said = " ".join(answer.text.split())
+    assert "has not claimed an @tag" in said
+    assert "publish one from their own address book" in said, "say how to fix it"
+    with state.store() as store:
+        assert store.contacts() == [], "and nothing was saved"

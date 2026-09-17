@@ -903,6 +903,22 @@ class MessageStore:
             (str(tag).lstrip("@"),)).fetchone()
         return row["address"] if row else ""
 
+    def tag_announced_at(self, address: str) -> str:
+        """The @tag an announcement gives this address, on either chain.
+
+        A tag is claimed on the messaging chain, so a mainnet address never
+        holds one directly -- it is named by the announcement that binds both
+        of a wallet's addresses to one key (D-032). Newest wins.
+        """
+        if not address:
+            return ""
+        row = self.conn.execute(
+            "SELECT tag FROM key_announcement WHERE tag != '' "
+            "AND (address = ? OR other_address = ?) "
+            "ORDER BY height DESC, seen_at DESC LIMIT 1",
+            (address, address)).fetchone()
+        return row["tag"] if row else ""
+
     def board_unread(self, network: str) -> int:
         """Public posts, not this wallet's own, since the board was last read."""
         row = self.conn.execute("SELECT value FROM seen_mark WHERE name=?",

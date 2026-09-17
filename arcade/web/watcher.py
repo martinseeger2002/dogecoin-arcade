@@ -222,8 +222,19 @@ class BlockWatcher:
                 self.state.bump_generation()
 
     #: When the automatic update last looked, and how often it may.
+    #:
+    #: Fifteen minutes, not six hours. Six was chosen against a picture of
+    #: releases arriving weekly; on the day it shipped, nine went out in two
+    #: hours and every machine sat on the first one it happened to have --
+    #: including a node holding a consensus rule that had since moved, while
+    #: its owner was told twice to update by hand. An automatic update nobody
+    #: notices is not automatic, it is slow (D-078).
+    #:
+    #: It costs one small signed file per quarter hour per machine, and the
+    #: board notice (D-068) is still the fast path: seconds, when there is
+    #: something to hear.
     _update_checked = 0.0
-    UPDATE_EVERY = 6 * 3600
+    UPDATE_EVERY = 15 * 60
 
     #: The last release this node announced or acted on, so a notice that
     #: stays on the board does not start an update every pass.

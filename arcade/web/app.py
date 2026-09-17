@@ -1196,6 +1196,33 @@ def create_app(state: AppState) -> FastAPI:
         testnet_address = resolved.get(False, testnet_address)
         mainnet_address = resolved.get(True, mainnet_address)
 
+        # The book holds people who have said who they are on the chain, and
+        # nobody else. A name you can check beats a name you typed: an entry
+        # whose address holds no @tag is a row of base58 with a label, which
+        # is the thing the address book exists to stop you relying on (D-079).
+        #
+        # Only when an address is being set. Editing the notes on somebody
+        # saved before this rule must not lock you out of your own book.
+        if testnet_address or mainnet_address:
+            named = ""
+            try:
+                _, tag_index = _tag_chain()
+                named = tag_index.tag_of(testnet_address) or ""
+            except Exception:
+                named = ""
+            if not named and state.store_path.exists():
+                with state.store() as store:
+                    named = (store.tag_announced_at(testnet_address)
+                             or store.tag_announced_at(mainnet_address))
+            if not named:
+                state.flash(
+                    f"{testnet_address or mainnet_address} has not claimed an "
+                    "@tag on the chain, so there is no name here that anybody "
+                    "could check. Ask them to publish one from their own "
+                    "address book -- one button, and then they can be added "
+                    "by searching for it.", "err")
+                return RedirectResponse("/contacts", status_code=303)
+
         pubkey = None
         if code.strip():
             try:
