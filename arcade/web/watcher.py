@@ -284,7 +284,15 @@ class BlockWatcher:
                                           limit=5)
         except Exception:
             return
-        for post in posts:
+        # Newest first. `group_posts` hands back oldest-first so a channel
+        # reads like a room, and walking it that way made a node coming fresh
+        # to two notices take the OLDER revision as the one it had seen. It
+        # costs a receiver nothing -- the revision in a notice is a dedup key,
+        # never what installs -- but on the publishing node `_announce_release`
+        # compares against the same field, so an older revision landing there
+        # invites it to announce again. And the log line should name the
+        # release a person would expect (D-087).
+        for post in reversed(posts):
             # Pool rows included, deliberately. `group_posts` returns a notice
             # at height 0 -- broadcast, not yet mined -- and acting on one is
             # a block sooner, which is the whole point when a consensus height

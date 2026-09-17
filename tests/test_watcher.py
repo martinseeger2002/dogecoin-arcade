@@ -506,3 +506,37 @@ def test_it_says_what_it_decided(monkeypatch):
     watcher._auto_update()
     assert state.update_status["what"] == "could not reach the site"
     assert "refused" in state.update_status["error"], "and why"
+
+
+def test_the_newest_notice_is_the_one_taken(monkeypatch, tmp_path):
+    """A channel is handed back oldest-first so it reads like a room; the
+    watcher wants the other end. Walking it forwards made a node coming fresh
+    to two notices record the OLDER revision as seen -- harmless on a
+    receiver, but the publishing node compares the same field before
+    announcing, so an old revision landing there invites a second post for a
+    release already announced (D-087)."""
+    from arcade.web.watcher import BlockWatcher
+    from arcade import release
+
+    state = FakeState(FakeChain(tip=100), FakeChain("main", tip=5))
+    watcher = BlockWatcher(state)
+    posts = [{"text": release.notice("0000111"), "sender": "nPub"},
+             {"text": "somebody says hello", "sender": "nOther"},
+             {"text": release.notice("2222333"), "sender": "nPub"}]
+
+    class Store:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def group_posts(self, network, channel, limit=5):
+            return posts
+
+    monkeypatch.setattr(watcher, "_release_publisher", lambda: "nPub")
+    monkeypatch.setattr(type(state), "store", lambda self: Store(), raising=False)
+    watcher._update_checked = 999999.0
+    watcher._check_release_notices()
+    assert watcher._release_seen == "2222333", "the newest, not the first read"
+    assert watcher._update_checked == 0.0, "and it asks the site now"
