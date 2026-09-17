@@ -91,3 +91,42 @@ def test_a_wallet_finds_its_tag_on_the_chain_that_holds_tags(tmp_path, monkeypat
                         property(lambda self: [state.ledger, state.messaging]))
     assert state.my_tag() == "notbigchiefenergy", \
         "the messaging chain, even when the ledger chain is listed first"
+
+
+def test_both_sides_ask_the_same_table_who_holds_the_tag(tmp_path, monkeypatch):
+    """The announce side read the tag table; the receive side read the tag an
+    ANNOUNCEMENT states. They disagree the moment somebody renames -- an
+    announcement is a statement by the key holder and goes stale -- so the
+    publisher announced and every receiver answered "nobody holds that"
+    before looking at a post.
+
+    Invisible from the publishing machine, because the half that works is the
+    half it runs. A test machine found it by reporting that its node did nothing
+    (D-086).
+    """
+    from arcade.web.state import AppState, ChainContext
+    from arcade.web.watcher import BlockWatcher
+
+    class Index:
+        def address_of(self, tag):
+            return "nPublisher" if tag == release.RELEASE_TAG else None
+
+    state = AppState(
+        home=tmp_path,
+        messaging=ChainContext(network="regtest", role="messaging", label="T"),
+        ledger=ChainContext(network="main", role="ledger", label="M"))
+    monkeypatch.setattr(type(state), "token_index", lambda self, chain: Index())
+    monkeypatch.setattr(type(state), "token_chains",
+                        property(lambda self: [state.ledger, state.messaging]))
+
+    watcher = BlockWatcher(state)
+    assert watcher._release_publisher() == "nPublisher", \
+        "the claim on the chain, not what an announcement says about it"
+
+    # And an announcement carrying a stale name cannot make it disagree,
+    # because it is not consulted at all.
+    from arcade.messaging.store import MessageStore
+    store = MessageStore(tmp_path / "m.sqlite")
+    store.add_key_announcement("aa" * 32, "nPublisher", b"\x01" * 32, "fp", 100,
+                               1700, tag="theoldname")
+    assert watcher._release_publisher() == "nPublisher"

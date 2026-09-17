@@ -267,10 +267,19 @@ class BlockWatcher:
         """
         chain = self.state.messaging
         try:
+            # The TAG TABLE, which is the claim on the chain, not the tag an
+            # announcement states. They can disagree -- an announcement is a
+            # statement by the key holder and goes stale the moment they claim
+            # a different name -- and the two sides of this feature were
+            # reading different ones. The publisher asked the tag table and
+            # announced; every receiver asked its announcements, found the old
+            # name, and answered "nobody holds that" before it looked at a
+            # single post. Invisible from the publishing machine, because the
+            # half that works is the half it runs (D-086).
+            who = self._release_publisher()
+            if not who:
+                return                  # nobody holds that tag on this chain
             with self.state.store() as store:
-                who = store.address_for_tag(releaselib.RELEASE_TAG)
-                if not who:
-                    return              # nobody has published that tag here
                 posts = store.group_posts(chain.network, releaselib.RELEASE_CHANNEL,
                                           limit=5)
         except Exception:
@@ -287,6 +296,18 @@ class BlockWatcher:
             log.info("release notice from @%s: %s", releaselib.RELEASE_TAG, revision)
             self._update_checked = 0.0   # look now
             break
+
+    def _release_publisher(self) -> str:
+        """The address holding the release tag, as the chain has it."""
+        for chain in self.state.token_chains:
+            if chain.network != self.state.messaging.network:
+                continue
+            try:
+                return self.state.token_index(chain).address_of(
+                    releaselib.RELEASE_TAG) or ""
+            except Exception:
+                return ""
+        return ""
 
     def _announce_release(self) -> None:
         """Tell everyone, if this is the node that may.
