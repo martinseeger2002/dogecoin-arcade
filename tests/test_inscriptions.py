@@ -328,3 +328,34 @@ def test_an_object_says_where_the_piece_belongs():
     odd = json.dumps({"name": "Goofball #4", "edition": 4,
                       "collection": {"name": 7}})
     assert I.collection_of(odd) == ("Goofball", 4, "Goofball #4")
+
+
+def test_an_object_adds_to_what_a_piece_says_rather_than_replacing_it():
+    """A `collection` object holding only what a form filled in must not
+    shadow what the item already said. Read the other way, inscribing a
+    thumbnail DELETED the set's description from every marketplace -- the
+    words still on the chain, paid for a hundred times, shown nowhere. Found
+    by a test machine on its own set, hours after the feature shipped (D-114).
+    """
+    import json
+
+    # Exactly the shape Pixel Skulls has on chain: an object with a name and
+    # an icon, and a HashLips description at the top level beside it.
+    on_chain = json.dumps({
+        "name": "Pixel Skull #1", "edition": 1,
+        "description": "100 hand-coded pixel skulls, no diffusion model",
+        "external_url": "https://skulls.example",
+        "collection": {"name": "Pixel Skull", "icon": "b4" * 32}})
+    assert I.collection_details(on_chain) == {
+        "description": "100 hand-coded pixel skulls, no diffusion model",
+        "url": "https://skulls.example",
+        "icon": "b4" * 32}, "the object adds the face; the words are still read"
+
+    # The object still WINS where it says something: it is the more specific
+    # statement, and a set that wants different words in the two places gets
+    # the ones it wrote about itself.
+    louder = json.dumps({
+        "name": "Pixel Skull #1", "edition": 1,
+        "description": "what one piece is",
+        "collection": {"name": "Pixel Skull", "description": "what the set is"}})
+    assert I.collection_details(louder)["description"] == "what the set is"

@@ -289,10 +289,18 @@ def collection_details(json_text: str) -> dict[str, Any]:
     if not isinstance(data, dict):
         return {}
     inner = data.get("collection")
-    source = inner if isinstance(inner, dict) else data
+    # Field by field, the object first and the item's own top level after --
+    # never the object INSTEAD of it. Read as "an object replaces the top
+    # level", adding a thumbnail deleted the set's description: the wizard
+    # writes an object holding only what the form filled in, and that object
+    # then shadowed a HashLips `description` still sitting in the same JSON,
+    # paid for on every piece and shown nowhere. Found by a test machine on its own
+    # set, permanently on chain, hours after the feature shipped (D-114).
+    sources = [inner, data] if isinstance(inner, dict) else [data]
     out: dict[str, Any] = {}
     for field in COLLECTION_FIELDS:
-        for alias in _COLLECTION_ALIASES[field]:
+        for source, alias in ((s, a) for s in sources
+                              for a in _COLLECTION_ALIASES[field]):
             if alias not in source:
                 continue
             value = source[alias]

@@ -205,3 +205,30 @@ def test_a_preview_serves_only_what_the_build_lists(client, tmp_path):
         answer = app.get("/inscriptions/collection/preview/piece",
                          params={"folder": str(build), "n": n})
         assert answer.status_code in (404, 422), n
+
+
+def test_the_review_screen_leads_with_the_name_not_the_path(client, tmp_path):
+    """Two build folders one letter apart in the collection name are
+    indistinguishable when the name is a table row and the path is what
+    catches the eye. That is how a raw HashLips build went on the chain in
+    place of a prepared one, reviewed by two people and noticed by neither
+    (a test machine, D-114)."""
+    app, state = client
+    build = hashlips(tmp_path, count=3)
+
+    body = app.post("/inscriptions/collection/review",
+                    data={"csrf_token": state.csrf_token, "folder": str(build)}).text
+    # The node is unreachable in this fixture, so the review panel does not
+    # draw at all -- it is priced against a wallet. What can be asserted here
+    # is the template itself, which is where the change lives.
+    from pathlib import Path as _Path
+
+    wizard = _Path("arcade/web/templates/collection_wizard.html").read_text()
+    lead = wizard[wizard.index("{% if build %}"):wizard.index("<table>")]
+    assert "font-size:1.35rem" in lead, "the set's name is the biggest thing here"
+    assert "build.collection" in lead and "build.items[0].name" in lead, \
+        "and the first piece's own name is beside it, before any path"
+    assert lead.index("build.collection") < lead.index("build.folder"), \
+        "the name comes before the path, which is the whole point"
+    assert "First piece is called" in wizard
+    assert body.count("Traceback") == 0

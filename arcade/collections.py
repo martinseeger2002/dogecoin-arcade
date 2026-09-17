@@ -162,7 +162,14 @@ def with_details(build: "Build", details: dict[str, Any]) -> "Build":
     if not isinstance(data, dict):
         return build
     member = I.collection_of(first.json)
-    about: dict[str, Any] = {"name": member[0] if member else build.collection}
+    # Seeded from what the piece ALREADY says about the set, so adding a face
+    # adds a field rather than replacing a source. Without this, an object
+    # holding only what the form filled in shadowed a HashLips `description`
+    # sitting in the same JSON -- inscribed on every piece, shown nowhere
+    # (a test machine, D-114). Belt and braces with the reader's own per-field
+    # fallback: this makes the bytes say it, that makes the old ones readable.
+    about: dict[str, Any] = dict(I.collection_details(first.json))
+    about["name"] = member[0] if member else build.collection
     about.update(wanted)
     existing = data.get("collection")
     if isinstance(existing, dict):

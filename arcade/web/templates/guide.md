@@ -267,11 +267,14 @@ them there yourself, in a `collection` object beside the name:
 ```
 
 `description`, `url` (or `website`, or `external_url`), `twitter`, `discord`,
-`telegram`, `supply`, `artist` and `icon` are read; everything else is ignored, text
+`telegram`, `supply`, `artist` and `icon` are read — **field by field**, the
+object first and the item's own top level after, so adding one of them never
+hides another. (A HashLips `description` at the top level keeps being read
+after the wizard writes an object for the thumbnail.) Everything else is ignored, text
 is capped, and a link that is not http(s) is not shown as a link — an
 inscription is written by anybody and this ends up on a page. A HashLips
 build already writes `description` and `external_url` at the top level of
-every item, and those are read when there is no object.
+every item, and those are read whether or not there is an object.
 
 **The set's face is its #1 unless it says otherwise.** A marketplace shows
 the first piece, because that is the one people recognise — but `icon` names

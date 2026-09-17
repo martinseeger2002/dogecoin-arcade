@@ -22,11 +22,26 @@
         This is mainnet. Every item is permanent, cannot be taken back, and is
         paid for as it goes.</p>
     {% endif %}
+    {# The name first and biggest, with the first item's own name under it.
+       Two folders one letter apart in the collection name are indistinguishable
+       when the name is a table row and the path is what catches the eye -- which
+       is how a raw HashLips build went on the chain in place of a prepared one,
+       reviewed by two of us and noticed by neither (a test machine, D-114). #}
+    <p style="margin:0 0 2px;font-size:1.35rem;font-weight:600">
+      {{ build.collection or 'no name in the metadata' }}</p>
+    <p class="muted" style="margin:0 0 14px">
+      first piece: <strong>{{ build.items[0].name if build.items else '—' }}</strong>
+      &middot; {{ "{:,}".format(cost['items']) }} items
+      &middot; {{ "{:,}".format(build.items[0].size) if build.items else 0 }} bytes each, about
+      &middot; <span class="mono" style="font-size:.82rem">{{ build.folder }}</span></p>
     <table>
       <tr><td class="muted" style="width:150px">Folder</td>
           <td class="mono" style="word-break:break-all">{{ build.folder }}</td></tr>
       <tr><td class="muted">Collection</td>
           <td>{{ build.collection or '(no name in the metadata)' }}</td></tr>
+      <tr><td class="muted">First piece is called</td>
+          <td>{{ build.items[0].name if build.items else '—' }}
+            <span class="muted">&mdash; every other piece follows it</span></td></tr>
       <tr><td class="muted">Items</td>
           <td>{{ "{:,}".format(cost['items']) }}
             <span class="muted">&mdash; editions
