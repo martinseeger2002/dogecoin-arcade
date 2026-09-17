@@ -824,3 +824,29 @@ def test_a_fill_nobody_answered_becomes_a_refusal(world, monkeypatch):
     assert "still be on the book" in offers.get_fill("f" * 64)["error"], \
         "say what to do about it"
     assert offers.get_fill("e" * 64)["status"] == "asked", "one still in time"
+
+
+def test_an_old_note_does_not_fall_off_the_page(world):
+    """`fills()` is newest-first with a limit, for showing somebody what they
+    asked for. Expiring through it meant an old note fell off the end and was
+    never examined again -- permanently stuck at the state this abolishes.
+
+    It survives only in a wallet with more than fifty notes: the long-lived,
+    heavily-traded one, which is the wallet least able to afford it and the
+    one no test with a handful of rows can reach (D-094).
+    """
+    index, seller, _, offers = world
+    now = time.time()
+    stale = "old" + "0" * 61
+    offers.add_fill({"id": stale, "network": "test", "order": "o" * 64,
+                     "maker": SELLER, "buyer": BUYER, "tokens": 1, "coins": 1,
+                     "created": now - 100_000, "expires": now - 1})
+    for n in range(60):
+        offers.add_fill({"id": f"{n:064x}", "network": "test", "order": "o" * 64,
+                         "maker": SELLER, "buyer": BUYER, "tokens": 1, "coins": 1,
+                         "created": now + n, "expires": now + 10_000})
+
+    assert all(f["id"] != stale for f in offers.fills("test", limit=50)), \
+        "the page it used to iterate cannot see it"
+    S.expire(seller, offers, "test")
+    assert offers.get_fill(stale)["status"] == "unanswered"

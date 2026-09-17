@@ -471,6 +471,23 @@ class Offers:
                 "SELECT * FROM fill WHERE network=? ORDER BY created DESC LIMIT ?",
                 (network, int(limit)))]
 
+    def stale_fills(self, network: str, now: float) -> list[dict]:
+        """Fills still waiting for an answer that will never come.
+
+        A query for CANDIDATES, not a page of recent history. `fills()` is
+        newest-first with a limit, for showing somebody what they asked for;
+        expiring through it meant an old note fell off the end of the page and
+        was never examined again -- permanently stuck at "waiting for their
+        node", which is the state this exists to abolish. It survives only in
+        a wallet with more than fifty notes, which is the long-lived
+        heavily-traded one, and no test that makes a handful can see it
+        (D-094).
+        """
+        with self._open() as conn:
+            return [dict(r) for r in conn.execute(
+                "SELECT * FROM fill WHERE network=? AND status='asked' "
+                "AND expires<=? ORDER BY created", (network, float(now)))]
+
     def close_fill(self, fill_id: str, status: str, offer_id: str = "",
                    txid: str = "", error: str = "") -> None:
         with self._open() as conn:
@@ -871,15 +888,14 @@ def expire(rpc: Any, offers: Offers, network: str) -> int:
             offers.close(offer["id"], "expired")
             _unlock(rpc, offer)
             closed += 1
-    for fill in offers.fills(network, limit=50):
-        if fill["status"] == "asked" and fill["expires"] <= time.time():
-            offers.close_fill(
-                fill["id"], "unanswered",
-                error="their node never answered. The order may still be on "
-                      "the book -- an order stands whether or not the wallet "
-                      "behind it is running -- so try again, or take another "
-                      "at the same price")
-            closed += 1
+    for fill in offers.stale_fills(network, time.time()):
+        offers.close_fill(
+            fill["id"], "unanswered",
+            error="their node never answered. The order may still be on the "
+                  "book -- an order stands whether or not the wallet behind "
+                  "it is running -- so try again, or take another at the "
+                  "same price")
+        closed += 1
     return closed
 
 
