@@ -438,10 +438,15 @@ class AppState:
     def my_tag(self) -> str:
         """This wallet's @tag as the chain has it, or "" -- never a guess."""
         try:
-            from .. import tags as taglib          # noqa: F401  (import guard)
-            chain = self.ledger if self.ledger.wallet else self.messaging
-            index = self.token_index(chain)
-            return index.tag_of(self.derived_address or "") or ""
+            # The chain the MESSAGES are on, which is where a tag is claimed
+            # (D-032). It asked the ledger chain, found no tag table entry for
+            # this address on mainnet, and answered "" for a wallet that holds
+            # one -- which is why this node never announced a release.
+            chain = next((c for c in self.token_chains
+                          if c.network == self.messaging.network), None)
+            if chain is None:
+                return ""
+            return self.token_index(chain).tag_of(self.derived_address or "") or ""
         except Exception:
             return ""
 

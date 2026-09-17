@@ -96,8 +96,10 @@
              onchange="document.getElementById('updates').submit()">
       <span style="color:var(--fg);font-size:.95rem">
         <strong>Install updates automatically from dogecoinarcade.com</strong><br>
-        <span class="muted" style="font-size:.86rem">Checked every few hours, and
-        never while this wallet is in the middle of sending something. A release
+        <span class="muted" style="font-size:.86rem">Checked every
+        {{ (update_every // 60) }} minutes, straight away when a release is
+        announced on the board, and never while this wallet is in the middle
+        of sending something. A release
         is signed with a key that is not on the website, and this copy carries
         the public half &mdash; so an update that was not published by
         DogecoinArcade is refused rather than installed, and one older than what

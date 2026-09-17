@@ -48,7 +48,13 @@ MANIFEST = "source.manifest.json"
 #: anyway. What is installed is decided by the signature, never by the notice
 #: (D-068).
 RELEASE_CHANNEL = "releases"
-RELEASE_TAG = "bigchiefenergy"
+#: The publishing node holds @notbigchiefenergy, not @bigchiefenergy, and a
+#: constant that names a tag nobody holds is a check that never passes -- the
+#: notice path sat inert for hours because of it. Pinned to the tag that is
+#: actually claimed; if the publisher ever claims a different one, this
+#: changes in a release signed with the old key, which is what makes it a pin
+#: rather than a suggestion (D-085).
+RELEASE_TAG = "notbigchiefenergy"
 
 #: How a notice reads on the board. Plain text, because it is a public post
 #: on a public board and anybody scrolling past should be able to see what it

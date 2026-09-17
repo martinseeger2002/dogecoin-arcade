@@ -36,7 +36,11 @@ def test_the_channel_and_the_tag_are_named_once():
     drift: the node that announces checks that it holds the tag, and every
     node that reads checks the sender against the same tag."""
     assert release.RELEASE_CHANNEL == "releases"
-    assert release.RELEASE_TAG == "bigchiefenergy"
+    # Whatever the publishing node actually holds. It read "bigchiefenergy"
+    # while the publisher held "notbigchiefenergy", so the check never passed
+    # and the notice path was inert -- a pin at a name nobody has is not a
+    # pin, it is an off switch nobody can see (D-085).
+    assert release.RELEASE_TAG == "notbigchiefenergy"
 
 
 def test_only_the_tag_holder_is_believed(tmp_path):
@@ -58,3 +62,32 @@ def test_only_the_tag_holder_is_believed(tmp_path):
     store.add_key_announcement("bb" * 32, "nChiefToo", b"\x02" * 32, "fp2", 200, 1800,
                                tag=release.RELEASE_TAG)
     assert store.address_for_tag(release.RELEASE_TAG) == "nChiefToo"
+
+
+def test_a_wallet_finds_its_tag_on_the_chain_that_holds_tags(tmp_path, monkeypatch):
+    """`my_tag` asked the LEDGER chain. Tags are claimed on the chain the
+    messages are on (D-032), so a wallet holding one was told it had none --
+    and the node that publishes releases never announced one, because the
+    check that gates announcing is "do I hold the release tag" (D-085)."""
+    from arcade.web.state import AppState, ChainContext
+
+    class Index:
+        def __init__(self, tags):
+            self.tags = tags
+
+        def tag_of(self, address):
+            return self.tags.get(address)
+
+    state = AppState(
+        home=tmp_path,
+        messaging=ChainContext(network="regtest", role="messaging", label="T"),
+        ledger=ChainContext(network="main", role="ledger", label="M"))
+    indexes = {"regtest": Index({"nMe": "notbigchiefenergy"}), "main": Index({})}
+    monkeypatch.setattr(type(state), "token_index",
+                        lambda self, chain: indexes[chain.network])
+    monkeypatch.setattr(type(state), "derived_address",
+                        property(lambda self: "nMe"))
+    monkeypatch.setattr(type(state), "token_chains",
+                        property(lambda self: [state.ledger, state.messaging]))
+    assert state.my_tag() == "notbigchiefenergy", \
+        "the messaging chain, even when the ledger chain is listed first"
