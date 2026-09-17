@@ -2992,10 +2992,12 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/r/inscription/{key}")
     def r_inscription(key: str):
-        row = _content_index().inscription(contentlib._key(key))
+        index = _content_index()
+        row = index.inscription(contentlib._key(key))
         if row is None:
             return contentlib._missing("no such inscription")
-        return contentlib._json(contentlib.describe(row))
+        return contentlib._json(contentlib.describe(
+            row, _tags_for([row["owner"], row["creator"]])))
 
     @app.get("/r/inscription/{key}/history")
     def r_inscription_history(key: str, limit: int = 100):
@@ -3055,7 +3057,8 @@ def create_app(state: AppState) -> FastAPI:
         rows = _content_index().inscriptions(
             limit=limit, offset=offset, after=after,
             creator=creator or None, owner=owner or None)
-        return contentlib._json([contentlib.describe(row) for row in rows])
+        named = _tags_for([r["owner"] for r in rows] + [r["creator"] for r in rows])
+        return contentlib._json([contentlib.describe(row, named) for row in rows])
 
     @app.get("/r/inscriptions/count")
     def r_inscription_count(owner: str = "", creator: str = ""):
@@ -3068,7 +3071,8 @@ def create_app(state: AppState) -> FastAPI:
     def r_inscriptions_of(address: str, limit: int = 200, offset: int = 0):
         rows = _content_index().inscriptions(owner=address, limit=limit,
                                              offset=offset)
-        return contentlib._json([contentlib.describe(row) for row in rows])
+        named = _tags_for([r["owner"] for r in rows] + [r["creator"] for r in rows])
+        return contentlib._json([contentlib.describe(row, named) for row in rows])
 
     @app.get("/r/collections")
     def r_collections(limit: int = 100, offset: int = 0, creator: str = ""):
@@ -3097,8 +3101,9 @@ def create_app(state: AppState) -> FastAPI:
         if summary is None:
             return contentlib._missing("no such collection")
         out = contentlib.describe_collection(summary)
-        out["items"] = [contentlib.describe(r) for r in
-                        index.collection_items(creator, name, limit=limit, offset=offset)]
+        items = index.collection_items(creator, name, limit=limit, offset=offset)
+        named = _tags_for([r["owner"] for r in items] + [r["creator"] for r in items])
+        out["items"] = [contentlib.describe(r, named) for r in items]
         if traits:
             out["traits"] = index.collection_traits(creator, name)
         return contentlib._json(out)
@@ -3915,8 +3920,14 @@ def create_app(state: AppState) -> FastAPI:
             raise
         except Exception:
             advice = ""
+        # Both names in one lookup, which also covers the common case of a
+        # piece still held by the wallet that made it -- most of a collection,
+        # most of the time (D-074).
+        named = _tags_for([row["owner"], row["creator"]])
         return render(request, "inscription_view.html", row=row, chain=chain,
-                      tag=index.tag_of(row["owner"]), pages=pages, mine=mine,
+                      tag=named.get(row["owner"]),
+                      creator_tag=named.get(row["creator"]),
+                      pages=pages, mine=mine,
                       tokens=held, coins=coins, advice=advice,
                       renders=row["content_type"].startswith(contentlib.RENDERABLE))
 

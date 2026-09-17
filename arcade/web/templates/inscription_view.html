@@ -157,7 +157,8 @@
         <td class="mono" style="word-break:break-all">
           {% if tag %}<strong>@{{ tag }}</strong> &middot; {% endif %}{{ row.owner }}</td></tr>
     <tr><td class="muted">Creator</td>
-        <td class="mono" style="word-break:break-all">{{ row.creator }}</td></tr>
+        <td class="mono" style="word-break:break-all">
+          {% if creator_tag %}<strong>@{{ creator_tag }}</strong> &middot; {% endif %}{{ row.creator }}</td></tr>
     <tr><td class="muted">Inscribed</td>
         <td>block {{ "{:,}".format(row.block_height) }}</td></tr>
     <tr><td class="muted">Id</td>

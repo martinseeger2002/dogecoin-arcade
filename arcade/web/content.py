@@ -131,7 +131,7 @@ def content(index: Any, key: str, download: bool = False) -> Response:
                     headers=headers)
 
 
-def describe(row: dict) -> dict:
+def describe(row: dict, tags: dict | None = None) -> dict:
     """One inscription, as a page sees it. Never the bytes.
 
     The creator's JSON comes with it, parsed. It was not here at first, which
@@ -146,11 +146,19 @@ def describe(row: dict) -> dict:
         parsed = json.loads(raw) if raw else None
     except ValueError:
         parsed = None          # inscribed as something that is not JSON
+    tags = tags or {}
     return {
         "id": row["txid"],
         "number": row["number"],
         "creator": row["creator"],
         "owner": row["owner"],
+        # Who those addresses are called, as of THIS NODE'S TIP. A tag is a
+        # claim on the chain and claims move: the wallet's own send page warns
+        # that one can change between blocks. Null when nobody holds it. Show
+        # it, do not store it against a piece -- an address is what a piece is
+        # owned by, a tag is what its owner is called today (D-074).
+        "creatortag": tags.get(row["creator"]) or None,
+        "ownertag": tags.get(row["owner"]) or None,
         "block": row["block_height"],
         "contenttype": row["content_type"],
         "length": row["content_len"],

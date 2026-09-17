@@ -308,3 +308,29 @@ def test_the_list_endpoints_are_all_reachable(client):
         response = app.get(path)
         assert response.status_code == 200, path
         assert response.headers["access-control-allow-origin"] == "*"
+
+
+def test_a_page_is_told_what_the_addresses_are_called(inscribed_rows):
+    """Creator and owner both come with their @tag where one is claimed.
+
+    An inscribed page has no way to look a tag up -- its whole chain access is
+    the block height, the block time and a transaction's depth -- so an API
+    that hands it bare addresses has decided the page cannot show a name
+    (D-074). Null when nobody holds one, and read at this node's tip rather
+    than stored against the piece: a tag can move between blocks.
+    """
+    from arcade.web import content as contentlib
+
+    row = inscribed_rows.inscription(2)          # creator nMe, owner nThem
+    named = contentlib.describe(row, {"nMe": "themaker", "nThem": "theholder"})
+    assert named["creatortag"] == "themaker" and named["ownertag"] == "theholder"
+    assert named["creator"] == "nMe" and named["owner"] == "nThem", \
+        "the address is still the answer; the tag is what it is called"
+
+    plain = contentlib.describe(row)
+    assert plain["creatortag"] is None and plain["ownertag"] is None, \
+        "null rather than absent, so a page can tell nobody holds one"
+
+    # A piece still held by the wallet that made it is one address, one name.
+    own = contentlib.describe(inscribed_rows.inscription(0), {"nMe": "themaker"})
+    assert own["creatortag"] == own["ownertag"] == "themaker"
