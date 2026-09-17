@@ -39,14 +39,15 @@
       {% else %}Claim a name and publish your key in one go, so anybody who
         scans finds you with their address book filled in instead of a row of
         base58.{% endif %}
-      Lower case, a&ndash;z, 0&ndash;9 and underscore, {{ mine.min }} to
-      {{ mine.max }} characters. First claim wins, and what goes on the chain
-      is public and permanent.</p>
+      Lower case, a&ndash;z, 0&ndash;9 and underscore. What goes on the chain is
+      public and permanent.</p>
 
 
   {% else %}
     <p class="muted" style="margin:0">Waiting for the testnet node. Nothing to do.</p>
   {% endif %}
+  <p class="muted" style="font-size:.84rem;margin:10px 0 0">First claim wins:
+    a name belongs to whoever claimed it first, and nobody else can take it.</p>
   <div class="msg info" style="margin:12px 0 0;font-size:.84rem">
       <strong>A tag points where its holder points it, and nowhere else.</strong>
       Nobody can move <strong>{{ '@' ~ mine.tag if mine.tag else 'your tag' }}</strong>

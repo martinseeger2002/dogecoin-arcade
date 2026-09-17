@@ -209,7 +209,7 @@ def test_one_balance_a_token_not_one_a_piece(web):
     assert "holds 100 Web Token, not 1,500" in page, "what is left, after the 900"
 
 
-def test_a_tag_is_claimed_in_two_steps_and_read_back(web, monkeypatch):
+def test_a_tag_is_claimed_by_one_press_and_read_back(web, monkeypatch):
     """Claiming @tag from the address book: shown, then broadcast, then indexed.
 
     The chain already decided who holds what (test_tags.py). This is the half
@@ -219,21 +219,16 @@ def test_a_tag_is_claimed_in_two_steps_and_read_back(web, monkeypatch):
     csrf = state.csrf_token
     monkeypatch.setattr(type(state), "derived_address", property(lambda self: alice))
 
-    # Refused before it costs anything.
-    assert "not" in app.post("/tags/claim", data=dict(csrf_token=csrf, tag="A B")).text
-    assert "arcade" in app.post("/tags/claim",
+    # Refused before anything is broadcast.
+    assert "not" in app.post("/publish", data=dict(csrf_token=csrf, tag="A B")).text
+    assert "arcade" in app.post("/publish",
                                 data=dict(csrf_token=csrf, tag="arcade")).text
+    assert node.rpc.call("getrawmempool") == [], "a refusal must not spend"
 
-    page = app.post("/tags/claim", data=dict(csrf_token=csrf, tag="robin")).text
-    assert "Claiming <strong>@robin</strong>" in page
-    assert node.rpc.call("getrawmempool") == [], "showing it must not spend"
-    txid = re.search(r"txid</td>\s*<td[^>]*>([0-9a-f]{64})", page).group(1)
-
-    response = app.post("/tags/claim", data=dict(csrf_token=csrf, tag="robin",
-                                                 confirmed=txid),
-                        follow_redirects=False)
-    assert response.status_code == 303 and response.headers["location"] == "/contacts"
-    assert txid in node.rpc.call("getrawmempool")
+    # One button: the claim goes out on the press, no second confirmation.
+    app.post("/publish", data=dict(csrf_token=csrf, tag="robin"))
+    pool = node.rpc.call("getrawmempool")
+    assert pool, "pressing it claims the name"
     mine_and_index(node, state)
 
     index = state.token_index(state.ledger)
@@ -242,10 +237,13 @@ def test_a_tag_is_claimed_in_two_steps_and_read_back(web, monkeypatch):
     assert "@robin" in app.get("/contacts").text
 
     # Already yours, and somebody else's, are both refused.
-    assert "already yours" in app.post("/tags/claim",
-                                       data=dict(csrf_token=csrf, tag="robin")).text
+    # Already yours is a no-op rather than an error -- the button also
+    # publishes a key, and pressing it twice must not be a refusal.
+    before = len(node.rpc.call("getrawmempool"))
+    app.post("/publish", data=dict(csrf_token=csrf, tag="robin"))
+    assert state.token_index(state.ledger).tag_of(alice) == "robin"
     monkeypatch.setattr(type(state), "derived_address", property(lambda self: bob))
-    assert "taken" in app.post("/tags/claim",
+    assert "taken" in app.post("/publish",
                                data=dict(csrf_token=csrf, tag="robin")).text
 
 
@@ -258,11 +256,7 @@ def test_a_message_can_be_addressed_to_a_tag(web, monkeypatch):
     app, state, node, alice, bob = web
     csrf = state.csrf_token
     monkeypatch.setattr(type(state), "derived_address", property(lambda self: alice))
-    txid = re.search(r"txid</td>\s*<td[^>]*>([0-9a-f]{64})",
-                     app.post("/tags/claim", data=dict(csrf_token=csrf, tag="robin")).text
-                     ).group(1)
-    app.post("/tags/claim", data=dict(csrf_token=csrf, tag="robin", confirmed=txid),
-             follow_redirects=False)
+    app.post("/publish", data=dict(csrf_token=csrf, tag="robin"))
     mine_and_index(node, state)
 
     # Nobody has announced a key at that address yet, so it says so about the

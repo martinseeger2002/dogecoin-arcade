@@ -2960,58 +2960,6 @@ def create_app(state: AppState) -> FastAPI:
         return {"tag": found, "address": home, "chain": chain,
                 "min": taglib.MIN_LENGTH, "max": taglib.MAX_LENGTH}
 
-    @app.post("/tags/claim", response_class=HTMLResponse)
-    def claim_tag(request: Request, tag: str = Form(""), csrf_token: str = Form(""),
-                  confirmed: str = Form("")):
-        """Claim a tag, or change the one you have, in two steps like a send.
-
-        Nothing is broadcast until the transaction that was shown is named
-        back (D-016). Refused before it costs anything when the name is not
-        one anybody could have, when it is already somebody's, and when it is
-        already yours.
-        """
-        check_csrf(csrf_token)
-        error, prepared, txid = None, None, None
-        chain, index = _tag_chain()
-        wanted = ""
-        try:
-            wanted = taglib.validate(tag)
-            home = state.derived_address
-            if not home:
-                raise taglib.TagError("this wallet has no identity address yet.")
-            holder = index.address_of(wanted)
-            if holder == home:
-                raise taglib.TagError(f"@{wanted} is already yours.")
-            if holder:
-                raise taglib.TagError(f"@{wanted} is taken.")
-            payload = P.AnyData(data=taglib.encode(wanted)).encode()
-            with chain.rpc() as rpc:
-                sender = tokenlib.TokenSender(rpc, chain.params)
-                prepared = state.prepared_tokens.get((chain.network, confirmed))
-                if prepared is None:
-                    prepared = sender.prepare(home, payload)
-                    prepared.what = f"claim @{wanted}"
-                    state.prepared_tokens[(chain.network, prepared.txid)] = prepared
-                    while len(state.prepared_tokens) > 20:
-                        del state.prepared_tokens[next(iter(state.prepared_tokens))]
-                else:
-                    txid = sender.broadcast(prepared)
-                    state.prepared_tokens.pop((chain.network, confirmed), None)
-                    state.pending_tokens.append(
-                        {"txid": txid, "what": f"claim @{wanted}", "at": time.time(),
-                         "network": chain.network})
-                    state.flash(f"@{wanted} claimed in {txid}. It is yours once its "
-                                f"block is indexed.", "ok")
-                    return RedirectResponse("/contacts", status_code=303)
-        except HTTPException:
-            raise          # a rejected form is a 400, not an error page
-        except (taglib.TagError, tokenlib.TokenError, ValueError) as exc:
-            error = str(exc)
-        except Exception as exc:
-            error = f"{exc.__class__.__name__}: {exc}"
-        return _contacts_view(request, tag_error=error, tag_prepared=prepared,
-                              tag_wanted=wanted)
-
     #: An inscription named in a post: a link to its content or its page, or
     #: the bare txid on a line of its own. Anchored on the 64 hex characters,
     #: so a sentence that merely contains the word "content" is not a card.
