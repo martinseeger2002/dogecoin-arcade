@@ -285,6 +285,13 @@ class BlockWatcher:
         except Exception:
             return
         for post in posts:
+            # Pool rows included, deliberately. `group_posts` returns a notice
+            # at height 0 -- broadcast, not yet mined -- and acting on one is
+            # a block sooner, which is the whole point when a consensus height
+            # is near. It is safe because the notice carries no authority: it
+            # says "look now", the sender is still checked, and what installs
+            # is decided by the signature on the manifest. A notice that never
+            # confirms costs one fetch (D-087).
             revision = releaselib.revision_in(post.get("text") or "")
             if not revision or revision == self._release_seen:
                 continue
