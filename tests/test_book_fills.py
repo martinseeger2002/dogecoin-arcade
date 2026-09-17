@@ -223,3 +223,97 @@ def test_before_its_block_the_reserve_is_still_locked(tmp_path):
     assert "insufficient balance" in reason(db, 3), "not yet"
     feed(engine, state, [swap(4, pid, 1000 * COIN, 8 * COIN, height=500)])
     assert reason(db, 4) == "valid", "from this block on"
+
+
+# --- naming the order a swap fills --------------------------------------------
+
+def named_swap(n, pid, tokens, coins, order, height=None):
+    """A swap that says which standing order it is filling."""
+    message = P.AnyData(data=I.Swap(
+        give=I.Leg(kind=I.LEG_TOKEN, property_id=pid, amount=tokens),
+        take=I.Leg(kind=I.LEG_COINS, amount=coins),
+        order=bytes.fromhex(order)).encode())
+    return tx(n, message, ALICE, height=height,
+              inputs=((ALICE, 1000), (BOB, 20 * COIN)),
+              outputs=((ALICE, 1000 + coins), (BOB, 20 * COIN - coins - 1000)))
+
+
+def test_a_named_order_is_filled_even_with_a_loose_balance(world):
+    """The hole the first live fill found. ALICE held 600 loose and an ask for
+    400; a swap for 333 took the loose tokens and left the book advertising
+    what had just been sold. Naming the order is what tells the two apart --
+    it cannot be derived, because a fill and a private sale beside it produce
+    byte-identical chains (D-082)."""
+    engine, state, db, pid = world
+    feed(engine, state, [tx(2, ask(pid, 400 * COIN, 4 * COIN), ALICE)])
+    assert held(db, ALICE, pid) == (600 * COIN, 400 * COIN), "plenty loose"
+
+    order = f"{2:064x}"
+    feed(engine, state, [named_swap(3, pid, 100 * COIN, 1 * COIN, order)])
+    assert reason(db, 3) == "valid"
+
+    rest = book(db)
+    assert len(rest) == 1 and rest[0]["sale_amount"] == 300 * COIN, \
+        "the order it named is the order it came out of"
+    assert rest[0]["want_amount"] == 3 * COIN
+    assert held(db, ALICE, pid) == (600 * COIN, 300 * COIN), "the loose balance is untouched"
+    assert held(db, BOB, pid) == (100 * COIN, 0)
+
+
+def test_an_order_that_has_gone_does_not_void_the_swap(world):
+    """A preference, never a condition. The coin leg settles on the chain
+    below whether this layer likes it or not, so refusing the swap would mean
+    somebody paid and received nothing."""
+    engine, state, db, pid = world
+    feed(engine, state, [named_swap(3, pid, 100 * COIN, 1 * COIN, "ff" * 32)])
+    assert reason(db, 3) == "valid", "no such order, and still a swap"
+    assert held(db, BOB, pid) == (100 * COIN, 0), "the tokens moved anyway"
+
+
+def test_a_named_order_at_a_worse_price_is_left_alone(world):
+    """The guard stays a guard. Below the asking price the order is not
+    touched -- and the swap still stands, out of the free balance."""
+    engine, state, db, pid = world
+    feed(engine, state, [tx(2, ask(pid, 400 * COIN, 4 * COIN), ALICE)])
+    order = f"{2:064x}"
+    feed(engine, state, [named_swap(3, pid, 100 * COIN, 50_000_000, order)])
+    assert reason(db, 3) == "valid"
+    assert book(db)[0]["sale_amount"] == 400 * COIN, "an ask is not sold below its price"
+    assert held(db, ALICE, pid) == (500 * COIN, 400 * COIN), "it came out of the loose balance"
+
+
+def test_more_than_the_order_holds_takes_what_it_has(world):
+    """Named and too small: what it has comes out of the book, the rest out of
+    the balance, and the order closes."""
+    engine, state, db, pid = world
+    feed(engine, state, [tx(2, ask(pid, 100 * COIN, 1 * COIN), ALICE)])
+    order = f"{2:064x}"
+    feed(engine, state, [named_swap(3, pid, 300 * COIN, 3 * COIN, order)])
+    assert reason(db, 3) == "valid"
+    assert book(db) == [], "emptied and closed"
+    assert held(db, BOB, pid) == (300 * COIN, 0)
+    assert held(db, ALICE, pid) == (700 * COIN, 0)
+
+
+def test_before_its_height_a_named_swap_is_just_a_swap(tmp_path):
+    """The name makes a payload legal that was invalid before, so it starts at
+    a height both nodes have agreed on."""
+    db = Database(tmp_path / "ledger.sqlite")
+    install_schema(db)
+    state = StateDB(db)
+    params = Params(**{**NETWORKS["regtest"].__dict__, "named_fills_from": 500})
+    engine = Engine(state, params)
+    feed(engine, state, [tx(1, P.IssuanceFixed(
+        ecosystem=2, property_type=2, previous_property_id=0, category="c",
+        subcategory="s", name="Arcade Test", url="", data="", amount=1000 * COIN),
+        ALICE, height=101)])
+    pid = db.conn.execute("SELECT MAX(property_id) FROM property").fetchone()[0]
+    feed(engine, state, [tx(2, ask(pid, 400 * COIN, 4 * COIN), ALICE, height=102)])
+    order = f"{2:064x}"
+
+    feed(engine, state, [named_swap(3, pid, 100 * COIN, 1 * COIN, order, height=499)])
+    assert reason(db, 3) == "valid"
+    assert book(db)[0]["sale_amount"] == 400 * COIN, "not yet: out of the balance"
+
+    feed(engine, state, [named_swap(4, pid, 100 * COIN, 1 * COIN, order, height=500)])
+    assert book(db)[0]["sale_amount"] == 300 * COIN, "from this block on, out of the book"

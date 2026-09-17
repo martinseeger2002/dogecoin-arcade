@@ -313,10 +313,31 @@ class Swap:
 
     give: Leg               # from the seller to the buyer
     take: Leg               # from the buyer to the seller
+    #: The standing order this swap fills, if it fills one. Optional, and a
+    #: PREFERENCE rather than a condition: a swap naming an order that has
+    #: gone, moved past its price, or has too little left is still a valid
+    #: swap, because the coin leg settles on the Dogecoin layer whether the
+    #: meta-layer likes it or not -- making a stale name invalid would mean a
+    #: taker paying real coins and receiving nothing (D-082).
+    #:
+    #: Why it has to be here at all: whether a swap fills an order or is a
+    #: private sale beside one is not a fact about state, it is a fact about
+    #: what the taker asked for, and the two produce byte-identical chains.
+    #: It cannot be derived. It has to be said.
+    #:
+    #: 32 bytes, and only a token-for-coins swap can carry it: two inscription
+    #: legs are already 66 of the 76 an OP_RETURN holds here. A fill is always
+    #: a token for coins (28 bytes with the header), so it fits with room.
+    order: bytes = b""
 
     def encode(self) -> bytes:
-        return (MAGIC + bytes([VERSION, KIND_SWAP])
+        body = (MAGIC + bytes([VERSION, KIND_SWAP])
                 + self.give.encode() + self.take.encode())
+        if not self.order:
+            return body
+        if len(self.order) != 32:
+            raise InscriptionError("an order is named by a 32-byte txid")
+        return body + self.order
 
 
 def is_inscription(payload: bytes) -> bool:
@@ -364,9 +385,13 @@ def parse(payload: bytes) -> Chunk | Transfer | Swap | Offer:
     if kind == KIND_SWAP:
         give, at = Leg.decode(payload, 6)
         take, at = Leg.decode(payload, at)
-        if at != len(payload):
-            raise InscriptionError("a swap has nothing after its two legs")
-        return Swap(give=give, take=take)
+        rest = len(payload) - at
+        if rest == 0:
+            return Swap(give=give, take=take)
+        if rest != 32:
+            raise InscriptionError(
+                "a swap has nothing after its two legs but the order it fills")
+        return Swap(give=give, take=take, order=payload[at:at + 32])
 
     if kind == KIND_OFFER:
         if len(payload) < 38:

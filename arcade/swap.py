@@ -917,6 +917,7 @@ def countersign(rpc: Any, index: Any, offers: Offers, offer: dict, hex_: str) ->
             raise SwapError("the first input after the seller's is not the buyer's")
 
     give, take = leg_from_json(offer["give"]), leg_from_json(offer["take"])
+    named = offer.get("order") or ""
     swaps, paid = [], 0
     for out in decoded.get("vout") or []:
         script = out.get("scriptPubKey", {})
@@ -930,11 +931,20 @@ def countersign(rpc: Any, index: Any, offers: Offers, offer: dict, hex_: str) ->
     swap = swaps[0]
     if swap is None or swap.give != give or swap.take != take:
         raise SwapError("the transaction does not carry the legs that were offered")
+    # Which order this fills is one of the terms, so the seller checks it like
+    # the others. A buyer that named a different order, or none, would be
+    # asking this wallet to sign a private sale beside its own advertisement
+    # rather than a fill of it -- the same amount of tokens, a different thing
+    # (D-082).
+    if (getattr(swap, "order", b"") or b"").hex() != named:
+        raise SwapError("the transaction does not fill the order that was offered")
     owed = offer["outpoint"]["value"] + coins_in(take) - coins_in(give)
     if paid < owed:
         raise SwapError(f"the seller is paid {paid / COIN:.8f}, not the "
                         f"{owed / COIN:.8f} the offer says")
     for who, leg in ((seller, give), (buyer, take)):
+        if who == seller and named and leg.kind == I.LEG_TOKEN:
+            continue          # backed by the order's reserve, not the balance
         problem = holds(index, rpc, who, leg)
         if problem:
             raise SwapError(problem)
@@ -1077,7 +1087,13 @@ def build(rpc: Any, index: Any, offer: dict, own: list[str],
     if seller_out < MIN_CHANGE:
         raise SwapError("the seller's output would be dust; ask for another offer")
 
-    payload = P.AnyData(data=I.Swap(give=give, take=take).encode()).encode()
+    # Name the order this fills, so the engine takes it from the book rather
+    # than from whatever the seller happens to hold loose (D-082). Empty for
+    # every other swap, which is then encoded exactly as it was before.
+    named = offer.get("order") or ""
+    payload = P.AnyData(data=I.Swap(
+        give=give, take=take,
+        order=bytes.fromhex(named) if named else b"").encode()).encode()
     unspent = sorted((u for u in (rpc.call("listunspent", 1, 9_999_999, [buyer]) or [])
                       if u.get("spendable", True)),
                      key=lambda u: -float(u["amount"]))

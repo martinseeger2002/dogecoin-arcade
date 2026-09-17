@@ -77,6 +77,11 @@ class Params:
     #: nodes on either side of the change would read the same block
     #: differently (D-062).
     fills_from: int | None = None
+    #: From this block a swap may NAME the order it fills, and the engine
+    #: draws from that order rather than from whatever the seller has loose.
+    #: Its own height because it makes a payload legal that was invalid
+    #: before -- a swap with 32 bytes after its legs (D-082).
+    named_fills_from: int | None = None
 
     # base58 version bytes. Verified in source: pepecoin/src/chainparams.cpp
     # (mainnet :92-93, testnet, regtest).
@@ -164,6 +169,9 @@ TESTNET = Params(
     # about, so the rule is to update both machines before the first fill,
     # not before the height.
     fills_from=1_492_520,
+    # Set 2026-09-16 at tip 1,492,633, after the first live fill traded
+    # without touching the book it was taken from.
+    named_fills_from=1_492_700,
     # Set 2026-09-12 at tip 1,484,661. Everything before this is development
     # traffic from building and testing the application -- cross-machine sends,
     # chunked posts, deliberately interrupted sends -- and is not read.
@@ -187,6 +195,7 @@ REGTEST = Params(
     activation_height=0,
     swaps_from=0,
     fills_from=0,
+    named_fills_from=0,
     datadir_subdir="regtest",
     pubkeyhash_version=111,
     scripthash_version=196,
@@ -227,6 +236,7 @@ DOGE_TESTNET = Params(
     activation_height=0,
     swaps_from=0,
     fills_from=0,
+    named_fills_from=0,
     datadir_subdir="testnet3",
     pubkeyhash_version=113,
     scripthash_version=196,
@@ -240,6 +250,7 @@ DOGE_REGTEST = Params(
     activation_height=0,
     swaps_from=0,
     fills_from=0,
+    named_fills_from=0,
     datadir_subdir="regtest",
     pubkeyhash_version=111,
     scripthash_version=196,

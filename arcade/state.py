@@ -1020,7 +1020,8 @@ class Engine:
         # What the seller has on the book, this swap may take out of. Worked
         # out before anything is checked and applied after everything is, so a
         # swap is still never half done.
-        fills = self._fills_for(rtx, seller, swap.give, swap.take)
+        fills = self._fills_for(rtx, seller, swap.give, swap.take,
+                                named=getattr(swap, "order", b""))
         self._check_leg(rtx, swap.give, seller, buyer,
                         extra=sum(taken for _, taken, _ in fills))
         self._check_leg(rtx, swap.take, buyer, seller)
@@ -1029,8 +1030,8 @@ class Engine:
         self._move_leg(swap.give, seller, buyer, rtx)
         self._move_leg(swap.take, buyer, seller, rtx)
 
-    def _fills_for(self, rtx: ArcadeTransaction, seller: str,
-                   give: I.Leg, take: I.Leg) -> list[tuple[dict, int, int]]:
+    def _fills_for(self, rtx: ArcadeTransaction, seller: str, give: I.Leg,
+                   take: I.Leg, named: bytes = b"") -> list[tuple[dict, int, int]]:
         """The seller's orders this swap fills: (order, tokens, coins) each.
 
         A resting ask holds its tokens in `metadex_reserve`, where a swap
@@ -1066,6 +1067,35 @@ class Engine:
             return []
         rows.sort(key=lambda r: (Fraction(r["want_amount"], r["sale_amount"]),
                                  r["block_height"], r["position"], r["txid"]))
+
+        # A swap that NAMES an order fills that order, whatever the seller has
+        # loose. Deriving it was the mistake: "sold 333 at 0.012 while
+        # advertising 500 at 0.012" is produced byte-identically by a fill of
+        # the advertisement and by a private sale beside it, and which one it
+        # was is a fact about what the taker asked for, not about state. The
+        # first live fill proved it -- the trade went through, the tokens came
+        # out of a large free balance, and the book went on advertising what
+        # had just been sold (D-082).
+        if named and self.params.named_fills_from is not None \
+                and rtx.block_height >= self.params.named_fills_from:
+            want = named.hex()
+            for row in rows:
+                if row["txid"] != want:
+                    continue
+                # The same price guard. A named order is a preference, so a
+                # price this swap does not meet means the order is left alone,
+                # never that the swap is refused.
+                if take.amount * row["sale_amount"] < row["want_amount"] * give.amount:
+                    break
+                taken = min(give.amount, row["reserved"], row["sale_amount"])
+                if taken <= 0:
+                    break
+                return [(row, taken, row["want_amount"] * taken // row["sale_amount"])]
+            # Named and unusable -- gone, re-priced, or emptied since the
+            # taker asked. The swap still stands: its coin leg settles on the
+            # chain below whether this layer likes it or not, and refusing it
+            # here would mean somebody paid and received nothing.
+            return []
 
         held = self.get_balance(seller, give.property_id)["balance"]
         need = give.amount - held         # what the free balance cannot cover
