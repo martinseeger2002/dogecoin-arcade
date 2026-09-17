@@ -470,7 +470,8 @@ class LedgerIndex:
             owner = {r["txid"]: r["creator"] for r in db.conn.execute(
                 "SELECT txid, creator FROM inscription")}
 
-        written = []
+        written: list = []
+        skipped: list = []
         for row in rows:
             try:
                 data = getattr(P.decode(bytes.fromhex(row["payload_hex"])), "data", None)
@@ -495,18 +496,33 @@ class LedgerIndex:
                         continue
                     try:
                         other = self._buyer_of(row["txid"], row["sender"])
-                    except Exception:
-                        # No node, or a transaction it cannot serve. The rest
-                        # of the history is still worth having, and a gap is
-                        # visible as a missing row rather than a wrong one.
+                    except Exception as exc:
+                        # Loudly. This swallowed an AttributeError from a
+                        # broken rpc factory on its first live run, skipped
+                        # every one of nine swaps, and reported success: four
+                        # moves written and no sign that nine were missing.
+                        # A partial history that says nothing is worse than a
+                        # refusal, because the gap looks like "it never moved"
+                        # -- which for provenance is the wrong answer rather
+                        # than a missing one (D-073).
                         other = None
+                        skipped.append((row["txid"], f"{type(exc).__name__}: {exc}"))
                     if other is None:
+                        if not skipped or skipped[-1][0] != row["txid"]:
+                            skipped.append((row["txid"], "no input but the seller's"))
                         continue
                     giver = row["sender"] if giver_is_sender else other
                     taker = other if giver_is_sender else row["sender"]
                     written.append((row["txid"], item, giver, taker,
                                     row["block_height"], row["position"], "swap"))
                     owner[item] = taker
+        if skipped:
+            # Not an exception: the transfers that WERE recovered are worth
+            # keeping, and the next run will try the rest. But it has to be
+            # visible, and the table stays incomplete rather than pretending.
+            log.warning("history backfill could not resolve %d swap%s: %s",
+                        len(skipped), "" if len(skipped) == 1 else "s",
+                        "; ".join(f"{t[:12]} ({why})" for t, why in skipped[:5]))
         if not written:
             return 0
         with self.open() as db:

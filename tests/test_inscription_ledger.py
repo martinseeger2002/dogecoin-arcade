@@ -300,3 +300,44 @@ def test_history_is_rebuilt_from_what_is_already_indexed(engine, tmp_path):
 
     # Once, not every pass.
     assert index.backfill_moves() == 0
+
+
+def test_a_backfill_that_cannot_resolve_a_swap_says_so(engine, caplog):
+    """It did not, and that was the bug rather than the skip.
+
+    The first live run had a broken node factory. Every swap raised, a bare
+    `except` swallowed it, nine moves were skipped and the run reported
+    success: four written, no sign that nine were missing. For provenance a
+    silent gap is not a missing answer, it is a wrong one -- a piece that was
+    bought reads as a piece that never moved.
+    """
+    import logging
+    from arcade.ledger import LedgerIndex
+    from arcade.config import NETWORKS
+
+    eng, state, db = engine
+    feed(eng, state, [tx(0, I.plan(b"a picture", "image/png")[0])])
+    item = hexid(0)
+    # A swap the ledger has already accepted. Written straight into arcade_tx
+    # because that is the only thing the backfill reads, and because the
+    # point here is what happens when the NODE cannot be asked about it.
+    from arcade import payload as P
+    swap = I.Swap(give=I.Leg(I.LEG_INSCRIPTION, txid=bytes.fromhex(item)),
+                  take=I.Leg(I.LEG_COINS, amount=10 ** 7))
+    db.conn.execute(
+        "INSERT INTO arcade_tx(txid, block_height, position, encoding_class, "
+        "message_type, message_version, sender, reference, payload_hex, valid) "
+        "VALUES(?,?,?,?,?,?,?,?,?,1)",
+        (hexid(900), 300, 0, "C", 200, 0, "nCreator", "nBuyer",
+         P.AnyData(data=swap.encode()).encode().hex()))
+    db.conn.execute("DELETE FROM inscription_move")
+    db.conn.commit()
+
+    def no_node():
+        raise OSError("connection refused")
+
+    index = LedgerIndex(db.path, NETWORKS["regtest"], no_node)
+    with caplog.at_level(logging.WARNING):
+        index.backfill_moves()
+    assert any("could not resolve" in r.message for r in caplog.records), \
+        "a gap has to be said out loud"
