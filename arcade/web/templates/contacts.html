@@ -4,51 +4,50 @@
 <h1>Address book</h1>
 <p class="sub">Who is who, and where to pay them. Stored only on this computer.</p>
 
-{% if tag_error %}<div class="msg err">{{ tag_error }}</div>{% endif %}
-
 <div class="panel" style="margin-bottom:18px">
-  <h3 style="margin:0 0 12px">Your @tag</h3>
-  {% if tag_prepared %}
-    <p class="muted" style="margin:0 0 8px">Claiming <strong>@{{ tag_wanted }}</strong>
-      for <code class="mono">{{ mine.address }}</code> on {{ mine.chain.label|lower }}.</p>
-    <table>
-      <tr><td class="muted" style="width:110px;border:0">txid</td>
-          <td class="mono" style="font-size:.78rem;border:0;word-break:break-all">{{ tag_prepared.txid }}</td></tr>
-
+  <h3 style="margin:0 0 12px">You on the chain</h3>
+  {% if state.unlocked %}
+    <table style="margin-bottom:12px">
+      <tr><td class="muted" style="width:130px">Address</td>
+          <td class="mono" style="font-size:.82rem;word-break:break-all">{{ mine.address or '—' }}</td></tr>
+      <tr><td class="muted">Other chain</td>
+          <td class="mono" style="font-size:.82rem;word-break:break-all">{{ other_address or '— none in this wallet' }}</td></tr>
+      <tr><td class="muted">Key</td>
+          <td>{% if announced %}<span class="pill ok">published</span>
+            {%- else %}<span class="muted">not published yet</span>{% endif %}</td></tr>
     </table>
-    <form method="post" action="/tags/claim" style="margin-top:12px">
-      <input type="hidden" name="csrf_token" value="{{ csrf }}">
-      <input type="hidden" name="tag" value="{{ tag_wanted }}">
-      <input type="hidden" name="confirmed" value="{{ tag_prepared.txid }}">
-      <div class="row"><button type="submit">Claim it</button>
-        <a class="muted" href="/contacts">Cancel</a></div>
-    </form>
-  {% else %}
-    {% if mine.tag %}
-      <p style="margin:0 0 10px;font-size:1.1rem"><strong>@{{ mine.tag }}</strong>
-        <span class="muted" style="font-size:.84rem">&mdash; yours on
-          {{ mine.chain.label|lower }}, held by
-          <code class="addr" onclick="copyAddr(this)" title="Click to copy">{{ mine.address }}</code></span></p>
-    {% endif %}
-    <form method="post" action="/tags/claim">
+
+    {# One button. A name and a key are one statement about who you are, and
+       splitting them let somebody change their tag and stay findable under
+       the old one by every wallet that reads announcements (D-076). #}
+    <form method="post" action="/publish">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <div class="row">
-        <div style="flex:1;position:relative">
+        <div style="flex:1">
           <input autocomplete="off" name="tag" spellcheck="false" class="mono"
-                 value="{{ tag_wanted or '' }}"
+                 value="{{ tag_wanted if tag_wanted is not none else (mine.tag or '') }}"
                  placeholder="{{ 'a different name' if mine.tag else 'the name people will see' }}"
                  maxlength="{{ mine.max }}"></div>
-        <button type="submit">{{ 'Change it' if mine.tag else 'Claim it' }}</button>
+        <button type="submit">Publish to the chain</button>
       </div>
     </form>
+
     <p class="muted" style="font-size:.84rem;margin:9px 0 0">
-      A name that belongs to your address, claimed on the chain: lower case,
-      a&ndash;z, 0&ndash;9 and underscore, {{ mine.min }} to {{ mine.max }}
-      characters. First claim wins.
-      Wherever this wallet shows who somebody is, it shows their @tag if the
-      chain gives them one &mdash; and unlike a name, that is something a
-      reader can check.</p>
-    <div class="msg info" style="margin:12px 0 0;font-size:.84rem">
+      {% if mine.tag %}You are <strong>@{{ mine.tag }}</strong> on
+        {{ mine.chain.label|lower }}. Change the name and press the button and
+        both go out together: the claim, and your key saying it is yours.
+      {% else %}Claim a name and publish your key in one go, so anybody who
+        scans finds you with their address book filled in instead of a row of
+        base58.{% endif %}
+      Lower case, a&ndash;z, 0&ndash;9 and underscore, {{ mine.min }} to
+      {{ mine.max }} characters. First claim wins, and what goes on the chain
+      is public and permanent.</p>
+
+
+  {% else %}
+    <p class="muted" style="margin:0">Waiting for the testnet node. Nothing to do.</p>
+  {% endif %}
+  <div class="msg info" style="margin:12px 0 0;font-size:.84rem">
       <strong>A tag points where its holder points it, and nowhere else.</strong>
       Nobody can move <strong>{{ '@' ~ mine.tag if mine.tag else 'your tag' }}</strong>
       to their own address while you hold it. What you can do is let go of it:
@@ -60,53 +59,56 @@
       have your tag written down will not hear that you did. Somebody who
       saved you in their address book is safe: this wallet stores the address
       a tag named, not the name.</div>
-  {% endif %}
 </div>
 
+{% if tag_error %}<div class="msg err">{{ tag_error }}</div>{% endif %}
 {% if publish_error %}<div class="msg err">{{ publish_error }}</div>{% endif %}
 {% if published_txid %}<div class="msg ok"><strong>Published.</strong>
   <span class="mono" style="font-size:.8rem;word-break:break-all">{{ published_txid }}</span></div>{% endif %}
 
 <div class="panel" style="margin-bottom:18px">
-  <h3 style="margin:0 0 12px">Your key on the chain</h3>
-  {% if prepared and not published_txid %}
-    <table>
-      <tr><td class="muted" style="width:110px;border:0">txid</td>
-          <td class="mono" style="font-size:.78rem;border:0;word-break:break-all">{{ prepared.txid }}</td></tr>
-      <tr><td class="muted" style="border:0">size</td>
-          <td style="border:0">{{ "{:,}".format(prepared.size) }} bytes</td></tr>
-
-    </table>
-    <form method="post" action="/publish-key" style="margin-top:12px">
-      <input type="hidden" name="csrf_token" value="{{ csrf }}">
-      <input type="hidden" name="confirmed" value="yes">
-      <div class="row"><button type="submit">Broadcast</button>
-        <a class="muted" href="/contacts">Cancel</a></div>
-    </form>
-  {% elif state.unlocked %}
+  <h3 style="margin:0 0 10px">Find somebody by @tag</h3>
+  <form method="get" action="/contacts">
     <div class="row">
-      <div style="flex:1"><div class="mono" style="font-size:.95rem">{{ state.derived_address or 'ready' }}</div></div>
-      <form method="post" action="/publish-key">
-        <input type="hidden" name="csrf_token" value="{{ csrf }}">
-        <button type="submit">Publish on chain</button>
-      </form>
+      <div style="flex:1"><input autocomplete="off" name="find" class="mono"
+        spellcheck="false" value="{{ find or '' }}"
+        placeholder="part of a name — @mar finds @robin"></div>
+      <button type="submit">Search</button>
+      {% if find %}<a class="muted" href="/contacts" style="font-size:.88rem">Clear</a>{% endif %}
     </div>
-    <table style="margin-top:10px">
-      <tr><td class="muted" style="width:130px">Your key</td>
-          <td class="muted">so people can write to you</td></tr>
-      <tr><td class="muted">{{ mine.chain.label }} address</td>
-          <td class="mono" style="font-size:.82rem;word-break:break-all">{{ mine.address or '—' }}</td></tr>
-      <tr><td class="muted">Other chain</td>
-          <td class="mono" style="font-size:.82rem;word-break:break-all">{{ other_address or '— none in this wallet' }}</td></tr>
-      <tr><td class="muted">@tag</td>
-          <td>{% if mine.tag %}<strong>@{{ mine.tag }}</strong>{% else %}
-            <span class="muted">— none claimed yet</span>{% endif %}</td></tr>
+  </form>
+  {% if find %}
+    {% if not matches %}
+      <p class="muted" style="font-size:.88rem;margin:12px 0 0">Nothing claimed
+        matching <strong>{{ find }}</strong> on this node. A tag exists here once
+        its claim is in a block this node has read.</p>
+    {% else %}
+    <table style="margin-top:12px">
+      {% for m in matches %}
+      <tr>
+        <td><strong>@{{ m.tag }}</strong>
+          <div class="mono muted" style="font-size:.74rem;word-break:break-all">{{ m.address }}</div></td>
+        <td style="text-align:right;white-space:nowrap">
+          {% if m.known %}<span class="muted" style="font-size:.84rem">already in your book</span>
+          {% else %}
+          <form method="post" action="/contacts/save" style="margin:0">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}">
+            <input type="hidden" name="name" value="{{ m.tag }}">
+            <input type="hidden" name="testnet_address" value="@{{ m.tag }}">
+            <button type="submit" class="small">Add</button>
+          </form>
+          {% endif %}</td>
+      </tr>
+      {% endfor %}
     </table>
-    <p class="muted" style="margin-top:10px;font-size:.87rem">
-      Anyone who scans finds you with their address book filled in, instead of a
-      row of base58. It is public and permanent.</p>
+    <p class="muted" style="font-size:.8rem;margin:10px 0 0">Adding one saves the
+      ADDRESS the name points at. If they later claim a different name, the card
+      shows the new one and you still pay the same person.</p>
+    {% endif %}
   {% else %}
-    <p class="muted" style="margin:0">Waiting for the testnet node. Nothing to do.</p>
+    <p class="muted" style="font-size:.88rem;margin:12px 0 0">Everybody who has
+      claimed a name on the chain can be found here. Search for theirs, or add
+      somebody by address below.</p>
   {% endif %}
 </div>
 

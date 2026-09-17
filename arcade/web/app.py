@@ -1056,10 +1056,11 @@ def create_app(state: AppState) -> FastAPI:
     # while the identity is locked, because it holds no secrets.
 
     @app.get("/contacts", response_class=HTMLResponse)
-    def contacts_page(request: Request, edit: int | None = None):
-        return _contacts_view(request, edit)
+    def contacts_page(request: Request, edit: int | None = None, find: str = ""):
+        return _contacts_view(request, edit, find=find)
 
-    def _contacts_view(request: Request, edit: int | None = None, **kwargs: Any):
+    def _contacts_view(request: Request, edit: int | None = None, find: str = "",
+                       **kwargs: Any):
         """The address book, and the one control the Keys page used to hold.
 
         Publishing your key belongs beside the name it publishes, which is
@@ -1067,12 +1068,6 @@ def create_app(state: AppState) -> FastAPI:
         (D-030). Not a route itself: FastAPI reads **kwargs off the query
         string, so the door and the view are separate functions.
         """
-        known_tags = []
-        try:
-            _, tag_index = _tag_chain()
-            known_tags = tag_index.tags(limit=200)
-        except Exception:
-            known_tags = []           # no node, no list: the field still works
         people, editing = [], None
         if state.store_path.exists():
             with state.store() as store:
@@ -1080,6 +1075,19 @@ def create_app(state: AppState) -> FastAPI:
                 if edit:
                     row = store.contact_by_id(edit)
                     editing = _contact_view(row) if row else None
+        known_tags, matches = [], []
+        try:
+            _, tag_index = _tag_chain()
+            known_tags = tag_index.tags(limit=200)
+            if find.strip():
+                matches = tag_index.search_tags(find, limit=25)
+                for entry in matches:
+                    entry["known"] = any(
+                        entry["address"] in (row["testnet_address"],
+                                             row["mainnet_address"])
+                        for row in (people or []))
+        except Exception:
+            known_tags, matches = [], []   # no node: the field still works
         published = []
         if state.store_path.exists():
             with state.store() as store:
@@ -1130,9 +1138,16 @@ def create_app(state: AppState) -> FastAPI:
                 found.get(entry["address"]) == entry["claimed_tag"] else ""
             entry["tag_disputed"] = bool(
                 entry["claimed_tag"] and found.get(entry["address"]) != entry["claimed_tag"])
+        # Whether this wallet's own key is on the chain, for the one card that
+        # now shows both halves of who you are.
+        announced = False
+        if state.unlocked and state.store_path.exists() and state.derived_address:
+            with state.store() as store:
+                announced = store.key_for(state.derived_address) is not None
         return render(request, "contacts.html", people=people, editing=editing,
                       published=published, when=_when, mine=_my_tag(), tags=found,
-                      known_tags=known_tags,
+                      known_tags=known_tags, announced=announced,
+                      matches=matches, find=find,
                       other_address=_other_chain_address(),
                       announce_limit=MAX_ANNOUNCE_NAME,
                       name_limit=MAX_ANNOUNCE_NAME_CLASS_B, **kwargs)
@@ -1941,8 +1956,65 @@ def create_app(state: AppState) -> FastAPI:
             state.flash(f"Could not add that: {exc}", "err")
         return RedirectResponse("/contacts", status_code=303)
 
+    @app.post("/publish", response_class=HTMLResponse)
+    def publish_identity(request: Request, tag: str = Form(""),
+                         csrf_token: str = Form("")):
+        """One button: claim the @tag if it changed, and say so on the chain.
+
+        They were two cards with two buttons, and the split was the bug: a
+        name is only half-claimed until the key announcement says so too, and
+        nothing told anybody that. Somebody who changed their tag and stopped
+        there was findable under a name they no longer held, by every wallet
+        reading announcements rather than the tag table (D-076).
+
+        No preview. Both transactions are testnet, always (D-010, D-075), and
+        what is worth saying about a claim -- it is permanent, first claim
+        wins -- the card says before the button is pressed rather than after.
+        """
+        check_csrf(csrf_token)
+        chain, index = _tag_chain()
+        wanted, claimed_txid = "", ""
+        try:
+            if not state.unlocked:
+                state.ensure_identity()
+            home = state.derived_address
+            if not home:
+                raise taglib.TagError("this wallet has no identity address yet.")
+            asked = (tag or "").strip().lstrip("@")
+            current = index.tag_of(home) or ""
+            if asked and asked.lower() != current.lower():
+                wanted = taglib.validate(asked)
+                holder = index.address_of(wanted)
+                if holder and holder != home:
+                    raise taglib.TagError(f"@{wanted} is taken.")
+                if holder != home:
+                    payload = P.AnyData(data=taglib.encode(wanted)).encode()
+                    with chain.rpc() as rpc:
+                        sender = tokenlib.TokenSender(rpc, chain.params)
+                        prepared = sender.prepare(home, payload)
+                        prepared.what = f"claim @{wanted}"
+                        claimed_txid = sender.broadcast(prepared)
+                    state.pending_tokens.append(
+                        {"txid": claimed_txid, "what": f"claim @{wanted}",
+                         "at": time.time(), "network": chain.network})
+            else:
+                wanted = current
+        except HTTPException:
+            raise
+        except (taglib.TagError, tokenlib.TokenError, ValueError) as exc:
+            return _contacts_view(request, tag_error=str(exc), tag_wanted=tag)
+        except Exception as exc:
+            return _contacts_view(request, tag_error=f"{exc.__class__.__name__}: {exc}",
+                                  tag_wanted=tag)
+        # Then the key, carrying the name, whether or not the name is new: a
+        # wallet that has never announced still needs to, and one that just
+        # changed its tag needs to say the new one.
+        return publish_key(request, csrf_token=csrf_token, confirmed="yes",
+                           say_tag=wanted or None, claimed=claimed_txid)
+
     @app.post("/publish-key", response_class=HTMLResponse)
-    def publish_key(request: Request, csrf_token: str = Form(""), confirmed: str = Form("")):
+    def publish_key(request: Request, csrf_token: str = Form(""), confirmed: str = Form(""),
+                    say_tag: str | None = None, claimed: str = ""):
         error = None
         prepared = None
         txid = None
@@ -1967,6 +2039,12 @@ def create_app(state: AppState) -> FastAPI:
             # person typed: a reader can check a tag against the chain, and
             # could only ever take a name on trust (D-032).
             other_hash, tag = _announced_extras()
+            # The tag just claimed, when one was: the claim may not be in a
+            # block yet, so reading it back off the chain would announce the
+            # old name (or none) and the two statements would disagree until
+            # somebody published again. The announcement is this wallet's own
+            # statement; the claim transaction is what makes it true (D-076).
+            tag = say_tag if say_tag is not None else tag
             payload = build_key_announcement(
                 state.identity.public_bytes, home_hash, "",
                 other_hash160=other_hash, tag=tag)
@@ -1983,7 +2061,7 @@ def create_app(state: AppState) -> FastAPI:
                 # starting block where no rescan could ever find it.
                 existing = find_own_announcements(
                     rpc, state.messaging.params, state.identity.public_bytes)
-                if existing:
+                if existing and not claimed:
                     # Refuse, and do NOT write the rows back. Restoring them
                     # would undo a reset the user asked for -- these are the
                     # very transactions they cleared. Knowing the announcement

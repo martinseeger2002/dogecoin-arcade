@@ -307,6 +307,25 @@ class LedgerIndex:
                 "SELECT * FROM tag ORDER BY block_height DESC, position DESC "
                 "LIMIT ?", (max(1, min(limit, 1000)),))]
 
+    def search_tags(self, text: str, limit: int = 25) -> list[dict[str, Any]]:
+        """Claimed names containing `text`, the closest first.
+
+        What the address book searches. Prefixes rank above the middle of a
+        word, because somebody typing "mar" is far more often looking for
+        @robin than for @postmaster, and exact wins outright.
+        """
+        wanted = str(text or "").strip().lstrip("@").lower()
+        if not wanted:
+            return []
+        like = wanted.replace("%", "").replace("_", "")
+        with self.open() as db:
+            return [dict(row) for row in db.conn.execute(
+                "SELECT * FROM tag WHERE tag LIKE ? "
+                "ORDER BY CASE WHEN tag = ? THEN 0 "
+                "              WHEN tag LIKE ? THEN 1 ELSE 2 END, "
+                "         LENGTH(tag), tag LIMIT ?",
+                (f"%{like}%", wanted, f"{like}%", max(1, min(limit, 100))))]
+
     def tags_for(self, addresses: list[str]) -> dict[str, str]:
         """Names for a batch of addresses: one query for a page full of posts."""
         if not addresses:

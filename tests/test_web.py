@@ -2748,3 +2748,46 @@ def test_nothing_on_the_address_book_warns_about_a_fee(client):
     # depends on what this wallet has already published, so assert the one
     # that is always there: what a tag claim actually commits you to.
     assert "First claim wins" in book
+
+
+def test_somebody_can_be_found_and_added_by_tag(client, monkeypatch):
+    """A search over claimed names, because an address book you can only fill
+    by pasting base58 is an address book most people never fill (D-077)."""
+    page, state = client
+    claimed = [{"tag": "robin", "address": "mgA7SfyBBrVGVSpQ7oqGHPhxpp2gUZWtfc"},
+               {"tag": "postmaster", "address": "mgA7SfyBBrVGVSpQ7oqGHPhxpp2gUZWtfd"}]
+
+    class Index:
+        def tags(self, limit=200):
+            return claimed
+
+        def search_tags(self, text, limit=25):
+            wanted = text.strip().lstrip("@").lower()
+            hits = [t for t in claimed if wanted in t["tag"]]
+            return sorted(hits, key=lambda t: (not t["tag"].startswith(wanted), t["tag"]))
+
+        def tags_for(self, addresses):
+            return {t["address"]: t["tag"] for t in claimed if t["address"] in addresses}
+
+        def tag_of(self, address):
+            return next((t["tag"] for t in claimed if t["address"] == address), None)
+
+        def address_of(self, wanted):
+            return next((t["address"] for t in claimed if t["tag"] == wanted), None)
+
+    monkeypatch.setattr(type(state), "token_index", lambda self, chain: Index())
+
+    found = page.get("/contacts?find=mar").text
+    assert "@robin" in found
+    assert found.index("@robin") < found.index("@postmaster"), \
+        "somebody typing 'mar' means @robin far more often than @postmaster"
+
+    assert "Nothing claimed" in page.get("/contacts?find=nobodyatall").text
+
+    # Adding one saves the address the name points at.
+    page.post("/contacts/save", data={"csrf_token": state.csrf_token,
+                                      "name": "robin", "testnet_address": "@robin"})
+    with state.store() as store:
+        saved = [dict(r) for r in store.contacts()]
+    assert saved[0]["testnet_address"] == "mgA7SfyBBrVGVSpQ7oqGHPhxpp2gUZWtfc"
+    assert "already in your book" in page.get("/contacts?find=robin").text
