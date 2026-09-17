@@ -47,6 +47,18 @@ INSTALLED_FILE = "installed.json"
 HOME = Path.home() / ".dogecoinarcade"
 
 
+#: Cloudflare in front of the site refuses `Python-urllib/3.x` with a 403, so
+#: every fetch names itself. Found by fetching the manifest that had just been
+#: published: curl got it, the updater got 403, and an automatic update that
+#: cannot read the manifest installs nothing -- silently, on every machine
+#: (D-066).
+USER_AGENT = "DogecoinArcade (+https://dogecoinarcade.com)"
+
+
+def _request(url: str):
+    return urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+
+
 class UpdateError(Exception):
     """The update could not proceed."""
 
@@ -134,7 +146,7 @@ def _published_revision() -> str | None:
     import urllib.error
     import urllib.request
     try:
-        with urllib.request.urlopen(REVISION_URL, timeout=30) as response:
+        with urllib.request.urlopen(_request(REVISION_URL), timeout=30) as response:
             return response.read().decode("utf-8", "replace").strip()[:7] or None
     except (urllib.error.URLError, OSError):
         return None
@@ -244,7 +256,7 @@ def _signed_manifest() -> dict:
     cannot attribute is a website with a shell on every machine (D-065).
     """
     try:
-        with urllib.request.urlopen(MANIFEST_URL, timeout=30) as response:
+        with urllib.request.urlopen(_request(MANIFEST_URL), timeout=30) as response:
             body = response.read().decode("utf-8", "replace")
     except urllib.error.URLError as exc:
         raise UpdateError(

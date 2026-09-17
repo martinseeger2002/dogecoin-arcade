@@ -291,10 +291,20 @@ def bindir(system: str) -> Path:
 
 # --- download and verify ------------------------------------------------------
 
+#: Cloudflare in front of the site refuses `Python-urllib/3.x` with a 403, so
+#: every fetch names itself (D-066).
+USER_AGENT = "DogecoinArcade installer (+https://dogecoinarcade.com)"
+
+
+def _request(url: str):
+    return urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+
+
 def download(url: str, dest: Path, label: str) -> Path:
     info(f"downloading {label}")
     try:
-        with urllib.request.urlopen(url, timeout=120) as response, dest.open("wb") as out:
+        with urllib.request.urlopen(_request(url), timeout=120) as response, \
+                dest.open("wb") as out:
             total = int(response.headers.get("Content-Length", 0))
             read = 0
             while chunk := response.read(64 * 1024):
@@ -1148,7 +1158,7 @@ def fetch_source_archive(checkout: Path, expect_sha256: str | None = None) -> st
 def read_url(url: str, label: str, quiet: bool = False) -> str:
     """Fetch a small text file. Returns "" when it is not there and quiet."""
     try:
-        with urllib.request.urlopen(url, timeout=60) as response:
+        with urllib.request.urlopen(_request(url), timeout=60) as response:
             return response.read().decode("utf-8", "replace")
     except urllib.error.URLError as exc:
         if quiet:
