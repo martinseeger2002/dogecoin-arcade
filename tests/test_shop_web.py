@@ -611,3 +611,64 @@ def test_an_answer_that_asks_for_more_than_the_book_says_is_refused(shop):
     assert _answers(answers, buyer) == [], "nothing signed"
     assert state.offers.get_fill("f" * 64)["status"] == "failed"
     assert "priced at" in state.offers.get_fill("f" * 64)["error"]
+
+
+# --- one piece asking another -------------------------------------------------
+
+def _fighter(index, txid=PIECE, owner=SELLER, power=55, ready=None):
+    import json as _json
+    index.rows[txid] = {
+        "txid": txid, "number": 2, "creator": OTHER, "owner": owner,
+        "collection": None, "edition": None,
+        "json": _json.dumps({"name": "Sparky", "stats": {"power": power, "hp": 120},
+                             "api": {"power": {"json": "stats.power"},
+                                     "ready": {"store": "ready"}}})}
+    return txid
+
+
+def test_a_node_answers_for_a_piece_it_holds(shop):
+    """With nobody at the screen. That is the point: two pieces can interact
+    while one of their owners is asleep (D-091)."""
+    state, index, node, buyer, answers, keeper = shop
+    keeper.tick()
+    item = _fighter(index)
+    state.pagestore.set(item, "ready", "yes")
+
+    _ask(state, buyer, {"ask": item, "route": "power"}, 30)
+    _ask(state, buyer, {"ask": item, "route": "ready"}, 31)
+    assert keeper.tick() == 2
+    said = [body for _, body in _answers(answers, buyer)][-2:]
+    assert said[0]["ok"] is True and said[0]["answer"] == 55
+    assert said[1]["ok"] is True and said[1]["answer"] == "yes"
+
+
+def test_it_will_not_answer_for_a_piece_it_does_not_hold(shop):
+    state, index, node, buyer, answers, keeper = shop
+    keeper.tick()
+    item = _fighter(index, owner=OTHER)
+    _ask(state, buyer, {"ask": item, "route": "power"}, 32)
+    assert keeper.tick() == 1
+    _, body = _answers(answers, buyer)[-1]
+    assert body["ok"] is False and "not held by this wallet" in body["error"]
+
+
+def test_an_undeclared_route_is_refused_by_name(shop):
+    state, index, node, buyer, answers, keeper = shop
+    keeper.tick()
+    item = _fighter(index)
+    _ask(state, buyer, {"ask": item, "route": "secret"}, 33)
+    assert keeper.tick() == 1
+    _, body = _answers(answers, buyer)[-1]
+    assert body["ok"] is False and "answers no route" in body["error"]
+
+
+def test_an_answer_is_not_mistaken_for_a_question(shop):
+    """Two nodes answering each other's answers for ever is how the shopkeeper
+    loop happened (D-027). An answer carries `re`; a question does not."""
+    state, index, node, buyer, answers, keeper = shop
+    keeper.tick()
+    item = _fighter(index)
+    _ask(state, buyer, {"ask": item, "route": "power", "re": "x" * 64,
+                        "ok": True, "answer": 55}, 34)
+    assert keeper.tick() == 0, "an answer is not answered"
+    assert _answers(answers, buyer) == []

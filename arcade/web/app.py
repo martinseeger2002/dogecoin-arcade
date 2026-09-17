@@ -53,6 +53,7 @@ from ..messaging.envelope import (
     MAX_ANNOUNCE_NAME, MAX_ANNOUNCE_NAME_CLASS_B,
     announcement_fits_one_output, build_key_announcement,
 )
+from .. import pageapi
 from .. import release as releaselib
 from ..messaging.keys import fingerprint_of
 from ..messaging.miner import Miner, MiningError
@@ -3081,6 +3082,66 @@ def create_app(state: AppState) -> FastAPI:
                        "block": m["block_height"], "txid": m["txid"],
                        "how": m["how"]} for m in moves],
         })
+
+    @app.get("/r/inscription/{key}/routes")
+    def r_inscription_routes(key: str):
+        """What this piece will answer, and where the answer comes from.
+
+        Public because the declaration is inscribed: a caller can read what a
+        route resolves to before asking, and a holder cannot quietly widen it
+        (D-091).
+        """
+        row = _content_index().inscription(contentlib._key(key))
+        if row is None:
+            return contentlib._missing("no such inscription")
+        return contentlib._json({"id": row["txid"], "routes": pageapi.declared(row)})
+
+    @app.post("/r/ask")
+    def r_ask(body: dict = Body(default={})):
+        """One page asking another a question.
+
+        Held here, answered here: no message, no fee, no wait. Held
+        elsewhere, the question goes to that node as a sealed node-to-node
+        message and the answer comes back through arcade.node's replies --
+        the page gets a txid and listens, exactly as it does for a shop.
+
+        A route is answered by this node from what the inscription declares,
+        so it works whether or not the holder is looking at the screen. That
+        is the whole point: two pieces can interact while one of their owners
+        is asleep (D-091).
+        """
+        if not isinstance(body, dict):
+            return contentlib._json({"error": "send a JSON object"}, status=400)
+        index = _content_index()
+        row = index.inscription(contentlib._key(str(body.get("inscription") or "")))
+        if row is None:
+            return contentlib._missing("no such inscription")
+        route = str(body.get("route") or "")
+        try:
+            with _token_chain()[0].rpc() as rpc:
+                own = _ledger_addresses(rpc)
+        except Exception:
+            own = []
+        if row["owner"] in own:
+            try:
+                items = state.pagestore.items(row["txid"])
+                return contentlib._json({"answer": pageapi.answer(row, route, items),
+                                         "from": "here", "inscription": row["txid"]})
+            except pageapi.ApiError as exc:
+                return contentlib._json({"error": str(exc)}, status=400)
+        # Somebody else's. Ask their node, and hand the page the receipt so it
+        # can listen for the answer.
+        try:
+            to = _key_at(row["owner"])
+            sent = _page_send(str(body.get("from") or row["txid"]),
+                              state.messaging, to,
+                              json.dumps({"ask": row["txid"], "route": route,
+                                          "args": body.get("args") or {}}).encode())
+        except Exception as exc:
+            return contentlib._json({"error": str(exc)}, status=400)
+        return contentlib._json({"asked": sent["txid"], "from": "their node",
+                                 "inscription": row["txid"], "to": to.hex()},
+                                status=202)
 
     @app.get("/r/metadata/{key}")
     def r_metadata(key: str):

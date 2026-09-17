@@ -133,6 +133,8 @@ class Shopkeeper:
     def _answer(self, rpc: Any, index: Any, offers: Any, chain: Any, row: Any,
                 question: dict) -> dict | None:
         state = self.state
+        if question.get("ask"):
+            return self._ask(rpc, index, row, question)
         kind = question["swap"]
         reply: dict[str, Any] = {"swap": kind, "swapv": swaplib.PROTOCOL,
                                  "re": row["txid"], "ok": False,
@@ -186,6 +188,38 @@ class Shopkeeper:
             log.warning("swap %s failed: %s", kind, exc, exc_info=True)
             reply["error"] = f"the shop's node could not do it: {exc}"
         return reply
+
+    def _ask(self, rpc: Any, index: Any, row: Any, question: dict) -> dict | None:
+        """Answer a question about a piece this wallet holds.
+
+        No person is asked and nothing is signed: a route is a public
+        declaration inscribed by whoever made the piece, and answering one
+        gives away only what that declaration already promises. It works with
+        nobody at the screen, which is the point -- two pieces can interact
+        while one of their owners is asleep (D-091).
+        """
+        from . import pageapi
+
+        answer: dict[str, Any] = {"ask": str(question.get("ask") or ""),
+                                  "route": str(question.get("route") or ""),
+                                  "re": row["txid"], "ok": False}
+        try:
+            found = index.inscription(str(question.get("ask") or ""))
+            if found is None:
+                raise pageapi.ApiError("no such inscription on this node")
+            if found["owner"] not in _own_addresses(rpc):
+                raise pageapi.ApiError(
+                    "that piece is not held by this wallet, so there is "
+                    "nothing here to ask")
+            items = self.state.pagestore.items(found["txid"])
+            answer.update(ok=True,
+                          answer=pageapi.answer(found, answer["route"], items))
+        except pageapi.ApiError as exc:
+            answer["error"] = str(exc)
+        except Exception as exc:
+            log.warning("ask failed: %s", exc, exc_info=True)
+            answer["error"] = f"the holder's node could not answer: {exc}"
+        return answer
 
     def _bid(self, rpc: Any, index: Any, offers: Any, chain: Any, row: Any,
              question: dict) -> dict | None:
@@ -392,6 +426,10 @@ def _swap_message(row: Any) -> dict | None:
         data = json.loads(bytes(row["body"]).decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
         return None
+    if isinstance(data, dict) and data.get("ask"):
+        # A question about a piece this wallet holds, answered from what that
+        # piece declares (D-091). An ANSWER carries `re`, so it is not one.
+        return None if "re" in data else data
     if not isinstance(data, dict) or data.get("swap") not in ("offer", "sign", "bid", "fill"):
         return None
     if data.get("swap") in ("bid", "fill"):
