@@ -53,6 +53,7 @@ from ..messaging.envelope import (
     MAX_ANNOUNCE_NAME, MAX_ANNOUNCE_NAME_CLASS_B,
     announcement_fits_one_output, build_key_announcement,
 )
+from .. import release as releaselib
 from ..messaging.keys import fingerprint_of
 from ..messaging.miner import Miner, MiningError
 from ..messaging.scanner import Scanner, find_own_announcements
@@ -405,7 +406,27 @@ def create_app(state: AppState) -> FastAPI:
                     announced = store.key_for(state.derived_address) is not None
         return render(request, "overview.html", contact_code=code, announced=announced,
                       my_address=state.derived_address,
+                      auto_update=bool(state.setting("auto_update", True)),
+                      release_key=releaselib.PUBLIC_KEY,
                       messaging=messaging_status(), ledger=ledger_status(), stats=stats)
+
+    @app.post("/settings/updates")
+    def set_auto_update(request: Request, csrf_token: str = Form(""),
+                        auto: str = Form("")):
+        """Turn automatic updates off, or back on.
+
+        Off is a real choice and is why the box is there: this machine fetches
+        code from a website and runs it, and some people want to look first.
+        On is the default because a node that is behind does not merely lack
+        features -- a consensus rule starts at a height, and old code reads the
+        same block differently from everybody else (D-062).
+        """
+        check_csrf(csrf_token)
+        state.set_setting("auto_update", auto == "on")
+        state.flash("Updates will install themselves." if auto == "on" else
+                    "Automatic updates are off. Run dogecoinarcade-update yourself.",
+                    "ok")
+        return RedirectResponse("/", status_code=303)
 
     # --- identity -------------------------------------------------------------
     # No passphrase, no key file, nothing to write down. The identity is derived

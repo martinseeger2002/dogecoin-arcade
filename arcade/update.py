@@ -23,18 +23,27 @@ account, no key and no forge -- just git.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
+
+from . import release as releaselib
 
 REPO_URL = "https://dogecoinarcade.com/repo"
 #: The archive the installer falls back to when there is no git (see
 #: installer/install.py). An installation made that way has no .git, so both
 #: "what is installed" and "what is published" have to be read another way.
 REVISION_URL = "https://dogecoinarcade.com/source.rev"
+MANIFEST_URL = "https://dogecoinarcade.com/" + releaselib.MANIFEST
 REVISION_FILE = ".revision"
+#: What was installed last, and when it was published. Kept outside the
+#: checkout, because the checkout is replaced wholesale by an update.
+INSTALLED_FILE = "installed.json"
 HOME = Path.home() / ".dogecoinarcade"
 
 
@@ -166,7 +175,9 @@ def update(dry_run: bool = False) -> int:
         # gone. Either way the archive is the way back to current, and it needs
         # nothing but a download.
         before = current_revision(checkout)
-        after = _call_installer(checkout, "fetch_source_archive", checkout)
+        signed = _signed_manifest()
+        after = _call_installer(checkout, "fetch_source_archive", checkout,
+                                signed["sha256"])
         if after is None:
             raise UpdateError(
                 f"could not fetch the source archive into {checkout}.\n"
@@ -175,6 +186,7 @@ def update(dry_run: bool = False) -> int:
         after = str(after)[:7]
         print(f"  already up to date ({after})" if before == after
               else f"  {before or 'unknown'} -> {after}")
+        _remember(signed)
     elif (checkout / ".git").exists():
         before = current_revision(checkout)
         result = _run(git, "pull", "--ff-only", "--quiet", cwd=checkout)
@@ -220,6 +232,52 @@ def update(dry_run: bool = False) -> int:
         return subprocess.run([str(python), "-m", "arcade.update", "--services-only"]).returncode
 
     return _update_services(checkout, venv, dry_run)
+
+
+def _signed_manifest() -> dict:
+    """The manifest for what is published, checked against the pinned key.
+
+    Everything downstream trusts this: the archive is then required to hash to
+    what it says. The refusals are deliberate and total -- no manifest, a
+    manifest signed by another key, or one older than what is already
+    installed, and nothing is installed. An updater that installs code it
+    cannot attribute is a website with a shell on every machine (D-065).
+    """
+    try:
+        with urllib.request.urlopen(MANIFEST_URL, timeout=30) as response:
+            body = response.read().decode("utf-8", "replace")
+    except urllib.error.URLError as exc:
+        raise UpdateError(
+            f"could not read the release manifest from {MANIFEST_URL}: {exc}.\n"
+            "  Nothing was installed. The manifest is what says the release is "
+            "ours; without it there is nothing to check the download against.")
+    try:
+        manifest = releaselib.verify(body)
+    except releaselib.ReleaseError as exc:
+        raise UpdateError(f"{exc}\n  Nothing was installed.")
+    if not releaselib.is_newer(manifest, _installed_published()):
+        raise UpdateError(
+            "the published release is older than the one installed here. That "
+            "is what a downgrade attack looks like -- an old signed release, "
+            "served to put a known bug back -- so it is refused. If you meant "
+            "to go back, install that version deliberately.")
+    return manifest
+
+
+def _installed_published() -> float | None:
+    try:
+        return float(json.loads((HOME / INSTALLED_FILE).read_text())["published"])
+    except Exception:
+        return None
+
+
+def _remember(manifest: dict) -> None:
+    """Write down what was installed, so the next update cannot go backwards."""
+    try:
+        HOME.mkdir(parents=True, exist_ok=True)
+        (HOME / INSTALLED_FILE).write_text(json.dumps(manifest, sort_keys=True))
+    except OSError as exc:
+        print(f"  could not record the installed release: {exc}")
 
 
 def _update_services(checkout: Path, venv: Path, dry_run: bool) -> int:

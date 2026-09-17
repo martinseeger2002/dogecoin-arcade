@@ -14,6 +14,8 @@ memory. These cover that split.
 
 from pathlib import Path
 
+import json
+
 import pytest
 
 from arcade import update
@@ -285,3 +287,76 @@ def test_a_reinstall_that_leaves_nothing_importable_says_so(tmp_path, monkeypatc
         update.update(dry_run=False)
     assert "no longer imports" in str(exc.value)
     assert "repair.py" in str(exc.value), "say the command that fixes it"
+
+
+def test_an_unsigned_release_is_not_installed(tmp_path, monkeypatch):
+    """The whole point of the manifest: without it, nothing is installed.
+
+    An updater that installs code it cannot attribute is a website with a
+    shell on every machine that ever ran this. That was survivable while a
+    person typed the command; it is not, now that the machine types it.
+    """
+    import urllib.error
+
+    def no_manifest(*a, **k):
+        raise urllib.error.URLError("404")
+
+    monkeypatch.setattr(update.urllib.request, "urlopen", no_manifest)
+    with pytest.raises(update.UpdateError) as exc:
+        update._signed_manifest()
+    assert "Nothing was installed" in str(exc.value)
+
+
+def test_a_release_signed_by_somebody_else_is_not_installed(tmp_path, monkeypatch):
+    from nacl.signing import SigningKey
+    from arcade import release
+
+    attacker = SigningKey.generate()
+    manifest = release.sign(attacker.encode().hex(), "bad1234", "ff" * 32)
+
+    class Answer:
+        def read(self):
+            return json.dumps(manifest).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(update.urllib.request, "urlopen", lambda *a, **k: Answer())
+    with pytest.raises(update.UpdateError, match="not signed by the key"):
+        update._signed_manifest()
+
+
+def test_the_archive_must_hash_to_what_was_signed(tmp_path, monkeypatch):
+    """The signature covers the hash, and the fetch is handed that hash, so
+    the site cannot serve a different archive than the one that was signed."""
+    from nacl.signing import SigningKey
+    from arcade import release
+
+    signer = SigningKey.generate()
+    manifest = release.sign(signer.encode().hex(), "abc1234", "de" * 32)
+    monkeypatch.setattr(release, "PUBLIC_KEY", signer.verify_key.encode().hex())
+
+    class Answer:
+        def read(self):
+            return json.dumps(manifest).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(update.urllib.request, "urlopen", lambda *a, **k: Answer())
+    monkeypatch.setattr(update, "HOME", tmp_path)
+    signed = update._signed_manifest()
+    assert signed["sha256"] == "de" * 32
+
+    # And once it is installed, an older signed release is refused.
+    update._remember(signed)
+    older = release.sign(signer.encode().hex(), "old1234", "aa" * 32, published=1.0)
+    manifest.clear(); manifest.update(older)
+    with pytest.raises(update.UpdateError, match="downgrade"):
+        update._signed_manifest()

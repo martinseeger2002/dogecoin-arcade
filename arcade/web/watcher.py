@@ -37,10 +37,14 @@ to prevent.
 from __future__ import annotations
 
 import logging
+import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
+from .. import update
 from ..messaging.scanner import Scanner, repair_announcement_names
 
 log = logging.getLogger(__name__)
@@ -95,6 +99,7 @@ class BlockWatcher:
         self._check(self.state.ledger, public_only=True)
         self._sync_ledgers()
         self._check_pending_offers()
+        self._auto_update()
         self._keep_shop()
         self._walk_home()
 
@@ -211,6 +216,54 @@ class BlockWatcher:
             if now != self._pending_offers.get(chain.network, set()):
                 self._pending_offers[chain.network] = now
                 self.state.bump_generation()
+
+    #: When the automatic update last looked, and how often it may.
+    _update_checked = 0.0
+    UPDATE_EVERY = 6 * 3600
+
+    def _auto_update(self) -> None:
+        """Install a newer published release, if the machine is allowed to.
+
+        Off by a checkbox on the Overview, on by default, because a node that
+        is behind is not merely missing features: a consensus rule starts at a
+        height, and a node still running last week's code reads the same block
+        differently from everybody else (D-062). The people most likely to be
+        behind are the ones least likely to be watching for a release.
+
+        What makes this safe to do unattended is the signature, not the
+        schedule: the manifest is checked against a key pinned in this code
+        before anything is downloaded, and the archive must hash to what the
+        manifest says (D-065). What makes it polite is the rest of this
+        function -- nothing is replaced while this wallet is in the middle of
+        sending something.
+        """
+        if not self.state.setting("auto_update", True):
+            return
+        now = time.time()
+        if now - self._update_checked < self.UPDATE_EVERY:
+            return
+        self._update_checked = now
+        if self.state.live_progress():
+            return                      # a send is in flight; next time
+        try:
+            installed, published, fetchable = update.check()
+        except Exception as exc:
+            log.debug("update check failed: %s", exc)
+            return
+        if not fetchable or not published or installed == published:
+            return
+        log.info("automatic update: %s -> %s", installed or "unknown", published)
+        # In a subprocess, and not in this thread: the update replaces the code
+        # this process is running out of, restarts the interface, and prints as
+        # it goes. The watcher's job is to decide that it should happen.
+        venv = Path(sys.executable).parent
+        result = subprocess.run([str(venv / "python"), "-m", "arcade.update"],
+                                capture_output=True, text=True, timeout=900)
+        if result.returncode != 0:
+            log.warning("automatic update failed: %s",
+                        (result.stderr or result.stdout).strip()[-600:])
+        else:
+            log.info("automatic update installed %s", published)
 
     _repaired = False
 

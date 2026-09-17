@@ -1074,20 +1074,26 @@ def find_git() -> str | None:
     return None
 
 
-def fetch_source_archive(checkout: Path) -> str | None:
+def fetch_source_archive(checkout: Path, expect_sha256: str | None = None) -> str | None:
     """Fetch the application as an archive. Returns the revision, if published.
 
-    The archive is served from the same site as this script and checked against
-    the SHA-256 published beside it. That catches a truncated or corrupted
-    download; it is not a signature, and it cannot be -- whoever could replace
-    the archive could replace the sum next to it, exactly as they could replace
-    the repository `git clone` reads. It is the same trust as the clone, with
-    one fewer program to install.
+    With no `expect_sha256` the archive is checked against the SHA-256
+    published beside it, which catches a truncated or corrupted download and
+    nothing else: whoever could replace the archive could replace the sum next
+    to it. That is the trust a FIRST install has, and cannot do better -- this
+    script runs before the application exists, on whatever Python is lying
+    around, with no signature checking available to it.
+
+    An update is a different situation and passes `expect_sha256`: the hash out
+    of a manifest it has already checked the signature on (arcade/release.py).
+    Then the site cannot serve a different archive than the one that was
+    signed, and the sums file beside it does not matter (D-065).
     """
     with tempfile.TemporaryDirectory() as tmp:
         workdir = Path(tmp)
         archive = download(ARCHIVE_URL, workdir / "source.tar.gz", "source.tar.gz")
-        expected = read_url(ARCHIVE_SUMS_URL, "checksum").split()
+        expected = ([str(expect_sha256)] if expect_sha256
+                    else read_url(ARCHIVE_SUMS_URL, "checksum").split())
         actual = sha256_of(archive)
         if not expected or expected[0] != actual:
             fail(
@@ -1096,7 +1102,8 @@ def fetch_source_archive(checkout: Path) -> str | None:
                 f"        got      {actual}\n"
                 f"      Refusing to install."
             )
-        info(f"sha256 matches the published sum ({actual[:16]}...)")
+        info(f"sha256 matches the {'signed manifest' if expect_sha256 else 'published sum'}"
+             f" ({actual[:16]}...)")
 
         unpacked = workdir / "unpacked"
         unpacked.mkdir()

@@ -430,6 +430,32 @@ class AppState:
 
     # --- identity -------------------------------------------------------------
 
+    # --- settings -------------------------------------------------------------
+
+    #: Preferences that outlive a restart and are nobody's business but this
+    #: machine's. A small JSON file rather than a table: there are two of them,
+    #: they are read on page renders, and a file can be read by a person who
+    #: wants to know what their wallet is doing without opening a database.
+    SETTINGS_FILE = "settings.json"
+
+    def settings(self) -> dict:
+        try:
+            import json
+            return json.loads((self.home / self.SETTINGS_FILE).read_text())
+        except Exception:
+            return {}
+
+    def setting(self, name: str, default: Any = None) -> Any:
+        value = self.settings().get(name)
+        return default if value is None else value
+
+    def set_setting(self, name: str, value: Any) -> None:
+        import json
+        data = self.settings()
+        data[name] = value
+        self.home.mkdir(parents=True, exist_ok=True)
+        (self.home / self.SETTINGS_FILE).write_text(json.dumps(data, sort_keys=True, indent=1))
+
     @property
     def key_path(self) -> Path:
         return self.home / f"{self.messaging.network}.key"
