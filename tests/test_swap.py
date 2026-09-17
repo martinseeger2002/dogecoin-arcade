@@ -71,6 +71,18 @@ class FakeIndex:
         return [r for r in self.rows.values()
                 if r.get("collection") == name and r["creator"] == creator]
 
+    #: Standing prices and standing offers, as the ledger would hold them.
+    #: Set by a test; empty is the ordinary case.
+    asks_standing: list = []
+    offers_standing: list = []
+
+    def asks(self, limit=200):
+        return list(self.asks_standing)[:limit]
+
+    def offers_on(self, owners, limit=100):
+        return [o for o in self.offers_standing if self.rows.get(
+            o["inscription"], {}).get("owner") in set(owners)]
+
     def indexed_height(self):
         return 100
 

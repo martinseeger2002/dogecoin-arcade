@@ -672,3 +672,121 @@ def test_an_answer_is_not_mistaken_for_a_question(shop):
                         "ok": True, "answer": 55}, 34)
     assert keeper.tick() == 0, "an answer is not answered"
     assert _answers(answers, buyer) == []
+
+
+# --- selling at a price already published -----------------------------------
+
+def _standing(index, piece, sats, buyer=BUYER, height=300, position=0, txid="off1"):
+    """An ask of the seller's, and an offer somebody made on it."""
+    index.asks_standing = [{"inscription": piece, "seller": SELLER,
+                            "take_kind": 3, "take_property": None,
+                            "take_amount": sats}]
+    index.offers_standing = [{"txid": txid, "inscription": piece, "buyer": buyer,
+                              "take_kind": 3, "take_property": None,
+                              "take_amount": sats, "number": 2, "owner": SELLER,
+                              "block_height": height, "position": position}]
+
+
+def _published(state, buyer):
+    """The buyer has a key on this node, so there is somebody to answer."""
+    with state.store() as store:
+        store.add_key_announcement(
+            txid="k" * 64, address=BUYER, pubkey=buyer.public_bytes,
+            fingerprint=fingerprint_of(buyer.public_bytes), height=200,
+            block_time=0, stated=True)
+
+
+def test_an_offer_that_meets_the_asking_price_is_accepted_without_asking(
+        shop, monkeypatch):
+    """The owner already said yes, in writing, on the chain: an ask names the
+    piece and the price, and this accepts exactly it (D-101)."""
+    state, index, node, buyer, answers, keeper = shop
+    _published(state, buyer)
+    _standing(index, PIECE, 3 * COIN)
+
+    assert keeper.sell_at_asking_price() == 1
+    (address, body), = _answers(answers, buyer)
+    assert body["swap"] == "bid" and body["ok"] is True and body["id"] == "off1"
+    assert body["offer"]["give"]["txid"] == PIECE
+    assert body["offer"]["take"]["sats"] == 3 * COIN
+
+    # And never twice: the piece is reserved for that buyer until it expires.
+    answers.clear()
+    assert keeper.sell_at_asking_price() == 0 and answers == []
+
+
+def test_less_than_the_asking_price_is_not_a_sale(shop):
+    state, index, node, buyer, answers, keeper = shop
+    _published(state, buyer)
+    _standing(index, PIECE, 3 * COIN)
+    index.offers_standing[0]["take_amount"] = 3 * COIN - 1
+
+    assert keeper.sell_at_asking_price() == 0 and answers == []
+
+
+def test_a_price_asked_in_a_token_is_not_met_by_coins(shop):
+    """Coins are not a bid for a token price, and one token is not another."""
+    state, index, node, buyer, answers, keeper = shop
+    _published(state, buyer)
+    _standing(index, PIECE, 3 * COIN)
+    index.asks_standing[0].update(take_kind=2, take_property=3, take_amount=10)
+
+    assert keeper.sell_at_asking_price() == 0 and answers == []
+    index.offers_standing[0].update(take_kind=2, take_property=4, take_amount=99)
+    assert keeper.sell_at_asking_price() == 0, "another token is not that token"
+    index.offers_standing[0].update(take_property=3, take_amount=10)
+    assert keeper.sell_at_asking_price() == 1, "the token asked for, in full"
+
+
+def test_more_than_the_asking_price_is_still_a_yes(shop):
+    state, index, node, buyer, answers, keeper = shop
+    _published(state, buyer)
+    _standing(index, PIECE, 3 * COIN)
+    index.offers_standing[0]["take_amount"] = 5 * COIN
+
+    assert keeper.sell_at_asking_price() == 1
+    (_, body), = _answers(answers, buyer)
+    assert body["offer"]["take"]["sats"] == 5 * COIN, "at what they offered, not the ask"
+
+
+def test_the_best_offer_wins_and_at_a_tie_the_earliest(shop):
+    state, index, node, buyer, answers, keeper = shop
+    _published(state, buyer)
+    _standing(index, PIECE, 3 * COIN)
+    index.offers_standing.append(
+        {"txid": "off2", "inscription": PIECE, "buyer": BUYER, "take_kind": 3,
+         "take_property": None, "take_amount": 4 * COIN, "number": 2,
+         "owner": SELLER, "block_height": 301, "position": 0})
+
+    assert keeper.sell_at_asking_price() == 1
+    (_, body), = _answers(answers, buyer)
+    assert body["id"] == "off2", "four coins beats three"
+
+
+def test_nothing_is_sold_when_the_switch_is_off(shop):
+    state, index, node, buyer, answers, keeper = shop
+    _published(state, buyer)
+    _standing(index, PIECE, 3 * COIN)
+    state.set_setting("auto_sell", False)
+
+    assert keeper.sell_at_asking_price() == 0 and answers == []
+    state.set_setting("auto_sell", True)
+    assert keeper.sell_at_asking_price() == 1
+
+
+def test_a_buyer_with_no_published_key_waits_for_a_person(shop):
+    """There is nobody to send the seller's half to. Their offer stands, and
+    the Exchange still shows it for a person to accept by hand (D-042)."""
+    state, index, node, buyer, answers, keeper = shop
+    _standing(index, PIECE, 3 * COIN)
+
+    assert keeper.sell_at_asking_price() == 0 and answers == []
+
+
+def test_a_piece_with_no_price_on_it_is_not_sold_by_itself(shop):
+    state, index, node, buyer, answers, keeper = shop
+    _published(state, buyer)
+    _standing(index, PIECE, 3 * COIN)
+    index.asks_standing = []
+
+    assert keeper.sell_at_asking_price() == 0 and answers == []

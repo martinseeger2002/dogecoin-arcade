@@ -128,6 +128,107 @@ class Shopkeeper:
             log.debug("shopkeeper tick failed", exc_info=True)
         return answered
 
+    # --- selling at a price already published --------------------------------
+
+    def sell_at_asking_price(self) -> int:
+        """Accept offers that meet a price this wallet has already asked.
+
+        The same reason nothing is asked for a shop's order: the owner
+        already said yes, in writing, where everyone can see it. An ask IS
+        that yes -- it names the piece and the price, on the chain, signed by
+        the address that holds it -- and this accepts exactly it and nothing
+        else (D-101).
+
+        What it will not do, each refusal being the thing somebody would
+        worry about:
+
+        * sell for less than was asked, or in a currency that was not asked
+          for -- the comparison is on the numbers, per kind, and a token
+          price and a coin price are not comparable at all;
+        * sell a piece whose ask is not live: `ledger.asks` already drops
+          one whose seller no longer holds the piece, or that has been
+          withdrawn, or that a newer ask has replaced;
+        * sell the same piece twice: `offer_for_bid` refuses while another
+          buyer's offer is still reserved against it (D-049);
+        * act on an offer that is only in the mempool. A block is what makes
+          an offer a fact, and the few minutes cost nothing: the payment
+          rides in the swap, not in the offer.
+
+        Off by a switch on the Overview, like automatic updates, because
+        somebody may want to look at every sale first -- but on by default,
+        since a price said in public that the seller then ignores is worse
+        than no price at all.
+        """
+        state = self.state
+        chain = state.messaging
+        if chain.network == "main" or chain.params.swaps_from is None:
+            return 0
+        if chain.params.asks_from is None:
+            return 0
+        if state.setting("auto_sell", True) is False:
+            return 0
+        sold = 0
+        try:
+            identity = state.ensure_identity()
+            index = state.token_index(chain)
+            with chain.rpc() as rpc:
+                own = _own_addresses(rpc)
+                mine = {ask["inscription"]: ask for ask in index.asks(limit=200)
+                        if ask["seller"] in set(own)}
+                if not mine:
+                    return 0
+                best: dict[str, dict] = {}
+                for offer in index.offers_on(sorted(own)):
+                    ask = mine.get(offer["inscription"])
+                    if ask is None or not _meets_the_ask(ask, offer):
+                        continue
+                    # The best price wins, and at the same price the one that
+                    # was made first: the same rule the token book follows,
+                    # and the one anybody queueing behind somebody expects
+                    # (D-083).
+                    standing = best.get(offer["inscription"])
+                    if standing is None or _better_offer(offer, standing):
+                        best[offer["inscription"]] = offer
+                for inscription, offer in best.items():
+                    if self._accept(rpc, index, chain, identity, offer):
+                        sold += 1
+        except Exception:
+            log.debug("selling at the asking price failed", exc_info=True)
+        return sold
+
+    def _accept(self, rpc: Any, index: Any, chain: Any, identity: Any,
+                offer: dict) -> bool:
+        """Answer one offer with this wallet's half of the swap."""
+        state = self.state
+        try:
+            with state.store() as store:
+                key = store.key_for(offer["buyer"])
+            if key is None:
+                # Nobody to answer. Their offer stands and a person can still
+                # accept it by hand once they publish a key (D-042).
+                return False
+            peer = bytes(key["pubkey"])
+            bid = {"inscription": offer["inscription"],
+                   "take": _take_of(offer, index),
+                   "buyer": offer["buyer"], "peer_pubkey": peer.hex()}
+            half = swaplib.offer_for_bid(rpc, index, state.offers, chain.network,
+                                         bid, own=_own_addresses(rpc))
+            self._reply(rpc, chain, identity, peer,
+                        {"swap": "bid", "swapv": swaplib.PROTOCOL,
+                         "id": offer["txid"], "ok": True, "offer": half})
+        except (swaplib.SwapError, SendError, apilib.ApiMessageError, ValueError) as exc:
+            log.debug("could not sell %s at its asking price: %s",
+                      offer.get("inscription"), exc)
+            return False
+        log.info("offered inscription %s at its asking price to %s",
+                 offer.get("number"), offer.get("buyer"))
+        # Not written down as a sale here: nothing has been sold yet. This is
+        # the seller's half going out; the swap happens when the buyer signs
+        # theirs and it comes back to be countersigned, and THAT is what goes
+        # in the approvals book (D-029).
+        state.bump_generation()
+        return True
+
     # --- answering ---------------------------------------------------------
 
     def _answer(self, rpc: Any, index: Any, offers: Any, chain: Any, row: Any,
@@ -395,6 +496,40 @@ def _bid_from_chain(rpc: Any, index: Any, txid: str) -> dict | None:
     return {"id": txid, "direction": "out", "status": "open",
             "inscription": found["inscription"], "owner": found["owner"],
             "buyer": found["buyer"], "take": take, "peer_pubkey": ""}
+
+
+def _take_of(offer: dict, index: Any) -> dict:
+    """An offer's price, in the shape a swap leg is written in."""
+    from . import inscriptions as I
+
+    leg = I.Leg(int(offer["take_kind"]),
+                property_id=int(offer["take_property"] or 0),
+                amount=int(offer["take_amount"] or 0))
+    return swaplib.leg_json(leg, index)
+
+
+def _meets_the_ask(ask: dict, offer: dict) -> bool:
+    """Whether an offer is worth at least what was asked for the piece.
+
+    Same currency or nothing: coins are not a bid for a token price, and one
+    token is not another. Within a currency it is a number, and more than
+    the asking price is still a yes -- refusing it would be refusing money
+    for the piece at a price already agreed to in public.
+    """
+    if int(ask["take_kind"]) != int(offer["take_kind"]):
+        return False
+    if int(ask["take_property"] or 0) != int(offer["take_property"] or 0):
+        return False
+    return int(offer["take_amount"] or 0) >= int(ask["take_amount"] or 0)
+
+
+def _better_offer(offer: dict, standing: dict) -> bool:
+    """More money wins; at the same money, whoever asked first."""
+    mine, theirs = int(offer["take_amount"] or 0), int(standing["take_amount"] or 0)
+    if mine != theirs:
+        return mine > theirs
+    return ((int(offer["block_height"] or 0), int(offer["position"] or 0))
+            < (int(standing["block_height"] or 0), int(standing["position"] or 0)))
 
 
 def _own_addresses(rpc: Any) -> list[str]:

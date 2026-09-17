@@ -180,6 +180,10 @@ class BlockWatcher:
             self._shopkeeper = Shopkeeper(self.state)
         if self._shopkeeper.tick():
             self.state.bump_generation()
+        # And what this wallet has already promised in public: an offer that
+        # meets a standing ask is a sale the owner agreed to when they said
+        # the price (D-101).
+        self._shopkeeper.sell_at_asking_price()
 
     def _sync_ledgers(self) -> None:
         """Keep the token indexes in step with their chains.

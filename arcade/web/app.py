@@ -448,6 +448,7 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "overview.html", contact_code=code, announced=announced,
                       my_address=state.derived_address,
                       auto_update=bool(state.setting("auto_update", True)),
+                      auto_sell=bool(state.setting("auto_sell", True)),
                       update_status=state.update_status, when=_when,
                       update_every=watcherlib.BlockWatcher.UPDATE_EVERY,
                       release_key=releaselib.PUBLIC_KEY,
@@ -469,6 +470,26 @@ def create_app(state: AppState) -> FastAPI:
         state.flash("Updates will install themselves." if auto == "on" else
                     "Automatic updates are off. Run dogecoinarcade-update yourself.",
                     "ok")
+        return RedirectResponse("/", status_code=303)
+
+    @app.post("/settings/selling")
+    def set_auto_sell(request: Request, csrf_token: str = Form(""),
+                      auto: str = Form("")):
+        """Stop this wallet accepting offers that meet its own asking price.
+
+        On by default, because an ask is a price said in public and a seller
+        who then ignores a buyer meeting it is worse than a seller with no
+        price. Off is a real choice: somebody may want to look at every sale
+        first, and turning it off leaves the asks standing and the offers
+        waiting for a person (D-101).
+        """
+        check_csrf(csrf_token)
+        state.set_setting("auto_sell", auto == "on")
+        state.flash(
+            "Offers that meet your asking price are accepted for you."
+            if auto == "on" else
+            "Offers will wait for you, even when they meet your asking price.",
+            "ok")
         return RedirectResponse("/", status_code=303)
 
     # --- identity -------------------------------------------------------------

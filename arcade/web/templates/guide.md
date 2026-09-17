@@ -363,16 +363,39 @@ for, and coins and tokens on one axis is adding pounds to metres. Drawn as
 SVG in the page: no charting library is fetched from anywhere, and the
 page's CSP would stop it if it tried.
 
-**Putting one up for sale.** *List for sale* — on any NFT of yours, from
-**Wallet → NFTs**, from its card in a collection, or from the piece's own
-page — asks a price and inscribes a **listing**: a small page whose JSON
-names a shop giving that one piece for that price. It is priced before it is
-paid for, like every other thing here that spends, and it is written from the
-address that holds the piece, because a shop's seller is the shop
-inscription's own owner and every buyer's node checks that that address still
-holds what it sells. From the block it lands in, anybody's node can read the
-price — a listing is public the way the piece is, not a note this wallet
-keeps. Selling it, or sending it away, ends the listing with nobody to tell.
+**Putting a price on one.** *Sell it* — on any NFT of yours, from
+**Wallet → NFTs**, from its tile in a collection, or from the piece's own
+page — asks a price and broadcasts an **ask**: one OP_RETURN saying "this
+piece, for this much". It is the other half of an offer, and the two are
+symmetrical: an offer is a buyer's word about somebody else's piece, an ask
+is the holder's about their own, and both are said on the chain rather than
+kept anywhere, so every node has the same book and a seller's wallet can be
+switched off without withdrawing the price.
+
+* **It costs a flat fee and locks nothing.** Nothing on this chain can hold
+  an inscription back from its owner, and an ask does not pretend to — the
+  same reason a bid holds no coins.
+* **Only the holder can price a piece**, and the newest ask for a piece is
+  the one that counts, so re-pricing is just another ask.
+* **A piece that moves takes its price with it.** An ask is live only while
+  the address that made it still holds what it names, so selling or sending a
+  piece withdraws its price with no transaction at all. *Take the price off*
+  withdraws one deliberately.
+* **Buying is offering exactly what was asked**, in one press: the offer
+  reaches the holder's wallet, and the swap moves the piece and the payment
+  together or not at all.
+* **An offer that meets the price is accepted for you.** A price said in
+  public is a promise to sell at it, so the seller's node answers a matching
+  offer — same currency, at least the amount — without asking again, exactly
+  as it answers an order at a shop. It never sells for less, never sells a
+  piece whose price has been taken off or that has moved, and never sells the
+  same piece twice; a better offer wins, and at the same price the earliest
+  one. Only offers in a block are acted on. The switch is on the Overview,
+  under **Selling**; turned off, offers wait for you.
+
+Asks are read from a height, like everything else that makes valid what used
+to be invalid; before it, an ask made on that chain would be read by nobody,
+and the page says so before the fee.
 
 **An offer is made with what you have.** The form lists the tokens this
 wallet holds with their balances, and the coin balance beside the coins
