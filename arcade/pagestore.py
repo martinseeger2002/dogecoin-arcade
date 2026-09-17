@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from .db import add_missing_columns
 from pathlib import Path
 
 #: A key is a name, not a document.
@@ -65,6 +66,7 @@ class PageStore:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(SCHEMA)
+        add_missing_columns(conn, SCHEMA)
         return conn
 
     def items(self, inscription: str) -> dict[str, str]:

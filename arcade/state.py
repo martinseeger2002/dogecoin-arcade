@@ -27,7 +27,8 @@ from .config import (
     RESERVED_PROPERTY_IDS,
     Params,
 )
-from .db import Database, StateDB, register_journalled_table
+from .db import (Database, StateDB, add_missing_columns,
+                 register_journalled_table)
 from .tx import ArcadeTransaction, EncodingClass
 
 # Omni's MAX_INT_8_BYTES -- amounts are signed 64-bit on the wire despite being
@@ -206,13 +207,22 @@ CREATE INDEX IF NOT EXISTS book_order_pair_idx
 -- Not the same thing as the transaction list: a page asking for provenance
 -- wants who held it and when, not which transactions carried the bytes.
 CREATE TABLE IF NOT EXISTS inscription_move (
-    txid          TEXT    PRIMARY KEY,
+    -- Keyed on the pair, not the transaction. One swap can hand over TWO
+    -- pieces -- a Goofball for a Goofball is the trade this was built to
+    -- make possible -- and `_move_leg` is then called twice for one txid.
+    -- Keyed on txid alone the second insert collided, and it raised
+    -- StateError rather than InvalidTransaction, so it threw out of the
+    -- handler instead of marking the transaction invalid: one such swap on
+    -- the chain would have stopped indexing at that height on every node
+    -- that met it (D-080).
+    txid          TEXT    NOT NULL,
     inscription   TEXT    NOT NULL,
     from_address  TEXT    NOT NULL,
     to_address    TEXT    NOT NULL,
     block_height  INTEGER NOT NULL,
     position      INTEGER NOT NULL,
-    how           TEXT    NOT NULL DEFAULT 'transfer'   -- or 'swap'
+    how           TEXT    NOT NULL DEFAULT 'transfer',  -- or 'swap'
+    PRIMARY KEY (txid, inscription)
 );
 CREATE INDEX IF NOT EXISTS inscription_move_item
     ON inscription_move(inscription, block_height, position);
@@ -240,6 +250,7 @@ CREATE INDEX IF NOT EXISTS balance_property_idx ON balance(property_id);
 def install_schema(db: Database) -> None:
     """Create the protocol tables and register them for journalling."""
     db.conn.executescript(SCHEMA)
+    add_missing_columns(db.conn, SCHEMA)
     register_journalled_table("property", ("property_id",))
     register_journalled_table("balance", ("address", "property_id"))
     register_journalled_table("activation", ("feature_id",))
@@ -247,12 +258,29 @@ def install_schema(db: Database) -> None:
     register_journalled_table("tag", ("tag",))
     register_journalled_table("inscription", ("txid",))
     register_journalled_table("nft_offer", ("txid",))
-    register_journalled_table("inscription_move", ("txid",))
+    register_journalled_table("inscription_move", ("txid", "inscription"))
     register_journalled_table("book_order", ("txid",))
     register_journalled_table("inscription_chunk",
                               ("sender", "inscription_id", "countdown"))
     register_journalled_table("collection_item", ("txid",))
+    _rekey_moves(db)
     _file_collections(db)
+
+
+def _rekey_moves(db: Database) -> None:
+    """Replace an inscription_move keyed on txid alone.
+
+    Shipped that way and it cannot record a swap of two pieces. Dropped
+    rather than migrated because every row is derived from transactions this
+    node has already read: the backfill rebuilds the lot, and a rebuild from
+    the source beats a rewrite of a table that was wrong (D-080).
+    """
+    row = db.conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='inscription_move'"
+    ).fetchone()
+    if row and "PRIMARY KEY (txid, inscription)" not in (row["sql"] or ""):
+        db.conn.execute("DROP TABLE inscription_move")
+        db.conn.executescript(SCHEMA)
 
 
 def _file_collections(db: Database) -> None:

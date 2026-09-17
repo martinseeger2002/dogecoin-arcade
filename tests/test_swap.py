@@ -758,3 +758,44 @@ def _refusal(call) -> str:
     except S.SwapError as exc:
         return str(exc)
     raise AssertionError("that should have been refused")
+
+
+def test_a_column_added_later_reaches_a_database_that_already_exists(tmp_path):
+    """CREATE TABLE IF NOT EXISTS does nothing to a table it finds.
+
+    `order` was added to the schema and reached new installations only. On
+    every wallet that had ever made an offer the column was missing, and the
+    insert that names it did not fail loudly: SQLite reads a double-quoted
+    name with no matching column as a STRING LITERAL, so four live rows came
+    back with the word "order" in them and nothing complained. The first fill
+    on such a wallet would have been refused (D-081).
+    """
+    import sqlite3
+
+    path = tmp_path / "swaps.sqlite"
+    # A store as it was before the column existed.
+    old = sqlite3.connect(path)
+    old.executescript(
+        "CREATE TABLE offer (id TEXT PRIMARY KEY, network TEXT NOT NULL, "
+        "shop TEXT NOT NULL, listing INTEGER NOT NULL, seller TEXT NOT NULL, "
+        "buyer TEXT NOT NULL, buyer_pubkey TEXT NOT NULL DEFAULT '', "
+        "give TEXT NOT NULL, take TEXT NOT NULL, outpoint_txid TEXT NOT NULL, "
+        "outpoint_vout INTEGER NOT NULL, outpoint_value INTEGER NOT NULL, "
+        "created REAL NOT NULL, expires REAL NOT NULL, "
+        "status TEXT NOT NULL DEFAULT 'open', txid TEXT NOT NULL DEFAULT '', "
+        "error TEXT NOT NULL DEFAULT '');")
+    old.commit()
+    old.close()
+
+    offers = S.Offers(path)
+    columns = {row[1] for row in sqlite3.connect(path).execute("PRAGMA table_info(offer)")}
+    assert "order" in columns, "an existing database has to get the column too"
+
+    # And it round-trips, which is the thing the missing column broke.
+    offers.add({"id": "abc", "network": "test", "shop": "", "order": "f" * 64,
+                "listing": -1, "seller": "nSeller", "buyer": "nBuyer",
+                "buyer_pubkey": "", "give": {"kind": "coins", "amount": "1", "sats": 1},
+                "take": {"kind": "coins", "amount": "2", "sats": 2},
+                "outpoint": {"txid": "a" * 64, "vout": 0, "value": 10},
+                "created": 1.0, "expires": 2.0})
+    assert offers.get("abc")["order"] == "f" * 64

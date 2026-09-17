@@ -57,6 +57,7 @@ from . import tokens as tokenlib
 from . import wallet as walletlib
 from .ledger import COIN, parse_amount as parse_token_amount
 from .txbuild import build_raw_tx, p2pkh_script
+from .db import add_missing_columns
 
 #: What a request may be for. A swap is the buyer's half of an exchange with
 #: a shop (arcade/swap.py): approving signs it and hands it to the shop's
@@ -134,6 +135,7 @@ class Requests:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._open() as conn:
             conn.executescript(SCHEMA)
+            add_missing_columns(conn, SCHEMA)
             have = {r["name"] for r in conn.execute("PRAGMA table_info(request)")}
             for name, spec in LATER_COLUMNS:
                 if name not in have:

@@ -109,6 +109,56 @@ class StateError(Exception):
     """A misuse of the state layer, such as mutating outside a block context."""
 
 
+def add_missing_columns(conn, schema_sql: str) -> list[str]:
+    """Bring an existing database up to the columns its schema declares.
+
+    `CREATE TABLE IF NOT EXISTS` does nothing to a table it finds, so a column
+    added to a schema reaches new installations and silently misses every
+    existing one. That bug cannot be seen from a test suite: tests build their
+    database from nothing every time, so the newest install is the one that
+    works and the oldest is the one that breaks (D-081).
+
+    It cost a live trade tonight -- `offer` gained an `order` column, both
+    machines had been running since before it, and the maker's node answered
+    "table offer has no column named order" after the taker had already paid a
+    message fee to ask. A sweep then found the mintpad's three columns missing
+    from `job` in the same way, on a wallet that had made collections before
+    they existed.
+
+    So it is done by reading the schema rather than by remembering: every
+    declared column that a present table lacks is added with its own
+    declaration. Columns carrying PRIMARY KEY, UNIQUE or REFERENCES are
+    skipped -- SQLite cannot ALTER those in, and a table that needs one needs
+    rebuilding rather than patching. Returns what it added, for the log.
+    """
+    import re
+
+    added = []
+    have_tables = {row[0] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    for block in re.finditer(r"CREATE TABLE IF NOT EXISTS (\w+)\s*\((.*?)\n\);",
+                             schema_sql, re.S):
+        table, body = block.group(1), block.group(2)
+        if table not in have_tables:
+            continue                      # CREATE made it in full; nothing to do
+        present = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for line in body.splitlines():
+            line = line.strip().rstrip(",").strip()
+            if not line or line.startswith("--"):
+                continue
+            upper = line.upper()
+            if upper.startswith(("PRIMARY KEY", "UNIQUE", "FOREIGN KEY", "CHECK")):
+                continue
+            name = line.split()[0].strip('"')
+            if name in present:
+                continue
+            declaration = line[len(line.split()[0]):].strip()
+            if any(word in upper for word in ("PRIMARY KEY", "UNIQUE", "REFERENCES")):
+                continue                  # not addable; a rebuild, not a patch
+            conn.execute(f'ALTER TABLE {table} ADD COLUMN "{name}" {declaration}')
+            added.append(f"{table}.{name}")
+    return added
+
 class Database:
     """Owns the SQLite connection and schema."""
 

@@ -49,6 +49,7 @@ from typing import Any, Callable
 from . import inscribe as inscribelib
 from . import inscriptions as I
 from . import mintpad as mintpadlib
+from .db import add_missing_columns
 
 log = logging.getLogger("arcade.collections")
 
@@ -276,6 +277,7 @@ class Jobs:
         self.path = Path(path)
         with self._open() as conn:
             conn.executescript(SCHEMA)
+            add_missing_columns(conn, SCHEMA)
 
     def _open(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, isolation_level=None, timeout=30)

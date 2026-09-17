@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from ..db import add_missing_columns
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -280,6 +281,7 @@ class MessageStore:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.executescript(SCHEMA)
+        add_missing_columns(self.conn, SCHEMA)
         self._migrate()
         if self.get_meta("schema_version") is None:
             self.set_meta("schema_version", str(SCHEMA_VERSION))

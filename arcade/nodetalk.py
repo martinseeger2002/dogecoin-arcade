@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .messaging import api as apilib
+from .db import add_missing_columns
 
 #: How many messages one page may send in an hour. A page talking to a shop
 #: sends a handful; one sending thirty a minute is not talking, it is
@@ -93,6 +94,7 @@ class Talk:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._open() as conn:
             conn.executescript(SCHEMA)
+            add_missing_columns(conn, SCHEMA)
 
     @contextmanager
     def _open(self) -> Iterator[sqlite3.Connection]:

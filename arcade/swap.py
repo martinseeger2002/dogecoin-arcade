@@ -78,6 +78,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
+from .db import add_missing_columns
 from . import inscriptions as I
 from . import payload as P
 from .encoding import decode_class_c, encode_class_c
@@ -414,6 +415,7 @@ class Offers:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._open() as conn:
             conn.executescript(SCHEMA)
+            add_missing_columns(conn, SCHEMA)
 
     @contextmanager
     def _open(self) -> Iterator[sqlite3.Connection]:
