@@ -2668,3 +2668,66 @@ def test_the_tag_card_says_what_letting_go_of_a_tag_costs(client):
     assert "next person to claim it" in card
     assert "will not hear that you did" in card, "the part that costs money"
     assert "stores the address a tag named, not the name" in card
+
+
+def test_a_contact_follows_the_tag_its_address_holds(client, monkeypatch):
+    """The book stores the address; the @tag beside it is read from the chain
+    on every render. So somebody who claims a new tag appears under it in
+    everyone's address book, without anything in the book changing and without
+    what they get paid changing either."""
+    page, state = client
+    with state.store() as store:
+        store.save_contact(pubkey=b"\x31" * 32, name="Chief",
+                           testnet_address="nChiefTestAddress", mainnet_address="")
+
+    tags = {"nChiefTestAddress": "bigchiefenergy"}
+
+    class Index:
+        def tags_for(self, addresses):
+            return {a: tags[a] for a in addresses if a in tags}
+
+        def tags(self, limit=200):
+            return []
+
+        def tag_of(self, address):
+            return tags.get(address)
+
+        def address_of(self, wanted):
+            return None
+
+    monkeypatch.setattr(type(state), "token_index", lambda self, chain: Index())
+    assert "@bigchiefenergy" in page.get("/contacts").text
+
+    # They claim a different one. Nothing in the book changed; the page follows.
+    tags["nChiefTestAddress"] = "chief2"
+    body = page.get("/contacts").text
+    assert "@chief2" in body and "@bigchiefenergy" not in body
+
+    # And if they let go of it entirely, the card shows the address alone
+    # rather than a name the chain no longer agrees with.
+    tags.clear()
+    assert "@chief2" not in page.get("/contacts").text
+
+
+def test_a_contact_saved_by_mainnet_address_is_named_too(client, monkeypatch):
+    """It looked up the testnet address only, so half the book went nameless."""
+    page, state = client
+    with state.store() as store:
+        store.save_contact(pubkey=b"\x32" * 32, name="Payee",
+                           testnet_address="", mainnet_address="nPayeeMainAddress")
+
+    class Index:
+        def tags_for(self, addresses):
+            return {"nPayeeMainAddress": "payee"} if "nPayeeMainAddress" in addresses else {}
+
+        def tags(self, limit=200):
+            return []
+
+        def tag_of(self, address):
+            return None
+
+        def address_of(self, wanted):
+            return None
+
+    monkeypatch.setattr(type(state), "token_index", lambda self, chain: Index())
+    assert "@payee" in page.get("/contacts").text

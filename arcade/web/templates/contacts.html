@@ -226,8 +226,10 @@
   <div class="card{{ ' editing' if editing and editing['id'] == p['id'] }}">
     <div class="row" style="align-items:baseline">
       <h3 class="row-title">{{ p['name'] or "Unnamed" }}</h3>
-      {% set handle = tags.get(p['testnet_address']) if tags else None %}
-      {% if handle %}<span class="muted mono" style="font-size:.84rem">@{{ handle }}</span>{% endif %}
+      {% set handle = (tags.get(p['testnet_address']) or tags.get(p['mainnet_address']))
+                      if tags else None %}
+      {% if handle %}<span class="muted mono" style="font-size:.84rem"
+        title="Read from the chain just now, not saved here — if they claim a new tag, this follows it">@{{ handle }}</span>{% endif %}
       {% if p['hex'] %}<span class="pill ok" title="You can message this contact">messaging</span>{% endif %}
     </div>
 
@@ -260,6 +262,10 @@
   <p>The address book is empty.</p>
   <p class="muted">Add the people you message or pay, so you are choosing a name
      rather than checking a string of characters each time.</p>
+  <p class="muted" style="font-size:.86rem">Their @tag is read from the chain
+     each time this page is drawn, so somebody who claims a new one appears
+     under it here without telling you. The address is what is saved, and the
+     address is what you pay.</p>
 </div>
 {% endif %}
 

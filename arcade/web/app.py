@@ -1112,7 +1112,14 @@ def create_app(state: AppState) -> FastAPI:
                         "name": row["name"] or "",
                     })
         addresses = [k["address"] for k in published]
-        addresses += [row["testnet_address"] for row in people]
+        # Both addresses of every contact. A tag is looked up fresh on every
+        # render rather than stored beside the name, which is what makes an
+        # address book follow its people: publish a new tag and everyone who
+        # saved you sees it the next time they look, without being told and
+        # without anything in their book changing. What is stored is the
+        # address, so what they PAY is unaffected either way (D-072).
+        for row in people:
+            addresses += [row["testnet_address"], row["mainnet_address"]]
         found = _tags_for(addresses)
         for entry in published:
             # A tag the chain agrees with, or nothing. An announcement that
@@ -3362,9 +3369,13 @@ def create_app(state: AppState) -> FastAPI:
         A page that was told "sent" needs to know when sent became final:
         a shop hands over the hat at one confirmation, or six, and that is
         its call to make. The wallet's own transactions answer through
-        gettransaction; anything else through getrawtransaction, which on a
-        node without -txindex knows only what is in its mempool. None when
-        the node cannot be asked or has never heard of it.
+        gettransaction; anything else through getrawtransaction, which the
+        installer's own configuration answers fully -- it writes `txindex=1`
+        on both chains. On a node somebody else set up without it, that call
+        sees only the mempool and this wallet's own transactions, so anything
+        relying on the weaker behaviour is relying on a configuration we do
+        not write. None when the node cannot be asked or has never heard of
+        it.
         """
         from ..rpc import RpcError
         try:

@@ -436,6 +436,106 @@ class LedgerIndex:
                 return move
         return None
 
+    def backfill_moves(self) -> int:
+        """Rebuild an inscription's history from transactions already indexed.
+
+        Every transfer and every swap is on the chain as its own message, and
+        this node has already read and judged each one -- `arcade_tx` keeps
+        the payload, the sender, the reference and the height of all of them,
+        valid or not. So the history that was never written down can be
+        replayed from what is here, with no rescan of blocks and no trust in
+        anything new.
+
+        Ownership is tracked as the replay goes: a piece starts with its
+        creator, and each accepted move hands it on. That is what makes a
+        transfer's `from` recoverable at all -- the row records who the
+        reference was, never who the owner had been.
+
+        A swap needs one thing `arcade_tx` does not keep: the buyer, which is
+        the first input that is not the seller's. The node has `txindex=1`
+        (the installer writes it), so that is a lookup rather than a rescan.
+
+        Runs once, when the table is empty. Returns how many rows it wrote.
+        """
+        from . import inscriptions as I
+        from . import payload as P
+
+        with self.open() as db:
+            if db.conn.execute("SELECT 1 FROM inscription_move LIMIT 1").fetchone():
+                return 0
+            rows = [dict(r) for r in db.conn.execute(
+                "SELECT txid, sender, reference, block_height, position, payload_hex "
+                "FROM arcade_tx WHERE valid=1 AND message_type=200 "
+                "ORDER BY block_height, position")]
+            owner = {r["txid"]: r["creator"] for r in db.conn.execute(
+                "SELECT txid, creator FROM inscription")}
+
+        written = []
+        for row in rows:
+            try:
+                data = getattr(P.decode(bytes.fromhex(row["payload_hex"])), "data", None)
+                if not data or not I.is_inscription(data):
+                    continue
+                parsed = I.parse(data)
+            except Exception:
+                continue
+            if isinstance(parsed, I.Transfer):
+                item = parsed.txid.hex()
+                if item not in owner or not row["reference"]:
+                    continue
+                written.append((row["txid"], item, owner[item], row["reference"],
+                                row["block_height"], row["position"], "transfer"))
+                owner[item] = row["reference"]
+            elif isinstance(parsed, I.Swap):
+                for leg, giver_is_sender in ((parsed.give, True), (parsed.take, False)):
+                    if leg.kind != I.LEG_INSCRIPTION:
+                        continue
+                    item = leg.txid.hex()
+                    if item not in owner:
+                        continue
+                    try:
+                        other = self._buyer_of(row["txid"], row["sender"])
+                    except Exception:
+                        # No node, or a transaction it cannot serve. The rest
+                        # of the history is still worth having, and a gap is
+                        # visible as a missing row rather than a wrong one.
+                        other = None
+                    if other is None:
+                        continue
+                    giver = row["sender"] if giver_is_sender else other
+                    taker = other if giver_is_sender else row["sender"]
+                    written.append((row["txid"], item, giver, taker,
+                                    row["block_height"], row["position"], "swap"))
+                    owner[item] = taker
+        if not written:
+            return 0
+        with self.open() as db:
+            db.conn.executemany(
+                "INSERT OR IGNORE INTO inscription_move(txid, inscription, "
+                "from_address, to_address, block_height, position, how) "
+                "VALUES(?,?,?,?,?,?,?)", written)
+            db.conn.commit()
+        log.info("rebuilt %d inscription moves from indexed transactions", len(written))
+        return len(written)
+
+    def _buyer_of(self, txid: str, seller: str) -> str | None:
+        """The first input of a swap that is not the seller's.
+
+        One connection for the whole lookup, because a PrevOutCache holds the
+        client it was built with and a cache whose node has been closed under
+        it is a cache that raises on its first miss.
+        """
+        from .indexer import PrevOutCache
+
+        with self._rpc() as rpc:
+            cache = PrevOutCache(rpc, self.params)
+            tx = rpc.call("getrawtransaction", txid, True)
+            for vin in tx.get("vin", []):
+                prev = cache.lookup(vin["txid"], int(vin["vout"]))
+                if prev.address and prev.address != seller:
+                    return prev.address
+        return None
+
     def inscription_content(self, key: str | int) -> tuple[str, bytes] | None:
         """(content type, bytes) if this node kept them, else None.
 

@@ -100,6 +100,7 @@ class BlockWatcher:
         self._check(self.state.ledger, public_only=True)
         self._sync_ledgers()
         self._check_pending_offers()
+        self._backfill_history_once()
         self._check_release_notices()
         self._announce_release()
         self._auto_update()
@@ -342,6 +343,29 @@ class BlockWatcher:
                         (result.stderr or result.stdout).strip()[-600:])
         else:
             log.info("automatic update installed %s", published)
+
+    _backfilled = False
+
+    def _backfill_history_once(self) -> None:
+        """Rebuild inscription history from transactions already indexed.
+
+        Kept out of the schema install because a swap's buyer needs the node,
+        and a node that is not up yet must not delay the interface -- the next
+        tick tries again. Costs one pass over a few hundred stored rows, and
+        only when the table is empty (D-071).
+        """
+        if self._backfilled:
+            return
+        for chain in self.state.token_chains:
+            index = self.state.token_index(chain)
+            if not index.enabled:
+                continue
+            try:
+                index.backfill_moves()
+            except Exception:
+                log.debug("history backfill failed on %s", chain.network, exc_info=True)
+                return                  # try again next tick
+        self._backfilled = True
 
     _repaired = False
 

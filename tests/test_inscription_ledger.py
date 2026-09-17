@@ -267,3 +267,36 @@ def test_a_piece_that_comes_back_still_remembers_going(engine):
                          reference="nCreator")])
     assert db.conn.execute("SELECT owner FROM inscription").fetchone()[0] == "nCreator"
     assert db.conn.execute("SELECT COUNT(*) FROM inscription_move").fetchone()[0] == 2
+
+
+def test_history_is_rebuilt_from_what_is_already_indexed(engine, tmp_path):
+    """Nothing is lost when a table arrives late: every transfer is on the
+    chain as its own message and this node has already read and judged each
+    one. So the history that was never written down is replayed from
+    `arcade_tx`, with no rescan of blocks and nothing new to trust (D-071)."""
+    from arcade.ledger import LedgerIndex
+    from arcade.config import NETWORKS
+
+    eng, state, db = engine
+    feed(eng, state, [tx(0, I.plan(b"a picture", "image/png")[0])])
+    item = hexid(0)
+    txid = bytes.fromhex(item)
+    feed(eng, state, [tx(1, I.Transfer(txid=txid).encode(), reference="nSecond")])
+    feed(eng, state, [tx(2, I.Transfer(txid=txid).encode(), sender="nSecond",
+                         reference="nThird")])
+
+    # Lose the history, keep the chain: exactly the state an installation is
+    # in the moment the table is added.
+    db.conn.execute("DELETE FROM inscription_move")
+    db.conn.commit()
+
+    index = LedgerIndex(db.path, NETWORKS["regtest"], lambda: None)
+    assert index.backfill_moves() == 2
+    where = index.moves(item)
+    assert [(m["from_address"], m["to_address"]) for m in where] == [
+        ("nCreator", "nSecond"), ("nSecond", "nThird")], \
+        "the owner at each step, which no single row records"
+    assert index.left_the_creator(item)["to_address"] == "nSecond"
+
+    # Once, not every pass.
+    assert index.backfill_moves() == 0
