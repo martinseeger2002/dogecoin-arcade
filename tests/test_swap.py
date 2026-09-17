@@ -799,3 +799,28 @@ def test_a_column_added_later_reaches_a_database_that_already_exists(tmp_path):
                 "outpoint": {"txid": "a" * 64, "vout": 0, "value": 10},
                 "created": 1.0, "expires": 2.0})
     assert offers.get("abc")["order"] == "f" * 64
+
+
+def test_a_fill_nobody_answered_becomes_a_refusal(world, monkeypatch):
+    """An order rests on the book whether or not the node behind it is
+    running. A taker who asks a node that is down gets silence, and the note
+    sat at "waiting for their node" for ever while the book went on
+    advertising what could not be traded.
+
+    Silence is the one answer nobody can act on (D-094).
+    """
+    index, seller, _, offers = world
+    now = time.time()
+    offers.add_fill({"id": "f" * 64, "network": "test", "order": "o" * 64,
+                     "maker": SELLER, "buyer": BUYER, "tokens": 100, "coins": 8,
+                     "created": now - 10_000, "expires": now - 1})
+    offers.add_fill({"id": "e" * 64, "network": "test", "order": "o" * 64,
+                     "maker": SELLER, "buyer": BUYER, "tokens": 100, "coins": 8,
+                     "created": now, "expires": now + 10_000})
+
+    S.expire(seller, offers, "test")
+    assert offers.get_fill("f" * 64)["status"] == "unanswered"
+    assert "never answered" in offers.get_fill("f" * 64)["error"]
+    assert "still be on the book" in offers.get_fill("f" * 64)["error"], \
+        "say what to do about it"
+    assert offers.get_fill("e" * 64)["status"] == "asked", "one still in time"

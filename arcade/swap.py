@@ -856,12 +856,29 @@ def offer_for_bid(rpc: Any, index: Any, offers: Offers, network: str,
 
 
 def expire(rpc: Any, offers: Offers, network: str) -> int:
-    """Close offers past their time and unlock what they held."""
+    """Close offers past their time, and fills nobody ever answered.
+
+    An order rests on the book whether or not the node behind it can still
+    answer. A taker who asks a node that is down gets silence: the note sits
+    at "waiting for their node" for ever, and the book goes on advertising
+    what cannot be traded. Silence is the one answer a person cannot act on,
+    so it becomes a refusal with a reason after the offer's own lifetime
+    (D-094).
+    """
     closed = 0
     for offer in offers.open_offers(network):
         if offer["expires"] <= time.time():
             offers.close(offer["id"], "expired")
             _unlock(rpc, offer)
+            closed += 1
+    for fill in offers.fills(network, limit=50):
+        if fill["status"] == "asked" and fill["expires"] <= time.time():
+            offers.close_fill(
+                fill["id"], "unanswered",
+                error="their node never answered. The order may still be on "
+                      "the book -- an order stands whether or not the wallet "
+                      "behind it is running -- so try again, or take another "
+                      "at the same price")
             closed += 1
     return closed
 

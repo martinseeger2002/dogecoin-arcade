@@ -139,6 +139,7 @@
             <td style="font-size:.8rem">{{ f.tokens_shown or f.tokens }}</td>
             <td style="text-align:right">
               {%- if f.status == 'asked' %}<span class="pill warn">waiting for their node</span>
+              {%- elif f.status == 'unanswered' %}<span class="pill bad">no answer</span>
               {%- elif f.status == 'signed' %}<span class="pill ok">signed</span>
               {%- elif f.status == 'sent' %}<span class="pill ok">sent</span>
               {%- else %}<span class="pill bad">{{ f.status }}</span>{% endif %}
