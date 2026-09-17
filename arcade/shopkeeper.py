@@ -103,10 +103,19 @@ class Shopkeeper:
                             continue
                         try:
                             bid_id = answer.pop("bid", "")
+                            fill_id = answer.pop("fill", "")
                             self._reply(rpc, chain, identity, bytes(row["sender_pubkey"]),
                                         answer)
+                            # Marked once the half has actually gone, never
+                            # before: a record that says "signed" for a reply
+                            # that never went out is a lie about what this
+                            # wallet did.
                             if bid_id:
                                 offers.close_bid(bid_id, "signed")
+                                state.bump_generation()
+                            if fill_id:
+                                offers.close_fill(fill_id, "signed",
+                                                  offer_id=str(answer.get("offer") or ""))
                                 state.bump_generation()
                             answered += 1
                         except (SendError, apilib.ApiMessageError, ValueError) as exc:
@@ -134,6 +143,8 @@ class Shopkeeper:
             return reply
         if kind == "bid":
             return self._bid(rpc, index, offers, chain, row, question)
+        if kind == "fill" and "ok" in question:
+            return self._fill(rpc, index, offers, chain, row, question)
         try:
             if kind == "fill":
                 # Somebody taking a price off this wallet's book. What they
@@ -237,6 +248,62 @@ class Shopkeeper:
         reply.update(offer=offer["id"], hex=built.hex, bid=bid_id)
         return reply
 
+    def _fill(self, rpc: Any, index: Any, offers: Any, chain: Any, row: Any,
+              question: dict) -> dict | None:
+        """The answer to a fill this wallet asked for.
+
+        The person already said what they would take and at what price when
+        they pressed Take, so the wallet signs its half without asking again
+        -- and only if the answer is the one it asked for (D-038). Checked
+        against two things that cannot both be forged: the note this wallet
+        wrote before the question went out, and the order as this node's own
+        index reads it off the chain.
+        """
+        state = self.state
+        fill_id = str(question.get("re") or "")
+        mine = offers.get_fill(fill_id) if fill_id else None
+        if mine is None or mine["status"] != "asked":
+            return None                   # not ours, or already dealt with
+        if not question.get("ok"):
+            offers.close_fill(fill_id, "refused",
+                              error=str(question.get("error") or "refused"))
+            state.bump_generation()
+            return None
+
+        reply = {"swap": "sign", "swapv": swaplib.PROTOCOL}
+        try:
+            offer = swaplib.check_offer(
+                question.get("offer"), shop="", own=_own_addresses(rpc),
+                height=index.indexed_height(), params=chain.params)
+            order = index.order(mine["order"])
+            if order is None:
+                raise swaplib.SwapError("that order is no longer on this node's book")
+            if offer["seller"] != order["address"] or offer["seller"] != mine["maker"]:
+                raise swaplib.SwapError("that answer is not from the wallet whose "
+                                        "order this is")
+            if offer["give"].get("kind") != "token" \
+                    or int(offer["give"].get("propertyid") or 0) != order["sale_property"] \
+                    or int(offer["give"].get("units") or 0) != int(mine["tokens"]):
+                raise swaplib.SwapError("that is not the amount that was asked for")
+            if offer["take"].get("kind") != "coins":
+                raise swaplib.SwapError("an order is filled with coins")
+            asked = int(offer["take"].get("sats") or 0)
+            # Never more than this wallet worked out for itself from the order
+            # on the chain. The maker names the price in its answer; this is
+            # what stops the answer naming a different one.
+            if asked > int(mine["coins"]):
+                raise swaplib.SwapError(
+                    f"that answer asks {asked} satoshis for what this wallet "
+                    f"priced at {mine['coins']} from the order on the chain")
+            built = swaplib.build(rpc, index, offer, own=_own_addresses(rpc),
+                                  from_order=order)
+        except (swaplib.SwapError, ValueError) as exc:
+            offers.close_fill(fill_id, "failed", error=str(exc))
+            state.bump_generation()
+            return None
+        reply.update(offer=offer["id"], hex=built.hex, fill=fill_id)
+        return reply
+
     def _reply(self, rpc: Any, chain: Any, identity: Any, to: bytes, body: dict) -> str:
         payload = apilib.seal(identity, to, json.dumps(body, separators=(",", ":")).encode())
         sender = MessageSender(rpc, chain.params)
@@ -325,7 +392,7 @@ def _swap_message(row: Any) -> dict | None:
         return None
     if not isinstance(data, dict) or data.get("swap") not in ("offer", "sign", "bid", "fill"):
         return None
-    if data.get("swap") == "bid":
+    if data.get("swap") in ("bid", "fill"):
         # A bid and its answer are both questions to the wallet that gets
         # them: one asks a person, the other asks the wallet to sign what
         # that person already agreed to. Neither can be answered by an

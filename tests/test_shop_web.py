@@ -2,6 +2,7 @@
 to the shop's node -- and the owner's door, which sends without asking."""
 
 import json
+import time
 import pathlib
 import sys
 
@@ -525,3 +526,88 @@ def test_an_answer_is_checked_against_the_chain_when_the_note_is_missing(shop,
     _ask(state, seller_identity, {"swap": "bid", "swapv": S.PROTOCOL,
                                   "id": offer_txid, "ok": True, "offer": offer}, 2)
     assert keeper.tick() == 0, "not ours, not signed"
+
+
+# --- filling a standing order ------------------------------------------------
+
+def _book_order(index, txid="or" + "d" * 62, address=SELLER, tokens=1000 * 10 ** 8,
+                coins=8 * 10 ** 8):
+    index.orders = getattr(index, "orders", {})
+    index.orders[txid] = {"txid": txid, "block_height": 500, "position": 0,
+                          "address": address, "sale_property": 3,
+                          "sale_amount": tokens, "want_property": 0,
+                          "want_amount": coins, "reserved": tokens}
+    index.order = lambda key: index.orders.get(str(key))
+    return txid
+
+
+def test_the_shopkeeper_answers_a_fill_with_its_own_price(shop):
+    """Somebody taking a price off this wallet's book. What they cannot work
+    out alone is which output carries the swap; the price comes from the
+    order, never from the question (D-063)."""
+    state, index, node, buyer, answers, keeper = shop
+    keeper.tick()                  # the first pass only sets the cursor
+    order = _book_order(index)
+    _ask(state, buyer, {"swap": "fill", "swapv": S.PROTOCOL, "order": order,
+                        "tokens": 250 * 10 ** 8, "buyer": BUYER}, 20)
+    assert keeper.tick() == 1
+    _, body = _answers(answers, buyer)[-1]
+    assert body["ok"] is True
+    assert body["offer"]["seller"] == SELLER and body["offer"]["buyer"] == BUYER
+    assert body["offer"]["give"]["units"] == 250 * 10 ** 8
+    assert body["offer"]["take"]["sats"] == 2 * 10 ** 8, "a quarter of the order"
+    assert body["offer"]["outpoint"]["txid"], "and which output carries it"
+
+
+def test_a_fill_of_an_order_that_is_not_ours_is_refused(shop):
+    state, index, node, buyer, answers, keeper = shop
+    keeper.tick()                  # the first pass only sets the cursor
+    order = _book_order(index, address=OTHER)
+    _ask(state, buyer, {"swap": "fill", "swapv": S.PROTOCOL, "order": order,
+                        "tokens": 10 * 10 ** 8, "buyer": BUYER}, 21)
+    assert keeper.tick() == 1
+    _, body = _answers(answers, buyer)[-1]
+    assert body["ok"] is False and "not this wallet's to fill" in body["error"]
+
+
+def test_an_answer_nobody_asked_for_is_ignored(shop):
+    """The taker's side. An answer makes this wallet sign a transaction that
+    pays coins, so without a note of having asked, any node could send one."""
+    state, index, node, buyer, answers, keeper = shop
+    order = _book_order(index, address=OTHER)
+    offer = {"id": "deadbeef", "network": "regtest", "shop": "", "listing": -1,
+             "seller": OTHER, "buyer": SELLER,
+             "give": {"kind": "token", "propertyid": 3, "amount": "100",
+                      "units": 100 * 10 ** 8},
+             "take": {"kind": "coins", "amount": "1.00000000", "sats": 10 ** 8},
+             "outpoint": {"txid": "1" * 64, "vout": 0, "value": 10 ** 7},
+             "created": time.time(), "expires": time.time() + 600}
+    _ask(state, buyer, {"swap": "fill", "swapv": S.PROTOCOL, "re": "n" * 64,
+                        "ok": True, "offer": offer}, 22)
+    assert keeper.tick() == 0, "read, and dropped: nothing to answer"
+    assert _answers(answers, buyer) == [], "nothing signed, nothing sent"
+
+
+def test_an_answer_that_asks_for_more_than_the_book_says_is_refused(shop):
+    """The note says what this wallet worked out from the chain. An answer
+    that wants more than that is not the price that was taken."""
+    state, index, node, buyer, answers, keeper = shop
+    keeper.tick()                  # the first pass only sets the cursor
+    order = _book_order(index, address=OTHER)
+    now = time.time()
+    state.offers.add_fill({"id": "f" * 64, "network": "regtest", "order": order,
+                           "maker": OTHER, "buyer": SELLER, "tokens": 100 * 10 ** 8,
+                           "coins": 10 ** 8, "created": now, "expires": now + 600})
+    offer = {"id": "deadbeef", "network": "regtest", "shop": "", "listing": -1,
+             "seller": OTHER, "buyer": SELLER,
+             "give": {"kind": "token", "propertyid": 3, "amount": "100",
+                      "units": 100 * 10 ** 8},
+             "take": {"kind": "coins", "amount": "9.00000000", "sats": 9 * 10 ** 8},
+             "outpoint": {"txid": "1" * 64, "vout": 0, "value": 10 ** 7},
+             "created": now, "expires": now + 600}
+    _ask(state, buyer, {"swap": "fill", "swapv": S.PROTOCOL, "re": "f" * 64,
+                        "ok": True, "offer": offer}, 23)
+    assert keeper.tick() == 0, "a refusal to sign is not an answer"
+    assert _answers(answers, buyer) == [], "nothing signed"
+    assert state.offers.get_fill("f" * 64)["status"] == "failed"
+    assert "priced at" in state.offers.get_fill("f" * 64)["error"]

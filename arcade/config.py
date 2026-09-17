@@ -154,11 +154,16 @@ TESTNET = Params(
     # Set 2026-09-14 at tip 1,488,130 with both known nodes due to update
     # within the day. No swap is sent before it.
     swaps_from=1_488_450,
-    # Set 2026-09-16 at tip 1,492,341. Testnet blocks come about a dozen a
-    # minute at the moment, so this is hours rather than minutes ahead: both
-    # known nodes have to be running this before it, and a node that is not
-    # would read the same block differently. Nothing fills an order before it.
-    fills_from=1_496_000,
+    # Brought forward from 1,496,000 to test a fill between the two known
+    # nodes the same day. Blocks are 45s here, so this is about two hours
+    # from the tip it was set at (1,492,425).
+    #
+    # What makes moving it safe is not the margin but the traffic: the height
+    # only changes how a block reads if a fill transaction is IN one. Until
+    # somebody broadcasts a fill there is nothing for two nodes to disagree
+    # about, so the rule is to update both machines before the first fill,
+    # not before the height.
+    fills_from=1_492_600,
     # Set 2026-09-12 at tip 1,484,661. Everything before this is development
     # traffic from building and testing the application -- cross-machine sends,
     # chunked posts, deliberately interrupted sends -- and is not read.

@@ -360,6 +360,26 @@ CREATE INDEX IF NOT EXISTS offer_open ON offer(status, network);
 -- An offer somebody made on an NFT, in either direction. Not a listing: it
 -- is made on an inscription whatever its owner has or has not put up for
 -- sale, and it is the owner's to accept or refuse (D-038).
+-- A fill this wallet asked for: "take 300 off order 3f9a at its own price".
+-- Written down BEFORE the question goes out, because the answer to it makes
+-- this wallet sign a transaction that pays coins. Without a note of having
+-- asked, any node could send an unsolicited answer and be paid for it.
+CREATE TABLE IF NOT EXISTS fill (
+    id            TEXT PRIMARY KEY,      -- the txid of the question
+    network       TEXT NOT NULL,
+    "order"       TEXT NOT NULL,
+    maker         TEXT NOT NULL,
+    buyer         TEXT NOT NULL,
+    tokens        INTEGER NOT NULL,
+    coins         INTEGER NOT NULL,      -- the most this wallet will pay
+    status        TEXT NOT NULL DEFAULT 'asked',
+    offer_id      TEXT NOT NULL DEFAULT '',
+    txid          TEXT NOT NULL DEFAULT '',
+    error         TEXT NOT NULL DEFAULT '',
+    created       REAL NOT NULL,
+    expires       REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS bid (
     id            TEXT PRIMARY KEY,
     network       TEXT NOT NULL,
@@ -427,6 +447,35 @@ class Offers:
             return _offer_row(row) if row else None
 
     # --- offers made on an NFT, in either direction ------------------------
+
+    def add_fill(self, fill: dict) -> None:
+        with self._open() as conn:
+            conn.execute(
+                'INSERT INTO fill(id, network, "order", maker, buyer, tokens, coins, '
+                "created, expires) VALUES(?,?,?,?,?,?,?,?,?)",
+                (fill["id"], fill["network"], fill["order"], fill["maker"],
+                 fill["buyer"], int(fill["tokens"]), int(fill["coins"]),
+                 fill["created"], fill["expires"]))
+
+    def get_fill(self, fill_id: str) -> dict | None:
+        with self._open() as conn:
+            row = conn.execute("SELECT * FROM fill WHERE id=?",
+                               (str(fill_id),)).fetchone()
+            return dict(row) if row else None
+
+    def fills(self, network: str, limit: int = 50) -> list[dict]:
+        with self._open() as conn:
+            return [dict(r) for r in conn.execute(
+                "SELECT * FROM fill WHERE network=? ORDER BY created DESC LIMIT ?",
+                (network, int(limit)))]
+
+    def close_fill(self, fill_id: str, status: str, offer_id: str = "",
+                   txid: str = "", error: str = "") -> None:
+        with self._open() as conn:
+            conn.execute(
+                "UPDATE fill SET status=?, offer_id=COALESCE(NULLIF(?,''), offer_id), "
+                "txid=COALESCE(NULLIF(?,''), txid), error=? WHERE id=?",
+                (status, offer_id, txid, error, str(fill_id)))
 
     def add_bid(self, bid: dict) -> None:
         with self._open() as conn:
@@ -969,7 +1018,8 @@ def check_offer(offer: Any, *, shop: str, own: list[str], height: int | None,
     return out
 
 
-def build(rpc: Any, index: Any, offer: dict, own: list[str]) -> Built:
+def build(rpc: Any, index: Any, offer: dict, own: list[str],
+          from_order: dict | None = None) -> Built:
     """The buyer's transaction, signed by the buyer only.
 
     The seller's outpoint first, then the buyer's own outputs, from the one
@@ -981,6 +1031,17 @@ def build(rpc: Any, index: Any, offer: dict, own: list[str]) -> Built:
         raise SwapError(f"{buyer} is not this wallet's")
     give, take = leg_from_json(offer["give"]), leg_from_json(offer["take"])
     for who, leg, name in ((seller, give, "the shop"), (buyer, take, "this wallet")):
+        if who == seller and from_order is not None and leg.kind == I.LEG_TOKEN:
+            # Filling a standing order. The seller's tokens are in the reserve
+            # that order holds, not in its free balance -- `holds` reads the
+            # free balance and would refuse every fill ever made. What has to
+            # be true is that the order still holds them, which is what the
+            # engine will check for itself when the swap lands (D-062).
+            if leg.amount > int(from_order.get("reserved") or 0):
+                raise SwapError(
+                    f"that order holds {from_order.get('reserved')} of property "
+                    f"{leg.property_id}, not {leg.amount}")
+            continue
         problem = holds(index, rpc, who, leg)
         if problem:
             raise SwapError(f"{name} cannot give that: {problem}")

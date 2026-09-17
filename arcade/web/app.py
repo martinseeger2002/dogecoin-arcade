@@ -4498,6 +4498,12 @@ def create_app(state: AppState) -> FastAPI:
                       recent=sorted(points, key=lambda p: -p["when"])[:12],
                       held=format_amount(held, prop["divisible"]), held_units=held,
                       coins=coins, mine=index.orders_of(sorted(owned)),
+                      fills=state.offers.fills(chain.network, limit=8),
+                      fills_from=chain.params.fills_from,
+                      fills_ready=(chain.params.fills_from is not None
+                                   and (index.indexed_height() or 0)
+                                   >= chain.params.fills_from),
+                      height=index.indexed_height(),
                       tags=_tags_for([o["address"] for o in book["asks"] + book["bids"]]))
 
     @app.post("/exchange/order")
@@ -4738,6 +4744,69 @@ def create_app(state: AppState) -> FastAPI:
         except Exception as exc:
             state.flash(str(exc), "err")
         return RedirectResponse("/exchange?tab=offers", status_code=303)
+
+    @app.post("/exchange/fill")
+    def fill_order(request: Request, order: str = Form(""), amount: str = Form(""),
+                   property_id: str = Form(""), csrf_token: str = Form("")):
+        """Take part of a price off the book.
+
+        The taker asks the maker's node for the one thing it cannot work out
+        alone -- which of the maker's outputs will carry the swap -- and gets
+        back an offer at the maker's own price (D-063). The answer is checked
+        against this note and against the order as this node reads it off the
+        chain, and then this wallet signs. Pressing this button is the
+        agreement; there is no second question.
+        """
+        check_csrf(csrf_token)
+        chain, index = _token_chain()
+        try:
+            row = index.order(str(order))
+            if row is None:
+                raise swaplib.SwapError(
+                    "that order is not on this node's book -- it may have been "
+                    "cancelled or filled, or its block may not have arrived here")
+            if row["want_property"] != 0:
+                raise swaplib.SwapError(
+                    "this fills an order that sells a token for coins. To fill a "
+                    "bid, the wallet holding the tokens has to offer them")
+            prop = index.property(row["sale_property"])
+            tokens = parse_amount(str(amount), bool(prop["divisible"]))
+            if not 0 < tokens <= row["sale_amount"]:
+                raise swaplib.SwapError(
+                    f"that order has {format_amount(row['sale_amount'], bool(prop['divisible']))} left")
+            # The most this wallet will pay, worked out here from the chain so
+            # the maker's answer is checked against our own arithmetic rather
+            # than believed. Rounded up, which is what the engine's price guard
+            # requires of a fill (D-062).
+            coins = -(-row["want_amount"] * tokens // row["sale_amount"])
+            with chain.rpc() as rpc:
+                own = _ledger_addresses(rpc)
+                if row["address"] in own:
+                    raise swaplib.SwapError("that order is your own")
+                buyer = _buyer_for(rpc, index, own,
+                                   swaplib.I.Leg(swaplib.I.LEG_COINS, amount=coins))
+                short = _too_few_outputs(rpc, buyer)
+                if short:
+                    raise swaplib.SwapError(short)
+            to = _key_at(row["address"])
+            sent = _page_send(str(order), chain, to, json.dumps({
+                "swap": "fill", "swapv": swaplib.PROTOCOL, "order": str(order),
+                "tokens": tokens, "buyer": buyer}).encode())
+            now = time.time()
+            state.offers.add_fill({
+                "id": sent["txid"], "network": chain.network, "order": str(order),
+                "maker": row["address"], "buyer": buyer, "tokens": tokens,
+                "coins": coins, "created": now, "expires": now + swaplib.OFFER_TTL})
+            state.flash(
+                f"Asked for {format_amount(tokens, bool(prop['divisible']))} "
+                f"at {coins / COIN:.8f} "
+                f"coins. Their node answers with its half; this wallet signs and "
+                f"broadcasts. Nothing moves unless both halves do.", "ok")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse(f"/exchange/pair/{property_id or ''}", status_code=303)
 
     def _answer_bid(chain, bid: dict, body: dict) -> None:
         """Tell the buyer what became of their offer."""

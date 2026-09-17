@@ -47,7 +47,8 @@
       {% if not book.asks %}<p class="muted" style="margin:0">Nothing offered.</p>{% else %}
       <table class="book">
         <tr class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.06em">
-          <td>Price</td><td style="text-align:right">Amount</td><td style="text-align:right">Coins</td><td></td></tr>
+          <td>Price</td><td style="text-align:right">Amount</td><td style="text-align:right">Coins</td>
+          <td></td><td></td></tr>
         {% for o in book.asks %}
         <tr{% if o.mine %} class="mine"{% endif %}>
           <td class="mono" style="color:var(--bad)">{{ o.price_shown }}</td>
@@ -57,9 +58,28 @@
             {%- if o.mine %}yours{% elif tags.get(o.address) %}@{{ tags[o.address] }}
             {%- else %}{{ o.address[:8] }}…{% endif %}
             {%- if o.pending %}<span class="pill" title="broadcast, not yet in a block"
-              style="margin-left:5px">pool</span>{% endif %}</td></tr>
+              style="margin-left:5px">pool</span>{% endif %}</td>
+          <td style="text-align:right;white-space:nowrap">
+            {%- if not o.mine and not o.pending and fills_ready %}
+            <form method="post" action="/exchange/fill" class="row"
+                  style="gap:4px;margin:0;justify-content:flex-end">
+              <input type="hidden" name="csrf_token" value="{{ csrf }}">
+              <input type="hidden" name="order" value="{{ o.txid }}">
+              <input type="hidden" name="property_id" value="{{ prop.property_id }}">
+              <input name="amount" value="{{ o.tokens_shown }}" inputmode="decimal"
+                     style="width:7.5em;padding:3px 6px;font-size:.8rem" autocomplete="off">
+              <button type="submit" class="small">Take</button>
+            </form>
+            {%- elif o.pending %}<span class="muted" style="font-size:.74rem">when its block lands</span>
+            {%- endif %}</td></tr>
         {% endfor %}
       </table>
+      {% endif %}
+      {% if not fills_ready %}
+      <p class="muted" style="font-size:.78rem;margin:10px 0 0">Taking a price off
+        the book starts at block {{ "{:,}".format(fills_from) }}{% if height %} and
+        this chain is at {{ "{:,}".format(height) }}{% endif %}. Until then an ask
+        holds its tokens and can only be cancelled by whoever placed it.</p>
       {% endif %}
     </div>
 
@@ -109,6 +129,25 @@
         the chain and stands until you cancel it. Selling holds the tokens back
         until then.</p>
     </div>
+
+    {% if fills %}
+    <div class="panel">
+      <h3 style="margin:0 0 8px">Prices you have taken</h3>
+      <table>
+        {% for f in fills %}
+        <tr><td class="mono" style="font-size:.8rem">{{ f.order[:10] }}…</td>
+            <td style="font-size:.8rem">{{ f.tokens_shown or f.tokens }}</td>
+            <td style="text-align:right">
+              {%- if f.status == 'asked' %}<span class="pill warn">waiting for their node</span>
+              {%- elif f.status == 'signed' %}<span class="pill ok">signed</span>
+              {%- elif f.status == 'sent' %}<span class="pill ok">sent</span>
+              {%- else %}<span class="pill bad">{{ f.status }}</span>{% endif %}
+              {%- if f.error %}<div class="muted" style="font-size:.74rem">{{ f.error }}</div>{% endif %}
+            </td></tr>
+        {% endfor %}
+      </table>
+    </div>
+    {% endif %}
 
     {% if mine %}
     <div class="panel">
