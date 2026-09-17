@@ -258,6 +258,15 @@ class BlockWatcher:
     #: stays on the board does not start an update every pass.
     _release_seen = ""
 
+    #: The newest board post this node has considered, and it only ever moves
+    #: forward. `_release_seen` alone could not do this job: it holds ONE
+    #: revision while a board holds many, so walking newest-first and stopping
+    #: at the first unseen one alternated between two notices for ever --
+    #:每 tick "new", every tick a reset, twelve fetches a minute from one node.
+    #: A high-water mark cannot alternate, cannot grow, and cannot be confused
+    #: by a re-read (D-093).
+    _release_after = 0
+
     def _check_release_notices(self) -> None:
         """Somebody published; look now rather than in six hours.
 
@@ -302,6 +311,8 @@ class BlockWatcher:
         # compares against the same field, so an older revision landing there
         # invites it to announce again. And the log line should name the
         # release a person would expect (D-087).
+        newest = max((int(p["id"]) for p in posts), default=0)
+        acted = ""
         for post in reversed(posts):
             # Pool rows included, deliberately. `group_posts` returns a notice
             # at height 0 -- broadcast, not yet mined -- and acting on one is
@@ -315,17 +326,30 @@ class BlockWatcher:
             # executed -- the function returned earlier while the tag lookup
             # answered "nobody" -- so the tag fix did not break it, it
             # unmasked it (D-090).
+            if int(post["id"]) <= self._release_after:
+                continue                 # considered on an earlier pass
             revision = releaselib.revision_in(post["text"] or "")
-            if not revision or revision == self._release_seen:
+            if not revision:
                 continue
             if post["sender"] != who:
                 # Anybody may post on a public board. Only the node that
                 # published the tag is telling us about a release.
                 continue
-            self._release_seen = revision
-            log.info("release notice from @%s: %s", releaselib.RELEASE_TAG, revision)
-            self._update_checked = 0.0   # look now
+            acted = revision
             break
+        # Forward, whatever was found: posts already looked at are not looked
+        # at again, so a board that never changes costs one read per pass and
+        # resets nothing.
+        self._release_after = max(self._release_after, newest)
+        if acted:
+            self._release_seen = acted
+            # A warning rather than info, deliberately. It fires once per
+            # release, and info from this service does not reach the journal
+            # at all on a test machine -- so the one event worth diagnosing from
+            # outside was the one leaving no trace (D-093).
+            log.warning("release notice from @%s: %s -- checking now",
+                        releaselib.RELEASE_TAG, acted)
+            self._update_checked = 0.0
 
     def _release_publisher(self) -> str:
         """The address holding the release tag, as the chain has it."""

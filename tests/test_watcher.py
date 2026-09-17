@@ -525,9 +525,10 @@ def test_the_newest_notice_is_the_one_taken(monkeypatch, tmp_path):
 
     state = FakeState(FakeChain(tip=100), FakeChain("main", tip=5))
     watcher = BlockWatcher(state)
-    posts = [{"text": release.notice("0000111"), "sender": "nPub"},
-             {"text": "somebody says hello", "sender": "nOther"},
-             {"text": release.notice("2222333"), "sender": "nPub"}]
+    # ids as a real store hands them back: oldest first, ascending.
+    posts = [{"id": 1, "text": release.notice("0000111"), "sender": "nPub"},
+             {"id": 2, "text": "somebody says hello", "sender": "nOther"},
+             {"id": 3, "text": release.notice("2222333"), "sender": "nPub"}]
 
     class Store:
         def __enter__(self):

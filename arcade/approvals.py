@@ -62,7 +62,7 @@ from .db import add_missing_columns
 #: What a request may be for. A swap is the buyer's half of an exchange with
 #: a shop (arcade/swap.py): approving signs it and hands it to the shop's
 #: node, which signs the other half and broadcasts.
-KINDS = ("coins", "token", "inscription", "swap")
+KINDS = ("coins", "token", "inscription", "swap", "mint")
 
 #: How long a request waits for an answer. An hour: long enough to notice on
 #: a phone, short enough that a request filed by a page somebody looked at
@@ -124,7 +124,14 @@ CREATE INDEX IF NOT EXISTS request_status ON request(status, created);
 #: inscribed page that is buying, and the shop node's key to answer to.
 LATER_COLUMNS = (("offer", "TEXT NOT NULL DEFAULT ''"),
                  ("page", "TEXT NOT NULL DEFAULT ''"),
-                 ("peer", "TEXT NOT NULL DEFAULT ''"))
+                 ("peer", "TEXT NOT NULL DEFAULT ''"),
+                 # What a mint would write: the bytes themselves, what they
+                 # are, and the metadata that goes with them. A mint is the
+                 # one request whose content is the thing being approved --
+                 # everything else names something already on the chain.
+                 ("content", "BLOB"),
+                 ("contenttype", "TEXT NOT NULL DEFAULT ''"),
+                 ("meta", "TEXT NOT NULL DEFAULT ''"))
 
 
 class Requests:
@@ -314,14 +321,33 @@ def summary(row: dict) -> str:
             # The shop's own side: it hands over `give` and is paid `take`.
             return f"sold {describe_leg(offer['give'])} for {describe_leg(offer['take'])}"
         return f"swap {describe_leg(offer['take'])} for {describe_leg(offer['give'])}"
+    if row["kind"] == "mint":
+        # What it costs and how long it takes, in the line itself: an
+        # inscription is the one request whose bill depends on its content,
+        # and "inscribe this" tells a person nothing they can weigh (D-092).
+        size = int(row["units"] or 0)
+        chunks = int(row["number"] or 1)
+        return (f"inscribe {size:,} bytes of {row['contenttype'] or 'data'} "
+                f"in {chunks} transaction{'' if chunks == 1 else 's'}, "
+                f"about {row['amount']} coins")
     return f"inscription #{row['number']} to {to}"
 
 
 # --- filing: everything that can be refused before anybody is asked ----------
 
+#: The most a PAGE may inscribe in one request. Not a protocol limit -- the
+#: wallet's own inscriber handles far more -- but a request body arrives over
+#: HTTP from a sandboxed frame, and a page that can file a five-megabyte
+#: question can fill a queue with them. Bigger belongs in the Wallet, where a
+#: person chose the file (D-092).
+MAX_MINT_BYTES = 100_000
+
+
 def validate(kind: str, index: Any, own: list[str], *, mainnet: bool,
              to: str, amount: str = "", propertyid: Any = None,
-             inscription: str = "", fromaddress: str = "") -> dict:
+             inscription: str = "", fromaddress: str = "",
+             data: Any = None, contenttype: str = "",
+             contentjson: str = "") -> dict:
     """Turn what a caller said into what a request row holds.
 
     Refuses at once what can be refused at once -- an address on the other
@@ -335,7 +361,47 @@ def validate(kind: str, index: Any, own: list[str], *, mainnet: bool,
         raise RequestError("a swap is asked for through the shop it buys from "
                            "(arcade.swap in an inscribed page), not filed as a send")
     fields: dict[str, Any] = {}
+    if kind == "mint":
+        # An inscription is written, not moved, so what is approved is the
+        # CONTENT -- and the bill depends on it. A person saying yes has to
+        # see bytes, transactions and cost, which means the wallet holds the
+        # bytes from the moment the request is filed (D-092).
+        import base64
+
+        from .inscribe import estimate
+
+        raw = data if isinstance(data, (bytes, bytearray)) else None
+        if raw is None:
+            try:
+                raw = base64.b64decode(str(data or ""), validate=True)
+            except Exception:
+                raise RequestError("content must be base64") from None
+        if not raw:
+            raise RequestError("there is nothing to inscribe")
+        if len(raw) > MAX_MINT_BYTES:
+            raise RequestError(
+                f"that is {len(raw):,} bytes and a page may inscribe at most "
+                f"{MAX_MINT_BYTES:,}. Inscribe it from the Wallet instead, "
+                f"where the cost and the time are shown before anything starts")
+        meta = str(contentjson or "")
+        if meta:
+            try:
+                json.loads(meta)
+            except ValueError:
+                raise RequestError("the metadata is not JSON") from None
+        ctype = str(contenttype or "application/octet-stream")[:80]
+        priced = estimate(raw, ctype, meta)
+        fields.update(content=bytes(raw), contenttype=ctype, meta=meta,
+                      units=len(raw),
+                      amount=f"{priced.fee + priced.dust:.8f}",
+                      number=priced.chunks)
     to = str(to or "").strip()
+    if kind == "mint" and not to:
+        # A mint has no recipient. It is written by this wallet and lands at
+        # whichever of its addresses pays for it, so an empty `to` is the
+        # ordinary case rather than a missing field.
+        fields["toaddress"] = ""
+        return fields
     if to.startswith("@"):
         resolved = index.address_of(to)
         if not resolved:

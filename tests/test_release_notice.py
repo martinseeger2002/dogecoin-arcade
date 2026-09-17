@@ -172,3 +172,19 @@ def test_the_loop_runs_against_a_real_store(tmp_path, monkeypatch):
     watcher._update_checked = 999999.0
     watcher._check_release_notices()
     assert watcher._update_checked == 999999.0
+
+    # And a BOARD WITH SEVERAL notices does not alternate between them. One
+    # revision remembered against many posts made every pass find something
+    # "new": reset, check, reset, twelve fetches a minute from one node
+    # (D-093).
+    store.add_group_post("regtest", release.RELEASE_CHANNEL, "cc" * 32, 102, 1702,
+                         "nPublisher", "@them", release.notice("dddeee1"))
+    store.conn.commit()
+    watcher._update_checked = 999999.0
+    watcher._check_release_notices()
+    assert watcher._update_checked == 0.0, "a genuinely new one still counts"
+    for _ in range(5):
+        watcher._update_checked = 999999.0
+        watcher._check_release_notices()
+        assert watcher._update_checked == 999999.0, \
+            "and then it stays quiet, however many notices are on the board"

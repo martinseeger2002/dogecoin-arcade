@@ -3325,6 +3325,16 @@ def create_app(state: AppState) -> FastAPI:
         # Inscription 0 is an inscription; `value or ""` would lose it.
         return "" if value is None else str(value)
 
+    def _json_field(value: Any) -> str:
+        """A page may hand metadata as an object or as text; the chain takes
+        text. Passing an object through unchanged would inscribe the word
+        "dict"."""
+        if value is None or value == "":
+            return ""
+        if isinstance(value, str):
+            return value
+        return json.dumps(value, separators=(",", ":"))
+
     def _file_request(origin: str, body: dict, label: str = "") -> dict:
         """Validate and queue one request; the caller's words go in quotes."""
         chain, index = _token_chain()
@@ -3334,7 +3344,9 @@ def create_app(state: AppState) -> FastAPI:
             to=str(body.get("to") or ""), amount=_given(body.get("amount")),
             propertyid=body.get("propertyid"),
             inscription=_given(body.get("inscription")),
-            fromaddress=str(body.get("from") or ""))
+            fromaddress=str(body.get("from") or ""),
+            data=body.get("data"), contenttype=str(body.get("contenttype") or ""),
+            contentjson=_json_field(body.get("json")))
         request_id = state.approvals.file(
             chain.network, kind, origin, fields.pop("toaddress"),
             label=label or str(body.get("label") or ""),
@@ -3390,6 +3402,29 @@ def create_app(state: AppState) -> FastAPI:
             return RedirectResponse("/approvals", status_code=303)
         chain = state.chain_named(row["network"])
         index = state.token_index(chain)
+        if row["kind"] == "mint" and decision == "approve" and row["status"] == "pending":
+            # An inscription is many transactions chained through change
+            # outputs, so there is no single signed thing to show and then
+            # broadcast: approving one starts the inscriber, and the progress
+            # bubble reports it exactly as the Wallet's own does (D-092).
+            try:
+                check_csrf(csrf_token)
+                plan = inscribelib.plan(bytes(row["content"] or b""),
+                                        row["contenttype"] or "application/octet-stream",
+                                        row["meta"] or "")
+                with chain.rpc() as rpc:
+                    sender = funded_address(rpc, mainnet=chain.is_mainnet)
+                    _inscribe_in_background(chain, sender, plan,
+                                            f"request {row['id'][:8]}")
+                queue.decide(request_id, "sent", txid="")
+                state.flash(f"Inscribing {int(row['units'] or 0):,} bytes in "
+                            f"{plan.chunks} transactions.", "ok")
+            except HTTPException:
+                raise
+            except Exception as exc:
+                queue.decide(request_id, "failed", error=str(exc))
+                state.flash(str(exc), "err")
+            return RedirectResponse(back, status_code=303)
         error, prepared, sent = None, None, None
         if request.method == "POST":
             check_csrf(csrf_token)
