@@ -197,6 +197,26 @@ CREATE TABLE IF NOT EXISTS book_order (
 CREATE INDEX IF NOT EXISTS book_order_pair_idx
     ON book_order(sale_property, want_property);
 
+-- Where an inscription has been. One row per hand it changed in, written as
+-- the move is applied, because the inscription row itself only ever holds the
+-- CURRENT owner -- it is overwritten on every transfer, so indexed state kept
+-- no history at all and "when did this first leave the creator" had no answer
+-- on any node (D-071).
+--
+-- Not the same thing as the transaction list: a page asking for provenance
+-- wants who held it and when, not which transactions carried the bytes.
+CREATE TABLE IF NOT EXISTS inscription_move (
+    txid          TEXT    PRIMARY KEY,
+    inscription   TEXT    NOT NULL,
+    from_address  TEXT    NOT NULL,
+    to_address    TEXT    NOT NULL,
+    block_height  INTEGER NOT NULL,
+    position      INTEGER NOT NULL,
+    how           TEXT    NOT NULL DEFAULT 'transfer'   -- or 'swap'
+);
+CREATE INDEX IF NOT EXISTS inscription_move_item
+    ON inscription_move(inscription, block_height, position);
+
 -- An offer for somebody's inscription, made in public (D-042). Said on the
 -- chain because a holder who never published a key cannot be messaged, and
 -- never asked to be. Nothing is locked by one: it is an offer.
@@ -227,6 +247,7 @@ def install_schema(db: Database) -> None:
     register_journalled_table("tag", ("tag",))
     register_journalled_table("inscription", ("txid",))
     register_journalled_table("nft_offer", ("txid",))
+    register_journalled_table("inscription_move", ("txid",))
     register_journalled_table("book_order", ("txid",))
     register_journalled_table("inscription_chunk",
                               ("sender", "inscription_id", "countdown"))
@@ -925,6 +946,19 @@ class Engine:
         if rtx.reference == existing["owner"]:
             raise InvalidTransaction("that inscription is already there")
         self.state.update("inscription", {"txid": txid}, {"owner": rtx.reference})
+        self._note_move(rtx, txid, existing["owner"], rtx.reference, "transfer")
+
+    def _note_move(self, rtx: ArcadeTransaction, inscription: str, giver: str,
+                   taker: str, how: str) -> None:
+        """Write down that a piece changed hands. Keyed by the transaction, so
+        replaying a block cannot double it, and journalled so a reorg unwinds
+        it with everything else."""
+        self.state.insert("inscription_move", {
+            "txid": rtx.txid, "inscription": inscription,
+            "from_address": giver, "to_address": taker,
+            "block_height": rtx.block_height, "position": rtx.position,
+            "how": how,
+        })
 
     # --- swaps ----------------------------------------------------------------
 
@@ -964,8 +998,8 @@ class Engine:
         self._check_leg(rtx, swap.take, buyer, seller)
         for row, taken, want in fills:
             self._fill_order(row, taken, want)
-        self._move_leg(swap.give, seller, buyer)
-        self._move_leg(swap.take, buyer, seller)
+        self._move_leg(swap.give, seller, buyer, rtx)
+        self._move_leg(swap.take, buyer, seller, rtx)
 
     def _fills_for(self, rtx: ArcadeTransaction, seller: str,
                    give: I.Leg, take: I.Leg) -> list[tuple[dict, int, int]]:
@@ -1077,9 +1111,15 @@ class Engine:
             return
         raise InvalidTransaction(f"unknown swap leg {leg.kind}")
 
-    def _move_leg(self, leg: I.Leg, giver: str, taker: str) -> None:
+    def _move_leg(self, leg: I.Leg, giver: str, taker: str,
+                  rtx: ArcadeTransaction | None = None) -> None:
         if leg.kind == I.LEG_INSCRIPTION:
             self.state.update("inscription", {"txid": leg.txid.hex()}, {"owner": taker})
+            if rtx is not None:
+                # A swap is a hand it changed in as much as a transfer is.
+                # Provenance that counted only transfers would miss every
+                # piece that was ever bought.
+                self._note_move(rtx, leg.txid.hex(), giver, taker, "swap")
         elif leg.kind == I.LEG_TOKEN:
             self.debit(giver, leg.property_id, leg.amount)
             self.credit(taker, leg.property_id, leg.amount)

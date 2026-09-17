@@ -410,6 +410,32 @@ class LedgerIndex:
                 f"{_INSCRIPTION_SELECT} WHERE i.{column}=?", (key,)).fetchone()
             return dict(row) if row else None
 
+    def moves(self, key: str, limit: int = 100) -> list[dict]:
+        """Every hand an inscription has changed in, oldest first.
+
+        The inscription row holds only the current owner -- it is overwritten
+        on each transfer -- so this is the only place that remembers. What a
+        page usually wants from it is the first row whose sender is the
+        creator: the moment a piece left the wallet that made it, which is
+        what people mean by a mint date when they are asking about provenance
+        (D-071).
+        """
+        with self.open() as db:
+            return [dict(r) for r in db.conn.execute(
+                "SELECT * FROM inscription_move WHERE inscription=? "
+                "ORDER BY block_height, position LIMIT ?",
+                (str(key), max(1, min(limit, 500))))]
+
+    def left_the_creator(self, key: str) -> dict | None:
+        """The first move out of the wallet that made it, if it has made one."""
+        row = self.inscription(str(key))
+        if row is None:
+            return None
+        for move in self.moves(str(key)):
+            if move["from_address"] == row["creator"]:
+                return move
+        return None
+
     def inscription_content(self, key: str | int) -> tuple[str, bytes] | None:
         """(content type, bytes) if this node kept them, else None.
 

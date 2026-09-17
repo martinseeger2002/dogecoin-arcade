@@ -2990,6 +2990,33 @@ def create_app(state: AppState) -> FastAPI:
             return contentlib._missing("no such inscription")
         return contentlib._json(contentlib.describe(row))
 
+    @app.get("/r/inscription/{key}/history")
+    def r_inscription_history(key: str, limit: int = 100):
+        """Every hand this piece has changed in, oldest first.
+
+        Provenance, which the indexed row cannot answer on its own: it holds
+        the current owner and is overwritten on every transfer, so a page
+        asking "when did this leave the wallet that made it" had nothing to
+        read (D-071). `left_creator` is that question answered directly,
+        because it is the one people actually ask.
+        """
+        index = _content_index()
+        row = index.inscription(contentlib._key(key))
+        if row is None:
+            return contentlib._missing("no such inscription")
+        moves = index.moves(row["txid"], limit=limit)
+        first = next((m for m in moves if m["from_address"] == row["creator"]), None)
+        return contentlib._json({
+            "id": row["txid"],
+            "creator": row["creator"],
+            "owner": row["owner"],
+            "inscribed": row["block_height"],
+            "left_creator": first["block_height"] if first else None,
+            "moves": [{"from": m["from_address"], "to": m["to_address"],
+                       "block": m["block_height"], "txid": m["txid"],
+                       "how": m["how"]} for m in moves],
+        })
+
     @app.get("/r/metadata/{key}")
     def r_metadata(key: str):
         return contentlib.metadata(_content_index(), key)

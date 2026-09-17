@@ -215,3 +215,55 @@ def test_the_same_piece_twice_is_refused(engine):
     feed(eng, state, [tx(0, bodies[0]), tx(1, bodies[0])])
     assert "already on chain" in db.conn.execute(
         "SELECT invalid_reason FROM arcade_tx WHERE txid=?", (hexid(1),)).fetchone()[0]
+
+
+def test_where_a_piece_has_been(engine):
+    """The inscription row holds the current owner and is overwritten on every
+    transfer, so nothing remembered where a piece had been. "When did this
+    leave the wallet that made it" -- the question people mean by a mint date
+    when they ask about provenance -- had no answer on any node (D-071)."""
+    eng, state, db = engine
+    feed(eng, state, [tx(0, I.plan(b"a picture", "image/png")[0])])
+    item = hexid(0)
+    txid = bytes.fromhex(item)
+
+    def moves():
+        return [dict(r) for r in db.conn.execute(
+            "SELECT * FROM inscription_move WHERE inscription=? "
+            "ORDER BY block_height, position", (item,))]
+
+    assert moves() == [], "made, never moved"
+
+    feed(eng, state, [tx(1, I.Transfer(txid=txid).encode(), reference="nSecond")])
+    feed(eng, state, [tx(2, I.Transfer(txid=txid).encode(), sender="nSecond",
+                         reference="nThird")])
+
+    where = moves()
+    assert [(m["from_address"], m["to_address"]) for m in where] == [
+        ("nCreator", "nSecond"), ("nSecond", "nThird")], "oldest first"
+    assert all(m["how"] == "transfer" for m in where)
+    assert where[0]["block_height"] < where[1]["block_height"]
+    assert db.conn.execute("SELECT owner FROM inscription").fetchone()[0] == "nThird"
+
+
+def test_a_refused_transfer_leaves_no_trace(engine):
+    """Provenance must not record hands it never changed."""
+    eng, state, db = engine
+    feed(eng, state, [tx(0, I.plan(b"x", "text/plain")[0])])
+    txid = bytes.fromhex(hexid(0))
+    feed(eng, state, [tx(1, I.Transfer(txid=txid).encode(), sender="nThief",
+                         reference="nThief")])
+    assert db.conn.execute("SELECT COUNT(*) FROM inscription_move").fetchone()[0] == 0
+
+
+def test_a_piece_that_comes_back_still_remembers_going(engine):
+    """History, not current state: "did this ever leave" must not change
+    because it came home."""
+    eng, state, db = engine
+    feed(eng, state, [tx(0, I.plan(b"x", "text/plain")[0])])
+    txid = bytes.fromhex(hexid(0))
+    feed(eng, state, [tx(1, I.Transfer(txid=txid).encode(), reference="nSecond")])
+    feed(eng, state, [tx(2, I.Transfer(txid=txid).encode(), sender="nSecond",
+                         reference="nCreator")])
+    assert db.conn.execute("SELECT owner FROM inscription").fetchone()[0] == "nCreator"
+    assert db.conn.execute("SELECT COUNT(*) FROM inscription_move").fetchone()[0] == 2
