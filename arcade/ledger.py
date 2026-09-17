@@ -29,7 +29,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, ContextManager
+from typing import Any, Callable, ContextManager, Sequence
 
 from . import payload as P
 from .chain import ChainFollower, ReorgTooDeep, SyncResult
@@ -77,6 +77,12 @@ _INSCRIPTION_SELECT = (
     "i.content_type, i.content_len, i.sha256, i.json, i.chunks, "
     "i.content IS NOT NULL AS held, c.collection, c.edition "
     "FROM inscription i LEFT JOIN collection_item c ON c.txid = i.txid")
+
+#: How many offers are standing against a piece, as a column beside it. A
+#: correlated count rather than a join, because a marketplace ORDERS on it
+#: and the ordering has to happen before the page is cut.
+_OFFERS_ON_IT = ("(SELECT COUNT(*) FROM nft_offer o "
+                 "WHERE o.inscription = i.txid)")
 
 
 class LedgerIndex:
@@ -700,6 +706,96 @@ class LedgerIndex:
                 f"{_INSCRIPTION_SELECT} WHERE c.creator = ? AND c.collection = ? "
                 f"ORDER BY c.edition IS NULL, c.edition, i.number LIMIT ? OFFSET ?",
                 (creator, name, max(1, min(limit, 500)), max(0, offset)))]
+
+    def collection_cover(self, creator: str, name: str) -> dict | None:
+        """The face of a collection: its #1, if this node can draw it.
+
+        People know a set by its first piece -- #1 is the one on the flyer --
+        so a marketplace row shows that, where a shop card shows a random
+        member to say "a set of different things" (D-041). The lowest edition
+        whose bytes are here and whose type a browser renders wins; when none
+        of them can be drawn the true #1 comes back anyway, so the caller can
+        say what it is holding instead of drawing a broken image.
+        """
+        with self.open() as db:
+            row = db.conn.execute(
+                "SELECT i.txid, i.number, i.content_type, c.edition, "
+                "       (i.content IS NOT NULL "
+                "        AND i.content_type LIKE 'image/%') AS drawable "
+                "FROM collection_item c JOIN inscription i ON i.txid = c.txid "
+                "WHERE c.creator = ? AND c.collection = ? "
+                "ORDER BY drawable DESC, c.edition IS NULL, c.edition, i.number "
+                "LIMIT 1", (creator, name)).fetchone()
+            return dict(row) if row else None
+
+    def collection_offers(self) -> dict[tuple[str, str], int]:
+        """How many pieces of each collection have an offer standing on them.
+
+        One query for a whole page of collections: asked per collection this
+        is a query per row, and the marketplace draws a hundred rows.
+        """
+        with self.open() as db:
+            return {(row["creator"], row["collection"]): int(row["pieces"])
+                    for row in db.conn.execute(
+                        "SELECT c.creator, c.collection, "
+                        "       COUNT(DISTINCT o.inscription) AS pieces "
+                        "FROM nft_offer o "
+                        "JOIN collection_item c ON c.txid = o.inscription "
+                        "GROUP BY c.creator, c.collection")}
+
+    def collection_held_by(self, creator: str, name: str, owners: list[str],
+                           limit: int = 100) -> list[dict]:
+        """The pieces of one collection these addresses hold, edition first.
+
+        Asked of the whole set rather than filtered out of the page on show:
+        a wallet holding #400 of a collection of five hundred would be told
+        it holds none of it, because everything of its own was on page
+        seventeen (D-028).
+        """
+        if not owners:
+            return []
+        marks = ",".join("?" * len(owners))
+        with self.open() as db:
+            return [dict(row) for row in db.conn.execute(
+                f"{_INSCRIPTION_SELECT} WHERE c.creator = ? AND c.collection = ? "
+                f"AND i.owner IN ({marks}) "
+                f"ORDER BY c.edition IS NULL, c.edition, i.number LIMIT ?",
+                (creator, name, *owners, max(1, min(limit, 500))))]
+
+    def collection_market(self, creator: str, name: str,
+                          for_sale: Sequence[str] = (), limit: int = 100,
+                          offset: int = 0) -> list[dict]:
+        """A collection in market order: what can be bought now, then the rest.
+
+        Somebody opening a collection is looking for what they can act on --
+        a piece with a price on it, then a piece somebody has already offered
+        for -- and after that for the collection itself, in the order it was
+        inscribed. Chronological rather than edition order, because the
+        editions are the artist's numbering and the chain's order is what
+        actually happened (D-096).
+
+        The ordering is done in SQL because it has to happen BEFORE the page
+        is cut: sorting one page's worth puts the for-sale pieces first only
+        on the page they already fell on.
+
+        `for_sale` is the txids a shop is selling right now, which is not in
+        the ledger at all -- a shop is an inscription whose JSON says so, read
+        afresh every time (D-037) -- so the caller passes what it read.
+        """
+        marks = ",".join("?" * len(for_sale))
+        selling = f"i.txid IN ({marks})" if for_sale else "0"
+        sql = _INSCRIPTION_SELECT.replace(
+            "SELECT ", f"SELECT {_OFFERS_ON_IT} AS offers, ", 1)
+        sql += (f" WHERE c.creator = ? AND c.collection = ?"
+                f" ORDER BY CASE WHEN {selling} THEN 0"
+                f"               WHEN {_OFFERS_ON_IT} > 0 THEN 1"
+                f"               ELSE 2 END,"
+                f"          i.number LIMIT ? OFFSET ?")
+        # In the order the marks appear in the statement: the WHERE comes
+        # before the ORDER BY that names what is for sale.
+        args = [creator, name, *for_sale, max(1, min(limit, 500)), max(0, offset)]
+        with self.open() as db:
+            return [dict(row) for row in db.conn.execute(sql, args)]
 
     def book(self, property_id: int, limit: int = 50,
              pool: bool = True) -> dict[str, list[dict]]:

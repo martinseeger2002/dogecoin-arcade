@@ -43,6 +43,7 @@ from .. import charts as chartlib
 from .. import fees
 from .. import gather as gatherlib
 from .. import mintpad as mintpadlib
+from .. import sellpage as sellpagelib
 from .. import swap as swaplib
 from .. import tags as taglib
 from .. import remote as remotelib
@@ -2515,7 +2516,7 @@ def create_app(state: AppState) -> FastAPI:
             "index": index.status(node_tip=state.ledger_tips.get(chain.network)),
             "inscriptions": [], "mine": [], "unfinished": [], "owned": set(),
             "funded": [], "error": error, "plan": plan, "node_error": None,
-            "my_tag": None, "tags": {}, "my_total": 0,
+            "my_tag": None, "tags": {}, "my_total": 0, "listed": {},
             "page": page, "pages": 1, "per_page": PAGE_INSCRIPTIONS, "total": 0,
         }
         try:
@@ -2562,6 +2563,12 @@ def create_app(state: AppState) -> FastAPI:
                                   if u["sender"] in owned]
         except Exception:
             pass
+        # Which of these are already for sale, so a card offers to list a
+        # piece once and says where the price is the second time.
+        try:
+            data["listed"] = _nft_listings(index, chain)
+        except Exception:
+            data["listed"] = {}
         return data
 
     @app.get("/nfts", response_class=HTMLResponse)
@@ -4076,8 +4083,14 @@ def create_app(state: AppState) -> FastAPI:
         # piece still held by the wallet that made it -- most of a collection,
         # most of the time (D-074).
         named = _tags_for([row["owner"], row["creator"]])
+        # Whether this piece is already for sale, so the wallet that holds it
+        # is offered the listing it has rather than a second one.
+        try:
+            sale = _nft_listings(index, chain).get(row["txid"])
+        except Exception:
+            sale = None
         return render(request, "inscription_view.html", row=row, chain=chain,
-                      tag=named.get(row["owner"]),
+                      tag=named.get(row["owner"]), sale=sale,
                       creator_tag=named.get(row["creator"]),
                       pages=pages, mine=mine,
                       tokens=held, coins=coins, advice=advice,
@@ -4694,6 +4707,148 @@ def create_app(state: AppState) -> FastAPI:
                         "mine": False, "listings": listings})
         return out
 
+    #: How many collections the NFT marketplace lists. A market people can
+    #: read, not a directory: the rest are a page away on /collections.
+    MARKET_COLLECTIONS = 60
+
+    def _nft_listings(index, chain) -> dict[str, dict[str, Any]]:
+        """Every single NFT a shop is selling right now, by the piece's txid.
+
+        Read from the shops on the chain each time, like everything else on
+        the Exchange (D-037): a piece whose seller has sent it away is not
+        for sale any more, and nothing had to be told.
+        """
+        out: dict[str, dict[str, Any]] = {}
+        for shop in _shop_listings(index, chain):
+            for listing in shop["listings"]:
+                give = listing["give"]
+                if give.get("kind") != "inscription" or listing["available"]:
+                    continue
+                # First shop wins: two shops may name the same piece, and only
+                # one of them can be given -- the buyer's node checks which
+                # when it reads the terms.
+                out.setdefault(give["txid"], {
+                    "shop": shop["txid"], "seller": shop["seller"],
+                    "price": swaplib.describe_leg(listing["take"]),
+                    "number": give.get("number"),
+                    "collection": give.get("collection"),
+                    "edition": give.get("edition")})
+        return out
+
+    def _nft_points(index, trades) -> dict[str | None, list[dict[str, Any]]]:
+        """What NFTs have sold for in coins, bucketed by collection.
+
+        One pass over the trades. Asking chartlib for each collection's
+        prices asks the index about every trade again -- a hundred
+        collections and five hundred trades is fifty thousand questions to
+        draw one table.
+        """
+        points: dict[str | None, list[dict[str, Any]]] = {}
+        for trade in trades:
+            legs = (trade["give"], trade["take"])
+            piece = next((l for l in legs
+                          if l.kind == inscriptionlib.LEG_INSCRIPTION), None)
+            paid = next((l for l in legs
+                         if l.kind == inscriptionlib.LEG_COINS), None)
+            if piece is None or paid is None:
+                continue          # a piece paid for in tokens is its own market
+            try:
+                row = index.inscription(piece.txid.hex())
+            except Exception:
+                row = None
+            points.setdefault((row or {}).get("collection") or None, []).append({
+                "when": trade["when"], "height": trade["height"],
+                "price": (paid.amount or 0) / COIN, "size": 1,
+                "txid": trade["txid"]})
+        return points
+
+    def _market_collections(index, chain, trades) -> list[dict[str, Any]]:
+        """Every collection on this chain as a market of its own.
+
+        The same table the Tokens tab draws for pairs, because a collection
+        IS the pair here: what a Goofball goes for says nothing about what a
+        Doge Punk goes for (D-040). Its face is #1 rather than a random
+        member -- a market row is a name people are meant to recognise
+        (D-096).
+        """
+        listed = _nft_listings(index, chain)
+        # Which set each listed piece belongs to. The listing carries the
+        # collection's name but not whose it is, and a collection is (creator,
+        # name) -- two people may inscribe a set called Doge Punks.
+        for_sale: dict[tuple[str, str], int] = {}
+        for txid in listed:
+            try:
+                row = index.inscription(txid)
+            except Exception:
+                row = None
+            if row and row.get("collection"):
+                key = (row["creator"], row["collection"])
+                for_sale[key] = for_sale.get(key, 0) + 1
+        try:
+            offers = index.collection_offers()
+        except Exception:
+            offers = {}
+        points = _nft_points(index, trades)
+        out = []
+        for row in index.collections(limit=MARKET_COLLECTIONS):
+            key = (row["creator"], row["collection"])
+            cover = index.collection_cover(*key) or {}
+            stats = chartlib.last_and_change(points.get(row["collection"], []))
+            drawable = str(cover.get("content_type") or "").startswith("image/")
+            out.append({
+                "creator": row["creator"], "name": row["collection"],
+                "count": row["count"],
+                "cover": cover.get("txid") if drawable else None,
+                "cover_edition": cover.get("edition"),
+                "first_number": row["first_number"],
+                "last_number": row["last_number"],
+                "for_sale": for_sale.get(key, 0),
+                "offers": offers.get(key, 0),
+                "last": stats["last"], "change": stats["change"],
+                "trades": len(points.get(row["collection"], []))})
+        # What can be acted on, first: a market lists the collections
+        # somebody is selling from before the ones nobody is.
+        out.sort(key=lambda c: (-c["for_sale"], -c["offers"], -c["trades"],
+                                c["name"].lower()))
+        return out
+
+    def _names_for(index, addresses) -> dict[str, str]:
+        """Which of these addresses hold a tag, asked of the chain they are on.
+
+        A tag is claimed per chain and the same name on two chains is two
+        names (D-032). A piece and whoever holds it are on the chain being
+        shown, so that index answers first; the messaging chain is asked for
+        what is left, which is where this wallet claims its own name when the
+        two chains are different.
+        """
+        wanted = sorted({a for a in addresses if a})
+        if not wanted:
+            return {}
+        try:
+            found = dict(index.tags_for(wanted))
+        except Exception:
+            found = {}
+        missing = [a for a in wanted if a not in found]
+        if missing:
+            found.update(_tags_for(missing))
+        return found
+
+    def _offerable(chain, index):
+        """What this wallet could offer with: its tokens, and its coins."""
+        held: list[dict[str, Any]] = []
+        coins = 0.0
+        owned: set[str] = set()
+        try:
+            with chain.rpc() as rpc:
+                owned = set(_ledger_addresses(rpc))
+                held = _purses(index.balances(sorted(owned)))
+                coins = float(rpc.call("getbalance") or 0)
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+        return owned, held, coins
+
     @app.get("/exchange/pair/{property_id}", response_class=HTMLResponse)
     def exchange_pair(request: Request, property_id: int):
         """One pair: its chart, its book, and the form that adds to the book."""
@@ -4829,7 +4984,8 @@ def create_app(state: AppState) -> FastAPI:
     @app.post("/exchange/offer", response_class=HTMLResponse)
     def make_offer_on(request: Request, inscription: str = Form(""),
                       amount: str = Form(""), kind: str = Form("coins"),
-                      property_id: str = Form(""), csrf_token: str = Form("")):
+                      property_id: str = Form(""), csrf_token: str = Form(""),
+                      back: str = Form("")):
         """Offer for an NFT, whoever holds it and whatever they have listed.
 
         The offer is a message to the wallet that holds it. Accepting is
@@ -4888,7 +5044,13 @@ def create_app(state: AppState) -> FastAPI:
             raise
         except Exception as exc:
             state.flash(str(exc), "err")
-            return RedirectResponse(f"/inscriptions/{inscription}/view", status_code=303)
+            # Back to the page the offer was made from -- a card in a
+            # collection, usually, and being dropped onto the piece's own
+            # page loses the place. Only this application's own paths: a
+            # form field is whatever was posted.
+            where = back if back.startswith("/") and not back.startswith("//") \
+                else f"/inscriptions/{inscription}/view"
+            return RedirectResponse(where, status_code=303)
 
     def _own_announcement(address: str) -> bool:
         """Whether this wallet has published a key at this address.
@@ -5090,6 +5252,164 @@ def create_app(state: AppState) -> FastAPI:
         except Exception as exc:
             log.warning("could not answer offer %s: %s", bid["id"], exc)
 
+    @app.get("/exchange/collection/{creator}/{name}", response_class=HTMLResponse)
+    def exchange_collection(request: Request, creator: str, name: str,
+                            page: int = 1):
+        """One collection, whole: what can be bought, then what was inscribed.
+
+        Every card carries the two names that matter about a piece -- who
+        made it and who holds it now -- and the way to offer for it. An offer
+        can be made on any of them, listed or not (D-042), which is what
+        makes this a market rather than a shop window.
+        """
+        chain, index = _token_chain()
+        summary = index.collection(creator, name)
+        if summary is None:
+            state.flash("no such collection on this chain", "err")
+            return RedirectResponse("/exchange?tab=market", status_code=303)
+        data: dict[str, Any] = {"chain": chain, "node": chain.status(),
+                                "summary": summary, "node_error": None,
+                                "rows": [], "tags": {}, "tokens": [], "coins": 0.0,
+                                "for_sale": 0, "offered": 0, "prices": None, "yours": [],
+                                "page": page, "pages": 1,
+                                "per_page": PAGE_INSCRIPTIONS}
+        # What this collection has actually traded for, on its own page
+        # rather than in the list of collections: a chart belongs beside the
+        # pieces it prices.
+        try:
+            points = _nft_points(index, index.trades()).get(name, [])
+        except Exception:
+            points = []
+        if points:
+            data["prices"] = {"unit": f"{chain.label} coins each",
+                              "stats": chartlib.summary(points),
+                              "slots": chartlib.candles(points)}
+        listed: dict[str, dict[str, Any]] = {}
+        try:
+            listed = _nft_listings(index, chain)
+        except Exception as exc:
+            data["node_error"] = f"the shops could not be read: {exc}"
+        owned, data["tokens"], data["coins"] = _offerable(chain, index)
+        try:
+            data["pages"] = max(1, -(-summary["count"] // PAGE_INSCRIPTIONS))
+            data["page"] = page = max(1, min(page, data["pages"]))
+            rows = index.collection_market(
+                creator, name, for_sale=sorted(listed),
+                limit=PAGE_INSCRIPTIONS, offset=(page - 1) * PAGE_INSCRIPTIONS)
+            for row in rows:
+                row["listing"] = listed.get(row["txid"])
+                row["mine"] = row["owner"] in owned
+            data["rows"] = rows
+            # Said about the whole collection, not about this page of it: the
+            # header answers "is anything here for sale", and page four
+            # saying no would be an answer about page four.
+            data["for_sale"] = sum(
+                1 for txid, entry in listed.items()
+                if entry.get("collection") == name
+                and (index.inscription(txid) or {}).get("creator") == creator)
+            data["offered"] = index.collection_offers().get((creator, name), 0)
+            # What this wallet holds of the set, asked of the whole set: it
+            # is the answer to "what can I sell", and page four is not where
+            # that is decided.
+            data["yours"] = index.collection_held_by(creator, name, sorted(owned))
+            for row in data["yours"]:
+                row["listing"] = listed.get(row["txid"])
+            data["tags"] = _names_for(
+                index, [r["owner"] for r in rows] + [r["creator"] for r in rows]
+                + [creator])
+        except Exception as exc:
+            data["node_error"] = data["node_error"] or f"the index could not be read: {exc}"
+        return render(request, "market_collection.html", **data)
+
+    # --- putting one NFT up for sale ------------------------------------------
+    #
+    # A listing is an inscription whose JSON names a shop giving this one
+    # piece (arcade/sellpage.py). It is written from the address that holds
+    # the piece, because a shop's seller is the shop inscription's own owner
+    # and a buyer's node checks that that address still holds what it sells.
+
+    def _sell_page_data(row: dict[str, Any], chain, index, **extra) -> dict[str, Any]:
+        listed = {}
+        try:
+            listed = _nft_listings(index, chain)
+        except Exception:
+            listed = {}
+        data: dict[str, Any] = {
+            "chain": chain, "node": chain.status(), "row": row,
+            "name": sellpagelib.name_of(row), "listing": listed.get(row["txid"]),
+            "tokens": [], "plan": None, "error": None,
+            "amount": "", "kind": "coins", "property_id": "",
+            # Swaps are read from a height, and on a chain that has none
+            # nobody can buy what is listed. Said here rather than after the
+            # fee is paid (D-051).
+            "swaps": chain.params.swaps_from is not None,
+        }
+        try:
+            data["tokens"] = index.properties()
+        except Exception:
+            data["tokens"] = []
+        data.update(extra)
+        return data
+
+    @app.get("/exchange/sell/{key}", response_class=HTMLResponse)
+    def sell_form(request: Request, key: str):
+        """The form that puts one piece up for sale."""
+        chain, index = _token_chain()
+        row = index.inscription(contentlib._key(key))
+        if row is None:
+            state.flash("no such inscription on this node", "err")
+            return RedirectResponse("/wallet/nfts", status_code=303)
+        return render(request, "sell.html", **_sell_page_data(row, chain, index))
+
+    @app.post("/exchange/sell", response_class=HTMLResponse)
+    def sell(request: Request, inscription: str = Form(""), amount: str = Form(""),
+             kind: str = Form("coins"), property_id: str = Form(""),
+             confirmed: str = Form(""), csrf_token: str = Form("")):
+        """Two presses, like everything else here that spends: the first
+        prices the listing, the second inscribes it."""
+        check_csrf(csrf_token)
+        chain, index = _token_chain()
+        row = index.inscription(contentlib._key(inscription))
+        if row is None:
+            state.flash("no such inscription on this node", "err")
+            return RedirectResponse("/wallet/nfts", status_code=303)
+        data = _sell_page_data(row, chain, index, amount=amount, kind=kind,
+                               property_id=property_id)
+        try:
+            with chain.rpc() as rpc:
+                if row["owner"] not in _ledger_addresses(rpc):
+                    raise sellpagelib.SaleError(
+                        "only the wallet holding a piece can list it, and this "
+                        "one is held by " + row["owner"])
+            take = mintpadlib.take_of(kind, amount,
+                                      int(property_id) if property_id else None)
+            price = swaplib.describe_leg(
+                swaplib.leg_json(swaplib.leg_of(take, index), index))
+            name = sellpagelib.name_of(row)
+            identity = state.ensure_identity()
+            plan = inscribelib.plan(
+                sellpagelib.page(row["txid"], name, price), "text/html",
+                sellpagelib.sale_json(
+                    contact.encode(state.messaging.network, identity.public_bytes),
+                    row["txid"], take, name))
+            if confirmed != "yes":
+                data.update(plan=plan, price=price)
+                return render(request, "sell.html", **data)
+            # From the address that holds it, so the shop's seller and the
+            # piece's owner are the same address -- a listing written from
+            # anywhere else says it sells something it cannot give.
+            _inscribe_in_background(chain, row["owner"], plan,
+                                    f"{name} for sale")
+            state.flash(
+                f"Listing {name} for {price}. It is for sale from the block "
+                f"the page lands in; anyone can find it in the Exchange.", "ok")
+            return RedirectResponse("/exchange?tab=market", status_code=303)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            data["error"] = str(exc)
+            return render(request, "sell.html", **data)
+
     @app.get("/exchange", response_class=HTMLResponse)
     def exchange(request: Request, tab: str = "offers"):
         """Everything for sale on this chain, and what has been offered to you.
@@ -5128,9 +5448,9 @@ def create_app(state: AppState) -> FastAPI:
         data["market"] = [s for s in data["shops"] if selling(s, "inscription")]
         data["tokens"] = [s for s in data["shops"] if selling(s, "token")]
         data["pairs"] = data.get("pairs", [])
+        data["collections"] = []
         # What has actually traded, and what it went for. Read from the swaps
         # the chain holds, not from a book -- there is no book (D-039).
-        data["charts"] = []
         try:
             trades = index.trades()
         except Exception:
@@ -5141,30 +5461,17 @@ def create_app(state: AppState) -> FastAPI:
             # (D-048). Clicking one opens its own page.
             data["pairs"] = _pairs(index, trades)
         elif tab == "market":
-            # A collection is a market of its own: what a Goofball goes for
-            # says nothing about what a Doge Punk goes for (D-040).
-            for market in chartlib.nft_markets(trades, index)[:6]:
-                pid = market["property_id"]
-                which = market["collection"] or chartlib.STANDALONE
-                points = chartlib.nft_prices(trades, index, collection=which,
-                                             property_id=pid)
-                if not points:
-                    continue
-                unit = f"{chain.label} coins"
-                if pid is not None:
-                    prop = index.property(pid)
-                    unit = (prop or {}).get("name") or f"token #{pid}"
-                what = market["collection"] or "NFTs in no collection"
-                # A face for the market, picked afresh from the collection
-                # it is a market in (D-041).
-                thumb = None
-                if market["collection"]:
-                    found = index.collection_thumb(None, market["collection"])
-                    thumb = (found or {}).get("txid")
-                data["charts"].append({
-                    "title": f"{what}, paid in {unit}", "unit": f"{unit} each",
-                    "thumb": thumb, "stats": chartlib.summary(points),
-                    "slots": chartlib.candles(points)})
+            # A collection is a market of its own, and the marketplace is the
+            # list of them -- the same table the Tokens tab draws for pairs.
+            # Its chart belongs to the collection's own page, where the
+            # pieces it prices are (D-096).
+            try:
+                data["collections"] = _market_collections(index, chain, trades)
+                data["tags"].update(_names_for(
+                    index, [c["creator"] for c in data["collections"]]))
+            except Exception as exc:
+                data["node_error"] = data["node_error"] or \
+                    f"the collections could not be read: {exc}"
         try:
             # The mempool first, then the blocks, so an offer made a minute
             # ago is here rather than in ten minutes' time. A transaction is

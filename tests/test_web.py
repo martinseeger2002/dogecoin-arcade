@@ -189,7 +189,10 @@ def test_the_exchange_reads_the_chain_rather_than_a_list(client):
     app, _ = client
     for tab, empty in (("mintpads", "No mintpads on this chain yet"),
                        ("tokens", "is selling tokens"),
-                       ("market", "No NFTs are listed for sale")):
+                       # The marketplace is the list of collections, and an
+                       # empty chain has none -- nor a shop selling a single
+                       # piece under it.
+                       ("market", "No collections are indexed on")):
         body = app.get(f"/exchange?tab={tab}").text
         assert empty in body, tab
     offers = app.get("/exchange?tab=offers").text

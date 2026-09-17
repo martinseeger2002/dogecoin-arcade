@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% import "_chart.html" as chart %}
+{% block title %}{{ summary.collection }} · DogecoinArcade{% endblock %}
+{% block body %}
+<div id="live" data-generation="{{ state.generation }}" class="live"></div>
+
+<h1>{{ summary.collection }}</h1>
+<p class="sub">{{ "{:,}".format(summary.count) }} piece{{ '' if summary.count == 1 else 's' }}
+  on {{ chain.label }} by
+  {% if tags.get(summary.creator) %}<strong>@{{ tags[summary.creator] }}</strong>
+  {%- else %}<span class="mono">{{ summary.creator }}</span>{% endif %}.
+  {% if for_sale %}{{ for_sale }} for sale{% else %}None listed for sale{% endif %}{% if offered %},
+  {{ offered }} with an offer standing{% endif %}.</p>
+
+<div class="row" style="margin-bottom:14px">
+  <a class="btn ghost small" href="/exchange?tab=market">All collections</a>
+  <a class="btn ghost small" href="/collections/{{ summary.creator }}/{{ summary.collection|urlencode }}">Traits</a>
+</div>
+
+{% if node_error %}<div class="msg err">{{ node_error }}</div>{% endif %}
+
+{% if prices %}
+<div class="panel" style="margin-bottom:14px">
+  {{ chart.headline(prices.stats, prices.unit) }}
+  {{ chart.candles(prices.slots, prices.unit) }}
+</div>
+{% endif %}
+
+{% if yours %}
+<h2>Yours in this collection &mdash; {{ yours|length }}</h2>
+<div class="panel" style="margin-bottom:16px">
+  <table>
+    {% for row in yours %}
+    <tr>
+      <td style="width:52px">
+        {% if row.held and row.content_type.startswith('image/') %}
+        <img src="/content/{{ row.txid }}" alt="{{ summary.collection }} #{{ row.edition }}"
+             loading="lazy" style="width:44px;height:44px;object-fit:cover;border-radius:8px;display:block">
+        {% endif %}</td>
+      <td><a href="/inscriptions/{{ row.txid }}/view">
+            {%- set data = row.json|fromjson -%}
+            {{ data.name if data and data.name else (summary.collection ~ ' #' ~ row.edition) }}</a>
+        <div class="muted" style="font-size:.78rem">#{{ "{:,}".format(row.number) }}</div></td>
+      <td style="text-align:right;white-space:nowrap">
+        {% if row.listing %}
+          <span class="pill ok">for sale</span> <strong>{{ row.listing.price }}</strong>
+          <a class="btn ghost small" href="/inscriptions/{{ row.listing.shop }}/view">Its listing</a>
+        {% else %}
+          <a class="btn small" href="/exchange/sell/{{ row.txid }}">List for sale</a>
+        {% endif %}
+        <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/send">Send</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+<div class="cards">
+  {% for row in rows %}
+  {% set data = row.json|fromjson %}
+  <div class="card">
+    <div class="row" style="align-items:baseline">
+      <strong>{{ data.name if data and data.name else (summary.collection ~ ' #' ~ row.edition) }}</strong>
+      <span class="muted" style="margin-left:auto">#{{ "{:,}".format(row.number) }}</span>
+    </div>
+    {% if row.held and row.content_type.startswith('image/') %}
+      <a class="media" href="/content/{{ row.txid }}?download=1"
+         onclick="arcadeOpenImage('/content/{{ row.txid }}', '#{{ row.number }}',
+                  '/content/{{ row.txid }}?download=1'); return false">
+        <img src="/content/{{ row.txid }}" alt="{{ summary.collection }} #{{ row.edition }}"
+             loading="lazy" style="max-width:100%;border-radius:8px;margin:8px 0"></a>
+    {% endif %}
+
+    {% if row.listing %}
+      <p style="margin:6px 0 2px"><span class="pill ok">for sale</span>
+        <strong>{{ row.listing.price }}</strong></p>
+    {% endif %}
+
+    <table>
+      <tr><td class="muted" style="width:74px">Made by</td>
+          <td class="mono" style="word-break:break-all">
+            {%- if tags.get(row.creator) %}<strong>@{{ tags[row.creator] }}</strong>
+            {%- else %}{{ row.creator }}{% endif %}</td></tr>
+      <tr><td class="muted">Held by</td>
+          <td class="mono" style="word-break:break-all">
+            {%- if row.mine %}<strong>you</strong>
+            {%- elif tags.get(row.owner) %}<strong>@{{ tags[row.owner] }}</strong>
+            {%- else %}{{ row.owner }}{% endif %}</td></tr>
+      {% if row.offers %}
+      <tr><td class="muted">Offers</td>
+          <td>{{ row.offers }} standing</td></tr>
+      {% endif %}
+    </table>
+
+    {% if row.mine %}
+      <div class="row" style="margin-top:8px">
+        <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view">Open</a>
+        {% if row.listing %}
+          <a class="btn ghost small" href="/inscriptions/{{ row.listing.shop }}/view">Its listing</a>
+        {% else %}
+          <a class="btn small" href="/exchange/sell/{{ row.txid }}">List for sale</a>
+        {% endif %}
+        <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/send">Send</a>
+      </div>
+    {% else %}
+      <form method="post" action="/exchange/offer" class="row"
+            style="gap:6px;margin-top:8px;align-items:center">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <input type="hidden" name="inscription" value="{{ row.txid }}">
+        <input type="hidden" name="back" value="{{ request.url.path }}?page={{ page }}">
+        <input autocomplete="off" name="amount" inputmode="decimal" placeholder="amount"
+               style="flex:0 0 90px">
+        <select autocomplete="off" name="kind" style="flex:0 0 108px"
+                onchange="this.form.querySelector('[name=property_id]').hidden = this.value !== 'token'">
+          <option value="coins">coins</option>
+          {% if tokens %}<option value="token">a token</option>{% endif %}
+        </select>
+        {% if tokens %}
+        <select autocomplete="off" name="property_id" hidden style="flex:1 1 140px">
+          {% for t in tokens %}
+          <option value="{{ t.property_id }}">{{ t.name }} &mdash; {{ t.display }}</option>
+          {% endfor %}
+        </select>
+        {% endif %}
+        <button type="submit" class="small">Make offer</button>
+      </form>
+      <div class="row" style="margin-top:6px">
+        <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view">Open</a>
+        {% if row.listing %}
+          <a class="btn small" href="/inscriptions/{{ row.listing.shop }}/view">Buy it</a>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+{% if not rows %}
+  <div class="panel empty"><p>Nothing of this collection is indexed yet.</p></div>
+{% endif %}
+
+{% if pages > 1 %}
+<nav class="pager">
+  {% if page > 1 %}<a class="btn ghost small" href="?page={{ page - 1 }}">Previous</a>{% endif %}
+  <span class="muted">page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}<a class="btn ghost small" href="?page={{ page + 1 }}">Next</a>{% endif %}
+  <form method="get" class="row" style="gap:6px;margin-left:auto">
+    <label class="muted" for="jump" style="margin:0">Page</label>
+    <input autocomplete="off" type="number" name="page" id="jump" min="1"
+           max="{{ pages }}" value="{{ page }}" style="width:5.5rem">
+    <button class="ghost small" type="submit">Go</button>
+  </form>
+</nav>
+{% endif %}
+{% endblock %}

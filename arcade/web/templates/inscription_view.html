@@ -171,6 +171,11 @@
     <a class="btn ghost small" href="/r/inscription/{{ row.txid }}">JSON</a>
     <a class="btn ghost small" href="/r/metadata/{{ row.txid }}">Metadata</a>
     {% if mine %}
+      {% if sale %}
+        <a class="btn ghost small" href="/inscriptions/{{ sale.shop }}/view">Its listing &mdash; {{ sale.price }}</a>
+      {% else %}
+        <a class="btn ghost small" href="/exchange/sell/{{ row.txid }}">List for sale</a>
+      {% endif %}
       <a class="btn small" href="/inscriptions/{{ row.txid }}/send">Send</a>
     {% endif %}
   </div>

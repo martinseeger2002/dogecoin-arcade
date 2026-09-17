@@ -277,18 +277,36 @@ questions.
   * **Nothing is matched by the engine.** A fill is a swap — one transaction
     carrying both legs, which is the only way a coin leg and a token leg move
     together. The book is what is on offer; the swap is how it settles.
-* **NFTs** — single NFTs for sale, part of a collection or not. An NFT
-  that has moved drops off by itself: the listing is read from the chain
-  every time, so there is nothing to un-list.
+* **NFTs** — the marketplace: every collection on the chain, one row each,
+  with how many of it are for sale, how many have an offer standing, and what
+  it last traded for. The row's picture is **#1 of the set**. Click one and
+  the whole collection opens — **what can be bought first**, then the pieces
+  somebody has offered for, then the rest in the order it was inscribed.
+  Every card names **who made it and who holds it now**, and carries a
+  *Make offer* box. Shops selling a single NFT are listed under the table.
+  An NFT that has moved drops off by itself: the listing is read from the
+  chain every time, so there is nothing to un-list.
 
 **Charts of what actually traded.** Tokens and NFTs both get candles, built
 from the swaps on the chain — there is no order book to draw, so what is
 drawn is what people paid. A day with no trade is a dot on the axis, never a
-line ruled to the next price. **One chart per collection**, and one currency
-to a chart: what a Goofball goes for says nothing about what a Doge Punk
-goes for, and coins and tokens on one axis is adding pounds to metres. Drawn
-as SVG in the page: no charting library is fetched from anywhere, and the
+line ruled to the next price. **One chart per collection**, drawn on that
+collection's own page beside the pieces it prices, and one currency to a
+chart: what a Goofball goes for says nothing about what a Doge Punk goes
+for, and coins and tokens on one axis is adding pounds to metres. Drawn as
+SVG in the page: no charting library is fetched from anywhere, and the
 page's CSP would stop it if it tried.
+
+**Putting one up for sale.** *List for sale* — on any NFT of yours, from
+**Wallet → NFTs**, from its card in a collection, or from the piece's own
+page — asks a price and inscribes a **listing**: a small page whose JSON
+names a shop giving that one piece for that price. It is priced before it is
+paid for, like every other thing here that spends, and it is written from the
+address that holds the piece, because a shop's seller is the shop
+inscription's own owner and every buyer's node checks that that address still
+holds what it sells. From the block it lands in, anybody's node can read the
+price — a listing is public the way the piece is, not a note this wallet
+keeps. Selling it, or sending it away, ends the listing with nobody to tell.
 
 **An offer is made with what you have.** The form lists the tokens this
 wallet holds with their balances, and the coin balance beside the coins

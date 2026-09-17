@@ -162,9 +162,13 @@ def leg_of(spec: dict, index: Any) -> I.Leg:
     """A listing's spec as a concrete leg. Not for `collection`: that is
     picked by the seller at offer time (pick_item)."""
     if "inscription" in spec:
+        # A number is what people say out loud, so a listing written by hand
+        # may name one -- but a txid is 64 characters and may be all digits,
+        # and reading one as a number sells whatever happens to have that
+        # number. Length settles it before the digits do.
         key = spec["inscription"]
-        row = index.inscription(int(key) if isinstance(key, int) or str(key).isdigit()
-                                else str(key))
+        numbered = isinstance(key, int) or (str(key).isdigit() and len(str(key)) != 64)
+        row = index.inscription(int(key) if numbered else str(key))
         if row is None:
             raise SwapError(f"there is no inscription {key}")
         return I.Leg(I.LEG_INSCRIPTION, txid=bytes.fromhex(row["txid"]))

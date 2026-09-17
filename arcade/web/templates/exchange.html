@@ -1,6 +1,5 @@
 {% extends "base.html" %}
 {% import "_chains.html" as chains %}
-{% import "_chart.html" as chart %}
 {% block title %}Exchange · DogecoinArcade{% endblock %}
 {% block body %}
 {% macro tabs(current) %}
@@ -183,27 +182,60 @@
   {% endif %}
 
 {% else %}
-  <p class="sub">Single NFTs for sale, collection or not. Any NFT can be
-    offered for even when it is not listed — open it and press Make offer.</p>
-  {% for c in charts %}
-  <div class="panel" style="margin-bottom:14px">
-    <div class="row" style="gap:12px;align-items:flex-start">
-      {% if c.thumb %}
-      <a class="media" href="/content/{{ c.thumb }}" title="one of them, at random"
-         style="flex:0 0 96px">
-        <img src="/content/{{ c.thumb }}" alt="one piece of this collection"
-             loading="lazy" style="width:96px;border-radius:8px"></a>
-      {% endif %}
-      <div style="flex:1;min-width:0">
-        <h3 style="margin:0 0 8px">{{ c.title }}</h3>
-        {{ chart.headline(c.stats, c.unit) }}
-      </div>
-    </div>
-    {{ chart.candles(c.slots, c.unit) }}
+  <p class="sub">Collections on {{ chain.label|lower }}, each one a market of its
+    own. Open one for the whole set &mdash; what is for sale first, then the
+    rest as it was inscribed. Any NFT can be offered for, listed or not.</p>
+
+  {% if collections %}
+  <div class="panel">
+    <table class="wallets">
+      <tr class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.06em">
+        <td colspan="2">Collection</td><td style="text-align:right">Items</td>
+        <td style="text-align:right">For sale</td>
+        <td style="text-align:right">Offers</td>
+        <td style="text-align:right">Last</td>
+        <td style="text-align:right">24h</td></tr>
+      {% for c in collections %}
+      {% set where = '/exchange/collection/' ~ c.creator ~ '/' ~ c.name|urlencode %}
+      <tr>
+        <td style="width:52px">
+          <a href="{{ where }}" title="#{{ c.cover_edition or 1 }} of {{ c.name }}">
+            {%- if c.cover %}
+            <img src="/content/{{ c.cover }}" alt="{{ c.name }} #{{ c.cover_edition or 1 }}"
+                 loading="lazy" style="width:44px;height:44px;object-fit:cover;border-radius:8px;display:block">
+            {%- else %}<span class="muted mono" style="font-size:.7rem">no art</span>{% endif %}</a></td>
+        <td><a href="{{ where }}"><strong>{{ c.name }}</strong></a>
+          <div class="muted" style="font-size:.78rem">
+            {%- if tags.get(c.creator) %}@{{ tags[c.creator] }}
+            {%- else %}<span class="mono">{{ c.creator[:12] }}…</span>{% endif %}</div></td>
+        <td style="text-align:right">{{ "{:,}".format(c.count) }}</td>
+        <td style="text-align:right">
+          {%- if c.for_sale %}<strong>{{ c.for_sale }}</strong>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td style="text-align:right">
+          {%- if c.offers %}{{ c.offers }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="mono" style="text-align:right">
+          {%- if c.last is not none %}{{ "%.4f"|format(c.last) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td style="text-align:right">
+          {%- if c.change is not none %}<span style="color:{{ 'var(--ok)' if c.change >= 0 else 'var(--bad)' }}">
+            {{ '+' if c.change >= 0 }}{{ "%.1f"|format(c.change) }}%</span>
+          {%- else %}<span class="muted">—</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
   </div>
-  {% endfor %}
+  {% else %}
+  <div class="panel empty"><p>No collections are indexed on {{ chain.label|lower }} yet.</p>
+    <p class="muted" style="font-size:.86rem">A collection appears here because it
+      is on the chain, not because anybody listed it. Inscribe one from the
+      <a href="/inscriptions/collection">collection wizard</a>.</p></div>
+  {% endif %}
+
+  <h2>Shops selling single NFTs</h2>
   {% if not market %}
-    <div class="panel empty"><p>No NFTs are listed for sale on this chain.</p></div>
+    <div class="panel empty"><p>No shop on {{ chain.label|lower }} is selling a
+      single NFT.</p>
+      <p class="muted" style="font-size:.86rem">Put one up from
+        <a href="/wallet/nfts">your NFTs</a>, or from its card in a collection.</p></div>
   {% else %}
     <div class="cards">{% for s in market %}{{ shopcard(s, 'Buy') }}{% endfor %}</div>
   {% endif %}

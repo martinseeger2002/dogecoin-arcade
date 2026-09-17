@@ -3,7 +3,7 @@
 {% import "_wallettabs.html" as wt %}
 {% block title %}Your NFTs · DogecoinArcade{% endblock %}
 {% block body %}
-{% macro card(row, tags) %}
+{% macro card(row, tags, listed) %}
 <div class="card">
   <div class="row" style="align-items:baseline">
     <strong>#{{ "{:,}".format(row.number) }}</strong>
@@ -32,18 +32,29 @@
           {% if row.edition is not none %}<span class="muted">#{{ row.edition }}</span>{% endif %}</td></tr>
     {% endif %}
   </table>
+  {% set sale = listed.get(row.txid) %}
+  {% if sale %}
+    <p style="margin:6px 0 0"><span class="pill ok">for sale</span>
+      <strong>{{ sale.price }}</strong></p>
+  {% endif %}
   <div class="row" style="margin-top:8px">
     <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view">Open</a>
-    <a class="btn small" href="/inscriptions/{{ row.txid }}/send">Send</a>
+    {% if sale %}
+      <a class="btn ghost small" href="/inscriptions/{{ sale.shop }}/view">Its listing</a>
+    {% else %}
+      <a class="btn small" href="/exchange/sell/{{ row.txid }}">List for sale</a>
+    {% endif %}
+    <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/send">Send</a>
   </div>
 </div>
 {% endmacro %}
 
 <h1>Wallet</h1>
 {{ wt.tabs('nfts') }}
-<p class="sub">The inscriptions held by an address in this wallet. Everything
-  inscribed on {{ chain.label|lower }}, yours or not, is on the
-  <a href="/nfts">NFTs</a> page.</p>
+<p class="sub">The inscriptions held by an address in this wallet. Put one up
+  for sale and it appears in the <a href="/exchange?tab=market">Exchange</a>,
+  in its collection, for anybody's node to read. Everything inscribed on
+  {{ chain.label|lower }}, yours or not, is on the <a href="/nfts">NFTs</a> page.</p>
 
 {% if node_error %}<div class="msg err">{{ node_error }}</div>{% endif %}
 
@@ -58,7 +69,7 @@
     <p class="muted">Newest {{ mine|length }} of {{ "{:,}".format(my_total) }}.</p>
   {% endif %}
   <div class="cards">
-    {% for row in mine %}{{ card(row, tags) }}{% endfor %}
+    {% for row in mine %}{{ card(row, tags, listed) }}{% endfor %}
   </div>
 {% endif %}
 {% endblock %}
