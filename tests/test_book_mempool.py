@@ -206,3 +206,33 @@ def test_a_node_that_is_not_there_is_not_an_error(index, monkeypatch):
     monkeypatch.setattr(index, "_rpc", broken)
     assert index.pending_orders() == ([], set())
     assert index.book(TOKEN) == {"asks": [], "bids": []}
+
+
+def test_at_one_price_the_oldest_is_first(index):
+    """Price, then time. At the same price the order placed first is filled
+    first, and a maker who queues behind somebody is entitled to rely on that.
+
+    The pool sorts LAST within a price, not first: an unmined order has
+    block_height 0, so a naive time sort put the newest thing on the book
+    ahead of orders that had stood for hours -- time priority backwards
+    (D-083).
+    """
+    with index.open() as db:
+        for txid, height, tokens, coins in (
+            ("aa" * 32, 700, 100_00000000, 1_00000000),    # 0.01, later
+            ("bb" * 32, 500, 100_00000000, 1_00000000),    # 0.01, earliest
+            ("cc" * 32, 600, 100_00000000, 50000000),      # 0.005, cheapest
+        ):
+            db.conn.execute(
+                "INSERT INTO book_order(txid,block_height,position,address,"
+                "sale_property,sale_amount,want_property,want_amount,reserved) "
+                "VALUES(?,?,0,?,?,?,0,?,?)",
+                (txid, height, MAKER, TOKEN, tokens, coins, tokens))
+        db.conn.commit()
+    index.node.pool = {"c1" * 32: a_transaction("c1" * 32, an_ask(
+        tokens=100_00000000, coins=1_00000000))}          # 0.01, unmined
+
+    order = [a["txid"][:2] for a in index.book(TOKEN)["asks"]]
+    assert order == ["cc", "bb", "aa", "c1"], (
+        "cheapest first; then oldest first at the same price; the pool last "
+        "because it is the newest of all")

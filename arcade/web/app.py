@@ -4878,6 +4878,37 @@ def create_app(state: AppState) -> FastAPI:
             state.flash(str(exc), "err")
         return RedirectResponse("/exchange?tab=offers", status_code=303)
 
+    def _earliest_at_or_better(index, clicked: dict, tokens: int) -> dict | None:
+        """The order a fill should actually take, given the one pressed.
+
+        The book is already sorted price-then-time, so this is the first row
+        that is not worse on price, has enough left, is not this wallet's, and
+        belongs to somebody this node can send a message to. An unreachable
+        maker is skipped rather than refused: their order stands, but it
+        cannot be negotiated with, and stopping the queue on it would let one
+        unreachable wallet block a price for everybody (D-042).
+        """
+        from fractions import Fraction
+
+        try:
+            book = index.book(int(clicked["sale_property"]))["asks"]
+        except Exception:
+            return None
+        want = Fraction(clicked["want_amount"], clicked["sale_amount"])
+        for row in book:
+            if row.get("pending") or row["txid"] == clicked["txid"]:
+                continue
+            if Fraction(row["want_amount"], row["sale_amount"]) > want:
+                break                     # sorted, so nothing after is better
+            if row["sale_amount"] < tokens:
+                continue
+            try:
+                _key_at(row["address"])
+            except Exception:
+                continue                  # nobody to ask; leave their order be
+            return row
+        return None
+
     @app.post("/exchange/fill")
     def fill_order(request: Request, order: str = Form(""), amount: str = Form(""),
                    property_id: str = Form(""), csrf_token: str = Form("")):
@@ -4911,6 +4942,14 @@ def create_app(state: AppState) -> FastAPI:
             # the maker's answer is checked against our own arithmetic rather
             # than believed. Rounded up, which is what the engine's price guard
             # requires of a fill (D-062).
+            # Price, then time. Somebody pressing Take on the third row at a
+            # price is asking to buy at that price, not to choose which of
+            # three identical offers gets the trade -- and the maker who
+            # queued first is entitled to be filled first (D-083). So the
+            # order actually taken is the earliest one at that price or
+            # better with enough left, skipping any this wallet cannot reach.
+            row = _earliest_at_or_better(index, row, tokens) or row
+            prop = index.property(row["sale_property"])
             coins = -(-row["want_amount"] * tokens // row["sale_amount"])
             with chain.rpc() as rpc:
                 own = _ledger_addresses(rpc)

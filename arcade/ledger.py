@@ -739,8 +739,22 @@ class LedgerIndex:
             row["coins"] = coins
             row["price"] = Fraction(coins, tokens)
             (asks if selling_token else bids).append(row)
-        asks.sort(key=lambda r: (r["price"], r["block_height"], r["position"]))
-        bids.sort(key=lambda r: (-r["price"], r["block_height"], r["position"]))
+        # Price first, then time: at the same price the order that was placed
+        # first is filled first, which is what every order book means by fair
+        # and is the rule a maker is entitled to rely on when they queue
+        # behind somebody (D-083).
+        #
+        # `pending` sorts LAST within a price rather than first. An unmined
+        # order has block_height 0, so a naive time sort put the newest thing
+        # on the book ahead of orders that had been standing for hours --
+        # time priority exactly backwards. It is the newest by definition:
+        # it has not been mined yet.
+        def when(row):
+            return (1, 0, 0) if row.get("pending") else (0, row["block_height"],
+                                                         row["position"])
+
+        asks.sort(key=lambda r: (r["price"], when(r)))
+        bids.sort(key=lambda r: (-r["price"], when(r)))
         return {"asks": asks[:limit], "bids": bids[:limit]}
 
     def pending_orders(self) -> tuple[list[dict], set[str]]:
