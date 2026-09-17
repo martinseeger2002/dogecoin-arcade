@@ -14,8 +14,7 @@
     <table>
       <tr><td class="muted" style="width:110px;border:0">txid</td>
           <td class="mono" style="font-size:.78rem;border:0;word-break:break-all">{{ tag_prepared.txid }}</td></tr>
-      <tr><td class="muted" style="border:0">fee</td>
-          <td style="border:0">{{ "%.8f"|format(tag_prepared.fee_sats / 100000000) }}</td></tr>
+
     </table>
     <form method="post" action="/tags/claim" style="margin-top:12px">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
@@ -45,7 +44,7 @@
     <p class="muted" style="font-size:.84rem;margin:9px 0 0">
       A name that belongs to your address, claimed on the chain: lower case,
       a&ndash;z, 0&ndash;9 and underscore, {{ mine.min }} to {{ mine.max }}
-      characters. First claim wins, and it costs a small fee.
+      characters. First claim wins.
       Wherever this wallet shows who somebody is, it shows their @tag if the
       chain gives them one &mdash; and unlike a name, that is something a
       reader can check.</p>
@@ -76,8 +75,7 @@
           <td class="mono" style="font-size:.78rem;border:0;word-break:break-all">{{ prepared.txid }}</td></tr>
       <tr><td class="muted" style="border:0">size</td>
           <td style="border:0">{{ "{:,}".format(prepared.size) }} bytes</td></tr>
-      <tr><td class="muted" style="border:0">fee</td>
-          <td style="border:0">{{ "%.8f"|format(prepared.fee_sats / 100000000) }}</td></tr>
+
     </table>
     <form method="post" action="/publish-key" style="margin-top:12px">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
@@ -106,7 +104,7 @@
     </table>
     <p class="muted" style="margin-top:10px;font-size:.87rem">
       Anyone who scans finds you with their address book filled in, instead of a
-      row of base58. It is public and permanent, and it costs a small fee.</p>
+      row of base58. It is public and permanent.</p>
   {% else %}
     <p class="muted" style="margin:0">Waiting for the testnet node. Nothing to do.</p>
   {% endif %}

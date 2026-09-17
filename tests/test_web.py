@@ -2731,3 +2731,20 @@ def test_a_contact_saved_by_mainnet_address_is_named_too(client, monkeypatch):
 
     monkeypatch.setattr(type(state), "token_index", lambda self, chain: Index())
     assert "@payee" in page.get("/contacts").text
+
+
+def test_nothing_on_the_address_book_warns_about_a_fee(client):
+    """Publishing a key and claiming a tag are messaging transactions, and
+    messaging is testnet only and always will be (D-010, D-032). A warning
+    about what something costs, when it costs test coins that arrive free
+    from a faucet, is noise dressed as caution -- and noise is how a real
+    warning stops being read (D-075).
+    """
+    page, _ = client
+    book = " ".join(page.get("/contacts").text.split())
+    for phrase in ("small fee", "costs a fee", "a few test coins"):
+        assert phrase not in book, f"the address book still says {phrase!r}"
+    # And the thing that IS worth saying is still said. Which panels render
+    # depends on what this wallet has already published, so assert the one
+    # that is always there: what a tag claim actually commits you to.
+    assert "First claim wins" in book
