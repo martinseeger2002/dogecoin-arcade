@@ -310,10 +310,15 @@ class BlockWatcher:
             # says "look now", the sender is still checked, and what installs
             # is decided by the signature on the manifest. A notice that never
             # confirms costs one fetch (D-087).
-            revision = releaselib.revision_in(post.get("text") or "")
+            # `post["text"]`, not `post.get(...)`: group_posts returns
+            # sqlite3.Row, which indexes but has no .get. This line had never
+            # executed -- the function returned earlier while the tag lookup
+            # answered "nobody" -- so the tag fix did not break it, it
+            # unmasked it (D-090).
+            revision = releaselib.revision_in(post["text"] or "")
             if not revision or revision == self._release_seen:
                 continue
-            if post.get("sender") != who:
+            if post["sender"] != who:
                 # Anybody may post on a public board. Only the node that
                 # published the tag is telling us about a release.
                 continue

@@ -130,3 +130,45 @@ def test_both_sides_ask_the_same_table_who_holds_the_tag(tmp_path, monkeypatch):
     store.add_key_announcement("aa" * 32, "nPublisher", b"\x01" * 32, "fp", 100,
                                1700, tag="theoldname")
     assert watcher._release_publisher() == "nPublisher"
+
+
+def test_the_loop_runs_against_a_real_store(tmp_path, monkeypatch):
+    """The test that would have caught it.
+
+    `_check_release_notices` returned early for its whole life, because the
+    tag lookup answered "nobody holds that". When the lookup was fixed the
+    loop body ran for the first time and threw on its first line:
+    `group_posts` returns sqlite3.Row, which indexes but has no `.get`.
+
+    Every existing test covered the lookup with fakes. None called this
+    function with posts from a real store, so the line the fix unlocked had
+    never been executed by anything -- and 1,247 passing tests said nothing
+    (D-090).
+    """
+    from arcade.messaging.store import MessageStore
+    from arcade.web.state import AppState, ChainContext
+    from arcade.web.watcher import BlockWatcher
+
+    state = AppState(
+        home=tmp_path,
+        messaging=ChainContext(network="regtest", role="messaging", label="T"),
+        ledger=ChainContext(network="main", role="ledger", label="M"))
+    store = MessageStore(state.store_path)
+    store.add_group_post("regtest", release.RELEASE_CHANNEL, "aa" * 32, 100, 1700,
+                         "nPublisher", "@them", release.notice("abc1234"))
+    store.add_group_post("regtest", release.RELEASE_CHANNEL, "bb" * 32, 101, 1701,
+                         "nSomebodyElse", "@other", release.notice("bad0000"))
+    store.conn.commit()
+
+    watcher = BlockWatcher(state)
+    monkeypatch.setattr(watcher, "_release_publisher", lambda: "nPublisher")
+    watcher._update_checked = 999999.0
+    watcher._check_release_notices()
+
+    assert watcher._release_seen == "abc1234", "the publisher's, not the stranger's"
+    assert watcher._update_checked == 0.0, "and it asks the site now"
+
+    # Twice is once: a notice already acted on does not keep resetting the poll.
+    watcher._update_checked = 999999.0
+    watcher._check_release_notices()
+    assert watcher._update_checked == 999999.0
