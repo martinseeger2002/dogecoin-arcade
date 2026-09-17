@@ -209,6 +209,32 @@ names itself the same way.
 
 ---
 
+**A set can describe itself, on its #1.** The first piece is the one a
+collection is known by, so that is where collection-level details are read
+from — put them in a `collection` object beside the name:
+
+```json
+{"name": "Goofball #1", "edition": 1,
+ "collection": {"name": "Goofball",
+                "description": "100 hand drawn goofballs",
+                "url": "https://goofball.example",
+                "twitter": "@goofballs",
+                "supply": 100}}
+```
+
+`description`, `url` (or `website`, or `external_url`), `twitter`, `discord`,
+`telegram`, `supply` and `artist` are read; everything else is ignored, text
+is capped, and a link that is not http(s) is not shown as a link — an
+inscription is written by anybody and this ends up on a page. A HashLips
+build already writes `description` and `external_url` at the top level of
+every item, and those are read when there is no object.
+
+**Membership is not decided by any of that.** A piece belongs to the set its
+own `name` or a `collection` STRING says, exactly as before — an object is
+not a string, so a set that describes itself is still filed by its name. Two
+nodes cannot disagree about what is in a collection because one of them
+understood a richer JSON.
+
 ## Shops and swaps
 
 A shop is an inscription. Its JSON lists what it sells and where its owner's
@@ -278,14 +304,19 @@ questions.
     carrying both legs, which is the only way a coin leg and a token leg move
     together. The book is what is on offer; the swap is how it settles.
 * **NFTs** — the marketplace: every collection on the chain, one row each,
-  with how many of it are for sale, how many have an offer standing, and what
-  it last traded for. The row's picture is **#1 of the set**. Click one and
-  the whole collection opens — **what can be bought first**, then the pieces
-  somebody has offered for, then the rest in the order it was inscribed.
-  Every card names **who made it and who holds it now**, and carries a
-  *Make offer* box. Shops selling a single NFT are listed under the table.
-  An NFT that has moved drops off by itself: the listing is read from the
-  chain every time, so there is nothing to un-list.
+  with its **floor**, how many of it are for sale, how many have an offer
+  standing, and what it last traded for **in coins** — a piece sold for a
+  token is its own market, and one axis cannot hold both. The row's picture
+  is **#1 of the set**. Click one and the whole collection opens — **what can
+  be bought first** (cheapest first, so the first tile is the floor), then
+  the pieces somebody has offered for, then the rest in the order it was
+  inscribed. The page opens with the set's #1 as its face, what the set says
+  about itself, and a strip of numbers: floor, for sale, offers, owners,
+  pieces and what has sold. Every piece is a tile — the picture, its name,
+  **who made it and who holds it now**, its price if it has one, and a
+  *Make offer* box on every one of them. Shops selling a single NFT are
+  listed under the table. An NFT that has moved drops off by itself: the
+  listing is read from the chain every time, so there is nothing to un-list.
 
 **Charts of what actually traded.** Tokens and NFTs both get candles, built
 from the swaps on the chain — there is no order book to draw, so what is

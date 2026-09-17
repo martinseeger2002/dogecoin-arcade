@@ -48,6 +48,7 @@ import hashlib
 import json as jsonlib
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 MAGIC = b"INSC"
 VERSION = 1
@@ -196,6 +197,90 @@ def collection_of(json_text: str) -> tuple[str, int | None, str] | None:
     if not collection or len(collection) > 200:
         return None
     return collection, edition, name[:200]
+
+
+#: What a set may say about ITSELF, on its #1. Read as a whitelist rather
+#: than as whatever the JSON happens to hold: this ends up on a page, and an
+#: inscription is written by anybody.
+COLLECTION_FIELDS = ("description", "url", "twitter", "discord", "telegram",
+                     "supply", "artist")
+
+#: Where each of those may be spelled from, in order. `external_url` is the
+#: name the rest of the NFT world uses for a collection's own site, and a
+#: HashLips build already writes `description` at the top level of every item.
+_COLLECTION_ALIASES = {
+    "description": ("description",),
+    "url": ("url", "website", "external_url", "externalUrl"),
+    "twitter": ("twitter", "x", "twitter_url", "twitterUrl"),
+    "discord": ("discord", "discord_url", "discordUrl"),
+    "telegram": ("telegram",),
+    "supply": ("supply", "total", "count"),
+    "artist": ("artist", "creator", "by"),
+}
+
+#: A link on a page is a link somebody can click, so only these are shown.
+_LINK_SCHEMES = ("https://", "http://")
+
+
+def collection_details(json_text: str) -> dict[str, Any]:
+    """What an item's JSON says about the COLLECTION, not about itself.
+
+    The #1 of a set is where this is read from (ledger.collection_cover): it
+    is the piece a set is known by, it is inscribed first, and putting the
+    description on every item would pay for it five hundred times.
+
+    Two spellings, because both already exist on disk. A `collection` OBJECT
+    holds them together::
+
+        {"name": "Goofball #1", "edition": 1,
+         "collection": {"name": "Goofball", "description": "...",
+                        "url": "https://...", "twitter": "..."}}
+
+    and a HashLips build writes `description` and `external_url` at the top
+    level of every item, which is read when there is no object.
+
+    Membership is NOT decided here and does not change: `collection_of`
+    reads a string `collection` or the `Prefix #12` name, and an object is
+    not a string, so a set that describes itself is still filed by its name
+    -- two nodes cannot disagree about what is in a collection because one
+    of them understood a richer JSON.
+
+    Everything is a whitelist with a length cap, and a link must be http(s):
+    this is inscribed text, and it is about to be put on a page.
+    """
+    if not json_text:
+        return {}
+    try:
+        data = jsonlib.loads(json_text)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    inner = data.get("collection")
+    source = inner if isinstance(inner, dict) else data
+    out: dict[str, Any] = {}
+    for field in COLLECTION_FIELDS:
+        for alias in _COLLECTION_ALIASES[field]:
+            if alias not in source:
+                continue
+            value = source[alias]
+            if field == "supply":
+                if isinstance(value, bool) or not isinstance(value, int):
+                    continue
+                if 0 < value <= 10_000_000:
+                    out[field] = value
+            elif isinstance(value, str) and value.strip():
+                text = " ".join(value.split())[:400]
+                if field in ("url", "discord", "telegram") and \
+                        not text.lower().startswith(_LINK_SCHEMES):
+                    continue
+                if field == "twitter":
+                    # A handle or a link; the page makes a link of either.
+                    text = text[:80]
+                out[field] = text
+            if field in out:
+                break
+    return out
 
 
 def chunk_header(inscription_id: bytes, countdown: int, clen: int,

@@ -191,9 +191,10 @@
     <table class="wallets">
       <tr class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.06em">
         <td colspan="2">Collection</td><td style="text-align:right">Items</td>
+        <td style="text-align:right">Floor &middot; coins</td>
         <td style="text-align:right">For sale</td>
         <td style="text-align:right">Offers</td>
-        <td style="text-align:right">Last</td>
+        <td style="text-align:right">Last &middot; coins</td>
         <td style="text-align:right">24h</td></tr>
       {% for c in collections %}
       {% set where = '/exchange/collection/' ~ c.creator ~ '/' ~ c.name|urlencode %}
@@ -209,6 +210,9 @@
             {%- if tags.get(c.creator) %}@{{ tags[c.creator] }}
             {%- else %}<span class="mono">{{ c.creator[:12] }}…</span>{% endif %}</div></td>
         <td style="text-align:right">{{ "{:,}".format(c.count) }}</td>
+        <td class="mono" style="text-align:right">
+          {%- if c.floor %}<strong>{{ "%.4f"|format(c.floor / 100000000) }}</strong>
+          {%- else %}<span class="muted">—</span>{% endif %}</td>
         <td style="text-align:right">
           {%- if c.for_sale %}<strong>{{ c.for_sale }}</strong>{% else %}<span class="muted">—</span>{% endif %}</td>
         <td style="text-align:right">

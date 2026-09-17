@@ -147,6 +147,36 @@ button.tag.switch:hover{filter:brightness(.85)}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
 @media(max-width:640px){.two{grid-template-columns:1fr}}
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
+
+/* A collection as a market: a hero, a strip of numbers, and a wall of pieces.
+   Laid out the way marketplaces lay one out, because that is the shape people
+   already know how to read -- the picture first and the price under it, not a
+   table with a thumbnail in it (D-096). */
+.collhero{display:flex;gap:16px;align-items:flex-start;margin:0 0 14px;flex-wrap:wrap}
+.collhero img{width:104px;height:104px;object-fit:cover;border-radius:14px;
+  border:1px solid var(--line);background:var(--panel)}
+.collhero .who{flex:1 1 240px;min-width:0}
+.collhero h1{margin:0 0 4px}
+.statbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(116px,1fr));
+  gap:10px;margin:0 0 18px}
+.stat{border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:10px 12px}
+.stat b{display:block;font-size:1.04rem;font-variant-numeric:tabular-nums}
+.stat span{font-size:.68rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(186px,1fr));gap:12px}
+.tile{border:1px solid var(--line);border-radius:12px;background:var(--panel);
+  overflow:hidden;display:flex;flex-direction:column}
+.tile .art{display:block;aspect-ratio:1/1;background:var(--bg) center/cover no-repeat;
+  image-rendering:pixelated}
+.tile .body{padding:9px 11px 11px;display:flex;flex-direction:column;gap:5px;flex:1}
+.tile .name{font-weight:600;font-size:.92rem;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.tile .who{font-size:.74rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.tile .price{font-variant-numeric:tabular-nums;font-size:.92rem}
+.tile details>summary{list-style:none;cursor:pointer}
+.tile details>summary::-webkit-details-marker{display:none}
+.tile .act{margin-top:auto;display:flex;gap:6px;flex-wrap:wrap}
+@media (max-width:560px){.tiles{grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:9px}}
 .card{border:1px solid var(--line);border-radius:10px;padding:15px 16px;background:var(--panel)}
 .card.editing{border-color:var(--accent);box-shadow:0 0 0 3px rgba(120,110,255,.12)}
 .card h3{font-size:1.02rem}

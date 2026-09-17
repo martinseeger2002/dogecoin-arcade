@@ -115,6 +115,18 @@ def order_of(body, *needles):
     return found
 
 
+def grid(body):
+    """The wall of pieces alone.
+
+    Sliced off the rest because the page says a piece's txid in more places
+    than the grid -- the hero is #1 of the set, and the band above is what
+    this wallet holds. An assertion about the ORDER of the collection has to
+    be made about the collection.
+    """
+    at = body.index('<div class="tiles">')
+    return body[at:]
+
+
 # --- the list of collections ------------------------------------------------
 
 def test_the_market_lists_collections_by_their_first_piece(client):
@@ -158,7 +170,7 @@ def test_open_contracts_come_first_then_the_chain_order(client):
     sell(state.home, PIECES[4])          # edition 5, which is inscription #0
     offer_on(state.home, PIECES[1])      # edition 2, which is inscription #3
 
-    body = app.get("/exchange/collection/nMe/Doge%20Punks").text
+    body = grid(app.get("/exchange/collection/nMe/Doge%20Punks").text)
     for_sale, offered, first, second = order_of(
         body, PIECES[4], PIECES[1], PIECES[0], PIECES[3])
     assert for_sale < offered, "what can be bought comes before what is offered for"
@@ -174,10 +186,11 @@ def test_every_card_names_both_ends_and_offers_for_it(client):
     tag(state.home, CREATOR, "punkmaker")
 
     body = app.get("/exchange/collection/nMe/Doge%20Punks").text
-    assert "Made by" in body and "Held by" in body
-    assert "@punkmaker" in body
-    assert body.count("Make offer") >= 5, "every card offers for it"
-    assert 'action="/exchange/offer"' in body
+    tiles = grid(body)
+    assert tiles.count("by @punkmaker") >= 5, "who made each one"
+    assert tiles.count("held by") >= 5, "and who holds it now"
+    assert tiles.count("Make offer") >= 5, "every card offers for it"
+    assert 'action="/exchange/offer"' in tiles
 
 
 def test_a_piece_for_sale_says_its_price_and_a_way_to_buy(client):
@@ -211,16 +224,91 @@ def test_the_collection_page_lists_what_you_hold_of_it(client, monkeypatch):
     wallet_holding(state, monkeypatch, CREATOR)
 
     body = app.get("/exchange/collection/nMe/Doge%20Punks").text
-    band = body[body.index("Yours in this collection"):body.index('<div class="cards">')]
+    band = body[body.index("Yours in this collection"):body.index('<div class="tiles">')]
     assert "Yours in this collection &mdash; 5" in body
     assert band.count("List for sale") == 4, "the four that are not listed yet"
     assert "9 coins" in band, "and the one that is says its price"
+    assert "listed" in band
 
 
 def test_a_collection_nobody_inscribed_says_so(client):
     app, state = client
     index_with_a_collection(state.home)
     assert app.get("/exchange/collection/nMe/Nope").status_code in (200, 303)
+
+
+def describe_the_set(home, piece=None, **details):
+    """Put collection-level details on the set's #1, where they belong."""
+    from arcade.db import Database
+
+    db = Database(home / "main-ledger.sqlite")
+    item = {"name": "Doge Punks #1", "edition": 1,
+            "attributes": [{"trait_type": "Background", "value": "Blue"}],
+            "collection": {"name": "Doge Punks", **details}}
+    db.conn.execute("UPDATE inscription SET json=? WHERE txid=?",
+                    (json.dumps(item), piece or PIECES[0]))
+    db.conn.commit()
+    db.close()
+
+
+def test_a_set_describes_itself_on_its_first_piece(client):
+    """#1 is the piece a collection is known by, so it is where the set says
+    what it is -- rather than on all five hundred of them."""
+    app, state = client
+    index_with_a_collection(state.home)
+    describe_the_set(state.home, description="Five  hand drawn punks",
+                     url="https://punks.example", twitter="@dogepunks",
+                     discord="javascript:alert(1)", supply=5)
+
+    body = app.get("/exchange/collection/nMe/Doge%20Punks").text
+    assert "Five hand drawn punks" in body, "the description, whitespace tidied"
+    assert 'href="https://punks.example"' in body
+    assert "https://x.com/dogepunks" in body, "a handle becomes a link"
+    assert "javascript:alert(1)" not in body, "a link that is not http(s) is not a link"
+    # And it is still filed by its name: an object where a string was
+    # expected must not move a piece out of its own collection.
+    assert "Doge Punks" in body and app.get("/exchange?tab=market").text.count(
+        "/exchange/collection/nMe/Doge%20Punks") >= 1
+
+
+def test_the_strip_says_floor_owners_and_what_has_sold(client):
+    app, state = client
+    index_with_a_collection(state.home)
+    sell(state.home, PIECES[2], price="4")
+    sell(state.home, PIECES[3], price="11", shop="6" * 64, number=98)
+
+    body = app.get("/exchange/collection/nMe/Doge%20Punks").text
+    strip = body[body.index('class="statbar"'):body.index('<h2>')]
+    assert "Floor" in strip and "4.0000" in strip, "the cheapest listed, not the dearest"
+    assert "Owners" in strip and "Pieces" in strip
+    # Cheapest first among what is for sale: the first tile of a collection
+    # is its floor.
+    tiles = grid(body)
+    assert tiles.index(PIECES[2]) < tiles.index(PIECES[3])
+
+
+def test_the_market_table_says_the_floor(client):
+    app, state = client
+    index_with_a_collection(state.home)
+    sell(state.home, PIECES[2], price="4")
+
+    body = app.get("/exchange?tab=market").text
+    assert "Floor" in body and "4.0000" in body
+
+
+def test_owners_are_counted_not_guessed_from_the_size(tmp_path):
+    from arcade.config import NETWORKS
+    from arcade.ledger import LedgerIndex
+    from arcade.db import Database
+
+    path = index_with_a_collection(tmp_path)
+    index = LedgerIndex(path, NETWORKS["main"], rpc_factory=lambda: None)
+    assert index.collection_owners(CREATOR, "Doge Punks") == 1
+    db = Database(path)
+    db.conn.execute("UPDATE inscription SET owner=? WHERE txid=?", ("nYou", PIECES[0]))
+    db.conn.commit()
+    db.close()
+    assert index.collection_owners(CREATOR, "Doge Punks") == 2
 
 
 # --- putting one up for sale ------------------------------------------------

@@ -4,23 +4,51 @@
 {% block body %}
 <div id="live" data-generation="{{ state.generation }}" class="live"></div>
 
-<h1>{{ summary.collection }}</h1>
-<p class="sub">{{ "{:,}".format(summary.count) }} piece{{ '' if summary.count == 1 else 's' }}
-  on {{ chain.label }} by
-  {% if tags.get(summary.creator) %}<strong>@{{ tags[summary.creator] }}</strong>
-  {%- else %}<span class="mono">{{ summary.creator }}</span>{% endif %}.
-  {% if for_sale %}{{ for_sale }} for sale{% else %}None listed for sale{% endif %}{% if offered %},
-  {{ offered }} with an offer standing{% endif %}.</p>
+{% macro coins(sats) %}{{ "%.4f"|format(sats / 100000000) }}{% endmacro %}
 
-<div class="row" style="margin-bottom:14px">
-  <a class="btn ghost small" href="/exchange?tab=market">All collections</a>
-  <a class="btn ghost small" href="/collections/{{ summary.creator }}/{{ summary.collection|urlencode }}">Traits</a>
+<div class="collhero">
+  {% if cover %}
+    <img src="/content/{{ cover }}" alt="{{ summary.collection }} #1" loading="lazy">
+  {% endif %}
+  <div class="who">
+    <h1>{{ summary.collection }}</h1>
+    <p class="muted" style="margin:0 0 6px">
+      by {% if tags.get(summary.creator) %}<strong>@{{ tags[summary.creator] }}</strong>
+         {%- else %}<span class="mono">{{ summary.creator }}</span>{% endif %}
+      &middot; {{ chain.label }}
+      &middot; inscriptions #{{ "{:,}".format(summary.first_number) }}&ndash;#{{ "{:,}".format(summary.last_number) }}</p>
+    {% if about.description %}
+      <p style="margin:0 0 6px;max-width:60ch">{{ about.description }}</p>
+    {% endif %}
+    <div class="row" style="gap:8px">
+      {% if about.url %}<a class="btn ghost small" href="{{ about.url }}"
+         rel="noopener noreferrer nofollow" target="_blank">Website</a>{% endif %}
+      {% if about.twitter %}<a class="btn ghost small" rel="noopener noreferrer nofollow" target="_blank"
+         href="{{ about.twitter if about.twitter.startswith('http') else
+                  'https://x.com/' ~ about.twitter.lstrip('@') }}">Twitter</a>{% endif %}
+      {% if about.discord %}<a class="btn ghost small" href="{{ about.discord }}"
+         rel="noopener noreferrer nofollow" target="_blank">Discord</a>{% endif %}
+      <a class="btn ghost small" href="/collections/{{ summary.creator }}/{{ summary.collection|urlencode }}">Traits</a>
+      <a class="btn ghost small" href="/exchange?tab=market">All collections</a>
+    </div>
+  </div>
+</div>
+
+<div class="statbar">
+  <div class="stat"><b>{% if floor %}{{ coins(floor) }}{% else %}&mdash;{% endif %}</b>
+    <span>Floor &middot; coins</span></div>
+  <div class="stat"><b>{{ for_sale }}</b><span>For sale</span></div>
+  <div class="stat"><b>{{ offered }}</b><span>Offers</span></div>
+  <div class="stat"><b>{{ "{:,}".format(owners) }}</b><span>Owners</span></div>
+  <div class="stat"><b>{{ "{:,}".format(summary.count) }}</b><span>Pieces</span></div>
+  <div class="stat"><b>{% if traded %}{{ "%.2f"|format(volume) }}{% else %}&mdash;{% endif %}</b>
+    <span>Volume &middot; {{ traded }} sold</span></div>
 </div>
 
 {% if node_error %}<div class="msg err">{{ node_error }}</div>{% endif %}
 
 {% if prices %}
-<div class="panel" style="margin-bottom:14px">
+<div class="panel" style="margin-bottom:16px">
   {{ chart.headline(prices.stats, prices.unit) }}
   {{ chart.candles(prices.slots, prices.unit) }}
 </div>
@@ -28,7 +56,7 @@
 
 {% if yours %}
 <h2>Yours in this collection &mdash; {{ yours|length }}</h2>
-<div class="panel" style="margin-bottom:16px">
+<div class="panel" style="margin-bottom:18px">
   <table>
     {% for row in yours %}
     <tr>
@@ -43,7 +71,7 @@
         <div class="muted" style="font-size:.78rem">#{{ "{:,}".format(row.number) }}</div></td>
       <td style="text-align:right;white-space:nowrap">
         {% if row.listing %}
-          <span class="pill ok">for sale</span> <strong>{{ row.listing.price }}</strong>
+          <span class="pill ok">listed</span> <strong>{{ row.listing.price }}</strong>
           <a class="btn ghost small" href="/inscriptions/{{ row.listing.shop }}/view">Its listing</a>
         {% else %}
           <a class="btn small" href="/exchange/sell/{{ row.txid }}">List for sale</a>
@@ -55,82 +83,68 @@
 </div>
 {% endif %}
 
-<div class="cards">
+<h2>The collection &mdash; for sale first, then as it was inscribed</h2>
+<div class="tiles">
   {% for row in rows %}
   {% set data = row.json|fromjson %}
-  <div class="card">
-    <div class="row" style="align-items:baseline">
-      <strong>{{ data.name if data and data.name else (summary.collection ~ ' #' ~ row.edition) }}</strong>
-      <span class="muted" style="margin-left:auto">#{{ "{:,}".format(row.number) }}</span>
-    </div>
-    {% if row.held and row.content_type.startswith('image/') %}
-      <a class="media" href="/content/{{ row.txid }}?download=1"
-         onclick="arcadeOpenImage('/content/{{ row.txid }}', '#{{ row.number }}',
-                  '/content/{{ row.txid }}?download=1'); return false">
-        <img src="/content/{{ row.txid }}" alt="{{ summary.collection }} #{{ row.edition }}"
-             loading="lazy" style="max-width:100%;border-radius:8px;margin:8px 0"></a>
-    {% endif %}
+  <div class="tile">
+    <a class="art" href="/inscriptions/{{ row.txid }}/view"
+       title="{{ summary.collection }} #{{ row.edition }}"
+       {% if row.held and row.content_type.startswith('image/') %}
+       style="background-image:url(/content/{{ row.txid }})"{% endif %}></a>
+    <div class="body">
+      <div class="name" title="{{ data.name if data and data.name else row.txid }}">
+        {{ data.name if data and data.name else (summary.collection ~ ' #' ~ row.edition) }}</div>
+      <div class="who">#{{ "{:,}".format(row.number) }} &middot; by
+        {%- if tags.get(row.creator) %} @{{ tags[row.creator] }}
+        {%- else %} {{ row.creator[:10] }}…{% endif %}</div>
+      <div class="who">held by
+        {%- if row.mine %} <strong>you</strong>
+        {%- elif tags.get(row.owner) %} @{{ tags[row.owner] }}
+        {%- else %} {{ row.owner[:10] }}…{% endif %}</div>
+      <div class="price">
+        {%- if row.listing %}<strong>{{ row.listing.price }}</strong>
+        {%- else %}<span class="muted">not for sale</span>{% endif %}
+        {%- if row.offers %} <span class="muted">&middot; {{ row.offers }} offer{{ '' if row.offers == 1 else 's' }}</span>{% endif %}</div>
 
-    {% if row.listing %}
-      <p style="margin:6px 0 2px"><span class="pill ok">for sale</span>
-        <strong>{{ row.listing.price }}</strong></p>
-    {% endif %}
-
-    <table>
-      <tr><td class="muted" style="width:74px">Made by</td>
-          <td class="mono" style="word-break:break-all">
-            {%- if tags.get(row.creator) %}<strong>@{{ tags[row.creator] }}</strong>
-            {%- else %}{{ row.creator }}{% endif %}</td></tr>
-      <tr><td class="muted">Held by</td>
-          <td class="mono" style="word-break:break-all">
-            {%- if row.mine %}<strong>you</strong>
-            {%- elif tags.get(row.owner) %}<strong>@{{ tags[row.owner] }}</strong>
-            {%- else %}{{ row.owner }}{% endif %}</td></tr>
-      {% if row.offers %}
-      <tr><td class="muted">Offers</td>
-          <td>{{ row.offers }} standing</td></tr>
-      {% endif %}
-    </table>
-
-    {% if row.mine %}
-      <div class="row" style="margin-top:8px">
-        <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view">Open</a>
-        {% if row.listing %}
-          <a class="btn ghost small" href="/inscriptions/{{ row.listing.shop }}/view">Its listing</a>
+      <div class="act">
+        {% if row.mine %}
+          {% if row.listing %}
+            <a class="btn ghost small" href="/inscriptions/{{ row.listing.shop }}/view">Its listing</a>
+          {% else %}
+            <a class="btn small" href="/exchange/sell/{{ row.txid }}">List for sale</a>
+          {% endif %}
         {% else %}
-          <a class="btn small" href="/exchange/sell/{{ row.txid }}">List for sale</a>
-        {% endif %}
-        <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/send">Send</a>
-      </div>
-    {% else %}
-      <form method="post" action="/exchange/offer" class="row"
-            style="gap:6px;margin-top:8px;align-items:center">
-        <input type="hidden" name="csrf_token" value="{{ csrf }}">
-        <input type="hidden" name="inscription" value="{{ row.txid }}">
-        <input type="hidden" name="back" value="{{ request.url.path }}?page={{ page }}">
-        <input autocomplete="off" name="amount" inputmode="decimal" placeholder="amount"
-               style="flex:0 0 90px">
-        <select autocomplete="off" name="kind" style="flex:0 0 108px"
-                onchange="this.form.querySelector('[name=property_id]').hidden = this.value !== 'token'">
-          <option value="coins">coins</option>
-          {% if tokens %}<option value="token">a token</option>{% endif %}
-        </select>
-        {% if tokens %}
-        <select autocomplete="off" name="property_id" hidden style="flex:1 1 140px">
-          {% for t in tokens %}
-          <option value="{{ t.property_id }}">{{ t.name }} &mdash; {{ t.display }}</option>
-          {% endfor %}
-        </select>
-        {% endif %}
-        <button type="submit" class="small">Make offer</button>
-      </form>
-      <div class="row" style="margin-top:6px">
-        <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view">Open</a>
-        {% if row.listing %}
-          <a class="btn small" href="/inscriptions/{{ row.listing.shop }}/view">Buy it</a>
+          {% if row.listing %}
+            <a class="btn small" href="/inscriptions/{{ row.listing.shop }}/view">Buy it</a>
+          {% endif %}
+          <details>
+            <summary class="btn ghost small">Make offer</summary>
+            <form method="post" action="/exchange/offer" class="row"
+                  style="gap:6px;margin-top:8px">
+              <input type="hidden" name="csrf_token" value="{{ csrf }}">
+              <input type="hidden" name="inscription" value="{{ row.txid }}">
+              <input type="hidden" name="back" value="{{ path }}?page={{ page }}">
+              <input autocomplete="off" name="amount" inputmode="decimal"
+                     placeholder="amount" style="flex:1 1 76px;min-width:0">
+              <select autocomplete="off" name="kind" style="flex:1 1 90px"
+                      onchange="var t=this.form.querySelector('[name=property_id]'); if(t) t.hidden = this.value !== 'token'">
+                <option value="coins">coins</option>
+                {% if tokens %}<option value="token">a token</option>{% endif %}
+              </select>
+              {% if tokens %}
+              <select autocomplete="off" name="property_id" hidden style="flex:1 1 100%">
+                {% for t in tokens %}
+                <option value="{{ t.property_id }}">{{ t.name }} &mdash; {{ t.display }}</option>
+                {% endfor %}
+              </select>
+              {% endif %}
+              <button type="submit" class="small" style="flex:1 1 100%">Make offer</button>
+            </form>
+          </details>
         {% endif %}
       </div>
-    {% endif %}
+    </div>
   </div>
   {% endfor %}
 </div>

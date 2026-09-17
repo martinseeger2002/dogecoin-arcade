@@ -719,7 +719,7 @@ class LedgerIndex:
         """
         with self.open() as db:
             row = db.conn.execute(
-                "SELECT i.txid, i.number, i.content_type, c.edition, "
+                "SELECT i.txid, i.number, i.content_type, i.json, c.edition, "
                 "       (i.content IS NOT NULL "
                 "        AND i.content_type LIKE 'image/%') AS drawable "
                 "FROM collection_item c JOIN inscription i ON i.txid = c.txid "
@@ -762,6 +762,19 @@ class LedgerIndex:
                 f"ORDER BY c.edition IS NULL, c.edition, i.number LIMIT ?",
                 (creator, name, *owners, max(1, min(limit, 500))))]
 
+    def collection_owners(self, creator: str, name: str) -> int:
+        """How many addresses hold a piece of this set.
+
+        What a marketplace means by "owners": the piece count is the set's
+        size, and the two are the same number only when nobody has sold one.
+        """
+        with self.open() as db:
+            return int(db.conn.execute(
+                "SELECT COUNT(DISTINCT i.owner) FROM collection_item c "
+                "JOIN inscription i ON i.txid = c.txid "
+                "WHERE c.creator = ? AND c.collection = ?",
+                (creator, name)).fetchone()[0])
+
     def collection_market(self, creator: str, name: str,
                           for_sale: Sequence[str] = (), limit: int = 100,
                           offset: int = 0) -> list[dict]:
@@ -780,20 +793,24 @@ class LedgerIndex:
 
         `for_sale` is the txids a shop is selling right now, which is not in
         the ledger at all -- a shop is an inscription whose JSON says so, read
-        afresh every time (D-037) -- so the caller passes what it read.
+        afresh every time (D-037) -- so the caller passes what it read, in
+        the order it wants them shown: cheapest first makes the first card
+        the floor.
         """
-        marks = ",".join("?" * len(for_sale))
-        selling = f"i.txid IN ({marks})" if for_sale else "0"
+        # The for-sale group keeps the ORDER IT WAS GIVEN IN -- cheapest
+        # first, which is what a floor price means -- by asking where each
+        # txid falls in one string. Commas separate them, so nothing can
+        # match across the join of two.
+        order = "," + ",".join(for_sale) + "," if for_sale else ""
         sql = _INSCRIPTION_SELECT.replace(
             "SELECT ", f"SELECT {_OFFERS_ON_IT} AS offers, ", 1)
         sql += (f" WHERE c.creator = ? AND c.collection = ?"
-                f" ORDER BY CASE WHEN {selling} THEN 0"
+                f" ORDER BY CASE WHEN instr(?, i.txid) > 0 THEN 0"
                 f"               WHEN {_OFFERS_ON_IT} > 0 THEN 1"
                 f"               ELSE 2 END,"
-                f"          i.number LIMIT ? OFFSET ?")
-        # In the order the marks appear in the statement: the WHERE comes
-        # before the ORDER BY that names what is for sale.
-        args = [creator, name, *for_sale, max(1, min(limit, 500)), max(0, offset)]
+                f"          instr(?, i.txid), i.number LIMIT ? OFFSET ?")
+        args = [creator, name, order, order,
+                max(1, min(limit, 500)), max(0, offset)]
         with self.open() as db:
             return [dict(row) for row in db.conn.execute(sql, args)]
 

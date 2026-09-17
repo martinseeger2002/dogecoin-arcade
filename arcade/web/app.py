@@ -4727,9 +4727,14 @@ def create_app(state: AppState) -> FastAPI:
                 # First shop wins: two shops may name the same piece, and only
                 # one of them can be given -- the buyer's node checks which
                 # when it reads the terms.
+                take = listing["take"]
                 out.setdefault(give["txid"], {
                     "shop": shop["txid"], "seller": shop["seller"],
-                    "price": swaplib.describe_leg(listing["take"]),
+                    "price": swaplib.describe_leg(take),
+                    # A floor is a number, and only a coin price is one that
+                    # can be compared: a piece priced in a token is priced in
+                    # another market (D-040).
+                    "sats": take.get("sats") if take.get("kind") == "coins" else None,
                     "number": give.get("number"),
                     "collection": give.get("collection"),
                     "edition": give.get("edition")})
@@ -4776,7 +4781,8 @@ def create_app(state: AppState) -> FastAPI:
         # collection's name but not whose it is, and a collection is (creator,
         # name) -- two people may inscribe a set called Doge Punks.
         for_sale: dict[tuple[str, str], int] = {}
-        for txid in listed:
+        floors: dict[tuple[str, str], int] = {}
+        for txid, entry in listed.items():
             try:
                 row = index.inscription(txid)
             except Exception:
@@ -4784,6 +4790,8 @@ def create_app(state: AppState) -> FastAPI:
             if row and row.get("collection"):
                 key = (row["creator"], row["collection"])
                 for_sale[key] = for_sale.get(key, 0) + 1
+                if entry["sats"] and entry["sats"] < floors.get(key, 1 << 62):
+                    floors[key] = entry["sats"]
         try:
             offers = index.collection_offers()
         except Exception:
@@ -4803,6 +4811,7 @@ def create_app(state: AppState) -> FastAPI:
                 "first_number": row["first_number"],
                 "last_number": row["last_number"],
                 "for_sale": for_sale.get(key, 0),
+                "floor": floors.get(key),
                 "offers": offers.get(key, 0),
                 "last": stats["last"], "change": stats["change"],
                 "trades": len(points.get(row["collection"], []))})
@@ -5271,8 +5280,17 @@ def create_app(state: AppState) -> FastAPI:
                                 "summary": summary, "node_error": None,
                                 "rows": [], "tags": {}, "tokens": [], "coins": 0.0,
                                 "for_sale": 0, "offered": 0, "prices": None, "yours": [],
+                                "owners": 0, "floor": None, "volume": 0.0, "traded": 0,
+                                "cover": None, "about": {},
                                 "page": page, "pages": 1,
                                 "per_page": PAGE_INSCRIPTIONS}
+        # What the set says about ITSELF, read from its #1 -- the piece a
+        # collection is known by is where a description, a site and the rest
+        # of it belong, rather than on all five hundred (inscriptions.py).
+        cover = index.collection_cover(creator, name) or {}
+        if str(cover.get("content_type") or "").startswith("image/"):
+            data["cover"] = cover.get("txid")
+        data["about"] = inscriptionlib.collection_details(cover.get("json") or "")
         # What this collection has actually traded for, on its own page
         # rather than in the list of collections: a chart belongs beside the
         # pieces it prices.
@@ -5293,8 +5311,13 @@ def create_app(state: AppState) -> FastAPI:
         try:
             data["pages"] = max(1, -(-summary["count"] // PAGE_INSCRIPTIONS))
             data["page"] = page = max(1, min(page, data["pages"]))
+            # Cheapest first among what is for sale, so the first card of a
+            # collection is its floor -- which is the number people come to
+            # a marketplace for.
+            selling = sorted(listed, key=lambda t: (listed[t]["sats"] is None,
+                                                    listed[t]["sats"] or 0))
             rows = index.collection_market(
-                creator, name, for_sale=sorted(listed),
+                creator, name, for_sale=selling,
                 limit=PAGE_INSCRIPTIONS, offset=(page - 1) * PAGE_INSCRIPTIONS)
             for row in rows:
                 row["listing"] = listed.get(row["txid"])
@@ -5303,11 +5326,17 @@ def create_app(state: AppState) -> FastAPI:
             # Said about the whole collection, not about this page of it: the
             # header answers "is anything here for sale", and page four
             # saying no would be an answer about page four.
-            data["for_sale"] = sum(
-                1 for txid, entry in listed.items()
+            mine_to_sell = [
+                entry for txid, entry in listed.items()
                 if entry.get("collection") == name
-                and (index.inscription(txid) or {}).get("creator") == creator)
+                and (index.inscription(txid) or {}).get("creator") == creator]
+            data["for_sale"] = len(mine_to_sell)
+            priced = [e["sats"] for e in mine_to_sell if e["sats"]]
+            data["floor"] = min(priced) if priced else None
             data["offered"] = index.collection_offers().get((creator, name), 0)
+            data["owners"] = index.collection_owners(creator, name)
+            data["volume"] = sum(p["price"] for p in points)
+            data["traded"] = len(points)
             # What this wallet holds of the set, asked of the whole set: it
             # is the answer to "what can I sell", and page four is not where
             # that is decided.

@@ -265,3 +265,39 @@ def test_the_json_is_checked_before_anything_is_priced():
 
     with pytest.raises(I.InscriptionError, match="not valid JSON"):
         inscribe.plan(b"x", "text/plain", "{oops")
+
+
+def test_a_set_may_describe_itself_without_changing_what_it_contains():
+    """Collection-level details are read from an item's JSON; membership is
+    not decided by them. An object where a string was expected must not move
+    a piece out of its collection -- two nodes cannot be allowed to disagree
+    about that because one of them understood a richer JSON."""
+    import json
+
+    rich = json.dumps({
+        "name": "Goofball #1", "edition": 1,
+        "collection": {"name": "Goofball", "description": "  100   goofballs ",
+                       "external_url": "https://goofball.example",
+                       "twitter": "@goofballs", "supply": 100,
+                       "discord": "javascript:alert(1)", "royalty": "5%"}})
+    assert I.collection_of(rich) == ("Goofball", 1, "Goofball #1")
+    assert I.collection_details(rich) == {
+        "description": "100 goofballs", "url": "https://goofball.example",
+        "twitter": "@goofballs", "supply": 100}, \
+        "whitelisted, tidied, and a link that is not http(s) is not a link"
+
+    # HashLips writes these at the top level of every item, which is where
+    # they are read from when there is no object.
+    plain = json.dumps({"name": "Goofball #2", "edition": 2,
+                        "description": "one goofball",
+                        "external_url": "http://goofball.example"})
+    assert I.collection_details(plain) == {"description": "one goofball",
+                                           "url": "http://goofball.example"}
+
+    for nothing in ("", "not json", "[1,2]", json.dumps({"name": "x"})):
+        assert I.collection_details(nothing) == {}
+
+    # Inscribed text is written by anybody: a description is capped and a
+    # supply that is not a whole number is not a supply.
+    long = json.dumps({"description": "x" * 900, "supply": True})
+    assert I.collection_details(long) == {"description": "x" * 400}
