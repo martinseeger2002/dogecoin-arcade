@@ -11,6 +11,7 @@ one.
 import json
 import pathlib
 import sys
+import time
 
 import pytest
 
@@ -95,6 +96,33 @@ def offer_on(home, piece, buyer="nBuyer", txid=None):
     db.close()
 
 
+def sold(home, piece, sats=250000000, seller="nSeller", height=400,
+         when=1789600000, txid=None):
+    """A swap, as the chain holds one: two legs in one transaction.
+
+    Written straight into `arcade_tx` because that is where the index reads
+    trades from -- a sale here is a transaction both sides signed, and there
+    is no list of sales to add a row to (D-039).
+    """
+    from arcade import inscriptions as I, payload as P
+    from arcade.db import Database
+
+    swap = I.Swap(give=I.Leg(I.LEG_INSCRIPTION, txid=bytes.fromhex(piece)),
+                  take=I.Leg(I.LEG_COINS, amount=sats))
+    db = Database(home / "main-ledger.sqlite")
+    db.conn.execute(
+        "INSERT OR IGNORE INTO block(height,hash,prev_hash,time,tx_count,processed_at) "
+        "VALUES(?,?,?,?,1,?)",
+        (height, f"{height:064x}", f"{height - 1:064x}", when, when))
+    db.conn.execute(
+        "INSERT INTO arcade_tx(txid,block_height,position,encoding_class,sender,"
+        "payload_hex,valid) VALUES(?,?,?,'C',?,?,1)",
+        (txid or ("5a" * 32), height, 0, seller,
+         P.AnyData(data=swap.encode()).encode().hex()))
+    db.conn.commit()
+    db.close()
+
+
 def tag(home, address, name):
     from arcade.db import Database
 
@@ -125,6 +153,63 @@ def grid(body):
     """
     at = body.index('<div class="tiles">')
     return body[at:]
+
+
+def mint(home, pid=3, name="Goofcoin", data="", url="", issuer=CREATOR):
+    """A token in the index, as an issuance would have left one."""
+    from arcade.db import Database
+
+    db = Database(home / "main-ledger.sqlite")
+    db.conn.execute(
+        "INSERT INTO property(property_id,ecosystem,property_type,issuer,category,"
+        "subcategory,name,url,data,managed,total_tokens,creation_txid,creation_block) "
+        "VALUES(?,1,2,?,'','',?,?,?,0,100000000,?,100)",
+        (pid, issuer, name, url, data, "c" * 64))
+    db.conn.commit()
+    db.close()
+
+
+# --- a token's face ---------------------------------------------------------
+
+def test_a_token_wears_an_inscription_as_its_icon(client):
+    app, state = client
+    index_with_a_collection(state.home)
+    from arcade import tokens as tokenlib
+    mint(state.home, data=tokenlib.data_with_icon("goofy money",
+                                                  f"/content/{PIECES[0]}"))
+
+    body = app.get("/tokens").text
+    assert f'src="/content/{PIECES[0]}"' in body, "the token wears the picture"
+
+
+def test_an_icon_this_node_cannot_draw_is_not_shown_as_one(client):
+    """An <img> pointing at content nobody holds is a broken picture in a
+    table, which is worse than initials."""
+    app, state = client
+    index_with_a_collection(state.home)
+    from arcade import tokens as tokenlib
+    mint(state.home, name="Ghostcoin",
+         data=tokenlib.data_with_icon("", "/content/" + "9" * 64))
+
+    body = app.get("/tokens").text
+    assert "/content/" + "9" * 64 not in body
+    assert "GH" in body, "its initials instead"
+
+
+def test_an_icon_that_is_not_an_inscription_is_refused_before_it_is_paid_for(
+        client, monkeypatch):
+    """A token's icon is an inscription on this chain, not a picture on
+    somebody's website: an issuance cannot be corrected afterwards."""
+    app, state = client
+    index_with_a_collection(state.home)
+    wallet_holding(state, monkeypatch, CREATOR)
+
+    body = app.post("/tokens/create", data={
+        "csrf_token": state.csrf_token, "sender": CREATOR, "name": "Goofcoin",
+        "supply": "100", "kind": "fixed", "units": "divisible",
+        "icon": "https://example.com/logo.png"}).text
+    assert "an icon is an inscription on this chain" in body
+    assert "Traceback" not in body
 
 
 # --- the list of collections ------------------------------------------------
@@ -160,6 +245,42 @@ def test_the_market_survives_a_shop_that_is_nonsense(client):
     sell(state.home, "9" * 64)          # a shop selling a piece nobody has
     body = app.get("/exchange?tab=market").text
     assert "Doge Punks" in body and "Traceback" not in body
+
+
+def test_the_marketplace_leads_with_what_is_being_traded(client):
+    """Popular means traded, and traded recently: a marketplace opens on the
+    busy collection, not on the biggest one."""
+    app, state = client
+    index_with_a_collection(state.home)
+    sold(state.home, PIECES[0], sats=250000000, when=int(time.time()) - 600)
+
+    body = app.get("/exchange?tab=market").text
+    assert "Popular collections" in body
+    top = body[body.index("Popular collections"):body.index("All collections")]
+    assert "Doge Punks" in top and "Floor" in top and "24h" in top
+
+
+def test_recent_sales_say_what_went_for_what_and_when(client):
+    app, state = client
+    index_with_a_collection(state.home)
+    tag(state.home, "nSeller", "punkseller")
+    sold(state.home, PIECES[0], sats=250000000, when=int(time.time()) - 300)
+
+    body = app.get("/exchange?tab=market").text
+    assert "Recently sold" in body
+    feed = body[body.index("Recently sold"):]
+    assert "Doge Punks #1" in feed
+    assert "2.5 coins" in feed, "what was paid, in words"
+    assert "5m ago" in feed, "and when, in words"
+    assert "@punkseller" in feed, "and who sold it"
+
+
+def test_a_chain_with_no_sales_still_has_a_marketplace(client):
+    app, state = client
+    index_with_a_collection(state.home)
+    body = app.get("/exchange?tab=market").text
+    assert "Popular collections" in body, "ranked by what is for sale instead"
+    assert "Recently sold" not in body, "and no empty feed pretending to be one"
 
 
 # --- one collection, opened -------------------------------------------------

@@ -7,6 +7,7 @@ and recipient the engine derives, not the ones the builder intended.
 
 import contextlib
 import dataclasses
+import json
 
 import pytest
 
@@ -144,3 +145,39 @@ def test_refusals_happen_before_anything_is_spent(setup):
         issuance_payload(name="x", divisible=True, managed=False, amount=0)
     with pytest.raises(TokenError, match="NUL"):
         issuance_payload(name="a\x00b", divisible=True, managed=False, amount=1)
+
+
+def test_a_token_can_wear_an_inscription_as_its_icon():
+    """Omni gives an issuance five strings and no sixth, so an icon rides in
+    `data` beside the description -- and a node that never heard of the
+    convention still shows the token, with the JSON as its description."""
+    from arcade import tokens as T
+
+    piece = "ab" * 32
+    assert T.icon_in(f"/content/{piece}") == piece
+    assert T.icon_in(f"https://dogecoinarcade.com/content/{piece}") == piece
+    assert T.icon_in(piece) == piece
+    assert T.icon_in("https://example.com/logo.png") == ""
+    assert T.icon_in("") == ""
+
+    data = T.data_with_icon("100 goofcoins", f"/content/{piece}")
+    assert T.details({"data": data, "url": "https://goof.example"}) == {
+        "about": "100 goofcoins", "icon": piece, "url": "https://goof.example"}
+
+    # No icon, no JSON: a token that does not want one pays for exactly what
+    # it always did. Every byte of an issuance is paid for.
+    assert T.data_with_icon("100 goofcoins", "") == "100 goofcoins"
+    assert T.details({"data": "100 goofcoins", "url": ""}) == {
+        "about": "100 goofcoins", "icon": "", "url": ""}
+
+    # A /content/ link pasted into the link field is an icon, and is not also
+    # shown as a website.
+    assert T.details({"data": "words", "url": f"/content/{piece}"}) == {
+        "about": "words", "icon": piece, "url": ""}
+
+    # Issuer-supplied text on its way to a page: a link that is not http(s)
+    # is not a link, and the description is capped.
+    said = json.dumps({"about": "x" * 900, "icon": "javascript:alert(1)",
+                       "url": "javascript:alert(1)"})
+    assert T.details({"data": said, "url": ""}) == {
+        "about": "x" * 400, "icon": "", "url": ""}

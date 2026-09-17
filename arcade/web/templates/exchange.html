@@ -141,34 +141,77 @@
   {% endif %}
 
 {% elif tab == 'tokens' %}
-  <p class="sub">Tokens paired against {{ chain.label }} coins. Click a pair for
-    its chart, its book and the form that adds to it.</p>
+  <p class="sub">Every token paired against {{ chain.label }} coins. Click a
+    market for its chart, its book and the form that adds to it.</p>
+
   {% if pairs %}
   <div class="panel">
-    <table class="wallets">
+    <div class="row" style="margin:0 0 10px">
+      <input autocomplete="off" id="marketfind" type="search" placeholder="Find a market"
+             oninput="findMarket(this.value)" style="flex:1 1 220px;max-width:280px">
+      <span class="muted" id="marketcount" style="font-size:.82rem">{{ pairs|length }}
+        market{{ '' if pairs|length == 1 else 's' }}</span>
+    </div>
+    <div style="overflow-x:auto">
+    <table class="wallets markets">
       <tr class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.06em">
-        <td>Pair</td><td style="text-align:right">Last</td>
+        <td colspan="2">Market</td>
+        <td style="text-align:right">Last</td>
         <td style="text-align:right">24h</td>
+        <td style="text-align:right">24h high</td>
+        <td style="text-align:right">24h low</td>
+        <td style="text-align:right">24h volume</td>
         <td style="text-align:right">Bid / Ask</td></tr>
       {% for p in pairs %}
-      <tr>
-        <td><a href="/exchange/pair/{{ p.property_id }}"><strong>{{ p.name }}</strong></a>
-          <span class="muted" style="font-size:.78rem">/ coins &middot; #{{ p.property_id }}</span></td>
+      <tr data-market="{{ p.name|lower }}/{{ chain.label|lower }} #{{ p.property_id }}">
+        <td style="width:40px">
+          <a href="/exchange/pair/{{ p.property_id }}">
+            {%- if p.icon %}<img src="/content/{{ p.icon }}" alt="{{ p.name }}" loading="lazy"
+              style="width:32px;height:32px;object-fit:cover;border-radius:50%;display:block">
+            {%- else %}<span class="coinface">{{ p.name[:2]|upper }}</span>{% endif %}</a></td>
+        <td><a href="/exchange/pair/{{ p.property_id }}"><strong>{{ p.name }}</strong></a><span
+             class="muted">/{{ chain.label|upper }}</span>
+          <div class="muted" style="font-size:.76rem">#{{ p.property_id }}
+            {%- if p.about %} &middot; {{ p.about[:40] }}{% endif %}</div></td>
         <td class="mono" style="text-align:right">
-          {%- if p.last is not none %}{{ p.last }}{% else %}<span class="muted">—</span>{% endif %}</td>
+          {%- if p.last is not none %}<strong>{{ "%.8f"|format(p.last) }}</strong>
+          {%- else %}<span class="muted">—</span>{% endif %}</td>
         <td style="text-align:right">
           {%- if p.change is not none %}<span style="color:{{ 'var(--ok)' if p.change >= 0 else 'var(--bad)' }}">
             {{ '+' if p.change >= 0 }}{{ "%.1f"|format(p.change) }}%</span>
           {%- else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="mono muted" style="text-align:right">
+          {%- if p.high is not none %}{{ "%.8f"|format(p.high) }}{% else %}—{% endif %}</td>
+        <td class="mono muted" style="text-align:right">
+          {%- if p.low is not none %}{{ "%.8f"|format(p.low) }}{% else %}—{% endif %}</td>
+        <td class="mono" style="text-align:right">
+          {%- if p.coins %}{{ "%.4f"|format(p.coins) }}
+            <div class="muted" style="font-size:.74rem">{{ p.trades }} trade{{ '' if p.trades == 1 else 's' }}</div>
+          {%- else %}<span class="muted">—</span>{% endif %}</td>
         <td class="mono muted" style="text-align:right;font-size:.82rem">
-          {%- if p.bid %}{{ "%.8f"|format(p.bid|float) }}{% else %}—{% endif %} /
-          {%- if p.ask %} {{ "%.8f"|format(p.ask|float) }}{% else %} —{% endif %}</td>
+          {%- if p.bid %}<span style="color:var(--ok)">{{ "%.8f"|format(p.bid|float) }}</span>
+          {%- else %}—{% endif %} /
+          {%- if p.ask %} <span style="color:var(--bad)">{{ "%.8f"|format(p.ask|float) }}</span>
+          {%- else %} —{% endif %}</td>
       </tr>
       {% endfor %}
     </table>
+    </div>
   </div>
+  <script>
+  function findMarket(text) {
+    var wanted = (text || '').trim().toLowerCase(), shown = 0;
+    document.querySelectorAll('table.markets tr[data-market]').forEach(function (row) {
+      var hit = !wanted || row.dataset.market.indexOf(wanted) >= 0;
+      row.hidden = !hit;
+      if (hit) shown++;
+    });
+    var count = document.getElementById('marketcount');
+    count.textContent = shown + (shown === 1 ? ' market' : ' markets');
+  }
+  </script>
   {% else %}
-  <div class="panel empty"><p>No pair has an order or a trade yet on
+  <div class="panel empty"><p>No market has an order or a trade yet on
     {{ chain.label|lower }}.</p>
     <p class="muted" style="font-size:.86rem">Open a token from the
       <a href="/tokens">Tokens</a> page and put an order on its book.</p></div>
@@ -181,12 +224,43 @@
     <div class="cards">{% for s in tokens %}{{ shopcard(s, 'Buy') }}{% endfor %}</div>
   {% endif %}
 
+
 {% else %}
   <p class="sub">Collections on {{ chain.label|lower }}, each one a market of its
     own. Open one for the whole set &mdash; what is for sale first, then the
     rest as it was inscribed. Any NFT can be offered for, listed or not.</p>
 
+  {% if popular %}
+  <h2>Popular collections</h2>
+  <div class="tiles" style="margin-bottom:20px">
+    {% for c in popular %}
+    {% set where = '/exchange/collection/' ~ c.creator ~ '/' ~ c.name|urlencode %}
+    <div class="tile">
+      <a class="art" href="{{ where }}" title="{{ c.name }} #{{ c.cover_edition or 1 }}"
+         {% if c.cover %}style="background-image:url(/content/{{ c.cover }})"{% endif %}></a>
+      <div class="body">
+        <div class="name"><a href="{{ where }}">{{ c.name }}</a></div>
+        <div class="who">{{ "{:,}".format(c.count) }} pieces &middot;
+          {%- if tags.get(c.creator) %} @{{ tags[c.creator] }}
+          {%- else %} {{ c.creator[:10] }}…{% endif %}</div>
+        <div class="row" style="gap:10px;margin-top:2px">
+          <div><div class="who">Floor</div>
+            <div class="price">{% if c.floor %}<strong>{{ "%.4f"|format(c.floor / 100000000) }}</strong>
+              {%- else %}<span class="muted">&mdash;</span>{% endif %}</div></div>
+          <div><div class="who">24h</div>
+            <div class="price">{% if c.day_coins %}{{ "%.2f"|format(c.day_coins) }}
+              {%- else %}<span class="muted">&mdash;</span>{% endif %}</div></div>
+          <div><div class="who">For sale</div>
+            <div class="price">{{ c.for_sale or '—' }}</div></div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   {% if collections %}
+  <h2>All collections</h2>
   <div class="panel">
     <table class="wallets">
       <tr class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.06em">
@@ -232,6 +306,35 @@
     <p class="muted" style="font-size:.86rem">A collection appears here because it
       is on the chain, not because anybody listed it. Inscribe one from the
       <a href="/inscriptions/collection">collection wizard</a>.</p></div>
+  {% endif %}
+
+  {% if sales %}
+  <h2>Recently sold</h2>
+  <div class="panel" style="margin-bottom:18px">
+    <table class="wallets">
+      {% for t in sales %}
+      <tr>
+        <td style="width:46px">
+          <a href="/inscriptions/{{ t.txid }}/view">
+            {%- if t.held and t.content_type.startswith('image/') %}
+            <img src="/content/{{ t.txid }}" alt="{{ t.name }}" loading="lazy"
+                 style="width:38px;height:38px;object-fit:cover;border-radius:8px;display:block">
+            {%- else %}<span class="coinface" style="border-radius:8px">#{{ t.number }}</span>{% endif %}</a></td>
+        <td><a href="/inscriptions/{{ t.txid }}/view"><strong>{{ t.name }}</strong></a>
+          <div class="muted" style="font-size:.76rem">
+            {%- if t.collection %}<a href="/exchange/collection/{{ t.creator }}/{{ t.collection|urlencode }}">{{ t.collection }}</a>
+              {%- if t.edition is not none %} #{{ t.edition }}{% endif %} &middot;
+            {%- endif %} #{{ "{:,}".format(t.number) }}</div></td>
+        <td style="text-align:right"><strong>{{ t.price }}</strong>
+          <div class="muted" style="font-size:.76rem">{{ t.when|ago }}
+            {%- if t.height %} &middot; block {{ "{:,}".format(t.height) }}{% endif %}</div></td>
+        <td class="muted" style="text-align:right;font-size:.78rem">
+          sold by {% if tags.get(t.seller) %}@{{ tags[t.seller] }}{% else %}{{ t.seller[:10] }}…{% endif %}
+          <div>held by {% if tags.get(t.owner) %}@{{ tags[t.owner] }}{% else %}{{ t.owner[:10] }}…{% endif %}</div></td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
   {% endif %}
 
   <h2>Shops selling single NFTs</h2>

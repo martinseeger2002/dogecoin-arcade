@@ -39,9 +39,14 @@
 {% if tokens %}
   <table class="wallets">
     <tr class="muted" style="font-size:.78rem;text-transform:uppercase;letter-spacing:.06em">
-      <td>Token</td><td>Supply</td><td>Holders</td><td>Issuer</td></tr>
+      <td colspan="2">Token</td><td>Supply</td><td>Holders</td><td>Issuer</td></tr>
   {% for t in tokens %}
     <tr>
+      <td style="width:40px"><a href="/tokens/{{ t.property_id }}">
+        {%- set face = faces.get(t.property_id, {}) -%}
+        {%- if face.icon %}<img src="/content/{{ face.icon }}" alt="{{ t.name }}"
+          loading="lazy" style="width:32px;height:32px;object-fit:cover;border-radius:50%;display:block">
+        {%- else %}<span class="coinface">{{ t.name[:2]|upper }}</span>{% endif %}</a></td>
       <td><a href="/tokens/{{ t.property_id }}"><strong>{{ t.name }}</strong></a>
         <span class="muted" style="font-size:.78rem">#{{ t.property_id }}</span>
         {% if t.test_ecosystem %}<span class="tag testnet">test ecosystem</span>{% endif %}
@@ -109,6 +114,19 @@
         <div class="field" style="flex:1"><label>Subcategory</label><input autocomplete="off" name="subcategory" value="{{ f.subcategory or '' }}"></div>
       </div>
       <div class="field"><label>Link</label><input autocomplete="off" name="url" placeholder="https://" value="{{ f.url or '' }}"></div>
+      <div class="field"><label>Icon</label>
+        <input autocomplete="off" name="icon" list="my-inscriptions"
+               placeholder="/content/&lt;inscription id&gt;" value="{{ f.icon or '' }}">
+        <datalist id="my-inscriptions">
+          {% for row in my_pictures %}
+          <option value="/content/{{ row.txid }}">{{ row.label }}</option>
+          {% endfor %}
+        </datalist>
+        <div class="muted" style="font-size:.8rem;margin-top:4px">An inscription on
+          this chain &mdash; paste its <code>/content/</code> link or its id, or pick
+          one of yours. The token wears it wherever it is shown, and the picture is
+          served by whichever node is looking, not by a website that can go away.
+          It costs about 30 bytes of the issuance.</div></div>
     </details>
     <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">
       {{ 'Review creation on mainnet' if chain.is_mainnet else 'Review creation' }}</button>

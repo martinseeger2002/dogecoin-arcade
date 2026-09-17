@@ -204,6 +204,30 @@ def last_and_change(points: list[dict], now: float | None = None,
             "volume": sum(float(p.get("size") or 0) for p in inside)}
 
 
+def day(points: list[dict], now: float | None = None,
+        window: int = DAY) -> dict[str, Any]:
+    """The numbers a market table quotes: last, move, high, low, what traded.
+
+    `last_and_change` decides the first two and is left to (D-048); this adds
+    the day's range and its two volumes. `volume` is in the thing being sold
+    -- tokens, or pieces -- and `coins` is what was paid for them, because a
+    market is read in both and one cannot be worked out from the other when
+    the price moved.
+    """
+    stats = dict(last=None, change=None, trades=0, volume=0.0,
+                 high=None, low=None, coins=0.0)
+    stats.update(last_and_change(points, now=now, window=window))
+    import time as _time
+
+    now = _time.time() if now is None else now
+    inside = [p for p in points if p["when"] >= now - window]
+    if inside:
+        prices = [p["price"] for p in inside]
+        stats["high"], stats["low"] = max(prices), min(prices)
+        stats["coins"] = sum(float(p.get("size") or 0) * p["price"] for p in inside)
+    return stats
+
+
 def summary(points: list[dict]) -> dict[str, Any]:
     """What the chart says in words: last, and the move over its span."""
     if not points:

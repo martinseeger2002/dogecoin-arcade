@@ -1,40 +1,86 @@
 {% extends "base.html" %}
 {% import "_chart.html" as chart %}
-{% block title %}{{ prop.name }} · Exchange · DogecoinArcade{% endblock %}
+{% block title %}{{ prop.name }}/{{ chain.label|upper }} · Exchange · DogecoinArcade{% endblock %}
 {% block body %}
 <div id="live" data-generation="{{ state.generation }}" class="live"></div>
-<a class="back-link" href="/exchange?tab=tokens">&#8592; All pairs</a>
-<h1 style="margin-bottom:2px">{{ prop.name }}
-  <span class="muted" style="font-size:.9rem;font-weight:400">/ {{ chain.label }} coins</span></h1>
-<p class="sub" style="margin-top:2px">#{{ prop.property_id }} &middot;
-  you hold {{ held }} &middot; {{ "%.4f"|format(coins) }} coins</p>
+<a class="back-link" href="/exchange?tab=tokens">&#8592; All markets</a>
+
+<div class="markethead">
+  <div class="row" style="gap:12px;align-items:center;flex:0 0 auto">
+    {% if face.icon %}
+      <img src="/content/{{ face.icon }}" alt="{{ prop.name }}" loading="lazy"
+           style="width:42px;height:42px;object-fit:cover;border-radius:50%">
+    {% else %}
+      <span class="coinface" style="width:42px;height:42px;font-size:.82rem">{{ prop.name[:2]|upper }}</span>
+    {% endif %}
+    <div>
+      <h1 style="margin:0;font-size:1.3rem">{{ prop.name }}<span class="muted">/{{ chain.label|upper }}</span></h1>
+      <div class="muted" style="font-size:.78rem">#{{ prop.property_id }}
+        {%- if face.about %} &middot; {{ face.about }}{% endif %}
+        {%- if face.url %} &middot; <a href="{{ face.url }}" rel="noopener noreferrer nofollow"
+          target="_blank">link</a>{% endif %}</div>
+    </div>
+  </div>
+  <div class="ticks">
+    <div class="tick"><b class="{{ 'up' if (day.change or 0) >= 0 else 'down' }}">
+      {%- if day.last is not none %}{{ "%.8f"|format(day.last) }}{% else %}&mdash;{% endif %}</b>
+      <span>Last &middot; coins</span></div>
+    <div class="tick"><b>
+      {%- if day.change is not none %}<span class="{{ 'up' if day.change >= 0 else 'down' }}">
+        {{ '+' if day.change >= 0 }}{{ "%.1f"|format(day.change) }}%</span>
+      {%- else %}&mdash;{% endif %}</b><span>24h change</span></div>
+    <div class="tick"><b>{% if day.high is not none %}{{ "%.8f"|format(day.high) }}{% else %}&mdash;{% endif %}</b>
+      <span>24h high</span></div>
+    <div class="tick"><b>{% if day.low is not none %}{{ "%.8f"|format(day.low) }}{% else %}&mdash;{% endif %}</b>
+      <span>24h low</span></div>
+    <div class="tick"><b>{{ "%.4f"|format(day.coins) }}</b><span>24h volume &middot; coins</span></div>
+    <div class="tick"><b>{{ held }}</b><span>You hold</span></div>
+  </div>
+</div>
 
 <div class="pairgrid">
   <div>
     <div class="panel">
-      {% if stats.last is not none %}
-      <div class="row" style="align-items:baseline;gap:12px">
-        <strong style="font-size:1.35rem">{{ stats.last }}</strong>
-        <span class="muted">coins each</span>
-        {% if stats.change is not none %}
-        <span style="color:{{ 'var(--ok)' if stats.change >= 0 else 'var(--bad)' }}">
-          {{ '+' if stats.change >= 0 }}{{ "%.1f"|format(stats.change) }}% today</span>
-        {% else %}<span class="muted">no earlier trade to compare with</span>{% endif %}
-      </div>
-      {% endif %}
       {{ chart.candles(slots, 'coins each') }}
+    </div>
+
+    <div class="panel">
+      <h3 style="margin:0 0 10px">Buy and sell {{ prop.name }}</h3>
+      <form method="post" action="/exchange/order" class="trade">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <input type="hidden" name="property_id" value="{{ prop.property_id }}">
+        <div class="sides">
+          <label><input type="radio" name="side" value="bid" checked><span>Buy</span></label>
+          <label><input type="radio" name="side" value="ask"><span>Sell</span></label>
+        </div>
+        <div class="row" style="gap:10px;align-items:flex-end">
+          <div class="field" style="flex:1 1 150px;margin:0"><label>Amount of {{ prop.name }}</label>
+            <input autocomplete="off" name="amount" inputmode="decimal" placeholder="0"></div>
+          <div class="field" style="flex:1 1 150px;margin:0"><label>Price, coins each</label>
+            <input autocomplete="off" name="price" inputmode="decimal" placeholder="0.00000000"></div>
+          <button type="submit" class="{{ 'danger' if chain.is_mainnet }}"
+                  style="flex:0 0 auto">Put it on the book</button>
+        </div>
+      </form>
+      <p class="muted" style="font-size:.78rem;margin:10px 0 0">You hold {{ held }}
+        {{ prop.name }} and {{ "%.4f"|format(coins) }} coins. The order goes on the
+        chain and stands until you cancel it. Selling holds the tokens back until
+        then; a bid holds nothing, because nothing on this chain can reserve coins
+        and still let a wallet spend.</p>
     </div>
 
     {% if recent %}
     <div class="panel">
-      <h3 style="margin:0 0 8px">Trades</h3>
+      <h3 style="margin:0 0 8px">Recent trades</h3>
       <table>
         <tr class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.06em">
-          <td>Price</td><td>Amount</td><td>Block</td></tr>
+          <td>Price</td><td style="text-align:right">Amount</td>
+          <td style="text-align:right">Coins</td><td style="text-align:right">Block</td></tr>
         {% for t in recent %}
-        <tr><td class="mono">{{ t.price }}</td>
-            <td class="mono">{{ "{:,.8f}".format(t.size).rstrip('0').rstrip('.') }}</td>
-            <td class="muted">{{ "{:,}".format(t.height) }}</td></tr>
+        <tr><td class="mono">{{ "%.8f"|format(t.price) }}</td>
+            <td class="mono" style="text-align:right">{{ "{:,.8f}".format(t.size).rstrip('0').rstrip('.') }}</td>
+            <td class="mono muted" style="text-align:right">{{ "%.4f"|format(t.price * t.size) }}</td>
+            <td class="muted" style="text-align:right">{{ "{:,}".format(t.height) }}</td></tr>
         {% endfor %}
       </table>
     </div>
@@ -43,22 +89,25 @@
 
   <div>
     <div class="panel">
-      <h3 style="margin:0 0 8px">Asks <span class="muted" style="font-weight:400">— selling {{ prop.name }}</span></h3>
-      {% if not book.asks %}<p class="muted" style="margin:0">Nothing offered.</p>{% else %}
+      <h3 style="margin:0 0 8px">Order book</h3>
+      {% if not book.asks and not book.bids %}
+        <p class="muted" style="margin:0">Nothing on either side yet.</p>
+      {% endif %}
+
+      {% if book.asks %}
       <table class="book">
-        <tr class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.06em">
-          <td>Price</td><td style="text-align:right">Amount</td><td style="text-align:right">Coins</td>
-          <td></td><td></td></tr>
-        {% for o in book.asks %}
-        <tr{% if o.mine %} class="mine"{% endif %}>
+        <tr class="muted" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.06em">
+          <td>Price</td><td style="text-align:right">Amount</td>
+          <td style="text-align:right">Coins</td><td></td><td></td></tr>
+        {% for o in book.asks|reverse %}
+        <tr class="ask{{ ' mine' if o.mine }}" style="--depth:{{ o.depth }}%">
           <td class="mono" style="color:var(--bad)">{{ o.price_shown }}</td>
           <td class="mono" style="text-align:right">{{ o.tokens_shown }}</td>
           <td class="mono muted" style="text-align:right">{{ o.coins_shown }}</td>
-          <td class="muted" style="font-size:.76rem">
+          <td class="muted" style="font-size:.74rem">
             {%- if o.mine %}yours{% elif tags.get(o.address) %}@{{ tags[o.address] }}
-            {%- else %}{{ o.address[:8] }}…{% endif %}
-            {%- if o.pending %}<span class="pill" title="broadcast, not yet in a block"
-              style="margin-left:5px">pool</span>{% endif %}</td>
+            {%- else %}{{ o.address[:6] }}…{% endif %}
+            {%- if o.pending %}<span class="pill" title="broadcast, not yet in a block">pool</span>{% endif %}</td>
           <td style="text-align:right;white-space:nowrap">
             {%- if not o.mine and not o.pending and fills_ready %}
             <form method="post" action="/exchange/fill" class="row"
@@ -67,67 +116,47 @@
               <input type="hidden" name="order" value="{{ o.txid }}">
               <input type="hidden" name="property_id" value="{{ prop.property_id }}">
               <input name="amount" value="{{ o.tokens_shown }}" inputmode="decimal"
-                     style="width:7.5em;padding:3px 6px;font-size:.8rem" autocomplete="off">
+                     style="width:6.5em;padding:3px 6px;font-size:.78rem" autocomplete="off">
               <button type="submit" class="small">Take</button>
             </form>
-            {%- elif o.pending %}<span class="muted" style="font-size:.74rem">when its block lands</span>
+            {%- elif o.pending %}<span class="muted" style="font-size:.72rem">when its block lands</span>
             {%- endif %}</td></tr>
         {% endfor %}
       </table>
       {% endif %}
+
+      <div class="spread">
+        {% if spread is not none %}
+          <strong class="mono">{{ "%.8f"|format(spread) }}</strong> <span class="muted">spread</span>
+        {% elif day.last is not none %}
+          <strong class="mono">{{ "%.8f"|format(day.last) }}</strong> <span class="muted">last traded</span>
+        {% else %}
+          <span class="muted">no spread &mdash; one side of the book is empty</span>
+        {% endif %}
+      </div>
+
+      {% if book.bids %}
+      <table class="book">
+        {% for o in book.bids %}
+        <tr class="bid{{ ' mine' if o.mine }}" style="--depth:{{ o.depth }}%">
+          <td class="mono" style="color:var(--ok)">{{ o.price_shown }}</td>
+          <td class="mono" style="text-align:right">{{ o.tokens_shown }}</td>
+          <td class="mono muted" style="text-align:right">{{ o.coins_shown }}</td>
+          <td class="muted" style="font-size:.74rem">
+            {%- if o.mine %}yours{% elif tags.get(o.address) %}@{{ tags[o.address] }}
+            {%- else %}{{ o.address[:6] }}…{% endif %}
+            {%- if o.pending %}<span class="pill" title="broadcast, not yet in a block">pool</span>{% endif %}</td>
+          <td></td></tr>
+        {% endfor %}
+      </table>
+      {% endif %}
+
       {% if not fills_ready %}
-      <p class="muted" style="font-size:.78rem;margin:10px 0 0">Taking a price off
+      <p class="muted" style="font-size:.76rem;margin:10px 0 0">Taking a price off
         the book starts at block {{ "{:,}".format(fills_from) }}{% if height %} and
         this chain is at {{ "{:,}".format(height) }}{% endif %}. Until then an ask
         holds its tokens and can only be cancelled by whoever placed it.</p>
       {% endif %}
-    </div>
-
-    <div class="panel">
-      <h3 style="margin:0 0 8px">Bids <span class="muted" style="font-weight:400">— buying {{ prop.name }}</span></h3>
-      {% if not book.bids %}<p class="muted" style="margin:0">Nothing wanted.</p>{% else %}
-      <table class="book">
-        <tr class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.06em">
-          <td>Price</td><td style="text-align:right">Amount</td><td style="text-align:right">Coins</td><td></td></tr>
-        {% for o in book.bids %}
-        <tr{% if o.mine %} class="mine"{% endif %}>
-          <td class="mono" style="color:var(--ok)">{{ o.price_shown }}</td>
-          <td class="mono" style="text-align:right">{{ o.tokens_shown }}</td>
-          <td class="mono muted" style="text-align:right">{{ o.coins_shown }}</td>
-          <td class="muted" style="font-size:.76rem">
-            {%- if o.mine %}yours{% elif tags.get(o.address) %}@{{ tags[o.address] }}
-            {%- else %}{{ o.address[:8] }}…{% endif %}
-            {%- if o.pending %}<span class="pill" title="broadcast, not yet in a block"
-              style="margin-left:5px">pool</span>{% endif %}</td></tr>
-        {% endfor %}
-      </table>
-      {% endif %}
-      <p class="muted" style="font-size:.78rem;margin:10px 0 0">A bid holds no
-        coins back &mdash; nothing can hold coins on this chain and still let a
-        wallet spend. An ask holds its tokens, so what is offered is really
-        there.</p>
-    </div>
-
-    <div class="panel">
-      <h3 style="margin:0 0 10px">Place an order</h3>
-      <form method="post" action="/exchange/order">
-        <input type="hidden" name="csrf_token" value="{{ csrf }}">
-        <input type="hidden" name="property_id" value="{{ prop.property_id }}">
-        <div class="sides">
-          <label><input type="radio" name="side" value="ask" checked>
-            <span>Sell</span></label>
-          <label><input type="radio" name="side" value="bid">
-            <span>Buy</span></label>
-        </div>
-        <div class="field"><label>Amount of {{ prop.name }}</label>
-          <input autocomplete="off" name="amount" inputmode="decimal" placeholder="0"></div>
-        <div class="field"><label>Price, in coins each</label>
-          <input autocomplete="off" name="price" inputmode="decimal" placeholder="0.00000000"></div>
-        <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">Put it on the book</button>
-      </form>
-      <p class="muted" style="font-size:.78rem;margin:10px 0 0">The order goes on
-        the chain and stands until you cancel it. Selling holds the tokens back
-        until then.</p>
     </div>
 
     {% if fills %}
@@ -152,7 +181,7 @@
 
     {% if mine %}
     <div class="panel">
-      <h3 style="margin:0 0 8px">Yours on this chain</h3>
+      <h3 style="margin:0 0 8px">Your orders</h3>
       <table>
         {% for o in mine %}
         <tr><td class="muted" style="font-size:.8rem">
@@ -178,12 +207,29 @@
 </div>
 
 <style>
-  .pairgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,340px);gap:16px}
-  @media (max-width:820px){.pairgrid{grid-template-columns:minmax(0,1fr)}}
-  .book td{padding:3px 6px 3px 0;font-size:.85rem}
+  .markethead{display:flex;gap:16px;align-items:center;flex-wrap:wrap;
+    border:1px solid var(--line);border-radius:12px;background:var(--panel);
+    padding:12px 14px;margin:0 0 16px}
+  .ticks{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));
+    gap:10px 18px;flex:1 1 380px}
+  .tick b{display:block;font-size:.98rem;font-variant-numeric:tabular-nums}
+  .tick span{font-size:.66rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+  .up{color:var(--ok)} .down{color:var(--bad)}
+  .pairgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,360px);gap:16px}
+  @media (max-width:880px){.pairgrid{grid-template-columns:minmax(0,1fr)}}
+  .book{width:100%}
+  .book td{padding:3px 6px 3px 0;font-size:.84rem;position:relative}
+  /* The depth bar is behind the row, not a column of its own: the numbers
+     stay where they are and the size is read without counting digits. */
+  .book tr.ask td:first-child::before,.book tr.bid td:first-child::before{
+    content:"";position:absolute;inset:0 auto 0 -4px;width:var(--depth);
+    pointer-events:none;border-radius:3px}
+  .book tr.ask td:first-child::before{background:rgba(224,112,112,.14)}
+  .book tr.bid td:first-child::before{background:rgba(91,189,133,.14)}
   .book tr.mine{background:var(--code)}
-  /* base.html makes every label a block, which stacked the radio above its
-     own word and read as two broken rows. */
+  .spread{display:flex;gap:8px;align-items:baseline;justify-content:center;
+    padding:8px 0;margin:6px 0;border-top:1px solid var(--line);
+    border-bottom:1px solid var(--line);font-size:.9rem}
   .sides{display:flex;gap:16px;margin-bottom:12px}
   .sides label{display:inline-flex;align-items:center;gap:6px;margin:0;
     font-size:.95rem;color:var(--fg);cursor:pointer}

@@ -40,6 +40,8 @@ creation ignores it.
 
 from __future__ import annotations
 
+import json as jsonlib
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -58,6 +60,74 @@ from .script import parse_output
 from .tx import (
     EncodingClass, PrevOut, TxError, _parsed_outputs, determine_reference, determine_sender,
 )
+
+
+#: An inscription named in a token's own fields: a bare txid, `/content/<txid>`,
+#: or any URL ending in one. This is how a token gets a face -- the icon is an
+#: inscription on the same chain, so it is served by whichever node is looking
+#: at it and belongs to nobody's CDN (D-098).
+_ICON = re.compile(r"(?:^|/)([0-9a-f]{64})/?$")
+
+
+def icon_in(text: str) -> str:
+    """The inscription a string names, or "" if it names none."""
+    found = _ICON.search((text or "").strip().split("?")[0])
+    return found.group(1) if found else ""
+
+
+def details(prop: dict[str, Any]) -> dict[str, str]:
+    """What a token says about itself: its description, its icon, its link.
+
+    Omni gives an issuance five strings and no more, so a token that wants an
+    icon has to say so in one of them. `data` is the description, and it may
+    be either plain text -- which is what it has always been, and what every
+    other Omni tool shows -- or a JSON object::
+
+        {"about": "100 goofcoins", "icon": "/content/<txid>",
+         "url": "https://goofcoin.example"}
+
+    An icon named in `url` is read too, so pasting a /content/ link into the
+    link field does the obvious thing rather than nothing.
+
+    Nothing here is consensus: the property row on the chain is unchanged,
+    and a node that has never heard of this convention shows the same token
+    with the JSON as its description. What is read is a whitelist, because
+    this is issuer-supplied text on its way to a page.
+    """
+    data = str(prop.get("data") or "")
+    link = str(prop.get("url") or "")
+    about, icon, url = data, "", link
+    if data.strip().startswith("{"):
+        try:
+            found = jsonlib.loads(data)
+        except ValueError:
+            found = None
+        if isinstance(found, dict):
+            about = str(found.get("about") or found.get("description") or "")[:400]
+            icon = icon_in(str(found.get("icon") or ""))
+            said = str(found.get("url") or "")
+            if said.lower().startswith(("https://", "http://")):
+                url = said
+    if not icon:
+        icon = icon_in(link)
+    if icon and icon_in(url) == icon:
+        url = ""            # the link WAS the icon; it is not also a website
+    return {"about": " ".join(about.split())[:400], "icon": icon, "url": url}
+
+
+def data_with_icon(about: str, icon: str) -> str:
+    """The `data` string an issuance carries, given what the form was told.
+
+    Plain text when there is no icon, so a token that does not want one costs
+    exactly what it did before -- every byte of an issuance is paid for, and
+    past 76 of them it no longer fits one OP_RETURN.
+    """
+    about = " ".join((about or "").split())
+    icon = icon_in(icon)
+    if not icon:
+        return about
+    return jsonlib.dumps({"about": about, "icon": f"/content/{icon}"},
+                         separators=(",", ":"))
 from .txbuild import build_raw_tx, multisig_script, op_return_script, p2pkh_script
 
 

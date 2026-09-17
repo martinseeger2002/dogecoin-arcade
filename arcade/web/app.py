@@ -94,6 +94,29 @@ def _describe_leg(data) -> str:
 
 TEMPLATES.env.filters["describe_leg"] = _describe_leg
 
+
+def _ago(when: Any) -> str:
+    """A template filter: how long ago, in the words people use out loud.
+
+    A block time is a number nobody reads as a moment. "4 minutes ago" is
+    what a sale feed is for -- whether the market is alive right now.
+    """
+    if not when:
+        return ""             # no time at all, rather than 1970
+    try:
+        seconds = time.time() - float(when)
+    except (TypeError, ValueError):
+        return ""
+    if seconds < 0:
+        seconds = 0
+    for size, unit in ((86400, "d"), (3600, "h"), (60, "m")):
+        if seconds >= size:
+            return f"{int(seconds // size)}{unit} ago"
+    return "just now"
+
+
+TEMPLATES.env.filters["ago"] = _ago
+
 # Sections that exist, and sections that do not. Shown honestly rather than
 # hidden, so the shape of the finished product is visible.
 #: (path, label, chain, built). `chain` is shown in the interface on every page,
@@ -2471,7 +2494,7 @@ def create_app(state: AppState) -> FastAPI:
             "other_chains": [c for c in state.token_chains if c is not chain],
             "index": index.status(node_tip=state.ledger_tips.get(chain.network)),
             "tokens": [], "holdings": [], "funded": [], "owned": set(),
-            "pending": [], "node_error": None,
+            "pending": [], "node_error": None, "faces": {}, "my_pictures": [],
         }
         try:
             data["tokens"] = index.properties()
@@ -2503,6 +2526,18 @@ def create_app(state: AppState) -> FastAPI:
                 still.append(item)
         state.pending_tokens = still
         data["pending"] = [i for i in still if i["network"] == chain.network]
+        data["faces"] = _faces_for(index, data["tokens"])
+        # Pictures this wallet could give a token as its icon, offered rather
+        # than asked for: an inscription id is 64 characters nobody types.
+        try:
+            data["my_pictures"] = [
+                {"txid": row["txid"],
+                 "label": (_fromjson(row["json"]) or {}).get("name")
+                          or f"#{row['number']:,}"}
+                for row in index.inscriptions(owners=sorted(owned), limit=60)
+                if row["held"] and str(row["content_type"] or "").startswith("image/")]
+        except Exception:
+            data["my_pictures"] = []
         return data
 
     # --- inscriptions ---------------------------------------------------------
@@ -4192,20 +4227,27 @@ def create_app(state: AppState) -> FastAPI:
                       units: str = Form("divisible"),
                       category: str = Form(""), subcategory: str = Form(""),
                       url: str = Form(""), data: str = Form(""),
+                      icon: str = Form(""),
                       confirmed: str = Form(""), csrf_token: str = Form("")):
         check_csrf(csrf_token)
         fields = dict(sender=sender, name=name, supply=supply, kind=kind, units=units,
                       category=category, subcategory=subcategory,
-                      url=url, data=data)
+                      url=url, data=data, icon=icon)
 
         def build(rpc):
             divisible = units != "indivisible"
             managed = kind == "managed"
             amount = None if managed else parse_amount(supply, divisible)
+            if icon.strip() and not tokenlib.icon_in(icon):
+                raise tokenlib.TokenError(
+                    "an icon is an inscription on this chain: paste its "
+                    "/content/ link or its id, not a picture from elsewhere.")
             payload = tokenlib.issuance_payload(
                 name=name, divisible=divisible, managed=managed, amount=amount,
-                category=category,
-                subcategory=subcategory, url=url, data=data)
+                category=category, subcategory=subcategory, url=url,
+                # The icon rides in `data` beside the description, because an
+                # issuance has five strings and no sixth (tokens.details).
+                data=tokenlib.data_with_icon(data, icon))
             if not sender.strip():
                 raise tokenlib.TokenError("choose the address that will issue the token.")
             return sender.strip(), payload, None
@@ -4613,22 +4655,28 @@ def create_app(state: AppState) -> FastAPI:
     def _pairs(index, trades) -> list[dict[str, Any]]:
         """Tokens against the coin, most traded first."""
         wanted = {p["property_id"]: p for p in _token_props(index)}
+        faces = _faces_for(index, wanted.values())
         out = []
         for pid, prop in wanted.items():
             points = chartlib.token_prices(trades, pid)
             book = index.book(pid, limit=1)
             if not points and not (book["asks"] or book["bids"]):
                 continue
-            stats = chartlib.last_and_change(points)
+            stats = chartlib.day(points)
             out.append({
                 "property_id": pid, "name": prop["name"],
                 "divisible": prop["divisible"],
+                "icon": faces[pid]["icon"], "about": faces[pid]["about"],
                 "last": stats["last"], "change": stats["change"],
+                "high": stats["high"], "low": stats["low"],
                 "trades": stats["trades"], "volume": stats["volume"],
+                "coins": stats["coins"],
                 "ask": book["asks"][0]["price"] if book["asks"] else None,
                 "bid": book["bids"][0]["price"] if book["bids"] else None,
             })
-        out.sort(key=lambda p: (-p["trades"], p["name"]))
+        # The market people are actually trading, first -- a table of pairs
+        # is read from the top, and the top should be where the trading is.
+        out.sort(key=lambda p: (-p["coins"], -p["trades"], p["name"].lower()))
         return out
 
     def _token_props(index) -> list[dict[str, Any]]:
@@ -4767,6 +4815,47 @@ def create_app(state: AppState) -> FastAPI:
                 "txid": trade["txid"]})
         return points
 
+    def _recent_sales(index, trades, limit: int = 12) -> list[dict[str, Any]]:
+        """The last NFTs to change hands, newest first.
+
+        Read from the swaps the chain holds, like everything else here: a
+        sale is a transaction both sides signed, so there is no list to keep
+        and nothing to believe (D-039). The buyer is not in the swap row --
+        what is known is who sold it and who holds it now, which for a sale
+        this recent is the same answer.
+        """
+        out: list[dict[str, Any]] = []
+        for trade in sorted(trades, key=lambda t: (-(t["height"] or 0),
+                                                   -(t["when"] or 0))):
+            legs = (trade["give"], trade["take"])
+            piece = next((l for l in legs
+                          if l.kind == inscriptionlib.LEG_INSCRIPTION), None)
+            paid = next((l for l in legs
+                         if l.kind != inscriptionlib.LEG_INSCRIPTION), None)
+            if piece is None or paid is None:
+                continue
+            txid = piece.txid.hex()
+            try:
+                row = index.inscription(txid)
+                price = swaplib.describe_leg(swaplib.leg_json(paid, index))
+            except Exception:
+                continue
+            if row is None:
+                continue
+            data = _fromjson(row["json"]) or {}
+            out.append({
+                "txid": txid, "number": row["number"],
+                "name": (data.get("name") if isinstance(data, dict) else None)
+                        or f"Inscription #{row['number']}",
+                "collection": row["collection"], "edition": row["edition"],
+                "creator": row["creator"], "owner": row["owner"],
+                "held": row["held"], "content_type": row["content_type"],
+                "price": price, "when": trade["when"], "height": trade["height"],
+                "seller": trade["seller"], "swap": trade["txid"]})
+            if len(out) >= limit:
+                break
+        return out
+
     def _market_collections(index, chain, trades) -> list[dict[str, Any]]:
         """Every collection on this chain as a market of its own.
 
@@ -4801,7 +4890,8 @@ def create_app(state: AppState) -> FastAPI:
         for row in index.collections(limit=MARKET_COLLECTIONS):
             key = (row["creator"], row["collection"])
             cover = index.collection_cover(*key) or {}
-            stats = chartlib.last_and_change(points.get(row["collection"], []))
+            mine = points.get(row["collection"], [])
+            stats = chartlib.day(mine)
             drawable = str(cover.get("content_type") or "").startswith("image/")
             out.append({
                 "creator": row["creator"], "name": row["collection"],
@@ -4814,7 +4904,9 @@ def create_app(state: AppState) -> FastAPI:
                 "floor": floors.get(key),
                 "offers": offers.get(key, 0),
                 "last": stats["last"], "change": stats["change"],
-                "trades": len(points.get(row["collection"], []))})
+                "day_coins": stats["coins"], "day_trades": stats["trades"],
+                "volume": sum(p["price"] for p in mine),
+                "trades": len(mine)})
         # What can be acted on, first: a market lists the collections
         # somebody is selling from before the ones nobody is.
         out.sort(key=lambda c: (-c["for_sale"], -c["offers"], -c["trades"],
@@ -4841,6 +4933,29 @@ def create_app(state: AppState) -> FastAPI:
         if missing:
             found.update(_tags_for(missing))
         return found
+
+    def _faces_for(index, props) -> dict[int, dict[str, str]]:
+        """What each token looks like: its icon, its description, its link.
+
+        The icon is an inscription (tokens.details), so it is only shown when
+        THIS node holds its bytes and a browser will draw them -- an <img>
+        pointing at content nobody has is a broken picture in a table, which
+        is worse than a token with no face at all (D-098).
+        """
+        out: dict[int, dict[str, str]] = {}
+        for prop in props:
+            face = tokenlib.details(prop)
+            if face["icon"]:
+                try:
+                    row = index.inscription(face["icon"])
+                except Exception:
+                    row = None
+                drawable = (row and row["held"]
+                            and str(row["content_type"] or "").startswith("image/"))
+                if not drawable:
+                    face["icon"] = ""
+            out[prop["property_id"]] = face
+        return out
 
     def _offerable(chain, index):
         """What this wallet could offer with: its tokens, and its coins."""
@@ -4888,7 +5003,19 @@ def create_app(state: AppState) -> FastAPI:
                 order["price_shown"] = f"{float(order['price']):.8f}".rstrip("0").rstrip(".")
                 order["tokens_shown"] = format_amount(order["tokens"], prop["divisible"])
                 order["coins_shown"] = format_amount(order["coins"], True)
+        # Depth behind each row of the book, as a share of the largest resting
+        # order on that side: a book is read at a glance, and the glance is
+        # where the size is.
+        for side in ("asks", "bids"):
+            biggest = max((o["tokens"] for o in book[side]), default=0)
+            for order in book[side]:
+                order["depth"] = round(100 * order["tokens"] / biggest, 1) if biggest else 0
+        spread = None
+        if book["asks"] and book["bids"]:
+            spread = float(book["asks"][0]["price"]) - float(book["bids"][0]["price"])
+        face = _faces_for(index, [prop])[property_id]
         return render(request, "pair.html", chain=chain, prop=prop, book=book,
+                      face=face, spread=spread, day=chartlib.day(points),
                       stats=chartlib.last_and_change(points),
                       slots=chartlib.candles(points),
                       recent=sorted(points, key=lambda p: -p["when"])[:12],
@@ -5478,6 +5605,8 @@ def create_app(state: AppState) -> FastAPI:
         data["tokens"] = [s for s in data["shops"] if selling(s, "token")]
         data["pairs"] = data.get("pairs", [])
         data["collections"] = []
+        data["popular"] = []
+        data["sales"] = []
         # What has actually traded, and what it went for. Read from the swaps
         # the chain holds, not from a book -- there is no book (D-039).
         try:
@@ -5496,8 +5625,20 @@ def create_app(state: AppState) -> FastAPI:
             # pieces it prices are (D-096).
             try:
                 data["collections"] = _market_collections(index, chain, trades)
+                # Popular means traded, and traded recently: what a market
+                # is for is not the biggest set, it is the busy one. Falls
+                # back on what is for sale where nothing has traded at all,
+                # because a chain with no history still has a marketplace.
+                data["popular"] = sorted(
+                    data["collections"],
+                    key=lambda c: (-c["day_coins"], -c["day_trades"],
+                                   -c["volume"], -c["for_sale"],
+                                   c["name"].lower()))[:6]
+                data["sales"] = _recent_sales(index, trades)
                 data["tags"].update(_names_for(
-                    index, [c["creator"] for c in data["collections"]]))
+                    index, [c["creator"] for c in data["collections"]]
+                    + [s["seller"] for s in data["sales"]]
+                    + [s["owner"] for s in data["sales"]]))
             except Exception as exc:
                 data["node_error"] = data["node_error"] or \
                     f"the collections could not be read: {exc}"

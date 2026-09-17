@@ -99,6 +99,21 @@ An Omni-style token ledger, indexed from the chain.
 
 ---
 
+**A token can wear an inscription as its icon.** Paste a `/content/<id>` link
+(or pick one of your own pictures) when creating a token and it is shown
+wherever the token is — the markets table, its market page, the token list.
+The picture is an inscription on the same chain, so it is served by whichever
+node is looking at it rather than by a website that can go away.
+
+An Omni issuance has five strings and no sixth, so the icon rides in `data`
+beside the description, as JSON: `{"about": "...", "icon": "/content/<id>"}`.
+A link pasted into the link field is read as an icon too. None of it is
+consensus — the property on the chain is exactly what it always was, and a
+node that never heard of the convention shows the same token with the JSON as
+its description. It costs about thirty bytes of the issuance, and an
+issuance cannot be corrected afterwards, so an icon that is not an
+inscription on this chain is refused before it is paid for.
+
 ## NFTs
 
 A file written onto the chain **in full and uncompressed**, owned by an
@@ -292,10 +307,13 @@ questions.
 * **Mintpads** — every mintpad with pieces left. A pad appears because it is
   on the chain, not because anybody listed it, and disappears when it mints
   out.
-* **Tokens** — every token paired against the chain's coin, with its last
-  price and the day's move. Click a pair for its candle chart, its **order
-  book** — asks and bids, best price first — and the form that puts an order
-  on it. An order rests on the chain until it is cancelled.
+* **Tokens** — the markets: every token paired against the chain's coin, with
+  its icon, last price, the day's move, high, low, volume and the spread
+  between best bid and best ask. Busiest first, and a box to find one by
+  name. Click a market for its candle chart, its **order book** — asks above
+  the spread, bids below, each row shaded by how much of the side it is —
+  its recent trades, and the form that puts an order on it. An order rests on
+  the chain until it is cancelled.
   * **An ask holds its tokens back**, so the book cannot show what the seller
     has since spent. **A bid holds nothing**: no covenant on this chain can
     reserve coins and still let a wallet spend, so a bid is an intent and the
@@ -303,7 +321,11 @@ questions.
   * **Nothing is matched by the engine.** A fill is a swap — one transaction
     carrying both legs, which is the only way a coin leg and a token leg move
     together. The book is what is on offer; the swap is how it settles.
-* **NFTs** — the marketplace: every collection on the chain, one row each,
+* **NFTs** — the marketplace. It opens on the **popular collections** —
+  popular meaning traded, and traded recently, because that is the question a
+  market answers — and on **what has just sold**: the piece, what it went for,
+  how long ago, who sold it and who holds it now, read from the swaps on the
+  chain. Then every collection on the chain, one row each,
   with its **floor**, how many of it are for sale, how many have an offer
   standing, and what it last traded for **in coins** — a piece sold for a
   token is its own market, and one axis cannot hold both. The row's picture
