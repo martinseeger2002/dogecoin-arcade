@@ -76,6 +76,16 @@ class FakeIndex:
     asks_standing: list = []
     offers_standing: list = []
 
+    #: The book, as a test sets it: this wallet's own orders and everybody's.
+    my_orders: list = []
+    book_rows: dict = {}
+
+    def orders_of(self, addresses, pool=True):
+        return [o for o in self.my_orders if o["address"] in set(addresses)]
+
+    def book(self, property_id, limit=50, pool=True):
+        return self.book_rows.get(int(property_id), {"asks": [], "bids": []})
+
     def asks(self, limit=200):
         return list(self.asks_standing)[:limit]
 

@@ -1,0 +1,103 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>%%TOKEN%% Launchpad</title>
+<!-- A launchpad that is an inscription. Its JSON names a shop selling a lot of
+     %%TOKEN%% for a price; this page is the counter. The icon is another
+     inscription, fetched from the node this is opened on. -->
+<style>
+  :root { color-scheme:dark; --gold:#ffc83d; --pink:#ff5fa2; --cyan:#43e8ff; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; min-height:100%; background:#07060c; color:#f4f1ff;
+              font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  main { min-height:100vh; display:grid; place-items:center; padding:18px; }
+  .card { width:min(420px,100%); text-align:center; padding:22px; border-radius:24px;
+          background:rgba(12,10,22,.8); border:1px solid rgba(255,255,255,.12);
+          box-shadow:0 30px 80px rgba(0,0,0,.6); }
+  .art { width:96px; height:96px; margin:0 auto 12px; border-radius:50%;
+         background:#110d22 center/cover no-repeat; image-rendering:pixelated;
+         box-shadow:0 0 0 3px var(--gold),0 0 40px rgba(255,200,61,.3); }
+  h1 { margin:0 0 2px; font-size:1.7rem; letter-spacing:-.02em; color:var(--gold); }
+  .sub { margin:0 0 16px; color:rgba(244,241,255,.62); font-size:.88rem; }
+  .deal { font-size:1.15rem; margin:0 0 4px; }
+  .deal b { color:var(--cyan); }
+  .left { font-size:.82rem; color:rgba(244,241,255,.55); margin:0 0 14px; }
+  button { width:100%; padding:14px 16px; border:0; border-radius:14px; font:inherit;
+           font-weight:700; cursor:pointer; color:#1a1024;
+           background:linear-gradient(90deg,var(--gold),var(--pink)); }
+  button[disabled] { opacity:.5; cursor:default; }
+  .say { margin-top:12px; min-height:2.6em; font-size:.86rem; color:rgba(244,241,255,.75); }
+  .say.bad { color:#ff8b8b; } .say.good { color:#7bf5a8; }
+  .foot { margin-top:10px; font-size:.76rem; color:rgba(244,241,255,.45); word-break:break-all; }
+</style>
+<main>
+  <div class="card">
+    <div class="art" id="art"></div>
+    <h1>%%TOKEN%%</h1>
+    <p class="sub" id="about">%%ABOUT%%</p>
+    <p class="deal" id="deal"><b>%%LOT%% %%TOKEN%%</b> for <b>%%PRICE%%</b></p>
+    <p class="left" id="left">reading the chain…</p>
+    <button id="buy" disabled>Buy a lot</button>
+    <p class="say" id="say"></p>
+    <p class="foot" id="foot"></p>
+  </div>
+</main>
+<script src="/r/swap.js"></script>
+<script>
+(function () {
+  var ICON = '%%ICON%%', LISTING = 0, shop = null, busy = false;
+  function $(id) { return document.getElementById(id); }
+  function say(t, how) { $('say').textContent = t || ''; $('say').className = 'say ' + (how || ''); }
+  if (ICON) $('art').style.backgroundImage = 'url(/content/' + ICON + ')';
+  if (!$('about').textContent.trim()) $('about').hidden = true;
+
+  // arcade.swap asks the frame's parent, so a wallet has to be around the
+  // page; on its own it would hear its own question echoed back.
+  var inWallet = window.parent !== window;
+
+  function draw() {
+    var l = shop && shop.listings[LISTING];
+    if (l) {
+      $('deal').innerHTML = '<b></b> for <b></b>';
+      var b = $('deal').querySelectorAll('b');
+      b[0].textContent = arcade.swap.describe(l.give);
+      b[1].textContent = arcade.swap.describe(l.take);
+      $('left').textContent = l.available ? l.available : 'sold by ' + shop.seller;
+    }
+    var btn = $('buy');
+    btn.disabled = busy || !shop || !l || !!l.available || !shop.open ||
+                   !shop.ready || shop.mine;
+    btn.textContent = busy ? 'Buying…' : 'Buy a lot';
+    $('foot').textContent =
+      !inWallet ? 'Open this in a DogecoinArcade wallet to buy.'
+      : !shop ? ''
+      : !shop.ready ? 'This chain reads swaps from block ' + shop.from + '; it is at ' + shop.height + '.'
+      : !shop.open ? 'This launchpad is closed: whoever wrote it no longer holds it.'
+      : shop.mine ? 'This is your launchpad. A buyer sees a live Buy button here.'
+      : '';
+  }
+
+  function refresh() {
+    var asked = inWallet
+      ? arcade.swap.shop().then(function (s) { shop = s; },
+                               function (e) { shop = null; say(e.message, 'bad'); })
+      : Promise.resolve().then(function () { $('left').textContent = ''; });
+    return asked.then(draw);
+  }
+
+  function buy() {
+    if (busy) return;
+    busy = true; draw();
+    arcade.swap.buy(LISTING, {step: function (what) { say(what); }})
+      .then(function (done) {
+        say('bought — swap ' + done.txid.slice(0, 12) + '…', 'good');
+      })
+      .catch(function (e) { say(e.message, 'bad'); })
+      .then(function () { busy = false; refresh(); });
+  }
+
+  $('buy').addEventListener('click', buy);
+  refresh();
+  setInterval(function () { if (!busy) refresh(); }, 60000);
+})();
+</script>

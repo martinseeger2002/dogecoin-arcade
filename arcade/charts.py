@@ -199,7 +199,11 @@ def last_and_change(points: list[dict], now: float | None = None,
     before = [p for p in ordered if p["when"] < now - window]
     last = ordered[-1]["price"]
     was = before[-1]["price"] if before else (inside[0]["price"] if inside else None)
-    change = None if not was or not before else (last - was) / was * 100
+    # Nothing traded inside the window, so there is no move to report. Without
+    # the `inside` test this compared the last trade with ITSELF -- it is the
+    # last element of `before` too -- and a market that had not traded for days
+    # showed a confident +0.0% beside its own chart saying -60% (a test machine).
+    change = None if not was or not before or not inside else (last - was) / was * 100
     return {"last": last, "change": change, "trades": len(inside),
             "volume": sum(float(p.get("size") or 0) for p in inside)}
 

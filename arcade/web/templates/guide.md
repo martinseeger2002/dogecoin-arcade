@@ -61,6 +61,12 @@ Both are shown before anything is sent.
 
 ## The public board
 
+**Red means somebody said something.** A channel with posts you have not seen
+carries a red count in the list, and so does a conversation with unread
+messages. Opening one clears its own count and nobody else's — reading
+#trading does not silence #releases. Your own posts are never news to you.
+
+
 Channels anybody can read. Nothing here is encrypted and nothing can be
 deleted — that is the point of them.
 
@@ -99,17 +105,26 @@ An Omni-style token ledger, indexed from the chain.
 
 ---
 
-**A token can wear an inscription as its icon.** Paste a `/content/<id>` link
-(or pick one of your own pictures) when creating a token and it is shown
-wherever the token is — the markets table, its market page, the token list.
+**A token can wear an inscription as its icon.** Give the inscription's id
+when creating a token — or pick one of your own pictures from the list, or
+**choose a file and inscribe it there and then**: the picture goes on the
+chain in one transaction, priced before it is paid for like everything else,
+and its id drops into the icon box. (An icon is capped at one transaction's
+worth, about 7 KB: it is drawn at 32 pixels and paid for in full for ever.)
+The icon is shown wherever the token is — the markets table, its market page, the token list.
 A token without one gets a plain mark, never its initials: two letters of a
 name read as a ticker symbol, and nothing here has one.
 The picture is an inscription on the same chain, so it is served by whichever
 node is looking at it rather than by a website that can go away.
 
-An Omni issuance has five strings and no sixth, so the icon rides in `data`
-beside the description, as JSON: `{"about": "...", "icon": "/content/<id>"}`.
-A link pasted into the link field is read as an icon too. None of it is
+An Omni issuance has five strings and no sixth, so the icon rides in `data`:
+the inscription's id alone when there is nothing else to say, and
+`{"about": "...", "icon": "<id>"}` when there is. A link pasted into the link
+field is read as an icon too. **A token with an icon is carried as Class B** —
+an id is 64 characters and a Class C payload is 76 for the whole issuance,
+name and all, so no shortening would fit it into one OP_RETURN. That costs the
+multisig encoding and some dust you can sweep back; the confirm screen shows
+it before anything is paid. None of it is
 consensus — the property on the chain is exactly what it always was, and a
 node that never heard of the convention shows the same token with the JSON as
 its description. It costs about thirty bytes of the issuance, and an
@@ -228,7 +243,9 @@ names itself the same way.
 
 **A set can describe itself, on its #1.** The first piece is the one a
 collection is known by, so that is where collection-level details are read
-from — put them in a `collection` object beside the name:
+from. The **collection wizard** asks for them at step 2 — description,
+website, Twitter, and a thumbnail — and writes them onto that piece; or put
+them there yourself, in a `collection` object beside the name:
 
 ```json
 {"name": "Goofball #1", "edition": 1,
@@ -240,11 +257,18 @@ from — put them in a `collection` object beside the name:
 ```
 
 `description`, `url` (or `website`, or `external_url`), `twitter`, `discord`,
-`telegram`, `supply` and `artist` are read; everything else is ignored, text
+`telegram`, `supply`, `artist` and `icon` are read; everything else is ignored, text
 is capped, and a link that is not http(s) is not shown as a link — an
 inscription is written by anybody and this ends up on a page. A HashLips
 build already writes `description` and `external_url` at the top level of
 every item, and those are read when there is no object.
+
+**The set's face is its #1 unless it says otherwise.** A marketplace shows
+the first piece, because that is the one people recognise — but `icon` names
+another inscription to use instead, and the wizard will inscribe a picture for
+you and fill it in. It is an inscription on this chain either way: a face on
+somebody's website is a face that disappears when the hosting does. One this
+node cannot draw falls back to #1 rather than to a broken image.
 
 **Membership is not decided by any of that.** A piece belongs to the set its
 own `name` or a `collection` STRING says, exactly as before — an object is
@@ -308,6 +332,17 @@ recorded as unread rather than as an old transaction meaning something new.
 
 ---
 
+**A token can sell itself from a launchpad.** On the token's own page, its
+issuer can inscribe a page that sells a fixed lot of the token for a fixed
+price — the mintpad's idea with the wall taken out. It is an inscription whose
+JSON names a shop, so any node can read it and buying is one swap carrying
+both sides; it is written from the address that holds the tokens, and it runs
+out when that address no longer holds a lot to sell. **Previewed before it is
+inscribed**, with the token's own icon and the price you typed, so what you
+pay for is what you already looked at. It appears under Mintpads in the
+Exchange by itself.
+
+
 ## The exchange
 
 Everything for sale on a chain, read from the chain itself. Four tabs, four
@@ -333,6 +368,17 @@ questions.
   * **Nothing is matched by the engine.** A fill is a swap — one transaction
     carrying both legs, which is the only way a coin leg and a token leg move
     together. The book is what is on offer; the swap is how it settles.
+  * **A book that crosses itself fills itself.** When one of your bids sits
+    at or above somebody's ask, this node takes it without being asked: a bid
+    above an ask and nothing happening is two people waiting for each other.
+    It takes the smaller of the two amounts, so a **partial fill** leaves
+    their order on the book shrunk by exactly what was taken — the remainder
+    posts itself — and **your own bid is withdrawn at that price and
+    re-posted for the rest** before anything is asked for, because no engine
+    reduces a bid (there is no reserve behind one) and a book must not
+    advertise what has already been committed. One at a time per pair, never
+    an order whose maker this node cannot reach, and never your own. The
+    switch is on the Overview.
 * **NFTs** — the marketplace. It opens on the **popular collections** —
   popular meaning traded, and traded recently, because that is the question a
   market answers — and on **what has just sold**: the piece, what it went for,
@@ -366,7 +412,8 @@ page's CSP would stop it if it tried.
 **Putting a price on one.** *Sell it* — on any NFT of yours, from
 **Wallet → NFTs**, from its tile in a collection, or from the piece's own
 page — asks a price and broadcasts an **ask**: one OP_RETURN saying "this
-piece, for this much". It is the other half of an offer, and the two are
+piece, for this much" (47 bytes of payload; about 250 as a whole
+transaction, with its inputs, change and signature). It is the other half of an offer, and the two are
 symmetrical: an offer is a buyer's word about somebody else's piece, an ask
 is the holder's about their own, and both are said on the chain rather than
 kept anywhere, so every node has the same book and a seller's wallet can be

@@ -58,7 +58,8 @@
     {% for c in channels %}
       <a class="thread {{ 'on' if c.channel == channel }}"
          href="/groups?which={{ which }}&channel={{ c.channel }}">
-        <div class="thread-top"><span class="who">#{{ c.channel }}</span></div>
+        <div class="thread-top"><span class="who">#{{ c.channel }}</span>
+          {% if c.unread %}<span class="badge new" title="{{ c.unread }} new">{{ c.unread }}</span>{% endif %}</div>
         <div class="thread-preview">{{ c.posts }} post{{ '' if c.posts == 1 else 's' }}</div>
         <div class="thread-when">{{ when(c.last) }}</div>
       </a>

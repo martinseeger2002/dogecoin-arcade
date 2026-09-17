@@ -1013,11 +1013,40 @@ class MessageStore:
             (post_id,)).fetchone()
 
     def group_channels(self, network: str) -> list[sqlite3.Row]:
-        """Channels seen on this network, most recently active first."""
+        """Channels seen on this network, most recently active first.
+
+        With how many posts in each are new to this wallet, so a list of
+        channels can say WHICH one has something in it rather than only that
+        the board does. A channel nobody has opened yet falls back to the
+        board's own mark, so an update does not light every channel up red
+        for posts that were read before there was a per-channel mark.
+        """
         return list(self.conn.execute(
-            "SELECT channel, COUNT(*) AS posts, MAX(block_time) AS last "
-            "FROM group_post WHERE network=? GROUP BY channel ORDER BY last DESC",
+            "SELECT p.channel, COUNT(*) AS posts, MAX(p.block_time) AS last, "
+            "  SUM(CASE WHEN p.mine = 0 AND p.id > COALESCE("
+            "        (SELECT CAST(value AS INTEGER) FROM seen_mark "
+            "         WHERE name = 'board:' || p.network || ':' || p.channel), "
+            "        (SELECT CAST(value AS INTEGER) FROM seen_mark "
+            "         WHERE name = 'board:' || p.network), 0) "
+            "      THEN 1 ELSE 0 END) AS unread "
+            "FROM group_post p WHERE p.network=? "
+            "GROUP BY p.channel ORDER BY last DESC",
             (network,)))
+
+    def mark_channel_read(self, network: str, channel: str) -> None:
+        """This channel, as far as it has been read, counts as seen.
+
+        Its own mark rather than the board's: opening #trading must not
+        silence #releases (D-108).
+        """
+        newest = self.conn.execute(
+            "SELECT COALESCE(MAX(id), 0) FROM group_post "
+            "WHERE network=? AND channel=?", (network, channel)).fetchone()[0]
+        self.conn.execute(
+            "INSERT INTO seen_mark(name, value) VALUES(?, ?) "
+            "ON CONFLICT(name) DO UPDATE SET value=excluded.value",
+            (f"board:{network}:{channel}", int(newest)))
+        self.conn.commit()
 
     # --- chunked sends in progress --------------------------------------------
 

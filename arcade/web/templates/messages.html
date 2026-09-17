@@ -46,7 +46,7 @@
           {% set handle = tags.get(t.address) if tags else None %}
           <span class="who {{ 'unnamed' if not (t.name or handle) }}">
             {{- t.name or ('@' ~ handle if handle else None) or t.address or 'Unknown sender' -}}</span>
-          {% if t.unread %}<span class="badge">{{ t.unread }}</span>{% endif %}
+          {% if t.unread %}<span class="badge new" title="{{ t.unread }} new">{{ t.unread }}</span>{% endif %}
         </div>
         <div class="thread-preview">{{ 'You: ' if t.outgoing }}{{ t.preview[:64].decode('utf-8', 'replace') }}</div>
         <div class="thread-when">{{ when(t.last) }}</div>

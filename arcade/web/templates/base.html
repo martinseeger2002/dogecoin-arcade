@@ -342,6 +342,10 @@ a.thread.on{background:var(--code);box-shadow:inset 3px 0 0 var(--accent)}
 .thread-top{display:flex;align-items:center;gap:8px}
 .thread-top .who{flex:1;font-weight:600;font-size:.9rem;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
+/* Unread is red, and red is for unread. The accent badge counts things
+   that are merely there -- approvals waiting, offers standing; this one says
+   somebody has said something to you since you last looked (D-108). */
+.badge.new{background:var(--bad);color:#fff;min-width:1.35em;text-align:center}
 .badge{background:var(--accent);color:var(--accent-fg);border-radius:999px;
   padding:1px 7px;font-size:.72rem;font-weight:700;flex:none}
 /* The count beside a nav item: red, because it is the one thing in the nav

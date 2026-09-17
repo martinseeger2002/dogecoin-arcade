@@ -187,6 +187,22 @@ def collection_of(json_text: str) -> tuple[str, int | None, str] | None:
     if isinstance(edition, bool) or not isinstance(edition, int):
         edition = None
     collection = data.get("collection")
+    if isinstance(collection, dict):
+        # A set that describes itself puts an OBJECT here (D-097), and its
+        # `name` is where the piece belongs -- which is what anybody writing
+        # one assumes, and what the field looks like it says.
+        #
+        # Read as "not a string, fall back to the item's name", the object
+        # split a collection in two: #1 carrying the description filed under
+        # the prefix of ITS OWN NAME while the other ninety-nine filed under
+        # their `collection` string, and the two agree only when the prefix
+        # matches character for character. "Pixel Skull #1" beside
+        # {"name": "Pixel Skulls"} made a ninety-nine-piece set and a
+        # one-piece set, with the description, the face and the floor on the
+        # one-piece one. Found by a test machine measuring it rather than reasoning
+        # about it (D-105).
+        said = collection.get("name")
+        collection = said if isinstance(said, str) else ""
     collection = collection.strip() if isinstance(collection, str) else ""
     if not collection:
         match = _EDITION_NAME.match(name)
@@ -200,11 +216,23 @@ def collection_of(json_text: str) -> tuple[str, int | None, str] | None:
     return collection, edition, name[:200]
 
 
+#: How anything here names an inscription: a bare txid, `/content/<txid>`, or
+#: any URL ending in one. One parser, because a token's icon and a
+#: collection's thumbnail are the same question asked twice.
+_NAMES_ONE = re.compile(r"(?:^|/)([0-9a-f]{64})/?$")
+
+
+def inscription_in(text: str) -> str:
+    """The inscription a string names, or "" if it names none."""
+    found = _NAMES_ONE.search((text or "").strip().lower().split("?")[0])
+    return found.group(1) if found else ""
+
+
 #: What a set may say about ITSELF, on its #1. Read as a whitelist rather
 #: than as whatever the JSON happens to hold: this ends up on a page, and an
 #: inscription is written by anybody.
 COLLECTION_FIELDS = ("description", "url", "twitter", "discord", "telegram",
-                     "supply", "artist")
+                     "supply", "artist", "icon")
 
 #: Where each of those may be spelled from, in order. `external_url` is the
 #: name the rest of the NFT world uses for a collection's own site, and a
@@ -217,6 +245,9 @@ _COLLECTION_ALIASES = {
     "telegram": ("telegram",),
     "supply": ("supply", "total", "count"),
     "artist": ("artist", "creator", "by"),
+    # The set's own face, when it is not simply #1: an inscription on this
+    # chain, named the same way a token's icon is (D-103).
+    "icon": ("icon", "thumbnail", "thumb", "image", "logo"),
 }
 
 #: A link on a page is a link somebody can click, so only these are shown.
@@ -272,7 +303,15 @@ def collection_details(json_text: str) -> dict[str, Any]:
                     out[field] = value
             elif isinstance(value, str) and value.strip():
                 text = " ".join(value.split())[:400]
-                if field in ("url", "discord", "telegram") and \
+                if field == "icon":
+                    # An inscription or nothing: the set's face is on this
+                    # chain, not on somebody's website. A HashLips `image`
+                    # pointing at IPFS lands here and is dropped, which is
+                    # the same judgement read_build makes (D-100).
+                    text = inscription_in(text)
+                    if not text:
+                        continue
+                elif field in ("url", "discord", "telegram") and \
                         not text.lower().startswith(_LINK_SCHEMES):
                     continue
                 if field == "twitter":

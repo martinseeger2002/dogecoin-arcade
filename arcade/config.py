@@ -160,42 +160,35 @@ TESTNET = Params(
     name="test",
     rpc_port=44873,
     p2p_port=44874,
-    # Tokens are indexed on testnet too, from here (D-016). Everything below
-    # is development traffic and the messaging scanner never read it either --
-    # see the next field.
-    activation_height=1_484_661,
-    # Set 2026-09-14 at tip 1,488,130 with both known nodes due to update
-    # within the day. No swap is sent before it.
-    swaps_from=1_488_450,
-    # Set 2026-09-17 at tip 1,493,729, about fifty minutes ahead at 45s a
-    # block. What makes that margin enough is the same thing that made it
-    # enough for fills: the height only changes how a block reads if an ask
-    # is IN one, and both known nodes update within minutes of the release
-    # notice. No ask is broadcast before it.
-    asks_from=1_493_800,
-    # Brought forward from 1,496,000 to test a fill between the two known
-    # nodes the same day. Blocks are 45s here, so this is about two hours
-    # from the tip it was set at (1,492,425).
+    # --- one floor, for everything (D-106) -------------------------------------
     #
-    # What makes moving it safe is not the margin but the traffic: the height
-    # only changes how a block reads if a fill transaction is IN one. Until
-    # somebody broadcasts a fill there is nothing for two nodes to disagree
-    # about, so the rule is to update both machines before the first fill,
-    # not before the height.
-    fills_from=1_492_520,
-    # Set 2026-09-16 at tip 1,492,633, after the first live fill traded
-    # without touching the book it was taken from.
-    named_fills_from=1_492_700,
-    # Set 2026-09-12 at tip 1,484,661. Everything before this is development
-    # traffic from building and testing the application -- cross-machine sends,
-    # chunked posts, deliberately interrupted sends -- and is not read.
+    # Set 2026-09-17 at tip 1,493,863, about three hours ahead at 46s a block.
+    # Every height below is the same number on purpose: tokens, messages,
+    # swaps, asks and fills all start together, so there is one date for
+    # "before" and one for "after" rather than six.
     #
-    # This is pinned to the VERSION rather than chosen per machine (D-015), so
-    # every node that installs this release starts from the same block and two
-    # machines cannot disagree about what the channel contains. Raising it makes
-    # everything below unreadable to a fresh install: the transactions stay on
-    # the chain for ever, but nothing here will look at them again.
-    messaging_start_height=1_484_661,
+    # Why start again at all: what is under it is six weeks of building the
+    # thing -- half-formats, a collection inscribed three ways, tokens made to
+    # watch a page draw, and an era of swaps from before asks existed. A
+    # marketplace whose history is mostly its own construction reads as
+    # nothing anybody would trust. Everything below stays on the chain for
+    # ever; nothing here will look at it again.
+    #
+    # Moving a floor does NOT clear what a node has already indexed -- the
+    # index resumes from its own height and only skips low blocks going
+    # forward -- so an install that keeps its index would see Goofball and the
+    # old tokens while a fresh one sees none of them, and the two would
+    # disagree about what exists. Every node moves its testnet index aside as
+    # part of taking this release. The release notice says which files, and
+    # they are the two that are per-chain: `test-ledger.sqlite` and
+    # `test.sqlite`. Nothing else in ~/.dogecoinarcade is testnet-only, and
+    # `main-ledger.sqlite` must not be touched at all.
+    activation_height=1_494_100,
+    messaging_start_height=1_494_100,
+    swaps_from=1_494_100,
+    asks_from=1_494_100,
+    fills_from=1_494_100,
+    named_fills_from=1_494_100,
     datadir_subdir="testnet3",
     pubkeyhash_version=113,
     scripthash_version=196,

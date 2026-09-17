@@ -34,39 +34,6 @@
 </div>
 {% endif %}
 
-<h2>All tokens</h2>
-<div class="panel">
-{% if tokens %}
-  <table class="wallets">
-    <tr class="muted" style="font-size:.78rem;text-transform:uppercase;letter-spacing:.06em">
-      <td colspan="2">Token</td><td>Supply</td><td>Holders</td><td>Issuer</td></tr>
-  {% for t in tokens %}
-    <tr>
-      <td style="width:40px"><a href="/tokens/{{ t.property_id }}">
-        {%- set face = faces.get(t.property_id, {}) -%}
-        {%- if face.icon %}<img src="/content/{{ face.icon }}" alt="{{ t.name }}"
-          loading="lazy" style="width:32px;height:32px;object-fit:cover;border-radius:50%;display:block">
-        {%- else %}<span class="coinface"></span>{% endif %}</a></td>
-      <td><a href="/tokens/{{ t.property_id }}"><strong>{{ t.name }}</strong></a>
-        <span class="muted" style="font-size:.78rem">#{{ t.property_id }}</span>
-        {% if t.test_ecosystem %}<span class="tag testnet">test ecosystem</span>{% endif %}
-        {% if t.managed %}<span class="muted" style="font-size:.78rem">managed</span>{% endif %}</td>
-      <td style="font-variant-numeric:tabular-nums">{{ t.total_display }}</td>
-      <td>{{ t.holder_count }}</td>
-      <td>{% if tags.get(t.issuer) %}<strong>@{{ tags[t.issuer] }}</strong>
-          <div class="mono muted" style="font-size:.72rem" onclick="copyAddr(this)"
-               title="Click to copy">{{ t.issuer }}</div>
-        {%- else %}<code class="addr" onclick="copyAddr(this)" title="Click to copy">{{ t.issuer }}</code>{% endif %}
-        {% if t.issuer in owned %}<span class="pill ok">you</span>{% endif %}</td>
-    </tr>
-  {% endfor %}
-  </table>
-{% else %}
-  <p class="muted" style="margin:0">No tokens exist on {{ chain.label|lower }} yet
-    {%- if index.activation_height %} (read from block {{ "{:,}".format(index.activation_height) }} on){% endif %}.</p>
-{% endif %}
-</div>
-
 <h2>Create a token</h2>
 <div class="panel">
   {% if not node.online %}
@@ -116,17 +83,43 @@
       <div class="field"><label>Link</label><input autocomplete="off" name="url" placeholder="https://" value="{{ f.url or '' }}"></div>
       <div class="field"><label>Icon</label>
         <input autocomplete="off" name="icon" list="my-inscriptions"
-               placeholder="/content/&lt;inscription id&gt;" value="{{ f.icon or '' }}">
+               placeholder="inscription id" value="{{ f.icon or '' }}">
         <datalist id="my-inscriptions">
           {% for row in my_pictures %}
-          <option value="/content/{{ row.txid }}">{{ row.label }}</option>
+          <option value="{{ row.txid }}">{{ row.label }}</option>
           {% endfor %}
         </datalist>
         <div class="muted" style="font-size:.8rem;margin-top:4px">An inscription on
-          this chain &mdash; paste its <code>/content/</code> link or its id, or pick
-          one of yours. The token wears it wherever it is shown, and the picture is
-          served by whichever node is looking, not by a website that can go away.
-          It costs about 30 bytes of the issuance.</div></div>
+          this chain: its id, or one of yours from the list &mdash; a
+          <code>/content/</code> link works too. The token wears it wherever it is
+          shown, and the picture is served by whichever node is looking, not by a
+          website that can go away. It costs about 30 bytes of the issuance.</div>
+        <div class="row" style="gap:8px;align-items:flex-end;margin-top:10px">
+          <div class="field" style="flex:1 1 220px;margin:0">
+            <label for="icon_file" class="muted" style="font-size:.84rem">or inscribe a picture now &mdash; up to 30,000 bytes</label>
+            <input type="file" name="icon_file" id="icon_file" accept="image/*"></div>
+          <button type="submit" class="ghost small" formaction="/tokens/icon"
+                  formenctype="multipart/form-data" style="flex:0 0 auto">
+            {{ 'Inscribe it' if icon_plan else 'What would it cost?' }}</button>
+        </div>
+        {% if icon_plan %}
+        <div class="note" style="margin-top:10px">
+          <strong>{{ icon_name }}</strong> &mdash;
+          {{ "{:,}".format(icon_plan.content_len) }} bytes in
+          {{ icon_plan.chunks }} transaction{{ '' if icon_plan.chunks == 1 else 's' }},
+          {{ "%.4f"|format(icon_plan.estimate.fee) }} in fees and
+          {{ "%.2f"|format(icon_plan.estimate.dust) }} in outputs you can sweep back.
+          Press <strong>Inscribe it</strong> again to put it on the chain; its id
+          drops into the icon box at once
+          {%- if icon_plan.chunks > 1 %}, and the other
+          {{ icon_plan.chunks - 1 }} piece{{ '' if icon_plan.chunks == 2 else 's' }}
+          go out behind you{% endif %}, and the token is created after that.
+          <input type="hidden" name="attached_b64" value="{{ icon_b64 }}">
+          <input type="hidden" name="attached_name" value="{{ icon_name }}">
+          <input type="hidden" name="attached_type" value="{{ icon_type }}">
+          <input type="hidden" name="icon_confirmed" value="yes">
+        </div>
+        {% endif %}</div>
     </details>
     <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">
       {{ 'Review creation on mainnet' if chain.is_mainnet else 'Review creation' }}</button>
@@ -138,4 +131,37 @@
   </form>
   {% endif %}
 </div>
+<h2>All tokens</h2>
+<div class="panel">
+{% if tokens %}
+  <table class="wallets">
+    <tr class="muted" style="font-size:.78rem;text-transform:uppercase;letter-spacing:.06em">
+      <td colspan="2">Token</td><td>Supply</td><td>Holders</td><td>Issuer</td></tr>
+  {% for t in tokens %}
+    <tr>
+      <td style="width:40px"><a href="/tokens/{{ t.property_id }}">
+        {%- set face = faces.get(t.property_id, {}) -%}
+        {%- if face.icon %}<img src="/content/{{ face.icon }}" alt="{{ t.name }}"
+          loading="lazy" style="width:32px;height:32px;object-fit:cover;border-radius:50%;display:block">
+        {%- else %}<span class="coinface"></span>{% endif %}</a></td>
+      <td><a href="/tokens/{{ t.property_id }}"><strong>{{ t.name }}</strong></a>
+        <span class="muted" style="font-size:.78rem">#{{ t.property_id }}</span>
+        {% if t.test_ecosystem %}<span class="tag testnet">test ecosystem</span>{% endif %}
+        {% if t.managed %}<span class="muted" style="font-size:.78rem">managed</span>{% endif %}</td>
+      <td style="font-variant-numeric:tabular-nums">{{ t.total_display }}</td>
+      <td>{{ t.holder_count }}</td>
+      <td>{% if tags.get(t.issuer) %}<strong>@{{ tags[t.issuer] }}</strong>
+          <div class="mono muted" style="font-size:.72rem" onclick="copyAddr(this)"
+               title="Click to copy">{{ t.issuer }}</div>
+        {%- else %}<code class="addr" onclick="copyAddr(this)" title="Click to copy">{{ t.issuer }}</code>{% endif %}
+        {% if t.issuer in owned %}<span class="pill ok">you</span>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </table>
+{% else %}
+  <p class="muted" style="margin:0">No tokens exist on {{ chain.label|lower }} yet
+    {%- if index.activation_height %} (read from block {{ "{:,}".format(index.activation_height) }} on){% endif %}.</p>
+{% endif %}
+</div>
+
 {% endblock %}

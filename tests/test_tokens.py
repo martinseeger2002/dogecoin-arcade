@@ -164,6 +164,15 @@ def test_a_token_can_wear_an_inscription_as_its_icon():
     assert T.details({"data": data, "url": "https://goof.example"}) == {
         "about": "100 goofcoins", "icon": piece, "url": "https://goof.example"}
 
+    # As few bytes as will say it: the bare id when there is nothing to say
+    # about the token, since an issuance is paid for by the byte for ever.
+    assert T.data_with_icon("", f"/content/{piece}") == piece
+    assert T.details({"data": piece, "url": ""}) == {
+        "about": "", "icon": piece, "url": ""}
+    # And the description is capped where somebody is about to pay for it,
+    # not only where it is read back (a test machine).
+    assert len(T.data_with_icon("x" * 900, "")) == T.MAX_ABOUT
+
     # No icon, no JSON: a token that does not want one pays for exactly what
     # it always did. Every byte of an issuance is paid for.
     assert T.data_with_icon("100 goofcoins", "") == "100 goofcoins"

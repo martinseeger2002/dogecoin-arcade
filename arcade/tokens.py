@@ -41,7 +41,6 @@ creation ignores it.
 from __future__ import annotations
 
 import json as jsonlib
-import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -60,31 +59,43 @@ from .script import parse_output
 from .tx import (
     EncodingClass, PrevOut, TxError, _parsed_outputs, determine_reference, determine_sender,
 )
+from .txbuild import build_raw_tx, multisig_script, op_return_script, p2pkh_script
 
 
-#: An inscription named in a token's own fields: a bare txid, `/content/<txid>`,
-#: or any URL ending in one. This is how a token gets a face -- the icon is an
-#: inscription on the same chain, so it is served by whichever node is looking
-#: at it and belongs to nobody's CDN (D-098).
-_ICON = re.compile(r"(?:^|/)([0-9a-f]{64})/?$")
+#: How long a description may be on the way IN. `details` caps what it reads
+#: at 400, but the cap that matters is this one: an issuance is paid for by the
+#: byte, for ever, and nobody should be able to buy two thousand characters
+#: that nothing will ever show (a test machine).
+MAX_ABOUT = 200
 
 
 def icon_in(text: str) -> str:
-    """The inscription a string names, or "" if it names none."""
-    found = _ICON.search((text or "").strip().split("?")[0])
-    return found.group(1) if found else ""
+    """The inscription a token's fields name, or "" if they name none.
+
+    A token gets its face from an inscription on the same chain, so it is
+    served by whichever node is looking at it and belongs to nobody's CDN
+    (D-098). The reading is `inscriptions.inscription_in`, shared with a
+    collection's thumbnail: the same question asked twice.
+    """
+    from . import inscriptions as I
+
+    return I.inscription_in(text)
 
 
 def details(prop: dict[str, Any]) -> dict[str, str]:
     """What a token says about itself: its description, its icon, its link.
 
     Omni gives an issuance five strings and no more, so a token that wants an
-    icon has to say so in one of them. `data` is the description, and it may
-    be either plain text -- which is what it has always been, and what every
-    other Omni tool shows -- or a JSON object::
+    icon has to say so in one of them. `data` is the description, and it is
+    read three ways: a BARE INSCRIPTION ID -- the whole field, which is the
+    smallest thing that can name an icon and is what a token with no
+    description writes; a JSON OBJECT, for one that wants both::
 
-        {"about": "100 goofcoins", "icon": "/content/<txid>",
+        {"about": "100 goofcoins", "icon": "<txid>",
          "url": "https://goofcoin.example"}
+
+    and anything else is the description, which is what `data` has always
+    been and what every other Omni tool shows.
 
     An icon named in `url` is read too, so pasting a /content/ link into the
     link field does the obvious thing rather than nothing.
@@ -97,7 +108,10 @@ def details(prop: dict[str, Any]) -> dict[str, str]:
     data = str(prop.get("data") or "")
     link = str(prop.get("url") or "")
     about, icon, url = data, "", link
-    if data.strip().startswith("{"):
+    alone = icon_in(data)
+    if alone and alone == data.strip().lower():
+        about, icon = "", alone            # the field is the id and nothing else
+    elif data.strip().startswith("{"):
         try:
             found = jsonlib.loads(data)
         except ValueError:
@@ -118,17 +132,25 @@ def details(prop: dict[str, Any]) -> dict[str, str]:
 def data_with_icon(about: str, icon: str) -> str:
     """The `data` string an issuance carries, given what the form was told.
 
-    Plain text when there is no icon, so a token that does not want one costs
-    exactly what it did before -- every byte of an issuance is paid for, and
-    past 76 of them it no longer fits one OP_RETURN.
+    As few bytes as will say it: plain text when there is no icon, so a token
+    that does not want one costs exactly what it did before; the bare id when
+    there is an icon and nothing to say about it; the object only when both
+    are wanted.
+
+    None of these fits one OP_RETURN and no shortening would -- an id is 64
+    characters and a Class C payload is 76 for the WHOLE issuance, name and
+    all -- so a token with an icon is carried as Class B, which costs the
+    multisig encoding and some sweepable dust. Said plainly in the guide
+    rather than implied to be a budget somebody can manage by writing less
+    (a test machine). What the shortening buys is fewer of those outputs.
     """
-    about = " ".join((about or "").split())
+    about = " ".join((about or "").split())[:MAX_ABOUT]
     icon = icon_in(icon)
     if not icon:
         return about
-    return jsonlib.dumps({"about": about, "icon": f"/content/{icon}"},
-                         separators=(",", ":"))
-from .txbuild import build_raw_tx, multisig_script, op_return_script, p2pkh_script
+    if not about:
+        return icon
+    return jsonlib.dumps({"about": about, "icon": icon}, separators=(",", ":"))
 
 
 class TokenError(Exception):

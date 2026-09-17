@@ -21,6 +21,7 @@ import secrets
 import sys
 import os
 from pathlib import Path
+from urllib.parse import quote
 from typing import Any
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -43,6 +44,7 @@ from .. import charts as chartlib
 from .. import fees
 from .. import gather as gatherlib
 from .. import mintpad as mintpadlib
+from .. import tokenpad as tokenpadlib
 from .. import swap as swaplib
 from .. import tags as taglib
 from .. import remote as remotelib
@@ -449,6 +451,7 @@ def create_app(state: AppState) -> FastAPI:
                       my_address=state.derived_address,
                       auto_update=bool(state.setting("auto_update", True)),
                       auto_sell=bool(state.setting("auto_sell", True)),
+                      auto_fill=bool(state.setting("auto_fill", True)),
                       update_status=state.update_status, when=_when,
                       update_every=watcherlib.BlockWatcher.UPDATE_EVERY,
                       release_key=releaselib.PUBLIC_KEY,
@@ -490,6 +493,23 @@ def create_app(state: AppState) -> FastAPI:
             if auto == "on" else
             "Offers will wait for you, even when they meet your asking price.",
             "ok")
+        return RedirectResponse("/", status_code=303)
+
+    @app.post("/settings/filling")
+    def set_auto_fill(request: Request, csrf_token: str = Form(""),
+                      auto: str = Form("")):
+        """Stop this wallet taking prices its own orders cross.
+
+        On by default: an order is a public instruction to trade at a price,
+        and a book where a bid sits above an ask and nothing happens is two
+        people waiting for each other (D-102).
+        """
+        check_csrf(csrf_token)
+        state.set_setting("auto_fill", auto == "on")
+        state.flash(
+            "Your bids will take any ask they cross."
+            if auto == "on" else
+            "Your orders will rest until you take a price yourself.", "ok")
         return RedirectResponse("/", status_code=303)
 
     # --- identity -------------------------------------------------------------
@@ -1805,8 +1825,19 @@ def create_app(state: AppState) -> FastAPI:
                 # Looking at the board is what reading it means: there is no
                 # per-post read mark because a post is not addressed to
                 # anybody. Marked before the page is rendered, so the count
-                # beside Public is gone by the time it is drawn.
+                # beside Public is gone by the time it is drawn -- and the
+                # channel being looked at is marked on its own, so opening
+                # one does not silence the others (D-108).
                 store.mark_board_read(chain.network)
+                if channel:
+                    store.mark_channel_read(chain.network, channel)
+                    for row in channels:
+                        if row["channel"] == channel:
+                            channels = [dict(r) for r in channels]
+                            for entry in channels:
+                                if entry["channel"] == channel:
+                                    entry["unread"] = 0
+                            break
                 older = (store.group_has_older(chain.network, channel, posts[0]["id"])
                          if posts else False)
         try:
@@ -2889,12 +2920,142 @@ def create_app(state: AppState) -> FastAPI:
             raise ValueError("none of the chosen files were metadata or images.")
         return root
 
+    # --- seeing the mintpad before paying for it ------------------------------
+    #
+    # The page that will be inscribed, served from the build on disk instead
+    # of from the chain: same bytes, with two addresses rewritten so the wall
+    # is the creator's own images and the listing is the one they are about to
+    # make. Nothing here is inscribed and nothing is spent (D-104).
+
+    def _preview_build(folder: str):
+        """The build a preview is of, or a complaint. Never an arbitrary path:
+        only files the build itself lists are ever served."""
+        return collectionlib.read_build(
+            collectionlib.find_build(Path((folder or "").strip())))
+
+    @app.get("/inscriptions/collection/preview")
+    def preview_mintpad(request: Request, folder: str = "", name: str = ""):
+        """The mintpad page as it will be inscribed, pointed at the build."""
+        build = _preview_build(folder)
+        collection = (name or build.collection).strip() or "Collection"
+        page = mintpadlib.page("preview", collection).decode("utf-8")
+        where = f"/inscriptions/collection/preview/set?folder={quote(folder)}"
+        page = page.replace(
+            "'/r/collection/' + CREATOR + '/' + COLLECTION + '?limit=100&offset='",
+            f"'{where}&offset='")
+        page = page.replace(
+            "'/content/' + id",
+            f"'/inscriptions/collection/preview/piece?folder={quote(folder)}&n=' + id")
+        # Said in the page rather than around it, because the frame is
+        # sandboxed and this is the only way to reach the button inside it.
+        page += ("<script>addEventListener('DOMContentLoaded',function(){"
+                 "var b=document.getElementById('buy');"
+                 "if(b){b.disabled=true;b.textContent='Preview \u2014 nothing is on the chain yet';}"
+                 "var f=document.getElementById('foot');"
+                 "if(f){f.textContent='This is the page that will be inscribed. "
+                 "The pictures are the ones in your build folder.';}});</script>")
+        return HTMLResponse(page, headers={"Cache-Control": "no-store"})
+
+    @app.get("/inscriptions/collection/preview/set")
+    def preview_set(folder: str = "", limit: int = 100, offset: int = 0):
+        """The build, in the shape /r/collection answers in."""
+        build = _preview_build(folder)
+        items = build.items[max(0, offset):max(0, offset) + max(1, min(limit, 500))]
+        return contentlib._json({
+            "creator": "preview", "name": build.collection,
+            "count": len(build.items),
+            "items": [{"id": item.edition, "number": item.edition,
+                       "creator": "preview", "owner": "preview",
+                       "contenttype": item.content_type,
+                       "collection": build.collection, "edition": item.edition,
+                       "json": _fromjson(item.json)} for item in items]})
+
+    @app.get("/inscriptions/collection/preview/piece")
+    def preview_piece(folder: str = "", n: int = 0):
+        """One picture out of the build. Only what the build lists, by edition
+        -- never a path somebody handed this route."""
+        build = _preview_build(folder)
+        item = next((i for i in build.items if i.edition == int(n)), None)
+        if item is None:
+            raise HTTPException(404, "no such piece in this build")
+        path = (build.folder / item.image).resolve()
+        if not path.is_file() or build.folder.resolve() not in path.parents:
+            raise HTTPException(404, "that picture is not in the build")
+        return Response(path.read_bytes(), media_type=item.content_type,
+                        headers={"Cache-Control": "no-store"})
+
+    @app.post("/inscriptions/collection/thumb", response_class=HTMLResponse)
+    def inscribe_thumb(request: Request, csrf_token: str = Form(""),
+                       thumb_confirmed: str = Form(""),
+                       thumb_file: UploadFile | None = File(None),
+                       thumb_b64: str = Form(""), thumb_name: str = Form(""),
+                       thumb_type: str = Form(""), folder: str = Form(""),
+                       fromaddress: str = Form(""), name: str = Form(""),
+                       thumb: str = Form(""), about: str = Form(""),
+                       site: str = Form(""), twitter: str = Form(""),
+                       launchpad: str = Form(""), pad_amount: str = Form(""),
+                       pad_kind: str = Form("coins"), pad_token: str = Form("")):
+        """Inscribe a picture for a collection to wear, without leaving step 2.
+
+        The same two presses as a token's icon, and for the same reason: a
+        set's face is an inscription on this chain, so it has to exist before
+        anything can name it.
+        """
+        check_csrf(csrf_token)
+        kept: dict[str, Any] = {
+            "thumb": thumb, "about": about, "site": site, "twitter": twitter,
+            "pad_on": launchpad == "yes", "pad_amount": pad_amount,
+            "pad_kind": pad_kind, "pad_token": pad_token, "sender": fromaddress}
+        try:
+            build = collectionlib.read_build(Path(folder.strip()))
+            cost = collectionlib.estimate_build(build)
+            content, filename, content_type = b"", thumb_name, thumb_type
+            if thumb_file is not None and thumb_file.filename:
+                content = thumb_file.file.read()
+                filename = thumb_file.filename
+                content_type = thumb_file.content_type or "image/png"
+            elif thumb_b64:
+                content = base64.b64decode(thumb_b64)
+            if not content:
+                raise ValueError("choose a picture, or give an inscription id.")
+            if not str(content_type or "").startswith("image/"):
+                raise ValueError("a thumbnail is a picture: choose an image file.")
+            if len(content) > MAX_ICON_BYTES:
+                raise ValueError(
+                    f"{filename} is {len(content):,} bytes, and this form takes "
+                    f"up to {MAX_ICON_BYTES:,}. Shrink it, or inscribe it from the "
+                    f"NFTs page -- there is no size limit there -- and paste its "
+                    f"id into the box above.")
+            plan = inscribelib.plan(content, content_type, "")
+            if thumb_confirmed == "yes":
+                chain, _ = _token_chain()
+                with chain.rpc() as rpc:
+                    where = (_check_own_address(rpc, fromaddress) if fromaddress
+                             else funded_address(rpc, mainnet=chain.is_mainnet))
+                    kept["thumb"] = _inscribe_now(chain, where, plan)
+                state.flash(f"Inscribed {filename} as {kept['thumb']}. It is this "
+                            f"collection's face from the block it lands in.", "ok")
+            else:
+                kept.update(thumb_plan=plan, thumb_name=filename,
+                            thumb_type=content_type,
+                            thumb_b64=base64.b64encode(content).decode())
+            return render(request, "collection_wizard.html",
+                          **_collection_page_data(build=build, cost=cost,
+                                                  preview=build.items[:12], **kept))
+        except HTTPException:
+            raise
+        except Exception as exc:
+            state.flash(str(exc), "err")
+            return RedirectResponse("/inscriptions/collection", status_code=303)
+
     @app.post("/inscriptions/collection/start")
     def collection_start(request: Request, csrf_token: str = Form(""),
                          folder: str = Form(""), fromaddress: str = Form(""),
                          name: str = Form(""), launchpad: str = Form(""),
                          pad_amount: str = Form(""), pad_kind: str = Form("coins"),
-                         pad_token: str = Form("")):
+                         pad_token: str = Form(""), thumb: str = Form(""),
+                         about: str = Form(""), site: str = Form(""),
+                         twitter: str = Form("")):
         """The second press: write the job down and start it.
 
         The mintpad is decided here and inscribed by the runner when the last
@@ -2906,6 +3067,18 @@ def create_app(state: AppState) -> FastAPI:
         jobs, runner = state.collections
         try:
             build = collectionlib.read_build(Path(folder.strip()))
+            # What the set says about itself goes on its #1, which is the
+            # piece a collection is known by (D-097). A thumbnail is an
+            # inscription on this chain or nothing: the face of a set is not
+            # on somebody's website.
+            if thumb.strip() and not inscriptionlib.inscription_in(thumb):
+                raise ValueError(
+                    "a thumbnail is an inscription on this chain: give its id, "
+                    "or choose a picture and inscribe it first.")
+            build = collectionlib.with_details(build, {
+                "icon": inscriptionlib.inscription_in(thumb),
+                "description": about.strip(), "url": site.strip(),
+                "twitter": twitter.strip()})
             with chain.rpc() as rpc:
                 sender = _check_own_address(rpc, fromaddress)
             pad_json = ""
@@ -4291,6 +4464,120 @@ def create_app(state: AppState) -> FastAPI:
         return _token_action(request, action="create", confirmed=confirmed, build=build,
                              fields=fields, back="/tokens", form_create=fields)
 
+    #: What a picture inscribed from a form may weigh. Not one transaction's
+    #: worth any more: a collection's face is inscribed once and shown first,
+    #: and asking somebody to quantise it down to five colours to fit a cap is
+    #: asking them to make their set's most visible image disagree with its
+    #: own traits -- which is what a test machine hit trying to fit a hundred-tile
+    #: mosaic under 7,000 bytes (D-109). The cost is shown before the press,
+    #: which is the rule this application answers such questions with.
+    MAX_ICON_BYTES = 30_000
+
+    @app.post("/tokens/icon", response_class=HTMLResponse)
+    def inscribe_icon(request: Request, csrf_token: str = Form(""),
+                      icon_confirmed: str = Form(""),
+                      icon_file: UploadFile | None = File(None),
+                      attached_b64: str = Form(""), attached_name: str = Form(""),
+                      attached_type: str = Form(""),
+                      sender: str = Form(""), name: str = Form(""),
+                      supply: str = Form(""), kind: str = Form("fixed"),
+                      units: str = Form("divisible"), category: str = Form(""),
+                      subcategory: str = Form(""), url: str = Form(""),
+                      data: str = Form(""), icon: str = Form("")):
+        """Inscribe a picture so a token can wear it, without leaving the form.
+
+        Two presses, like everything else here that spends: the first prices
+        it, the second puts it on the chain. The id lands back in the icon
+        box, and the token is created after that -- as two things, because
+        they are two things: an inscription is permanent whether or not the
+        token is ever made.
+
+        Everything already typed into the form comes back with it. Losing a
+        half-filled issuance to a picture is the kind of small cruelty that
+        makes people not try the feature at all.
+        """
+        check_csrf(csrf_token)
+        fields = dict(sender=sender, name=name, supply=supply, kind=kind,
+                      units=units, category=category, subcategory=subcategory,
+                      url=url, data=data, icon=icon)
+        extra: dict[str, Any] = {}
+        try:
+            content, filename, content_type = b"", attached_name, attached_type
+            if icon_file is not None and icon_file.filename:
+                content = icon_file.file.read()
+                filename = icon_file.filename
+                content_type = icon_file.content_type or "image/png"
+            elif attached_b64:
+                content = base64.b64decode(attached_b64)
+            if not content:
+                raise ValueError("choose a picture to inscribe, or paste an "
+                                 "inscription id into the icon box.")
+            if not str(content_type or "").startswith("image/"):
+                raise ValueError("an icon is a picture: choose an image file.")
+            if len(content) > MAX_ICON_BYTES:
+                raise ValueError(
+                    f"{filename} is {len(content):,} bytes, and this form takes "
+                    f"up to {MAX_ICON_BYTES:,}. Shrink it, or inscribe it from the "
+                    f"NFTs page -- there is no size limit there -- and paste its "
+                    f"id into the icon box.")
+            plan = inscribelib.plan(content, content_type, "")
+            if icon_confirmed == "yes":
+                chain, _ = _token_chain()
+                with chain.rpc() as rpc:
+                    from_address = (_check_own_address(rpc, sender) if sender
+                                    else funded_address(rpc, mainnet=chain.is_mainnet))
+                    txid = _inscribe_now(chain, from_address, plan)
+                fields["icon"] = txid
+                state.flash(
+                    f"Inscribed {filename} as {txid}. It is the token's icon from "
+                    f"the block it lands in; create the token whenever you like.",
+                    "ok")
+                return render(request, "tokens.html", prepared=None,
+                              **_token_page_data(), form_create=fields)
+            extra = {"icon_plan": plan, "icon_name": filename,
+                     "icon_type": content_type,
+                     "icon_b64": base64.b64encode(content).decode()}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return render(request, "tokens.html", prepared=None, **_token_page_data(),
+                      form_create=fields, **extra)
+
+    def _inscribe_now(chain: Any, sender: str, plan: Any) -> str:
+        """Inscribe, and return the id it will be known by, without waiting.
+
+        The first chunk goes here and now, because it is the one the
+        inscription is NAMED by -- the piece carrying the manifest, fixed the
+        moment it is broadcast whatever order the rest confirm in (state.py)
+        -- and the id is the whole point of the press. A page that says "it
+        is being inscribed, look for the id later" makes somebody go and find
+        it themselves.
+
+        Anything after it goes on a thread. Chunks are independent of each
+        other by design, so the order they are sent in does not matter, and
+        the split that makes a long send fast (inscribe.prepare_wallet) waits
+        for a block -- which is fine on a thread and is not fine in a request.
+        """
+        with chain.rpc() as rpc:
+            sender_obj = MessageSender(rpc, chain.params, public_only=True)
+            sent = sender_obj.send_all(sender, plan.payloads[:1])
+        if not sent:
+            raise ValueError("nothing was broadcast")
+        first, rest = sent[0], plan.payloads[1:]
+        if rest:
+            def finish():
+                try:
+                    with chain.rpc() as rpc:
+                        more = MessageSender(rpc, chain.params, public_only=True)
+                        inscribelib.prepare_wallet(more, sender, plan)
+                        more.send_all(sender, rest)
+                except Exception as exc:
+                    log.warning("could not finish inscribing %s: %s", first, exc)
+
+            threading.Thread(target=finish, name="arcade-icon", daemon=True).start()
+        return first
+
     def _send_parts(rpc, index, prop: dict, units: int,
                     avoid: str = "") -> list[tuple[str, int]]:
         """Which addresses a token send comes out of, and how much from each.
@@ -4491,8 +4778,110 @@ def create_app(state: AppState) -> FastAPI:
             "index": index.status(node_tip=state.ledger_tips.get(chain.network)),
             "owned": owned,
             "is_issuer": prop["issuer"] in owned,
+            "face": _faces_for(index, [prop])[property_id],
+            "pad": _pad_on(index, chain, property_id),
             "node_error": node_error,
         }
+
+    def _pad_on(index, chain, property_id: int) -> dict[str, Any] | None:
+        """The launchpad selling this token, if one is open (D-107)."""
+        try:
+            shops = _shop_listings(index, chain)
+        except Exception:
+            return None
+        for shop in shops:
+            for listing in shop["listings"]:
+                give = listing["give"]
+                if give.get("kind") == "token" and \
+                        int(give.get("propertyid") or 0) == int(property_id):
+                    return {"txid": shop["txid"], "seller": shop["seller"],
+                            "text": listing["text"],
+                            "available": listing["available"]}
+        return None
+
+    @app.get("/tokens/launchpad/preview")
+    def preview_launchpad(name: str = "", lot: str = "", price: str = "",
+                          icon: str = "", about: str = ""):
+        """The launchpad page as it will be inscribed, before anything is.
+
+        Built from what the form says rather than from the chain, which is the
+        whole point: a page that does not exist yet can still be looked at.
+        Buying is off, because there is nothing to buy from.
+        """
+        page = tokenpadlib.page(name or "A token", lot or "?", price or "?",
+                                icon=icon, about=about).decode("utf-8")
+        page += ("<script>addEventListener('DOMContentLoaded',function(){"
+                 "var b=document.getElementById('buy');"
+                 "if(b){b.disabled=true;b.textContent='Preview \u2014 not on the chain yet';}"
+                 "var l=document.getElementById('left');"
+                 "if(l){l.textContent='This is the page that will be inscribed.';}});"
+                 "</script>")
+        return HTMLResponse(page, headers={"Cache-Control": "no-store"})
+
+    @app.post("/tokens/{property_id}/launchpad", response_class=HTMLResponse)
+    def make_launchpad(request: Request, property_id: int, lot: str = Form(""),
+                       amount: str = Form(""), kind: str = Form("coins"),
+                       take_token: str = Form(""), confirmed: str = Form(""),
+                       csrf_token: str = Form("")):
+        """Inscribe the page that sells this token, from the issuer's address.
+
+        Two presses, like everything else that spends: the first prices the
+        page, the second inscribes it. It can only be made after the token
+        exists, because a shop names the token by the id the engine gave it
+        -- which is why this is on the token's own page rather than on the
+        form that creates one (D-107).
+        """
+        check_csrf(csrf_token)
+        chain, index = _token_chain()
+        prop = index.property(property_id)
+        if prop is None:
+            raise HTTPException(status_code=404, detail=f"no token {property_id}")
+        extra: dict[str, Any] = {"pad_lot": lot, "pad_amount": amount,
+                                 "pad_kind": kind, "pad_take_token": take_token}
+        try:
+            from_address = state.home_address(chain)
+            units = parse_amount(lot, bool(prop["divisible"]))
+            if units <= 0:
+                raise tokenlib.TokenError("say how many go in one sale.")
+            held = index.balance(from_address, property_id)
+            if held < units:
+                raise tokenlib.TokenError(
+                    f"{from_address} holds "
+                    f"{format_amount(held, bool(prop['divisible']))} {prop['name']}, "
+                    f"so it cannot sell "
+                    f"{format_amount(units, bool(prop['divisible']))} at a time.")
+            take = mintpadlib.take_of(kind, amount,
+                                      int(take_token) if take_token else None)
+            price = swaplib.describe_leg(
+                swaplib.leg_json(swaplib.leg_of(take, index), index))
+            face = _faces_for(index, [prop])[property_id]
+            identity = state.ensure_identity()
+            plan = inscribelib.plan(
+                tokenpadlib.page(prop["name"], lot.strip(), price,
+                                 icon=face["icon"], about=face["about"]),
+                "text/html",
+                tokenpadlib.shop_json(
+                    contact.encode(state.messaging.network, identity.public_bytes),
+                    property_id, prop["name"], lot.strip(), take))
+            if confirmed == "yes":
+                # An inscription, not a token transaction: written from the
+                # address that holds the tokens, because a shop's seller is
+                # the shop inscription's own owner and every buyer's node
+                # checks it still holds what it sells.
+                _inscribe_in_background(chain, from_address, plan,
+                                        f"{prop['name']} Launchpad")
+                state.flash(
+                    f"Inscribing the {prop['name']} launchpad: {lot.strip()} for "
+                    f"{price} a sale. It is open from the block it lands in, and "
+                    f"appears in the Exchange by itself.", "ok")
+                return RedirectResponse(f"/tokens/{property_id}", status_code=303)
+            extra.update(pad_plan=plan, pad_price=price)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return render(request, "token.html", prepared=None,
+                      **_token_detail(property_id), **extra)
 
     def _issuer_action(request: Request, property_id: int, action: str, confirmed: str,
                        fields: dict[str, str], build):
@@ -4853,15 +5242,24 @@ def create_app(state: AppState) -> FastAPI:
             out.setdefault(txid, entry)
         return out
 
-    def _nft_points(index, trades) -> dict[str | None, list[dict[str, Any]]]:
+    def _nft_points(index, trades) -> dict[tuple[str, str] | None,
+                                           list[dict[str, Any]]]:
         """What NFTs have sold for in coins, bucketed by collection.
+
+        Keyed by (creator, name), because that is what a collection IS: two
+        people may inscribe a set called Doge Punks, and keying on the name
+        alone would give them one price history, one chart and one floor
+        between them. Found by a test machine reading the function against its own
+        comment three lines down, where `for_sale` is keyed correctly --
+        invisible on a chain with one collection, and wrong on the day there
+        are two.
 
         One pass over the trades. Asking chartlib for each collection's
         prices asks the index about every trade again -- a hundred
         collections and five hundred trades is fifty thousand questions to
         draw one table.
         """
-        points: dict[str | None, list[dict[str, Any]]] = {}
+        points: dict[tuple[str, str] | None, list[dict[str, Any]]] = {}
         for trade in trades:
             legs = (trade["give"], trade["take"])
             piece = next((l for l in legs
@@ -4874,7 +5272,10 @@ def create_app(state: AppState) -> FastAPI:
                 row = index.inscription(piece.txid.hex())
             except Exception:
                 row = None
-            points.setdefault((row or {}).get("collection") or None, []).append({
+            where = None
+            if row and row.get("collection"):
+                where = (row["creator"], row["collection"])
+            points.setdefault(where, []).append({
                 "when": trade["when"], "height": trade["height"],
                 "price": (paid.amount or 0) / COIN, "size": 1,
                 "txid": trade["txid"]})
@@ -4945,6 +5346,33 @@ def create_app(state: AppState) -> FastAPI:
                 break
         return out
 
+    def _drawable(index, txid: str) -> str:
+        """That inscription's id, if this node holds bytes a browser will draw."""
+        if not txid:
+            return ""
+        try:
+            row = index.inscription(txid)
+        except Exception:
+            return ""
+        if row and row["held"] and str(row["content_type"] or "").startswith("image/"):
+            return row["txid"]
+        return ""
+
+    def _face_of(index, creator: str, name: str) -> tuple[str, dict[str, Any]]:
+        """A collection's picture and what it says about itself.
+
+        #1 by default, because that is the piece a set is known by -- but a
+        creator who wants a different face says so on that same #1, and this
+        prefers what they said (D-103). Either way it is an inscription this
+        node can actually draw, or nothing.
+        """
+        cover = index.collection_cover(creator, name) or {}
+        about = inscriptionlib.collection_details(cover.get("json") or "")
+        chosen = _drawable(index, about.get("icon", ""))
+        if not chosen and str(cover.get("content_type") or "").startswith("image/"):
+            chosen = cover.get("txid") or ""
+        return chosen, dict(about, edition=cover.get("edition"))
+
     def _market_collections(index, chain, trades) -> list[dict[str, Any]]:
         """Every collection on this chain as a market of its own.
 
@@ -4978,15 +5406,15 @@ def create_app(state: AppState) -> FastAPI:
         out = []
         for row in index.collections(limit=MARKET_COLLECTIONS):
             key = (row["creator"], row["collection"])
-            cover = index.collection_cover(*key) or {}
-            mine = points.get(row["collection"], [])
+            face, about = _face_of(index, *key)
+            mine = points.get(key, [])
             stats = chartlib.day(mine)
-            drawable = str(cover.get("content_type") or "").startswith("image/")
             out.append({
                 "creator": row["creator"], "name": row["collection"],
                 "count": row["count"],
-                "cover": cover.get("txid") if drawable else None,
-                "cover_edition": cover.get("edition"),
+                "cover": face or None,
+                "cover_edition": about.get("edition"),
+                "about": about.get("description", ""),
                 "first_number": row["first_number"],
                 "last_number": row["last_number"],
                 "for_sale": for_sale.get(key, 0),
@@ -5503,15 +5931,14 @@ def create_app(state: AppState) -> FastAPI:
         # What the set says about ITSELF, read from its #1 -- the piece a
         # collection is known by is where a description, a site and the rest
         # of it belong, rather than on all five hundred (inscriptions.py).
-        cover = index.collection_cover(creator, name) or {}
-        if str(cover.get("content_type") or "").startswith("image/"):
-            data["cover"] = cover.get("txid")
-        data["about"] = inscriptionlib.collection_details(cover.get("json") or "")
+        face, about = _face_of(index, creator, name)
+        data["cover"] = face or None
+        data["about"] = about
         # What this collection has actually traded for, on its own page
         # rather than in the list of collections: a chart belongs beside the
         # pieces it prices.
         try:
-            points = _nft_points(index, index.trades()).get(name, [])
+            points = _nft_points(index, index.trades()).get((creator, name), [])
         except Exception:
             points = []
         if points:

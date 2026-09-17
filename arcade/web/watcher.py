@@ -184,6 +184,9 @@ class BlockWatcher:
         # meets a standing ask is a sale the owner agreed to when they said
         # the price (D-101).
         self._shopkeeper.sell_at_asking_price()
+        # And a book that crosses itself is not a market: if this wallet's own
+        # bid is above somebody's ask, take it (D-102).
+        self._shopkeeper.fill_what_crosses()
 
     def _sync_ledgers(self) -> None:
         """Keep the token indexes in step with their chains.

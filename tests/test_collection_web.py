@@ -164,3 +164,44 @@ def test_a_run_page_follows_the_job(client, tmp_path):
     app.post(f"/inscriptions/collection/{job_id}/delete",
              data={"csrf_token": state.csrf_token})
     assert jobs.get(job_id) is None
+
+
+def test_the_mintpad_can_be_seen_before_it_is_paid_for(client, tmp_path):
+    """The page that will be inscribed, drawn from the build on disk: nothing
+    on the chain, nothing spent (D-104)."""
+    app, state = client
+    build = hashlips(tmp_path, count=3)
+
+    page = app.get("/inscriptions/collection/preview", params={"folder": str(build)})
+    assert page.status_code == 200
+    body = page.text
+    assert "DOGE PUNKS MINTPAD" in body.upper()
+    assert "/r/collection/" not in body, "it reads the build, not the chain"
+    assert "/inscriptions/collection/preview/set" in body
+    assert "'/content/' + id" not in body, "and the wall is the build's pictures"
+    assert "nothing is on the chain yet" in body, "and it says so, on the button"
+
+    listing = app.get("/inscriptions/collection/preview/set",
+                      params={"folder": str(build)}).json()
+    assert listing["count"] == 3
+    assert [i["edition"] for i in listing["items"]] == [1, 2, 3]
+    assert listing["items"][0]["json"]["name"] == "Doge Punks #1"
+
+    piece = app.get("/inscriptions/collection/preview/piece",
+                    params={"folder": str(build), "n": 2})
+    assert piece.status_code == 200 and piece.content[:4] == b"\x89PNG"
+    assert app.get("/inscriptions/collection/preview/piece",
+                   params={"folder": str(build), "n": 99}).status_code == 404
+
+
+def test_a_preview_serves_only_what_the_build_lists(client, tmp_path):
+    """A route that reads a folder the user named must still not hand out
+    anything that folder does not contain."""
+    app, state = client
+    build = hashlips(tmp_path, count=2)
+    (tmp_path / "secret.txt").write_text("not yours")
+
+    for n in ("../secret.txt", "0", "-1"):
+        answer = app.get("/inscriptions/collection/preview/piece",
+                         params={"folder": str(build), "n": n})
+        assert answer.status_code in (404, 422), n

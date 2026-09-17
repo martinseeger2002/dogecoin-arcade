@@ -790,3 +790,167 @@ def test_a_piece_with_no_price_on_it_is_not_sold_by_itself(shop):
     index.asks_standing = []
 
     assert keeper.sell_at_asking_price() == 0 and answers == []
+
+
+# --- taking a price this wallet's own order crosses -------------------------
+
+BID = "bid" + "1" * 61
+
+
+def _crossing(index, bid_tokens=100 * 10 ** 8, bid_coins=10 ** 8,
+              ask_tokens=100 * 10 ** 8, ask_coins=10 ** 8, maker=OTHER):
+    """One bid of this wallet's, and one ask on the same pair."""
+    index.my_orders = [{"txid": BID, "address": SELLER, "sale_property": 0,
+                        "sale_amount": bid_coins, "want_property": 3,
+                        "want_amount": bid_tokens, "block_height": 500,
+                        "position": 0, "reserved": 0}]
+    index.book_rows = {3: {"asks": [{"txid": "ask" + "2" * 61, "address": maker,
+                                     "sale_property": 3, "sale_amount": ask_tokens,
+                                     "want_property": 0, "want_amount": ask_coins,
+                                     "reserved": ask_tokens, "block_height": 499,
+                                     "position": 0}], "bids": []}}
+
+
+@pytest.fixture
+def trading(shop, monkeypatch):
+    """The shopkeeper, with the maker reachable and token sends captured."""
+    state, index, node, buyer, answers, keeper = shop
+    maker = Identity.generate()
+    with state.store() as store:
+        store.add_key_announcement(txid="m" * 64, address=OTHER,
+                                   pubkey=maker.public_bytes,
+                                   fingerprint=fingerprint_of(maker.public_bytes),
+                                   height=200, block_time=0, stated=True)
+    built = []
+
+    class FakeTokenSender:
+        def __init__(self, *a, **k):
+            pass
+
+        def prepare(self, address, payload):
+            built.append((address, payload))
+            return f"tx-{len(built)}"
+
+        def broadcast(self, prepared):
+            return str(prepared)
+
+    monkeypatch.setattr("arcade.tokens.TokenSender", FakeTokenSender)
+    monkeypatch.setattr(node, "call",
+                        lambda method, *a: ([{"txid": "u", "vout": 0, "spendable": True},
+                                             {"txid": "u", "vout": 1, "spendable": True}]
+                                            if method == "listunspent"
+                                            else FakeNode.call(node, method, *a)))
+    return state, index, keeper, answers, maker, built
+
+
+def _orders_built(built):
+    from arcade import payload as P
+
+    return [P.decode(payload) for _, payload in built]
+
+
+def test_a_bid_takes_the_ask_it_crosses(trading):
+    state, index, keeper, answers, maker, built = trading
+    _crossing(index)
+
+    assert keeper.fill_what_crosses() == 1
+    (_, body), = _answers(answers, maker)
+    assert body["swap"] == "fill" and body["tokens"] == 100 * 10 ** 8
+    assert body["buyer"] == SELLER
+    note, = state.offers.fills("regtest")
+    assert note["tokens"] == 100 * 10 ** 8 and note["coins"] == 10 ** 8
+    # The bid is withdrawn at its own price first: a book must not advertise
+    # what has already been committed.
+    (cancel,) = _orders_built(built)
+    from arcade import payload as P
+    assert isinstance(cancel, P.MetaDExCancelPrice)
+    assert cancel.property_id_desired == 3
+
+
+def test_a_partial_fill_puts_the_remainder_back(trading):
+    """What is left of THEIR order shrinks and stays on the book by itself;
+    what is left of this wallet's bid is posted again, because no engine
+    reduces a bid -- there is no reserve behind one."""
+    state, index, keeper, answers, maker, built = trading
+    _crossing(index, bid_tokens=100 * 10 ** 8, ask_tokens=40 * 10 ** 8,
+              ask_coins=4 * 10 ** 7)
+
+    assert keeper.fill_what_crosses() == 1
+    (_, body), = _answers(answers, maker)
+    assert body["tokens"] == 40 * 10 ** 8, "as much as was there"
+    cancel, again = _orders_built(built)
+    from arcade import payload as P
+    assert isinstance(cancel, P.MetaDExCancelPrice)
+    assert isinstance(again, P.MetaDExTrade)
+    assert again.amount_desired == 60 * 10 ** 8, "the rest, at the same price"
+    assert again.amount_for_sale == 6 * 10 ** 7
+
+
+def test_a_bid_below_the_ask_is_not_a_trade(trading):
+    state, index, keeper, answers, maker, built = trading
+    _crossing(index, bid_coins=10 ** 8 - 1)      # a satoshi short of the ask
+
+    assert keeper.fill_what_crosses() == 0
+    assert answers == [] and built == []
+
+
+def test_this_wallet_does_not_take_its_own_ask(trading):
+    state, index, keeper, answers, maker, built = trading
+    _crossing(index, maker=SELLER)
+
+    assert keeper.fill_what_crosses() == 0 and built == []
+
+
+def test_a_maker_nobody_can_reach_is_left_alone(trading):
+    """Their order stands, but it cannot be negotiated with, and stopping on
+    it would let one unreachable wallet block a price for everybody (D-042)."""
+    state, index, keeper, answers, maker, built = trading
+    _crossing(index, maker=BUYER)               # no key announced for BUYER
+
+    assert keeper.fill_what_crosses() == 0 and built == []
+
+
+def test_one_fill_at_a_time_per_order(trading):
+    state, index, keeper, answers, maker, built = trading
+    _crossing(index)
+
+    assert keeper.fill_what_crosses() == 1
+    answers.clear(); built.clear()
+    assert keeper.fill_what_crosses() == 0, "the first has not landed yet"
+    assert answers == [] and built == []
+
+
+def test_two_bids_at_one_price_are_left_to_a_person(trading):
+    """Cancelling by price would take both off and only one would come back."""
+    state, index, keeper, answers, maker, built = trading
+    _crossing(index)
+    twin = dict(index.my_orders[0], txid="bid" + "9" * 61)
+    index.my_orders.append(twin)
+
+    assert keeper.fill_what_crosses() == 0 and built == []
+
+
+def test_nothing_is_taken_when_the_switch_is_off(trading):
+    state, index, keeper, answers, maker, built = trading
+    _crossing(index)
+    state.set_setting("auto_fill", False)
+
+    assert keeper.fill_what_crosses() == 0 and built == []
+
+
+def test_a_rebuilt_message_store_does_not_leave_the_shopkeeper_deaf(shop):
+    """A chain reset moves the message store aside (D-106). Its ids then
+    start again at 1 while the swap cursor remembers thousands -- and the
+    shopkeeper would answer nothing until the new store grew past the old
+    one's last id, without saying so."""
+    state, index, node, buyer, answers, keeper = shop
+    state.offers.set_cursor("regtest", 4000)
+
+    _ask(state, buyer, {"swap": "offer", "swapv": S.PROTOCOL, "shop": SHOP,
+                        "listing": 0, "buyer": BUYER}, 1)
+    assert keeper.tick() == 0, "the first pass after a rebuild only re-marks"
+    assert state.offers.cursor("regtest") < 4000, "the cursor comes back to earth"
+
+    _ask(state, buyer, {"swap": "offer", "swapv": S.PROTOCOL, "shop": SHOP,
+                        "listing": 0, "buyer": BUYER}, 2)
+    assert keeper.tick() == 1, "and what arrives after it is answered"

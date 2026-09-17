@@ -213,6 +213,64 @@ def test_an_icon_that_is_not_an_inscription_is_refused_before_it_is_paid_for(
     assert "Traceback" not in body
 
 
+def test_an_icon_can_be_a_bare_inscription_id(client):
+    """The box takes an id, because that is what an inscription is called.
+    A /content/ link still works -- both name the same thing."""
+    from arcade import tokens as tokenlib
+
+    app, state = client
+    index_with_a_collection(state.home)
+    mint(state.home, data=tokenlib.data_with_icon("goofy money", PIECES[0]))
+
+    assert f'src="/content/{PIECES[0]}"' in app.get("/tokens").text
+
+
+def test_a_picture_is_priced_rather_than_inscribed_on_the_first_press(
+        client, monkeypatch):
+    """The page that shows the price is the create form, which only draws
+    with a node behind it -- so what is asserted here is the half that holds
+    without one: nothing was broadcast and nothing was refused."""
+    app, state = client
+    index_with_a_collection(state.home)
+    wallet_holding(state, monkeypatch, CREATOR)
+
+    answer = app.post(
+        "/tokens/icon",
+        files={"icon_file": ("goof.png", b"\x89PNG" + b"x" * 400, "image/png")},
+        data={"csrf_token": state.csrf_token, "name": "Goofcoin"})
+    assert answer.status_code == 200
+    for complaint in ("Shrink it first", "an icon is a picture",
+                      "choose a picture", "Traceback"):
+        assert complaint not in answer.text, complaint
+
+
+def test_a_picture_too_big_for_the_form_is_told_where_else_to_go(
+        client, monkeypatch):
+    """A refusal that only says no makes somebody quantise their art down to
+    five colours to fit it (a test machine, D-109). This one names the way out."""
+    app, state = client
+    index_with_a_collection(state.home)
+    wallet_holding(state, monkeypatch, CREATOR)
+
+    body = app.post("/tokens/icon",
+                    files={"icon_file": ("huge.png", b"\x89PNG" + b"x" * 40000, "image/png")},
+                    data={"csrf_token": state.csrf_token}).text
+    assert "40,004 bytes" in body and "30,000" in body
+    assert "inscribe it from the NFTs page" in body
+    assert "Traceback" not in body
+
+
+def test_only_a_picture_can_be_an_icon(client, monkeypatch):
+    app, state = client
+    index_with_a_collection(state.home)
+    wallet_holding(state, monkeypatch, CREATOR)
+
+    body = app.post("/tokens/icon",
+                    files={"icon_file": ("notes.txt", b"hello", "text/plain")},
+                    data={"csrf_token": state.csrf_token}).text
+    assert "an icon is a picture" in body
+
+
 # --- the list of collections ------------------------------------------------
 
 def test_the_market_lists_collections_by_their_first_piece(client):
@@ -566,3 +624,99 @@ def test_an_inscription_this_node_has_never_seen_has_no_price(client):
     app, state = client
     index_with_a_collection(state.home)
     assert app.get(f"/exchange/sell/{'9' * 64}").status_code in (200, 303)
+
+
+def test_two_sets_of_the_same_name_do_not_share_a_price(client):
+    """A collection IS (creator, name). Keyed on the name alone, two people
+    who both inscribe a set called Doge Punks get one price history, one
+    chart and one floor between them (a test machine)."""
+    from arcade.db import Database
+
+    app, state = client
+    index_with_a_collection(state.home)
+    # A second Doge Punks, by somebody else, with its own sale.
+    db = Database(state.home / "main-ledger.sqlite")
+    theirs = "b" * 63 + "1"
+    db.conn.execute(
+        "INSERT INTO inscription(txid,number,creator,owner,block_height,position,"
+        "content_type,content_len,sha256,json,chunks,content) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        (theirs, 50, "nThem", "nThem", 400, 0, "image/png", 10, "ff" * 32,
+         json.dumps({"name": "Doge Punks #1", "edition": 1}), 1, b"\x89PNG"))
+    db.conn.execute(
+        "INSERT INTO collection_item(txid,creator,collection,edition,name) "
+        "VALUES(?,?,?,?,?)", (theirs, "nThem", "Doge Punks", 1, "Doge Punks #1"))
+    db.conn.commit()
+    db.close()
+    sold(state.home, theirs, sats=900000000, when=int(time.time()) - 300)
+
+    body = app.get("/exchange?tab=market").text
+    rows = body[body.index("All collections"):]
+    # Nine coins is their sale; it must not appear on the other creator's row.
+    ours = rows[rows.index("nMe/Doge%20Punks"):]
+    ours = ours[:ours.index("</tr>")]
+    assert "9.0000" not in ours, "one set's trade is not the other's last price"
+
+
+def test_a_set_may_choose_a_face_that_is_not_its_number_one(client):
+    """#1 by default, because that is the piece a set is known by -- but a
+    creator who wants a different face says so on that same #1 (D-103)."""
+    app, state = client
+    index_with_a_collection(state.home)
+    # PIECES[4] is edition 5: a face nothing would pick by accident.
+    describe_the_set(state.home, icon=f"/content/{PIECES[4]}")
+
+    body = app.get("/exchange?tab=market").text
+    row = body[body.index("All collections"):]
+    assert f"/content/{PIECES[4]}" in row, "the face the set asked for"
+    assert f"/content/{PIECES[0]}" not in row, "not #1, this time"
+
+
+def test_a_face_this_node_cannot_draw_falls_back_to_number_one(client):
+    app, state = client
+    index_with_a_collection(state.home)
+    describe_the_set(state.home, icon="/content/" + "9" * 64)
+
+    body = app.get("/exchange?tab=market").text
+    assert "/content/" + "9" * 64 not in body
+    assert f"/content/{PIECES[0]}" in body, "#1, as it was before anybody asked"
+
+
+# --- a token's launchpad ----------------------------------------------------
+
+def test_a_launchpad_can_be_seen_before_it_is_inscribed(client):
+    """The page that will sell the token, drawn from what the form says --
+    a page that does not exist yet can still be looked at (D-107)."""
+    app, state = client
+    index_with_a_collection(state.home)
+
+    page = app.get("/tokens/launchpad/preview",
+                   params={"name": "Goofcoin", "lot": "100", "price": "2 coins",
+                           "icon": PIECES[0], "about": "goofy money"})
+    assert page.status_code == 200
+    body = page.text
+    assert "Goofcoin" in body and "100" in body and "2 coins" in body
+    assert f"ICON = '{PIECES[0]}'" in body, "it wears the token's icon"
+    assert "/content/' + ICON" in body, "fetched from whichever node draws it"
+    assert "not on the chain yet" in body, "and says so, on the button"
+    assert "/r/swap.js" in body, "the real page, not a mock of one"
+
+
+def test_a_launchpad_page_names_the_token_it_sells(tmp_path):
+    from arcade import swap as swaplib, tokenpad
+
+    text = tokenpad.shop_json("arcade:test:abc", 3, "Goofcoin", "100",
+                              {"coins": "2"})
+    shop = swaplib.shop_of({"json": text, "owner": CREATOR, "creator": CREATOR})
+    assert shop["listings"] == [{"give": {"token": 3, "amount": "100"},
+                                 "take": {"coins": "2"}}]
+    page = tokenpad.page("Goofcoin", "100", "2 coins", icon="ab" * 32)
+    assert b"%%" not in page, "every placeholder filled before it is paid for"
+    assert b"Goofcoin" in page
+
+
+def test_a_token_name_cannot_write_the_launchpad_page(tmp_path):
+    from arcade import tokenpad
+
+    page = tokenpad.page("<script>alert(1)</script>", "1", "1 coin")
+    assert b"<script>alert(1)" not in page and b"&lt;script&gt;" in page

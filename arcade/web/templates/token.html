@@ -20,6 +20,83 @@
 
 {{ tk.index_status(index, chain) }}
 
+{% if face.icon or face.about or face.url %}
+<div class="row" style="gap:12px;align-items:center;margin:0 0 16px">
+  {% if face.icon %}
+  <img src="/content/{{ face.icon }}" alt="{{ prop.name }}" loading="lazy"
+       style="width:56px;height:56px;object-fit:cover;border-radius:50%">
+  {% endif %}
+  <div style="min-width:0">
+    {% if face.about %}<div>{{ face.about }}</div>{% endif %}
+    {% if face.url %}<a href="{{ face.url }}" rel="noopener noreferrer nofollow"
+       target="_blank" style="font-size:.86rem">{{ face.url }}</a>{% endif %}
+  </div>
+</div>
+{% endif %}
+
+<h2>Launchpad</h2>
+<div class="panel" style="margin-bottom:16px">
+  {% if pad %}
+    <p style="margin:0 0 6px"><span class="pill ok">open</span> {{ pad.text }}</p>
+    {% if pad.available %}<p class="muted" style="margin:0 0 8px">{{ pad.available }}</p>{% endif %}
+    <div class="row">
+      <a class="btn small" href="/inscriptions/{{ pad.txid }}/view">Open the launchpad</a>
+      <a class="btn ghost small" href="/exchange?tab=mintpads">All launchpads</a>
+    </div>
+    <p class="muted" style="font-size:.84rem;margin:10px 0 0">A launchpad closes
+      by being sent away, and runs out when the address behind it no longer holds
+      a lot to sell. Inscribing another replaces nothing &mdash; both would be
+      open.</p>
+  {% elif is_issuer %}
+    <p class="muted" style="margin:0 0 10px">A page that sells this token at a
+      fixed price, for as long as you hold lots to sell &mdash; the mintpad's
+      idea, without the wall. It is an inscription: anybody's node can read it,
+      and buying is one swap carrying both sides.</p>
+    <form method="post" action="/tokens/{{ prop.property_id }}/launchpad">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <div class="row" style="gap:8px;align-items:flex-end">
+        <div class="field" style="flex:0 0 150px;margin:0">
+          <label for="lot">{{ prop.name }} per sale</label>
+          <input autocomplete="off" name="lot" id="lot" inputmode="decimal"
+                 placeholder="100" value="{{ pad_lot or '' }}"></div>
+        <div class="field" style="flex:0 0 130px;margin:0">
+          <label for="pad-amount">Price</label>
+          <input autocomplete="off" name="amount" id="pad-amount" inputmode="decimal"
+                 placeholder="2" value="{{ pad_amount or '' }}"></div>
+        <div class="field" style="flex:0 0 160px;margin:0">
+          <label for="pad-kind">Paid in</label>
+          <select autocomplete="off" name="kind" id="pad-kind">
+            <option value="coins" {{ 'selected' if pad_kind != 'token' }}>{{ chain.label }} coins</option>
+          </select></div>
+        <button type="submit" style="flex:0 0 auto">
+          {{ 'Inscribe it' if pad_plan else 'What will it cost?' }}</button>
+      </div>
+      {% if pad_plan %}
+      <div class="note" style="margin-top:12px">
+        Selling <strong>{{ pad_lot }} {{ prop.name }}</strong> for
+        <strong>{{ pad_price }}</strong> a sale &mdash;
+        {{ "{:,}".format(pad_plan.content_len) }} bytes in {{ pad_plan.chunks }}
+        transaction{{ '' if pad_plan.chunks == 1 else 's' }},
+        {{ "%.4f"|format(pad_plan.estimate.fee) }} in fees and
+        {{ "%.2f"|format(pad_plan.estimate.dust) }} in outputs you can sweep back.
+        Press again to inscribe it.
+        <input type="hidden" name="confirmed" value="yes">
+      </div>
+      {% endif %}
+    </form>
+    <div class="row" style="margin-top:12px">
+      <a class="btn ghost small" target="_blank"
+         href="/tokens/launchpad/preview?name={{ prop.name|urlencode }}&amp;lot={{ (pad_lot or '100')|urlencode }}&amp;price={{ (pad_price or '2 coins')|urlencode }}&amp;icon={{ face.icon }}&amp;about={{ face.about|urlencode }}">Open the preview full size</a>
+    </div>
+    <iframe src="/tokens/launchpad/preview?name={{ prop.name|urlencode }}&amp;lot={{ (pad_lot or '100')|urlencode }}&amp;price={{ (pad_price or '2 coins')|urlencode }}&amp;icon={{ face.icon }}&amp;about={{ face.about|urlencode }}"
+            sandbox="allow-scripts" loading="lazy" title="launchpad preview"
+            style="width:100%;height:420px;border:1px solid var(--line);border-radius:10px;background:#07060c;margin-top:10px"></iframe>
+  {% else %}
+    <p class="muted" style="margin:0">Nothing is selling {{ prop.name }} from a
+      launchpad. Its issuer can open one.</p>
+  {% endif %}
+</div>
+
 <div class="grid" style="margin-bottom:16px">
   <div class="stat"><div class="k">Supply</div><div class="v">{{ prop.total_display }}</div>
     {% if prop.managed %}<div class="n">granted so far</div>{% endif %}</div>

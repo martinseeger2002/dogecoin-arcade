@@ -80,12 +80,24 @@ class Shopkeeper:
                 index = state.token_index(chain)
                 with state.store() as store:
                     last = offers.cursor(chain.network)
+                    newest = int(store.conn.execute(
+                        "SELECT COALESCE(MAX(id), 0) FROM api_message").fetchone()[0])
                     if last is None:
                         # First run on this chain: what arrived before there
                         # was a shopkeeper was not an order to it.
-                        last = int(store.conn.execute(
-                            "SELECT COALESCE(MAX(id), 0) FROM api_message").fetchone()[0])
-                        offers.set_cursor(chain.network, last)
+                        offers.set_cursor(chain.network, newest)
+                        return 0
+                    if last > newest:
+                        # The cursor is ahead of the store, so the store is not
+                        # the one the cursor was counting: it has been moved
+                        # aside and rebuilt -- which is what a chain reset asks
+                        # every node to do (D-106). Left alone, the shopkeeper
+                        # would answer nothing until the new store had grown
+                        # past the old one's last id, deaf for thousands of
+                        # messages and silent about it. Treated as first run.
+                        log.info("swap cursor %d is past the store's %d; the "
+                                 "message store was rebuilt", last, newest)
+                        offers.set_cursor(chain.network, newest)
                         return 0
                     rows = store.api_messages(fingerprint_of(identity.public_bytes),
                                               chain.network, after_id=last, limit=BATCH)
@@ -228,6 +240,135 @@ class Shopkeeper:
         # in the approvals book (D-029).
         state.bump_generation()
         return True
+
+    # --- taking a price this wallet's own order crosses ------------------------
+
+    def fill_what_crosses(self) -> int:
+        """Take an ask off the book when this wallet's own bid crosses it.
+
+        A book where a bid sits above an ask and nothing happens is not a
+        market, it is two people waiting for each other. Somebody has to be
+        the taker, and it can only be the bid: an ask can be taken (the
+        maker's node answers with its half, which is the one thing a taker
+        cannot work out alone -- D-063), and a bid cannot, because nothing
+        holds the buyer's coins and the seller has nothing to ask them for.
+
+        So: when a bid of this wallet's crosses somebody's ask, this takes
+        it, for the smaller of the two amounts. A partial fill leaves the
+        maker's order shrunk by exactly what was taken and still on the book
+        (state._fill_order), which is the remainder posting itself.
+
+        The bid is a different matter, because the engine never reduces one
+        -- there is no reserve behind it to reduce. So this wallet withdraws
+        its own bid at that price FIRST and re-posts the remainder, before
+        asking for anything: a book that advertises what has already been
+        committed is the thing D-082 is about, and the swap does not depend
+        on the bid existing -- no swap names a bid.
+
+        One fill at a time per pair, because the second one would be decided
+        on a book that the first has not landed in yet.
+        """
+        state = self.state
+        chain = state.messaging
+        if chain.network == "main" or chain.params.swaps_from is None:
+            return 0
+        if chain.params.fills_from is None:
+            return 0
+        if state.setting("auto_fill", True) is False:
+            return 0
+        try:
+            identity = state.ensure_identity()
+            index = state.token_index(chain)
+            if (index.indexed_height() or 0) < chain.params.fills_from:
+                return 0
+            with chain.rpc() as rpc:
+                own = _own_addresses(rpc)
+                mine = [o for o in index.orders_of(own) if not o.get("pending")]
+                busy = {f["order"] for f in state.offers.fills(chain.network, limit=50)
+                        if f["status"] in ("asked", "signed")}
+                for bid in mine:
+                    if bid["sale_property"] != 0 or not bid["want_property"]:
+                        continue
+                    if _twin(bid, mine):
+                        # Two bids at one price on one pair: cancelling by
+                        # price would take both off and only one would come
+                        # back. A person can still press Take.
+                        continue
+                    if self._fill_one(rpc, index, chain, identity, bid, own, busy):
+                        return 1
+        except Exception:
+            log.debug("filling what crosses failed", exc_info=True)
+        return 0
+
+    def _fill_one(self, rpc: Any, index: Any, chain: Any, identity: Any,
+                  bid: dict, own: list[str], busy: set) -> bool:
+        from fractions import Fraction
+
+        state = self.state
+        want = int(bid["want_amount"])            # tokens this bid is for
+        pays = int(bid["sale_amount"])            # coins it will pay for them
+        if want <= 0 or pays <= 0:
+            return False
+        book = index.book(int(bid["want_property"]))
+        for ask in book["asks"]:
+            if ask.get("pending") or ask["address"] in set(own) or ask["txid"] in busy:
+                continue
+            if Fraction(ask["want_amount"], ask["sale_amount"]) > Fraction(pays, want):
+                return False                      # sorted: nothing after is better
+            with state.store() as store:
+                key = store.key_for(ask["address"])
+            if key is None:
+                continue                          # nobody to ask; leave it be
+            take = min(want, int(ask["sale_amount"]))
+            if take <= 0:
+                continue
+            # Rounded up, which is what the engine's price guard requires of a
+            # fill: the maker must not be paid less than their own price.
+            coins = -(-int(ask["want_amount"]) * take // int(ask["sale_amount"]))
+            if not _has_two_outputs(rpc, bid["address"]):
+                # Two transactions from the buyer's side, two outputs (D-051).
+                return False
+            self._reprice(rpc, chain, bid, want - take)
+            sent = self._reply(rpc, chain, identity, bytes(key["pubkey"]),
+                               {"swap": "fill", "swapv": swaplib.PROTOCOL,
+                                "order": ask["txid"], "tokens": take,
+                                "buyer": bid["address"]})
+            now = time.time()
+            state.offers.add_fill({
+                "id": sent, "network": chain.network, "order": ask["txid"],
+                "maker": ask["address"], "buyer": bid["address"], "tokens": take,
+                "coins": coins, "created": now, "expires": now + swaplib.OFFER_TTL})
+            log.info("taking %s of order %s at the price this wallet bid",
+                     take, ask["txid"][:12])
+            state.bump_generation()
+            return True
+        return False
+
+    def _reprice(self, rpc: Any, chain: Any, bid: dict, left: int) -> None:
+        """Withdraw this bid and put back what is still wanted.
+
+        Cancelled at its own price, not by pair, so another bid of this
+        wallet's at another price is left where it is.
+        """
+        from . import payload as P
+        from . import tokens as tokenlib
+
+        pid = int(bid["want_property"])
+        sender = tokenlib.TokenSender(rpc, chain.params)
+        cancel = P.MetaDExCancelPrice(
+            property_id_for_sale=0, amount_for_sale=int(bid["sale_amount"]),
+            property_id_desired=pid, amount_desired=int(bid["want_amount"]))
+        sender.broadcast(sender.prepare(bid["address"], cancel.encode()))
+        if left <= 0:
+            return
+        # The remainder at the same price, rounded the way the order was:
+        # what is left of a bid must not become dearer than it was.
+        coins = int(bid["sale_amount"]) * left // int(bid["want_amount"])
+        if coins <= 0:
+            return
+        again = P.MetaDExTrade(property_id_for_sale=0, amount_for_sale=coins,
+                               property_id_desired=pid, amount_desired=left)
+        sender.broadcast(sender.prepare(bid["address"], again.encode()))
 
     # --- answering ---------------------------------------------------------
 
@@ -530,6 +671,32 @@ def _better_offer(offer: dict, standing: dict) -> bool:
         return mine > theirs
     return ((int(offer["block_height"] or 0), int(offer["position"] or 0))
             < (int(standing["block_height"] or 0), int(standing["position"] or 0)))
+
+
+def _twin(bid: dict, mine: list[dict]) -> bool:
+    """Whether another order of this wallet's is the same pair at the same price."""
+    from fractions import Fraction
+
+    price = Fraction(int(bid["sale_amount"]), int(bid["want_amount"]))
+    for other in mine:
+        if other["txid"] == bid["txid"] or other["sale_property"] != 0:
+            continue
+        if other["want_property"] != bid["want_property"]:
+            continue
+        if Fraction(int(other["sale_amount"]), int(other["want_amount"])) == price:
+            return True
+    return False
+
+
+def _has_two_outputs(rpc: Any, address: str) -> bool:
+    """A buyer's side of a swap is two transactions and needs an output for
+    each: the half they sign, and the message that carries it (D-051)."""
+    try:
+        outputs = [u for u in (rpc.call("listunspent", 1, 9_999_999, [address]) or [])
+                   if u.get("spendable", True)]
+    except Exception:
+        return True                  # cannot tell; let the usual path decide
+    return len(outputs) >= 2
 
 
 def _own_addresses(rpc: Any) -> list[str]:

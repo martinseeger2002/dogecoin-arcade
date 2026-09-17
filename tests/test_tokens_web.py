@@ -399,9 +399,15 @@ def test_an_order_goes_on_the_book_and_can_be_taken_off(web):
         assert index.balance(home, prop["property_id"]) == 900 * 10**8, \
             "what is on the book is not also spendable"
 
-        # It shows on the pair page, and on the list of pairs.
+        # It shows on the market page, and on the list of markets. Asserted
+        # on what the page is FOR rather than on its headings: the book was
+        # re-laid-out around a spread (a87df0b) and these assertions went on
+        # naming an "Asks" heading and a "Place an order" button that had
+        # both been renamed, so the suite was red on a working feature and
+        # two releases went out over it (a test machine).
         body = app.get(f"/exchange/pair/{pid}").text
-        assert "Asks" in body and "0.5" in body and "Place an order" in body
+        assert "Order book" in body and "0.5" in body
+        assert 'action="/exchange/order"' in body, "and the form that adds to it"
         assert "Web Token" in app.get("/exchange?tab=tokens").text
 
         # Selling more than is left, counting the order, is refused.

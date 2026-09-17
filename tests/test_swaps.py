@@ -336,3 +336,50 @@ def test_an_older_node_reads_an_ask_as_an_invalid_inscription(engine):
     feed(eng, state, [tx(7, unknown, SELLER)])
     assert "unknown inscription kind" in status_of(db, 7)
     assert state.stopped is None if hasattr(state, "stopped") else True
+
+
+def test_an_ask_before_its_height_is_read_by_nobody(tmp_path):
+    """The refusal a chain gives before asks start, which cannot be tested on
+    a chain that has already passed the height (a test machine could not: testnet was
+    past 1,493,800 by the time both nodes were current)."""
+    import dataclasses
+
+    from arcade.config import NETWORKS
+    from arcade.db import Database
+    from arcade.state import Engine, StateDB, install_schema
+
+    db = Database(tmp_path / "later.sqlite")
+    install_schema(db)
+    state = StateDB(db)
+    later = dataclasses.replace(NETWORKS["regtest"], asks_from=1_000_000)
+    eng = Engine(state, later)
+    piece = inscribe(eng, state, 1, SELLER)
+
+    ask = I.Ask(txid=piece, take=I.Leg(I.LEG_COINS, amount=10 ** 8)).encode()
+    feed(eng, state, [tx(2, ask, SELLER, height=999_999)])
+    assert "asks are read from block 1000000" in status_of(db, 2)
+    assert db.conn.execute("SELECT COUNT(*) FROM nft_ask").fetchone()[0] == 0
+
+    # And at the height itself it is read, which is what makes the number a
+    # rule rather than a preference.
+    feed(eng, state, [tx(3, ask, SELLER, height=1_000_000)])
+    assert status_of(db, 3) == "valid"
+    assert db.conn.execute("SELECT COUNT(*) FROM nft_ask").fetchone()[0] == 1
+
+
+def test_a_chain_that_reads_no_asks_at_all_says_so(tmp_path):
+    import dataclasses
+
+    from arcade.config import NETWORKS
+    from arcade.db import Database
+    from arcade.state import Engine, StateDB, install_schema
+
+    db = Database(tmp_path / "never.sqlite")
+    install_schema(db)
+    state = StateDB(db)
+    eng = Engine(state, dataclasses.replace(NETWORKS["regtest"], asks_from=None))
+    piece = inscribe(eng, state, 1, SELLER)
+    feed(eng, state, [tx(2, I.Ask(txid=piece,
+                                  take=I.Leg(I.LEG_COINS, amount=1)).encode(),
+                         SELLER)])
+    assert "asks are not read on this chain" in status_of(db, 2)

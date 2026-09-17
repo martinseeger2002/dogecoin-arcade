@@ -1,6 +1,7 @@
 """A HashLips build, read, priced, written down and sent -- with a pause, a
 resume and a crash in the middle -- against a sender that only pretends."""
 
+import dataclasses
 import json
 import threading
 import time
@@ -541,3 +542,50 @@ def test_a_build_inscribes_without_the_ipfs_pointer(tmp_path):
     for item in build.items:
         assert "ipfs" not in item.json, item.json
         assert '"edition"' in item.json
+
+
+def test_a_set_can_be_given_its_own_face_and_words(tmp_path):
+    """A collection is not an object on the chain, so what it says about
+    itself goes on the piece it is known by -- its #1 (D-097, D-103)."""
+    import json as jsonlib
+
+    from arcade import collections as C
+    from arcade import inscriptions as I
+
+    build = C.read_build(hashlips(tmp_path, count=3))
+    piece = "ab" * 32
+    said = C.with_details(build, {"icon": piece, "description": "five punks",
+                                  "url": "https://punks.example", "twitter": ""})
+    first = min(said.items, key=lambda i: i.edition)
+    data = jsonlib.loads(first.json)
+    assert data["collection"] == {"name": "Doge Punks", "icon": piece,
+                                  "description": "five punks",
+                                  "url": "https://punks.example"}, \
+        "empty fields are not written, and cost nothing"
+    assert data["edition"] == 1 and data["attributes"], "the item is otherwise itself"
+    assert I.collection_of(first.json) == ("Doge Punks", 1, "Doge Punks #1"), \
+        "membership is decided by the name, not by the object"
+    assert I.collection_details(first.json)["icon"] == piece
+    # Nothing said, nothing written: a set that wants no description pays for
+    # no description.
+    assert C.with_details(build, {}).items[0].json == build.items[0].json
+    others = [i.json for i in said.items if i.edition != 1]
+    assert others == [i.json for i in build.items if i.edition != 1], \
+        "and it is written once, not on all five hundred"
+
+
+def test_a_set_is_costed_in_whole_chunks_and_has_no_size_limit(tmp_path):
+    """No cap belongs on a piece: the pictures come from a folder and are
+    planned as a job, and a piece takes as many chunks as it takes. What a
+    form caps is a single image chosen in that form, and that cap must never
+    reach this path (a test machine)."""
+    from arcade import collections as C
+
+    build = C.read_build(hashlips(tmp_path, count=3))
+    big = dataclasses.replace(build.items[0], size=40_000)
+    build = dataclasses.replace(build, items=[big] + build.items[1:])
+
+    cost = C.estimate_build(build)
+    assert isinstance(cost["chunks"], int)
+    assert cost["chunks"] >= 7, "a 40 KB piece is several chunks, and is allowed"
+    assert cost["items"] == 3, "and nothing refused it"

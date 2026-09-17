@@ -50,3 +50,35 @@ def test_each_chain_is_counted_on_its_own(tmp_path):
     store.mark_board_read("test")
     assert store.board_unread("test") == 0
     assert store.board_unread("main") == 1, "reading one board is not reading the other"
+
+
+def test_each_channel_says_what_is_new_in_it(tmp_path):
+    """A list of channels that only says the board has something new makes
+    somebody open all of them (D-108)."""
+    store = a_store(tmp_path)
+    for n, (channel, mine) in enumerate([("trading", False), ("trading", False),
+                                         ("releases", False), ("chat", True)]):
+        store.add_group_post("test", channel, f"{n:064x}", 100 + n, 1700 + n,
+                             "nThem", "them", "hello", mine=mine)
+
+    rows = {r["channel"]: r for r in store.group_channels("test")}
+    assert rows["trading"]["unread"] == 2
+    assert rows["releases"]["unread"] == 1
+    assert rows["chat"]["unread"] == 0, "your own posts are not news to you"
+
+    # Opening one silences that one and leaves the others alone.
+    store.mark_channel_read("test", "trading")
+    rows = {r["channel"]: r for r in store.group_channels("test")}
+    assert rows["trading"]["unread"] == 0 and rows["releases"]["unread"] == 1
+
+    # A channel nobody has opened falls back to the board's own mark, so an
+    # update does not light up what was already read.
+    store.mark_board_read("test")
+    rows = {r["channel"]: r for r in store.group_channels("test")}
+    assert all(r["unread"] == 0 for r in rows.values())
+
+    # And something new after that is new again, in its own channel only.
+    store.add_group_post("test", "releases", "e" * 64, 200, 1800, "nThem",
+                         "them", "arcade-release abcdef0")
+    rows = {r["channel"]: r for r in store.group_channels("test")}
+    assert rows["releases"]["unread"] == 1 and rows["trading"]["unread"] == 0

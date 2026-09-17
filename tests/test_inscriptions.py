@@ -301,3 +301,30 @@ def test_a_set_may_describe_itself_without_changing_what_it_contains():
     # supply that is not a whole number is not a supply.
     long = json.dumps({"description": "x" * 900, "supply": True})
     assert I.collection_details(long) == {"description": "x" * 400}
+
+
+def test_an_object_says_where_the_piece_belongs():
+    """A set that describes itself on its #1 must not thereby file that #1
+    somewhere else. Read as "not a string, use the item's name", the object
+    split a collection in two -- the ninety-nine under their `collection`
+    string, and #1, the piece carrying the description and the face, under
+    the prefix of its own name (a test machine, D-105)."""
+    import json
+
+    one = json.dumps({"name": "Pixel Skull #1", "edition": 1,
+                      "collection": {"name": "Pixel Skulls", "description": "x"}})
+    rest = json.dumps({"name": "Pixel Skull #7", "edition": 7,
+                       "collection": "Pixel Skulls"})
+    assert I.collection_of(one) == ("Pixel Skulls", 1, "Pixel Skull #1")
+    assert I.collection_of(rest) == ("Pixel Skulls", 7, "Pixel Skull #7")
+
+    # An object with no name of its own is still filed by the item's name,
+    # exactly as before -- and it can still describe the set.
+    nameless = json.dumps({"name": "Goofball #3", "edition": 3,
+                           "collection": {"description": "x"}})
+    assert I.collection_of(nameless) == ("Goofball", 3, "Goofball #3")
+    assert I.collection_details(nameless) == {"description": "x"}
+    # And a name that is not text is not a name.
+    odd = json.dumps({"name": "Goofball #4", "edition": 4,
+                      "collection": {"name": 7}})
+    assert I.collection_of(odd) == ("Goofball", 4, "Goofball #4")

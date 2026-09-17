@@ -35,6 +35,7 @@ it is a fee for nothing, and the job's whole job is not to pay twice.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import mimetypes
@@ -134,6 +135,42 @@ def strip_offchain(entry: dict[str, Any]) -> dict[str, Any]:
     if not offchain:
         return dict(entry)
     return {key: value for key, value in entry.items() if key != "image"}
+
+
+def with_details(build: "Build", details: dict[str, Any]) -> "Build":
+    """Put what the set says about ITSELF onto its #1.
+
+    A collection is not an object on the chain -- it is what a set of
+    inscriptions have in common -- so its description, its site and its own
+    thumbnail live on the piece it is known by (D-097). This merges them into
+    the lowest edition's JSON as a `collection` object, leaving everything
+    else in that item exactly as the build wrote it.
+
+    Membership does not move: `collection_of` reads a `collection` STRING or
+    the `Prefix #12` name, and an object is neither, so the set is still
+    filed under the name it had.
+    """
+    wanted = {key: value for key, value in (details or {}).items()
+              if str(value or "").strip()}
+    if not wanted or not build.items:
+        return build
+    first = min(build.items, key=lambda item: item.edition)
+    try:
+        data = json.loads(first.json)
+    except ValueError:
+        return build
+    if not isinstance(data, dict):
+        return build
+    member = I.collection_of(first.json)
+    about: dict[str, Any] = {"name": member[0] if member else build.collection}
+    about.update(wanted)
+    existing = data.get("collection")
+    if isinstance(existing, dict):
+        about = {**existing, **about}
+    data["collection"] = about
+    said = dataclasses.replace(first, json=compact(data))
+    items = [said if item is first else item for item in build.items]
+    return dataclasses.replace(build, items=items)
 
 
 def find_build(folder: Path) -> Path:
@@ -243,13 +280,17 @@ def read_build(folder: Path) -> Build:
 
 def estimate_build(build: Build) -> dict[str, Any]:
     """What the whole set will cost, item by item, before anything is spent."""
-    chunks = fee = dust = 0.0
+    # Chunks are counted as an integer, because they are one. Summed into a
+    # float and truncated back, a set whose cost is reported one chunk short
+    # is a set whose funding is one chunk short (a test machine).
+    chunks = 0
+    fee = dust = 0.0
     for item in build.items:
         est = inscribelib.estimate(item.size, item.content_type, item.json)
-        chunks += est.chunks
+        chunks += int(est.chunks)
         fee += est.fee
         dust += est.dust
-    return {"items": len(build.items), "bytes": build.bytes, "chunks": int(chunks),
+    return {"items": len(build.items), "bytes": build.bytes, "chunks": chunks,
             "fee": round(fee, 8), "dust": round(dust, 8),
             "total": round(fee + dust, 8)}
 
