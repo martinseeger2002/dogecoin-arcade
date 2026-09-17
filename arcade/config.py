@@ -162,17 +162,19 @@ TESTNET = Params(
     p2p_port=44874,
     # --- one floor, for everything (D-106) -------------------------------------
     #
-    # Set 2026-09-17 at tip 1,493,938, about half an hour ahead at 46s a block.
+    # Set 2026-09-17 to the tip ITSELF, 1,493,951, with no margin at all.
     # Every height below is the same number on purpose: tokens, messages,
     # swaps, asks and fills all start together, so there is one date for
     # "before" and one for "after" rather than six.
     #
-    # Half an hour rather than three, because the margin is not what makes
-    # this safe and waiting for it buys nothing: a floor only changes how a
-    # block reads if a transaction is IN one, and the rule is that nothing new
-    # goes out until both nodes report the same floor. A node that takes the
-    # release late has indexed nothing above the old floor either -- the chain
-    # had not reached it -- so it simply starts from this one.
+    # No margin, because a margin was never what made this safe. A floor only
+    # changes how a block reads if a transaction is IN one, and the rule is
+    # that nothing new goes out until both nodes report the same floor. The
+    # blocks between this height and whenever a node takes the release hold
+    # nothing of ours, so there is nothing for two nodes to read differently
+    # -- and a node that updates late indexes from here anyway, because its
+    # index starts at the floor rather than where it happened to be. Three
+    # hours bought exactly what no margin buys, an hour and a half later.
     #
     # Why start again at all: what is under it is six weeks of building the
     # thing -- half-formats, a collection inscribed three ways, tokens made to
@@ -193,12 +195,12 @@ TESTNET = Params(
     # with mainnet messages rescan them (a test machine found the row). Nothing else in
     # ~/.dogecoinarcade is per-chain, and `main-ledger.sqlite` must not be
     # touched at all.
-    activation_height=1_493_980,
-    messaging_start_height=1_493_980,
-    swaps_from=1_493_980,
-    asks_from=1_493_980,
-    fills_from=1_493_980,
-    named_fills_from=1_493_980,
+    activation_height=1_493_951,
+    messaging_start_height=1_493_951,
+    swaps_from=1_493_951,
+    asks_from=1_493_951,
+    fills_from=1_493_951,
+    named_fills_from=1_493_951,
     datadir_subdir="testnet3",
     pubkeyhash_version=113,
     scripthash_version=196,
