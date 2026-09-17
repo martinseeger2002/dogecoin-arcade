@@ -2638,14 +2638,24 @@ def test_anything_can_be_sent_to_a_tag(client, monkeypatch):
         assert appmod._tag_address(state, "@FRIEND", mainnet=mainnet) \
             == "nTagHolderAddress1111111111111111", "a tag is not case sensitive"
 
-    # An address is passed through untouched; only an @ means a lookup.
-    assert appmod._tag_address(state, "nSomebodyElse", mainnet=False) == "nSomebodyElse"
+    # The @ is punctuation: a name resolves with or without it, because what
+    # tells a name from an address is the shape and not the sigil (D-112).
+    assert appmod._tag_address(state, "friend", mainnet=False) \
+        == "nTagHolderAddress1111111111111111"
+
+    # An address is passed through untouched. A real one is 34 characters of
+    # mixed-case base58 and no tag can be that, which is what makes the two
+    # unambiguous without the @.
+    address = "nqW8nXSzigaSx1wTTTtUkMLYkbrYNJLRhz"
+    assert appmod._tag_address(state, address, mainnet=False) == address
     assert appmod._tag_address(state, "  ", mainnet=False) == ""
 
     # And a name nobody holds is refused by name, not by a base58 complaint.
     import pytest as _pytest
     with _pytest.raises(ValueError, match="nobody holds @stranger"):
         appmod._tag_address(state, "@stranger", mainnet=False)
+    with _pytest.raises(ValueError, match="nobody holds @stranger"):
+        appmod._tag_address(state, "stranger", mainnet=False)
 
 
 def test_the_address_book_stores_the_address_a_tag_names(client, monkeypatch):
@@ -2799,9 +2809,11 @@ def test_somebody_can_be_found_and_added_by_tag(client, monkeypatch):
     monkeypatch.setattr(type(state), "token_index", lambda self, chain: Index())
 
     found = page.get("/contacts?find=mar").text
-    assert "@robin" in found
-    assert found.index("@robin") < found.index("@postmaster"), \
-        "somebody typing 'mar' means @robin far more often than @postmaster"
+    assert "@robin" in found and "Add" in found
+    # With or without the @, and in any case: the sigil is punctuation
+    # (D-112).
+    for typed in ("@robin", "ROBIN", "robin"):
+        assert "@robin" in page.get(f"/contacts?find={typed}").text, typed
 
     assert "Nothing claimed" in page.get("/contacts?find=nobodyatall").text
 
@@ -2896,3 +2908,66 @@ def test_the_package_s_own_diagnostics_reach_the_journal():
     assert "arcade.shopkeeper: the message store was rebuilt" in written
     assert "arcade.ledger: rebuilt inscription moves" in written, \
         "uvicorn's config must not take the package's own logging away"
+
+
+def test_a_tag_is_a_name(client):
+    """A contact the chain has named should not be drawn as "Unnamed" beside
+    the name it was just read under. A name you typed wins, because it is
+    yours; the tag stands in when you typed none.
+
+    Nameless rows exist -- the book refuses to SAVE one without a name, but
+    rows arrive from older versions and from scans -- and that is exactly the
+    row the chain can name.
+    """
+    app, state = client
+    with state.store() as store:
+        store.save_contact(name="", testnet_address=TEST_ADDRESS)
+        store.conn.commit()
+    _tag_on_chain(state, TEST_ADDRESS, "boxa")
+
+    body = app.get("/contacts").text
+    card = body[body.index('class="cards"'):]
+    assert "@boxa" in card
+    assert "Unnamed" not in card, "the chain named them; the page should say so"
+
+    with state.store() as store:
+        (row,) = store.contacts()
+        store.save_contact(contact_id=row["id"], name="A test machine",
+                           testnet_address=TEST_ADDRESS)
+        store.conn.commit()
+    card = app.get("/contacts").text
+    card = card[card.index('class="cards"'):]
+    assert "A test machine" in card and "@boxa" in card, \
+        "a name of your own wins, and the tag is shown beside it"
+
+
+def _tag_on_chain(state, address, tag):
+    """Give an address a name on the chain this wallet reads tags from."""
+    from arcade.db import Database
+    from arcade.state import install_schema
+
+    chain = state.messaging
+    db = Database(state.home / f"{chain.network}-ledger.sqlite")
+    install_schema(db)
+    db.conn.execute("INSERT OR REPLACE INTO tag(tag,address,claimed_txid,"
+                    "block_height,position) VALUES(?,?,?,?,?)",
+                    (tag, address, "a" * 64, 100, 0))
+    db.conn.commit()
+    db.close()
+
+
+def test_your_own_tag_is_shown_with_your_own_address(client):
+    """It was in the prose under the form and nowhere in the table of who you
+    are, which is the part people read."""
+    from arcade.messaging.keys import Identity
+
+    app, state = client
+    state.identity = Identity.generate()          # the table needs a wallet
+    body = app.get("/contacts").text
+    panel = body[body.index("You on the chain"):body.index("First claim wins")]
+    assert "Name" in panel, "the table says what you are called"
+    assert "not claimed yet" in panel, "and says so plainly when you are not"
+    # The claimed case wants a derived address and a tag on the chain it was
+    # derived for, which this fixture has no node for; it is what the running
+    # wallet shows -- "@notbigchiefenergy on testnet" -- and the template
+    # takes the same `mine.tag` the prose under the form already used.

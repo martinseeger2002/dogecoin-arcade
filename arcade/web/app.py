@@ -4238,10 +4238,11 @@ def create_app(state: AppState) -> FastAPI:
                     # last block this node read.
                     destination = to.strip()
                     resolved = None
-                    if destination.startswith("@"):
-                        resolved = index.address_of(destination)
+                    if taglib.looks_like_a_tag(destination):
+                        wanted = taglib.normalise(destination)
+                        resolved = index.address_of(wanted)
                         if not resolved:
-                            raise ValueError(f"nobody holds {destination}.")
+                            raise ValueError(f"nobody holds @{wanted}.")
                         destination = resolved
                     problem = _check_address(destination,
                                              mainnet=chain.is_mainnet)
@@ -6264,10 +6265,12 @@ def _resolve_recipient(state, recipient: str) -> bytes:
     if not recipient:
         raise ValueError("choose a recipient, or paste their contact code")
 
-    if recipient.startswith("@"):
+    if taglib.looks_like_a_tag(recipient):
         # A tag is a name for an ADDRESS, and messaging needs a key, so this
         # is two lookups: the chain says which address holds the name, and
         # that address's announcement says which key lives there (D-032).
+        # Typed with or without the @, because the shape is what tells a name
+        # from an address and the punctuation tells nothing (D-112).
         wanted = taglib.normalise(recipient)
         address = None
         for chain in state.token_chains:
@@ -6503,7 +6506,10 @@ def _tag_address(state, destination: str, *, mainnet: bool) -> str:
     afterwards is the address it resolved to, because that is what was paid.
     """
     destination = (destination or "").strip()
-    if not destination.startswith("@"):
+    # With or without the @: nobody types the punctuation consistently, and
+    # nothing can be read both ways -- a tag is at most 24 characters of
+    # a-z0-9_ and an address is 34 of mixed-case base58 (D-112).
+    if not taglib.looks_like_a_tag(destination):
         return destination
     wanted = taglib.normalise(destination)
     for chain in state.token_chains:

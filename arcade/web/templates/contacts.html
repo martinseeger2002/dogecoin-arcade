@@ -8,7 +8,11 @@
   <h3 style="margin:0 0 12px">You on the chain</h3>
   {% if state.unlocked %}
     <table style="margin-bottom:12px">
-      <tr><td class="muted" style="width:130px">Address</td>
+      <tr><td class="muted" style="width:130px">Name</td>
+          <td>{% if mine.tag %}<strong>@{{ mine.tag }}</strong>
+            <span class="muted" style="font-size:.82rem">on {{ mine.chain.label|lower }}</span>
+            {%- else %}<span class="muted">not claimed yet</span>{% endif %}</td></tr>
+      <tr><td class="muted">Address</td>
           <td class="mono" style="font-size:.82rem;word-break:break-all">{{ mine.address or '—' }}</td></tr>
       <tr><td class="muted">Other chain</td>
           <td class="mono" style="font-size:.82rem;word-break:break-all">{{ other_address or '— none in this wallet' }}</td></tr>
@@ -72,8 +76,7 @@
   <form method="get" action="/contacts">
     <div class="row">
       <div style="flex:1"><input autocomplete="off" name="find" class="mono"
-        spellcheck="false" value="{{ find or '' }}"
-        placeholder="part of a name — @mar finds @robin"></div>
+        spellcheck="false" value="{{ find or '' }}"></div>
       <button type="submit">Search</button>
       {% if find %}<a class="muted" href="/contacts" style="font-size:.88rem">Clear</a>{% endif %}
     </div>
@@ -115,6 +118,7 @@
   {% endif %}
 </div>
 
+{% if editing %}
 <div class="panel" style="margin-bottom:18px">
   <form method="post" action="/contacts/save">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
@@ -163,6 +167,7 @@
     </div>
   </form>
 </div>
+{% endif %}
 
 <div class="panel" style="margin-bottom:18px">
   <div class="row" style="align-items:baseline">
@@ -227,11 +232,14 @@
 <div class="cards">
   {% for p in people %}
   <div class="card{{ ' editing' if editing and editing['id'] == p['id'] }}">
+    {% set handle = (tags.get(p['testnet_address']) or tags.get(p['mainnet_address']))
+                    if tags else None %}
     <div class="row" style="align-items:baseline">
-      <h3 class="row-title">{{ p['name'] or "Unnamed" }}</h3>
-      {% set handle = (tags.get(p['testnet_address']) or tags.get(p['mainnet_address']))
-                      if tags else None %}
-      {% if handle %}<span class="muted mono" style="font-size:.84rem"
+      {# A tag is a name. Showing "Unnamed" beside one the chain just told us
+         is the wallet refusing to read what it knows: a name you typed wins,
+         because it is yours, and the tag stands in when you typed none. #}
+      <h3 class="row-title">{{ p['name'] or ('@' ~ handle if handle else None) or "Unnamed" }}</h3>
+      {% if handle and p['name'] %}<span class="muted mono" style="font-size:.84rem"
         title="Read from the chain just now, not saved here — if they claim a new tag, this follows it">@{{ handle }}</span>{% endif %}
       {% if p['hex'] %}<span class="pill ok" title="You can message this contact">messaging</span>{% endif %}
     </div>

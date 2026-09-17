@@ -66,6 +66,28 @@ def normalise(text: str) -> str:
     return text.strip().lower()
 
 
+def looks_like_a_tag(text: str) -> bool:
+    """Whether this is somebody's name rather than an address or a code.
+
+    With or without the @: nobody types the punctuation consistently and
+    nothing should depend on it. What makes this unambiguous is not the @ but
+    the shape -- a tag is at most 24 characters of a-z, 0-9 and underscore,
+    and an address is 34 characters of mixed-case base58, so no string can be
+    read as both (D-112).
+    """
+    said = (text or "").strip()
+    tag = normalise(said)
+    if not tag or not (MIN_LENGTH <= len(tag) <= MAX_LENGTH) \
+            or not ALLOWED.match(tag):
+        return False
+    # With an @, any case: "@a test machine" is plainly a name and plainly not base58.
+    # Without one, only what a tag actually looks like -- lower case -- so a
+    # mistyped address ("PoNotARealAddress") is still answered as an address,
+    # with the checksum complaint that tells somebody what they got wrong,
+    # rather than as a name nobody holds.
+    return said.startswith("@") or said == tag
+
+
 def validate(text: str) -> str:
     """Return the canonical tag, or say exactly what is wrong with it."""
     tag = normalise(text)

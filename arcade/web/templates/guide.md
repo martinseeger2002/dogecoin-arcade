@@ -201,6 +201,16 @@ render is handed over as a download rather than guessed at.
 
 ---
 
+**The file is on the chain, and only there.** This node does not keep a copy
+of an inscription's bytes: it keeps which transactions carried them, and reads
+them back when somebody asks — reassembling, checking the result against the
+manifest's own sha256, and handing it over. That is a stronger guarantee than
+a stored copy, not a weaker one: a stored blob is trusted, a reassembled one
+is proved. Recently-served files are cached briefly so a wall of a hundred
+tiles is not a hundred trips to the node. A node that would rather hold the
+bytes — a gallery answering strangers — can say so.
+
+
 ## Collections
 
 A set of inscriptions that belong together — a HashLips build, or anything that
@@ -511,6 +521,18 @@ A page or a program can ask this wallet to send something. It cannot send.
 ---
 
 ## @tags
+
+**The @ is punctuation.** Anywhere a name can be typed — a send, a message, a
+search — it works with or without it: `@boxa` and `boxa` are the same name.
+What tells a name from an address is the shape, not the sigil: a tag is at
+most 24 characters of `a-z`, `0-9` and `_`, and an address is 34 of
+mixed-case base58.
+
+Case is free when you search, and with an `@` it is free everywhere — `@a test machine`
+is plainly a name. A **bare** name in a field that spends is read as a name
+only if it is written as one, in lower case, so that a mistyped address is
+still answered with "that is not a valid address" rather than "nobody holds
+that name".
 
 A handle that belongs to an address. `@robin`.
 

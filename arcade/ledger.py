@@ -72,10 +72,13 @@ class Stopped:
 #: Every listing of inscriptions reads the same columns, never the content:
 #: a page of a hundred files would be a hundred files. The collection columns
 #: come along by a join, NULL for an inscription that is in no set.
+#: `held` is not "kept here" any more but "this node can produce it": from
+#: its own copy if it kept one, or off the chain, because `inscription_piece`
+#: says which transactions carry the bytes (D-113).
 _INSCRIPTION_SELECT = (
     "SELECT i.txid, i.number, i.creator, i.owner, i.block_height, i.position, "
     "i.content_type, i.content_len, i.sha256, i.json, i.chunks, "
-    "i.content IS NOT NULL AS held, c.collection, c.edition "
+    "(i.content IS NOT NULL OR EXISTS (SELECT 1 FROM inscription_piece p WHERE p.inscription = i.txid)) AS held, c.collection, c.edition "
     "FROM inscription i LEFT JOIN collection_item c ON c.txid = i.txid")
 
 #: How many offers are standing against a piece, as a column beside it. A
@@ -96,6 +99,11 @@ class LedgerIndex:
         #: Only one sync at a time. The watcher is the only caller in
         #: practice, but a manual "sync now" must not race it.
         self._sync_lock = threading.Lock()
+        #: Files read back off the chain: txid -> bytes, oldest first,
+        #: trimmed by total size. PER INDEX, not per class: two chains share
+        #: this class, txids are only unique within a chain, and a shared
+        #: cache would hand one chain's bytes to the other.
+        self._content_cache: dict[str, bytes] = {}
         self.stopped: Stopped | None = None
         self.last_sync: float | None = None
         self.last_result: SyncResult | None = None
@@ -577,21 +585,97 @@ class LedgerIndex:
                     return prev.address
         return None
 
-    def inscription_content(self, key: str | int) -> tuple[str, bytes] | None:
-        """(content type, bytes) if this node kept them, else None.
+    #: Files read back off the chain, newest first, so a page of a hundred
+    #: tiles does not ask the node a hundred times for the same picture. Small
+    #: on purpose: it is a convenience, not a store, and the point of D-113 is
+    #: that nothing here is where the file lives.
+    CACHE_BYTES = 64 * 1024 * 1024
 
-        None means "not held here", never "does not exist": the row says how
-        long it is and what it hashes to, so it can be fetched back off the
-        chain and proved.
+    def inscription_content(self, key: str | int) -> tuple[str, bytes] | None:
+        """(content type, bytes), read back off the chain if need be.
+
+        The bytes are not kept in this index (D-113). What is kept is which
+        transactions carried them, so this fetches those, reassembles, and
+        checks the result against the manifest's own sha256 before handing it
+        over -- which is a stronger guarantee than a stored copy ever was: a
+        stored blob is trusted, a reassembled one is proved.
+
+        None means the file cannot be produced -- no such inscription, or a
+        node that cannot serve those transactions -- never "does not exist".
         """
         with self.open() as db:
             column = "number" if isinstance(key, int) else "txid"
             row = db.conn.execute(
-                f"SELECT content_type, content FROM inscription WHERE {column}=?",
-                (key,)).fetchone()
-            if row is None or row["content"] is None:
+                f"SELECT txid, content_type, content, content_len, sha256, chunks "
+                f"FROM inscription WHERE {column}=?", (key,)).fetchone()
+            if row is None:
                 return None
-            return row["content_type"], bytes(row["content"])
+            if row["content"] is not None:
+                return row["content_type"], bytes(row["content"])
+            pieces = [dict(r) for r in db.conn.execute(
+                "SELECT countdown, txid FROM inscription_piece "
+                "WHERE inscription=? ORDER BY countdown DESC", (row["txid"],))]
+        if not pieces:
+            return None                   # indexed before pieces were recorded
+        found = self._cached(row["txid"])
+        if found is not None:
+            return row["content_type"], found
+        try:
+            content = self._from_chain(row, pieces)
+        except Exception as exc:
+            log.warning("could not read %s back off the chain: %s",
+                        row["txid"][:12], exc)
+            return None
+        self._remember(row["txid"], content)
+        return row["content_type"], content
+
+    def _from_chain(self, row: dict, pieces: list[dict]) -> bytes:
+        """Fetch the transactions that carry a file, and prove what comes back."""
+        from hashlib import sha256
+        from . import inscriptions as I
+        from .indexer import PrevOutCache
+        from .tx import extract
+
+        assembly = None
+        with self._rpc() as rpc:
+            cache = PrevOutCache(rpc, self.params)
+            for piece in pieces:
+                tx = rpc.call("getrawtransaction", piece["txid"], 1)
+                # `extract` wants the lookup ITSELF, not the cache around it.
+                read = extract(tx, 0, 0, self.params, cache.lookup)
+                if read is None:
+                    raise ValueError(f"{piece['txid'][:12]} carries no payload")
+                body = P.decode(read.payload).data
+                chunk = I.parse(body)
+                if not isinstance(chunk, I.Chunk):
+                    raise ValueError(f"{piece['txid'][:12]} is not a chunk")
+                if assembly is None:
+                    assembly = I.Assembly(inscription_id=chunk.inscription_id)
+                assembly.pieces[chunk.countdown] = chunk.body
+        if assembly is None or not assembly.complete():
+            raise ValueError("the chain did not give back every piece")
+        manifest, content = assembly.join()
+        # Proved, not trusted. The index says what the file hashes to and the
+        # chain says what it is; a mismatch means one of them is lying and
+        # neither answer is safe to serve.
+        if sha256(content).hexdigest() != row["sha256"]:
+            raise ValueError("what came back does not match the manifest")
+        return content
+
+
+    def _cached(self, txid: str) -> bytes | None:
+        found = self._content_cache.get(txid)
+        if found is not None:
+            # Newest last, so trimming takes the least recently wanted.
+            self._content_cache[txid] = self._content_cache.pop(txid)
+        return found
+
+    def _remember(self, txid: str, content: bytes) -> None:
+        cache = self._content_cache
+        cache[txid] = content
+        held = sum(len(v) for v in cache.values())
+        while held > self.CACHE_BYTES and len(cache) > 1:
+            held -= len(cache.pop(next(iter(cache))))
 
     def inscription_count(self, owner: str | None = None,
                           creator: str | None = None,
@@ -720,7 +804,7 @@ class LedgerIndex:
         with self.open() as db:
             row = db.conn.execute(
                 "SELECT i.txid, i.number, i.content_type, i.json, c.edition, "
-                "       (i.content IS NOT NULL "
+                "       ((i.content IS NOT NULL OR EXISTS (SELECT 1 FROM inscription_piece p WHERE p.inscription = i.txid)) "
                 "        AND i.content_type LIKE 'image/%') AS drawable "
                 "FROM collection_item c JOIN inscription i ON i.txid = c.txid "
                 "WHERE c.creator = ? AND c.collection = ? "
@@ -1201,7 +1285,7 @@ class LedgerIndex:
     #: sold or sent away stops being for sale with no transaction at all.
     _LIVE_ASK = (
         "SELECT a.*, i.owner, i.number, i.creator, i.content_type, "
-        "       i.content IS NOT NULL AS held, c.collection, c.edition, "
+        "       (i.content IS NOT NULL OR EXISTS (SELECT 1 FROM inscription_piece p WHERE p.inscription = i.txid)) AS held, c.collection, c.edition, "
         "       b.time AS when_ "
         "FROM nft_ask a "
         "JOIN inscription i ON i.txid = a.inscription "
@@ -1255,7 +1339,7 @@ class LedgerIndex:
         """
         sql = ("SELECT i.txid, i.number, i.content_type FROM collection_item c "
                "JOIN inscription i ON i.txid = c.txid "
-               "WHERE c.collection = ? AND i.content IS NOT NULL "
+               "WHERE c.collection = ? AND (i.content IS NOT NULL OR EXISTS (SELECT 1 FROM inscription_piece p WHERE p.inscription = i.txid)) "
                "  AND i.content_type LIKE 'image/%' ")
         args: list[Any] = [name]
         if creator:

@@ -148,6 +148,18 @@ CREATE TABLE IF NOT EXISTS inscription_chunk (
     PRIMARY KEY (sender, inscription_id, countdown)
 );
 
+-- Which transactions an assembled inscription was made of, in the order its
+-- countdown gives them. Kept so the FILE does not have to be: the bytes are
+-- on the chain in full, this says where, and `ledger.inscription_content`
+-- reads them back and checks them against the manifest's sha256 when
+-- somebody actually asks for them (D-113).
+CREATE TABLE IF NOT EXISTS inscription_piece (
+    inscription  TEXT    NOT NULL,
+    countdown    INTEGER NOT NULL,
+    txid         TEXT    NOT NULL,
+    PRIMARY KEY (inscription, countdown)
+);
+
 -- Collections. Which set an inscription belongs to, read off its JSON by one
 -- rule (`inscriptions.collection_of`) at the moment it completes, so every
 -- node files it the same way. A set from the HashLips Art Engine lands here
@@ -284,6 +296,7 @@ def install_schema(db: Database) -> None:
     register_journalled_table("inscription_chunk",
                               ("sender", "inscription_id", "countdown"))
     register_journalled_table("collection_item", ("txid",))
+    register_journalled_table("inscription_piece", ("inscription", "countdown"))
     _rekey_moves(db)
     _file_collections(db)
 
@@ -358,7 +371,11 @@ class Engine:
         # everybody else's -- the hash and the length are always stored, so a
         # body that was not kept can be fetched back off the chain later and
         # proved to be the right one.
-        self.keep_content = keep_content or (lambda address: True)
+        # Nothing kept by default: the bytes are on the chain, the pieces
+        # table says where, and they are read back when somebody asks
+        # (D-113). A node that would rather hold them -- a gallery answering
+        # strangers, an archive -- passes its own policy here.
+        self.keep_content = keep_content or (lambda address: False)
 
     # --- balance helpers ------------------------------------------------------
 
@@ -1006,8 +1023,19 @@ class Engine:
             "sha256": manifest.sha256.hex(),
             "json": manifest.json,
             "chunks": len(assembly.pieces),
+            # Not kept. The file is on the chain in full and this index says
+            # which transactions hold it, so keeping a second copy here was
+            # paying twice to store what cannot be lost (D-113). A node that
+            # wants the bytes to hand -- a gallery serving strangers -- says
+            # so with `keep_content`.
             "content": content if self.keep_content(rtx.sender) else None,
         })
+        for row in rows:
+            self.state.insert("inscription_piece", {
+                "inscription": first["txid"],
+                "countdown": row["countdown"],
+                "txid": row["txid"],
+            })
         member = I.collection_of(manifest.json)
         if member is not None:
             collection, edition, name = member

@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS block (
     processed_at INTEGER NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS block_hash_idx ON block(hash);
+-- No index on block(hash): `hash TEXT NOT NULL UNIQUE` already builds one, and
+-- a second copy of it cost 0.8 MB in a 13 MB index for nothing (D-113).
 
 -- The undo journal. One row per state mutation, ordered by `id`.
 --
@@ -69,6 +70,12 @@ CREATE TABLE IF NOT EXISTS undo (
 );
 
 CREATE INDEX IF NOT EXISTS undo_height_idx ON undo(height);
+
+-- How far back the journal is kept. A reorg deeper than ChainFollower's
+-- max_reorg_depth is refused outright as something a retry cannot fix, so an
+-- undo row older than that can never be used -- and kept for ever it was the
+-- only part of this index that grew without bound (D-113).
+
 
 -- Single-row key/value metadata (schema version, indexed tip, etc).
 CREATE TABLE IF NOT EXISTS meta (
@@ -176,6 +183,10 @@ class Database:
 
     def _migrate(self) -> None:
         self.conn.executescript(SCHEMA)
+        # Was created beside the UNIQUE constraint that already indexes that
+        # column. Dropped here rather than left, because an index nobody
+        # needs is still written on every block (D-113).
+        self.conn.execute("DROP INDEX IF EXISTS block_hash_idx")
         current = self.get_meta("schema_version")
         if current is None:
             self.set_meta("schema_version", str(SCHEMA_VERSION))
@@ -262,9 +273,26 @@ class StateDB:
             conn.execute("ROLLBACK")
             raise
         else:
+            self._forget_old_undo(height)
             conn.execute("COMMIT")
         finally:
             self._height = None
+
+    #: Kept in step with ChainFollower.max_reorg_depth, and deliberately a
+    #: little deeper: the follower refuses anything past its own limit, so
+    #: rows below this can never be replayed by anybody.
+    UNDO_KEEP = 1_000
+
+    def _forget_old_undo(self, height: int) -> None:
+        """Drop journal rows a reorg could no longer reach.
+
+        Inside the block's own transaction, so a crash cannot lose the block
+        and keep the pruning or the other way round. Cheap: an index on
+        height makes it a range delete, and most blocks delete nothing.
+        """
+        floor = height - self.UNDO_KEEP
+        if floor > 0:
+            self.db.conn.execute("DELETE FROM undo WHERE height < ?", (floor,))
 
     def _require_context(self) -> int:
         if self._height is None:
