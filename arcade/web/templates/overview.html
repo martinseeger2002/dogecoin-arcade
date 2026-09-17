@@ -105,6 +105,21 @@
         without you running <code>dogecoinarcade-update</code>.</span></span>
     </label>
   </form>
+  {% if update_status %}
+  <p class="muted" style="font-size:.8rem;margin:10px 0 0">
+    Last checked {{ when(update_status.at) }} &mdash;
+    <strong>{{ update_status.what }}</strong>
+    {%- if update_status.installed %}, running
+      <code class="mono" style="font-size:.9em">{{ update_status.installed[:7] }}</code>{% endif %}
+    {%- if update_status.published and update_status.published != update_status.installed %},
+      published <code class="mono" style="font-size:.9em">{{ update_status.published[:7] }}</code>{% endif %}.
+    {%- if update_status.error %}<br><span style="color:var(--bad)">{{ update_status.error }}</span>{% endif %}
+  </p>
+  {% else %}
+  <p class="muted" style="font-size:.8rem;margin:10px 0 0">Not checked since this
+    interface started. It looks every {{ (update_every // 60) }} minutes, and on
+    a source checkout it never updates itself &mdash; the checkout is the source.</p>
+  {% endif %}
   <p class="muted" style="font-size:.78rem;margin:10px 0 0">Signing key
     <code class="mono" style="font-size:.9em">{{ release_key[:16] }}…</code>
     &mdash; pinned in this installation's own code. Updating cannot change it;

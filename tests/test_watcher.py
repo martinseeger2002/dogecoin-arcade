@@ -460,3 +460,49 @@ def test_a_node_that_publishes_nothing_checks_anyway(monkeypatch):
                         lambda self, name, default=None: True, raising=False)
     watcher._auto_update()
     assert looked, "it did not even ask"
+
+
+def test_the_update_runs_before_anything_that_could_skip_it(monkeypatch):
+    """It was ninth in the tick, so any of the eight above it raising took the
+    update with it -- and the outer catch logs at debug, so a machine could go
+    a week without checking and say nothing (D-084)."""
+    from arcade.web.watcher import BlockWatcher
+
+    state = FakeState(FakeChain(tip=100), FakeChain("main", tip=5))
+    watcher = BlockWatcher(state)
+    ran = []
+    monkeypatch.setattr(watcher, "_auto_update", lambda: ran.append("update"))
+    monkeypatch.setattr(watcher, "_repair_once",
+                        lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    with pytest.raises(RuntimeError):
+        watcher._tick()
+    assert ran == ["update"], "the update went first, before the thing that broke"
+
+
+def test_it_says_what_it_decided(monkeypatch):
+    """A thing that runs on its own has to be able to say when it last ran.
+    The operator asked twice why updates were not automatic while they were running
+    exactly as written, and neither of us could answer it from outside."""
+    from arcade.web.watcher import BlockWatcher
+
+    state = FakeState(FakeChain(tip=100), FakeChain("main", tip=5))
+    state.update_status = None
+    watcher = BlockWatcher(state)
+    monkeypatch.setattr(type(state), "setting",
+                        lambda self, name, default=None: True, raising=False)
+
+    monkeypatch.setattr("arcade.web.watcher.update.check",
+                        lambda: ("abc1234", "abc1234", False))
+    watcher._auto_update()
+    assert state.update_status["what"] == "up to date"
+    assert state.update_status["installed"] == "abc1234"
+    assert state.update_status["at"] > 0
+
+    def unreachable():
+        raise OSError("connection refused")
+
+    watcher._update_checked = 0.0
+    monkeypatch.setattr("arcade.web.watcher.update.check", unreachable)
+    watcher._auto_update()
+    assert state.update_status["what"] == "could not reach the site"
+    assert "refused" in state.update_status["error"], "and why"

@@ -91,6 +91,15 @@ class BlockWatcher:
             self._stop.wait(self.poll_seconds)
 
     def _tick(self) -> None:
+        # First, and in its own hands. It was ninth in this list, so any of
+        # the eight above it raising took the update with it -- and the outer
+        # catch logs at debug, so a machine could go a week without checking
+        # and say nothing. An updater downstream of every other subsystem's
+        # health is not an updater (D-084).
+        try:
+            self._auto_update()
+        except Exception:
+            log.warning("automatic update check failed", exc_info=True)
         self._repair_once()
         self._confirm_sent()
         self._confirm_posts()
@@ -103,7 +112,6 @@ class BlockWatcher:
         self._backfill_history_once()
         self._check_release_notices()
         self._announce_release()
-        self._auto_update()
         self._keep_shop()
         self._walk_home()
 
@@ -336,12 +344,17 @@ class BlockWatcher:
         if self.state.live_progress():
             return                      # a send is in flight; next time
         try:
-            installed, published, fetchable = update.check()
+            installed, published, available = update.check()
         except Exception as exc:
-            log.debug("update check failed: %s", exc)
+            self._said("could not reach the site", exc=str(exc))
             return
-        if not fetchable or not published or installed == published:
+        if not published:
+            self._said("the site published no revision")
             return
+        if installed == published or not available:
+            self._said("up to date", installed=installed, published=published)
+            return
+        self._said("updating", installed=installed, published=published)
         log.info("automatic update: %s -> %s", installed or "unknown", published)
         # In a subprocess, and not in this thread: the update replaces the code
         # this process is running out of, restarts the interface, and prints as
@@ -350,10 +363,26 @@ class BlockWatcher:
         result = subprocess.run([str(venv / "python"), "-m", "arcade.update"],
                                 capture_output=True, text=True, timeout=900)
         if result.returncode != 0:
-            log.warning("automatic update failed: %s",
-                        (result.stderr or result.stdout).strip()[-600:])
+            trouble = (result.stderr or result.stdout).strip()[-600:]
+            log.warning("automatic update failed: %s", trouble)
+            self._said("the update failed", installed=installed,
+                       published=published, exc=trouble[-200:])
         else:
             log.info("automatic update installed %s", published)
+            self._said("installed", installed=published, published=published)
+
+    def _said(self, what: str, installed=None, published=None, exc: str = "") -> None:
+        """Record what the last update check decided, for the Overview.
+
+        The operator asked twice why updates were not automatic while they were
+        running exactly as written. Neither of us could answer it from
+        outside, because the only evidence was a debug log nobody reads. A
+        thing that runs on its own has to say when it last ran (D-084).
+        """
+        self.state.update_status = {
+            "at": time.time(), "what": what, "installed": installed,
+            "published": published, "error": exc,
+        }
 
     _backfilled = False
 

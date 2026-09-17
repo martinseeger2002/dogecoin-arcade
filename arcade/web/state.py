@@ -430,6 +430,11 @@ class AppState:
 
     # --- identity -------------------------------------------------------------
 
+    #: What the automatic update last decided, and when. Written by the
+    #: watcher, read by the Overview: a thing that runs on its own has to be
+    #: able to say when it last ran (D-084).
+    update_status: dict | None = None
+
     def my_tag(self) -> str:
         """This wallet's @tag as the chain has it, or "" -- never a guess."""
         try:
