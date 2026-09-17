@@ -37,6 +37,13 @@ catch (e) { say('topnav', 'blocked'); }
 try { localStorage.setItem('x', '1'); say('storage', 'ALLOWED'); }
 catch (e) { say('storage', 'blocked'); }
 try { document.forms.length; say('script', 'ran'); } catch (e) {}
+// Every asynchronous probe says 'pending' before it starts, so a fetch that
+// never settles is reported as 'pending' rather than being absent. It was
+// absent: the collector waited for seven of eight keys, 'wallet' was the one
+// missing, and the assertion read None and failed -- which looks exactly like
+// "the sandbox let it through" and is not. A probe that cannot say "no
+// answer" cannot tell a blocked read from a slow one. (A test machine found it.)
+say('wallet', 'pending'); say('outside', 'pending'); say('api', 'pending');
 // /guide rather than /tokens: a page that needs the node can hang waiting for
 // one that is not there, and a test must not confuse slow with refused.
 fetch('/guide').then(r => r.text()).then(t => say('wallet', 'READ'))
@@ -122,10 +129,13 @@ def viewer(inscribed):
 
     browser.switch_to.frame(frames[0])
     tried = {}
-    for _ in range(40):
+    for _ in range(80):
         text = browser.find_element(By.ID, "out").text
         tried = json.loads(text) if text else {}
-        if len(tried) >= 7:
+        # Every probe present AND settled. "Seven of the possible eight" let a
+        # fetch that had not answered yet count as done, and the test that read
+        # its absence reported a sandbox failure that had not happened.
+        if len(tried) >= 8 and "pending" not in tried.values():
             break
         time.sleep(0.25)
     browser.switch_to.default_content()

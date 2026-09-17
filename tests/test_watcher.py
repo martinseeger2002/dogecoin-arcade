@@ -56,6 +56,18 @@ class FakeState:
     def bump_generation(self):
         self.generation += 1
 
+    def setting(self, name, default=None):
+        # The watcher asks before it updates itself or announces a release.
+        # A double that answers nothing at all made eight watcher tests fail
+        # with AttributeError -- the watcher was fine, its stand-in was not.
+        return {"auto_update": False, "announce_releases": False}.get(name, default)
+
+    def my_tag(self):
+        return ""
+
+    def live_progress(self):
+        return None
+
     def ensure_identity(self):
         return None
 

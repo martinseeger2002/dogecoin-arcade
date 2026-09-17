@@ -281,6 +281,8 @@ class Shopkeeper:
             if offer["seller"] != order["address"] or offer["seller"] != mine["maker"]:
                 raise swaplib.SwapError("that answer is not from the wallet whose "
                                         "order this is")
+            if offer.get("order") and offer["order"] != mine["order"]:
+                raise swaplib.SwapError("that answer is for a different order")
             if offer["give"].get("kind") != "token" \
                     or int(offer["give"].get("propertyid") or 0) != order["sale_property"] \
                     or int(offer["give"].get("units") or 0) != int(mine["tokens"]):

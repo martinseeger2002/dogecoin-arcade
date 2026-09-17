@@ -587,8 +587,14 @@ def _offer_row(row: sqlite3.Row) -> dict:
 
 def public(offer: dict) -> dict:
     """The offer as it is sent to the buyer: everything but the bookkeeping."""
-    return {k: offer[k] for k in ("id", "network", "shop", "listing", "seller", "buyer",
-                                  "give", "take", "outpoint", "created", "expires")}
+    out = {k: offer[k] for k in ("id", "network", "shop", "listing", "seller", "buyer",
+                                 "give", "take", "outpoint", "created", "expires")}
+    # The order a fill is for travels with it. The buyer already knows which
+    # order it asked about; carrying it here lets every check downstream be
+    # made against the offer itself rather than against who called what.
+    if offer.get("order"):
+        out["order"] = str(offer["order"])
+    return out
 
 
 # --- the seller's side --------------------------------------------------------
@@ -998,6 +1004,7 @@ def check_offer(offer: Any, *, shop: str, own: list[str], height: int | None,
                "outpoint": {"txid": str(offer["outpoint"]["txid"]),
                             "vout": int(offer["outpoint"]["vout"]),
                             "value": int(offer["outpoint"]["value"])},
+               "order": str(offer.get("order") or ""),
                "created": float(offer["created"]), "expires": float(offer["expires"])}
     except (KeyError, TypeError, ValueError):
         raise SwapError("that is not an offer") from None
@@ -1035,8 +1042,26 @@ def build(rpc: Any, index: Any, offer: dict, own: list[str],
             # Filling a standing order. The seller's tokens are in the reserve
             # that order holds, not in its free balance -- `holds` reads the
             # free balance and would refuse every fill ever made. What has to
-            # be true is that the order still holds them, which is what the
-            # engine will check for itself when the swap lands (D-062).
+            # be true is that THIS order holds THESE tokens, which is what the
+            # engine checks for itself when the swap lands (D-062).
+            #
+            # All four conditions, not just the amount. A test machine found this
+            # checking only `leg.amount > reserved`, which reads as "some
+            # order holds enough units of something" -- the tokens it
+            # authorised spending did not have to be the tokens that order
+            # reserved, or even the same property. Nothing could reach it
+            # through today's caller, because `_fill` fetches the order from
+            # its own note; but a guard that is correct only because of who
+            # calls it is a guard that breaks when somebody else calls it.
+            if str(from_order.get("address") or "") != seller:
+                raise SwapError("that order is not the seller's")
+            if int(from_order.get("sale_property") or 0) != leg.property_id:
+                raise SwapError(
+                    f"that order sells property {from_order.get('sale_property')}, "
+                    f"not {leg.property_id}")
+            named = str(offer.get("order") or "")
+            if named and named != str(from_order.get("txid") or ""):
+                raise SwapError("that is not the order this offer is for")
             if leg.amount > int(from_order.get("reserved") or 0):
                 raise SwapError(
                     f"that order holds {from_order.get('reserved')} of property "
