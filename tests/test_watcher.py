@@ -322,8 +322,8 @@ def test_every_tick_looks_for_posts_to_confirm():
     from arcade.web.watcher import BlockWatcher
 
     source = inspect.getsource(BlockWatcher._tick)
-    assert "self._confirm_posts()" in source
-    assert "self._confirm_sent()" in source
+    assert "self._confirm_posts" in source
+    assert "self._confirm_sent" in source
 
 
 def test_the_tip_is_only_marked_seen_once_a_scan_has_reached_it():
@@ -465,10 +465,11 @@ def test_a_node_that_publishes_nothing_checks_anyway(monkeypatch):
     assert looked, "it did not even ask"
 
 
-def test_the_update_runs_before_anything_that_could_skip_it(monkeypatch):
-    """It was ninth in the tick, so any of the eight above it raising took the
-    update with it -- and the outer catch logs at debug, so a machine could go
-    a week without checking and say nothing (D-084)."""
+def test_one_broken_phase_does_not_end_the_pass(monkeypatch):
+    """They ran in a bare sequence, so the first to raise took every phase
+    after it, and the outer catch logs at debug -- a subsystem switching
+    itself off in silence. That is how release announcements stopped
+    (D-084, D-089)."""
     from arcade.web.watcher import BlockWatcher
 
     state = FakeState(FakeChain(tip=100), FakeChain("main", tip=5))
@@ -477,9 +478,11 @@ def test_the_update_runs_before_anything_that_could_skip_it(monkeypatch):
     monkeypatch.setattr(watcher, "_auto_update", lambda: ran.append("update"))
     monkeypatch.setattr(watcher, "_repair_once",
                         lambda: (_ for _ in ()).throw(RuntimeError("boom")))
-    with pytest.raises(RuntimeError):
-        watcher._tick()
-    assert ran == ["update"], "the update went first, before the thing that broke"
+    later = []
+    monkeypatch.setattr(watcher, "_announce_release", lambda: later.append("announce"))
+    watcher._tick()                      # no raise: one phase cannot end the pass
+    assert ran == ["update"], "the update went first"
+    assert later == ["announce"], "and the phase after the broken one still ran"
 
 
 def test_it_says_what_it_decided(monkeypatch):

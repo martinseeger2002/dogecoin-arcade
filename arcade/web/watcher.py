@@ -91,29 +91,39 @@ class BlockWatcher:
             self._stop.wait(self.poll_seconds)
 
     def _tick(self) -> None:
-        # First, and in its own hands. It was ninth in this list, so any of
-        # the eight above it raising took the update with it -- and the outer
-        # catch logs at debug, so a machine could go a week without checking
-        # and say nothing. An updater downstream of every other subsystem's
-        # health is not an updater (D-084).
-        try:
-            self._auto_update()
-        except Exception:
-            log.warning("automatic update check failed", exc_info=True)
-        self._repair_once()
-        self._confirm_sent()
-        self._confirm_posts()
-        self._check(self.state.messaging, public_only=False)
-        # The public board's mainnet half needs its own scan, and a public-only
-        # scanner decrypts nothing, so it is safe there (D-014).
-        self._check(self.state.ledger, public_only=True)
-        self._sync_ledgers()
-        self._check_pending_offers()
-        self._backfill_history_once()
-        self._check_release_notices()
-        self._announce_release()
-        self._keep_shop()
-        self._walk_home()
+        """One pass. Every phase in its own hands.
+
+        They ran in a bare sequence, so the first one to raise took every
+        phase after it -- and the outer catch logs at debug, so the effect was
+        a subsystem silently switching itself off. That is how release
+        announcements stopped: something upstream began raising and
+        `_announce_release`, ninth in the list, simply never ran again. Nothing
+        said so, on a machine watching itself closely (D-089).
+
+        The update went first for the same reason, back when it was the only
+        one protected. The right answer is that none of them can take the
+        others down.
+        """
+        for phase in (self._auto_update,
+                      self._repair_once,
+                      self._confirm_sent,
+                      self._confirm_posts,
+                      lambda: self._check(self.state.messaging, public_only=False),
+                      # The public board's mainnet half needs its own scan, and
+                      # a public-only scanner decrypts nothing (D-014).
+                      lambda: self._check(self.state.ledger, public_only=True),
+                      self._sync_ledgers,
+                      self._check_pending_offers,
+                      self._backfill_history_once,
+                      self._check_release_notices,
+                      self._announce_release,
+                      self._keep_shop,
+                      self._walk_home):
+            try:
+                phase()
+            except Exception:
+                name = getattr(phase, "__name__", "a watcher phase")
+                log.warning("watcher: %s failed", name, exc_info=True)
 
     _shopkeeper = None
     _gathered_at = 0
