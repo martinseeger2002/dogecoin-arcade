@@ -408,7 +408,7 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "overview.html", contact_code=code, announced=announced,
                       my_address=state.derived_address,
                       auto_update=bool(state.setting("auto_update", True)),
-                      update_status=state.update_status,
+                      update_status=state.update_status, when=_when,
                       update_every=watcherlib.BlockWatcher.UPDATE_EVERY,
                       release_key=releaselib.PUBLIC_KEY,
                       messaging=messaging_status(), ledger=ledger_status(), stats=stats)

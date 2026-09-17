@@ -2829,3 +2829,26 @@ def test_somebody_with_no_tag_cannot_be_added(client):
     assert "publish one from their own address book" in said, "say how to fix it"
     with state.store() as store:
         assert store.contacts() == [], "and nothing was saved"
+
+
+def test_the_overview_renders_once_the_watcher_has_checked(client):
+    """The branch that only exists on a machine that has been running.
+
+    `update_status` is None until the watcher writes it, so every test and
+    every fresh page load took the other branch -- and the one that runs on a
+    live machine called a helper the route had forgotten to pass. The home
+    page returned 500 on the one machine where anybody would see it (D-084).
+    """
+    page, state = client
+    state.update_status = {"at": 1_700_000_000.0, "what": "up to date",
+                           "installed": "abc1234", "published": "abc1234",
+                           "error": ""}
+    answer = page.get("/")
+    assert answer.status_code == 200, answer.text[:300]
+    assert "Last checked" in answer.text and "up to date" in answer.text
+
+    state.update_status = {"at": 1_700_000_000.0, "what": "could not reach the site",
+                           "installed": None, "published": None,
+                           "error": "connection refused"}
+    body = page.get("/").text
+    assert "could not reach the site" in body and "connection refused" in body
