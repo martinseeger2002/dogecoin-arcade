@@ -1,18 +1,20 @@
 {% extends "base.html" %}
-{% import "_chains.html" as chains %}
-{% block title %}List {{ name }} · DogecoinArcade{% endblock %}
+{% import "_token_confirm.html" as tk %}
+{% block title %}Price {{ name }} · DogecoinArcade{% endblock %}
 {% block body %}
-<h1>List it for sale</h1>
-<p class="sub">A listing is an inscription of its own: a page that sells this
-  piece, with the price in its JSON. Anybody's node can read it, so the piece
-  is for sale to everyone rather than to whoever this wallet tells.</p>
+<h1>Put a price on it</h1>
+<p class="sub">An ask: one transaction saying what you want for this piece.
+  Every node reads it, so the price is public the way the piece is &mdash; no
+  page to inscribe, nothing locked, and your wallet can be switched off
+  without withdrawing it.</p>
 
 {% if error %}<div class="msg err">{{ error }}</div>{% endif %}
 
-{% if not swaps %}
-<div class="msg">Swaps are not read on {{ chain.label|lower }} yet, so a listing
-  made here can be seen and not bought. Switch the Exchange to a chain that
-  reads them before paying for one.</div>
+{% if not asks_ready %}
+<div class="msg">Prices are read on {{ chain.label|lower }} from block
+  {{ "{:,}".format(asks_from) if asks_from else '—' }}{% if height %}, and this
+  chain is at {{ "{:,}".format(height) }}{% endif %}. Until then an ask made here
+  would be read by nobody. Anyone can still make you an offer.</div>
 {% endif %}
 
 <div class="panel" style="margin-bottom:14px">
@@ -25,7 +27,7 @@
       <h2 style="margin:0 0 4px">{{ name }}</h2>
       <p class="muted" style="margin:0">
         Inscription #{{ "{:,}".format(row.number) }}
-        {%- if row.collection %} · {{ row.collection }}
+        {%- if row.collection %} · <a href="/exchange/collection/{{ row.creator }}/{{ row.collection|urlencode }}">{{ row.collection }}</a>
           {%- if row.edition is not none %} #{{ row.edition }}{% endif %}{% endif %}</p>
       <p class="mono muted" style="margin:6px 0 0;font-size:.8rem;word-break:break-all">
         held by {{ row.owner }}</p>
@@ -33,70 +35,65 @@
   </div>
 </div>
 
-{% if listing %}
-  <div class="panel">
-    <p>This piece is already for sale for <strong>{{ listing.price }}</strong>.</p>
-    <p class="muted" style="font-size:.86rem">A listing is closed by sending its
-      page away, or it ends by itself when the piece is sold. Listing it twice
-      pays for two pages and sells it once.</p>
-    <div class="row" style="margin-top:8px">
-      <a class="btn small" href="/inscriptions/{{ listing.shop }}/view">Open the listing</a>
-      <a class="btn ghost small" href="/wallet/nfts">Your NFTs</a>
-    </div>
-  </div>
-{% else %}
-  <form method="post" action="/exchange/sell" class="panel">
-    <input type="hidden" name="csrf_token" value="{{ csrf }}">
-    <input type="hidden" name="inscription" value="{{ row.txid }}">
-    <div class="row" style="gap:8px;align-items:flex-end">
-      <div style="flex:0 0 140px">
-        <label for="amount">Price</label>
-        <input autocomplete="off" name="amount" id="amount" inputmode="decimal"
-               placeholder="5" value="{{ amount }}"></div>
-      <div style="flex:0 0 170px">
-        <label for="kind">Paid in</label>
-        <select autocomplete="off" name="kind" id="kind"
-                onchange="document.getElementById('sell-token').hidden = this.value !== 'token'">
-          <option value="coins" {{ 'selected' if kind != 'token' }}>{{ chain.label }} coins</option>
-          {% if tokens %}<option value="token" {{ 'selected' if kind == 'token' }}>a token</option>{% endif %}
-        </select></div>
-      {% if tokens %}
-      <div style="flex:1 1 200px" id="sell-token" {{ '' if kind == 'token' else 'hidden' }}>
-        <label for="property_id">Which token</label>
-        <select autocomplete="off" name="property_id" id="property_id">
-          {% for t in tokens %}
-          <option value="{{ t.property_id }}"
-                  {{ 'selected' if property_id|string == t.property_id|string }}>
-            {{ t.name }} &mdash; #{{ t.property_id }}</option>
-          {% endfor %}
-        </select></div>
-      {% endif %}
-    </div>
-
-    {% if plan %}
-    <table style="margin-top:12px">
-      <tr><td class="muted" style="width:140px">Asking</td>
-          <td><strong>{{ price }}</strong></td></tr>
-      <tr><td class="muted">The page costs</td>
-          <td>{{ "%.4f"|format(plan.estimate.fee) }} in fees and
-            {{ "%.2f"|format(plan.estimate.dust) }} in outputs you can sweep back,
-            in {{ plan.chunks }} transaction{{ '' if plan.chunks == 1 else 's' }}</td></tr>
-      <tr><td class="muted">Sold from</td>
-          <td class="mono" style="word-break:break-all">{{ row.owner }}</td></tr>
-    </table>
-    <p class="muted" style="font-size:.86rem;margin:10px 0 0">Press again to
-      inscribe it. From the block it lands in, anybody looking at this piece is
-      told the price, and their wallet asks yours for the swap.</p>
-    <div class="row" style="margin-top:10px">
-      <button type="submit" name="confirmed" value="yes">List it for {{ price }}</button>
-      <a class="btn ghost small" href="/wallet/nfts">Not now</a>
-    </div>
-    {% else %}
-    <div class="row" style="margin-top:12px">
-      <button type="submit">What will it cost?</button>
-      <a class="btn ghost small" href="/wallet/nfts">Back</a>
-    </div>
-    {% endif %}
-  </form>
+{% if prepared %}
+  {{ tk.confirm(prepared, confirm_action, confirm_fields, confirm_what, back, chain, csrf) }}
 {% endif %}
+
+{% if ask %}
+  <div class="panel" style="margin-bottom:14px">
+    <p style="margin:0 0 6px"><span class="pill ok">for sale</span>
+      asking <strong>{{ ask.take_amount|ask_price(ask.take_kind) }}</strong>
+      since block {{ "{:,}".format(ask.block_height) }}.</p>
+    <p class="muted" style="font-size:.86rem;margin:0 0 10px">A new price replaces
+      this one &mdash; the newest ask for a piece is the one that counts. Sending
+      the piece away withdraws it by itself, with no transaction at all.</p>
+    <form method="post" action="/exchange/unlist" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="inscription" value="{{ row.txid }}">
+      <button class="ghost small" type="submit">Take the price off</button>
+    </form>
+  </div>
+{% endif %}
+
+{% if shop %}
+  <div class="msg">This piece is also in a shop inscription at
+    <a href="/inscriptions/{{ shop.shop }}/view">{{ shop.price }}</a>. An ask is
+    read first &mdash; it is the newer word, and it is yours.</div>
+{% endif %}
+
+<form method="post" action="/exchange/sell" class="panel">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <input type="hidden" name="inscription" value="{{ row.txid }}">
+  <div class="row" style="gap:8px;align-items:flex-end">
+    <div class="field" style="flex:0 0 140px;margin:0">
+      <label for="amount">{{ 'New price' if ask else 'Price' }}</label>
+      <input autocomplete="off" name="amount" id="amount" inputmode="decimal"
+             placeholder="5" value="{{ amount }}"></div>
+    <div class="field" style="flex:0 0 170px;margin:0">
+      <label for="kind">Paid in</label>
+      <select autocomplete="off" name="kind" id="kind"
+              onchange="document.getElementById('sell-token').hidden = this.value !== 'token'">
+        <option value="coins" {{ 'selected' if kind != 'token' }}>{{ chain.label }} coins</option>
+        {% if tokens %}<option value="token" {{ 'selected' if kind == 'token' }}>a token</option>{% endif %}
+      </select></div>
+    {% if tokens %}
+    <div class="field" style="flex:1 1 200px;margin:0" id="sell-token"
+         {{ '' if kind == 'token' else 'hidden' }}>
+      <label for="property_id">Which token</label>
+      <select autocomplete="off" name="property_id" id="property_id">
+        {% for t in tokens %}
+        <option value="{{ t.property_id }}"
+                {{ 'selected' if property_id|string == t.property_id|string }}>
+          {{ t.name }} &mdash; #{{ t.property_id }}</option>
+        {% endfor %}
+      </select></div>
+    {% endif %}
+    <button type="submit" style="flex:0 0 auto">Show me the transaction</button>
+  </div>
+  <p class="muted" style="font-size:.84rem;margin:10px 0 0">It is one
+    OP_RETURN, so it costs a flat fee and locks nothing. From the block it
+    lands in, anybody's marketplace shows the price and a buyer can offer
+    exactly it in one press; the piece moves only when you accept, in one
+    transaction carrying both sides.</p>
+</form>
 {% endblock %}

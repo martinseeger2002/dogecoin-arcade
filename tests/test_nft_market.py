@@ -193,7 +193,8 @@ def test_an_icon_this_node_cannot_draw_is_not_shown_as_one(client):
 
     body = app.get("/tokens").text
     assert "/content/" + "9" * 64 not in body
-    assert "GH" in body, "its initials instead"
+    assert "Ghostcoin" in body, "the token is still listed, with a plain mark"
+    assert "GH" not in body, "two letters of a name read as a ticker; nothing here has one"
 
 
 def test_an_icon_that_is_not_an_inscription_is_refused_before_it_is_paid_for(
@@ -347,9 +348,9 @@ def test_the_collection_page_lists_what_you_hold_of_it(client, monkeypatch):
     body = app.get("/exchange/collection/nMe/Doge%20Punks").text
     band = body[body.index("Yours in this collection"):body.index('<div class="tiles">')]
     assert "Yours in this collection &mdash; 5" in body
-    assert band.count("List for sale") == 4, "the four that are not listed yet"
+    assert band.count("Sell it") == 4, "the four with no price on them yet"
     assert "9 coins" in band, "and the one that is says its price"
-    assert "listed" in band
+    assert "for sale" in band
 
 
 def test_a_collection_nobody_inscribed_says_so(client):
@@ -453,40 +454,92 @@ def test_a_piece_already_for_sale_says_so_instead(client, monkeypatch):
     assert "7 coins" in body
     assert f"/exchange/sell/{PIECES[0]}" not in body, "listing it twice sells it once"
 
+# --- a price on a piece: the ask --------------------------------------------
 
-def test_the_sell_form_opens_on_the_piece_it_is_about(client, monkeypatch):
+def price(home, piece, sats=500000000, seller=CREATOR, height=500, position=0,
+          txid=None, kind=3, prop=None):
+    """An ask in the index, as the engine would have written one."""
+    from arcade.db import Database
+
+    db = Database(home / "main-ledger.sqlite")
+    db.conn.execute(
+        "INSERT INTO nft_ask(txid,block_height,position,inscription,seller,"
+        "take_kind,take_property,take_amount) VALUES(?,?,?,?,?,?,?,?)",
+        (txid or f"a{height:03d}{position:02d}".ljust(64, "f"), height, position,
+         piece, seller, kind, prop, sats))
+    db.conn.commit()
+    db.close()
+
+
+def test_an_ask_is_read_from_the_chain_and_shown_as_a_price(client):
     app, state = client
     index_with_a_collection(state.home)
-    wallet_holding(state, monkeypatch, CREATOR)
+    price(state.home, PIECES[1], sats=500000000)
 
-    body = app.get(f"/exchange/sell/{PIECES[0]}").text
-    assert "Doge Punks #1" in body and "held by nMe" in body
-    assert 'name="amount"' in body, "it asks a price"
-    # Mainnet reads no swaps, so a listing made there could be seen and not
-    # bought. Said before the fee, not after it.
-    assert "Swaps are not read on mainnet yet" in body
+    body = app.get("/exchange/collection/nMe/Doge%20Punks").text
+    assert "5 coins" in body, "what the holder wants for it"
+    assert "For sale" in body
+    tiles = grid(body)
+    assert tiles.index(PIECES[1]) < tiles.index(PIECES[0]), "priced pieces first"
 
 
-def test_an_inscription_this_node_has_never_seen_is_not_a_listing(client):
+def test_the_newest_price_is_the_one_that_counts(client):
     app, state = client
     index_with_a_collection(state.home)
-    assert app.get(f"/exchange/sell/{'9' * 64}").status_code in (200, 303)
+    price(state.home, PIECES[1], sats=500000000, height=500)
+    price(state.home, PIECES[1], sats=200000000, height=501)
+
+    body = app.get("/exchange?tab=market").text
+    assert "2 coins" in body
+    assert "5 coins" not in body, "a new ask replaces the old one"
 
 
-def test_listing_prices_the_page_before_it_pays_for_it(client, monkeypatch):
+def test_a_withdrawn_price_is_not_a_price(client):
     app, state = client
     index_with_a_collection(state.home)
-    wallet_holding(state, monkeypatch, CREATOR)
+    price(state.home, PIECES[1], sats=500000000, height=500)
+    price(state.home, PIECES[1], sats=0, kind=0, height=501)   # take it off
 
-    body = app.post("/exchange/sell",
-                    data={"csrf_token": state.csrf_token, "inscription": PIECES[0],
-                          "amount": "5", "kind": "coins"}).text
-    assert "The page costs" in body, "the first press prices it"
-    assert "5 coins" in body
-    assert "Traceback" not in body
+    body = app.get("/exchange?tab=market").text
+    assert "5 coins" not in body
+    assert "For sale now" not in body
 
 
-def test_only_the_wallet_holding_a_piece_may_list_it(client, monkeypatch):
+def test_a_piece_that_has_moved_takes_its_price_with_it(client):
+    """Nothing on this chain can hold an inscription back, so an ask is not a
+    promise -- it is live only while the address that made it still holds the
+    piece. Sending it away withdraws the price with no transaction at all."""
+    from arcade.db import Database
+
+    app, state = client
+    index_with_a_collection(state.home)
+    price(state.home, PIECES[1], sats=500000000)
+    db = Database(state.home / "main-ledger.sqlite")
+    db.conn.execute("UPDATE inscription SET owner=? WHERE txid=?", ("nYou", PIECES[1]))
+    db.conn.commit()
+    db.close()
+
+    assert "5 coins" not in app.get("/exchange?tab=market").text
+
+
+def test_the_marketplace_indexes_what_is_for_sale(client):
+    app, state = client
+    index_with_a_collection(state.home)
+    tag(state.home, CREATOR, "punkmaker")
+    price(state.home, PIECES[2], sats=125000000)
+
+    body = app.get("/exchange?tab=market").text
+    assert "For sale now" in body, "the book of asks, on the marketplace itself"
+    book = body[body.index("For sale now"):body.index("Recently sold")
+                if "Recently sold" in body else len(body)]
+    assert "Doge Punks #3" in book and "1.25 coins" in book
+    assert "@punkmaker" in book, "who is asking"
+    # Buying is offering exactly what was asked, in one press.
+    assert 'action="/exchange/offer"' in book
+    assert 'value="1.25000000"' in book
+
+
+def test_only_the_holder_can_put_a_price_on_a_piece(client, monkeypatch):
     app, state = client
     index_with_a_collection(state.home)
     wallet_holding(state, monkeypatch, "nSomebodyElse")
@@ -494,27 +547,22 @@ def test_only_the_wallet_holding_a_piece_may_list_it(client, monkeypatch):
     body = app.post("/exchange/sell",
                     data={"csrf_token": state.csrf_token, "inscription": PIECES[0],
                           "amount": "5", "kind": "coins"}).text
-    assert "only the wallet holding a piece can list it" in body
+    assert "only the wallet holding a piece can price it" in body
+    assert "Traceback" not in body
 
 
-def test_a_listing_says_what_it_sells_and_who_answers_for_it(tmp_path):
-    """The JSON that goes on the chain, checked as a shop reads it."""
-    from arcade import sellpage, swap as swaplib
+def test_the_sell_page_says_a_chain_that_reads_no_asks_yet(client, monkeypatch):
+    app, state = client
+    index_with_a_collection(state.home)
+    wallet_holding(state, monkeypatch, CREATOR)
 
-    text = sellpage.sale_json("arcade:test:abc", PIECES[0].upper(),
-                              {"coins": "5"}, "Doge Punks #1")
-    shop = swaplib.shop_of({"json": text, "owner": CREATOR, "creator": CREATOR})
-    assert shop["node"] == "arcade:test:abc"
-    assert shop["listings"] == [{"give": {"inscription": PIECES[0]},
-                                 "take": {"coins": "5"}}]
-    page = sellpage.page(PIECES[0], "Doge Punks #1", "5 coins")
-    assert PIECES[0].encode() in page and b"/r/swap.js" in page
-    assert b"%%" not in page, "every placeholder is filled before it is paid for"
+    body = app.get(f"/exchange/sell/{PIECES[0]}").text
+    assert "Doge Punks #1" in body and "held by nMe" in body
+    assert 'name="amount"' in body, "it asks a price"
+    assert "Prices are read on mainnet from block" in body
 
 
-def test_a_name_with_html_in_it_cannot_write_the_page(tmp_path):
-    from arcade import sellpage
-
-    page = sellpage.page(PIECES[0], "<script>alert(1)</script>", "5 coins")
-    assert b"<script>alert(1)" not in page
-    assert b"&lt;script&gt;" in page
+def test_an_inscription_this_node_has_never_seen_has_no_price(client):
+    app, state = client
+    index_with_a_collection(state.home)
+    assert app.get(f"/exchange/sell/{'9' * 64}").status_code in (200, 303)

@@ -267,3 +267,72 @@ def test_an_offer_fits_one_op_return():
         assert isinstance(parsed, I.Offer) and parsed.take == take
     with pytest.raises(I.InscriptionError, match="truncated offer"):
         I.parse(I.Offer(txid=bytes(32), take=I.Leg(I.LEG_COINS, amount=1)).encode()[:20])
+
+
+def test_an_ask_is_the_holder_s_own_word_and_only_theirs(engine):
+    """The other half of an offer: what the holder wants for a piece, said on
+    the chain so every node has the same book (D-099). Nothing is locked."""
+    eng, state, db = engine
+    piece = inscribe(eng, state, 1, SELLER)
+
+    good = I.Ask(txid=piece, take=I.Leg(I.LEG_COINS, amount=5 * 10 ** 8)).encode()
+    feed(eng, state, [tx(2, good, SELLER, height=200)])
+    assert status_of(db, 2) == "valid"
+    (row,) = db.conn.execute("SELECT * FROM nft_ask").fetchall()
+    assert row["inscription"] == piece.hex() and row["seller"] == SELLER
+    assert row["take_kind"] == I.LEG_COINS and row["take_amount"] == 5 * 10 ** 8
+    assert owner_of(db, piece) == SELLER, "an ask moves nothing"
+
+    # Not yours to price, and nothing to price.
+    theirs = I.Ask(txid=piece, take=I.Leg(I.LEG_COINS, amount=1)).encode()
+    feed(eng, state, [tx(3, theirs, BUYER)])
+    assert "only the holder" in status_of(db, 3)
+    missing = I.Ask(txid=bytes(32), take=I.Leg(I.LEG_COINS, amount=1)).encode()
+    feed(eng, state, [tx(4, missing, SELLER)])
+    assert "no such inscription" in status_of(db, 4)
+    # A barter is not a price: the marketplace is built on numbers.
+    barter = I.Ask(txid=piece, take=I.Leg(I.LEG_INSCRIPTION, txid=piece)).encode()
+    feed(eng, state, [tx(5, barter, SELLER)])
+    assert "coins or in a token" in status_of(db, 5)
+
+    # Withdrawing is an ask with no price in it, and it is the holder's too.
+    off = I.Ask(txid=piece, take=I.Leg(I.LEG_NONE)).encode()
+    feed(eng, state, [tx(6, off, SELLER, height=201)])
+    assert status_of(db, 6) == "valid"
+    assert db.conn.execute("SELECT COUNT(*) FROM nft_ask").fetchone()[0] == 2, \
+        "both are kept; the newest is the one that counts"
+
+    # A reorg takes each back with its own block.
+    state.rollback_block(201)
+    assert db.conn.execute("SELECT COUNT(*) FROM nft_ask").fetchone()[0] == 1
+    state.rollback_block(200)
+    assert db.conn.execute("SELECT COUNT(*) FROM nft_ask").fetchone()[0] == 0
+
+
+def test_an_ask_fits_one_op_return():
+    """So pricing a piece costs a flat fee and no dust -- which is the whole
+    reason it is a message and not an inscribed page."""
+    from arcade.encoding import max_class_c_payload
+
+    for take in (I.Leg(I.LEG_COINS, amount=10 ** 8),
+                 I.Leg(I.LEG_TOKEN, property_id=65535, amount=10 ** 12),
+                 I.Leg(I.LEG_NONE)):
+        raw = I.Ask(txid=bytes(range(32)), take=take).encode()
+        assert len(P.AnyData(data=raw).encode()) <= max_class_c_payload()
+        parsed = I.parse(raw)
+        assert isinstance(parsed, I.Ask) and parsed.take == take
+        assert parsed.cancelled == (take.kind == I.LEG_NONE)
+    with pytest.raises(I.InscriptionError, match="truncated ask"):
+        I.parse(I.Ask(txid=bytes(32), take=I.Leg(I.LEG_COINS, amount=1)).encode()[:20])
+
+
+def test_an_older_node_reads_an_ask_as_an_invalid_inscription(engine):
+    """Which is the whole point of hiding behind the magic: a client that
+    predates asks records one as invalid and carries on, where an
+    unrecognised payload TYPE would have stopped it dead."""
+    eng, state, db = engine
+    piece = inscribe(eng, state, 1, SELLER)
+    unknown = (I.MAGIC + bytes([I.VERSION, 99]) + piece)
+    feed(eng, state, [tx(7, unknown, SELLER)])
+    assert "unknown inscription kind" in status_of(db, 7)
+    assert state.stopped is None if hasattr(state, "stopped") else True

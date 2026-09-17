@@ -242,6 +242,26 @@ CREATE TABLE IF NOT EXISTS nft_offer (
 );
 CREATE INDEX IF NOT EXISTS nft_offer_item_idx ON nft_offer(inscription);
 
+-- The other half: a price put on an inscription by whoever holds it (D-099).
+-- An Omni-style ask, in the sense that matters -- it is a standing public
+-- instruction, indexed from the chain, that anybody can read and act on --
+-- but it reserves nothing. Nothing on this chain can hold an inscription
+-- back, and an ask is live only while the address that made it still holds
+-- what it names, so sending a piece away withdraws its price with no
+-- transaction at all. One row per ask transaction; the newest for an
+-- inscription is the one that counts, and a take_kind of 0 is a withdrawal.
+CREATE TABLE IF NOT EXISTS nft_ask (
+    txid          TEXT    PRIMARY KEY,
+    block_height  INTEGER NOT NULL,
+    position      INTEGER NOT NULL,
+    inscription   TEXT    NOT NULL,
+    seller        TEXT    NOT NULL,
+    take_kind     INTEGER NOT NULL,
+    take_property INTEGER,
+    take_amount   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS nft_ask_item_idx ON nft_ask(inscription, block_height, position);
+
 CREATE INDEX IF NOT EXISTS ribbit_tx_block_idx ON arcade_tx(block_height, position);
 CREATE INDEX IF NOT EXISTS balance_property_idx ON balance(property_id);
 """
@@ -258,6 +278,7 @@ def install_schema(db: Database) -> None:
     register_journalled_table("tag", ("tag",))
     register_journalled_table("inscription", ("txid",))
     register_journalled_table("nft_offer", ("txid",))
+    register_journalled_table("nft_ask", ("txid",))
     register_journalled_table("inscription_move", ("txid", "inscription"))
     register_journalled_table("book_order", ("txid",))
     register_journalled_table("inscription_chunk",
@@ -701,6 +722,8 @@ class Engine:
             self._swap(rtx, parsed)
         elif isinstance(parsed, I.Offer):
             self._offer(rtx, parsed)
+        elif isinstance(parsed, I.Ask):
+            self._ask(rtx, parsed)
         else:
             self._inscription_chunk(rtx, parsed)
 
@@ -842,6 +865,49 @@ class Engine:
             "take_kind": offer.take.kind,
             "take_property": offer.take.property_id or None,
             "take_amount": int(offer.take.amount or 0),
+        })
+
+    def _ask(self, rtx: ArcadeTransaction, ask: I.Ask) -> None:
+        """Write down what the holder wants for a piece. Nothing moves.
+
+        Only the current owner may price a piece, and the price is in coins
+        or in a token -- an ask that wanted another inscription would be a
+        barter nobody could match against a number, and the marketplace is
+        built on numbers.
+
+        Nothing is reserved. There is no way on this chain to hold an
+        inscription back from its owner, and pretending otherwise would be a
+        promise the ledger cannot keep -- the same reason a bid holds no
+        coins (D-048). What makes an ask honest instead is that it is checked
+        against the chain when it is READ: `ledger.asks` drops any whose
+        seller no longer holds the piece, so a sold or sent-away piece
+        withdraws its own price.
+        """
+        since = self.params.asks_from
+        if since is None:
+            raise InvalidTransaction("asks are not read on this chain")
+        if rtx.block_height < since:
+            raise InvalidTransaction(f"asks are read from block {since}")
+        found = self.state.db.conn.execute(
+            "SELECT owner FROM inscription WHERE txid=?",
+            (ask.txid.hex(),)).fetchone()
+        if found is None:
+            raise InvalidTransaction("there is no such inscription on this chain")
+        if found["owner"] != rtx.sender:
+            raise InvalidTransaction("only the holder of an inscription can price it")
+        if ask.take.kind == I.LEG_INSCRIPTION:
+            raise InvalidTransaction("an ask is priced in coins or in a token")
+        if not ask.cancelled and not ask.take.amount:
+            raise InvalidTransaction("an ask for nothing is not an ask")
+        self.state.insert("nft_ask", {
+            "txid": rtx.txid,
+            "block_height": rtx.block_height,
+            "position": rtx.position,
+            "inscription": ask.txid.hex(),
+            "seller": rtx.sender,
+            "take_kind": ask.take.kind,
+            "take_property": ask.take.property_id or None,
+            "take_amount": int(ask.take.amount or 0),
         })
 
     def _tag(self, rtx: ArcadeTransaction, kind: int, tag: str) -> None:

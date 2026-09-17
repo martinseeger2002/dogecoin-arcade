@@ -11,7 +11,7 @@
       <img src="/content/{{ face.icon }}" alt="{{ prop.name }}" loading="lazy"
            style="width:42px;height:42px;object-fit:cover;border-radius:50%">
     {% else %}
-      <span class="coinface" style="width:42px;height:42px;font-size:.82rem">{{ prop.name[:2]|upper }}</span>
+      <span class="coinface" style="width:42px;height:42px"></span>
     {% endif %}
     <div>
       <h1 style="margin:0;font-size:1.3rem">{{ prop.name }}<span class="muted">/{{ chain.label|upper }}</span></h1>

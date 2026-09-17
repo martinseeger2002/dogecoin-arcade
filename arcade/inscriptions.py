@@ -57,6 +57,7 @@ KIND_CHUNK = 1        # a piece of an inscription's content
 KIND_TRANSFER = 2     # hand an inscription to the reference address
 KIND_SWAP = 5         # two parties trade in one transaction (3 and 4 are tags)
 KIND_OFFER = 6        # an offer for somebody's inscription, said out loud
+KIND_ASK = 7          # the holder's own price for one, said out loud
 
 #: What one side of a swap hands over.
 LEG_NONE = 0
@@ -454,7 +455,43 @@ class Offer:
                 + self.take.encode())
 
 
-def parse(payload: bytes) -> Chunk | Transfer | Swap | Offer:
+@dataclass(frozen=True)
+class Ask:
+    """A price on one inscription, said by whoever holds it.
+
+    The other half of an offer (D-042), and the reason the marketplace has a
+    price to show: an offer is a buyer saying what they would pay, an ask is
+    the holder saying what they want. Both are said ON THE CHAIN rather than
+    kept anywhere, so every node has the same book and a seller's wallet can
+    be switched off without withdrawing the price.
+
+    The seller is the transaction's sender, and only the current holder can
+    price a piece. An ask needs no page of its own and nothing is locked by
+    it: it is one OP_RETURN saying "this, for this", and the answer is a
+    swap both sides sign.
+
+    A `take` of LEG_NONE is a cancellation. Sending the piece away cancels it
+    too, without a transaction -- an ask is live only while the address that
+    made it still holds what it names (D-099).
+    """
+
+    txid: bytes           # the inscription being priced
+    take: "Leg"           # what the holder wants for it; LEG_NONE to cancel
+
+    @property
+    def cancelled(self) -> bool:
+        return self.take.kind == LEG_NONE
+
+    def encode(self) -> bytes:
+        if len(self.txid) != 32:
+            raise InscriptionError("an ask names a 32-byte inscription")
+        body = MAGIC + bytes([VERSION, KIND_ASK]) + self.txid
+        # A cancellation is the one leg that encodes as nothing but its kind,
+        # so withdrawing a price costs a single byte more than saying one.
+        return body + (bytes([LEG_NONE]) if self.cancelled else self.take.encode())
+
+
+def parse(payload: bytes) -> Chunk | Transfer | Swap | Offer | Ask:
     """Read one inscription payload. Raises `InscriptionError` if malformed."""
     if not is_inscription(payload):
         raise InscriptionError("not an inscription payload")
@@ -485,6 +522,18 @@ def parse(payload: bytes) -> Chunk | Transfer | Swap | Offer:
         if at != len(payload):
             raise InscriptionError("an offer has nothing after its price")
         return Offer(txid=payload[6:38], take=take)
+
+    if kind == KIND_ASK:
+        if len(payload) < 39:
+            raise InscriptionError("truncated ask")
+        if payload[38] == LEG_NONE:
+            if len(payload) != 39:
+                raise InscriptionError("a cancelled ask has nothing after it")
+            return Ask(txid=payload[6:38], take=Leg(LEG_NONE))
+        take, at = Leg.decode(payload, 38)
+        if at != len(payload):
+            raise InscriptionError("an ask has nothing after its price")
+        return Ask(txid=payload[6:38], take=take)
 
     if kind != KIND_CHUNK:
         raise InscriptionError(f"unknown inscription kind {kind}")

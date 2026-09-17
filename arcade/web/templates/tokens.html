@@ -46,7 +46,7 @@
         {%- set face = faces.get(t.property_id, {}) -%}
         {%- if face.icon %}<img src="/content/{{ face.icon }}" alt="{{ t.name }}"
           loading="lazy" style="width:32px;height:32px;object-fit:cover;border-radius:50%;display:block">
-        {%- else %}<span class="coinface">{{ t.name[:2]|upper }}</span>{% endif %}</a></td>
+        {%- else %}<span class="coinface"></span>{% endif %}</a></td>
       <td><a href="/tokens/{{ t.property_id }}"><strong>{{ t.name }}</strong></a>
         <span class="muted" style="font-size:.78rem">#{{ t.property_id }}</span>
         {% if t.test_ecosystem %}<span class="tag testnet">test ecosystem</span>{% endif %}

@@ -77,6 +77,14 @@ class Params:
     #: nodes on either side of the change would read the same block
     #: differently (D-062).
     fills_from: int | None = None
+    #: From this block a holder may put a PRICE on an inscription
+    #: (inscriptions.py: KIND_ASK) and every node reads the same one. A node
+    #: that predates asks records one as an invalid inscription and shows no
+    #: price, so the two would disagree about what is for sale. Nothing moves
+    #: on an ask and no balance depends on it -- it is not in the consensus
+    #: hash -- but it is still a height, for the same reason the others are:
+    #: the rule is agreed before the first one is broadcast, not after.
+    asks_from: int | None = None
     #: From this block a swap may NAME the order it fills, and the engine
     #: draws from that order rather than from whatever the seller has loose.
     #: Its own height because it makes a payload legal that was invalid
@@ -159,6 +167,12 @@ TESTNET = Params(
     # Set 2026-09-14 at tip 1,488,130 with both known nodes due to update
     # within the day. No swap is sent before it.
     swaps_from=1_488_450,
+    # Set 2026-09-17 at tip 1,493,729, about fifty minutes ahead at 45s a
+    # block. What makes that margin enough is the same thing that made it
+    # enough for fills: the height only changes how a block reads if an ask
+    # is IN one, and both known nodes update within minutes of the release
+    # notice. No ask is broadcast before it.
+    asks_from=1_493_800,
     # Brought forward from 1,496,000 to test a fill between the two known
     # nodes the same day. Blocks are 45s here, so this is about two hours
     # from the tip it was set at (1,492,425).
@@ -194,6 +208,7 @@ REGTEST = Params(
     p2p_port=18444,
     activation_height=0,
     swaps_from=0,
+    asks_from=0,
     fills_from=0,
     named_fills_from=0,
     datadir_subdir="regtest",
@@ -235,6 +250,7 @@ DOGE_TESTNET = Params(
     p2p_port=44556,
     activation_height=0,
     swaps_from=0,
+    asks_from=0,
     fills_from=0,
     named_fills_from=0,
     datadir_subdir="testnet3",
@@ -249,6 +265,7 @@ DOGE_REGTEST = Params(
     p2p_port=18444,
     activation_height=0,
     swaps_from=0,
+    asks_from=0,
     fills_from=0,
     named_fills_from=0,
     datadir_subdir="regtest",

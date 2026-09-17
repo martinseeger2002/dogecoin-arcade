@@ -71,10 +71,10 @@
         <div class="muted" style="font-size:.78rem">#{{ "{:,}".format(row.number) }}</div></td>
       <td style="text-align:right;white-space:nowrap">
         {% if row.listing %}
-          <span class="pill ok">listed</span> <strong>{{ row.listing.price }}</strong>
-          <a class="btn ghost small" href="/inscriptions/{{ row.listing.shop }}/view">Its listing</a>
+          <span class="pill ok">for sale</span> <strong>{{ row.listing.price }}</strong>
+          <a class="btn ghost small" href="/exchange/sell/{{ row.txid }}">Change the price</a>
         {% else %}
-          <a class="btn small" href="/exchange/sell/{{ row.txid }}">List for sale</a>
+          <a class="btn small" href="/exchange/sell/{{ row.txid }}">Sell it</a>
         {% endif %}
         <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/send">Send</a></td>
     </tr>
@@ -109,13 +109,27 @@
 
       <div class="act">
         {% if row.mine %}
-          {% if row.listing %}
+          {% if row.listing and row.listing.kind == 'ask' %}
+            <a class="btn ghost small" href="/exchange/sell/{{ row.txid }}">Change the price</a>
+          {% elif row.listing %}
             <a class="btn ghost small" href="/inscriptions/{{ row.listing.shop }}/view">Its listing</a>
           {% else %}
-            <a class="btn small" href="/exchange/sell/{{ row.txid }}">List for sale</a>
+            <a class="btn small" href="/exchange/sell/{{ row.txid }}">Sell it</a>
           {% endif %}
         {% else %}
-          {% if row.listing %}
+          {% if row.listing and row.listing.kind == 'ask' %}
+            <form method="post" action="/exchange/offer" style="margin:0">
+              <input type="hidden" name="csrf_token" value="{{ csrf }}">
+              <input type="hidden" name="inscription" value="{{ row.txid }}">
+              <input type="hidden" name="back" value="{{ path }}?page={{ page }}">
+              <input type="hidden" name="amount" value="{{ row.listing.take.amount }}">
+              <input type="hidden" name="kind" value="{{ 'token' if row.listing.take.kind == 'token' else 'coins' }}">
+              {% if row.listing.take.kind == 'token' %}
+              <input type="hidden" name="property_id" value="{{ row.listing.take.propertyid }}">
+              {% endif %}
+              <button type="submit" class="small">Buy for {{ row.listing.price }}</button>
+            </form>
+          {% elif row.listing %}
             <a class="btn small" href="/inscriptions/{{ row.listing.shop }}/view">Buy it</a>
           {% endif %}
           <details>

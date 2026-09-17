@@ -1195,6 +1195,55 @@ class LedgerIndex:
                 tuple(buyers) + (max(1, min(limit, 500)),)).fetchall()
         return [dict(row) for row in rows]
 
+    #: A live ask: the newest one for its inscription, not a withdrawal, and
+    #: still made by the address that holds the piece. The last clause is what
+    #: makes a price honest without reserving anything -- a piece that has been
+    #: sold or sent away stops being for sale with no transaction at all.
+    _LIVE_ASK = (
+        "SELECT a.*, i.owner, i.number, i.creator, i.content_type, "
+        "       i.content IS NOT NULL AS held, c.collection, c.edition, "
+        "       b.time AS when_ "
+        "FROM nft_ask a "
+        "JOIN inscription i ON i.txid = a.inscription "
+        "LEFT JOIN collection_item c ON c.txid = a.inscription "
+        "LEFT JOIN block b ON b.height = a.block_height "
+        "WHERE a.take_kind != 0 AND a.seller = i.owner "
+        "  AND NOT EXISTS (SELECT 1 FROM nft_ask n WHERE n.inscription = a.inscription "
+        "                  AND (n.block_height > a.block_height "
+        "                       OR (n.block_height = a.block_height "
+        "                           AND n.position > a.position)))")
+
+    def asks(self, limit: int = 200) -> list[dict]:
+        """Every price standing on this chain, newest first."""
+        with self.open() as db:
+            return [dict(row) for row in db.conn.execute(
+                f"{self._LIVE_ASK} ORDER BY a.block_height DESC, a.position DESC "
+                f"LIMIT ?", (max(1, min(limit, 500)),))]
+
+    def ask_on(self, inscription: str) -> dict | None:
+        """The price standing on one piece, if there is one."""
+        with self.open() as db:
+            row = db.conn.execute(
+                f"{self._LIVE_ASK} AND a.inscription = ?", (str(inscription),)).fetchone()
+            return dict(row) if row else None
+
+    def asks_in(self, creator: str, name: str) -> list[dict]:
+        """The prices standing on one collection's pieces."""
+        with self.open() as db:
+            return [dict(row) for row in db.conn.execute(
+                f"{self._LIVE_ASK} AND c.creator = ? AND c.collection = ?",
+                (creator, name))]
+
+    def collection_asks(self) -> dict[tuple[str, str], int]:
+        """How many pieces of each collection have a price on them."""
+        with self.open() as db:
+            return {(row["creator"], row["collection"]): int(row["pieces"])
+                    for row in db.conn.execute(
+                        f"SELECT c.creator, c.collection, COUNT(*) AS pieces "
+                        f"FROM ({self._LIVE_ASK}) x "
+                        f"JOIN collection_item c ON c.txid = x.inscription "
+                        f"GROUP BY c.creator, c.collection")}
+
     def collection_thumb(self, creator: str | None, name: str) -> dict | None:
         """One piece of a collection, picked at random, for a thumbnail.
 

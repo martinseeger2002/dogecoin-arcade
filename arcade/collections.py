@@ -104,6 +104,38 @@ def compact(data: Any) -> str:
     return json.dumps(data, separators=(",", ":"), ensure_ascii=False)
 
 
+#: How a HashLips build names a picture it has not uploaded anywhere, and how
+#: it names one on IPFS. Neither is where the picture is here.
+_OFFCHAIN_IMAGE = ("ipfs://", "ipns://", "ar://")
+_PLACEHOLDER = "newuritoreplace"
+
+
+def strip_offchain(entry: dict[str, Any]) -> dict[str, Any]:
+    """The item's metadata without the pointer to a picture somewhere else.
+
+    A HashLips build writes `"image": "ipfs://NewUriToReplace/1.png"` into
+    every item. On this chain the picture IS the inscription -- its content,
+    in full, paid for once and served by every node that has it -- so that
+    field names a place the art is not, at about fifty bytes an item that
+    somebody pays for and nobody can follow. Five hundred items is 25 KB of
+    chain bought to point at an empty IPFS path (D-100).
+
+    An `image` that is a real http(s) URL is left alone: it is somebody's own
+    site and their decision, and it resolves. Everything else in the item is
+    untouched, including `edition`, `name` and `attributes`, which is what
+    membership, numbering and rarity are read from.
+    """
+    image = entry.get("image")
+    if not isinstance(image, str):
+        return dict(entry)
+    text = image.strip().lower()
+    offchain = (text.startswith(_OFFCHAIN_IMAGE) or _PLACEHOLDER in text
+                or "/ipfs/" in text or not text.startswith(("http://", "https://")))
+    if not offchain:
+        return dict(entry)
+    return {key: value for key, value in entry.items() if key != "image"}
+
+
 def find_build(folder: Path) -> Path:
     """The build folder, given it or something near it.
 
@@ -189,7 +221,8 @@ def read_build(folder: Path) -> Build:
             problems.append(f"{name}: no image for edition {edition} in {images_dir}")
             continue
         kind = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-        items.append(Item(edition=edition, name=name, json=compact(entry),
+        items.append(Item(edition=edition, name=name,
+                          json=compact(strip_offchain(entry)),
                           image=str(path.relative_to(folder)),
                           content_type=kind, size=path.stat().st_size))
     items.sort(key=lambda item: item.edition)

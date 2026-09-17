@@ -39,10 +39,12 @@
   {% endif %}
   <div class="row" style="margin-top:8px">
     <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view">Open</a>
-    {% if sale %}
+    {% if sale and sale.kind == 'ask' %}
+      <a class="btn ghost small" href="/exchange/sell/{{ row.txid }}">Change the price</a>
+    {% elif sale %}
       <a class="btn ghost small" href="/inscriptions/{{ sale.shop }}/view">Its listing</a>
     {% else %}
-      <a class="btn small" href="/exchange/sell/{{ row.txid }}">List for sale</a>
+      <a class="btn small" href="/exchange/sell/{{ row.txid }}">Sell it</a>
     {% endif %}
     <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/send">Send</a>
   </div>

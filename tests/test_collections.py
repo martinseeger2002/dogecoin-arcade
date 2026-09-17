@@ -52,8 +52,11 @@ def test_a_build_folder_is_read_item_by_item(tmp_path):
 def test_the_item_json_goes_up_as_it_is_compacted(tmp_path):
     build = C.read_build(hashlips(tmp_path))
     original = json.loads((build.folder / "json" / "2.json").read_text())
-    assert json.loads(build.items[1].json) == original, "same data"
-    assert build.items[1].json == json.dumps(original, separators=(",", ":")), \
+    # Same data but for the IPFS pointer, which names a place the picture is
+    # not: here the picture IS the inscription (D-100).
+    wanted = {k: v for k, v in original.items() if k != "image"}
+    assert json.loads(build.items[1].json) == wanted, "same data, minus the pointer"
+    assert build.items[1].json == json.dumps(wanted, separators=(",", ":")), \
         "no whitespace paid for"
     assert I.collection_of(build.items[1].json) == ("Doge Punks", 2, "Doge Punks #2")
 
@@ -503,3 +506,38 @@ def test_a_run_without_a_mintpad_inscribes_nothing_extra(tmp_path):
     assert job["note"] == "every item is on its way"
     wanted = expected_payloads(build, jobs, job_id)
     assert sorted(sender.sent) == sorted(p for ps in wanted.values() for p in ps)
+
+
+def test_the_ipfs_image_is_not_paid_for(tmp_path):
+    """A HashLips build writes `"image": "ipfs://NewUriToReplace/1.png"` into
+    every item. The picture here IS the inscription, so that field names a
+    place the art is not, at about fifty bytes an item somebody pays for and
+    nobody can follow."""
+    from arcade.collections import strip_offchain
+
+    item = {"name": "Doge Punks #1", "description": "a punk", "edition": 1,
+            "image": "ipfs://NewUriToReplace/1.png", "dna": "abc",
+            "attributes": [{"trait_type": "Background", "value": "Blue"}]}
+    kept = strip_offchain(item)
+    assert "image" not in kept
+    assert kept["edition"] == 1 and kept["attributes"] == item["attributes"], \
+        "membership, numbering and rarity are read from the rest of it"
+
+    for gone in ("ipfs://QmX/1.png", "ipns://x/1.png", "ar://x",
+                 "https://gateway.example/ipfs/QmX/1.png", "1.png", ""):
+        assert "image" not in strip_offchain({**item, "image": gone}), gone
+
+    # Somebody's own site resolves, and is their decision.
+    stays = strip_offchain({**item, "image": "https://punks.example/1.png"})
+    assert stays["image"] == "https://punks.example/1.png"
+    # An `image` that is not text at all is left exactly as it was.
+    assert strip_offchain({"image": 7}) == {"image": 7}
+
+
+def test_a_build_inscribes_without_the_ipfs_pointer(tmp_path):
+    from arcade import collections as C
+
+    build = C.read_build(hashlips(tmp_path, count=2))
+    for item in build.items:
+        assert "ipfs" not in item.json, item.json
+        assert '"edition"' in item.json

@@ -102,6 +102,8 @@ An Omni-style token ledger, indexed from the chain.
 **A token can wear an inscription as its icon.** Paste a `/content/<id>` link
 (or pick one of your own pictures) when creating a token and it is shown
 wherever the token is — the markets table, its market page, the token list.
+A token without one gets a plain mark, never its initials: two letters of a
+name read as a ticker symbol, and nothing here has one.
 The picture is an inscription on the same chain, so it is served by whichever
 node is looking at it rather than by a website that can go away.
 
@@ -250,6 +252,16 @@ not a string, so a set that describes itself is still filed by its name. Two
 nodes cannot disagree about what is in a collection because one of them
 understood a richer JSON.
 
+**The IPFS pointer is not inscribed.** A HashLips build writes
+`"image": "ipfs://NewUriToReplace/1.png"` into every item. Here the picture
+IS the inscription — its content, in full, served by every node that has it —
+so that field names a place the art is not, at about fifty bytes an item that
+somebody pays for and nobody can follow. It is dropped before the set is
+priced. An `image` that is a real http(s) link is left alone: that resolves,
+and it is the creator's decision. Everything else is inscribed exactly as the
+build wrote it, including `edition` and `attributes`, which is what
+membership, numbering and rarity are read from.
+
 ## Shops and swaps
 
 A shop is an inscription. Its JSON lists what it sells and where its owner's
@@ -332,7 +344,8 @@ questions.
   is **#1 of the set**. Click one and the whole collection opens — **what can
   be bought first** (cheapest first, so the first tile is the floor), then
   the pieces somebody has offered for, then the rest in the order it was
-  inscribed. The page opens with the set's #1 as its face, what the set says
+  inscribed. Under those two: **for sale now**, the asks standing on this
+  chain, each with a one-press buy. The page opens with the set's #1 as its face, what the set says
   about itself, and a strip of numbers: floor, for sale, offers, owners,
   pieces and what has sold. Every piece is a tile — the picture, its name,
   **who made it and who holds it now**, its price if it has one, and a
