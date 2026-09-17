@@ -56,6 +56,9 @@ class FakeState:
     def bump_generation(self):
         self.generation += 1
 
+    def set_update_status(self, status):
+        self.update_status = status
+
     def setting(self, name, default=None):
         # The watcher asks before it updates itself or announces a release.
         # A double that answers nothing at all made eight watcher tests fail
@@ -486,7 +489,6 @@ def test_it_says_what_it_decided(monkeypatch):
     from arcade.web.watcher import BlockWatcher
 
     state = FakeState(FakeChain(tip=100), FakeChain("main", tip=5))
-    state.update_status = None
     watcher = BlockWatcher(state)
     monkeypatch.setattr(type(state), "setting",
                         lambda self, name, default=None: True, raising=False)
@@ -540,3 +542,55 @@ def test_the_newest_notice_is_the_one_taken(monkeypatch, tmp_path):
     watcher._check_release_notices()
     assert watcher._release_seen == "2222333", "the newest, not the first read"
     assert watcher._update_checked == 0.0, "and it asks the site now"
+
+
+def test_a_successful_update_is_not_read_from_the_exit_status(monkeypatch, tmp_path):
+    """The updater restarts arcade-web, systemd stops this process in the same
+    cgroup, and the subprocess is killed mid-flight -- so a SUCCESSFUL update
+    returns non-zero and its benign progress output is logged as the error.
+    A test machine caught it on the one run that actually worked.
+
+    What is on disk now is what happened (D-088).
+    """
+    from arcade.web.watcher import BlockWatcher
+
+    state = FakeState(FakeChain(tip=100), FakeChain("main", tip=5))
+    watcher = BlockWatcher(state)
+    monkeypatch.setattr(type(state), "setting",
+                        lambda self, name, default=None: True, raising=False)
+
+    checks = iter([("old1234", "new5678", True),      # before
+                   ("new5678", "new5678", False)])    # after, on disk
+    monkeypatch.setattr("arcade.web.watcher.update.check", lambda: next(checks))
+
+    class Killed:
+        returncode = -15
+        stdout = "Checking cloudflared\n  already installed"
+        stderr = ""
+
+    monkeypatch.setattr("arcade.web.watcher.subprocess.run", lambda *a, **k: Killed())
+    watcher._auto_update()
+    assert state.update_status["what"] == "installed", \
+        "killed by the restart it caused is not a failure"
+    assert state.update_status["installed"] == "new5678"
+
+
+def test_an_update_that_really_failed_still_says_so(monkeypatch):
+    from arcade.web.watcher import BlockWatcher
+
+    state = FakeState(FakeChain(tip=100), FakeChain("main", tip=5))
+    watcher = BlockWatcher(state)
+    monkeypatch.setattr(type(state), "setting",
+                        lambda self, name, default=None: True, raising=False)
+    checks = iter([("old1234", "new5678", True), ("old1234", "new5678", True)])
+    monkeypatch.setattr("arcade.web.watcher.update.check", lambda: next(checks))
+
+    class Broke:
+        returncode = 1
+        stdout = ""
+        stderr = "pip could not build a wheel"
+
+    monkeypatch.setattr("arcade.web.watcher.subprocess.run", lambda *a, **k: Broke())
+    watcher._auto_update()
+    assert state.update_status["what"] == "the update did not take"
+    assert "wheel" in state.update_status["error"], "and what it said"

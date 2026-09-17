@@ -2840,15 +2840,15 @@ def test_the_overview_renders_once_the_watcher_has_checked(client):
     page returned 500 on the one machine where anybody would see it (D-084).
     """
     page, state = client
-    state.update_status = {"at": 1_700_000_000.0, "what": "up to date",
-                           "installed": "abc1234", "published": "abc1234",
-                           "error": ""}
+    state.set_update_status({"at": 1_700_000_000.0, "what": "up to date",
+                             "installed": "abc1234", "published": "abc1234",
+                             "error": ""})
     answer = page.get("/")
     assert answer.status_code == 200, answer.text[:300]
     assert "Last checked" in answer.text and "up to date" in answer.text
 
-    state.update_status = {"at": 1_700_000_000.0, "what": "could not reach the site",
-                           "installed": None, "published": None,
-                           "error": "connection refused"}
+    state.set_update_status({"at": 1_700_000_000.0, "what": "could not reach the site",
+                             "installed": None, "published": None,
+                             "error": "connection refused"})
     body = page.get("/").text
     assert "could not reach the site" in body and "connection refused" in body

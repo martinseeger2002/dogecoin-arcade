@@ -433,7 +433,32 @@ class AppState:
     #: What the automatic update last decided, and when. Written by the
     #: watcher, read by the Overview: a thing that runs on its own has to be
     #: able to say when it last ran (D-084).
-    update_status: dict | None = None
+    #:
+    #: On disk as well as in memory, because the success case ENDS THIS
+    #: PROCESS: an update restarts arcade-web, so a status held only in
+    #: memory is destroyed by the very event it was meant to record. The one
+    #: outcome a person most wants to see is the one that could not survive
+    #: to be shown (D-088).
+    STATUS_FILE = "update-status.json"
+
+    def set_update_status(self, status: dict) -> None:
+        import json
+        try:
+            self.home.mkdir(parents=True, exist_ok=True)
+            (self.home / self.STATUS_FILE).write_text(json.dumps(status))
+        except OSError:
+            pass
+        self._update_status = status
+
+    @property
+    def update_status(self) -> dict | None:
+        import json
+        if getattr(self, "_update_status", None):
+            return self._update_status
+        try:
+            return json.loads((self.home / self.STATUS_FILE).read_text())
+        except Exception:
+            return None
 
     def my_tag(self) -> str:
         """This wallet's @tag as the chain has it, or "" -- never a guess."""

@@ -390,7 +390,10 @@ class BlockWatcher:
         if installed == published or not available:
             self._said("up to date", installed=installed, published=published)
             return
-        self._said("updating", installed=installed, published=published)
+        # Written down BEFORE the subprocess, because the subprocess restarts
+        # this service and systemd stops the parent with it. Everything after
+        # this line may simply never run (D-088).
+        self._said("installing", installed=installed, published=published)
         log.info("automatic update: %s -> %s", installed or "unknown", published)
         # In a subprocess, and not in this thread: the update replaces the code
         # this process is running out of, restarts the interface, and prints as
@@ -398,14 +401,28 @@ class BlockWatcher:
         venv = Path(sys.executable).parent
         result = subprocess.run([str(venv / "python"), "-m", "arcade.update"],
                                 capture_output=True, text=True, timeout=900)
-        if result.returncode != 0:
-            trouble = (result.stderr or result.stdout).strip()[-600:]
-            log.warning("automatic update failed: %s", trouble)
-            self._said("the update failed", installed=installed,
-                       published=published, exc=trouble[-200:])
-        else:
+        # The return code is not the outcome. The updater restarts arcade-web,
+        # systemd stops this process in the same cgroup, and the subprocess is
+        # killed mid-flight -- so a SUCCESSFUL update returns non-zero, logs
+        # "automatic update failed", and the benign progress output ("already
+        # there", "cloudflared is already installed") is printed as the error.
+        # A test machine caught it on the one run that actually worked.
+        #
+        # So the outcome is read from the installation, not from the exit
+        # status: what is on disk now is what happened (D-088).
+        try:
+            now_installed, _, _ = update.check()
+        except Exception:
+            now_installed = None
+        if now_installed and published and now_installed.startswith(published[:7]):
             log.info("automatic update installed %s", published)
             self._said("installed", installed=published, published=published)
+            return
+        trouble = (result.stderr or result.stdout).strip()[-600:]
+        log.warning("automatic update did not take (%s): %s",
+                    now_installed or "revision unknown", trouble)
+        self._said("the update did not take", installed=now_installed or installed,
+                   published=published, exc=trouble[-200:])
 
     def _said(self, what: str, installed=None, published=None, exc: str = "") -> None:
         """Record what the last update check decided, for the Overview.
@@ -415,10 +432,10 @@ class BlockWatcher:
         outside, because the only evidence was a debug log nobody reads. A
         thing that runs on its own has to say when it last ran (D-084).
         """
-        self.state.update_status = {
+        self.state.set_update_status({
             "at": time.time(), "what": what, "installed": installed,
             "published": published, "error": exc,
-        }
+        })
 
     _backfilled = False
 
