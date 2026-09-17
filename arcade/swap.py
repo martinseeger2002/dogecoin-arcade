@@ -336,6 +336,11 @@ CREATE TABLE IF NOT EXISTS offer (
     id            TEXT PRIMARY KEY,
     network       TEXT NOT NULL,
     shop          TEXT NOT NULL,
+    -- The standing order this offer fills, for an offer that fills one. What
+    -- it is for: two buyers asking for the same order at the same time must
+    -- not both be promised the whole of it, and the subtraction that stops
+    -- that can only be done if the offer says which order it came from.
+    "order"       TEXT NOT NULL DEFAULT '',
     listing       INTEGER NOT NULL,
     seller        TEXT NOT NULL,
     buyer         TEXT NOT NULL,
@@ -405,10 +410,11 @@ class Offers:
     def add(self, offer: dict) -> None:
         with self._open() as conn:
             conn.execute(
-                "INSERT INTO offer(id, network, shop, listing, seller, buyer, buyer_pubkey, "
-                "give, take, outpoint_txid, outpoint_vout, outpoint_value, created, expires) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (offer["id"], offer["network"], offer["shop"], int(offer["listing"]),
+                'INSERT INTO offer(id, network, shop, "order", listing, seller, buyer, '
+                "buyer_pubkey, give, take, outpoint_txid, outpoint_vout, outpoint_value, "
+                "created, expires) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (offer["id"], offer["network"], offer["shop"],
+                 str(offer.get("order") or ""), int(offer["listing"]),
                  offer["seller"], offer["buyer"], offer.get("buyer_pubkey", ""),
                  json.dumps(offer["give"]), json.dumps(offer["take"]),
                  offer["outpoint"]["txid"], int(offer["outpoint"]["vout"]),
@@ -519,7 +525,7 @@ def _offer_row(row: sqlite3.Row) -> dict:
     data = dict(row)
     return {
         "id": data["id"], "network": data["network"], "shop": data["shop"],
-        "listing": data["listing"], "seller": data["seller"], "buyer": data["buyer"],
+        "order": data.get("order") or "", "listing": data["listing"], "seller": data["seller"], "buyer": data["buyer"],
         "buyer_pubkey": data["buyer_pubkey"],
         "give": json.loads(data["give"]), "take": json.loads(data["take"]),
         "outpoint": {"txid": data["outpoint_txid"], "vout": data["outpoint_vout"],
@@ -658,6 +664,79 @@ def make_offer(rpc: Any, index: Any, offers: Offers, network: str, shop_row: dic
              "buyer_pubkey": buyer_pubkey, "give": leg_json(give, index),
              "take": leg_json(take, index), "outpoint": outpoint,
              "created": now, "expires": now + OFFER_TTL}
+    offers.add(offer)
+    return public(offer)
+
+
+def offer_for_order(rpc: Any, index: Any, offers: Offers, network: str,
+                    order_txid: str, tokens: int, buyer: str, buyer_pubkey: str,
+                    own: list[str]) -> dict:
+    """The maker's half of a swap that fills one of its own standing orders.
+
+    This is what a node answers when somebody asks to take a price off its
+    book. The taker needs one thing it cannot work out alone -- which of the
+    maker's outputs will carry the swap -- and gets it here, in an offer it
+    can build on. Publishing that outpoint with the order instead would save
+    nothing: the maker has to be online to sign either way, and an outpoint
+    named an hour ago may be spent by the time anybody takes it (D-063).
+
+    Everything the shop path checks is checked here, plus the two that are
+    particular to a book: the price is the maker's own, taken from the order
+    rather than from anything the taker said, and what is already promised
+    out of this order to other buyers is subtracted before more is offered.
+    The engine will check the finished transaction again (D-062), and an
+    offer that cannot become one is a message fee spent on a refusal.
+    """
+    expire(rpc, offers, network)
+    order = index.order(str(order_txid))
+    if order is None:
+        raise SwapError("no such order on this node -- it may have been "
+                        "cancelled, filled, or not yet mined")
+    seller = order["address"]
+    if seller not in own:
+        raise SwapError("that order is not this wallet's to fill")
+    if buyer == seller or buyer in own:
+        raise SwapError("a wallet cannot fill its own order")
+    if order["want_property"] != 0:
+        raise SwapError("only an order selling a token for coins can be filled "
+                        "this way; a bid is filled by the wallet that holds the "
+                        "tokens asking this one")
+
+    standing = offers.open_offers(network) + [
+        offer for offer in offers.sold_offers(network) if _unsettled(index, offer)]
+    promised = sum(int(o["give"].get("units") or 0) for o in standing
+                   if o.get("order") == str(order_txid))
+    left = order["sale_amount"] - promised
+    tokens = int(tokens)
+    if tokens <= 0:
+        raise SwapError("a fill needs an amount")
+    if tokens > left:
+        raise SwapError(
+            f"that order has {left} left of {order['sale_amount']}"
+            + (" -- the rest is promised to other buyers until their offers "
+               "expire" if promised else ""))
+
+    # The maker's own price, from the order, rounded so the maker is never
+    # paid less than it asked: the engine's guard is the same arithmetic
+    # (D-062), and an offer that rounded the other way would be refused by
+    # the chain after both wallets had signed it.
+    coins = -(-order["want_amount"] * tokens // order["sale_amount"])
+    give = I.Leg(I.LEG_TOKEN, property_id=order["sale_property"], amount=tokens)
+    take = I.Leg(I.LEG_COINS, amount=coins)
+    # Neither side's balance is checked here, and both for reasons rather
+    # than by omission. The maker's tokens are in the reserve this order
+    # holds, which is exactly where the fill takes them from -- the free
+    # balance says nothing. The buyer's coins are paid inside the swap
+    # itself, so the buyer either builds a transaction that covers them or
+    # fails to build one.
+    locked_outs = {(o["outpoint"]["txid"], o["outpoint"]["vout"]) for o in standing}
+    outpoint = _lock_output(rpc, seller, give, take, locked_outs)
+    now = time.time()
+    offer = {"id": secrets.token_hex(8), "network": network, "shop": "",
+             "order": str(order_txid), "listing": -1, "seller": seller,
+             "buyer": buyer, "buyer_pubkey": buyer_pubkey,
+             "give": leg_json(give, index), "take": leg_json(take, index),
+             "outpoint": outpoint, "created": now, "expires": now + OFFER_TTL}
     offers.add(offer)
     return public(offer)
 

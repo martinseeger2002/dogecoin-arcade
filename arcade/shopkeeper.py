@@ -135,7 +135,19 @@ class Shopkeeper:
         if kind == "bid":
             return self._bid(rpc, index, offers, chain, row, question)
         try:
-            if kind == "offer":
+            if kind == "fill":
+                # Somebody taking a price off this wallet's book. What they
+                # cannot work out alone is which of this wallet's outputs
+                # carries the swap; the price comes from the order, never
+                # from the question (D-063).
+                from .web.app import _ledger_addresses
+                offer = swaplib.offer_for_order(
+                    rpc, index, offers, chain.network,
+                    str(question.get("order") or ""), int(question.get("tokens", 0)),
+                    str(question.get("buyer") or ""),
+                    bytes(row["sender_pubkey"]).hex(), own=_ledger_addresses(rpc))
+                reply.update(ok=True, offer=offer)
+            elif kind == "offer":
                 shop = index.inscription(str(question.get("shop") or ""))
                 if shop is None:
                     raise swaplib.SwapError("no such inscription on this node")
@@ -311,7 +323,7 @@ def _swap_message(row: Any) -> dict | None:
         data = json.loads(bytes(row["body"]).decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
         return None
-    if not isinstance(data, dict) or data.get("swap") not in ("offer", "sign", "bid"):
+    if not isinstance(data, dict) or data.get("swap") not in ("offer", "sign", "bid", "fill"):
         return None
     if data.get("swap") == "bid":
         # A bid and its answer are both questions to the wallet that gets

@@ -711,6 +711,18 @@ class LedgerIndex:
                       else o["sale_property"] for o in fresh}
         return sorted(p for p in pairs if p)
 
+    def order(self, txid: str) -> dict | None:
+        """One standing order, by the transaction that placed it.
+
+        Mined only, deliberately: an order in the pool holds no reserve yet,
+        so a swap filling it would be refused by the engine for want of a
+        balance. It becomes fillable when its block lands (D-062).
+        """
+        with self.open() as db:
+            row = db.conn.execute("SELECT * FROM book_order WHERE txid=?",
+                                  (str(txid),)).fetchone()
+            return dict(row) if row else None
+
     def orders_of(self, addresses: list[str], pool: bool = True) -> list[dict]:
         """This wallet's own standing orders, newest first.
 

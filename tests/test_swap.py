@@ -653,3 +653,108 @@ def test_what_is_away_from_home_is_found_and_walked_back():
                      send_token=token, send_piece=piece, limit=9)
     assert [s[0] for s in sent] == ["coins", "coins"], sent
     assert {s[1] for s in sent} == {"nElse", "nBroke"}
+
+
+# --- filling a standing order -----------------------------------------------
+
+def _an_order(index, txid="or" + "d" * 62, tokens=1000 * COIN, coins=8 * COIN,
+              address=SELLER):
+    """One row of the book, as the index would hand it over."""
+    index.orders = getattr(index, "orders", {})
+    index.orders[txid] = {
+        "txid": txid, "block_height": 500, "position": 0, "address": address,
+        "sale_property": 3, "sale_amount": tokens, "want_property": 0,
+        "want_amount": coins, "reserved": tokens}
+    index.order = lambda key: index.orders.get(str(key))
+    return txid
+
+
+def test_an_order_is_filled_at_the_makers_own_price(world):
+    """The price comes from the book, never from the question.
+
+    What the taker cannot work out alone is which of the maker's outputs will
+    carry the swap. It gets that here, in an offer it can build on -- which is
+    why an order does not publish an outpoint and does not need to (D-063).
+    """
+    index, seller, _, offers = world
+    order = _an_order(index)                       # 1,000 at 0.008
+    offer = S.offer_for_order(seller, index, offers, "test", order, 250 * COIN,
+                              BUYER, "ff" * 32, own=[SELLER])
+    assert offer["seller"] == SELLER and offer["buyer"] == BUYER
+    assert offer["give"] == {"kind": "token", "propertyid": 3, "name": "Arcade Test",
+                             "amount": "250", "units": 250 * COIN}
+    assert offer["take"]["sats"] == 2 * COIN, "a quarter of the order, a quarter of the coins"
+    assert offer["outpoint"]["txid"] and ("1" * 64, offer["outpoint"]["vout"]) in seller.locked
+    assert offers.get(offer["id"])["order"] == order, "written down against the order"
+
+
+def test_the_rounding_never_pays_the_maker_less(world):
+    """The engine's guard is integer arithmetic on the same numbers (D-062);
+    an offer that rounded the other way would be signed by both wallets and
+    then refused by the chain."""
+    index, seller, _, offers = world
+    order = _an_order(index, tokens=3 * COIN, coins=2 * COIN)      # 2 for 3
+    offer = S.offer_for_order(seller, index, offers, "test", order, 1 * COIN,
+                              BUYER, "", own=[SELLER])
+    coins, tokens = offer["take"]["sats"], 1 * COIN
+    assert coins * (3 * COIN) >= (2 * COIN) * tokens, "the guard the engine applies"
+    assert coins == 66_666_667, "rounded up, by one satoshi"
+
+
+def test_what_is_promised_to_one_buyer_is_not_offered_to_another(world):
+    index, seller, _, offers = world
+    order = _an_order(index, tokens=100 * COIN, coins=1 * COIN)
+    S.offer_for_order(seller, index, offers, "test", order, 60 * COIN, BUYER, "",
+                      own=[SELLER])
+    with pytest.raises(S.SwapError, match="has 4000000000 left"):
+        S.offer_for_order(seller, index, offers, "test", order, 60 * COIN, OTHER, "",
+                          own=[SELLER])
+    assert "promised to other buyers" in _refusal(
+        lambda: S.offer_for_order(seller, index, offers, "test", order, 60 * COIN,
+                                  OTHER, "", own=[SELLER]))
+    # What is left still is.
+    rest = S.offer_for_order(seller, index, offers, "test", order, 40 * COIN, OTHER,
+                             "", own=[SELLER])
+    assert rest["give"]["units"] == 40 * COIN
+
+
+def test_an_order_that_is_not_this_wallets_is_refused(world):
+    index, seller, _, offers = world
+    order = _an_order(index, address=OTHER)
+    with pytest.raises(S.SwapError, match="not this wallet's to fill"):
+        S.offer_for_order(seller, index, offers, "test", order, 10 * COIN, BUYER, "",
+                          own=[SELLER])
+
+
+def test_a_wallet_cannot_fill_its_own_order(world):
+    index, seller, _, offers = world
+    order = _an_order(index)
+    with pytest.raises(S.SwapError, match="cannot fill its own order"):
+        S.offer_for_order(seller, index, offers, "test", order, 10 * COIN, SELLER, "",
+                          own=[SELLER])
+
+
+def test_an_order_that_is_not_there_is_not_a_refusal_about_something_else(world):
+    index, seller, _, offers = world
+    _an_order(index)
+    with pytest.raises(S.SwapError, match="no such order on this node"):
+        S.offer_for_order(seller, index, offers, "test", "ff" * 32, 10 * COIN, BUYER,
+                          "", own=[SELLER])
+
+
+def test_a_bid_is_not_filled_this_way(world):
+    """The coin side has to be funded by the wallet that holds the coins."""
+    index, seller, _, offers = world
+    order = _an_order(index)
+    index.orders[order].update(sale_property=0, want_property=3)
+    with pytest.raises(S.SwapError, match="only an order selling a token for coins"):
+        S.offer_for_order(seller, index, offers, "test", order, 10 * COIN, BUYER, "",
+                          own=[SELLER])
+
+
+def _refusal(call) -> str:
+    try:
+        call()
+    except S.SwapError as exc:
+        return str(exc)
+    raise AssertionError("that should have been refused")
