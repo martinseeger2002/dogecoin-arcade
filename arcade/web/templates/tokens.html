@@ -48,7 +48,10 @@
         {% if t.managed %}<span class="muted" style="font-size:.78rem">managed</span>{% endif %}</td>
       <td style="font-variant-numeric:tabular-nums">{{ t.total_display }}</td>
       <td>{{ t.holder_count }}</td>
-      <td><code class="addr" onclick="copyAddr(this)" title="Click to copy">{{ t.issuer }}</code>
+      <td>{% if tags.get(t.issuer) %}<strong>@{{ tags[t.issuer] }}</strong>
+          <div class="mono muted" style="font-size:.72rem" onclick="copyAddr(this)"
+               title="Click to copy">{{ t.issuer }}</div>
+        {%- else %}<code class="addr" onclick="copyAddr(this)" title="Click to copy">{{ t.issuer }}</code>{% endif %}
         {% if t.issuer in owned %}<span class="pill ok">you</span>{% endif %}</td>
     </tr>
   {% endfor %}

@@ -2597,3 +2597,58 @@ def test_a_hundred_waiting_does_not_stretch_the_nav(client):
             store.add_group_post(state.messaging.network, "main", f"{n:064x}",
                                  100 + n, 1700 + n, "nSomebody", "them", "hi")
     assert '<span class="nav-count">99+</span>' in page.get("/").text
+
+
+def test_anything_can_be_sent_to_a_tag(client, monkeypatch):
+    """A tag is a name for an address, so a field that wants an address takes
+    one -- coins, tokens, a contact. It was two fields out of six."""
+    page, state = client
+
+    class Index:
+        def address_of(self, wanted):
+            return "nTagHolderAddress1111111111111111" if wanted == "friend" else None
+
+    monkeypatch.setattr(type(state), "token_index", lambda self, chain: Index())
+    from arcade.web import app as appmod
+
+    for mainnet in (False, True):
+        chains = [c for c in state.token_chains if bool(c.is_mainnet) == mainnet]
+        if not chains:
+            continue
+        assert appmod._tag_address(state, "@friend", mainnet=mainnet) \
+            == "nTagHolderAddress1111111111111111"
+        assert appmod._tag_address(state, "@FRIEND", mainnet=mainnet) \
+            == "nTagHolderAddress1111111111111111", "a tag is not case sensitive"
+
+    # An address is passed through untouched; only an @ means a lookup.
+    assert appmod._tag_address(state, "nSomebodyElse", mainnet=False) == "nSomebodyElse"
+    assert appmod._tag_address(state, "  ", mainnet=False) == ""
+
+    # And a name nobody holds is refused by name, not by a base58 complaint.
+    import pytest as _pytest
+    with _pytest.raises(ValueError, match="nobody holds @stranger"):
+        appmod._tag_address(state, "@stranger", mainnet=False)
+
+
+def test_the_address_book_stores_the_address_a_tag_names(client, monkeypatch):
+    """Not the tag. A tag moves, and paying whoever holds a name today is not
+    what somebody meant when they wrote it down last year."""
+    page, state = client
+
+    class Index:
+        def address_of(self, wanted):
+            return "mgA7SfyBBrVGVSpQ7oqGHPhxpp2gUZWtfc" if wanted == "friend" else None
+
+    monkeypatch.setattr(type(state), "token_index", lambda self, chain: Index())
+    csrf = state.csrf_token
+    answer = page.post("/contacts/save", data={"csrf_token": csrf, "name": "A friend",
+                                               "testnet_address": "@friend"},
+                       follow_redirects=True)
+    assert answer.status_code == 200, answer.text[:400]
+    with state.store() as store:
+        saved = [dict(r) for r in store.contacts()]
+    import re
+    said = re.search(r'<div class="msg [^"]*">(.*?)</div>', answer.text, re.S)
+    assert saved, f"nothing was saved: {said.group(1).strip()[:200] if said else '?'}"
+    assert saved and saved[0]["testnet_address"] == "mgA7SfyBBrVGVSpQ7oqGHPhxpp2gUZWtfc", \
+        "the address it named, not the name"

@@ -115,12 +115,21 @@
     <div class="two">
       <div class="field"><label>Testnet address <span class="tag testnet">test</span></label>
         <input autocomplete="off" name="testnet_address" class="mono" spellcheck="false"
+               list="claimed-tags"
                value="{{ editing['testnet_address'] if editing else '' }}"
-               placeholder="Test coins — no real value"></div>
+               placeholder="An address, or @theirname"></div>
       <div class="field"><label>Mainnet address <span class="tag mainnet">main</span></label>
         <input autocomplete="off" name="mainnet_address" class="mono" spellcheck="false"
+               list="claimed-tags"
                value="{{ editing['mainnet_address'] if editing else '' }}"
-               placeholder="Real coins — check this one twice"></div>
+               placeholder="An address, or @theirname"></div>
+    </div>
+    {# Every name claimed on the chain, offered as you type. Saved as the
+       address the name points at, so the book cannot follow a tag that moves. #}
+    <datalist id="claimed-tags">
+      {% for t in known_tags %}<option value="@{{ t.tag }}">{{ t.address }}</option>{% endfor %}
+    </datalist>
+    <div class="two" style="display:none">
     </div>
 
     {% if not editing %}

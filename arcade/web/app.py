@@ -1067,6 +1067,12 @@ def create_app(state: AppState) -> FastAPI:
         (D-030). Not a route itself: FastAPI reads **kwargs off the query
         string, so the door and the view are separate functions.
         """
+        known_tags = []
+        try:
+            _, tag_index = _tag_chain()
+            known_tags = tag_index.tags(limit=200)
+        except Exception:
+            known_tags = []           # no node, no list: the field still works
         people, editing = [], None
         if state.store_path.exists():
             with state.store() as store:
@@ -1119,6 +1125,7 @@ def create_app(state: AppState) -> FastAPI:
                 entry["claimed_tag"] and found.get(entry["address"]) != entry["claimed_tag"])
         return render(request, "contacts.html", people=people, editing=editing,
                       published=published, when=_when, mine=_my_tag(), tags=found,
+                      known_tags=known_tags,
                       other_address=_other_chain_address(),
                       announce_limit=MAX_ANNOUNCE_NAME,
                       name_limit=MAX_ANNOUNCE_NAME_CLASS_B, **kwargs)
@@ -1144,14 +1151,28 @@ def create_app(state: AppState) -> FastAPI:
 
         # Reject an address that belongs to the wrong chain now, rather than
         # letting it sit in the book until someone pays it.
+        resolved = {}
         for label, value, want_mainnet in (
             ("Testnet", testnet_address, False), ("Mainnet", mainnet_address, True)
         ):
             if value:
+                # A tag is a name for an address, so a field that wants an
+                # address takes one (D-070). Stored as the address it names:
+                # a book that kept the name would silently follow the tag if
+                # it moved, and paying whoever holds a name today is not what
+                # somebody meant when they wrote it down last year.
+                try:
+                    value = _tag_address(state, value, mainnet=want_mainnet)
+                except ValueError as exc:
+                    state.flash(f"{label} address: {exc}", "err")
+                    return RedirectResponse("/contacts", status_code=303)
+                resolved[want_mainnet] = value
                 problem = _check_address(value, mainnet=want_mainnet)
                 if problem:
                     state.flash(f"{label} address: {problem}", "err")
                     return RedirectResponse("/contacts", status_code=303)
+        testnet_address = resolved.get(False, testnet_address)
+        mainnet_address = resolved.get(True, mainnet_address)
 
         pubkey = None
         if code.strip():
@@ -2119,8 +2140,10 @@ def create_app(state: AppState) -> FastAPI:
             check_csrf(csrf_token)
             ctx = _context(which)
             sats = walletlib.parse_amount(amount)
+            destination = _tag_address(state, destination,
+                                       mainnet=ctx.is_mainnet)
             with ctx.rpc() as rpc:
-                prepared = walletlib.prepare_send(rpc, destination.strip(), sats)
+                prepared = walletlib.prepare_send(rpc, destination, sats)
                 if confirmed == "yes":
                     txid = walletlib.broadcast(rpc, prepared)
                     state.flash(f"Sent. Transaction {txid}", "ok")
@@ -2348,6 +2371,9 @@ def create_app(state: AppState) -> FastAPI:
             data["node_error"] = str(exc)
             owned = []
         data["owned"] = set(owned)
+        # Who issued a token, said the way people say it. An address is how
+        # the chain names an issuer; a tag is how a person does (D-070).
+        data["tags"] = _tags_for([t["issuer"] for t in data["tokens"]])
         data["holdings"] = index.balances(owned)
         data["purses"] = _purses(data["holdings"])
         # A broadcast token transaction is invisible until its block is
@@ -3936,6 +3962,11 @@ def create_app(state: AppState) -> FastAPI:
         address = (address or "").strip()
         if not address:
             raise tokenlib.TokenError("a recipient address is needed.")
+        try:
+            address = _tag_address(state, address,
+                                   mainnet=state.token_chain.is_mainnet)
+        except ValueError as exc:
+            raise tokenlib.TokenError(str(exc)) from None
         complaint = _check_address(address, mainnet=state.token_chain.is_mainnet)
         if complaint:
             raise tokenlib.TokenError(complaint)
@@ -5175,6 +5206,37 @@ def _ledger_addresses(rpc) -> list[str]:
         if not real or _is_arcade_account(utxo.get("account", utxo.get("label"))):
             found.setdefault(utxo["address"], None)
     return list(found)
+
+
+def _tag_address(state, destination: str, *, mainnet: bool) -> str:
+    """An @tag turned into the address that holds it, or the text unchanged.
+
+    Every send takes one of these now -- coins, tokens, grants, revokes, an
+    inscription, an offer. A tag is a name for an address and the chain says
+    which, so there is no reason one place should take a name and the next one
+    only take 34 characters of base58 (D-070).
+
+    Resolved at the moment of sending, never remembered: a tag can move, and a
+    wallet that pays yesterday's answer pays the wrong person. What is shown
+    afterwards is the address it resolved to, because that is what was paid.
+    """
+    destination = (destination or "").strip()
+    if not destination.startswith("@"):
+        return destination
+    wanted = taglib.normalise(destination)
+    for chain in state.token_chains:
+        if bool(chain.is_mainnet) != bool(mainnet):
+            continue
+        try:
+            found = state.token_index(chain).address_of(wanted)
+        except Exception:
+            found = None
+        if found:
+            return found
+    raise ValueError(
+        f"nobody holds @{wanted} on "
+        f"{'mainnet' if mainnet else 'testnet'}, or this node has not indexed "
+        f"the claim yet. A tag is claimed from the Address book.")
 
 
 def _check_address(address: str, *, mainnet: bool) -> str | None:
