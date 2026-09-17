@@ -696,6 +696,13 @@ forwarding. The mempool already gossips to every node in seconds.
 
 ---
 
+**What it says in the journal.** The interface logs what it did at `info` --
+blocks read, a store rebuilt, a sale answered, a release announced -- so
+`journalctl -u arcade-web` is a record of the wallet's own decisions rather
+than only of its complaints. `--log-level warning` quiets it; `debug` is for
+when something is wrong.
+
+
 ## What it does not do
 
 * **No custom peer-to-peer protocol.** See above: it would not propagate.

@@ -10,6 +10,8 @@ remotely with an SSH port-forward instead.
 from __future__ import annotations
 
 import argparse
+import logging
+import os
 import sys
 from pathlib import Path
 
@@ -45,7 +47,25 @@ def main(argv: list[str] | None = None) -> int:
         "--host", default="127.0.0.1",
         help="deliberately defaults to loopback; changing it exposes spending authority",
     )
+    parser.add_argument(
+        "--log-level", default=os.environ.get("ARCADE_LOG_LEVEL", "info"),
+        choices=["debug", "info", "warning", "error"],
+        help="how much this writes to the journal; info by default")
     args = parser.parse_args(argv)
+
+    # Nothing configured logging at all, so the root logger sat at its default
+    # WARNING and every log.info in the package went nowhere -- two dozen
+    # deliberate diagnostics, including the one that says a message store has
+    # been rebuilt and the ones that say what the indexer did with a block.
+    # Worse than losing them: "check the journal for X" then cannot tell a fix
+    # that worked quietly from a fix that never ran, which is exactly the
+    # instruction this session had been giving the other machine all day
+    # (a test machine, D-110).
+    #
+    # No timestamp in the format: journald stamps every line, and a terminal
+    # user is watching it happen.
+    logging.basicConfig(level=getattr(logging, args.log_level.upper()),
+                        format="%(levelname)s %(name)s: %(message)s")
 
     # Startup output is the only feedback before the browser opens; it is
     # worthless if it sits in a buffer until the process exits.

@@ -246,17 +246,24 @@ def test_a_picture_is_priced_rather_than_inscribed_on_the_first_press(
 
 def test_a_picture_too_big_for_the_form_is_told_where_else_to_go(
         client, monkeypatch):
-    """A refusal that only says no makes somebody quantise their art down to
-    five colours to fit it (a test machine, D-109). This one names the way out."""
+    """There is no size limit on an inscription and none in the forms either:
+    what a picture costs is shown before it is paid for, and the form does not
+    get to decide somebody's art is too big for their own money (D-109). What
+    is still refused is a file too large to hold in memory to price it, and
+    the refusal names the route that streams instead."""
     app, state = client
     index_with_a_collection(state.home)
     wallet_holding(state, monkeypatch, CREATOR)
 
-    body = app.post("/tokens/icon",
-                    files={"icon_file": ("huge.png", b"\x89PNG" + b"x" * 40000, "image/png")},
-                    data={"csrf_token": state.csrf_token}).text
-    assert "40,004 bytes" in body and "30,000" in body
-    assert "inscribe it from the NFTs page" in body
+    body = app.post(
+        "/tokens/icon",
+        files={"icon_file": ("huge.png", b"\x89PNG" + b"x" * 5_000_000, "image/png")},
+        data={"csrf_token": state.csrf_token}).text
+    assert "5,000,004 bytes" in body
+    assert "no size limit anywhere in this application" in body, \
+        "the refusal is about the form's memory, not about the art"
+    assert "Inscribe it from the NFTs page" in body or \
+        "inscribe it from the NFTs page" in body.lower()
     assert "Traceback" not in body
 
 

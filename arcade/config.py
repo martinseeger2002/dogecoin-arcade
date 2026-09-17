@@ -162,10 +162,17 @@ TESTNET = Params(
     p2p_port=44874,
     # --- one floor, for everything (D-106) -------------------------------------
     #
-    # Set 2026-09-17 at tip 1,493,863, about three hours ahead at 46s a block.
+    # Set 2026-09-17 at tip 1,493,938, about half an hour ahead at 46s a block.
     # Every height below is the same number on purpose: tokens, messages,
     # swaps, asks and fills all start together, so there is one date for
     # "before" and one for "after" rather than six.
+    #
+    # Half an hour rather than three, because the margin is not what makes
+    # this safe and waiting for it buys nothing: a floor only changes how a
+    # block reads if a transaction is IN one, and the rule is that nothing new
+    # goes out until both nodes report the same floor. A node that takes the
+    # release late has indexed nothing above the old floor either -- the chain
+    # had not reached it -- so it simply starts from this one.
     #
     # Why start again at all: what is under it is six weeks of building the
     # thing -- half-formats, a collection inscribed three ways, tokens made to
@@ -179,16 +186,19 @@ TESTNET = Params(
     # forward -- so an install that keeps its index would see Goofball and the
     # old tokens while a fresh one sees none of them, and the two would
     # disagree about what exists. Every node moves its testnet index aside as
-    # part of taking this release. The release notice says which files, and
-    # they are the two that are per-chain: `test-ledger.sqlite` and
-    # `test.sqlite`. Nothing else in ~/.dogecoinarcade is testnet-only, and
-    # `main-ledger.sqlite` must not be touched at all.
-    activation_height=1_494_100,
-    messaging_start_height=1_494_100,
-    swaps_from=1_494_100,
-    asks_from=1_494_100,
-    fills_from=1_494_100,
-    named_fills_from=1_494_100,
+    # part of taking this release. The release notice says which files:
+    # `test-ledger.sqlite`, which is purely the testnet index, and
+    # `test.sqlite`, which is the messaging store -- that one ALSO holds
+    # mainnet's messaging scan position, so moving it aside makes a wallet
+    # with mainnet messages rescan them (a test machine found the row). Nothing else in
+    # ~/.dogecoinarcade is per-chain, and `main-ledger.sqlite` must not be
+    # touched at all.
+    activation_height=1_493_980,
+    messaging_start_height=1_493_980,
+    swaps_from=1_493_980,
+    asks_from=1_493_980,
+    fills_from=1_493_980,
+    named_fills_from=1_493_980,
     datadir_subdir="testnet3",
     pubkeyhash_version=113,
     scripthash_version=196,

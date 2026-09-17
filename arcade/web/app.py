@@ -3022,10 +3022,10 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError("a thumbnail is a picture: choose an image file.")
             if len(content) > MAX_ICON_BYTES:
                 raise ValueError(
-                    f"{filename} is {len(content):,} bytes, and this form takes "
-                    f"up to {MAX_ICON_BYTES:,}. Shrink it, or inscribe it from the "
-                    f"NFTs page -- there is no size limit there -- and paste its "
-                    f"id into the box above.")
+                    f"{filename} is {len(content):,} bytes, which is more than a "
+                    f"form should hold in memory to price it. Inscribe it from "
+                    f"the NFTs page -- there is no size limit anywhere in this "
+                    f"application -- and paste its id into the box above.")
             plan = inscribelib.plan(content, content_type, "")
             if thumb_confirmed == "yes":
                 chain, _ = _token_chain()
@@ -4464,14 +4464,15 @@ def create_app(state: AppState) -> FastAPI:
         return _token_action(request, action="create", confirmed=confirmed, build=build,
                              fields=fields, back="/tokens", form_create=fields)
 
-    #: What a picture inscribed from a form may weigh. Not one transaction's
-    #: worth any more: a collection's face is inscribed once and shown first,
-    #: and asking somebody to quantise it down to five colours to fit a cap is
-    #: asking them to make their set's most visible image disagree with its
-    #: own traits -- which is what a test machine hit trying to fit a hundred-tile
-    #: mosaic under 7,000 bytes (D-109). The cost is shown before the press,
-    #: which is the rule this application answers such questions with.
-    MAX_ICON_BYTES = 30_000
+    #: There is no size limit on an inscription and there is none here either
+    #: (D-109). What a picture costs is shown before it is paid for, which is
+    #: how this application answers every question of this kind; the form does
+    #: not get to decide that somebody's art is too big for their own money.
+    #: What the number below guards is the REQUEST, not the art: a browser
+    #: upload has to be held in memory to be priced, and past a few megabytes
+    #: that is a wallet holding a file instead of a wallet. Anything larger
+    #: goes through the NFTs page, which streams it.
+    MAX_ICON_BYTES = 4_000_000
 
     @app.post("/tokens/icon", response_class=HTMLResponse)
     def inscribe_icon(request: Request, csrf_token: str = Form(""),
@@ -4516,10 +4517,10 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError("an icon is a picture: choose an image file.")
             if len(content) > MAX_ICON_BYTES:
                 raise ValueError(
-                    f"{filename} is {len(content):,} bytes, and this form takes "
-                    f"up to {MAX_ICON_BYTES:,}. Shrink it, or inscribe it from the "
-                    f"NFTs page -- there is no size limit there -- and paste its "
-                    f"id into the icon box.")
+                    f"{filename} is {len(content):,} bytes, which is more than a "
+                    f"form should hold in memory to price it. Inscribe it from "
+                    f"the NFTs page -- there is no size limit anywhere in this "
+                    f"application -- and paste its id into the icon box.")
             plan = inscribelib.plan(content, content_type, "")
             if icon_confirmed == "yes":
                 chain, _ = _token_chain()
@@ -4559,23 +4560,41 @@ def create_app(state: AppState) -> FastAPI:
         the split that makes a long send fast (inscribe.prepare_wallet) waits
         for a block -- which is fine on a thread and is not fine in a request.
         """
-        with chain.rpc() as rpc:
-            sender_obj = MessageSender(rpc, chain.params, public_only=True)
-            sent = sender_obj.send_all(sender, plan.payloads[:1])
-        if not sent:
-            raise ValueError("nothing was broadcast")
-        first, rest = sent[0], plan.payloads[1:]
+        rest = plan.payloads[1:]
+        # Claimed BEFORE anything is broadcast, because failing to claim it
+        # after the first chunk would leave a half-written inscription on the
+        # chain for ever. One long send at a time, the same rule a collection
+        # run and a long message follow.
+        if rest and not state.begin_send():
+            raise ValueError("something is already being sent. Wait for it to "
+                             "finish, then inscribe this.")
+        try:
+            with chain.rpc() as rpc:
+                sender_obj = MessageSender(rpc, chain.params, public_only=True)
+                sent = sender_obj.send_all(sender, plan.payloads[:1])
+            if not sent:
+                raise ValueError("nothing was broadcast")
+        except Exception:
+            if rest:
+                state.end_send()
+            raise
+        first = sent[0]
         if rest:
-            def finish():
+            def inscribe_the_rest():
                 try:
                     with chain.rpc() as rpc:
                         more = MessageSender(rpc, chain.params, public_only=True)
                         inscribelib.prepare_wallet(more, sender, plan)
                         more.send_all(sender, rest)
+                    log.info("finished inscribing %s: %d more pieces",
+                             first, len(rest))
                 except Exception as exc:
                     log.warning("could not finish inscribing %s: %s", first, exc)
+                finally:
+                    state.end_send()
 
-            threading.Thread(target=finish, name="arcade-icon", daemon=True).start()
+            threading.Thread(target=inscribe_the_rest, name="arcade-icon",
+                             daemon=True).start()
         return first
 
     def _send_parts(rpc, index, prop: dict, units: int,

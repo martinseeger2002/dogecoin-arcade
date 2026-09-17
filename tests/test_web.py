@@ -9,6 +9,7 @@ value here is not depth -- it is that every route gets exercised at least once,
 with the node unreachable, which is also the state a new user starts in.
 """
 
+import inspect
 import re
 import time
 import pathlib
@@ -2855,3 +2856,43 @@ def test_the_overview_renders_once_the_watcher_has_checked(client):
                              "error": "connection refused"})
     body = page.get("/").text
     assert "could not reach the site" in body and "connection refused" in body
+
+
+def test_the_package_s_own_diagnostics_reach_the_journal():
+    """Nothing configured logging, so the root logger sat at WARNING and every
+    log.info in the package went nowhere -- two dozen deliberate diagnostics,
+    silently. Worse than losing them: "check the journal for X" could not then
+    tell a fix that worked quietly from one that never ran (a test machine, D-110).
+
+    Asserted against uvicorn's own dictConfig, because that runs after ours
+    and is what would take it away again.
+    """
+    import io
+    import logging
+    import logging.config
+
+    import uvicorn.config
+
+    from arcade import ledger, shopkeeper
+    from arcade.web import __main__ as entry
+
+    assert "basicConfig" in inspect.getsource(entry.main), \
+        "the entry point is where this is turned on"
+
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    root = logging.getLogger()
+    before, level = list(root.handlers), root.level
+    root.handlers = [handler]
+    root.setLevel(logging.INFO)
+    try:
+        logging.config.dictConfig(uvicorn.config.LOGGING_CONFIG)
+        shopkeeper.log.info("the message store was rebuilt")
+        ledger.log.info("rebuilt inscription moves")
+    finally:
+        root.handlers, root.level = before, level
+    written = stream.getvalue()
+    assert "arcade.shopkeeper: the message store was rebuilt" in written
+    assert "arcade.ledger: rebuilt inscription moves" in written, \
+        "uvicorn's config must not take the package's own logging away"
