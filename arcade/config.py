@@ -163,7 +163,7 @@ TESTNET = Params(
     # somebody broadcasts a fill there is nothing for two nodes to disagree
     # about, so the rule is to update both machines before the first fill,
     # not before the height.
-    fills_from=1_492_600,
+    fills_from=1_492_520,
     # Set 2026-09-12 at tip 1,484,661. Everything before this is development
     # traffic from building and testing the application -- cross-machine sends,
     # chunked posts, deliberately interrupted sends -- and is not read.

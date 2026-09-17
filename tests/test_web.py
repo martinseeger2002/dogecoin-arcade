@@ -2652,3 +2652,19 @@ def test_the_address_book_stores_the_address_a_tag_names(client, monkeypatch):
     assert saved, f"nothing was saved: {said.group(1).strip()[:200] if said else '?'}"
     assert saved and saved[0]["testnet_address"] == "mgA7SfyBBrVGVSpQ7oqGHPhxpp2gUZWtfc", \
         "the address it named, not the name"
+
+
+def test_the_tag_card_says_what_letting_go_of_a_tag_costs(client):
+    """A tag moves only when its holder moves it -- and the page has to say
+    the other half too: abandoning one hands the next claimer everything sent
+    to that name afterwards, and the people who wrote it down are not told."""
+    page, _ = client
+    # Whitespace-insensitive: the sentences are wrapped in the template, and a
+    # test that breaks when somebody re-wraps a paragraph teaches nobody
+    # anything.
+    card = " ".join(page.get("/contacts").text.split())
+    assert "points where its holder points it" in card
+    assert "Nobody can move" in card, "say plainly that it cannot be taken"
+    assert "next person to claim it" in card
+    assert "will not hear that you did" in card, "the part that costs money"
+    assert "stores the address a tag named, not the name" in card

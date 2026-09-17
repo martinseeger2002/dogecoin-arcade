@@ -46,11 +46,21 @@
       A name that belongs to your address, claimed on the chain: lower case,
       a&ndash;z, 0&ndash;9 and underscore, {{ mine.min }} to {{ mine.max }}
       characters. First claim wins, and it costs a small fee.
-      {% if mine.tag %}Changing it frees <strong>@{{ mine.tag }}</strong> for
-      anybody else.{% endif %}
       Wherever this wallet shows who somebody is, it shows their @tag if the
       chain gives them one &mdash; and unlike a name, that is something a
       reader can check.</p>
+    <div class="msg info" style="margin:12px 0 0;font-size:.84rem">
+      <strong>A tag points where its holder points it, and nowhere else.</strong>
+      Nobody can move <strong>{{ '@' ~ mine.tag if mine.tag else 'your tag' }}</strong>
+      to their own address while you hold it. What you can do is let go of it:
+      {% if mine.tag %}claiming a different name frees <strong>@{{ mine.tag }}</strong>
+      the moment the change is mined{% else %}claiming a different name later
+      frees the one you have now{% endif %}, and the next person to claim it
+      gets it &mdash; along with anything anyone sends to that name from then
+      on. That is worth knowing before you change it, because the people who
+      have your tag written down will not hear that you did. Somebody who
+      saved you in their address book is safe: this wallet stores the address
+      a tag named, not the name.</div>
   {% endif %}
 </div>
 
