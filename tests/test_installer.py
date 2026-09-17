@@ -355,9 +355,15 @@ def published(tmp_path, monkeypatch):
             return False
 
     def fake_urlopen(url, timeout=None):
-        if url not in served:
-            raise urllib.error.URLError(f"not served: {url}")
-        return FakeResponse(served[url])
+        # A Request now, not a string: every fetch names itself, because the
+        # site's zone refuses Python-urllib's default header with a 403 that
+        # no installation could act on (D-066).
+        where = getattr(url, "full_url", url)
+        assert "DogecoinArcade" in getattr(url, "headers", {}).get("User-agent", ""), \
+            "a program that downloads software should say what it is"
+        if where not in served:
+            raise urllib.error.URLError(f"not served: {where}")
+        return FakeResponse(served[where])
 
     monkeypatch.setattr(install.urllib.request, "urlopen", fake_urlopen)
     return served, digest
