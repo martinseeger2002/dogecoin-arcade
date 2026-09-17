@@ -890,6 +890,19 @@ class MessageStore:
              ",".join(txids or [])))
         return cur.lastrowid or 0
 
+    def address_for_tag(self, tag: str) -> str:
+        """The address that published this @tag, as announced on the chain.
+
+        The newest announcement wins: a tag moves when its holder says so,
+        and a node that kept believing the first one would take instructions
+        from an address its owner had left behind.
+        """
+        row = self.conn.execute(
+            "SELECT address FROM key_announcement WHERE tag=? "
+            "ORDER BY height DESC, seen_at DESC LIMIT 1",
+            (str(tag).lstrip("@"),)).fetchone()
+        return row["address"] if row else ""
+
     def board_unread(self, network: str) -> int:
         """Public posts, not this wallet's own, since the board was last read."""
         row = self.conn.execute("SELECT value FROM seen_mark WHERE name=?",

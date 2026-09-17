@@ -44,6 +44,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .. import release as releaselib
 from .. import update
 from ..messaging.scanner import Scanner, repair_announcement_names
 
@@ -99,6 +100,8 @@ class BlockWatcher:
         self._check(self.state.ledger, public_only=True)
         self._sync_ledgers()
         self._check_pending_offers()
+        self._check_release_notices()
+        self._announce_release()
         self._auto_update()
         self._keep_shop()
         self._walk_home()
@@ -220,6 +223,81 @@ class BlockWatcher:
     #: When the automatic update last looked, and how often it may.
     _update_checked = 0.0
     UPDATE_EVERY = 6 * 3600
+
+    #: The last release this node announced or acted on, so a notice that
+    #: stays on the board does not start an update every pass.
+    _release_seen = ""
+
+    def _check_release_notices(self) -> None:
+        """Somebody published; look now rather than in six hours.
+
+        Automatic updates poll, and a poll is a compromise: often enough to
+        matter, rare enough not to hammer the site. A consensus rule starting
+        at a height does not care about that compromise -- the machines that
+        have not looked yet are exactly the ones that will read the block
+        wrong (D-062).
+
+        So a release is announced on the public board, and a node that sees
+        one checks immediately. The notice carries no authority: it names a
+        revision and nothing else, and what gets installed is still decided
+        by the signature on the manifest (D-065). The worst a forged notice
+        can do is make a node fetch a manifest it would have fetched anyway
+        -- which is why the check below is worth having but is not what makes
+        this safe.
+        """
+        chain = self.state.messaging
+        try:
+            with self.state.store() as store:
+                who = store.address_for_tag(releaselib.RELEASE_TAG)
+                if not who:
+                    return              # nobody has published that tag here
+                posts = store.group_posts(chain.network, releaselib.RELEASE_CHANNEL,
+                                          limit=5)
+        except Exception:
+            return
+        for post in posts:
+            revision = releaselib.revision_in(post.get("text") or "")
+            if not revision or revision == self._release_seen:
+                continue
+            if post.get("sender") != who:
+                # Anybody may post on a public board. Only the node that
+                # published the tag is telling us about a release.
+                continue
+            self._release_seen = revision
+            log.info("release notice from @%s: %s", releaselib.RELEASE_TAG, revision)
+            self._update_checked = 0.0   # look now
+            break
+
+    def _announce_release(self) -> None:
+        """Tell everyone, if this is the node that may.
+
+        Self-selecting rather than configured: the node that holds the tag a
+        notice must come from is the node that publishes releases, and no
+        other machine can usefully claim otherwise -- everyone else checks
+        the sender against the same tag.
+        """
+        if self.state.setting("announce_releases", True) is False:
+            return
+        try:
+            if (self.state.my_tag() or "").lstrip("@") != releaselib.RELEASE_TAG:
+                return
+            installed, published, _ = update.check()
+        except Exception:
+            return
+        if not published or published == self._release_seen:
+            return
+        # Only what this machine is actually running. Announcing a release
+        # this node has not installed is telling other people to run
+        # something nobody has run.
+        if installed != published:
+            return
+        self._release_seen = published
+        try:
+            self.state.post_to_board(releaselib.RELEASE_CHANNEL,
+                                     releaselib.notice(published))
+            log.info("announced release %s on the board", published)
+        except Exception as exc:
+            log.warning("could not announce release %s: %s", published, exc)
 
     def _auto_update(self) -> None:
         """Install a newer published release, if the machine is allowed to.

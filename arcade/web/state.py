@@ -430,6 +430,46 @@ class AppState:
 
     # --- identity -------------------------------------------------------------
 
+    def my_tag(self) -> str:
+        """This wallet's @tag as the chain has it, or "" -- never a guess."""
+        try:
+            from .. import tags as taglib          # noqa: F401  (import guard)
+            chain = self.ledger if self.ledger.wallet else self.messaging
+            index = self.token_index(chain)
+            return index.tag_of(self.derived_address or "") or ""
+        except Exception:
+            return ""
+
+    def post_to_board(self, channel: str, text: str) -> str:
+        """One short public post, in one transaction, with no page behind it.
+
+        The interface's own posting path is a long one -- attachments,
+        progress, chunking, a person watching -- and none of that applies to
+        a machine saying one line. This is the short path, and it refuses
+        rather than chunks: a notice that does not fit in one transaction is
+        a notice that has gone wrong.
+        """
+        from ..messaging import group
+        from ..messaging.sender import MessageSender, funded_address
+
+        chain = self.messaging
+        plan = group.plan(group.GroupPost(channel=channel, nickname=self.profile_name,
+                                          text=text))
+        if plan.transactions != 1:
+            raise ValueError("a board notice has to fit in one transaction")
+        with chain.rpc() as rpc:
+            sender = MessageSender(rpc, chain.params, public_only=True)
+            address = funded_address(rpc, mainnet=chain.is_mainnet)
+            prepared = sender.prepare(address, plan.payloads[0],
+                                      class_c=plan.class_c, change_address=address)
+            txid = sender.broadcast(prepared)
+        with self.store() as store:
+            store.add_group_post(chain.network, channel, txid, 0, int(time.time()),
+                                 address, self.profile_name, text, mine=True,
+                                 txids=[txid])
+        self.bump_generation()
+        return txid
+
     # --- settings -------------------------------------------------------------
 
     #: Preferences that outlive a restart and are nobody's business but this

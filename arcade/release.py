@@ -41,6 +41,36 @@ PUBLIC_KEY = "9c955cd5c945d72775f2fa8592b13f5098285d1205edd0be2cca11591b2a008a"
 MANIFEST = "source.manifest.json"
 
 
+#: The public channel a release is announced on, and the tag whose node may
+#: announce one. A notice is a nudge and nothing more -- it tells a node to
+#: look NOW rather than at its next six-hourly check -- so the worst a forged
+#: one can do is make somebody fetch a manifest they would have fetched
+#: anyway. What is installed is decided by the signature, never by the notice
+#: (D-068).
+RELEASE_CHANNEL = "releases"
+RELEASE_TAG = "bigchiefenergy"
+
+#: How a notice reads on the board. Plain text, because it is a public post
+#: on a public board and anybody scrolling past should be able to see what it
+#: says rather than a blob.
+NOTICE = "arcade-release {revision}"
+
+
+def notice(revision: str) -> str:
+    return NOTICE.format(revision=str(revision)[:40])
+
+
+def revision_in(text: str) -> str:
+    """The revision a notice names, or "" if this is not a notice."""
+    words = str(text or "").strip().split()
+    if len(words) != 2 or words[0] != "arcade-release":
+        return ""
+    revision = words[1]
+    if len(revision) < 7 or any(c not in "0123456789abcdef" for c in revision.lower()):
+        return ""
+    return revision.lower()
+
+
 class ReleaseError(Exception):
     """A release that is not ours, or not readable."""
 
