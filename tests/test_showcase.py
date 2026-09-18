@@ -49,7 +49,14 @@ def showcased(tmp_path_factory):
     db = Database(home / "regtest-ledger.sqlite")
     install_schema(db)
     state_db = StateDB(db)
-    engine = Engine(state_db, NETWORKS["regtest"])
+    # This node keeps the bytes. A node only stores an inscription's content
+    # when it is asked to (D-113); otherwise /content reassembles it from the
+    # chain, and there is no chain here to reassemble from. Left as the
+    # default, every page below framed a JSON error instead of the inscription
+    # -- which is how twenty browser tests, the sandbox guarantees among them,
+    # went from testing something to testing nothing without going red in a
+    # way anybody read (a test machine pressed on it; D-121).
+    engine = Engine(state_db, NETWORKS["regtest"], keep_content=lambda _: True)
 
     def inscribe(n, content, content_type, json_text=""):
         height = 100 + n * 10
@@ -120,6 +127,14 @@ def rendered(showcased):
         if table("sandbox"):
             break
         time.sleep(0.3)
+    else:
+        # Said here rather than eighteen seconds later at the first hard
+        # `find_element`. The loop used to exhaust in silence and every
+        # assertion below then checked an empty dict, so a page that never ran
+        # reported as a missing element and read as a stale selector (D-121).
+        raise AssertionError(
+            "the framed inscription never ran: "
+            + browser.execute_script("return document.body.innerText")[:400])
     result = {name: table(name) for name in
               ("recursion", "self", "chain", "wallet", "sandbox")}
     result["meta"] = browser.find_element(By.ID, "meta").text
@@ -219,7 +234,8 @@ def hours(tmp_path_factory):
     db = Database(home / "regtest-ledger.sqlite")
     install_schema(db)
     state_db = StateDB(db)
-    engine = Engine(state_db, NETWORKS["regtest"])
+    # Keeps the bytes, for the same reason the showcase node does (D-121).
+    engine = Engine(state_db, NETWORKS["regtest"], keep_content=lambda _: True)
 
     def inscribe(n, content, content_type, json_text=""):
         height = 100 + n * 10
@@ -272,6 +288,11 @@ def hours(tmp_path_factory):
         cells = browser.find_elements(By.CSS_SELECTOR, f"#{name} td")
         return {cells[n].text.strip(): cells[n + 1].text.strip()
                 for n in range(0, len(cells) - 1, 2)}
+
+    if not browser.find_elements(By.ID, "hdr"):
+        raise AssertionError(
+            "the framed artwork never ran: "
+            + browser.execute_script("return document.body.innerText")[:400])
 
     result = {
         "wallet": table("wallet"),

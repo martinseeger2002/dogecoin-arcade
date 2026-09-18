@@ -79,7 +79,14 @@ def inscribed():
     db = Database(home / "regtest-ledger.sqlite")
     install_schema(db)
     state_db = StateDB(db)
-    engine = Engine(state_db, NETWORKS["regtest"])
+    # This node keeps the bytes. A node only stores an inscription's content
+    # when it is asked to (D-113); otherwise /content reassembles it from the
+    # chain, and there is no chain here to reassemble from. Left as the
+    # default, every page below framed a JSON error instead of the inscription
+    # -- which is how twenty browser tests, the sandbox guarantees among them,
+    # went from testing something to testing nothing without going red in a
+    # way anybody read (a test machine pressed on it; D-121).
+    engine = Engine(state_db, NETWORKS["regtest"], keep_content=lambda _: True)
     txid = f"{1:064x}"
     with state_db.block_context(100, "h", "p", 0, 1, 0):
         engine.process(ArcadeTransaction(
