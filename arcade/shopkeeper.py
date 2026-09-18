@@ -57,6 +57,8 @@ class Shopkeeper:
     def __init__(self, state: Any):
         self.state = state
         self._warned = False
+        #: Orders already asked about; see `_asked_already` (D-119).
+        self._tried: dict[tuple, float] = {}
 
     def tick(self) -> int:
         """One pass; returns how many swap messages were answered.
@@ -305,6 +307,35 @@ class Shopkeeper:
             log.debug("filling what crosses failed", exc_info=True)
         return 0
 
+    #: An order this node has already asked about, as it looked when asked:
+    #: (txid, what it sells, what it wants) -> when. The book is built from
+    #: blocks, so a crossing order stays crossing until one lands -- and
+    #: without this the next tick sees the same untouched order and asks
+    #: again. Eleven fill transactions went out in fifty seconds against two
+    #: bids before this existed, each for the full amount (a test machine, D-119).
+    #:
+    #: Keyed on the order AS SEEN, so a PARTIAL fill -- which changes the
+    #: amounts -- is a different key and may be acted on at once, while a
+    #: refusal or a silence is not retried until the window passes.
+    RETRY_AFTER = 600.0
+
+    def _asked_already(self, order: dict) -> bool:
+        """Whether this node has asked about this order, as it stands now."""
+        key = (str(order["txid"]), int(order["sale_amount"]),
+               int(order["want_amount"]))
+        when = self._tried.get(key)
+        now = time.time()
+        if when is not None and now - when < self.RETRY_AFTER:
+            return True
+        # Written BEFORE anything is sent, never after: a record made after
+        # the message is a record that is missing exactly when the send
+        # failed, which is the case that loops.
+        self._tried[key] = now
+        if len(self._tried) > 500:
+            for old_key in sorted(self._tried, key=self._tried.get)[:100]:
+                del self._tried[old_key]
+        return False
+
     def _fill_one(self, rpc: Any, index: Any, chain: Any, identity: Any,
                   bid: dict, own: list[str], busy: set) -> bool:
         from fractions import Fraction
@@ -333,6 +364,8 @@ class Shopkeeper:
             if not _has_two_outputs(rpc, bid["address"]):
                 # Two transactions from the buyer's side, two outputs (D-051).
                 return False
+            if self._asked_already(ask):
+                continue
             self._reprice(rpc, chain, bid, want - take)
             sent = self._reply(rpc, chain, identity, bytes(key["pubkey"]),
                                {"swap": "fill", "swapv": swaplib.PROTOCOL,
@@ -390,6 +423,8 @@ class Shopkeeper:
                 continue
             if not _has_two_outputs(rpc, ask["address"]):
                 return False
+            if self._asked_already(bid):
+                continue
             sent = self._reply(rpc, chain, identity, bytes(key["pubkey"]),
                                {"swap": "fill", "swapv": swaplib.PROTOCOL,
                                 "order": bid["txid"], "tokens": tokens,

@@ -998,3 +998,67 @@ def test_this_wallet_does_not_sell_into_its_own_bid(trading):
     _crossing_bid(index, maker=SELLER)
 
     assert keeper.fill_what_crosses() == 0 and answers == []
+
+
+def test_a_bid_is_not_taken_twice_while_the_first_is_in_flight(trading):
+    """Eleven fill transactions went out in fifty seconds against two bids,
+    each for the full amount, because the book is built from blocks and the
+    bid it crosses stays untouched until one lands. The node must remember
+    what it has already sent (a test machine, D-119)."""
+    state, index, keeper, answers, maker, built = trading
+    _crossing_bid(index)
+
+    assert keeper.fill_what_crosses() == 1
+    for _ in range(4):
+        assert keeper.fill_what_crosses() == 0, "one attempt, not one per tick"
+    assert len(answers) == 1, f"{len(answers)} fill messages went out"
+
+
+def test_a_refused_fill_is_not_asked_again_on_the_next_tick(trading, monkeypatch):
+    """The case that actually loops: the note says refused, so an in-flight
+    check lets it through, and the book has not changed because nothing has
+    landed -- so it asks again, and again. Eleven times in fifty seconds
+    (a test machine, D-119)."""
+    state, index, keeper, answers, maker, built = trading
+    _crossing_bid(index)
+
+    assert keeper.fill_what_crosses() == 1
+    # Whatever becomes of the note -- refused, failed, expired, or never
+    # written at all -- the order must not be asked about again.
+    for note in state.offers.fills("regtest"):
+        state.offers.close_fill(note["id"], "refused", error="not this way")
+    for _ in range(5):
+        assert keeper.fill_what_crosses() == 0
+    assert len(answers) == 1, f"{len(answers)} fill messages went out"
+
+
+def test_a_note_that_was_never_written_still_does_not_loop(trading, monkeypatch):
+    """A record made AFTER the message is missing exactly when the send
+    failed, which is the case that spends without remembering."""
+    state, index, keeper, answers, maker, built = trading
+    _crossing_bid(index)
+    monkeypatch.setattr(type(state.offers), "add_fill",
+                        lambda self, fill: (_ for _ in ()).throw(RuntimeError("no note")))
+
+    keeper.fill_what_crosses()
+    for _ in range(5):
+        keeper.fill_what_crosses()
+    assert len(answers) <= 1, f"{len(answers)} fill messages went out with no note"
+
+
+def test_a_partial_fill_may_be_followed_at_once(trading):
+    """The guard is keyed on the order AS SEEN, so an order that has been
+    reduced is a different order and may be acted on immediately -- otherwise
+    a book would stop halfway through emptying itself."""
+    state, index, keeper, answers, maker, built = trading
+    _crossing_bid(index, bid_tokens=40 * COIN, bid_coins=8 * 10 ** 7)
+
+    assert keeper.fill_what_crosses() == 1
+    assert keeper.fill_what_crosses() == 0, "not the same order twice"
+
+    # The block lands and the bid comes back smaller: a new statement.
+    index.book_rows[3]["bids"][0].update(want_amount=25 * COIN,
+                                         sale_amount=5 * 10 ** 7)
+    for note in state.offers.fills("regtest"):
+        state.offers.close_fill(note["id"], "sent")
+    assert keeper.fill_what_crosses() == 1, "the remainder is fair game"
