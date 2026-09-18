@@ -208,13 +208,13 @@ TESTNET = Params(
     # read by no node here rather than read two ways. A few blocks above the
     # tip at the press, which is a couple of minutes at thirty-second blocks:
     # far enough that nothing of ours is under it, near enough to wait for.
-    activation_height=1_494_450,
-    messaging_start_height=1_494_450,
-    swaps_from=1_494_450,
-    asks_from=1_494_450,
-    fills_from=1_494_450,
-    named_fills_from=1_494_450,
-    bid_fills_from=1_494_450,
+    activation_height=1_494_540,
+    messaging_start_height=1_494_540,
+    swaps_from=1_494_540,
+    asks_from=1_494_540,
+    fills_from=1_494_540,
+    named_fills_from=1_494_540,
+    bid_fills_from=1_494_540,
     datadir_subdir="testnet3",
     pubkeyhash_version=113,
     scripthash_version=196,
