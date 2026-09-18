@@ -498,3 +498,34 @@ def test_the_review_says_what_number_one_will_say_about_the_set(client, tmp_path
     assert "A Real Name" in page, "the field that would be published is on the page"
     assert "five punks" in page
     assert "names them permanently" in page
+
+
+def test_a_set_entirely_on_the_chain_says_so_instead_of_crashing(client, tmp_path,
+                                                                 monkeypatch):
+    """The refusal has to survive its own page.
+
+    Pricing "what this run would actually send" empties the build when every
+    piece is already up, and the page then died on `build.items[0]` --
+    "list object has no element 0" -- with the explanation sitting in a
+    variable it never reached. A crash in front of a message is worse than no
+    message: it says nothing and looks like a fault in the wizard (D-128).
+    """
+    import contextlib
+
+    from arcade.web import app as webapp
+
+    app, state = client
+    index_with_a_collection(state.home, count=5)      # Doge Punks #1..#5 from nMe
+    build = hashlips(tmp_path, count=5)               # the same five
+
+    monkeypatch.setattr(type(state.token_chain), "rpc",
+                        lambda self: contextlib.nullcontext(object()), raising=False)
+    monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
+
+    page = app.post("/inscriptions/collection/review",
+                    data={"csrf_token": state.csrf_token, "folder": str(build),
+                          "fromaddress": "nMe"})
+    assert page.status_code == 200
+    assert "no element 0" not in page.text and "Traceback" not in page.text
+    assert "already on this chain from this address, all 5 pieces of it" in page.text
+    assert "Doge Punks #1" in page.text, "and the build is still described"

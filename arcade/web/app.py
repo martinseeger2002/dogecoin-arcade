@@ -2987,7 +2987,15 @@ def create_app(state: AppState) -> FastAPI:
             # Priced on what this run would actually send, so the number on
             # the page is the number that is charged (D-120).
             already = _what_is_already_there(sender, build)
-            build = _without(build, already["skip"])
+            if not already["blocked"]:
+                # Only when there is a run left to price. Stripping the
+                # skipped pieces out of a build that is ENTIRELY on the chain
+                # leaves no items at all, and the page then died on
+                # `build.items[0]` -- "list object has no element 0" -- while
+                # the refusal it was about to print sat in `clash`, unread.
+                # A crash in front of a message is worse than no message: it
+                # says nothing and looks like a fault in the wizard (D-128).
+                build = _without(build, already["skip"])
             cost = collectionlib.estimate_build(build)
             # What the #1 already says about the SET, shown before the press.
             # That object is what a marketplace reads for the whole

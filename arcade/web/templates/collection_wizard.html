@@ -50,7 +50,8 @@
       <tr><td class="muted">Items</td>
           <td>{{ "{:,}".format(cost['items']) }}
             <span class="muted">&mdash; editions
-              {{ build.items[0].edition }} to {{ build.items[-1].edition }}</span></td></tr>
+              {% if build.items %}{{ build.items[0].edition }} to
+              {{ build.items[-1].edition }}{% else %}none left to send{% endif %}</span></td></tr>
       <tr><td class="muted">Bytes</td>
           <td>{{ "{:,}".format(cost['bytes']) }}, uncompressed</td></tr>
       <tr><td class="muted">Transactions</td>
