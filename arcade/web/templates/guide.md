@@ -117,7 +117,11 @@ An Omni-style token ledger, indexed from the chain.
   agrees. A transaction the engine cannot understand stops the index rather
   than being skipped — a silently skipped transaction is how two nodes come to
   disagree about who owns what.
-* Mainnet and testnet are separate ledgers with their own start blocks.
+* Mainnet and testnet are separate ledgers with their own start blocks. When
+  a release moves a start block above everything a node has indexed, that
+  index moves itself aside — kept, named after the new floor — and rebuilds
+  from it. Nothing is deleted: a floor published wrong is undone by renaming
+  a file back.
 
 ---
 

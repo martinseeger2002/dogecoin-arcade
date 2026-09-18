@@ -132,3 +132,64 @@ def test_reorg_deeper_than_limit_refuses(regtest, follower):
 
     with pytest.raises(ReorgTooDeep):
         follower.sync_once()
+
+
+def test_an_index_below_a_raised_floor_says_so(regtest, follower, monkeypatch):
+    """Raising the floor above everything the index holds is not a reorg.
+
+    It is what raising a floor means, and it happened three times in two days
+    -- each time reported as "the chain reorganised further back than the
+    index can unwind", with no hash compared and every hash in fact agreeing.
+    A wrong diagnosis in an error message aims the investigation (D-123).
+    """
+    from arcade.chain import IndexBelowFloor
+
+    regtest.generate(10)
+    follower.sync_once()
+    tip = follower.db.tip()["height"]
+
+    # Through monkeypatch: the node's client is shared with every other test
+    # in the session, and a replacement left on it is a defect handed to
+    # whatever runs next.
+    asked = []
+    real = follower.rpc.get_block_hash
+    monkeypatch.setattr(follower.rpc, "get_block_hash",
+                        lambda h: (asked.append(h), real(h))[1])
+
+    follower.params = follower.params.__class__(
+        **{**follower.params.__dict__, "activation_height": tip + 100})
+    with pytest.raises(IndexBelowFloor) as complaint:
+        follower.find_fork_height()
+
+    said = str(complaint.value)
+    assert "older floor" in said and "Nothing is wrong with the chain" in said
+    assert f"{tip + 100:,}" in said, "it says where the chain now starts"
+    assert asked == [], "no hash is compared, because none of them is the question"
+
+
+def test_a_node_that_cannot_be_asked_is_not_a_reorg(regtest, follower, monkeypatch):
+    """A timeout, a refused connection or a bad password is evidence about
+    the node and none at all about the chain. Walking on regardless is how a
+    wallet that briefly loses its node reports a catastrophic reorg (D-123)."""
+    from arcade.chain import NodeUnreachable
+    from arcade.rpc import RpcError
+
+    regtest.generate(5)
+    follower.sync_once()
+    follower.db.conn.execute(
+        "UPDATE block SET hash = 'deadbeef' WHERE height = (SELECT MAX(height) FROM block)")
+
+    def unreachable(height):
+        raise ConnectionError("connection refused")
+
+    monkeypatch.setattr(follower.rpc, "get_block_hash", unreachable)
+    with pytest.raises(NodeUnreachable):
+        follower.find_fork_height()
+
+    # An answer of "I do not have that height" is different: the node spoke,
+    # and what it said is about the chain, so the walk goes on.
+    monkeypatch.setattr(follower.rpc, "get_block_hash", lambda h: (_ for _ in ()).throw(
+        RpcError(-8, "Block height out of range", "getblockhash")))
+    follower.max_reorg_depth = 0
+    with pytest.raises(ReorgTooDeep):
+        follower.find_fork_height()

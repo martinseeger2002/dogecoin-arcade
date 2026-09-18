@@ -32,7 +32,8 @@ from pathlib import Path
 from typing import Any, Callable, ContextManager, Sequence
 
 from . import payload as P
-from .chain import ChainFollower, ReorgTooDeep, SyncResult
+from .chain import (ChainFollower, IndexBelowFloor, NodeUnreachable,
+                    ReorgTooDeep, SyncResult)
 from .config import Params
 from .db import Database
 from .indexer import ArcadeHandler
@@ -145,6 +146,8 @@ class LedgerIndex:
                 result = follower.sync_once(max_blocks=max_blocks)
                 for key, value in handler.stats.items():
                     self.stats[key] = self.stats.get(key, 0) + value
+        except IndexBelowFloor as exc:
+            self._start_again(exc)
         except Exception as exc:
             self._stop(exc)
             return None
@@ -158,6 +161,56 @@ class LedgerIndex:
         finally:
             self._sync_lock.release()
 
+    def _start_again(self, exc: IndexBelowFloor) -> None:
+        """Move this index aside and rebuild it from the new floor.
+
+        The move is automatic; the delete never is (D-123). An index is
+        derived from the chain and can be rebuilt, so keeping it is not the
+        decision -- but a program that DISCARDS on a config change discards on
+        a mistaken one, and four floors have been published in two days with
+        two of them moved after publishing. A floor a digit too high would
+        wipe every updated node the moment it started, silently, before
+        anybody read the number. A copy costs a file; the alternative costs
+        everything, everywhere, at once, by way of the thing everybody trusts.
+
+        So it is renamed after the FLOOR that displaced it, which is what
+        makes it obvious which one to rename back, and the log says where it
+        went -- an automatic move that does not say leaves somebody with six
+        copies and no idea which is which (a test machine).
+
+        The messaging store next to it is never touched. It holds an address
+        book that was typed rather than scanned: losing it is losing work, not
+        losing test data, which is precisely the thing a program cannot decide
+        for somebody.
+        """
+        floor = self.params.activation_height
+        kept = self.path.with_name(f"{self.path.name}.before-{floor}")
+        count = 1
+        while kept.exists():
+            count += 1
+            kept = self.path.with_name(f"{self.path.name}.before-{floor}.{count}")
+        moved = False
+        try:
+            for suffix in ("", "-wal", "-shm"):
+                source = Path(str(self.path) + suffix)
+                if source.exists():
+                    source.rename(str(kept) + suffix)
+                    moved = moved or not suffix
+        except OSError as exc2:
+            self._stop(IndexBelowFloor(f"{exc}\n(and it could not be moved "
+                                       f"aside automatically: {exc2})"))
+            return
+        if not moved:
+            self._stop(exc)
+            return
+        log.warning("ledger %s: the floor is now %s and every block this index "
+                    "held was below it, so it has been moved to %s and is being "
+                    "rebuilt from %s. Nothing is wrong with the chain.",
+                    self.params.name, f"{floor:,}", kept.name, f"{floor:,}")
+        self.stopped = None
+        self.stats = {}
+        self._content_cache = {}
+
     def _stop(self, exc: Exception) -> None:
         """Record why the index halted, at the height it was working on."""
         height = self.indexed_height()
@@ -166,6 +219,15 @@ class LedgerIndex:
             reason = (f"a transaction uses Omni message type {exc.message_type}, which "
                       f"this version does not implement. Balances after this block "
                       f"cannot be trusted until a version that does is installed.")
+        elif isinstance(exc, IndexBelowFloor):
+            # Its own sentence, because the old one named a catastrophic
+            # external event for what is a config value somebody changed on
+            # purpose ten minutes earlier. A wrong diagnosis in an error
+            # message costs more than no message: it aims the investigation
+            # (D-123).
+            reason = str(exc)
+        elif isinstance(exc, NodeUnreachable):
+            reason = str(exc)
         elif isinstance(exc, ReorgTooDeep):
             reason = f"the chain reorganised further back than the index can unwind: {exc}"
         else:

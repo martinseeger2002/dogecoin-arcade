@@ -226,3 +226,42 @@ def test_a_scanner_reads_the_pool_once(tmp_path, monkeypatch):
     asked.clear()
     scanner.scan_mempool()
     assert asked.count("getrawtransaction") == 0, "and neither, the second"
+
+
+def test_an_index_below_a_raised_floor_moves_itself_aside(tmp_path, regtest):
+    """Automate the move, never the delete (D-123).
+
+    An index is derived from the chain, so keeping it is not the decision --
+    but a program that discards on a config change discards on a mistaken
+    one, and a floor a digit too high would wipe every updated node the
+    moment it started. So the file is renamed after the floor that displaced
+    it, and rebuilt.
+    """
+    import dataclasses
+
+    from arcade.ledger import LedgerIndex
+
+    path = tmp_path / "test-ledger.sqlite"
+    regtest.generate(6)
+    index = LedgerIndex(path, regtest.params, rpc_factory=lambda: regtest.rpc)
+    index.sync()
+    assert index.indexed_height() is not None
+    was = index.indexed_height()
+
+    floor = was + 500
+    index.params = dataclasses.replace(regtest.params, activation_height=floor)
+    index.sync()
+
+    kept = tmp_path / f"test-ledger.sqlite.before-{floor}"
+    assert kept.exists(), "the old index is kept, under the floor that displaced it"
+    assert index.stopped is None, "and nothing is halted: this is a rebuild, not a fault"
+    assert index.indexed_height() is None, "the new one starts empty"
+
+    # A second time keeps both: a floor moved twice must not overwrite the
+    # copy from the first move.
+    index.sync()                                   # nothing to do; index is empty
+    fresh = LedgerIndex(path, regtest.params, rpc_factory=lambda: regtest.rpc)
+    fresh.sync()
+    fresh.params = dataclasses.replace(regtest.params, activation_height=floor)
+    fresh.sync()
+    assert (tmp_path / f"test-ledger.sqlite.before-{floor}.2").exists()

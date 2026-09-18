@@ -20,7 +20,7 @@ from typing import Any, Callable, Protocol
 
 from .config import Params
 from .db import Database, StateDB
-from .rpc import RpcClient
+from .rpc import RpcClient, RpcError
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +68,20 @@ class ReorgTooDeep(Exception):
     """A reorg went deeper than we are willing to handle automatically."""
 
 
+class IndexBelowFloor(Exception):
+    """Every block this index holds is below the floor the chain now starts at.
+
+    Not a disagreement with anybody: it is what raising a floor MEANS, and it
+    is the routine operation this project performed three times in two days.
+    Its own class because the answer is its own -- the index cannot be
+    unwound to meet the floor, it is discarded and rebuilt from it (D-123).
+    """
+
+
+class NodeUnreachable(Exception):
+    """The node could not be asked, so the chain said nothing either way."""
+
+
 class ChainFollower:
     """Keeps the database in step with the node's active chain."""
 
@@ -111,8 +125,24 @@ class ChainFollower:
             return None
 
         height = tip["height"]
-        floor = max(self.params.activation_height, height - self.max_reorg_depth)
+        start = self.params.activation_height
+        if height < start:
+            # The floor was raised above everything this index holds. No hash
+            # is compared, and none should be: every block in here is below
+            # the floor and unreadable by definition. Said before the loop
+            # because the loop would not run -- `floor` would exceed `height`
+            # and the function would fall through to a reorg it never looked
+            # for. Three floors in two days each reported as a catastrophic
+            # reorg, and the hashes agreed perfectly every time (a test machine, D-123).
+            raise IndexBelowFloor(
+                f"this index was built for an older floor: it ends at "
+                f"{height:,} and the chain now starts at {start:,}, so "
+                f"everything in it is below the floor and cannot be read. "
+                f"Nothing is wrong with the chain. Move the index file aside "
+                f"and let it rebuild from {start:,}.")
+        floor = max(start, height - self.max_reorg_depth)
 
+        asked = 0
         while height >= floor:
             ours = self.db.block_at(height)
             if ours is None:
@@ -120,17 +150,31 @@ class ChainFollower:
                 continue
             try:
                 theirs = self.rpc.get_block_hash(height)
-            except Exception:
-                # Node does not have this height at all (it is behind, or shorter).
+            except RpcError:
+                # The node answered and does not have this height: it is
+                # behind, or on a shorter chain. That IS evidence about the
+                # chain, so keep walking back.
+                asked += 1
                 height -= 1
                 continue
+            except Exception as exc:
+                # It did not answer -- a timeout, a refused connection, wrong
+                # credentials. That is evidence about the node and none at all
+                # about the chain, and walking on regardless is how a wallet
+                # that briefly cannot reach its node reports a catastrophic
+                # reorg (D-123).
+                raise NodeUnreachable(
+                    f"the node could not be asked for the hash at {height:,}: "
+                    f"{exc}") from exc
+            asked += 1
             if theirs == ours["hash"]:
                 return height
             height -= 1
 
         raise ReorgTooDeep(
             f"our chain disagrees with the node for more than {self.max_reorg_depth} blocks "
-            f"below height {tip['height']}; refusing to roll back automatically"
+            f"below height {tip['height']}; refusing to roll back automatically "
+            f"({asked} heights compared)"
         )
 
     # --- one pass -------------------------------------------------------------
