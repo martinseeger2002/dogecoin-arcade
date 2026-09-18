@@ -95,6 +95,22 @@ An Omni-style token ledger, indexed from the chain.
 
 * **Create** a token with a fixed supply, or a managed one you can grant and
   revoke against later.
+* **One name, one token.** A name already issued on that chain is refused —
+  first claim wins, in chain order. Names are compared folded (lower case,
+  letters and digits only), so *Dogecoin Arcade*, *dogecoin arcade* and
+  *Dogecoin-Arcade* are the same name and the rule cannot be stepped around
+  with the space bar. The wallet checks before it builds anything, the
+  mempool included: a name claimed by a transaction still waiting for its
+  block is claimed. Managed and fixed share one namespace, since a reader
+  cannot see the difference between them.
+* **A name is plain ASCII.** Letters, digits, spaces and punctuation, with at
+  least one letter or digit. Characters from other alphabets are refused
+  rather than quietly ignored: *Dogecoin* written with a Cyrillic *o* looks
+  identical on every page and would be a different token, and a rule that
+  deletes what it does not recognise is a rule that can be worked around by
+  typing more of it. Lookalikes *within* ASCII — a zero for an O, a one for
+  an l — are still allowed: they are visible on the page, and folding them
+  would collide names people mean to be different (*A1*, *W3*, *COIN2*).
 * **Send** tokens to an address, **grant** and **revoke** on a managed token,
   and **hand the issuer role** to somebody else.
 * Balances, holders and history come from replaying the chain, so every node

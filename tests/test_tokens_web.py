@@ -432,3 +432,36 @@ def test_an_order_goes_on_the_book_and_can_be_taken_off(web):
         mine_and_index(node, state)
         assert index.book(prop["property_id"])["asks"] == []
         assert index.balance(home, prop["property_id"]) == 1000 * 10**8
+
+
+def test_a_name_already_on_the_chain_is_refused_before_it_costs_anything(web):
+    """One name, one token. The chain refuses the second issuance now, and a
+    refused issuance still costs its fee -- so the wallet asks first (D-122)."""
+    app, state, node, alice, bob = web
+    csrf = state.csrf_token
+    form = dict(csrf_token=csrf, sender=alice, name="Dogecoin Arcade", supply="100",
+                kind="fixed", units="divisible")
+    txid = shown(app.post("/tokens/create", data=form).text, "txid")
+    app.post("/tokens/create", data={**form, "confirmed": txid}, follow_redirects=False)
+
+    # Broadcast but not yet in a block: the name is claimed all the same, or a
+    # wallet pays twice to lose a race with itself.
+    page = app.post("/tokens/create", data={**form, "name": "dogecoin arcade"}).text
+    assert "broadcast a token called" in page
+    assert 'name="confirmed"' not in page, "nothing to confirm; nothing was built"
+
+    mine_and_index(node, state)
+    for spelling in ("Dogecoin Arcade", "dogecoin arcade", "DOGECOIN-ARCADE",
+                     "DogecoinArcade"):
+        page = app.post("/tokens/create", data={**form, "name": spelling}).text
+        assert "is already token #" in page, spelling
+        assert 'name="confirmed"' not in page
+
+    assert node.rpc.call("getrawmempool") == [], "nothing was sent to be refused"
+
+    # A name of its own is still free.
+    page = app.post("/tokens/create", data={**form, "name": "Dogecoin Arcade 2"}).text
+    assert 'name="confirmed"' in page
+
+    page = app.post("/tokens/create", data={**form, "name": "!!!"}).text
+    assert "needs at least one letter or digit" in page

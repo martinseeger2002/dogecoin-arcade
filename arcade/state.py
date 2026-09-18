@@ -382,6 +382,63 @@ def _declared_supply(conn, creator: str, collection: str) -> int:
     return said if isinstance(said, int) and said > 0 else 0
 
 
+#: What a token name may be written with: ordinary printable ASCII. Anything
+#: else is refused rather than folded away, because folding is what lets a
+#: character vanish from the comparison and stay on the screen (D-122).
+NAME_CHARACTERS = frozenset(chr(n) for n in range(0x20, 0x7F))
+
+
+def name_key(name: str) -> str:
+    """The form two token names are compared in: letters and digits, folded.
+
+    "Dogecoin Arcade", "dogecoin arcade", "Dogecoin-Arcade" and
+    "DOGECOINARCADE" are one name to everybody who reads them, so they are
+    one name here. Everything else -- spaces, punctuation, case -- is how a
+    name is written rather than which name it is, and leaving any of it in
+    means the rule can be stepped around by pressing the space bar (D-122).
+
+    Only meaningful for a name `name_complaint` accepts: it is ASCII by then,
+    so there is no character in it that this can silently drop.
+    """
+    return "".join(ch for ch in (name or "").lower() if "a" <= ch <= "z" or ch.isdigit())
+
+
+def name_complaint(name: str) -> str:
+    """Why this cannot be a token name at all, or "" if it can.
+
+    Separate from the uniqueness rule, and asked first, because "what may a
+    name contain" and "is this name taken" are different questions and only
+    the first one can be answered about a name on its own.
+
+    Refusing rather than folding is the whole point. A fold deletes what it
+    does not recognise, and a character that disappears from the comparison
+    while staying on every screen is exactly the hole this rule exists to
+    close: "Dogecoin" with a Cyrillic o renders identically to "Dogecoin" in
+    every page either machine draws, and would be a different token. Folded,
+    it passes whichever way the fold is written -- dropped, and it makes a
+    new key; kept, and it makes a new key. Refused, it cannot (a test machine found
+    this before the rule reached the chain).
+
+    So a name is printable ASCII, and the door to more than that is a later
+    decision with its own activation height and its own confusables policy,
+    not a side effect of how a key is built. No mainnet token exists yet, so
+    nothing on any chain is rewritten by saying it now.
+    """
+    said = (name or "").strip()
+    if not said:
+        return "a token name must not be empty."
+    odd = [ch for ch in said if ch not in NAME_CHARACTERS]
+    if odd:
+        return (f"a token name uses ordinary letters, digits and punctuation "
+                f"-- {odd[0]!r} is not one of them. Characters from other "
+                f"alphabets can look identical to these on a page, and a name "
+                f"that looks like another token's is the one thing a name "
+                f"must not do.")
+    if not name_key(said):
+        return "a token name needs at least one letter or digit."
+    return ""
+
+
 def _file_collections(db: Database) -> None:
     """File inscriptions indexed before collections were, once.
 
@@ -641,10 +698,14 @@ class Engine:
             raise InvalidTransaction(f"invalid property type {msg.property_type}")
         if not msg.name:
             raise InvalidTransaction("property name must not be empty")
+        complaint = name_complaint(msg.name)
+        if complaint:
+            raise InvalidTransaction(complaint)
 
     def _create_property(
         self, rtx: ArcadeTransaction, msg: Any, managed: bool, total: int
     ) -> int:
+        self._refuse_a_taken_name(msg)
         property_id = self.next_property_id(msg.ecosystem)
         self.state.insert(
             "property",
@@ -665,6 +726,33 @@ class Engine:
             },
         )
         return property_id
+
+    def _refuse_a_taken_name(self, msg: Any) -> None:
+        """One name to a token, first claim wins, in chain order (D-122).
+
+        The same name was issued twice on two machines and both tokens are
+        real: a hundred of "Dogecoin Arcade" here and a hundred there, telling
+        anybody reading a balance, an order book or a shop two different
+        things with one word. A ticker is only useful because it is the same
+        object wherever it is quoted.
+
+        Compared folded (`name_key`), because a name that differs only in
+        case, spacing or punctuation is the same name to the person reading
+        it, and the ways to spell one name are endless. Per ecosystem, since
+        main and test are separate ledgers that happen to share this code.
+
+        Refused outright rather than renamed: an issuance that does not do
+        what it says is not one to keep, and the wallet that sent it will
+        have refused it first -- this is the rule for everyone else's node.
+        """
+        wanted = name_key(msg.name)
+        rows = self.state.db.conn.execute(
+            "SELECT name FROM property WHERE ecosystem = ?",
+            (msg.ecosystem,)).fetchall()
+        for row in rows:
+            if name_key(row["name"]) == wanted:
+                raise InvalidTransaction(
+                    f"the name {msg.name!r} is already a token on this chain")
 
     def _issuance_fixed(self, rtx: ArcadeTransaction, msg: P.IssuanceFixed) -> None:
         """Type 50. Entire supply is credited to the issuer at creation."""

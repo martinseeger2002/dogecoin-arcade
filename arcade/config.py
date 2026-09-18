@@ -202,19 +202,19 @@ TESTNET = Params(
     # with mainnet messages rescan them (a test machine found the row). Nothing else in
     # ~/.dogecoinarcade is per-chain, and `main-ledger.sqlite` must not be
     # touched at all.
-    # Moved again 2026-09-17 with the collection seal (D-120): a set that was
-    # inscribed twice is doubled on the chain for ever, and the rule that
-    # stops it is a rule about what may join a set -- so the sets under it are
-    # read by no node here rather than read two ways. A few blocks above the
-    # tip at the press, which is a couple of minutes at thirty-second blocks:
-    # far enough that nothing of ours is under it, near enough to wait for.
-    activation_height=1_494_540,
-    messaging_start_height=1_494_540,
-    swaps_from=1_494_540,
-    asks_from=1_494_540,
-    fills_from=1_494_540,
-    named_fills_from=1_494_540,
-    bid_fills_from=1_494_540,
+    # Moved again 2026-09-18 with the token name rule (D-122): "Dogecoin
+    # Arcade" was issued on both machines and both tokens are real, so the
+    # pair goes under the floor along with the doubled collection that moved
+    # it yesterday (D-120). Set about forty minutes ahead of the tip, which is
+    # the suite, the publish and both machines taking the release -- far
+    # enough that nothing of ours is under it, near enough to wait for.
+    activation_height=1_495_420,
+    messaging_start_height=1_495_420,
+    swaps_from=1_495_420,
+    asks_from=1_495_420,
+    fills_from=1_495_420,
+    named_fills_from=1_495_420,
+    bid_fills_from=1_495_420,
     datadir_subdir="testnet3",
     pubkeyhash_version=113,
     scripthash_version=196,

@@ -48,6 +48,7 @@ from .. import mintpad as mintpadlib
 from .. import tokenpad as tokenpadlib
 from .. import swap as swaplib
 from .. import tags as taglib
+from .. import state as statelib
 from .. import remote as remotelib
 from ..messaging import contact, content, group
 from ..script import b58check_decode, b58check_encode
@@ -4416,7 +4417,11 @@ def create_app(state: AppState) -> FastAPI:
                     state.prepared_tokens.pop((chain.network, confirmed), None)
                     state.pending_tokens.append(
                         {"txid": txid, "what": action, "at": time.time(),
-                         "network": chain.network})
+                         "network": chain.network,
+                         # Kept so a name this wallet has just claimed is not
+                         # offered again while its block is still coming
+                         # (_name_is_taken, D-122).
+                         "name": str(fields.get("name") or "")})
                     state.flash(f"{action.capitalize()} broadcast as {txid}. It shows "
                                 f"here once its block is indexed.", "ok")
         except HTTPException:
@@ -4456,6 +4461,38 @@ def create_app(state: AppState) -> FastAPI:
             raise tokenlib.TokenError(complaint)
         return address
 
+    def _name_is_taken(name: str) -> str:
+        """Why this token name cannot be used, or "" if it can.
+
+        The chain refuses a second token of the same name now (D-122), and a
+        refused issuance still costs its fee -- so the wallet asks first. The
+        mempool counts too: a name claimed by a transaction that has not been
+        indexed yet is claimed, and a wallet that forgets what it broadcast
+        two minutes ago will happily pay to lose the race with itself.
+        """
+        complaint = statelib.name_complaint(name)
+        if complaint:
+            return complaint
+        wanted = statelib.name_key(name)
+        chain, index = _token_chain()
+        try:
+            taken = [p for p in index.properties()
+                     if statelib.name_key(p["name"]) == wanted]
+        except Exception:
+            return ""                     # the index is the wallet's business
+        if taken:
+            first = taken[0]
+            return (f"{first['name']} is already token #{first['property_id']} "
+                    f"on this chain. One name is one token: pick another.")
+        for item in state.pending_tokens:
+            if (item.get("network") == chain.network
+                    and item.get("what") == "create"
+                    and statelib.name_key(item.get("name", "")) == wanted):
+                return (f"this wallet broadcast a token called {name.strip()} "
+                        f"a moment ago ({item['txid'][:12]}...). Wait for its "
+                        f"block rather than pay for the same name twice.")
+        return ""
+
     @app.post("/tokens/create", response_class=HTMLResponse)
     def tokens_create(request: Request, sender: str = Form(""), name: str = Form(""),
                       supply: str = Form(""), kind: str = Form("fixed"),
@@ -4473,6 +4510,9 @@ def create_app(state: AppState) -> FastAPI:
             divisible = units != "indivisible"
             managed = kind == "managed"
             amount = None if managed else parse_amount(supply, divisible)
+            complaint = _name_is_taken(name)
+            if complaint:
+                raise tokenlib.TokenError(complaint)
             if icon.strip() and not tokenlib.icon_in(icon):
                 raise tokenlib.TokenError(
                     "an icon is an inscription on this chain: paste its "
