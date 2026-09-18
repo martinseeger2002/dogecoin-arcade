@@ -2984,78 +2984,13 @@ def create_app(state: AppState) -> FastAPI:
         return Response(path.read_bytes(), media_type=item.content_type,
                         headers={"Cache-Control": "no-store"})
 
-    @app.post("/inscriptions/collection/thumb", response_class=HTMLResponse)
-    def inscribe_thumb(request: Request, csrf_token: str = Form(""),
-                       thumb_confirmed: str = Form(""),
-                       thumb_file: UploadFile | None = File(None),
-                       thumb_b64: str = Form(""), thumb_name: str = Form(""),
-                       thumb_type: str = Form(""), folder: str = Form(""),
-                       fromaddress: str = Form(""), name: str = Form(""),
-                       thumb: str = Form(""), about: str = Form(""),
-                       site: str = Form(""), twitter: str = Form(""),
-                       launchpad: str = Form(""), pad_amount: str = Form(""),
-                       pad_kind: str = Form("coins"), pad_token: str = Form("")):
-        """Inscribe a picture for a collection to wear, without leaving step 2.
-
-        The same two presses as a token's icon, and for the same reason: a
-        set's face is an inscription on this chain, so it has to exist before
-        anything can name it.
-        """
-        check_csrf(csrf_token)
-        kept: dict[str, Any] = {
-            "thumb": thumb, "about": about, "site": site, "twitter": twitter,
-            "pad_on": launchpad == "yes", "pad_amount": pad_amount,
-            "pad_kind": pad_kind, "pad_token": pad_token, "sender": fromaddress}
-        try:
-            build = collectionlib.read_build(Path(folder.strip()))
-            cost = collectionlib.estimate_build(build)
-            content, filename, content_type = b"", thumb_name, thumb_type
-            if thumb_file is not None and thumb_file.filename:
-                content = thumb_file.file.read()
-                filename = thumb_file.filename
-                content_type = thumb_file.content_type or "image/png"
-            elif thumb_b64:
-                content = base64.b64decode(thumb_b64)
-            if not content:
-                raise ValueError("choose a picture, or give an inscription id.")
-            if not str(content_type or "").startswith("image/"):
-                raise ValueError("a thumbnail is a picture: choose an image file.")
-            if len(content) > MAX_ICON_BYTES:
-                raise ValueError(
-                    f"{filename} is {len(content):,} bytes, which is more than a "
-                    f"form should hold in memory to price it. Inscribe it from "
-                    f"the NFTs page -- there is no size limit anywhere in this "
-                    f"application -- and paste its id into the box above.")
-            plan = inscribelib.plan(content, content_type, "")
-            if thumb_confirmed == "yes":
-                chain, _ = _token_chain()
-                with chain.rpc() as rpc:
-                    where = (_check_own_address(rpc, fromaddress) if fromaddress
-                             else funded_address(rpc, mainnet=chain.is_mainnet))
-                    kept["thumb"] = _inscribe_now(chain, where, plan)
-                state.flash(f"Inscribed {filename} as {kept['thumb']}. It is this "
-                            f"collection's face from the block it lands in.", "ok")
-            else:
-                kept.update(thumb_plan=plan, thumb_name=filename,
-                            thumb_type=content_type,
-                            thumb_b64=base64.b64encode(content).decode())
-            return render(request, "collection_wizard.html",
-                          **_collection_page_data(build=build, cost=cost,
-                                                  preview=build.items[:12], **kept))
-        except HTTPException:
-            raise
-        except Exception as exc:
-            state.flash(str(exc), "err")
-            return RedirectResponse("/inscriptions/collection", status_code=303)
-
     @app.post("/inscriptions/collection/start")
     def collection_start(request: Request, csrf_token: str = Form(""),
                          folder: str = Form(""), fromaddress: str = Form(""),
                          name: str = Form(""), launchpad: str = Form(""),
                          pad_amount: str = Form(""), pad_kind: str = Form("coins"),
                          pad_token: str = Form(""), thumb: str = Form(""),
-                         about: str = Form(""), site: str = Form(""),
-                         twitter: str = Form("")):
+                         about: str = Form(""), site: str = Form("")):
         """The second press: write the job down and start it.
 
         The mintpad is decided here and inscribed by the runner when the last
@@ -3077,8 +3012,7 @@ def create_app(state: AppState) -> FastAPI:
                     "or choose a picture and inscribe it first.")
             build = collectionlib.with_details(build, {
                 "icon": inscriptionlib.inscription_in(thumb),
-                "description": about.strip(), "url": site.strip(),
-                "twitter": twitter.strip()})
+                "description": about.strip(), "url": site.strip()})
             with chain.rpc() as rpc:
                 sender = _check_own_address(rpc, fromaddress)
             pad_json = ""
@@ -3111,6 +3045,7 @@ def create_app(state: AppState) -> FastAPI:
         page = max(1, min(page, pages))
         items = jobs.items(job_id, limit=per_page, offset=(page - 1) * per_page)
         numbers: dict[str, int] = {}
+        index = None
         try:
             index = state.token_index(state.chain_named(job["network"]))
             for item in items:
@@ -3121,8 +3056,20 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             pass
         chain = state.chain_named(job["network"])
+        # A broadcast is not a page. The mintpad's transaction going out means
+        # it is on its way; the link only works once the chain has it and this
+        # node has read it -- and "The mintpad is up. Open it" leading to "no
+        # such inscription" is the wallet lying about its own work (D-115).
+        pad_live = False
+        if job["pad_txid"]:
+            try:
+                pad_live = index is not None and \
+                index.inscription(job["pad_txid"]) is not None
+            except Exception:
+                pad_live = False
         return render(request, "collection_job.html", job=job, items=items,
                       numbers=numbers, running=runner.running(job_id),
+                      pad_live=pad_live,
                       chain=chain, page=page, pages=pages)
 
     @app.get("/inscriptions/collection/{job_id}/status")
@@ -4464,139 +4411,6 @@ def create_app(state: AppState) -> FastAPI:
 
         return _token_action(request, action="create", confirmed=confirmed, build=build,
                              fields=fields, back="/tokens", form_create=fields)
-
-    #: There is no size limit on an inscription and there is none here either
-    #: (D-109). What a picture costs is shown before it is paid for, which is
-    #: how this application answers every question of this kind; the form does
-    #: not get to decide that somebody's art is too big for their own money.
-    #: What the number below guards is the REQUEST, not the art: a browser
-    #: upload has to be held in memory to be priced, and past a few megabytes
-    #: that is a wallet holding a file instead of a wallet. Anything larger
-    #: goes through the NFTs page, which streams it.
-    MAX_ICON_BYTES = 4_000_000
-
-    @app.post("/tokens/icon", response_class=HTMLResponse)
-    def inscribe_icon(request: Request, csrf_token: str = Form(""),
-                      icon_confirmed: str = Form(""),
-                      icon_file: UploadFile | None = File(None),
-                      attached_b64: str = Form(""), attached_name: str = Form(""),
-                      attached_type: str = Form(""),
-                      sender: str = Form(""), name: str = Form(""),
-                      supply: str = Form(""), kind: str = Form("fixed"),
-                      units: str = Form("divisible"), category: str = Form(""),
-                      subcategory: str = Form(""), url: str = Form(""),
-                      data: str = Form(""), icon: str = Form("")):
-        """Inscribe a picture so a token can wear it, without leaving the form.
-
-        Two presses, like everything else here that spends: the first prices
-        it, the second puts it on the chain. The id lands back in the icon
-        box, and the token is created after that -- as two things, because
-        they are two things: an inscription is permanent whether or not the
-        token is ever made.
-
-        Everything already typed into the form comes back with it. Losing a
-        half-filled issuance to a picture is the kind of small cruelty that
-        makes people not try the feature at all.
-        """
-        check_csrf(csrf_token)
-        fields = dict(sender=sender, name=name, supply=supply, kind=kind,
-                      units=units, category=category, subcategory=subcategory,
-                      url=url, data=data, icon=icon)
-        extra: dict[str, Any] = {}
-        try:
-            content, filename, content_type = b"", attached_name, attached_type
-            if icon_file is not None and icon_file.filename:
-                content = icon_file.file.read()
-                filename = icon_file.filename
-                content_type = icon_file.content_type or "image/png"
-            elif attached_b64:
-                content = base64.b64decode(attached_b64)
-            if not content:
-                raise ValueError("choose a picture to inscribe, or paste an "
-                                 "inscription id into the icon box.")
-            if not str(content_type or "").startswith("image/"):
-                raise ValueError("an icon is a picture: choose an image file.")
-            if len(content) > MAX_ICON_BYTES:
-                raise ValueError(
-                    f"{filename} is {len(content):,} bytes, which is more than a "
-                    f"form should hold in memory to price it. Inscribe it from "
-                    f"the NFTs page -- there is no size limit anywhere in this "
-                    f"application -- and paste its id into the icon box.")
-            plan = inscribelib.plan(content, content_type, "")
-            if icon_confirmed == "yes":
-                chain, _ = _token_chain()
-                with chain.rpc() as rpc:
-                    from_address = (_check_own_address(rpc, sender) if sender
-                                    else funded_address(rpc, mainnet=chain.is_mainnet))
-                    txid = _inscribe_now(chain, from_address, plan)
-                fields["icon"] = txid
-                state.flash(
-                    f"Inscribed {filename} as {txid}. It is the token's icon from "
-                    f"the block it lands in; create the token whenever you like.",
-                    "ok")
-                return render(request, "tokens.html", prepared=None,
-                              **_token_page_data(), form_create=fields)
-            extra = {"icon_plan": plan, "icon_name": filename,
-                     "icon_type": content_type,
-                     "icon_b64": base64.b64encode(content).decode()}
-        except HTTPException:
-            raise
-        except Exception as exc:
-            state.flash(str(exc), "err")
-        return render(request, "tokens.html", prepared=None, **_token_page_data(),
-                      form_create=fields, **extra)
-
-    def _inscribe_now(chain: Any, sender: str, plan: Any) -> str:
-        """Inscribe, and return the id it will be known by, without waiting.
-
-        The first chunk goes here and now, because it is the one the
-        inscription is NAMED by -- the piece carrying the manifest, fixed the
-        moment it is broadcast whatever order the rest confirm in (state.py)
-        -- and the id is the whole point of the press. A page that says "it
-        is being inscribed, look for the id later" makes somebody go and find
-        it themselves.
-
-        Anything after it goes on a thread. Chunks are independent of each
-        other by design, so the order they are sent in does not matter, and
-        the split that makes a long send fast (inscribe.prepare_wallet) waits
-        for a block -- which is fine on a thread and is not fine in a request.
-        """
-        rest = plan.payloads[1:]
-        # Claimed BEFORE anything is broadcast, because failing to claim it
-        # after the first chunk would leave a half-written inscription on the
-        # chain for ever. One long send at a time, the same rule a collection
-        # run and a long message follow.
-        if rest and not state.begin_send():
-            raise ValueError("something is already being sent. Wait for it to "
-                             "finish, then inscribe this.")
-        try:
-            with chain.rpc() as rpc:
-                sender_obj = MessageSender(rpc, chain.params, public_only=True)
-                sent = sender_obj.send_all(sender, plan.payloads[:1])
-            if not sent:
-                raise ValueError("nothing was broadcast")
-        except Exception:
-            if rest:
-                state.end_send()
-            raise
-        first = sent[0]
-        if rest:
-            def inscribe_the_rest():
-                try:
-                    with chain.rpc() as rpc:
-                        more = MessageSender(rpc, chain.params, public_only=True)
-                        inscribelib.prepare_wallet(more, sender, plan)
-                        more.send_all(sender, rest)
-                    log.info("finished inscribing %s: %d more pieces",
-                             first, len(rest))
-                except Exception as exc:
-                    log.warning("could not finish inscribing %s: %s", first, exc)
-                finally:
-                    state.end_send()
-
-            threading.Thread(target=inscribe_the_rest, name="arcade-icon",
-                             daemon=True).start()
-        return first
 
     def _send_parts(rpc, index, prop: dict, units: int,
                     avoid: str = "") -> list[tuple[str, int]]:

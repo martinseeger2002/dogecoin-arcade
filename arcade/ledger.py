@@ -866,10 +866,12 @@ class LedgerIndex:
 
         Somebody opening a collection is looking for what they can act on --
         a piece with a price on it, then a piece somebody has already offered
-        for -- and after that for the collection itself, in the order it was
-        inscribed. Chronological rather than edition order, because the
-        editions are the artist's numbering and the chain's order is what
-        actually happened (D-096).
+        for -- and after that for the collection itself, BY EDITION: #1, #2,
+        #3. The chain's order was the first answer and it was the wrong one
+        (D-096 revised in D-116): a set is known by its own numbering, that is
+        how people ask for a piece and how every other marketplace lists one,
+        and the order a miner happened to confirm things in is a fact about
+        mining rather than about the set.
 
         The ordering is done in SQL because it has to happen BEFORE the page
         is cut: sorting one page's worth puts the for-sale pieces first only
@@ -892,7 +894,9 @@ class LedgerIndex:
                 f" ORDER BY CASE WHEN instr(?, i.txid) > 0 THEN 0"
                 f"               WHEN {_OFFERS_ON_IT} > 0 THEN 1"
                 f"               ELSE 2 END,"
-                f"          instr(?, i.txid), i.number LIMIT ? OFFSET ?")
+                f"          instr(?, i.txid),"
+                f"          c.edition IS NULL, c.edition, i.number"
+                f" LIMIT ? OFFSET ?")
         args = [creator, name, order, order,
                 max(1, min(limit, 500)), max(0, offset)]
         with self.open() as db:

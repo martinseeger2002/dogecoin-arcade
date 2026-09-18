@@ -106,12 +106,10 @@ An Omni-style token ledger, indexed from the chain.
 ---
 
 **A token can wear an inscription as its icon.** Give the inscription's id
-when creating a token — or pick one of your own pictures from the list, or
-**choose a file and inscribe it there and then**: the picture goes on the
-chain in one transaction, priced before it is paid for like everything else,
-and its id drops into the icon box. (An icon is capped at one transaction's
-worth, about 7 KB: it is drawn at 32 pixels and paid for in full for ever.)
-The icon is shown wherever the token is — the markets table, its market page, the token list.
+when creating a token, or pick one of your own pictures from the list beside
+the field. Inscribe the picture from the NFTs page first if it is not on the
+chain yet — one thing at a time, and the id is what the token needs. The icon
+is shown wherever the token is — the markets table, its market page, the token list.
 A token without one gets a plain mark, never its initials: two letters of a
 name read as a ticker symbol, and nothing here has one.
 The picture is an inscription on the same chain, so it is served by whichever
@@ -278,8 +276,7 @@ every item, and those are read whether or not there is an object.
 
 **The set's face is its #1 unless it says otherwise.** A marketplace shows
 the first piece, because that is the one people recognise — but `icon` names
-another inscription to use instead, and the wizard will inscribe a picture for
-you and fill it in. It is an inscription on this chain either way: a face on
+another inscription to use instead, and the wizard takes its id at step 2. It is an inscription on this chain either way: a face on
 somebody's website is a face that disappears when the hosting does. One this
 node cannot draw falls back to #1 rather than to a broken image.
 
@@ -402,8 +399,9 @@ questions.
   token is its own market, and one axis cannot hold both. The row's picture
   is **#1 of the set**. Click one and the whole collection opens — **what can
   be bought first** (cheapest first, so the first tile is the floor), then
-  the pieces somebody has offered for, then the rest in the order it was
-  inscribed. Under those two: **for sale now**, the asks standing on this
+  the pieces somebody has offered for, then the set **in edition order** —
+  #1, #2, #3 — because that is how a set is known and how anybody asks for a
+  piece of it. Under those two: **for sale now**, the asks standing on this
   chain, each with a one-press buy. The page opens with the set's #1 as its face, what the set says
   about itself, and a strip of numbers: floor, for sale, offers, owners,
   pieces and what has sold. Every piece is a tile — the picture, its name,

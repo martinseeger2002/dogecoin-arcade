@@ -232,3 +232,35 @@ def test_the_review_screen_leads_with_the_name_not_the_path(client, tmp_path):
         "the name comes before the path, which is the whole point"
     assert "First piece is called" in wizard
     assert body.count("Traceback") == 0
+
+
+def test_a_mintpad_is_not_up_until_a_block_carries_it(client, tmp_path):
+    """A broadcast is not a page. "The mintpad is up. Open it" leading to "no
+    such inscription" is the wallet lying about its own work (D-115)."""
+    from arcade import collections as C
+
+    app, state = client
+    build = hashlips(tmp_path, count=2)
+    jobs, _ = state.collections
+    job_id = jobs.create("main", "nMe", C.read_build(build))
+    jobs.set_pad(job_id, txid="d" * 64)
+
+    page = app.get(f"/inscriptions/collection/{job_id}").text
+    assert "The mintpad is on its way" in page
+    assert "The mintpad is up" not in page, "not until the chain has it"
+    assert "d" * 64 in page, "and it says which transaction to wait for"
+
+    # Once it is indexed, it is a page, and the wallet says so.
+    index_with_a_collection(state.home)
+    from arcade.db import Database
+    db = Database(state.home / "main-ledger.sqlite")
+    db.conn.execute(
+        "INSERT INTO inscription(txid,number,creator,owner,block_height,position,"
+        "content_type,content_len,sha256,json,chunks,content) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL)",
+        ("d" * 64, 99, "nMe", "nMe", 500, 0, "text/html", 10, "ab" * 32, "{}", 1))
+    db.conn.commit()
+    db.close()
+
+    page = app.get(f"/inscriptions/collection/{job_id}").text
+    assert "The mintpad is up" in page

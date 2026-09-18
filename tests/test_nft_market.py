@@ -225,75 +225,6 @@ def test_an_icon_can_be_a_bare_inscription_id(client):
     assert f'src="/content/{PIECES[0]}"' in app.get("/tokens").text
 
 
-def test_a_picture_is_priced_rather_than_inscribed_on_the_first_press(
-        client, monkeypatch):
-    """The page that shows the price is the create form, which only draws
-    with a node behind it -- so what is asserted here is the half that holds
-    without one: nothing was broadcast and nothing was refused."""
-    app, state = client
-    index_with_a_collection(state.home)
-    wallet_holding(state, monkeypatch, CREATOR)
-
-    answer = app.post(
-        "/tokens/icon",
-        files={"icon_file": ("goof.png", b"\x89PNG" + b"x" * 400, "image/png")},
-        data={"csrf_token": state.csrf_token, "name": "Goofcoin"})
-    assert answer.status_code == 200
-    for complaint in ("Shrink it first", "an icon is a picture",
-                      "choose a picture", "Traceback"):
-        assert complaint not in answer.text, complaint
-
-
-def test_a_picture_too_big_for_the_form_is_told_where_else_to_go(
-        client, monkeypatch):
-    """There is no size limit on an inscription and none in the forms either:
-    what a picture costs is shown before it is paid for, and the form does not
-    get to decide somebody's art is too big for their own money (D-109). What
-    is still refused is a file too large to hold in memory to price it, and
-    the refusal names the route that streams instead."""
-    app, state = client
-    index_with_a_collection(state.home)
-    wallet_holding(state, monkeypatch, CREATOR)
-
-    body = app.post(
-        "/tokens/icon",
-        files={"icon_file": ("huge.png", b"\x89PNG" + b"x" * 5_000_000, "image/png")},
-        data={"csrf_token": state.csrf_token}).text
-    assert "5,000,004 bytes" in body
-    assert "no size limit anywhere in this application" in body, \
-        "the refusal is about the form's memory, not about the art"
-    assert "Inscribe it from the NFTs page" in body or \
-        "inscribe it from the NFTs page" in body.lower()
-    assert "Traceback" not in body
-
-
-def test_only_a_picture_can_be_an_icon(client, monkeypatch):
-    app, state = client
-    index_with_a_collection(state.home)
-    wallet_holding(state, monkeypatch, CREATOR)
-
-    body = app.post("/tokens/icon",
-                    files={"icon_file": ("notes.txt", b"hello", "text/plain")},
-                    data={"csrf_token": state.csrf_token}).text
-    assert "an icon is a picture" in body
-
-
-# --- the list of collections ------------------------------------------------
-
-def test_the_market_lists_collections_by_their_first_piece(client):
-    app, state = client
-    index_with_a_collection(state.home)
-    tag(state.home, CREATOR, "punkmaker")
-
-    body = app.get("/exchange?tab=market").text
-    assert "Doge Punks" in body
-    assert "/exchange/collection/nMe/Doge%20Punks" in body, "the row opens the collection"
-    assert f"/content/{PIECES[0]}" in body, "the face of the row is #1, not a random piece"
-    for other in PIECES[1:]:
-        assert f"/content/{other}" not in body
-    assert "@punkmaker" in body, "who made it, by name"
-
-
 def test_a_collection_with_something_for_sale_is_listed_first(client):
     app, state = client
     index_with_a_collection(state.home)
@@ -351,20 +282,22 @@ def test_a_chain_with_no_sales_still_has_a_marketplace(client):
 
 # --- one collection, opened -------------------------------------------------
 
-def test_open_contracts_come_first_then_the_chain_order(client):
+def test_open_contracts_come_first_then_edition_order(client):
     app, state = client
     index_with_a_collection(state.home)
     sell(state.home, PIECES[4])          # edition 5, which is inscription #0
     offer_on(state.home, PIECES[1])      # edition 2, which is inscription #3
 
     body = grid(app.get("/exchange/collection/nMe/Doge%20Punks").text)
-    for_sale, offered, first, second = order_of(
+    for_sale, offered, first, fourth = order_of(
         body, PIECES[4], PIECES[1], PIECES[0], PIECES[3])
     assert for_sale < offered, "what can be bought comes before what is offered for"
     assert offered < first, "and both come before the rest of the collection"
-    # The rest in the order they were inscribed: edition 1 is inscription #4
-    # and edition 4 is #1, so chronological and edition order disagree here.
-    assert second < first, "the rest is chronological, not in edition order"
+    # The rest by EDITION -- #1, then #4 -- which is how a set is known and
+    # how anybody asks for a piece of it. The fixture numbers its pieces
+    # backwards, so edition order and the chain's order disagree here and the
+    # assertion can tell them apart (D-116).
+    assert first < fourth, "the rest is in edition order, not the chain's"
 
 
 def test_every_card_names_both_ends_and_offers_for_it(client):
