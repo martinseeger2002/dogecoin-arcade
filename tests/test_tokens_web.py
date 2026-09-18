@@ -450,6 +450,16 @@ def test_a_name_already_on_the_chain_is_refused_before_it_costs_anything(web):
     assert "broadcast a token called" in page
     assert 'name="confirmed"' not in page, "nothing to confirm; nothing was built"
 
+    # And now the case that actually cost money: the name was claimed by
+    # somebody ELSE's node, so this wallet has no memory of it. Forgetting
+    # what we broadcast is how the other machine sees it -- in the mempool
+    # and nowhere else (D-124).
+    state.pending_tokens = []
+    page = app.post("/tokens/create", data={**form, "name": "DOGECOIN-ARCADE"}).text
+    assert "claimed a moment ago by a transaction waiting for its block" in page
+    assert 'name="confirmed"' not in page
+    assert len(node.rpc.call("getrawmempool")) == 1, "and nothing was added to it"
+
     mine_and_index(node, state)
     for spelling in ("Dogecoin Arcade", "dogecoin arcade", "DOGECOIN-ARCADE",
                      "DogecoinArcade"):

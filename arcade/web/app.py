@@ -4491,6 +4491,21 @@ def create_app(state: AppState) -> FastAPI:
                 return (f"this wallet broadcast a token called {name.strip()} "
                         f"a moment ago ({item['txid'][:12]}...). Wait for its "
                         f"block rather than pay for the same name twice.")
+        # The node's mempool, not just this wallet's memory of what it sent.
+        # A name claimed on ANOTHER machine seconds ago is invisible in the
+        # index and in `pending_tokens`, and that is exactly how the duplicate
+        # pair happened: two wallets, neither able to see the other, both
+        # paying for a name only one of them could keep (D-124).
+        try:
+            claimed = index.pending_names()
+        except Exception:
+            claimed = []
+        for row in claimed:
+            if statelib.name_key(row["name"]) == wanted:
+                return (f"{row['name'].strip()} was claimed a moment ago by a "
+                        f"transaction waiting for its block "
+                        f"({row['txid'][:12]}...). The chain will keep the "
+                        f"first one, so this would pay a fee for nothing.")
         return ""
 
     @app.post("/tokens/create", response_class=HTMLResponse)

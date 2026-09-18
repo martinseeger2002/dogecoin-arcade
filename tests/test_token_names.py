@@ -123,19 +123,30 @@ def test_what_the_fold_keeps():
 
 
 def test_an_invalid_issuance_changes_nothing_else(engine):
-    """A refused issuance is refused whole: no property, no balance, no id
-    burned -- the next token gets the number this one would have had."""
+    """A refused issuance is refused whole: no property, no balance, and no
+    id burned.
+
+    The last of those was asserted before it was established -- the survivor
+    keeping the number it took says nothing about what the NEXT token gets,
+    which is the whole question (a test machine). It is the next id that has to be
+    looked at, and nobody had looked.
+    """
     eng, state, db = engine
     issue(eng, state, 1, "Dogecoin Arcade")
+    first = db.conn.execute("SELECT property_id FROM property").fetchone()[0]
+
     issue(eng, state, 2, "dogecoin arcade", sender="nSomebodyElse")
-    rows = [dict(r) for r in db.conn.execute(
-        "SELECT property_id, issuer FROM property")]
-    assert rows == [{"property_id": 2147483651, "issuer": "nMe"}] or \
-        len(rows) == 1, rows
+    assert [r["property_id"] for r in db.conn.execute(
+        "SELECT property_id FROM property")] == [first]
     held = db.conn.execute(
         "SELECT COUNT(*) AS n FROM balance WHERE address = 'nSomebodyElse'").fetchone()
     assert held["n"] == 0
+
     issue(eng, state, 3, "Something Else", sender="nSomebodyElse")
+    ids = [r["property_id"] for r in db.conn.execute(
+        "SELECT property_id FROM property ORDER BY property_id")]
+    assert ids == [first, first + 1], \
+        "the next token takes the next number: the refusal consumed nothing"
     assert len(names(db)) == 2
 
 
@@ -183,3 +194,56 @@ def test_punctuation_and_spacing_still_collide(engine):
     issue(eng, state, 3, "Doge Coin")
     issue(eng, state, 4, "Dogecoin")
     assert names(db) == ["A.1", "Doge Coin"]
+
+
+def test_a_name_claimed_in_the_mempool_is_claimed(tmp_path):
+    """The gap the first version left open, and the one that cost money.
+
+    A wallet knew what IT had broadcast and nothing about what anybody else
+    had, so a name claimed on another machine two seconds ago was invisible
+    until a block landed. The chain refuses the second issuance either way --
+    it refuses it after the fee is spent (D-124).
+    """
+    from arcade import payload as P
+    from arcade.config import NETWORKS
+    from arcade.ledger import LedgerIndex
+
+    params = NETWORKS["regtest"]
+    issuance = P.IssuanceFixed(ecosystem=2, property_type=2,
+                               previous_property_id=0, category="",
+                               subcategory="", name="Dogecoin Arcade", url="",
+                               data="", amount=100).encode()
+
+    class Rpc:
+        """A node whose mempool holds somebody else's issuance."""
+
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+
+        def call(self, method, *args):
+            if method == "getrawmempool":
+                return ["aa" * 32]
+            if method == "getrawtransaction":
+                return {"txid": "aa" * 32, "vin": [], "vout": []}
+            raise AssertionError(method)
+
+    index = LedgerIndex(tmp_path / "ledger.sqlite", params, lambda: Rpc())
+
+    # The transaction is read by the same extractor the indexer uses, so the
+    # test stands in at that seam rather than faking a whole transaction.
+    import arcade.tx as txlib
+
+    class Fake:
+        txid = "aa" * 32
+        sender = "nSomebodyElse"
+        payload = issuance
+
+    original = txlib.extract
+    txlib.extract = lambda *a, **k: Fake()
+    try:
+        rows = index.pending_names()
+    finally:
+        txlib.extract = original
+
+    assert [r["name"] for r in rows] == ["Dogecoin Arcade"]
+    assert rows[0]["sender"] == "nSomebodyElse", "whose it is, for the message"

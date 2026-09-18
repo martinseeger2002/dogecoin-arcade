@@ -1239,6 +1239,69 @@ class LedgerIndex:
         # before it confirms rather than after (D-058).
         return next((o for o in self.pending_offers() if o["txid"] == str(txid)), None)
 
+    def pending_names(self, limit: int = 200) -> list[dict]:
+        """Token names claimed by issuances sitting in the mempool.
+
+        The gap the first version of the name rule left open, found by
+        the operator's own two machines: the wallet knew what IT had broadcast and
+        nothing about what anybody else had, so a name claimed on another
+        node two seconds ago was invisible here until a block landed. The
+        chain refuses the second issuance either way -- that part was never
+        in question -- but it refuses it AFTER the fee is spent, and a
+        refusal that costs money is not the same service as a refusal that
+        does not (D-124).
+
+        Read fresh and never written down, exactly as offers and asks are:
+        the ledger is built from blocks only, two nodes must agree on what
+        the chain says rather than on what their mempools happened to hold,
+        and a name claimed by a transaction that never confirms must leave
+        nothing behind.
+        """
+        from .indexer import PrevOutCache
+        from .tx import extract
+
+        try:
+            with self._rpc() as rpc:
+                ids = list(rpc.call("getrawmempool") or [])[:max(0, limit)]
+                if not ids:
+                    self._pool_names = {}
+                    return []
+                known = getattr(self, "_pool_names", {})
+                cache = PrevOutCache(rpc, self.params)
+                found: dict[str, dict | None] = {}
+                for txid in ids:
+                    if txid in known:
+                        found[txid] = known[txid]
+                        continue
+                    try:
+                        tx = rpc.call("getrawtransaction", txid, True)
+                        rtx = extract(tx, 0, 0, self.params, cache.lookup)
+                    except Exception:                 # gone, or not ours
+                        found[txid] = None
+                        continue
+                    found[txid] = self._name_row(rtx)
+                self._pool_names = found
+        except Exception as exc:                      # no node, no mempool
+            log.debug("mempool names unavailable: %s", exc)
+            return []
+        return [row for row in self._pool_names.values() if row]
+
+    def _name_row(self, rtx) -> dict | None:
+        """One mempool transaction as a claimed name, or None if it is not one."""
+        if rtx is None or not rtx.payload:
+            return None
+        try:
+            parsed = P.decode(rtx.payload)
+        except (P.PayloadError, P.UnknownMessageType, P.OutOfScopeMessageType):
+            return None
+        if not isinstance(parsed, (P.IssuanceFixed, P.IssuanceManaged)):
+            return None
+        name = getattr(parsed, "name", "")
+        if not name:
+            return None
+        return {"txid": rtx.txid, "sender": rtx.sender, "name": name,
+                "ecosystem": getattr(parsed, "ecosystem", None)}
+
     def pending_offers(self, limit: int = 200) -> list[dict]:
         """Offers sitting in the mempool, in the shape `offers_on` returns.
 

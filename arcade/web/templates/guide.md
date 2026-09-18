@@ -100,8 +100,9 @@ An Omni-style token ledger, indexed from the chain.
   letters and digits only), so *Dogecoin Arcade*, *dogecoin arcade* and
   *Dogecoin-Arcade* are the same name and the rule cannot be stepped around
   with the space bar. The wallet checks before it builds anything, the
-  mempool included: a name claimed by a transaction still waiting for its
-  block is claimed. Managed and fixed share one namespace, since a reader
+  mempool included — and the node's mempool, not just this wallet's memory:
+  a name claimed on somebody else's machine seconds ago is claimed, which is
+  the case that costs money if it is missed. Managed and fixed share one namespace, since a reader
   cannot see the difference between them.
 * **A name is plain ASCII.** Letters, digits, spaces and punctuation, with at
   least one letter or digit. Characters from other alphabets are refused
