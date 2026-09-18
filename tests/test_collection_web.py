@@ -306,7 +306,9 @@ def test_a_run_already_under_way_is_not_started_twice(client, tmp_path):
     app, state = client
     build = C.read_build(hashlips(tmp_path, count=2))
     jobs, _ = state.collections
-    jobs.create("main", "nMe", build, name="Doge Punks")
+    chain = state.token_chain
+    jobs.create(chain.network, "nMe", build, name="Doge Punks",
+                floor=chain.params.activation_height)
 
     response = app.post("/inscriptions/collection/start",
                         data={"csrf_token": state.csrf_token,
@@ -356,3 +358,105 @@ def test_a_half_finished_set_is_finished_rather_than_paid_for_twice(
     assert len(runs) == 1
     editions = [i["edition"] for i in jobs.items(runs[0]["id"])]
     assert editions == [6, 7, 8], "only what is not on the chain is paid for"
+
+
+def test_a_run_from_an_older_floor_does_not_block_a_new_one(client, tmp_path,
+                                                            monkeypatch):
+    """A run belongs to a chain era.
+
+    `collections.sqlite` was never named in the reset instruction, so after a
+    floor moved it still held runs against a chain nobody reads -- and they
+    went on refusing a set that no longer existed anywhere. The operator hit this
+    on the first collection test after the second reset (D-125).
+    """
+    import contextlib
+
+    from arcade import collections as C
+    from arcade.web import app as webapp
+
+    app, state = client
+    build = C.read_build(hashlips(tmp_path, count=2))
+    jobs, runner = state.collections
+    chain = state.token_chain
+    floor = chain.params.activation_height
+
+    old = jobs.create(chain.network, "nMe", build, name="Doge Punks",
+                      floor=(floor or 0) - 1000)
+    assert jobs.get(old)["status"] != "failed", "and it is not a failed run"
+
+    monkeypatch.setattr(type(chain), "rpc",
+                        lambda self: contextlib.nullcontext(object()), raising=False)
+    monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
+    monkeypatch.setattr(type(runner), "start", lambda self, job_id: True)
+
+    response = app.post("/inscriptions/collection/start",
+                        data={"csrf_token": state.csrf_token,
+                              "folder": str(build.folder), "fromaddress": "nMe"},
+                        follow_redirects=False)
+    assert response.status_code == 303
+    assert "is already being inscribed" not in app.get("/inscriptions/collection").text
+    assert len(jobs.list()) == 2, "the new run was written down"
+
+    # The old one is still there and still refuses to be resumed into this
+    # chain: the half it sent is below the floor, so finishing it would make
+    # a set with holes and no #1.
+    app.post(f"/inscriptions/collection/{old}/resume",
+             data={"csrf_token": state.csrf_token}, follow_redirects=False)
+    page = app.get(f"/inscriptions/collection/{old}").text
+    assert "below the floor" in page and "holes in it" in page
+
+
+def test_a_run_from_this_floor_still_blocks(client, tmp_path):
+    """The guard that matters is not weakened: two runs of one set on one
+    chain is the thing it was written for."""
+    from arcade import collections as C
+
+    app, state = client
+    build = C.read_build(hashlips(tmp_path, count=2))
+    jobs, _ = state.collections
+    chain = state.token_chain
+    jobs.create(chain.network, "nMe", build, name="Doge Punks",
+                floor=chain.params.activation_height)
+
+    app.post("/inscriptions/collection/start",
+             data={"csrf_token": state.csrf_token,
+                   "folder": str(build.folder), "fromaddress": "nMe"},
+             follow_redirects=False)
+    assert "is already being inscribed" in app.get("/inscriptions/collection").text
+    assert len(jobs.list()) == 1
+
+
+def test_a_finished_run_does_not_say_go_and_resume_it(client, tmp_path):
+    """"done" is not "failed", so a finished run blocked for ever -- and did
+    it with "Open that run and resume it", which was wrong twice over:
+    nothing was being inscribed and there was nothing to resume. Whether the
+    SET exists is a question for the chain; what this file knows is whether a
+    run is still going (a test machine, D-125)."""
+    from arcade import collections as C
+
+    app, state = client
+    build = C.read_build(hashlips(tmp_path, count=2))
+    jobs, _ = state.collections
+    chain = state.token_chain
+    job_id = jobs.create(chain.network, "nMe", build, name="Doge Punks",
+                         floor=chain.params.activation_height)
+    jobs.set_status(job_id, "done", note="every item is on its way")
+
+    app.post("/inscriptions/collection/start",
+             data={"csrf_token": state.csrf_token,
+                   "folder": str(build.folder), "fromaddress": "nMe"},
+             follow_redirects=False)
+    page = app.get("/inscriptions/collection").text
+    assert "resume it" not in page, "there is nothing to resume"
+    assert "already inscribed Doge Punks on this chain" in page
+    assert "None of it is indexed yet" in page, \
+        "which is the only reason a finished run still stands in the way"
+
+    # And once the chain shows the set, the chain is what answers.
+    index_with_a_collection(state.home, count=5)
+    app.post("/inscriptions/collection/start",
+             data={"csrf_token": state.csrf_token,
+                   "folder": str(hashlips(tmp_path / "again")), "fromaddress": "nMe"},
+             follow_redirects=False)
+    assert "already on this chain from this address" in \
+        app.get("/inscriptions/collection").text

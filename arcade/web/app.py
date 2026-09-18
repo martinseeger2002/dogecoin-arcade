@@ -2857,6 +2857,11 @@ def create_app(state: AppState) -> FastAPI:
         data.update(extra)
         return data
 
+    #: A run that has not finished. These are the ones that stand in the way
+    #: of starting another: "done" means every piece was sent, and whether the
+    #: SET exists is then a question for the chain, not for this file (D-125).
+    UNFINISHED = ("running", "paused", "pausing", "pending", "starting")
+
     def _what_is_already_there(sender: str, build, label: str = "") -> dict[str, Any]:
         """What of this build is on the chain already, and what that means.
 
@@ -2866,11 +2871,23 @@ def create_app(state: AppState) -> FastAPI:
         sets -- somebody else's set of the same name is not in the way and
         cannot be (D-120).
 
-        Three answers. Nothing there: carry on. All of it there: refuse,
-        because a second copy of every piece is a second bill for pieces no
-        node will file into the set. Some of it there: send the rest. That
-        last one is the half-finished run, and paying again for the half that
-        went up is exactly the mistake this is here to stop.
+        Three answers about the chain. Nothing there: carry on. All of it
+        there: refuse, because a second copy of every piece is a second bill
+        for pieces no node will file into the set. Some of it there: send the
+        rest -- the half-finished run, where paying again for the half that
+        went up is the mistake this exists to stop.
+
+        And two about this node's own runs, both scoped to the CURRENT floor,
+        because a run belongs to a chain era and the run list survives a reset
+        that the index does not (D-125):
+
+        * one still going -- resume it, do not start a second;
+        * one finished whose pieces the index has not caught up with yet,
+          which is the minutes between the last broadcast and its block.
+
+        A finished run whose set IS on the chain says nothing this function
+        cannot see for itself, and a finished run on a chain that no longer
+        reads its pieces says nothing at all.
         """
         out: dict[str, Any] = {"blocked": "", "note": "", "skip": set()}
         collection = build.collection
@@ -2883,25 +2900,53 @@ def create_app(state: AppState) -> FastAPI:
             return out                    # the index is the wizard's business
         jobs, _ = state.collections
         named = {collection, label.strip()} - {""}
-        for job in jobs.list(chain.network):
-            if (job.get("sender") == sender
-                    and str(job.get("name") or "").strip() in named
-                    and job.get("status") != "failed"):
+        floor = chain.params.activation_height
+        mine = [job for job in jobs.list(chain.network)
+                if job.get("sender") == sender
+                and str(job.get("name") or "").strip() in named]
+        for job in mine:
+            if job.get("floor") == floor and job.get("status") in UNFINISHED:
                 out["blocked"] = (
                     f"{collection} is already being inscribed from this "
                     f"address by run {job['id']}. Open that run and resume "
                     f"it rather than starting a second one.")
                 return out
+
         out["skip"] = {item.edition for item in build.items if item.edition in done}
-        if not out["skip"]:
-            return out
-        if len(out["skip"]) == len(build.items):
+        if out["skip"] and len(out["skip"]) == len(build.items):
             out["blocked"] = (
                 f"{collection} is already on this chain from this address, "
                 f"all {len(done):,} pieces of it. Inscribing it again would "
                 f"pay for a second copy of every item, and no node would file "
                 f"the copies into the set.")
             return out
+
+        if not out["skip"]:
+            # Nothing of it is indexed. A run of this name that finished on
+            # THIS chain minutes ago is the gap: its pieces are broadcast and
+            # not yet in a block, so the index is honestly empty and a second
+            # run would pay for the set twice over.
+            finished = [job for job in mine
+                        if job.get("floor") == floor and job.get("status") == "done"]
+            if finished:
+                job = finished[-1]
+                when = dt.datetime.fromtimestamp(
+                    float(job.get("created") or 0)).strftime("%d %b %H:%M")
+                out["blocked"] = (
+                    f"this wallet already inscribed {collection} on this chain "
+                    f"-- run {job['id']}, started {when}, {job.get('items', 0):,} "
+                    f"pieces. None of it is indexed yet, which is the minutes "
+                    f"between the last piece being sent and its block. Wait for "
+                    f"it rather than pay for the set twice.")
+                return out
+            stale = [job for job in mine if job.get("floor") != floor]
+            if stale:
+                out["note"] = (
+                    f"a run of {collection} from before this chain started at "
+                    f"{floor:,} is being ignored: the pieces it sent are below "
+                    f"the floor, so no node reads them.")
+            return out
+
         left = len(build.items) - len(out["skip"])
         out["note"] = (
             f"{len(out['skip']):,} of these are already on this chain from "
@@ -3103,7 +3148,8 @@ def create_app(state: AppState) -> FastAPI:
                     contact.encode(state.messaging.network, identity.public_bytes),
                     name.strip() or build.collection, take)
             job_id = jobs.create(chain.network, sender, build, name=name.strip(),
-                                 pad_json=pad_json)
+                                 pad_json=pad_json,
+                                 floor=chain.params.activation_height)
             runner.start(job_id)
         except Exception as exc:
             state.flash(str(exc), "err")
@@ -3170,8 +3216,26 @@ def create_app(state: AppState) -> FastAPI:
     def collection_resume(job_id: str, csrf_token: str = Form("")):
         check_csrf(csrf_token)
         jobs, runner = state.collections
-        if jobs.get(job_id) is None:
+        job = jobs.get(job_id)
+        if job is None:
             raise HTTPException(404, "no such collection run")
+        # A run from before the floor cannot be finished, only continued into
+        # a different chain: the pieces it already sent are below the floor
+        # and invisible, so resuming would inscribe the rest and make a set
+        # with holes in it -- and no #1, which is where a set says how big it
+        # is (D-125). Shown rather than hidden, because somebody paid for the
+        # half that went out.
+        chain, _ = _token_chain()
+        floor = chain.params.activation_height
+        if job.get("floor") is not None and job.get("floor") != floor:
+            state.flash(
+                f"that run was made when this chain started at "
+                f"{int(job['floor']):,}; it now starts at {floor:,}, so the "
+                f"pieces it sent are below the floor and no node reads them. "
+                f"Start the build again rather than resuming into a set with "
+                f"holes in it.", "err")
+            return RedirectResponse(f"/inscriptions/collection/{job_id}",
+                                    status_code=303)
         runner.start(job_id)
         return RedirectResponse(f"/inscriptions/collection/{job_id}", status_code=303)
 

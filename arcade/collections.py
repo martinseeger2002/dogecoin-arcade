@@ -331,7 +331,16 @@ CREATE TABLE IF NOT EXISTS job (
     -- the collection is not selling itself (D-036).
     pad_json    TEXT NOT NULL DEFAULT '',
     pad_txid    TEXT NOT NULL DEFAULT '',
-    pad_error   TEXT NOT NULL DEFAULT ''
+    pad_error   TEXT NOT NULL DEFAULT '',
+    -- The chain's floor when this run was written down. A run belongs to a
+    -- chain era: after a floor moves, the pieces it inscribed are below the
+    -- floor and no node reads them, so it is history of a chain nobody looks
+    -- at any more. Without this, a finished run went on refusing a set that
+    -- no longer exists anywhere -- the index had been reset and the run list
+    -- had not, and nothing in the reset instruction named this file (D-125).
+    -- NULL on rows written before this column existed, which is exactly the
+    -- rows that predate the floor they were made under.
+    floor       INTEGER
 );
 CREATE TABLE IF NOT EXISTS item (
     job_id        TEXT NOT NULL,
@@ -375,7 +384,7 @@ class Jobs:
         return conn
 
     def create(self, network: str, sender: str, build: Build,
-               name: str = "", pad_json: str = "") -> str:
+               name: str = "", pad_json: str = "", floor: int | None = None) -> str:
         """Write the job down, every item with the id its pieces will carry."""
         cost = estimate_build(build)
         job_id = secrets.token_hex(6)
@@ -383,11 +392,11 @@ class Jobs:
             conn.execute("BEGIN")
             conn.execute(
                 "INSERT INTO job (id, created, network, sender, name, folder, "
-                "status, items, chunks, fee, dust, pad_json) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "status, items, chunks, fee, dust, pad_json, floor) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (job_id, time.time(), network, sender, name or build.collection,
                  str(build.folder), "paused", cost["items"], cost["chunks"],
-                 cost["fee"], cost["dust"], pad_json))
+                 cost["fee"], cost["dust"], pad_json, floor))
             for item in build.items:
                 est = inscribelib.estimate(item.size, item.content_type, item.json)
                 conn.execute(

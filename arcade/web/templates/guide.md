@@ -253,9 +253,12 @@ names itself the same way.
   an inscription: paid for, owned, sellable — just not a member of that set.
 * **A set is not inscribed twice by accident either.** The wizard refuses a
   build whose collection is already on the chain from that address, or is
-  already being inscribed here, at the pricing step and again at the press —
-  before the node is asked anything, because a second run is a bill for a
-  second copy of every piece.
+  being inscribed by a run still going here, at the pricing step and again at
+  the press — before the node is asked anything, because a second run is a
+  bill for a second copy of every piece. A run that has *finished* stands in
+  the way only until its last piece has a block, and says so. Runs from
+  before a chain's start block are retired: they are not consulted, and they
+  cannot be resumed into a chain that does not read the pieces they sent.
 * **Ordered by edition**, with the traits counted across the set, so a page
   shows *Blue background — 3 of 5, 60%* without anybody having filled that in.
 * **A wizard inscribes a whole build.** Point it at a HashLips `build` folder
