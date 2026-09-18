@@ -5063,6 +5063,17 @@ def create_app(state: AppState) -> FastAPI:
             standing = index.asks(limit=500)
         except Exception:
             standing = []
+        # The mempool first, then the blocks. A price is a statement, and a
+        # marketplace that shows nothing for ten minutes after somebody makes
+        # one looks as though the listing failed -- which is the same
+        # complaint offers answered in D-058, met from the seller's side
+        # (D-117). A pending ask is marked as pending and says so.
+        try:
+            fresh = index.pending_asks()
+        except Exception:
+            fresh = []
+        in_pool = {row["inscription"] for row in fresh}
+        standing = fresh + [a for a in standing if a["inscription"] not in in_pool]
         for ask in standing:
             take = _take_json(ask, index)
             out[ask["inscription"]] = {
@@ -5070,9 +5081,10 @@ def create_app(state: AppState) -> FastAPI:
                 "price": swaplib.describe_leg(take), "take": take,
                 "sats": take.get("sats") if take.get("kind") == "coins" else None,
                 "number": ask["number"], "collection": ask["collection"],
-                "edition": ask["edition"], "when": ask.get("when_")}
+                "edition": ask["edition"], "when": ask.get("when_"),
+                "pending": bool(ask.get("pending"))}
         for txid, entry in _nft_listings(index, chain).items():
-            entry = dict(entry, kind="shop", take=None, when=None)
+            entry = dict(entry, kind="shop", take=None, when=None, pending=False)
             out.setdefault(txid, entry)
         return out
 
@@ -5119,10 +5131,19 @@ def create_app(state: AppState) -> FastAPI:
         """The prices most recently put on a piece, newest first.
 
         The book of asks, as a marketplace shows one: what somebody can buy
-        right now, whether or not it belongs to a collection (D-099).
+        right now, whether or not it belongs to a collection (D-099). The
+        mempool first, so a price that has just been made is here rather than
+        in ten minutes' time (D-117).
         """
         out = []
-        for ask in index.asks(limit=limit * 3):
+        try:
+            fresh = index.pending_asks()
+        except Exception:
+            fresh = []
+        in_pool = {row["inscription"] for row in fresh}
+        standing = fresh + [a for a in index.asks(limit=limit * 3)
+                            if a["inscription"] not in in_pool]
+        for ask in standing:
             row = index.inscription(ask["inscription"])
             if row is None:
                 continue
@@ -5134,7 +5155,8 @@ def create_app(state: AppState) -> FastAPI:
                 "seller": ask["seller"], "held": ask["held"],
                 "content_type": ask["content_type"],
                 "price": swaplib.describe_leg(take), "take": take,
-                "when": ask.get("when_"), "height": ask["block_height"]})
+                "when": ask.get("when_"), "height": ask["block_height"],
+                "pending": bool(ask.get("pending"))})
             if len(out) >= limit:
                 break
         return out

@@ -1265,6 +1265,96 @@ class LedgerIndex:
             "pending": True,
         }
 
+    def pending_asks(self, limit: int = 200) -> list[dict]:
+        """Prices sitting in the mempool, in the shape `asks` returns.
+
+        The same reason offers are read from the pool (D-058), met from the
+        other side: somebody listed a piece and the marketplace showed
+        nothing until the block landed, so it looked as though the listing
+        had failed -- it was in the mempool the whole time (D-117).
+
+        Read fresh and never written down: the ledger is built from blocks
+        and stays that way. Checked exactly as the engine checks one -- the
+        inscription must exist, the seller must hold it now, and a price is
+        in coins or in a token -- so a pending ask is refused here for the
+        same reasons it would be refused in a block.
+        """
+        from .indexer import PrevOutCache
+        from .tx import extract
+
+        try:
+            with self._rpc() as rpc:
+                ids = list(rpc.call("getrawmempool") or [])[:max(0, limit)]
+                if not ids:
+                    self._pool_asks = {}
+                    return []
+                known = getattr(self, "_pool_asks", {})
+                cache = PrevOutCache(rpc, self.params)
+                found: dict[str, dict | None] = {}
+                for txid in ids:
+                    if txid in known:
+                        found[txid] = known[txid]
+                        continue
+                    try:
+                        tx = rpc.call("getrawtransaction", txid, True)
+                        rtx = extract(tx, 0, 0, self.params, cache.lookup)
+                    except Exception:                 # gone, or not ours
+                        found[txid] = None
+                        continue
+                    found[txid] = self._ask_row(rtx)
+                self._pool_asks = found
+        except Exception as exc:                      # no node, no mempool
+            log.debug("mempool asks unavailable: %s", exc)
+            return []
+        return [row for row in self._pool_asks.values() if row]
+
+    def _ask_row(self, rtx) -> dict | None:
+        """One mempool transaction as an ask row, or None if it is not one."""
+        from . import inscriptions as I
+
+        if rtx is None or not rtx.payload:
+            return None
+        try:
+            parsed = P.decode(rtx.payload)
+        except (P.PayloadError, P.UnknownMessageType, P.OutOfScopeMessageType):
+            return None
+        data = getattr(parsed, "data", None)
+        if not data or not I.is_inscription(data):
+            return None
+        try:
+            item = I.parse(data)
+        except Exception:
+            return None
+        if not isinstance(item, I.Ask) or item.cancelled:
+            return None
+        row = self.inscription(item.txid.hex())
+        # Only the holder may price a piece, and a price is a number: the
+        # engine's own two rules, applied here so the pool cannot show what a
+        # block would refuse.
+        if row is None or row["owner"] != rtx.sender:
+            return None
+        if item.take.kind == I.LEG_INSCRIPTION or not item.take.amount:
+            return None
+        return {
+            "txid": rtx.txid,
+            "block_height": 0,
+            "position": 0,
+            "inscription": item.txid.hex(),
+            "seller": rtx.sender,
+            "take_kind": item.take.kind,
+            "take_property": item.take.property_id,
+            "take_amount": item.take.amount,
+            "number": row["number"],
+            "owner": row["owner"],
+            "creator": row.get("creator"),
+            "content_type": row.get("content_type"),
+            "held": row.get("held"),
+            "collection": row.get("collection"),
+            "edition": row.get("edition"),
+            "when_": None,
+            "pending": True,
+        }
+
     def offers_by(self, buyers: list[str], limit: int = 100) -> list[dict]:
         """Offers these addresses have made, whatever became of them."""
         if not buyers:

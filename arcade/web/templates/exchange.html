@@ -327,7 +327,8 @@
             {%- endif %} asked by
             {%- if tags.get(l.seller) %} @{{ tags[l.seller] }}{% else %} {{ l.seller[:10] }}…{% endif %}
             {%- if l.when %} &middot; {{ l.when|ago }}{% endif %}</div></td>
-        <td style="text-align:right"><strong>{{ l.price }}</strong></td>
+        <td style="text-align:right"><strong>{{ l.price }}</strong>
+          {%- if l.pending %}<div class="muted" style="font-size:.74rem">in the mempool</div>{% endif %}</td>
         <td style="text-align:right;width:130px">
           {% if l.seller not in owned %}
           <form method="post" action="/exchange/offer" style="margin:0">

@@ -178,3 +178,66 @@ def test_a_node_that_is_not_there_is_not_an_error(index, monkeypatch):
 
     monkeypatch.setattr(index, "_rpc", broken)
     assert index.pending_offers() == []
+
+
+def test_a_price_is_read_from_the_mempool_too(monkeypatch, tmp_path):
+    """A listing that shows nothing until its block lands looks like a
+    listing that failed -- the same complaint offers answered, met from the
+    seller's side (D-117). Checked as the engine checks one: only the holder
+    may price a piece, and a price is a number."""
+    from arcade import inscriptions as I
+    from arcade import payload as P
+    from arcade.config import NETWORKS
+    from arcade.db import Database
+    from arcade.ledger import LedgerIndex
+    from arcade.state import install_schema
+
+    path = tmp_path / "ledger.sqlite"
+    db = Database(path)
+    install_schema(db)
+    piece = "ab" * 32
+    db.conn.execute(
+        "INSERT INTO inscription(txid,number,creator,owner,block_height,position,"
+        "content_type,content_len,sha256,json,chunks,content) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL)",
+        (piece, 7, "nSeller", "nSeller", 100, 0, "image/png", 9, "cd" * 32, "{}", 1))
+    db.conn.commit()
+    db.close()
+
+    def ask_from(sender, take):
+        raw = P.AnyData(data=I.Ask(txid=bytes.fromhex(piece), take=take).encode()).encode()
+        return sender, raw
+
+    pool = {
+        "a" * 64: ask_from("nSeller", I.Leg(I.LEG_COINS, amount=10 * 10 ** 8)),
+        "b" * 64: ask_from("nSomebodyElse", I.Leg(I.LEG_COINS, amount=1)),
+    }
+
+    class Node:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def call(self, method, *args):
+            if method == "getrawmempool":
+                return list(pool)
+            if method == "getrawtransaction":
+                return {"txid": args[0]}
+            raise AssertionError(method)
+
+    index = LedgerIndex(path, NETWORKS["regtest"], rpc_factory=Node)
+
+    def fake_extract(tx, height, position, params, lookup):
+        sender, raw = pool[tx["txid"]]
+        return type("Rtx", (), {"txid": tx["txid"], "sender": sender, "payload": raw})()
+
+    monkeypatch.setattr("arcade.tx.extract", fake_extract)
+    standing = index.pending_asks()
+    assert [a["seller"] for a in standing] == ["nSeller"], \
+        "a price from somebody who does not hold it is not a price"
+    (ask,) = standing
+    assert ask["inscription"] == piece and ask["take_amount"] == 10 * 10 ** 8
+    assert ask["pending"] is True and ask["block_height"] == 0
+    assert ask["number"] == 7 and ask["owner"] == "nSeller"

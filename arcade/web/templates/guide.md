@@ -435,6 +435,10 @@ switched off without withdrawing the price.
   same reason a bid holds no coins.
 * **Only the holder can price a piece**, and the newest ask for a piece is
   the one that counts, so re-pricing is just another ask.
+* **A price shows the moment it is broadcast**, marked as being in the
+  mempool until its block lands — a marketplace that shows nothing for ten
+  minutes looks like a listing that failed. It is checked exactly as a block
+  would check it, so the pool never shows what a block would refuse.
 * **A piece that moves takes its price with it.** An ask is live only while
   the address that made it still holds what it names, so selling or sending a
   piece withdraws its price with no transaction at all. *Take the price off*

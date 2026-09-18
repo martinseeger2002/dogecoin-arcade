@@ -71,7 +71,8 @@
         <div class="muted" style="font-size:.78rem">#{{ "{:,}".format(row.number) }}</div></td>
       <td style="text-align:right;white-space:nowrap">
         {% if row.listing %}
-          <span class="pill ok">for sale</span> <strong>{{ row.listing.price }}</strong>
+          <span class="pill {{ '' if row.listing.pending else 'ok' }}">{{ 'listing sent' if row.listing.pending else 'for sale' }}</span>
+          <strong>{{ row.listing.price }}</strong>
           <a class="btn ghost small" href="/exchange/sell/{{ row.txid }}">Change the price</a>
         {% else %}
           <a class="btn small" href="/exchange/sell/{{ row.txid }}">Sell it</a>
@@ -104,6 +105,7 @@
         {%- else %} {{ row.owner[:10] }}…{% endif %}</div>
       <div class="price">
         {%- if row.listing %}<strong>{{ row.listing.price }}</strong>
+        {%- if row.listing.pending %} <span class="pill" title="broadcast, not yet in a block">pool</span>{% endif %}
         {%- else %}<span class="muted">not for sale</span>{% endif %}
         {%- if row.offers %} <span class="muted">&middot; {{ row.offers }} offer{{ '' if row.offers == 1 else 's' }}</span>{% endif %}</div>
 
