@@ -775,32 +775,51 @@ def offer_for_order(rpc: Any, index: Any, offers: Offers, network: str,
         raise SwapError("that order is not this wallet's to fill")
     if buyer == seller or buyer in own:
         raise SwapError("a wallet cannot fill its own order")
-    if order["want_property"] != 0:
-        raise SwapError("only an order selling a token for coins can be filled "
-                        "this way; a bid is filled by the wallet that holds the "
-                        "tokens asking this one")
+    a_bid = order["sale_property"] == 0 and order["want_property"] != 0
+    if order["want_property"] != 0 and not a_bid:
+        raise SwapError("an order is filled in coins or in tokens, not both")
 
     standing = offers.open_offers(network) + [
         offer for offer in offers.sold_offers(network) if _unsettled(index, offer)]
-    promised = sum(int(o["give"].get("units") or 0) for o in standing
-                   if o.get("order") == str(order_txid))
-    left = order["sale_amount"] - promised
     tokens = int(tokens)
     if tokens <= 0:
         raise SwapError("a fill needs an amount")
-    if tokens > left:
-        raise SwapError(
-            f"that order has {left} left of {order['sale_amount']}"
-            + (" -- the rest is promised to other buyers until their offers "
-               "expire" if promised else ""))
+    if a_bid:
+        # The mirror: this wallet's BID is being filled, so it gives coins and
+        # takes tokens. Both sides of a crossing book can be taken now, and
+        # the one that acts is whichever side is not resting (D-118).
+        promised = sum(int(o["take"].get("units") or 0) for o in standing
+                       if o.get("order") == str(order_txid))
+        left = order["want_amount"] - promised
+        if tokens > left:
+            raise SwapError(
+                f"that bid has {left} left of {order['want_amount']}"
+                + (" -- the rest is promised to other sellers until their "
+                   "offers expire" if promised else ""))
+        # Rounded DOWN, so the maker never pays more per token than it bid.
+        # The engine's own guard is the same arithmetic from the other side.
+        coins = order["sale_amount"] * tokens // order["want_amount"]
+        if coins <= 0:
+            raise SwapError("that much of this bid comes to less than a satoshi")
+        give = I.Leg(I.LEG_COINS, amount=coins)
+        take = I.Leg(I.LEG_TOKEN, property_id=order["want_property"], amount=tokens)
+    else:
+        promised = sum(int(o["give"].get("units") or 0) for o in standing
+                       if o.get("order") == str(order_txid))
+        left = order["sale_amount"] - promised
+        if tokens > left:
+            raise SwapError(
+                f"that order has {left} left of {order['sale_amount']}"
+                + (" -- the rest is promised to other buyers until their offers "
+                   "expire" if promised else ""))
 
-    # The maker's own price, from the order, rounded so the maker is never
-    # paid less than it asked: the engine's guard is the same arithmetic
-    # (D-062), and an offer that rounded the other way would be refused by
-    # the chain after both wallets had signed it.
-    coins = -(-order["want_amount"] * tokens // order["sale_amount"])
-    give = I.Leg(I.LEG_TOKEN, property_id=order["sale_property"], amount=tokens)
-    take = I.Leg(I.LEG_COINS, amount=coins)
+        # The maker's own price, from the order, rounded so the maker is never
+        # paid less than it asked: the engine's guard is the same arithmetic
+        # (D-062), and an offer that rounded the other way would be refused by
+        # the chain after both wallets had signed it.
+        coins = -(-order["want_amount"] * tokens // order["sale_amount"])
+        give = I.Leg(I.LEG_TOKEN, property_id=order["sale_property"], amount=tokens)
+        take = I.Leg(I.LEG_COINS, amount=coins)
     # Neither side's balance is checked here, and both for reasons rather
     # than by omission. The maker's tokens are in the reserve this order
     # holds, which is exactly where the fill takes them from -- the free

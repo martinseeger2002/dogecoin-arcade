@@ -378,17 +378,18 @@ questions.
   * **Nothing is matched by the engine.** A fill is a swap — one transaction
     carrying both legs, which is the only way a coin leg and a token leg move
     together. The book is what is on offer; the swap is how it settles.
-  * **A book that crosses itself fills itself.** When one of your bids sits
-    at or above somebody's ask, this node takes it without being asked: a bid
-    above an ask and nothing happening is two people waiting for each other.
-    It takes the smaller of the two amounts, so a **partial fill** leaves
-    their order on the book shrunk by exactly what was taken — the remainder
-    posts itself — and **your own bid is withdrawn at that price and
-    re-posted for the rest** before anything is asked for, because no engine
-    reduces a bid (there is no reserve behind one) and a book must not
-    advertise what has already been committed. One at a time per pair, never
-    an order whose maker this node cannot reach, and never your own. The
-    switch is on the Overview.
+  * **A book that crosses itself fills itself, from either end.** When one of
+    your bids sits at or above somebody's ask, this node takes the ask; when
+    one of your asks is crossed by somebody's bid, it takes the bid. Whichever
+    side is not resting is the one that acts, so nothing waits for the other
+    person to notice. It takes the smaller of the two amounts, and a
+    **partial fill** leaves the maker's order on the book shrunk by exactly
+    what was taken — an ask by the tokens that came out of its reserve, a bid
+    by what was bought out of it. Where your own bid was the one that acted,
+    it is withdrawn at that price and re-posted for the rest before anything
+    is asked for, because nothing else would reduce it in flight. One fill at
+    a time per pair, never an order whose maker this node cannot reach, and
+    never your own. The switch is on the Overview.
 * **NFTs** — the marketplace. It opens on the **popular collections** —
   popular meaning traded, and traded recently, because that is the question a
   market answers — and on **what has just sold**: the piece, what it went for,

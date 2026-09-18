@@ -85,6 +85,13 @@ class Params:
     #: hash -- but it is still a height, for the same reason the others are:
     #: the rule is agreed before the first one is broadcast, not after.
     asks_from: int | None = None
+    #: From this block a swap may also fill the BUYER's standing bid: a bid
+    #: reserves nothing, so nothing moves out of it, but the order itself is
+    #: reduced by what was bought (D-118). Its own height because it changes
+    #: what a block does to the book, and `book_order` is in the consensus
+    #: hash -- two nodes either side of it would disagree about what is on
+    #: offer, which is the one thing a book may never do.
+    bid_fills_from: int | None = None
     #: From this block a swap may NAME the order it fills, and the engine
     #: draws from that order rather than from whatever the seller has loose.
     #: Its own height because it makes a payload legal that was invalid
@@ -201,6 +208,10 @@ TESTNET = Params(
     asks_from=1_493_951,
     fills_from=1_493_951,
     named_fills_from=1_493_951,
+    # Set 2026-09-17 at tip 1,494,344, the tip itself: nothing is broadcast
+    # until both nodes report the same height, and the blocks between hold
+    # nothing of ours (D-106).
+    bid_fills_from=1_494_344,
     datadir_subdir="testnet3",
     pubkeyhash_version=113,
     scripthash_version=196,
@@ -214,6 +225,7 @@ REGTEST = Params(
     activation_height=0,
     swaps_from=0,
     asks_from=0,
+    bid_fills_from=0,
     fills_from=0,
     named_fills_from=0,
     datadir_subdir="regtest",
@@ -256,6 +268,7 @@ DOGE_TESTNET = Params(
     activation_height=0,
     swaps_from=0,
     asks_from=0,
+    bid_fills_from=0,
     fills_from=0,
     named_fills_from=0,
     datadir_subdir="testnet3",
@@ -271,6 +284,7 @@ DOGE_REGTEST = Params(
     activation_height=0,
     swaps_from=0,
     asks_from=0,
+    bid_fills_from=0,
     fills_from=0,
     named_fills_from=0,
     datadir_subdir="regtest",

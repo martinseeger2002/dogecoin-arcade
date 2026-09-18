@@ -954,3 +954,47 @@ def test_a_rebuilt_message_store_does_not_leave_the_shopkeeper_deaf(shop):
     _ask(state, buyer, {"swap": "offer", "swapv": S.PROTOCOL, "shop": SHOP,
                         "listing": 0, "buyer": BUYER}, 2)
     assert keeper.tick() == 1, "and what arrives after it is answered"
+
+
+def _crossing_bid(index, ask_tokens=100 * COIN, ask_coins=10 ** 8,
+                  bid_tokens=100 * COIN, bid_coins=2 * 10 ** 8, maker=OTHER):
+    """One ask of this wallet's, and somebody's bid that crosses it."""
+    index.my_orders = [{"txid": "ask" + "3" * 61, "address": SELLER,
+                        "sale_property": 3, "sale_amount": ask_tokens,
+                        "want_property": 0, "want_amount": ask_coins,
+                        "block_height": 500, "position": 0,
+                        "reserved": ask_tokens}]
+    index.book_rows = {3: {"asks": [], "bids": [
+        {"txid": "bid" + "4" * 61, "address": maker, "sale_property": 0,
+         "sale_amount": bid_coins, "want_property": 3,
+         "want_amount": bid_tokens, "reserved": 0,
+         "block_height": 499, "position": 0}]}}
+
+
+def test_an_ask_takes_the_bid_that_crosses_it(trading):
+    """Whichever side is not resting is the one that acts, so a crossing book
+    empties itself from either end (D-118)."""
+    state, index, keeper, answers, maker, built = trading
+    _crossing_bid(index)
+
+    assert keeper.fill_what_crosses() == 1
+    (_, body), = _answers(answers, maker)
+    assert body["swap"] == "fill" and body["tokens"] == 100 * COIN
+    assert body["buyer"] == SELLER, "this wallet receives the coins"
+    note, = state.offers.fills("regtest")
+    assert note["coins"] == 2 * 10 ** 8, "at THEIR price, which is the better one"
+    assert built == [], "nothing is cancelled: the engine reduces a filled bid"
+
+
+def test_a_bid_below_this_wallets_ask_is_not_taken(trading):
+    state, index, keeper, answers, maker, built = trading
+    _crossing_bid(index, ask_coins=3 * 10 ** 8)      # wants more than they offer
+
+    assert keeper.fill_what_crosses() == 0 and answers == []
+
+
+def test_this_wallet_does_not_sell_into_its_own_bid(trading):
+    state, index, keeper, answers, maker, built = trading
+    _crossing_bid(index, maker=SELLER)
+
+    assert keeper.fill_what_crosses() == 0 and answers == []

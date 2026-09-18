@@ -317,3 +317,58 @@ def test_before_its_height_a_named_swap_is_just_a_swap(tmp_path):
 
     feed(engine, state, [named_swap(4, pid, 100 * COIN, 1 * COIN, order, height=500)])
     assert book(db)[0]["sale_amount"] == 300 * COIN, "from this block on, out of the book"
+
+def test_a_swap_that_names_a_bid_reduces_it(world):
+    """A bid reserves nothing, so nothing comes out of it -- but buying it
+    makes the statement smaller. Without this the book goes on advertising an
+    intention the buyer has already acted on (D-118)."""
+    engine, state, db, pid = world
+
+    # Bob bids 10 coins for 100 tokens.
+    feed(engine, state, [tx(40, P.MetaDExTrade(
+        property_id_for_sale=0, amount_for_sale=10 * COIN,
+        property_id_desired=pid, amount_desired=100 * COIN), BOB)])
+    bid = f"{40:064x}"
+    assert db.conn.execute("SELECT want_amount FROM book_order WHERE txid=?",
+                           (bid,)).fetchone()[0] == 100 * COIN
+
+    # Alice sells 40 of them into it, at Bob's own price, naming the bid.
+    message = P.AnyData(data=I.Swap(
+        give=I.Leg(kind=I.LEG_TOKEN, property_id=pid, amount=40 * COIN),
+        take=I.Leg(kind=I.LEG_COINS, amount=4 * COIN),
+        order=bytes.fromhex(bid)).encode())
+    feed(engine, state, [tx(41, message, ALICE,
+                            inputs=((ALICE, 1000), (BOB, 20 * COIN)),
+                            outputs=((ALICE, 1000 + 4 * COIN),
+                                     (BOB, 16 * COIN - 1000)))])
+
+    row = dict(db.conn.execute("SELECT * FROM book_order WHERE txid=?",
+                               (bid,)).fetchone())
+    assert row["want_amount"] == 60 * COIN, "sixty tokens still wanted"
+    assert row["sale_amount"] == 6 * COIN, "and six coins still offered for them"
+    assert row["reserved"] == 0, "a bid never reserved anything"
+    assert db.conn.execute(
+        "SELECT balance FROM balance WHERE address=? AND property_id=?",
+        (BOB, pid)).fetchone()[0] == 40 * COIN, "and the tokens arrived"
+
+
+def test_a_bid_is_not_reduced_by_a_dearer_swap(world):
+    """A bid is a ceiling. A swap that paid more per token than the bid
+    offered is a private trade beside it, not a fill of it."""
+    engine, state, db, pid = world
+    feed(engine, state, [tx(50, P.MetaDExTrade(
+        property_id_for_sale=0, amount_for_sale=10 * COIN,
+        property_id_desired=pid, amount_desired=100 * COIN), BOB)])
+    bid = f"{50:064x}"
+
+    message = P.AnyData(data=I.Swap(
+        give=I.Leg(kind=I.LEG_TOKEN, property_id=pid, amount=10 * COIN),
+        take=I.Leg(kind=I.LEG_COINS, amount=5 * COIN),        # 0.5 a token
+        order=bytes.fromhex(bid)).encode())
+    feed(engine, state, [tx(51, message, ALICE,
+                            inputs=((ALICE, 1000), (BOB, 20 * COIN)),
+                            outputs=((ALICE, 1000 + 5 * COIN),
+                                     (BOB, 15 * COIN - 1000)))])
+    assert db.conn.execute("SELECT want_amount FROM book_order WHERE txid=?",
+                           (bid,)).fetchone()[0] == 100 * COIN, \
+        "the bid is untouched: it never offered that price"

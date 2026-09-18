@@ -764,14 +764,25 @@ def test_an_order_that_is_not_there_is_not_a_refusal_about_something_else(world)
                           "", own=[SELLER])
 
 
-def test_a_bid_is_not_filled_this_way(world):
-    """The coin side has to be funded by the wallet that holds the coins."""
+def test_a_bid_is_answered_the_other_way_round(world):
+    """A bid was refused here once, on the grounds that its coin side has to
+    be funded by the wallet holding the coins -- which is true and is exactly
+    what this does: the maker gives COINS and takes TOKENS. Both sides of a
+    crossing book can be taken now, and whichever side is not resting is the
+    one that acts (D-118)."""
     index, seller, _, offers = world
     order = _an_order(index)
-    index.orders[order].update(sale_property=0, want_property=3)
-    with pytest.raises(S.SwapError, match="only an order selling a token for coins"):
-        S.offer_for_order(seller, index, offers, "test", order, 10 * COIN, BUYER, "",
-                          own=[SELLER])
+    # 8 coins offered for 1,000 tokens: 0.008 a token.
+    index.orders[order].update(sale_property=0, sale_amount=8 * COIN,
+                               want_property=3, want_amount=1000 * COIN,
+                               reserved=0)
+    offer = S.offer_for_order(seller, index, offers, "test", order, 250 * COIN,
+                              BUYER, "", own=[SELLER])
+    assert offer["give"]["kind"] == "coins" and offer["give"]["sats"] == 2 * COIN, \
+        "a quarter of the bid, at the bid's own price"
+    assert offer["take"]["kind"] == "token"
+    assert int(offer["take"]["units"]) == 250 * COIN
+    assert offer["outpoint"]["txid"], "and which of the maker's outputs carries it"
 
 
 def _refusal(call) -> str:

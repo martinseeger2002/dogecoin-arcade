@@ -253,17 +253,18 @@ class Shopkeeper:
         cannot work out alone -- D-063), and a bid cannot, because nothing
         holds the buyer's coins and the seller has nothing to ask them for.
 
-        So: when a bid of this wallet's crosses somebody's ask, this takes
-        it, for the smaller of the two amounts. A partial fill leaves the
-        maker's order shrunk by exactly what was taken and still on the book
-        (state._fill_order), which is the remainder posting itself.
+        Both sides now. When a bid of this wallet's crosses somebody's ask,
+        this takes the ask; when an ask of this wallet's is crossed by
+        somebody's bid, this takes the bid -- the maker answers with coins
+        and this wallet gives the tokens. Whichever side is not resting is
+        the one that acts, and a crossing book empties itself from either end
+        (D-118).
 
-        The bid is a different matter, because the engine never reduces one
-        -- there is no reserve behind it to reduce. So this wallet withdraws
-        its own bid at that price FIRST and re-posts the remainder, before
-        asking for anything: a book that advertises what has already been
-        committed is the thing D-082 is about, and the swap does not depend
-        on the bid existing -- no swap names a bid.
+        A partial fill leaves the maker's order shrunk by exactly what was
+        taken and still on the book: `state._fill_order` for an ask, and
+        `state._reduce_bid` for a bid, which is the piece that had to exist
+        before this was safe -- a book that goes on advertising what somebody
+        has already bought is the state D-082 is about.
 
         One fill at a time per pair, because the second one would be decided
         on a book that the first has not landed in yet.
@@ -286,16 +287,20 @@ class Shopkeeper:
                 mine = [o for o in index.orders_of(own) if not o.get("pending")]
                 busy = {f["order"] for f in state.offers.fills(chain.network, limit=50)
                         if f["status"] in ("asked", "signed")}
-                for bid in mine:
-                    if bid["sale_property"] != 0 or not bid["want_property"]:
-                        continue
-                    if _twin(bid, mine):
-                        # Two bids at one price on one pair: cancelling by
-                        # price would take both off and only one would come
-                        # back. A person can still press Take.
-                        continue
-                    if self._fill_one(rpc, index, chain, identity, bid, own, busy):
-                        return 1
+                for order in mine:
+                    if order["sale_property"] == 0 and order["want_property"]:
+                        if _twin(order, mine):
+                            # Two bids at one price on one pair: cancelling by
+                            # price would take both off and only one would come
+                            # back. A person can still press Take.
+                            continue
+                        if self._fill_one(rpc, index, chain, identity, order,
+                                          own, busy):
+                            return 1
+                    elif order["want_property"] == 0 and order["sale_property"]:
+                        if self._sell_into_a_bid(rpc, index, chain, identity,
+                                                 order, own, busy):
+                            return 1
         except Exception:
             log.debug("filling what crosses failed", exc_info=True)
         return 0
@@ -340,6 +345,63 @@ class Shopkeeper:
                 "coins": coins, "created": now, "expires": now + swaplib.OFFER_TTL})
             log.info("taking %s of order %s at the price this wallet bid",
                      take, ask["txid"][:12])
+            state.bump_generation()
+            return True
+        return False
+
+    def _sell_into_a_bid(self, rpc: Any, index: Any, chain: Any, identity: Any,
+                         ask: dict, own: list[str], busy: set) -> bool:
+        """Take somebody's bid when this wallet's own ask is crossed by it.
+
+        The mirror of `_fill_one`, and simpler in the one way that matters:
+        the maker's bid IS reduced by the swap when it names it
+        (state._reduce_bid), so there is nothing to withdraw and re-post
+        afterwards. What this wallet gives is tokens, which its own resting
+        ask holds in reserve -- and the engine takes them from that reserve
+        rather than from the free balance, which is what `_fills_for` has
+        done since fills existed.
+        """
+        from fractions import Fraction
+
+        state = self.state
+        selling = int(ask["sale_amount"])          # tokens this ask is for
+        wants = int(ask["want_amount"])            # coins it wants for them
+        if selling <= 0 or wants <= 0:
+            return False
+        book = index.book(int(ask["sale_property"]))
+        for bid in book["bids"]:
+            if bid.get("pending") or bid["address"] in set(own) or bid["txid"] in busy:
+                continue
+            # Their price per token must be at least this wallet's.
+            if Fraction(bid["sale_amount"], bid["want_amount"]) \
+                    < Fraction(wants, selling):
+                return False                       # sorted dearest first
+            with state.store() as store:
+                key = store.key_for(bid["address"])
+            if key is None:
+                continue                           # nobody to ask; leave it be
+            tokens = min(selling, int(bid["want_amount"]))
+            if tokens <= 0:
+                continue
+            # What this wallet will accept, worked out from THEIR order, and
+            # rounded down so the answer cannot underpay by a rounding.
+            coins = int(bid["sale_amount"]) * tokens // int(bid["want_amount"])
+            if coins <= 0:
+                continue
+            if not _has_two_outputs(rpc, ask["address"]):
+                return False
+            sent = self._reply(rpc, chain, identity, bytes(key["pubkey"]),
+                               {"swap": "fill", "swapv": swaplib.PROTOCOL,
+                                "order": bid["txid"], "tokens": tokens,
+                                "buyer": ask["address"]})
+            now = time.time()
+            state.offers.add_fill({
+                "id": sent, "network": chain.network, "order": bid["txid"],
+                "maker": bid["address"], "buyer": ask["address"],
+                "tokens": tokens, "coins": coins,
+                "created": now, "expires": now + swaplib.OFFER_TTL})
+            log.info("selling %s into the bid %s crosses", tokens,
+                     bid["txid"][:12])
             state.bump_generation()
             return True
         return False
@@ -559,20 +621,39 @@ class Shopkeeper:
                                         "order this is")
             if offer.get("order") and offer["order"] != mine["order"]:
                 raise swaplib.SwapError("that answer is for a different order")
-            if offer["give"].get("kind") != "token" \
-                    or int(offer["give"].get("propertyid") or 0) != order["sale_property"] \
-                    or int(offer["give"].get("units") or 0) != int(mine["tokens"]):
-                raise swaplib.SwapError("that is not the amount that was asked for")
-            if offer["take"].get("kind") != "coins":
-                raise swaplib.SwapError("an order is filled with coins")
-            asked = int(offer["take"].get("sats") or 0)
-            # Never more than this wallet worked out for itself from the order
-            # on the chain. The maker names the price in its answer; this is
-            # what stops the answer naming a different one.
-            if asked > int(mine["coins"]):
-                raise swaplib.SwapError(
-                    f"that answer asks {asked} satoshis for what this wallet "
-                    f"priced at {mine['coins']} from the order on the chain")
+            if order["sale_property"] == 0 and order["want_property"]:
+                # A BID being filled: the maker gives coins and takes tokens,
+                # and this wallet is the one with the tokens (D-118). Every
+                # check is the same one read from the other side.
+                if offer["give"].get("kind") != "coins":
+                    raise swaplib.SwapError("a bid is filled with coins")
+                if offer["take"].get("kind") != "token" \
+                        or int(offer["take"].get("propertyid") or 0) != order["want_property"] \
+                        or int(offer["take"].get("units") or 0) != int(mine["tokens"]):
+                    raise swaplib.SwapError("that is not the amount that was asked for")
+                paid = int(offer["give"].get("sats") or 0)
+                # Never LESS than this wallet worked out from the order on the
+                # chain. On this side the maker's answer could underpay, which
+                # is the mirror of it overcharging.
+                if paid < int(mine["coins"]):
+                    raise swaplib.SwapError(
+                        f"that answer offers {paid} satoshis for what this wallet "
+                        f"priced at {mine['coins']} from the order on the chain")
+            else:
+                if offer["give"].get("kind") != "token" \
+                        or int(offer["give"].get("propertyid") or 0) != order["sale_property"] \
+                        or int(offer["give"].get("units") or 0) != int(mine["tokens"]):
+                    raise swaplib.SwapError("that is not the amount that was asked for")
+                if offer["take"].get("kind") != "coins":
+                    raise swaplib.SwapError("an order is filled with coins")
+                asked = int(offer["take"].get("sats") or 0)
+                # Never more than this wallet worked out for itself from the
+                # order on the chain. The maker names the price in its answer;
+                # this is what stops the answer naming a different one.
+                if asked > int(mine["coins"]):
+                    raise swaplib.SwapError(
+                        f"that answer asks {asked} satoshis for what this wallet "
+                        f"priced at {mine['coins']} from the order on the chain")
             built = swaplib.build(rpc, index, offer, own=_own_addresses(rpc),
                                   from_order=order)
         except (swaplib.SwapError, ValueError) as exc:

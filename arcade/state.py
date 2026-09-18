@@ -1116,11 +1116,19 @@ class Engine:
         # swap is still never half done.
         fills = self._fills_for(rtx, seller, swap.give, swap.take,
                                 named=getattr(swap, "order", b""))
+        # And the BUYER's own bid, if this swap names one. A bid reserves
+        # nothing, so nothing comes out of it -- what is wrong without this is
+        # that the book goes on advertising an intention the buyer has already
+        # acted on (D-118).
+        bids = self._bid_fills_for(rtx, buyer, swap.give, swap.take,
+                                   named=getattr(swap, "order", b""))
         self._check_leg(rtx, swap.give, seller, buyer,
                         extra=sum(taken for _, taken, _ in fills))
         self._check_leg(rtx, swap.take, buyer, seller)
         for row, taken, want in fills:
             self._fill_order(row, taken, want)
+        for row, taken, spent in bids:
+            self._reduce_bid(row, taken, spent)
         self._move_leg(swap.give, seller, buyer, rtx)
         self._move_leg(swap.take, buyer, seller, rtx)
 
@@ -1210,6 +1218,60 @@ class Engine:
             out.append((row, taken, want))
             need -= taken
         return out
+
+    def _bid_fills_for(self, rtx: ArcadeTransaction, buyer: str, give: I.Leg,
+                       take: I.Leg, named: bytes = b"") -> list[tuple[dict, int, int]]:
+        """The buyer's own bid this swap fills: (order, tokens, coins).
+
+        The mirror of `_fills_for`, and it exists for the same reason: a book
+        that advertises what has already been committed is the state D-082 is
+        about. An ask is reduced because the tokens come out of the reserve it
+        holds; a bid holds nothing, so nothing moves -- but the ORDER is still
+        a public statement of what somebody will buy, and buying it makes the
+        statement smaller.
+
+        NAMED only, never derived. Which of a buyer's bids a swap fills is a
+        fact about what the taker asked for, not about state -- exactly the
+        argument that made named fills necessary on the seller's side (D-082).
+
+        The guard is the buyer's own price: this swap must not have paid MORE
+        per token than the bid offered. A bid is a ceiling, and the remainder
+        keeps it.
+        """
+        since = self.params.bid_fills_from
+        if since is None or rtx.block_height < since or not named:
+            return []
+        if give.kind != I.LEG_TOKEN or take.kind != I.LEG_COINS:
+            return []                     # only tokens bought for coins
+        row = self.state.db.conn.execute(
+            "SELECT * FROM book_order WHERE txid=? AND address=? "
+            "AND sale_property=? AND want_property=?",
+            (named.hex(), buyer, self.COIN_PROPERTY, give.property_id)).fetchone()
+        if row is None:
+            return []
+        row = dict(row)
+        # take.amount/give.amount <= sale/want, without dividing anything.
+        if take.amount * row["want_amount"] > row["sale_amount"] * give.amount:
+            return []                     # dearer than the bid; leave it alone
+        taken = min(give.amount, row["want_amount"])
+        if taken <= 0:
+            return []
+        # Rounded UP, so what is left of the bid never offers more per token
+        # than the whole of it did. Rounding the other way would leave a
+        # remainder bidding dearer than the person ever said.
+        spent = -(-row["sale_amount"] * taken // row["want_amount"])
+        return [(row, taken, min(spent, row["sale_amount"]))]
+
+    def _reduce_bid(self, row: dict, taken: int, spent: int) -> None:
+        """Take what was bought out of a standing bid. Nothing else moves."""
+        left = row["want_amount"] - taken
+        if left <= 0:
+            self.state.delete("book_order", {"txid": row["txid"]})
+            return
+        self.state.update("book_order", {"txid": row["txid"]}, {
+            "want_amount": left,
+            "sale_amount": max(1, row["sale_amount"] - spent),
+        })
 
     def _fill_order(self, row: dict, taken: int, want: int) -> None:
         """Take `taken` out of an order's reserve and reduce the order by it."""
