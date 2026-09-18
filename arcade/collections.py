@@ -56,20 +56,44 @@ log = logging.getLogger("arcade.collections")
 
 IMAGE_SUFFIXES = (".png", ".gif", ".jpg", ".jpeg", ".webp", ".svg", ".mp4", ".webm")
 
-#: How many pieces to give their own output in one split. A split is one
-#: block's wait, once; the pieces then go as fast as the node takes them. A
-#: whole 10,000-item collection at once would need more coins than most
-#: wallets hold on one address, so the run tops up in batches of this many.
-SPLIT_BATCH = 120
+#: How many pieces to give their own output in one split, and so how many
+#: transactions go out per funded round. A split is one block's wait, once;
+#: the pieces then go as fast as the node takes them.
+#:
+#: Not the whole collection at once, for two reasons that are both arithmetic
+#: rather than policy. The split is funded from the ONE issuing address
+#: (sender.split_outputs), and a piece is worth about 1.4 coins, so a
+#: 10,000-item run wants some 14,000 coins sitting on that single address; and
+#: a block holds about nineteen pieces anyway -- a full Class B chunk is ~39 KB
+#: VIRTUAL, sigops x 20 beating its byte count (fees.py) -- so the same run is
+#: five hundred blocks of chain whatever it was funded with. Pre-funding
+#: everything would buy only the split waits, which at this batch size are a
+#: few per cent of the run.
+SPLIT_BATCH = 100
 
-#: Between checks while waiting on a block or on the send lock.
+#: The first gap between checks while waiting, and the longest it grows to.
+#: Doubling, because the thing being waited for is a block: at a minute a
+#: block and longer under congestion, a three-second poll asks a thousand
+#: times and learns nothing a one-minute poll would have missed (the operator).
 POLL = 3.0
+POLL_MAX = 60.0
 
-#: How long a run waits for what it sent to confirm before it pauses rather
-#: than send on top of it. Blocks fit about nine pieces (fees.py: 20,000
-#: sigops a block, 2,000-odd a piece), so a batch of SPLIT_BATCH takes a
-#: dozen blocks or more, and testnet's are a minute or so apart.
-FUND_WAIT = 1800
+#: Blocks that may pass with what this run sent still unconfirmed before it
+#: pauses. Counted in BLOCKS, not minutes: a wall clock cannot tell "the
+#: chain is slow" from "the chain is moving and our pieces are not in it",
+#: and those are different faults with different answers -- the first is
+#: waiting, the second is a fee too low for the mempool as it stands. The old
+#: thirty-minute rule said "resume when the chain has moved" to people whose
+#: chain had moved twenty blocks without them.
+STUCK_BLOCKS = 10
+
+#: And the ceiling for the other fault: no block at all for this long.
+FUND_WAIT = 3600
+
+
+def backoff(seconds: float) -> float:
+    """The next gap to wait, doubling up to POLL_MAX."""
+    return min(POLL_MAX, max(POLL, seconds * 2))
 
 
 class CollectionError(Exception):
@@ -833,10 +857,12 @@ class Runner:
     def _wait_for_block(self, job_id: str, sender_obj: Any, deadline: float) -> bool:
         """True once the chain has moved; False when stopped or out of time."""
         start = sender_obj.rpc.get_block_count()
+        wait = POLL
         while sender_obj.rpc.get_block_count() == start:
             if self._stopping(job_id) or time.time() > deadline:
                 return False
-            time.sleep(POLL)
+            time.sleep(wait)
+            wait = backoff(wait)
         return True
 
     def _fund(self, job: dict, plan: Any, sender_obj: Any, address: str,
@@ -849,24 +875,42 @@ class Runner:
         the next batch and wait the one block that takes.
         """
         job_id = job["id"]
-        ahead, piece = self.jobs.upcoming(job_id, 200)
+        ahead, piece = self.jobs.upcoming(job_id, SPLIT_BATCH)
         piece = max(piece, inscribelib.piece_size(plan))
         if sender_obj.spendable_outputs(address, at_least=piece // 2, minconf=1) >= need:
             return
-        deadline = time.time() + FUND_WAIT
+        # Waiting is measured against the chain, not against a clock: a block
+        # is a minute here and longer when it is busy (D-127).
+        started = sender_obj.rpc.get_block_count()
+        quiet_until = time.time() + FUND_WAIT
+        wait = POLL
         while (sender_obj.spendable_outputs(address, minconf=0)
                > sender_obj.spendable_outputs(address, minconf=1)):
-            self.jobs.note(job_id, "waiting for a block before splitting the wallet again")
             if self._stopping(job_id):
                 return
-            if time.time() > deadline:
-                # Sending anyway would spend the unconfirmed outputs and
-                # chain on them, and the node refuses a chain of three
-                # pieces (sender.send_all). Pause, and say what for.
+            height = sender_obj.rpc.get_block_count()
+            moved = height - started
+            # Sending anyway would spend the unconfirmed outputs and chain on
+            # them, and the node refuses a chain of three pieces
+            # (sender.send_all). So this pauses -- but it says which of the
+            # two things went wrong, because they need different answers.
+            if moved >= STUCK_BLOCKS:
                 raise RuntimeError(
-                    f"waited {FUND_WAIT // 60} minutes for a block to confirm what this "
-                    "job already sent, and none came. Resume when the chain has moved.")
-            time.sleep(POLL)
+                    f"{moved} blocks have come since this run's last pieces went "
+                    f"out and they are still unconfirmed, so their fee is too "
+                    f"low for the mempool as it stands. Resume when it clears.")
+            if moved:
+                quiet_until = time.time() + FUND_WAIT      # the chain is alive
+            if time.time() > quiet_until:
+                raise RuntimeError(
+                    f"no block at all for {FUND_WAIT // 60} minutes, so nothing "
+                    f"this run sent can confirm. Resume when the chain moves.")
+            self.jobs.note(
+                job_id,
+                f"waiting for a block before splitting again "
+                f"({moved} since the last pieces went out)")
+            time.sleep(wait)
+            wait = backoff(wait)
         wanted = max(need, min(SPLIT_BATCH, ahead))
         sender_obj.ensure_outputs(
             address, wanted, each_sats=piece,

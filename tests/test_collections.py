@@ -396,7 +396,9 @@ def test_a_refusal_by_the_node_pauses_the_job_and_resume_goes_on(tmp_path, monke
     assert len(sender.sent) == 4, "their recorded pieces are reused, not paid for again"
 
 
-def test_funding_that_never_confirms_pauses_rather_than_chains(tmp_path, monkeypatch):
+def test_a_chain_that_never_produces_a_block_pauses_rather_than_chains(
+        tmp_path, monkeypatch):
+    """One of the two waits, and it says which one it was: no block at all."""
     build = C.read_build(hashlips(tmp_path, count=2))
     sender = FakeSender()
     sender.outputs = 0
@@ -408,8 +410,53 @@ def test_funding_that_never_confirms_pauses_rather_than_chains(tmp_path, monkeyp
     runner.start(job_id)
     wait(runner, job_id)
     job = jobs.get(job_id)
-    assert job["status"] == "paused" and "waited 0 minutes for a block" in job["error"]
+    assert job["status"] == "paused" and "no block at all" in job["error"]
     assert sender.sent == [] and sender.splits == 0, "nothing sent on top of the unconfirmed"
+
+
+def test_blocks_passing_without_our_pieces_is_a_different_fault(tmp_path, monkeypatch):
+    """The other wait, and the reason it is counted in blocks.
+
+    A wall clock cannot tell "the chain is slow" from "the chain is moving
+    and our pieces are not in it". The first is waiting; the second is a fee
+    too low for the mempool as it stands, and saying "resume when the chain
+    has moved" to somebody whose chain has moved ten blocks helps nobody
+    (D-127).
+    """
+    build = C.read_build(hashlips(tmp_path, count=2))
+    sender = FakeSender()
+    sender.outputs = 0
+    sender.spendable_outputs = lambda address, at_least=0, minconf=0: 5 if minconf == 0 else 0
+
+    # The chain is alive and busy: a block every time anybody looks.
+    def rising():
+        sender.height += 1
+        return sender.height
+
+    sender.rpc.get_block_count = rising
+    jobs, runner = runner_for(tmp_path, sender)
+    monkeypatch.setattr(C, "POLL", 0.01)
+    monkeypatch.setattr(C, "POLL_MAX", 0.01)
+    job_id = jobs.create("regtest", "nSender", build)
+    runner.start(job_id)
+    wait(runner, job_id)
+    job = jobs.get(job_id)
+    assert job["status"] == "paused"
+    assert "blocks have come" in job["error"] and "fee is too low" in job["error"]
+    assert "no block at all" not in job["error"], "the other fault, and not this one"
+    assert sender.sent == [] and sender.splits == 0
+
+
+def test_the_wait_backs_off_rather_than_asking_a_thousand_times():
+    """Blocks are a minute apart and longer when busy, so the gap doubles to
+    a minute rather than polling every three seconds throughout (the operator)."""
+    gaps, seconds = [], C.POLL
+    for _ in range(8):
+        gaps.append(seconds)
+        seconds = C.backoff(seconds)
+    assert gaps[:4] == [3.0, 6.0, 12.0, 24.0]
+    assert gaps[-1] == C.POLL_MAX == 60.0
+    assert C.backoff(0) == C.POLL, "never faster than the first gap"
 
 
 def test_a_failed_job_says_why(tmp_path):

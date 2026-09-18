@@ -122,6 +122,23 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {context.label:8s} {context.network:10s} NOT FOUND -- "
                   f"the {context.role} sections will explain why")
 
+    # A floor that moved makes a new chain era, and the wallet's own files
+    # were written under the old one: rows naming a property id or an
+    # inscription number describe something else now, because those are
+    # assigned by the index and start again from the bottom (D-126). They are
+    # moved out of the live tables and kept beside them.
+    from .. import era as eralib
+    for context in state.token_chains:
+        try:
+            moved = eralib.retire_old_rows(state.home, context.network,
+                                           context.params.activation_height)
+        except Exception as exc:
+            print(f"  could not retire old rows for {context.network}: {exc}")
+            continue
+        for what, count in sorted(moved.items()):
+            print(f"  {context.network}: {count} row(s) of {what} were from an "
+                  f"older floor and have been set aside")
+
     # If the passphrase was saved, unlock at startup rather than making the user
     # do it on every launch. That is the entire point of saving it.
     if state.try_auto_unlock():

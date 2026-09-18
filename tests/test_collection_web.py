@@ -460,3 +460,41 @@ def test_a_finished_run_does_not_say_go_and_resume_it(client, tmp_path):
              follow_redirects=False)
     assert "already on this chain from this address" in \
         app.get("/inscriptions/collection").text
+
+
+def test_the_review_says_what_number_one_will_say_about_the_set(client, tmp_path,
+                                                                monkeypatch):
+    """The text that becomes permanent, shown before the press.
+
+    A build wrote a real name into the `collection` object's `artist` field —
+    the object a marketplace reads for the whole set — and the only reason it
+    was not inscribed for ever was an unrelated defect stopping the run. The
+    screen showed the cost of that text and never the text (a test machine).
+    """
+    import contextlib
+    import json as jsonlib
+
+    from arcade.web import app as webapp
+
+    app, state = client
+    folder = hashlips(tmp_path, count=2)
+    # Through _metadata.json, which is what a build is read from when it has
+    # one -- the same file an Art Engine writes and the same place a
+    # generator would put an author.
+    listing = folder / "json" / "_metadata.json"
+    items = jsonlib.loads(listing.read_text())
+    items[0]["collection"] = {"name": "Doge Punks", "artist": "A Real Name",
+                              "description": "five punks"}
+    listing.write_text(jsonlib.dumps(items))
+
+    monkeypatch.setattr(type(state.token_chain), "rpc",
+                        lambda self: contextlib.nullcontext(object()), raising=False)
+    monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
+
+    page = app.post("/inscriptions/collection/review",
+                    data={"csrf_token": state.csrf_token, "folder": str(folder),
+                          "fromaddress": "nMe"}).text
+    assert "What piece #1 will say about the collection" in page
+    assert "A Real Name" in page, "the field that would be published is on the page"
+    assert "five punks" in page
+    assert "names them permanently" in page

@@ -123,6 +123,14 @@ An Omni-style token ledger, indexed from the chain.
   index moves itself aside — kept, named after the new floor — and rebuilds
   from it. Nothing is deleted: a floor published wrong is undone by renaming
   a file back.
+* **A moved start block retires the wallet's own records too.** Approvals,
+  swap offers and fills, node letters and collection runs all name things the
+  chain assigned — and property ids and inscription numbers start again from
+  the bottom after a reset, so a kept row does not go stale, it starts
+  describing something else. Rows from an older start block are moved out of
+  the live tables into a JSON file beside them, named after the era they
+  belonged to. Being keyed by network is not enough: a reset makes a new era
+  *inside* a network.
 
 ---
 
@@ -273,8 +281,19 @@ names itself the same way.
   computer never wrote down are found again in the chain index rather than
   paid for twice.
 * **Funded in batches.** The wallet is split into outputs sized for the
-  largest of the next 120 items, so each piece has its own confirmed coin and
-  a thousand-item run does not wait a block per transaction.
+  largest of the next 100 items, so each piece has its own confirmed coin and
+  a thousand-item run does not wait a block per transaction. Not the whole
+  collection at once: the split is funded from the single issuing address, a
+  piece is worth about 1.4 coins, and a block holds only about nineteen
+  pieces anyway — so a 10,000-item run is some five hundred blocks of chain
+  however it was funded, and pre-funding it all would buy only the split
+  waits.
+* **Waiting is measured in blocks, not minutes.** The gap between checks
+  doubles from three seconds to a minute, because that is what a block costs.
+  And a run that pauses says which of two things happened: ten blocks came
+  and its pieces are still not in one (the fee is too low for the mempool as
+  it stands), or no block came at all (the chain is stalled and there is
+  nothing to fix). A wall clock cannot tell those apart.
 * **Messages still go through** while a run is on: the send lock is held one
   item at a time.
 * **It can sell itself.** Tick the mintpad at the pricing step, name a price

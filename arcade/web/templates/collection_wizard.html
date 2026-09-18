@@ -64,6 +64,30 @@
             <span class="muted">&mdash; spent item by item as the run goes,
               from {{ sender }}</span></td></tr>
     </table>
+    {# What the set will say about ITSELF, from the #1's own JSON. It is on
+       the chain for ever and it is what a marketplace shows for the whole
+       collection, and until now this screen showed the cost of it and not
+       the text of it (a test machine). #}
+    <div class="panel" style="margin-top:12px;padding:10px 12px">
+      <p class="muted" style="margin:0 0 6px;font-size:.85rem">
+        What piece #1 will say about the collection &mdash; inscribed once, on
+        the chain for ever, and shown wherever this set appears:</p>
+      {% if says %}
+      <table>
+        {% for key, value in says.items() %}
+        <tr><td class="muted" style="width:150px">{{ key }}</td>
+            <td style="word-break:break-word">{{ value }}</td></tr>
+        {% endfor %}
+      </table>
+      <p class="muted" style="margin:6px 0 0;font-size:.85rem">
+        Anything here that names a person names them permanently. Edit the
+        build's metadata if that is not what you meant.</p>
+      {% else %}
+      <p class="muted" style="margin:0;font-size:.85rem">
+        Nothing yet &mdash; whatever you fill in below becomes it.</p>
+      {% endif %}
+    </div>
+
     {% if build.problems %}
       <div class="msg err" style="margin-top:12px">
         <strong>Check these before you start:</strong>

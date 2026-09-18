@@ -194,27 +194,42 @@ TESTNET = Params(
     # index resumes from its own height and only skips low blocks going
     # forward -- so an install that keeps its index would see Goofball and the
     # old tokens while a fresh one sees none of them, and the two would
-    # disagree about what exists. Every node moves its testnet index aside as
-    # part of taking this release. The release notice says which files:
-    # `test-ledger.sqlite`, which is purely the testnet index, and
-    # `test.sqlite`, which is the messaging store -- that one ALSO holds
+    # disagree about what exists.
+    #
+    # The index now moves ITSELF aside when it finds the floor above
+    # everything it holds, and the wallet's own stores retire their older
+    # era's rows the same way (D-123, D-126), so the only file left for a
+    # human to decide about is `test.sqlite`, the messaging store: it holds an
+    # address book that was typed rather than scanned, and it ALSO holds
     # mainnet's messaging scan position, so moving it aside makes a wallet
-    # with mainnet messages rescan them (a test machine found the row). Nothing else in
-    # ~/.dogecoinarcade is per-chain, and `main-ledger.sqlite` must not be
-    # touched at all.
-    # Moved again 2026-09-18 with the token name rule (D-122): "Dogecoin
-    # Arcade" was issued on both machines and both tokens are real, so the
-    # pair goes under the floor along with the doubled collection that moved
-    # it yesterday (D-120). Set about forty minutes ahead of the tip, which is
-    # the suite, the publish and both machines taking the release -- far
-    # enough that nothing of ours is under it, near enough to wait for.
-    activation_height=1_495_420,
-    messaging_start_height=1_495_420,
-    swaps_from=1_495_420,
-    asks_from=1_495_420,
-    fills_from=1_495_420,
-    named_fills_from=1_495_420,
-    bid_fills_from=1_495_420,
+    # with mainnet messages rescan them (a test machine found that row).
+    #
+    # "Nothing else in ~/.dogecoinarcade is per-chain" is what used to be
+    # written here, and it was wrong in the way that is hardest to see: every
+    # one of those files IS keyed by network, and a reset makes a new era
+    # inside one network, so being network-scoped said nothing about a floor.
+    # `approvals.sqlite` was the sharp one -- a row naming property 3 by the
+    # name of a token from two eras ago, in the file that records what
+    # somebody authorised (D-126). `main-ledger.sqlite` must not be touched.
+    # Moved again 2026-09-18, third time in two days, and this one is a
+    # tidy-up rather than a consensus change: the local stores are retiring an
+    # era's worth of rows (D-126), the run list is doing the same (D-125), and
+    # starting both machines clean beats reasoning about what survived.
+    #
+    # Ten blocks above the tip, and set LAST -- after the suite, immediately
+    # before the publish. The first two of these floors were chosen before a
+    # half-hour test run and were behind the chain by the time the publish
+    # finished; the third was an hour ahead and made somebody wait an hour for
+    # a number. The floor is one line of config and the suite is testing the
+    # code, so the number is the last thing decided rather than the first
+    # (the operator).
+    activation_height=1_495_811,
+    messaging_start_height=1_495_811,
+    swaps_from=1_495_811,
+    asks_from=1_495_811,
+    fills_from=1_495_811,
+    named_fills_from=1_495_811,
+    bid_fills_from=1_495_811,
     datadir_subdir="testnet3",
     pubkeyhash_version=113,
     scripthash_version=196,

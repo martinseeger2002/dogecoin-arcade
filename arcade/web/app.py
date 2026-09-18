@@ -2843,7 +2843,7 @@ def create_app(state: AppState) -> FastAPI:
                                 # last attempt turned it off (D-036).
                                 "pad_on": True, "pad_amount": "",
                                 "pad_kind": "coins", "pad_token": "",
-                                "clash": "", "partly": "",
+                                "clash": "", "partly": "", "says": {},
                                 "tokens": []}
         try:
             data["tokens"] = state.token_index(chain).properties()
@@ -2989,11 +2989,20 @@ def create_app(state: AppState) -> FastAPI:
             already = _what_is_already_there(sender, build)
             build = _without(build, already["skip"])
             cost = collectionlib.estimate_build(build)
+            # What the #1 already says about the SET, shown before the press.
+            # That object is what a marketplace reads for the whole
+            # collection (D-097), it is on the chain for ever, and it was the
+            # one thing on this screen nobody could see: a build wrote
+            # "artist": a real name into it and the only reason it was not
+            # inscribed was an unrelated defect stopping the run (a test machine).
+            first = min(build.items, key=lambda i: i.edition) if build.items else None
+            about = (inscriptionlib.collection_details(first.json)
+                     if first is not None else {})
             return render(request, "collection_wizard.html",
                           **_collection_page_data(
                               build=build, cost=cost, sender=sender,
                               clash=already["blocked"], partly=already["note"],
-                              preview=build.items[:12]))
+                              says=about, preview=build.items[:12]))
         except HTTPException:
             raise
         except Exception as exc:
