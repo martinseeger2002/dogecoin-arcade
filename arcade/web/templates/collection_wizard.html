@@ -170,8 +170,14 @@
         <div id="pad-fields" class="row" style="gap:8px;margin-top:12px"
              {{ '' if pad_on else 'hidden' }}>
           <div style="flex:0 0 120px">
+            {# `required` only while the pad is on, set by padFields with the
+               panel's visibility -- a required field inside a hidden div
+               cannot be filled in and the browser refuses to submit while
+               pointing at something nobody can see. #}
             <input autocomplete="off" name="pad_amount" inputmode="decimal"
-                   placeholder="price" value="{{ pad_amount or '' }}"></div>
+                   id="pad-amount" placeholder="price"
+                   value="{{ pad_amount or '' }}"
+                   {{ 'required' if pad_on }}></div>
           <div style="flex:0 0 150px">
             <select autocomplete="off" name="pad_kind" id="pad-kind"
                     onchange="padToken(this)">
@@ -199,7 +205,15 @@
       </div>
     </form>
     <script>
-    function padFields(box){ document.getElementById('pad-fields').hidden = !box.checked; }
+    function padFields(box){
+      document.getElementById('pad-fields').hidden = !box.checked;
+      // The price is required exactly while it is being asked for. Without
+      // this, pressing Inscribe with the pad ticked and no price threw on
+      // the server and bounced the whole review away -- the build, the
+      // costing and the fields, gone, to say one word about one box (D-129).
+      var amount = document.getElementById('pad-amount');
+      if (amount) { amount.required = box.checked; }
+    }
     function padToken(sel){
       document.getElementById('pad-token-wrap').hidden = sel.value !== 'token';
     }

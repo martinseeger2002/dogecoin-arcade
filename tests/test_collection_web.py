@@ -288,11 +288,10 @@ def test_a_set_already_on_the_chain_cannot_be_inscribed_again(client, tmp_path,
     response = app.post("/inscriptions/collection/start",
                         data={"csrf_token": state.csrf_token, "folder": str(build),
                               "fromaddress": "nMe"}, follow_redirects=False)
-    assert response.status_code == 303
-    assert response.headers["location"] == "/inscriptions/collection"
-    page = app.get("/inscriptions/collection").text
-    assert "already on this chain from this address" in page
-    assert "5 pieces" in page
+    # The answer lands on the page it was asked from, not two pages back.
+    assert response.status_code == 200
+    assert "already on this chain from this address" in response.text
+    assert "5 pieces" in response.text
 
     jobs, _ = state.collections
     assert jobs.list() == [], "and nothing was written down"
@@ -314,8 +313,7 @@ def test_a_run_already_under_way_is_not_started_twice(client, tmp_path):
                         data={"csrf_token": state.csrf_token,
                               "folder": str(build.folder), "fromaddress": "nMe"},
                         follow_redirects=False)
-    assert response.status_code == 303
-    assert "is already being inscribed" in app.get("/inscriptions/collection").text
+    assert "is already being inscribed" in response.text
     assert len(jobs.list()) == 1
 
     # Somebody else's set of the same name is their own, and is not in the way.
@@ -323,7 +321,7 @@ def test_a_run_already_under_way_is_not_started_twice(client, tmp_path):
                         data={"csrf_token": state.csrf_token,
                               "folder": str(build.folder), "fromaddress": "nSomebodyElse"},
                         follow_redirects=False)
-    assert "is already being inscribed" not in app.get("/inscriptions/collection").text
+    assert "is already being inscribed" not in response.text
 
 
 def test_a_half_finished_set_is_finished_rather_than_paid_for_twice(
@@ -418,11 +416,11 @@ def test_a_run_from_this_floor_still_blocks(client, tmp_path):
     jobs.create(chain.network, "nMe", build, name="Doge Punks",
                 floor=chain.params.activation_height)
 
-    app.post("/inscriptions/collection/start",
-             data={"csrf_token": state.csrf_token,
-                   "folder": str(build.folder), "fromaddress": "nMe"},
-             follow_redirects=False)
-    assert "is already being inscribed" in app.get("/inscriptions/collection").text
+    page = app.post("/inscriptions/collection/start",
+                    data={"csrf_token": state.csrf_token,
+                          "folder": str(build.folder), "fromaddress": "nMe"},
+                    follow_redirects=False).text
+    assert "is already being inscribed" in page
     assert len(jobs.list()) == 1
 
 
@@ -442,11 +440,10 @@ def test_a_finished_run_does_not_say_go_and_resume_it(client, tmp_path):
                          floor=chain.params.activation_height)
     jobs.set_status(job_id, "done", note="every item is on its way")
 
-    app.post("/inscriptions/collection/start",
-             data={"csrf_token": state.csrf_token,
-                   "folder": str(build.folder), "fromaddress": "nMe"},
-             follow_redirects=False)
-    page = app.get("/inscriptions/collection").text
+    page = app.post("/inscriptions/collection/start",
+                    data={"csrf_token": state.csrf_token,
+                          "folder": str(build.folder), "fromaddress": "nMe"},
+                    follow_redirects=False).text
     assert "resume it" not in page, "there is nothing to resume"
     assert "already inscribed Doge Punks on this chain" in page
     assert "None of it is indexed yet" in page, \
@@ -454,12 +451,11 @@ def test_a_finished_run_does_not_say_go_and_resume_it(client, tmp_path):
 
     # And once the chain shows the set, the chain is what answers.
     index_with_a_collection(state.home, count=5)
-    app.post("/inscriptions/collection/start",
-             data={"csrf_token": state.csrf_token,
-                   "folder": str(hashlips(tmp_path / "again")), "fromaddress": "nMe"},
-             follow_redirects=False)
-    assert "already on this chain from this address" in \
-        app.get("/inscriptions/collection").text
+    page = app.post("/inscriptions/collection/start",
+                    data={"csrf_token": state.csrf_token,
+                          "folder": str(hashlips(tmp_path / "again")),
+                          "fromaddress": "nMe"}, follow_redirects=False).text
+    assert "already on this chain from this address" in page
 
 
 def test_the_review_says_what_number_one_will_say_about_the_set(client, tmp_path,
@@ -529,3 +525,56 @@ def test_a_set_entirely_on_the_chain_says_so_instead_of_crashing(client, tmp_pat
     assert "no element 0" not in page.text and "Traceback" not in page.text
     assert "already on this chain from this address, all 5 pieces of it" in page.text
     assert "Doge Punks #1" in page.text, "and the build is still described"
+
+
+def test_a_mintpad_with_no_price_keeps_the_review(client, tmp_path, monkeypatch):
+    """One missing field should not cost the whole review.
+
+    Ticking the mintpad and leaving the price empty threw on the server and
+    bounced back to step one: the build, the costing, the addresses and
+    everything typed, gone, to say one word about one box. The browser now
+    refuses to submit at all (the field is `required` while the pad is on),
+    and if it arrives anyway the answer lands on the page it came from
+    (D-129).
+    """
+    import contextlib
+
+    from arcade.web import app as webapp
+
+    app, state = client
+    build = hashlips(tmp_path, count=2)
+    monkeypatch.setattr(type(state.token_chain), "rpc",
+                        lambda self: contextlib.nullcontext(object()), raising=False)
+    monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
+
+    page = app.post("/inscriptions/collection/start",
+                    data={"csrf_token": state.csrf_token, "folder": str(build),
+                          "fromaddress": "nMe", "launchpad": "yes",
+                          "pad_amount": "", "pad_kind": "coins"},
+                    follow_redirects=False)
+    assert page.status_code == 200, "the review, not a redirect to the top"
+    assert "say what one costs" in page.text
+    assert "Doge Punks" in page.text and "Inscribe" in page.text, \
+        "with the build and the button still there"
+    jobs, _ = state.collections
+    assert jobs.list() == [], "and nothing was written down"
+
+
+def test_the_price_is_required_while_the_pad_is_on(client, tmp_path, monkeypatch):
+    """Belt to the server's braces: the browser will not send it at all."""
+    import contextlib
+
+    from arcade.web import app as webapp
+
+    app, state = client
+    monkeypatch.setattr(type(state.token_chain), "rpc",
+                        lambda self: contextlib.nullcontext(object()), raising=False)
+    monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
+    page = app.post("/inscriptions/collection/review",
+                    data={"csrf_token": state.csrf_token,
+                          "folder": str(hashlips(tmp_path, count=2)),
+                          "fromaddress": "nMe"}).text
+    assert 'id="pad-amount"' in page and "required" in page
+    assert "amount.required = box.checked" in page, \
+        "and it follows the tick, because a required field inside a hidden " \
+        "panel cannot be filled in"

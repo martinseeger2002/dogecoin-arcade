@@ -3169,8 +3169,26 @@ def create_app(state: AppState) -> FastAPI:
                                  floor=chain.params.activation_height)
             runner.start(job_id)
         except Exception as exc:
-            state.flash(str(exc), "err")
-            return RedirectResponse("/inscriptions/collection", status_code=303)
+            # Back to the REVIEW, not to step one. A refusal here is usually
+            # one field -- a price left out of a mintpad that was ticked --
+            # and bouncing to the top threw away the build, the costing and
+            # everything else typed, to say one word about one box (D-129).
+            try:
+                again = collectionlib.read_build(Path(folder.strip()))
+                first = (min(again.items, key=lambda i: i.edition)
+                         if again.items else None)
+                return render(request, "collection_wizard.html",
+                              **_collection_page_data(
+                                  build=again, sender=fromaddress.strip(),
+                                  cost=collectionlib.estimate_build(again),
+                                  says=(inscriptionlib.collection_details(first.json)
+                                        if first is not None else {}),
+                                  preview=again.items[:12], error=str(exc),
+                                  pad_on=launchpad == "yes", pad_amount=pad_amount,
+                                  pad_kind=pad_kind, pad_token=pad_token))
+            except Exception:
+                state.flash(str(exc), "err")
+                return RedirectResponse("/inscriptions/collection", status_code=303)
         state.flash(f"Inscribing {len(build.items):,} items. This page follows "
                     f"the run; it carries on if you leave.", "ok")
         return RedirectResponse(f"/inscriptions/collection/{job_id}", status_code=303)
