@@ -791,6 +791,18 @@ class LedgerIndex:
                 f"ORDER BY c.edition IS NULL, c.edition, i.number LIMIT ? OFFSET ?",
                 (creator, name, max(1, min(limit, 500)), max(0, offset)))]
 
+    def collection_editions(self, creator: str, name: str) -> set[int]:
+        """Which numbers of a set are already on the chain from that address.
+
+        What a second run has to leave out. A collection admits one piece per
+        edition (D-120), so re-sending these would pay for inscriptions that
+        join nothing.
+        """
+        with self.open() as db:
+            return {row["edition"] for row in db.conn.execute(
+                "SELECT edition FROM collection_item WHERE creator = ? "
+                "AND collection = ? AND edition IS NOT NULL", (creator, name))}
+
     def collection_cover(self, creator: str, name: str) -> dict | None:
         """The face of a collection: its #1, if this node can draw it.
 

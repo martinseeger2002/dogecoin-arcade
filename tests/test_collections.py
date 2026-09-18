@@ -560,15 +560,18 @@ def test_a_set_can_be_given_its_own_face_and_words(tmp_path):
     data = jsonlib.loads(first.json)
     assert data["collection"] == {"name": "Doge Punks", "icon": piece,
                                   "description": "five punks",
-                                  "url": "https://punks.example"}, \
+                                  "url": "https://punks.example", "supply": 3}, \
         "empty fields are not written, and cost nothing"
     assert data["edition"] == 1 and data["attributes"], "the item is otherwise itself"
     assert I.collection_of(first.json) == ("Doge Punks", 1, "Doge Punks #1"), \
         "membership is decided by the name, not by the object"
     assert I.collection_details(first.json)["icon"] == piece
-    # Nothing said, nothing written: a set that wants no description pays for
-    # no description.
-    assert C.with_details(build, {}).items[0].json == build.items[0].json
+    # Nothing said, and the size is still written: it is what seals the set,
+    # so it is not the creator's to leave out (D-120).
+    plain = jsonlib.loads(C.with_details(build, {}).items[0].json)
+    assert plain["collection"]["supply"] == 3
+    assert plain["collection"]["description"] == "test set", \
+        "and what the build already said about itself is still carried (D-114)"
     others = [i.json for i in said.items if i.edition != 1]
     assert others == [i.json for i in build.items if i.edition != 1], \
         "and it is written once, not on all five hundred"

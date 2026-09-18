@@ -150,10 +150,17 @@ def with_details(build: "Build", details: dict[str, Any]) -> "Build":
     the `Prefix #12` name, and an object is neither, so the set is still
     filed under the name it had.
     """
+    if not build.items:
+        return build
     wanted = {key: value for key, value in (details or {}).items()
               if str(value or "").strip()}
-    if not wanted or not build.items:
-        return build
+    # How many pieces there are, said by the set itself. A collection has no
+    # object on the chain to be a manifest, so the number rides on the piece
+    # that already carries everything else the set says about itself -- and
+    # once it is there, no node will file a hundred-and-first item into a
+    # hundred-item set, which is what stops a build being inscribed twice
+    # (D-120).
+    wanted.setdefault("supply", len(build.items))
     first = min(build.items, key=lambda item: item.edition)
     try:
         data = json.loads(first.json)

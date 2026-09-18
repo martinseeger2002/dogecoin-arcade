@@ -40,7 +40,13 @@
   <div class="stat"><b>{{ for_sale }}</b><span>For sale</span></div>
   <div class="stat"><b>{{ offered }}</b><span>Offers</span></div>
   <div class="stat"><b>{{ "{:,}".format(owners) }}</b><span>Owners</span></div>
-  <div class="stat"><b>{{ "{:,}".format(summary.count) }}</b><span>Pieces</span></div>
+  {# A set says how big it is on its own #1, and nothing joins it once it
+     holds that many, so "17 of 100" is a fact off the chain rather than a
+     promise from a website (D-120). #}
+  <div class="stat"><b>{{ "{:,}".format(summary.count) }}{% if about.supply %}<span
+        class="muted" style="font-size:.7em"> / {{ "{:,}".format(about.supply) }}</span>{% endif %}</b>
+    <span>{% if about.supply and summary.count >= about.supply %}Pieces &middot; complete
+          {% else %}Pieces{% endif %}</span></div>
   <div class="stat"><b>{% if traded %}{{ "%.2f"|format(volume) }}{% else %}&mdash;{% endif %}</b>
     <span>Volume &middot; {{ traded }} sold</span></div>
 </div>

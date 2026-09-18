@@ -317,6 +317,71 @@ def _rekey_moves(db: Database) -> None:
         db.conn.executescript(SCHEMA)
 
 
+def joins_collection(conn, creator: str, collection: str,
+                     edition: int | None, name: str) -> bool:
+    """Whether a finished inscription takes its place in the set it names.
+
+    A set is (creator, collection), so nobody else's inscription can land in
+    yours whatever its JSON says: another address inscribing "Pixel Skulls
+    #7" opens a set of their own under their own key, and the page, the floor
+    and the mintpad are all keyed the same way. That half was always true.
+    Two rules seal the other half (D-120):
+
+      * one piece per edition. A build inscribed twice filed a second
+        #1..#100 beside the first and the set came out doubled -- every piece
+        present in duplicate, a hundred items reading as two hundred.
+      * the #1 may declare a `supply`, and once the set holds that many,
+        nothing further joins it. The wizard now writes one on every set it
+        inscribes, so a set says how big it is in the same breath as what it
+        is called.
+
+    A refused piece is still an inscription. It was paid for, it is on the
+    chain, its owner holds it and can sell it -- it is simply not a member of
+    that set, which is the only thing a second copy could honestly be.
+    """
+    if edition is not None:
+        already = conn.execute(
+            "SELECT 1 FROM collection_item "
+            "WHERE creator = ? AND collection = ? AND edition = ?",
+            (creator, collection, edition)).fetchone()
+    else:
+        # A set numbered by nothing but its names: the name is the edition.
+        already = conn.execute(
+            "SELECT 1 FROM collection_item WHERE creator = ? AND collection = ? "
+            "AND edition IS NULL AND name = ?",
+            (creator, collection, name)).fetchone()
+    if already is not None:
+        return False
+    supply = _declared_supply(conn, creator, collection)
+    if not supply:
+        return True
+    if edition is not None and edition > supply:
+        return False
+    held = conn.execute(
+        "SELECT COUNT(*) AS n FROM collection_item WHERE creator = ? AND collection = ?",
+        (creator, collection)).fetchone()["n"]
+    return held < supply
+
+
+def _declared_supply(conn, creator: str, collection: str) -> int:
+    """How many pieces the set's own #1 says there are, or 0 for unsaid.
+
+    Read from the #1 rather than from a separate manifest because a set has
+    no object on this chain to hold one: the piece a collection is known by
+    is where it says everything else about itself already (D-097), and a
+    number written there is on the chain before item two is paid for.
+    """
+    row = conn.execute(
+        "SELECT i.json AS json FROM collection_item c "
+        "JOIN inscription i ON i.txid = c.txid "
+        "WHERE c.creator = ? AND c.collection = ? AND c.edition = 1",
+        (creator, collection)).fetchone()
+    if row is None:
+        return 0
+    said = I.collection_details(row["json"]).get("supply")
+    return said if isinstance(said, int) and said > 0 else 0
+
+
 def _file_collections(db: Database) -> None:
     """File inscriptions indexed before collections were, once.
 
@@ -329,12 +394,17 @@ def _file_collections(db: Database) -> None:
     rows = db.conn.execute(
         "SELECT i.txid, i.creator, i.json FROM inscription i "
         "LEFT JOIN collection_item c ON c.txid = i.txid "
-        "WHERE c.txid IS NULL AND i.json != ''").fetchall()
+        "WHERE c.txid IS NULL AND i.json != '' ORDER BY i.number").fetchall()
     for row in rows:
         member = I.collection_of(row["json"])
         if member is None:
             continue
         collection, edition, name = member
+        # In chain order and through the same gate the engine uses, so an
+        # index brought level here holds the same set as one built from the
+        # blocks: first claim wins there, first claim wins here.
+        if not joins_collection(db.conn, row["creator"], collection, edition, name):
+            continue
         db.conn.execute(
             "INSERT OR IGNORE INTO collection_item "
             "(txid, creator, collection, edition, name) VALUES (?, ?, ?, ?, ?)",
@@ -1039,6 +1109,10 @@ class Engine:
         member = I.collection_of(manifest.json)
         if member is not None:
             collection, edition, name = member
+            if not joins_collection(self.state.db.conn, rtx.sender,
+                                    collection, edition, name):
+                member = None
+        if member is not None:
             self.state.insert("collection_item", {
                 "txid": first["txid"], "creator": rtx.sender,
                 "collection": collection, "edition": edition, "name": name})

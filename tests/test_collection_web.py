@@ -264,3 +264,95 @@ def test_a_mintpad_is_not_up_until_a_block_carries_it(client, tmp_path):
 
     page = app.get(f"/inscriptions/collection/{job_id}").text
     assert "The mintpad is up" in page
+
+
+def test_a_set_already_on_the_chain_cannot_be_inscribed_again(client, tmp_path,
+                                                              monkeypatch):
+    """The wizard refuses before the node is asked anything, because the
+    answer is already in the index: inscribing a build twice buys a second
+    copy of every piece that no node will file into the set (D-120)."""
+    import contextlib
+
+    from arcade.web import app as webapp
+
+    app, state = client
+    index_with_a_collection(state.home, count=5)
+    build = hashlips(tmp_path)          # the same "Doge Punks", same address
+
+    # The node answers, so the refusal is the wizard's own and not the
+    # absence of a node standing in for it.
+    monkeypatch.setattr(type(state.token_chain), "rpc",
+                        lambda self: contextlib.nullcontext(object()), raising=False)
+    monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
+
+    response = app.post("/inscriptions/collection/start",
+                        data={"csrf_token": state.csrf_token, "folder": str(build),
+                              "fromaddress": "nMe"}, follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/inscriptions/collection"
+    page = app.get("/inscriptions/collection").text
+    assert "already on this chain from this address" in page
+    assert "5 pieces" in page
+
+    jobs, _ = state.collections
+    assert jobs.list() == [], "and nothing was written down"
+
+
+def test_a_run_already_under_way_is_not_started_twice(client, tmp_path):
+    """The other half: while a set is being inscribed there is nothing on
+    the chain yet to refuse it, so the run itself is what stands in the way."""
+    from arcade import collections as C
+
+    app, state = client
+    build = C.read_build(hashlips(tmp_path, count=2))
+    jobs, _ = state.collections
+    jobs.create("main", "nMe", build, name="Doge Punks")
+
+    response = app.post("/inscriptions/collection/start",
+                        data={"csrf_token": state.csrf_token,
+                              "folder": str(build.folder), "fromaddress": "nMe"},
+                        follow_redirects=False)
+    assert response.status_code == 303
+    assert "is already being inscribed" in app.get("/inscriptions/collection").text
+    assert len(jobs.list()) == 1
+
+    # Somebody else's set of the same name is their own, and is not in the way.
+    response = app.post("/inscriptions/collection/start",
+                        data={"csrf_token": state.csrf_token,
+                              "folder": str(build.folder), "fromaddress": "nSomebodyElse"},
+                        follow_redirects=False)
+    assert "is already being inscribed" not in app.get("/inscriptions/collection").text
+
+
+def test_a_half_finished_set_is_finished_rather_than_paid_for_twice(
+        client, tmp_path, monkeypatch):
+    """The other shape of the same mistake. Five of the set are up, the run
+    that sent them is gone, and the creator points the wizard at the build
+    again: the five that are there are left alone and the rest go up (D-120)."""
+    import contextlib
+
+    from arcade import collections as C
+    from arcade.web import app as webapp
+
+    app, state = client
+    index_with_a_collection(state.home, count=5)     # Doge Punks #1..#5 from nMe
+    build = C.read_build(hashlips(tmp_path, count=8))
+
+    # Far enough for the route to write the job down: the address is the
+    # creator's, and the runner is never started here.
+    chain = state.token_chain
+    monkeypatch.setattr(type(chain), "rpc",
+                        lambda self: contextlib.nullcontext(object()), raising=False)
+    monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
+    jobs, runner = state.collections
+    monkeypatch.setattr(type(runner), "start", lambda self, job_id: True)
+
+    response = app.post("/inscriptions/collection/start",
+                        data={"csrf_token": state.csrf_token,
+                              "folder": str(build.folder), "fromaddress": "nMe"},
+                        follow_redirects=False)
+    assert response.status_code == 303
+    runs = jobs.list()
+    assert len(runs) == 1
+    editions = [i["edition"] for i in jobs.items(runs[0]["id"])]
+    assert editions == [6, 7, 8], "only what is not on the chain is paid for"

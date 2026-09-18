@@ -29,6 +29,11 @@
        reviewed by two of us and noticed by neither (a test machine, D-114). #}
     <p style="margin:0 0 2px;font-size:1.35rem;font-weight:600">
       {{ build.collection or 'no name in the metadata' }}</p>
+    {# Said here, where the fee is quoted, and refused again at the press:
+       inscribing a set twice is a bill for a second copy of every piece that
+       no node will file into the set (D-120). #}
+    {% if clash %}<div class="msg err">{{ clash }}</div>{% endif %}
+    {% if partly %}<div class="msg">{{ partly }}</div>{% endif %}
     <p class="muted" style="margin:0 0 14px">
       first piece: <strong>{{ build.items[0].name if build.items else '—' }}</strong>
       &middot; {{ "{:,}".format(cost['items']) }} items
@@ -162,7 +167,8 @@
       </div>
 
       <div class="row">
-        <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">
+        <button type="submit" class="{{ 'danger' if chain.is_mainnet }}"
+                {{ 'disabled' if clash }}>
           Inscribe {{ "{:,}".format(cost['items']) }} items</button>
         <a class="btn ghost" href="/inscriptions/collection">Back</a>
       </div>

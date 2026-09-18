@@ -202,16 +202,19 @@ TESTNET = Params(
     # with mainnet messages rescan them (a test machine found the row). Nothing else in
     # ~/.dogecoinarcade is per-chain, and `main-ledger.sqlite` must not be
     # touched at all.
-    activation_height=1_493_951,
-    messaging_start_height=1_493_951,
-    swaps_from=1_493_951,
-    asks_from=1_493_951,
-    fills_from=1_493_951,
-    named_fills_from=1_493_951,
-    # Set 2026-09-17 at tip 1,494,344, the tip itself: nothing is broadcast
-    # until both nodes report the same height, and the blocks between hold
-    # nothing of ours (D-106).
-    bid_fills_from=1_494_344,
+    # Moved again 2026-09-17 with the collection seal (D-120): a set that was
+    # inscribed twice is doubled on the chain for ever, and the rule that
+    # stops it is a rule about what may join a set -- so the sets under it are
+    # read by no node here rather than read two ways. A few blocks above the
+    # tip at the press, which is a couple of minutes at thirty-second blocks:
+    # far enough that nothing of ours is under it, near enough to wait for.
+    activation_height=1_494_450,
+    messaging_start_height=1_494_450,
+    swaps_from=1_494_450,
+    asks_from=1_494_450,
+    fills_from=1_494_450,
+    named_fills_from=1_494_450,
+    bid_fills_from=1_494_450,
     datadir_subdir="testnet3",
     pubkeyhash_version=113,
     scripthash_version=196,

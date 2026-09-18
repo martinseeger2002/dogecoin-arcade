@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import base64
+import dataclasses
 import datetime as dt
 import hashlib
 import json
@@ -2841,6 +2842,7 @@ def create_app(state: AppState) -> FastAPI:
                                 # last attempt turned it off (D-036).
                                 "pad_on": True, "pad_amount": "",
                                 "pad_kind": "coins", "pad_token": "",
+                                "clash": "", "partly": "",
                                 "tokens": []}
         try:
             data["tokens"] = state.token_index(chain).properties()
@@ -2853,6 +2855,65 @@ def create_app(state: AppState) -> FastAPI:
             data["node_error"] = str(exc)
         data.update(extra)
         return data
+
+    def _what_is_already_there(sender: str, build, label: str = "") -> dict[str, Any]:
+        """What of this build is on the chain already, and what that means.
+
+        Asked twice: at review, so the creator reads it before the fee is
+        quoted, and at the press, where it refuses. A collection is
+        (creator, name), so this only ever speaks about the creator's OWN
+        sets -- somebody else's set of the same name is not in the way and
+        cannot be (D-120).
+
+        Three answers. Nothing there: carry on. All of it there: refuse,
+        because a second copy of every piece is a second bill for pieces no
+        node will file into the set. Some of it there: send the rest. That
+        last one is the half-finished run, and paying again for the half that
+        went up is exactly the mistake this is here to stop.
+        """
+        out: dict[str, Any] = {"blocked": "", "note": "", "skip": set()}
+        collection = build.collection
+        if not sender or not collection:
+            return out
+        try:
+            chain, index = _token_chain()
+            done = index.collection_editions(sender, collection)
+        except Exception:
+            return out                    # the index is the wizard's business
+        jobs, _ = state.collections
+        named = {collection, label.strip()} - {""}
+        for job in jobs.list(chain.network):
+            if (job.get("sender") == sender
+                    and str(job.get("name") or "").strip() in named
+                    and job.get("status") != "failed"):
+                out["blocked"] = (
+                    f"{collection} is already being inscribed from this "
+                    f"address by run {job['id']}. Open that run and resume "
+                    f"it rather than starting a second one.")
+                return out
+        out["skip"] = {item.edition for item in build.items if item.edition in done}
+        if not out["skip"]:
+            return out
+        if len(out["skip"]) == len(build.items):
+            out["blocked"] = (
+                f"{collection} is already on this chain from this address, "
+                f"all {len(done):,} pieces of it. Inscribing it again would "
+                f"pay for a second copy of every item, and no node would file "
+                f"the copies into the set.")
+            return out
+        left = len(build.items) - len(out["skip"])
+        out["note"] = (
+            f"{len(out['skip']):,} of these are already on this chain from "
+            f"this address. This run sends the other {left:,}; the rest are "
+            f"left alone, because a second copy joins nothing.")
+        return out
+
+    def _without(build, editions: set[int]):
+        """The build minus the pieces that are already up."""
+        if not editions:
+            return build
+        return dataclasses.replace(
+            build, items=[i for i in build.items if i.edition not in editions])
 
     @app.get("/inscriptions/collection", response_class=HTMLResponse)
     def collection_wizard(request: Request):
@@ -2873,14 +2934,20 @@ def create_app(state: AppState) -> FastAPI:
             build = collectionlib.read_build(Path(folder.strip()))
             if not build.items:
                 raise ValueError("no items with both metadata and an image.")
-            cost = collectionlib.estimate_build(build)
             chain, _ = _token_chain()
             with chain.rpc() as rpc:
                 sender = (_check_own_address(rpc, fromaddress) if fromaddress
                           else funded_address(rpc, mainnet=chain.is_mainnet))
+            # Priced on what this run would actually send, so the number on
+            # the page is the number that is charged (D-120).
+            already = _what_is_already_there(sender, build)
+            build = _without(build, already["skip"])
+            cost = collectionlib.estimate_build(build)
             return render(request, "collection_wizard.html",
-                          **_collection_page_data(build=build, cost=cost,
-                                                  sender=sender, preview=build.items[:12]))
+                          **_collection_page_data(
+                              build=build, cost=cost, sender=sender,
+                              clash=already["blocked"], partly=already["note"],
+                              preview=build.items[:12]))
         except HTTPException:
             raise
         except Exception as exc:
@@ -3010,9 +3077,20 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError(
                     "a thumbnail is an inscription on this chain: give its id, "
                     "or choose a picture and inscribe it first.")
-            build = collectionlib.with_details(build, {
-                "icon": inscriptionlib.inscription_in(thumb),
-                "description": about.strip(), "url": site.strip()})
+            # Before the node is asked anything, because this refusal is
+            # about what is already on the chain and it should cost nothing
+            # to hear (D-120).
+            already = _what_is_already_there(fromaddress.strip(), build, name)
+            if already["blocked"]:
+                raise ValueError(already["blocked"])
+            if already["skip"]:
+                # A run that finishes a set does not rewrite what the set
+                # says about itself: that is on its #1, which is up already.
+                build = _without(build, already["skip"])
+            else:
+                build = collectionlib.with_details(build, {
+                    "icon": inscriptionlib.inscription_in(thumb),
+                    "description": about.strip(), "url": site.strip()})
             with chain.rpc() as rpc:
                 sender = _check_own_address(rpc, fromaddress)
             pad_json = ""

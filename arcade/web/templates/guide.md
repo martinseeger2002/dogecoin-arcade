@@ -221,7 +221,20 @@ names itself the same way.
   is on the chain, so every node files the same sets identically, and a set
   cannot be edited, hijacked or renamed afterwards.
 * **One set is one creator's.** Two addresses inscribing the same name make two
-  collections, so nobody can slip their own items into somebody else's.
+  collections, so nobody can slip their own items into somebody else's — not
+  while you are inscribing it, not afterwards.
+* **A set is sealed by its own #1.** One piece per edition, first claim wins:
+  a build inscribed twice does not double the set, because the second #7 is
+  not admitted to it. And when the #1 declares a `supply`, the set is full at
+  that many — nothing joins after, and nothing numbered past it joins at all.
+  The wizard writes the size on every set it inscribes, so a page can say
+  *17 of 100* as a fact read off the chain. A piece that is refused is still
+  an inscription: paid for, owned, sellable — just not a member of that set.
+* **A set is not inscribed twice by accident either.** The wizard refuses a
+  build whose collection is already on the chain from that address, or is
+  already being inscribed here, at the pricing step and again at the press —
+  before the node is asked anything, because a second run is a bill for a
+  second copy of every piece.
 * **Ordered by edition**, with the traits counted across the set, so a page
   shows *Blue background — 3 of 5, 60%* without anybody having filled that in.
 * **A wizard inscribes a whole build.** Point it at a HashLips `build` folder
