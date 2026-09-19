@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}{{ ('@' ~ whose.tag) if whose else 'Feed' }} · DogecoinArcade{% endblock %}
+
+{# One card, drawn for a post and for every reply under it, however deep: a
+   reply is a post as far as this page is concerned, which is what the format
+   says too (D-138). #}
+{% macro card(p, depth=0) %}
+<div class="panel feedpost{{ ' reply' if p.is_reply }}"
+     style="margin:0 0 12px;{{ 'margin-left:%dpx' % (depth * 22) if depth }}">
+  {% set who = bylines.get(p.author, {}) %}
+  <div class="row" style="align-items:center;gap:10px">
+    {% if who.face %}
+      <img class="coinface" src="/content/{{ who.face }}" alt=""
+           style="width:38px;height:38px;border-radius:50%;object-fit:cover">
+    {% else %}
+      <span class="coinface" style="width:38px;height:38px;border-radius:50%"></span>
+    {% endif %}
+    <div>
+      {% if who.tag %}
+        <a href="/u/{{ who.tag }}" style="font-weight:600">@{{ who.tag }}</a>
+      {% else %}
+        <span class="muted mono" style="font-size:.82rem">{{ p.author[:12] }}…</span>
+      {% endif %}
+      <div class="muted" style="font-size:.78rem">
+        {{ when(p.block_time) if p.block_time else 'just now' }}
+        {% if not p.height %}<span class="pill warn">waiting for its block</span>{% endif %}
+        {% if p.edited %}&middot; edited{% endif %}
+      </div>
+    </div>
+    {% if p.mine %}
+    <form method="post" action="/feed/{{ p.txid }}/delete" style="margin-left:auto"
+          onsubmit="return confirm('Delete this? The words stay on the chain for ever — no arcade will show them.')">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="back" value="{{ here }}">
+      <button class="ghost small" type="submit">Delete</button></form>
+    {% endif %}
+  </div>
+
+  {% if p.muted %}
+    <p class="muted" style="margin:10px 0 0;font-size:.86rem">Hidden — you muted
+      this person.
+      <form method="post" action="/feed/{{ p.txid }}/unmute" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <input type="hidden" name="text" value="{{ p.author }}">
+        <input type="hidden" name="back" value="{{ here }}">
+        <button class="ghost small" type="submit">Unmute</button></form></p>
+  {% else %}
+    {# Text, with any /content/<id> in it drawn rather than printed: a picture
+       is shown, a page goes in the sandbox the viewer already uses, and
+       anything else stays a link (D-138). #}
+    <div class="posttext" style="margin:10px 0 0;white-space:pre-wrap"
+      >{{ render_post(p.text, drawable) }}</div>
+  {% endif %}
+
+  <div class="row" style="margin-top:10px;gap:6px;align-items:center">
+    <form method="post" action="/feed/{{ p.txid }}/{{ 'unlike' if p.liked_by_me else 'like' }}"
+          style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="back" value="{{ here }}">
+      <button class="ghost small" type="submit"
+              title="Every like is a transaction, so everybody counts the same number">
+        {{ '♥' if p.liked_by_me else '♡' }} {{ p.likes }}</button></form>
+
+    <button class="ghost small" type="button"
+            onclick="toggle('reply-{{ p.txid }}')">Reply</button>
+
+    <form method="post" action="/feed/{{ p.txid }}/share" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="back" value="{{ here }}">
+      <button class="ghost small" type="submit"
+              title="Put this on your own feed">Share {{ p.shares or '' }}</button></form>
+
+    <a class="ghost btn small" href="/feed/{{ p.txid }}/tip"
+       title="Send coins, a token or a piece — on either chain">Tip {{ p.tips or '' }}</a>
+
+    {% if not p.mine %}
+    <form method="post" action="/feed/{{ p.txid }}/mute" style="margin-left:auto">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="text" value="{{ p.author }}">
+      <input type="hidden" name="back" value="{{ here }}">
+      <button class="ghost small" type="submit"
+              title="Hidden here and nowhere else. They are not told.">Mute</button></form>
+    {% endif %}
+  </div>
+
+  <form method="post" action="/feed/{{ p.txid }}/reply" id="reply-{{ p.txid }}"
+        hidden style="margin-top:10px">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="back" value="{{ here }}">
+    <div class="row">
+      <div style="flex:1"><input autocomplete="off" name="text"
+        placeholder="Say something" maxlength="2000"></div>
+      <button type="submit" class="small">Reply</button>
+    </div>
+  </form>
+</div>
+{% for child in p.replies %}{{ card(child, depth + 1) }}{% endfor %}
+{% endmacro %}
+
+{% block body %}
+{% if whose %}
+  <div class="row" style="align-items:center;gap:12px">
+    {% if whose.face %}
+      <img src="/content/{{ whose.face }}" alt=""
+           style="width:64px;height:64px;border-radius:50%;object-fit:cover">
+    {% endif %}
+    <div>
+      <h1 style="margin:0">@{{ whose.tag }}</h1>
+      {% if whose.address %}
+        <a class="muted" style="font-size:.86rem"
+           href="/wallet?who={{ whose.address }}">@{{ whose.tag }}'s wallet</a>
+      {% endif %}
+    </div>
+  </div>
+  {% if not whose.address %}
+    <div class="panel empty" style="margin-top:16px">
+      <p>Nobody holds <strong>@{{ whose.tag }}</strong> on this chain.</p>
+      <p class="muted">A tag exists here once its claim is in a block this node
+        has read.</p></div>
+  {% endif %}
+{% else %}
+  <h1>Feed</h1>
+  <p class="sub">Everything anybody has posted, newest first. Every like, reply
+    and share is on the chain, so everybody sees the same numbers.</p>
+{% endif %}
+
+{% if not whose %}
+<div class="panel" style="margin-bottom:18px">
+  {% if mine.tag %}
+  <form method="post" action="/feed/post" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <div class="field">
+      <textarea autocomplete="off" name="text" rows="3"
+        placeholder="Say something as @{{ mine.tag }}"></textarea></div>
+    <div class="row" style="align-items:center;gap:8px">
+      <input type="file" name="attachment" accept="image/*,video/*,audio/*">
+      <span class="muted" style="font-size:.8rem">A file becomes an inscription
+        you own, like any other piece</span>
+      <button type="submit" style="margin-left:auto">Post</button>
+    </div>
+  </form>
+  {% else %}
+  <p style="margin:0">You need a name before you can post &mdash; it is what
+    your posts appear under, and it is one button on the
+    <a href="/contacts">address book</a>.</p>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if posts %}
+  {% for p in posts %}{{ card(p) }}{% endfor %}
+  {% if cursor %}
+  <div id="more" data-next="{{ cursor }}" style="text-align:center;padding:14px">
+    <a class="ghost btn" href="{{ here }}{{ '&' if '?' in here else '?' }}before={{ cursor }}">Older posts</a>
+  </div>
+  {% endif %}
+{% else %}
+  <div class="panel empty">
+    <p>Nothing here yet.</p>
+    <p class="muted">{% if whose %}@{{ whose.tag }} has not posted on this
+      chain.{% else %}Be the first: say something above.{% endif %}</p>
+  </div>
+{% endif %}
+
+<script>
+function toggle(id){ var el = document.getElementById(id); if (el) el.hidden = !el.hidden; }
+
+// Ten at a time, and the next ten when somebody reaches the bottom (D-138).
+// A link is there whether or not this runs: scrolling is a convenience, not
+// the only way to see an older post.
+(function(){
+  var more = document.getElementById('more');
+  if (!more || !window.IntersectionObserver) return;
+  var asking = false;
+  new IntersectionObserver(function(entries){
+    if (!entries[0].isIntersecting || asking) return;
+    asking = true;
+    var link = more.querySelector('a');
+    if (link) window.location = link.href;
+  }, {rootMargin: '300px'}).observe(more);
+})();
+</script>
+{% endblock %}

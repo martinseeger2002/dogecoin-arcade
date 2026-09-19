@@ -25,6 +25,8 @@ from pathlib import Path
 from urllib.parse import quote
 from typing import Any
 
+from markupsafe import Markup
+
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import (
@@ -39,6 +41,8 @@ from .. import inscribe as inscribelib
 from .. import collections as collectionlib
 from .. import approvals as approvalslib
 from .. import payload as P
+from .. import feedview
+from ..messaging import feed as feedlib
 from .. import inscriptions as inscriptionlib
 from . import guide as guidelib
 from .. import charts as chartlib
@@ -135,6 +139,59 @@ def _ask_price(amount: Any, kind: Any) -> str:
 
 
 TEMPLATES.env.filters["ask_price"] = _ask_price
+# A global rather than a filter: it takes what the page already looked up,
+# and a filter taking a second argument reads worse in the template.
+TEMPLATES.env.globals["render_post"] = lambda text, drawable=None: Markup(
+    post_html(text, drawable))
+
+
+#: An inscription named in a post: a bare id is not enough, because a post is
+#: prose and sixty-four hex characters can be anything. `/content/<id>` is the
+#: same spelling a token icon and a collection thumbnail use (D-103).
+_CONTENT_IN_TEXT = re.compile(r"/content/([0-9a-f]{64})")
+
+
+def post_html(text: str, drawable: dict[str, str] | None = None) -> str:
+    """One post's words as HTML: escaped first, then its inscriptions drawn.
+
+    Everything is escaped before anything is added, so a post that contains
+    angle brackets is a post that contains angle brackets. What is added back
+    is decided HERE, from what the index says the inscription is -- never
+    from anything the post says about itself (D-138).
+
+    * a picture is shown;
+    * a page goes in the sandboxed frame the viewer already uses, which is
+      the one whose guarantees D-121 put back under test;
+    * anything else stays a link, because a thing this node cannot identify
+      is a thing it should not be drawing.
+    """
+    drawable = drawable or {}
+    out = []
+    last = 0
+    for found in _CONTENT_IN_TEXT.finditer(text or ""):
+        out.append(html.escape((text or "")[last:found.start()]))
+        piece = found.group(1)
+        kind = drawable.get(piece, "")
+        if kind.startswith("image/"):
+            out.append(f'<img class="postmedia" src="/content/{piece}" alt="" '
+                       f'loading="lazy">')
+        elif kind == "text/html":
+            # Same sandbox as the inscription viewer: no same-origin, so it
+            # cannot reach this page, this wallet or anybody's storage.
+            out.append(f'<iframe class="inscription-frame postmedia" '
+                       f'src="/content/{piece}" loading="lazy" '
+                       f'sandbox="allow-scripts allow-pointer-lock"></iframe>')
+        else:
+            out.append(f'<a href="/inscriptions/{piece}/view">'
+                       f'/content/{piece[:12]}…</a>')
+        last = found.end()
+    out.append(html.escape((text or "")[last:]))
+    return "".join(out)
+
+
+def inscriptions_in(text: str) -> list[str]:
+    """Every inscription a post names, so a page can ask about them at once."""
+    return _CONTENT_IN_TEXT.findall(text or "")
 
 # Sections that exist, and sections that do not. Shown honestly rather than
 # hidden, so the shape of the finished product is visible.
@@ -154,7 +211,7 @@ NAV = [
     ("/",             "Overview",     None,        True),
     ("/messages",     "Messages",     "testnet",   True),
     ("/contacts",     "Address book", None,        True),
-    ("/groups",       "Public",       None,        True),
+    ("/feed",         "Feed",         "testnet",   True),
     ("/backup",       "Backup",       None,        True),
     ("/wallet",       "Wallet",       None,        True),
     ("/tokens",       "Tokens",       "mainnet",   True),
@@ -1172,6 +1229,10 @@ def create_app(state: AppState) -> FastAPI:
         people, editing = [], None
         if state.store_path.exists():
             with state.store() as store:
+                # What their own announcement already says, filled into any
+                # gaps: a book that held somebody whose mainnet address was
+                # one table away is what this is for (D-139).
+                store.complete_contacts()
                 people = [_contact_view(row) for row in store.contacts()]
                 if edit:
                     row = store.contact_by_id(edit)
@@ -1255,6 +1316,7 @@ def create_app(state: AppState) -> FastAPI:
                       known_tags=known_tags, announced=announced,
                       matches=matches, find=find,
                       other_address=_mainnet_identity(),
+                      pieces=_held_pieces(), my_face=_my_picture(),
                       announce_limit=MAX_ANNOUNCE_NAME,
                       name_limit=MAX_ANNOUNCE_NAME_CLASS_B, **kwargs)
 
@@ -1830,6 +1892,395 @@ def create_app(state: AppState) -> FastAPI:
     # carries no key material and reveals nothing that publishing it does not
     # already reveal, so mainnet is a cost decision rather than a safety one.
 
+    # --- the feed -------------------------------------------------------------
+    #
+    # One public feed of everybody's posts, and a page per person (D-138).
+    # Channels are gone: a post belongs to whoever wrote it, and that is the
+    # only place it lives.
+
+    #: How many posts a feed page holds before somebody has to ask for more.
+    FEED_PAGE = 10
+
+    def _feed_page(network: str, author: str = "", before: int | None = None,
+                   limit: int = FEED_PAGE) -> tuple[list[Any], int | None]:
+        """A page of posts, newest first, and the cursor for the next one."""
+        with state.store() as store:
+            rows = store.feed_posts(network, author=author, before=before,
+                                    limit=limit + 1)
+        more = rows[limit:]
+        rows = rows[:limit]
+        return rows, (rows[-1]["id"] if rows and more else None)
+
+    def _shown(rows: list[Any], network: str) -> list[Any]:
+        """Posts with everything done to them applied, ready to draw."""
+        if not rows:
+            return []
+        targets = [row["txid"] for row in rows]
+        with state.store() as store:
+            acts = store.feed_acts_on(network, targets)
+            # Replies can be replied to, so their own actions are wanted too:
+            # one more query rather than one per reply (D-138's leanness).
+            replies = [a["txid"] for a in acts if a["kind"] == feedlib.REPLY]
+            if replies:
+                acts = list(acts) + list(store.feed_acts_on(network, replies))
+            muted = store.muted()
+        return feedview.assemble(rows, acts, me=state.derived_address or "",
+                                 muted=muted)
+
+    def _drawable_in(shown: list[Any]) -> dict[str, str]:
+        """The content type of every inscription these posts name.
+
+        Asked once for the page rather than once per post, and asked of the
+        INDEX rather than of the post: what a file is, is decided from the
+        chain (D-138).
+        """
+        wanted: set[str] = set()
+
+        def walk(items):
+            for item in items:
+                wanted.update(inscriptions_in(item.text))
+                walk(item.replies)
+
+        walk(shown)
+        if not wanted:
+            return {}
+        out: dict[str, str] = {}
+        try:
+            _, index = _token_chain()
+            for piece in wanted:
+                row = index.inscription(piece)
+                if row is not None:
+                    out[piece] = row["content_type"] or ""
+        except Exception:
+            return {}
+        return out
+
+    def _bylines(shown: list[Any]) -> dict[str, dict[str, Any]]:
+        """Who wrote these, as @tags and pictures, read from the chain.
+
+        Never stored beside a post: a tag can move, and a copy would be a name
+        that used to be right (D-137).
+        """
+        addresses = set()
+
+        def walk(items):
+            for item in items:
+                addresses.add(item.author)
+                walk(item.replies)
+
+        walk(shown)
+        out: dict[str, dict[str, Any]] = {}
+        tags = _tags_for(sorted(addresses))
+        for address in addresses:
+            out[address] = {"tag": tags.get(address, ""),
+                            "face": _face_for(address)}
+        return out
+
+    def _face_for(address: str) -> str:
+        """The inscription somebody uses as a profile picture, if they still
+        hold it. Checked on every draw, because a picture of a piece somebody
+        has sold is a picture of somebody else's property (D-138)."""
+        if not address:
+            return ""
+        try:
+            with state.store() as store:
+                said = store.key_for(address)
+            piece = (said["pfp"] or "") if said is not None else ""
+            if not piece:
+                return ""
+            chain, index = _token_chain()
+            row = index.inscription(piece)
+            if row is None or row["owner"] != address:
+                return ""
+            return piece
+        except Exception:
+            return ""
+
+    @app.get("/feed", response_class=HTMLResponse)
+    def feed_page(request: Request, before: int | None = None):
+        """Everybody's posts, newest first."""
+        chain = state.messaging
+        rows, cursor = _feed_page(chain.network, before=before)
+        shown = _shown(rows, chain.network)
+        return render(request, "feed.html", chain=chain, posts=shown,
+                      bylines=_bylines(shown), drawable=_drawable_in(shown),
+                      cursor=cursor, whose=None,
+                      here="/feed", mine=_my_tag(), when=_when,
+                      node=chain.status())
+
+    @app.get("/u/{tag}", response_class=HTMLResponse)
+    def profile_page(request: Request, tag: str, before: int | None = None):
+        """One person's feed. Every @tag on every page links here."""
+        chain = state.messaging
+        wanted = (tag or "").strip().lstrip("@").lower()
+        address = ""
+        try:
+            _, index = _tag_chain()
+            address = index.address_of(wanted) or ""
+        except Exception:
+            address = ""
+        rows, cursor = ([], None) if not address else _feed_page(
+            chain.network, author=address, before=before)
+        shown = _shown(rows, chain.network)
+        return render(request, "feed.html", chain=chain, posts=shown,
+                      bylines=_bylines(shown), drawable=_drawable_in(shown),
+                      cursor=cursor,
+                      whose={"tag": wanted, "address": address,
+                             "face": _face_for(address)},
+                      here=f"/u/{wanted}", mine=_my_tag(), when=_when,
+                      node=chain.status())
+
+    #: How many transactions a picture posted to the feed may take. A post
+    #: should feel like a post: this is inscribed while the request waits,
+    #: because the post has to carry the id and the id is the first piece's
+    #: txid. Anything larger belongs on the NFTs page, where inscribing has a
+    #: progress bar and can be resumed (D-138).
+    POST_PIECE_LIMIT = 6
+
+    def _inscribe_for_post(data: bytes, name: str, content_type: str) -> str:
+        """Inscribe a file posted to the feed, and return its inscription id.
+
+        The same inscription as any other: owned by the poster, sellable,
+        rendered by the same viewer. What is different is only that the
+        wallet does it on the way to a post rather than being asked.
+        """
+        chain, _ = _token_chain()
+        # From the bytes, not from what the browser said they were: the
+        # content type is what every reader will draw it as, and a sender's
+        # say-so is not evidence (media.sniff, and the rule the viewer
+        # already follows).
+        found = media.sniff(data)
+        kind = found.content_type if found else (
+            (content_type or "").strip() or "application/octet-stream")
+        plan = inscribelib.plan(data, kind, "")
+        if plan.chunks > POST_PIECE_LIMIT:
+            raise ValueError(
+                f"that file needs {plan.chunks} transactions and a post takes "
+                f"at most {POST_PIECE_LIMIT}. Inscribe it from the NFTs page, "
+                f"where it can be watched and resumed, then paste its link.")
+        with chain.rpc() as rpc:
+            sender_obj = MessageSender(rpc, chain.params, public_only=True)
+            address = funded_address(rpc, mainnet=chain.is_mainnet)
+            inscribelib.prepare_wallet(sender_obj, address, plan)
+            txids = sender_obj.send_all(address, plan.payloads)
+        if not txids:
+            raise ValueError("the node took none of it")
+        # The inscription is named by its FIRST transaction, which is the one
+        # carrying the manifest.
+        return txids[0]
+
+    def _held_pieces(limit: int = 60) -> list[dict[str, Any]]:
+        """Inscriptions this wallet holds, on either chain, that can be drawn.
+
+        Both chains because a profile picture is a picture, and which chain
+        somebody's favourite piece is on is their business (D-138).
+        """
+        out: list[dict[str, Any]] = []
+        for chain in state.token_chains:
+            try:
+                index = state.token_index(chain)
+                with chain.rpc() as rpc:
+                    mine = set(_ledger_addresses(rpc))
+                if not mine:
+                    continue
+                for row in index.inscriptions(owners=sorted(mine), limit=limit):
+                    if not str(row["content_type"] or "").startswith("image/"):
+                        continue
+                    out.append({"txid": row["txid"], "number": row["number"],
+                                "chain": chain.label,
+                                "network": chain.network})
+            except HTTPException:
+                raise
+            except Exception:
+                continue              # a chain with no node is not an error here
+        return out[:limit]
+
+    def _my_picture() -> str:
+        """The piece this wallet publishes as its face, if it still holds it.
+
+        Checked here as well as when drawing, because announcing a picture of
+        something you have sold puts a claim on the chain that is wrong the
+        moment it lands (D-138).
+        """
+        chosen = str(state.setting("pfp", "") or "")
+        if not chosen:
+            return ""
+        for chain in state.token_chains:
+            try:
+                row = state.token_index(chain).inscription(chosen)
+                if row is None:
+                    continue
+                with chain.rpc() as rpc:
+                    if row["owner"] in set(_ledger_addresses(rpc)):
+                        return chosen
+            except HTTPException:
+                raise
+            except Exception:
+                continue
+        return ""
+
+    @app.post("/profile/picture")
+    def set_profile_picture(request: Request, piece: str = Form(""),
+                            csrf_token: str = Form("")):
+        """Choose which piece is your face. Published on the next publish."""
+        try:
+            check_csrf(csrf_token)
+            chosen = inscriptionlib.inscription_in(piece) if piece.strip() else ""
+            if piece.strip() and not chosen:
+                raise ValueError("a profile picture is an inscription on one of "
+                                 "these chains: give its id.")
+            state.set_setting("pfp", chosen)
+            state.flash(
+                "Saved. Publish your tag to put it on the chain -- until then "
+                "it is a note to yourself." if chosen else
+                "Picture cleared. Publish your tag to take it off the chain.",
+                "ok")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse("/contacts", status_code=303)
+
+    def _needs_a_name() -> str:
+        """Why this wallet cannot post yet, or "".
+
+        Posting asks for a name first, so everything in the feed has a person
+        behind it and every byline goes somewhere (D-138). One button away,
+        on the page this says it on.
+        """
+        if not state.unlocked:
+            return "waiting for the testnet node"
+        if not (_my_tag()["tag"] or ""):
+            return ("claim a @tag first -- it is the name your posts appear "
+                    "under, and it is one button on the address book")
+        return ""
+
+    @app.post("/feed/post")
+    def feed_post(request: Request, text: str = Form(""),
+                  csrf_token: str = Form(""),
+                  attachment: UploadFile | None = File(None)):
+        """Say something. A file becomes an inscription and the post links it."""
+        try:
+            check_csrf(csrf_token)
+            complaint = _needs_a_name()
+            if complaint:
+                raise ValueError(complaint)
+            said = (text or "").strip()
+            data = attachment.file.read() if attachment and attachment.filename else b""
+            if data:
+                # A file posted to a feed is an inscription like any other:
+                # owned, sellable, and rendered by the same viewer (D-138).
+                # The post carries its id rather than its bytes, which is what
+                # keeps a post one cheap transaction.
+                piece = _inscribe_for_post(data, attachment.filename or "",
+                                           attachment.content_type or "")
+                said = (said + f"\n/content/{piece}").strip()
+            if not said:
+                raise ValueError("say something, or attach something")
+            state.post_to_board("", said)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse("/feed", status_code=303)
+
+    @app.get("/feed/{txid}/tip", response_class=HTMLResponse)
+    def tip_page(request: Request, txid: str):
+        """Who wrote this, where they take payment, and the form to send one."""
+        chain = state.messaging
+        with state.store() as store:
+            row = store.feed_post_by_txid(chain.network, txid)
+        if row is None:
+            state.flash("no such post on this chain", "err")
+            return RedirectResponse("/feed", status_code=303)
+        author = row["sender"]
+        tag = _tags_for([author]).get(author, "")
+        # Where they said to pay them, on each chain, from their own
+        # announcement (D-137). Never guessed at: an address nobody published
+        # is an address nobody asked to be paid at.
+        wheres = []
+        with state.store() as store:
+            said = store.key_for(author)
+        for context in state.token_chains:
+            if context.network == chain.network:
+                where = author
+            else:
+                where = (said["other_address"] or "") if said is not None else ""
+            if where:
+                wheres.append({"network": context.network, "label": context.label,
+                               "address": where})
+        return render(request, "tip.html", chain=chain, post=row, tag=tag,
+                      author=author, wheres=wheres, when=_when)
+
+    @app.post("/feed/{txid}/tip")
+    def tip_send(request: Request, txid: str, network: str = Form(""),
+                 amount: str = Form(""), csrf_token: str = Form("")):
+        try:
+            check_csrf(csrf_token)
+            with state.store() as store:
+                row = store.feed_post_by_txid(state.messaging.network, txid)
+                said = store.key_for(row["sender"]) if row is not None else None
+            if row is None:
+                raise ValueError("no such post on this chain")
+            context = next((c for c in state.token_chains
+                            if c.network == network), None)
+            if context is None:
+                raise ValueError("no such chain here")
+            where = row["sender"] if network == state.messaging.network else (
+                (said["other_address"] or "") if said is not None else "")
+            if not where:
+                raise ValueError(
+                    "they have not published an address on that chain, so "
+                    "there is nowhere to send it")
+            sats = parse_amount(amount, True)
+            txid_out = state.send_tip(network, txid, where, sats)
+            state.flash(f"Tipped. {txid_out} is on its way, and the post shows "
+                        f"it once its block lands.", "ok")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            state.flash(str(exc), "err")
+            return RedirectResponse(f"/feed/{txid}/tip", status_code=303)
+        return RedirectResponse("/feed", status_code=303)
+
+    @app.post("/feed/{txid}/{doing}")
+    def feed_act(request: Request, txid: str, doing: str,
+                 text: str = Form(""), csrf_token: str = Form(""),
+                 back: str = Form("/feed")):
+        """Like, unlike, reply, share, edit or delete one post.
+
+        One route for all of them: they are one message type with a kind
+        byte, and a route per kind would be six copies of this (D-138).
+        """
+        kinds = {"like": feedlib.LIKE, "unlike": feedlib.UNLIKE,
+                 "reply": feedlib.REPLY, "share": feedlib.SHARE,
+                 "edit": feedlib.EDIT, "delete": feedlib.DELETE}
+        try:
+            check_csrf(csrf_token)
+            if doing == "mute":
+                # Local, free, and tells nobody (D-138).
+                with state.store() as store:
+                    store.mute(text.strip() or txid, on=True)
+                state.flash("Muted. Their posts are hidden here and nowhere "
+                            "else -- they are not told, and the counts on "
+                            "their posts do not change.", "ok")
+                return RedirectResponse(back or "/feed", status_code=303)
+            if doing == "unmute":
+                with state.store() as store:
+                    store.mute(text.strip() or txid, on=False)
+                return RedirectResponse(back or "/feed", status_code=303)
+            if doing not in kinds:
+                raise HTTPException(404, "no such thing to do to a post")
+            complaint = _needs_a_name()
+            if complaint:
+                raise ValueError(complaint)
+            state.send_feed_act(kinds[doing], txid, text)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse(back or "/feed", status_code=303)
+
     @app.get("/groups", response_class=HTMLResponse)
     def groups(request: Request, which: str = "messaging", channel: str = "",
                before: int | None = None):
@@ -2096,8 +2547,13 @@ def create_app(state: AppState) -> FastAPI:
             if len(raw) != 32:
                 raise ValueError("that is not a 32-byte key")
             with state.store() as store:
-                store.save_contact(pubkey=raw, name=name.strip(),
-                                   testnet_address=address.strip())
+                said = store.key_for(address.strip())
+                store.save_contact(
+                    pubkey=raw, name=name.strip(),
+                    testnet_address=address.strip(),
+                    # Everything that announcement carries, not just the
+                    # address the button happened to know (D-139).
+                    mainnet_address=(said["other_address"] or "") if said else "")
             state.flash(
                 f"Added {name.strip() or address.strip()}. An announcement proves "
                 f"control of that address, never who somebody is &mdash; confirm "
@@ -2201,9 +2657,15 @@ def create_app(state: AppState) -> FastAPI:
             # somebody published again. The announcement is this wallet's own
             # statement; the claim transaction is what makes it true (D-076).
             tag = say_tag if say_tag is not None else tag
+            # The picture goes out with the name and the addresses: one
+            # search then finds everything somebody needs to know about
+            # whoever holds that tag (D-138). Only if this wallet still holds
+            # the piece -- announcing one you have sold would be announcing
+            # somebody else's property.
+            face = _my_picture()
             payload = build_key_announcement(
                 state.identity.public_bytes, home_hash, "",
-                other_hash160=other_hash, tag=tag)
+                other_hash160=other_hash, tag=tag, pfp=face)
             # A long name will not fit one OP_RETURN, so it goes as Class B --
             # a couple of dust outputs rather than none. Better than publishing
             # half a name, permanently, for the cheaper fee.

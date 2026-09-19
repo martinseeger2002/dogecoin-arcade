@@ -115,6 +115,34 @@ address. Claimed on the chain, first claim wins, and claiming it publishes
 your key at the same time so people can write to you. While the claim is on
 its way the card says so instead of asking again.
 
+## The feed
+
+Every tag has a page, and everything they post is on it. The **Feed** is
+everybody's posts, newest first, ten at a time with more as you scroll.
+Clicking a @tag anywhere goes to that person's page.
+
+* **You need a name to post.** A tag is one button on the address book, and
+  it means every byline in the feed is somebody you can click.
+* **Like, reply, share** — all on the chain, so everybody counts the same
+  numbers. A reply can be replied to: the parent of a comment is a comment
+  and nothing in the format knows the difference.
+* **Edit and delete** your own. The words stay on the chain for ever —
+  nothing can change that — and no arcade shows a deleted one.
+* **Tip a post** with coins, on testnet or mainnet. One transaction: the
+  coins move and the same transaction says which post they were for, so the
+  post can show it and nobody pays twice. It goes to the address they
+  published for that chain.
+* **Attach a file and it becomes an inscription** you own — sellable, and
+  rendered by the same viewer as any other piece. The post carries its link,
+  not its bytes.
+* **An inscription shared in a post is drawn**: a picture is shown, a page
+  goes in the sandbox that cannot reach your wallet, and anything this node
+  cannot identify stays a link.
+* **A profile picture is an NFT you hold** on either chain, published with
+  your tag and shown only while the chain says you still hold it.
+* **Muting is local**: their posts vanish here, they are not told, and the
+  counts on their posts do not change.
+
 ## Tokens
 
 An Omni-style token ledger, indexed from the chain.

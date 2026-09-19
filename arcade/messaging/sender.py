@@ -654,12 +654,19 @@ class MessageSender:
     def prepare(self, sender_address: str, payload: bytes, class_c: bool = False,
                 minconf: int = SPENDABLE_MINCONF,
                 change_address: str | None = None,
-                exclude: frozenset = frozenset()) -> PreparedTx:
+                exclude: frozenset = frozenset(),
+                pay: tuple[tuple[int, str], ...] = ()) -> PreparedTx:
         """Build, fund and sign one transaction. Does NOT broadcast.
 
         `minconf=0` lets this spend change that is still unconfirmed, which is
         required to continue a chunk chain and wrong anywhere else -- see
         `send_all`.
+
+        `pay` adds ordinary payment outputs beside the payload's own, which is
+        what makes a tip ONE transaction: the coins move and the same
+        transaction says which post they were for, so the payment needs no
+        second message to explain it and costs one fee rather than two
+        (D-138).
         """
         if class_c:
             # Wrap in AnyData exactly as the Class B path does. The carrier
@@ -675,6 +682,11 @@ class MessageSender:
             outputs = [(0, op_return_script(encode_class_c(anydata)))]
         else:
             outputs = self._class_b_outputs(sender_address, payload)
+
+        for amount, where in pay:
+            if int(amount) <= 0:
+                raise SendError("a payment of nothing is not a payment")
+            outputs.append((int(amount), p2pkh_script(where)))
 
         # Choose our own inputs on BOTH carriers.
         #

@@ -45,9 +45,13 @@ CREATE TABLE IF NOT EXISTS key_announcement (
     fingerprint TEXT NOT NULL,
     height      INTEGER NOT NULL,
     block_time  INTEGER NOT NULL,
-    seen_at     INTEGER NOT NULL
+    seen_at     INTEGER NOT NULL,
+    pfp         TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS key_announcement_addr ON key_announcement(address, height);
+-- The inscription somebody uses as their picture, as announced. Honoured only
+-- while the chain says they still hold it (D-138), so this is what they SAID,
+-- never what is drawn.
 
 -- Every candidate payload we have seen, decrypted or not. Undecryptable ones are
 -- kept deliberately: they cost little, and re-scanning the chain after importing
@@ -585,7 +589,7 @@ class MessageStore:
     def add_key_announcement(
         self, txid: str, address: str, pubkey: bytes, fingerprint: str,
         height: int, block_time: int, stated: bool = False, name: str = "",
-        tag: str = "", other_address: str = "",
+        tag: str = "", other_address: str = "", pfp: str = "",
     ) -> None:
         """Record an announcement.
 
@@ -598,8 +602,8 @@ class MessageStore:
         self.conn.execute(
             "INSERT INTO key_announcement"
             "(txid,address,pubkey,fingerprint,height,block_time,seen_at,stated,name,"
-            "tag,other_address) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?) "
+            "tag,other_address,pfp) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?) "
             # A longer name replaces a shorter one, so a rescan repairs a name an
             # older parser had cut. INSERT OR IGNORE meant the truncation was
             # permanent in the reader's store however often it was rescanned.
@@ -614,9 +618,15 @@ class MessageStore:
             "           ELSE key_announcement.tag END, "
             "  other_address=CASE WHEN excluded.other_address <> '' "
             "                     THEN excluded.other_address "
-            "                     ELSE key_announcement.other_address END",
+            "                     ELSE key_announcement.other_address END, "
+            # A picture cleared is a picture cleared: unlike the fields above,
+            # an empty one from a NEWER announcement is a person taking their
+            # face down, and must not be read as an older parser seeing
+            # nothing. The newest announcement for an address is what counts,
+            # so this simply takes what arrived (D-138).
+            "  pfp=excluded.pfp",
             (txid, address, pubkey, fingerprint, height, block_time,
-             int(time.time()), 1 if stated else 0, name, tag, other_address),
+             int(time.time()), 1 if stated else 0, name, tag, other_address, pfp),
         )
 
     def superseded_addresses(self, pubkey: bytes) -> list[str]:
@@ -1009,6 +1019,64 @@ class MessageStore:
             "  mine=MAX(feed_act.mine, excluded.mine)",
             (network, txid, int(kind), target, author, text or "",
              int(height), int(block_time), 1 if mine else 0))
+
+    def feed_posts(self, network: str, author: str = "", before: int | None = None,
+                   limit: int = 10) -> list[sqlite3.Row]:
+        """A page of the feed, newest first.
+
+        `before` is the id of the oldest post already shown, so scrolling
+        asks for what comes after it rather than counting pages -- a post
+        arriving between requests cannot then push a row onto two pages or
+        off both (D-138).
+        """
+        where = "network = ?"
+        params: list = [network]
+        if author:
+            where += " AND sender = ?"
+            params.append(author)
+        if before:
+            where += " AND id < ?"
+            params.append(int(before))
+        return self.conn.execute(
+            f"SELECT * FROM group_post WHERE {where} "
+            f"ORDER BY id DESC LIMIT ?",
+            (*params, max(1, min(limit, 100)))).fetchall()
+
+    def complete_contacts(self) -> int:
+        """Fill in what a contact's own announcement already says.
+
+        A contact is saved by several paths and only one of them asked the
+        announcement for the other chain's address and the key, so a book
+        could hold somebody whose mainnet address was sitting one table away
+        (D-139). Filling gaps ONLY: a value somebody typed is theirs and is
+        never overwritten by the chain.
+
+        Cheap and idempotent, so it runs when the page is drawn rather than
+        needing anybody to re-add anybody.
+        """
+        filled = 0
+        rows = self.conn.execute(
+            "SELECT id, pubkey, testnet_address, mainnet_address FROM contact "
+            "WHERE testnet_address != '' "
+            "AND (mainnet_address = '' OR pubkey IS NULL)").fetchall()
+        for row in rows:
+            said = self.key_for(row["testnet_address"])
+            if said is None:
+                continue
+            mainnet = row["mainnet_address"] or (said["other_address"] or "")
+            key = row["pubkey"] or said["pubkey"]
+            if mainnet == (row["mainnet_address"] or "") and key == row["pubkey"]:
+                continue
+            self.conn.execute(
+                "UPDATE contact SET mainnet_address = ?, pubkey = ? WHERE id = ?",
+                (mainnet, key, row["id"]))
+            filled += 1
+        return filled
+
+    def feed_post_by_txid(self, network: str, txid: str) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM group_post WHERE network = ? AND txid = ?",
+            (network, txid)).fetchone()
 
     def feed_acts_on(self, network: str, targets: list[str]) -> list[sqlite3.Row]:
         """Every action against any of these posts, oldest first.

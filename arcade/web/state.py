@@ -505,6 +505,67 @@ class AppState:
         self.bump_generation()
         return txid
 
+    def send_feed_act(self, kind: int, target: str, text: str = "") -> str:
+        """Put one like, reply, share, edit or delete on the chain.
+
+        The same short path a board notice takes: one payload, one
+        transaction, no chunking and nobody watching a progress bar. A feed
+        action is small by construction -- a like is 39 bytes -- and one that
+        did not fit would be one that had gone wrong (D-138).
+
+        Written down here at broadcast with height 0, so the page moves the
+        moment the button is pressed and the scan upserts the real height when
+        the block lands. That is what `add_feed_act` is shaped for.
+        """
+        from ..messaging import feed
+        from ..messaging.sender import MessageSender, funded_address
+
+        chain = self.messaging
+        payload = feed.build(kind, target, text)
+        with chain.rpc() as rpc:
+            sender = MessageSender(rpc, chain.params, public_only=True)
+            address = funded_address(rpc, mainnet=chain.is_mainnet)
+            prepared = sender.prepare(address, payload, change_address=address)
+            txid = sender.broadcast(prepared)
+        with self.store() as store:
+            store.add_feed_act(chain.network, txid, kind, target, address,
+                               text, 0, int(time.time()), mine=True)
+        self.bump_generation()
+        return txid
+
+    def send_tip(self, network: str, post_txid: str, to_address: str,
+                 sats: int) -> str:
+        """Pay somebody for a post, in one transaction that says which post.
+
+        The coins move and the same transaction carries the note, so nothing
+        has to be reconciled afterwards and nobody pays twice (D-138). On
+        either chain: a tip is a payment, and payments are what the ledger
+        chains are for -- which is why this takes a network rather than
+        assuming the messaging one.
+        """
+        from ..messaging import feed
+        from ..messaging.sender import MessageSender, funded_address
+
+        chain = next((c for c in self.token_chains if c.network == network), None)
+        if chain is None:
+            raise ValueError(f"nothing is indexed on {network}")
+        payload = feed.build(feed.TIP, post_txid)
+        with chain.rpc() as rpc:
+            sender = MessageSender(rpc, chain.params, public_only=True)
+            address = funded_address(rpc, mainnet=chain.is_mainnet)
+            prepared = sender.prepare(address, payload, change_address=address,
+                                      pay=((int(sats), to_address),))
+            txid = sender.broadcast(prepared)
+        # Recorded against the MESSAGING chain's store, because that is where
+        # the post lives and where the page will look for it. The payment is
+        # on whichever chain it was made on, and says so.
+        with self.store() as store:
+            store.add_feed_act(self.messaging.network, txid, feed.TIP,
+                               post_txid, address, f"{network}:{int(sats)}",
+                               0, int(time.time()), mine=True)
+        self.bump_generation()
+        return txid
+
     # --- settings -------------------------------------------------------------
 
     #: Preferences that outlive a restart and are nobody's business but this

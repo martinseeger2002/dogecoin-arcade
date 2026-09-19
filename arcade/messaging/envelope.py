@@ -227,6 +227,14 @@ ANNOUNCE_TAG_OTHER_CHAIN = 0x02
 #: announcement is wrong, not the chain.
 ANNOUNCE_TAG_HANDLE = 0x03
 
+#: The inscription this address uses as a profile picture, as its 32-byte
+#: txid. Published rather than stored anywhere, so one search finds the name,
+#: both addresses, the key AND the face (D-138). It is honoured only while
+#: the chain says that address still holds the piece: a picture of something
+#: somebody has sold is a picture of somebody else's property, so the check
+#: is made on every draw rather than at announcement time.
+ANNOUNCE_TAG_PFP = 0x04
+
 #: What is left for the name once everything else is accounted for. Computed,
 #: not written down: the first attempt hardcoded 16 and was wrong, because it
 #: forgot the 4-byte AnyData wrapper that every Arcade payload carries. A
@@ -254,7 +262,7 @@ MAX_ANNOUNCE_NAME_CLASS_B = 64
 
 def build_key_announcement(public_bytes: bytes, hash160: bytes = b"",
                            name: str = "", other_hash160: bytes = b"",
-                           tag: str = "") -> bytes:
+                           tag: str = "", pfp: str | bytes = b"") -> bytes:
     """Header + X25519 public key, optionally saying whose key it is.
 
     The bare form is 38 bytes and is what earlier versions publish. The tail adds
@@ -301,6 +309,12 @@ def build_key_announcement(public_bytes: bytes, hash160: bytes = b"",
         if len(handle) > 255:
             raise EnvelopeError("that is not a tag")
         out += bytes([ANNOUNCE_TAG_HANDLE, len(handle)]) + handle
+    if pfp:
+        raw = bytes.fromhex(pfp) if isinstance(pfp, str) else pfp
+        if len(raw) != 32:
+            raise EnvelopeError("a profile picture is an inscription, which is "
+                                "named by a 32-byte transaction id")
+        out += bytes([ANNOUNCE_TAG_PFP]) + raw
     return out
 
 
@@ -346,7 +360,8 @@ def parse_announced_extras(payload: bytes) -> dict:
     than being discarded. A section it cannot read ends the walk, so what was
     understood up to that point is kept.
     """
-    found = {"hash160": b"", "name": "", "other_hash160": b"", "tag": ""}
+    found = {"hash160": b"", "name": "", "other_hash160": b"", "tag": "",
+             "pfp": ""}
     at = KEY_ANNOUNCE_HEADER_LEN + 32
     if len(payload) <= at or payload[at] != ANNOUNCE_TAG_IDENTITY:
         return found              # bare announcement, or NUL padding
@@ -372,6 +387,12 @@ def parse_announced_extras(payload: bytes) -> dict:
                     break
                 found["other_hash160"] = other
                 at += 21
+            elif kind == ANNOUNCE_TAG_PFP:
+                piece = payload[at + 1 : at + 33]
+                if len(piece) != 32:
+                    break
+                found["pfp"] = piece.hex()
+                at += 33
             elif kind == ANNOUNCE_TAG_HANDLE:
                 length = payload[at + 1]
                 raw = payload[at + 2 : at + 2 + length]

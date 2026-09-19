@@ -377,6 +377,7 @@ class Scanner:
                     atx.txid, address, pubkey, fingerprint_of(pubkey), height,
                     block_time, stated=bool(claimed_hash), name=claimed_name,
                     tag=claimed_tag, other_address=other_address,
+                    pfp=extras.get("pfp", ""),
                 )
                 result.announcements += 1
                 continue

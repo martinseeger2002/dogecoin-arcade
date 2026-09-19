@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Tip {{ ('@' ~ tag) if tag else 'a post' }} · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Tip {% if tag %}<a href="/u/{{ tag }}">@{{ tag }}</a>{% else %}this post{% endif %}</h1>
+<p class="sub">One transaction: the coins move and the same transaction says
+  which post they were for, so the post can show it and nobody pays twice.</p>
+
+<div class="panel" style="margin-bottom:18px">
+  <p class="muted" style="font-size:.82rem;margin:0 0 6px">The post</p>
+  <div style="white-space:pre-wrap">{{ render_post(post['text'], {}) }}</div>
+  <p class="muted" style="font-size:.78rem;margin:8px 0 0">
+    {{ when(post['block_time']) if post['block_time'] else 'just now' }}</p>
+</div>
+
+{% if wheres %}
+<div class="panel">
+  <form method="post" action="/feed/{{ post['txid'] }}/tip">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <div class="field"><label>Which chain</label>
+      <select name="network">
+        {% for where in wheres %}
+        <option value="{{ where.network }}">{{ where.label }}
+          &mdash; {{ where.address[:14] }}…</option>
+        {% endfor %}
+      </select>
+      <p class="muted" style="font-size:.82rem;margin:6px 0 0">
+        Each one goes to the address they published for that chain. Testnet
+        coins are play money; mainnet coins are real.</p></div>
+
+    <div class="field"><label>How much</label>
+      <input autocomplete="off" name="amount" inputmode="decimal" placeholder="1.0"
+             required></div>
+
+    <div class="row">
+      <button type="submit">Send the tip</button>
+      <a class="ghost btn" href="/feed">Back to the feed</a>
+    </div>
+  </form>
+</div>
+{% else %}
+<div class="panel empty">
+  <p>There is nowhere to send it.</p>
+  <p class="muted">Whoever wrote this has not published an address, so nothing
+    here knows where they take payment. Ask them to publish their tag &mdash;
+    it puts both their addresses on the chain, and it is one button.</p>
+</div>
+{% endif %}
+{% endblock %}

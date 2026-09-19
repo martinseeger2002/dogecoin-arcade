@@ -44,6 +44,45 @@
   <p class="muted" style="margin:0">Waiting for the testnet node. Nothing to do.</p>
   {% endif %}
 
+  {# Your face: any piece this wallet holds, on either chain. Published with
+     the tag, and honoured only while the chain says you still hold it
+     (D-138). #}
+  <details style="margin-top:10px">
+    <summary class="muted" style="cursor:pointer;font-size:.84rem">
+      Profile picture{% if my_face %} &mdash; set{% endif %}</summary>
+    <form method="post" action="/profile/picture" style="margin-top:10px">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      {% if pieces %}
+      <div class="row" style="flex-wrap:wrap;gap:10px">
+        <label class="facepick" style="text-align:center">
+          <input type="radio" name="piece" value="" {{ 'checked' if not my_face }}>
+          <div class="muted" style="font-size:.8rem;padding:14px 6px">none</div>
+        </label>
+        {% for piece in pieces %}
+        <label class="facepick" style="text-align:center">
+          <input type="radio" name="piece" value="{{ piece.txid }}"
+                 {{ 'checked' if my_face == piece.txid }}>
+          <img src="/content/{{ piece.txid }}" alt="" loading="lazy"
+               style="width:56px;height:56px;border-radius:50%;object-fit:cover;display:block">
+          <span class="muted" style="font-size:.72rem">#{{ piece.number }}
+            {{ piece.chain|lower }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button type="submit" class="small">Use this</button>
+        <span class="muted" style="font-size:.82rem">It goes on the chain the
+          next time you publish, and it is shown only while you still hold the
+          piece.</span>
+      </div>
+      {% else %}
+      <p class="muted" style="font-size:.86rem;margin:0">This wallet holds no
+        pictures yet. Anything you inscribe &mdash; including a file posted to
+        the <a href="/feed">feed</a> &mdash; can be your face.</p>
+      {% endif %}
+    </form>
+  </details>
+
   <details style="margin-top:10px">
     <summary class="muted" style="cursor:pointer;font-size:.84rem">What a tag
       does and does not promise</summary>
@@ -117,6 +156,16 @@
       not claimed a tag cannot be added &mdash; ask them to publish one from
       their own address book, which is one button.</p>
   {% endif %}
+  {# Said here, where somebody is deciding to trust a name, and said whether
+     or not this wallet has a node: a claim proves control of an address and
+     nothing else. First claim wins is the other half -- what a name commits
+     its holder to -- and both are true before anybody presses anything. #}
+  <p class="muted" style="font-size:.82rem;margin:10px 0 0">
+    <strong>First claim wins.</strong> A tag belongs to whoever claimed it
+    first and nobody else can take it. What a claim proves is control of an
+    address at that moment &mdash; it says nothing about who they are, so
+    confirm a name with the person before you trust it with anything that
+    matters.</p>
 </div>
 
 {# --- people you have already met ------------------------------------------ #}

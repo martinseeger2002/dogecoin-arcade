@@ -2609,7 +2609,7 @@ def test_the_nav_counts_what_is_waiting(client, monkeypatch):
         store.add_group_post(state.messaging.network, "main", "a" * 64, 100, 1700,
                              "nSomebody", "them", "hello")
     body = page.get("/").text
-    assert 'href="/groups">Public<span class="nav-count">1</span>' in body
+    assert 'href="/feed">Feed<span class="nav-count">1</span>' in body
 
     # Opening the board is reading it.
     page.get("/groups")
