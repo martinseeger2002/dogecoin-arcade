@@ -68,14 +68,33 @@ class ReorgTooDeep(Exception):
     """A reorg went deeper than we are willing to handle automatically."""
 
 
-class IndexBelowFloor(Exception):
-    """Every block this index holds is below the floor the chain now starts at.
+class IndexFromAnotherFloor(Exception):
+    """This index was built for a different floor than the chain now has.
 
-    Not a disagreement with anybody: it is what raising a floor MEANS, and it
-    is the routine operation this project performed three times in two days.
-    Its own class because the answer is its own -- the index cannot be
-    unwound to meet the floor, it is discarded and rebuilt from it (D-123).
+    Not a disagreement with anybody: it is what moving a floor MEANS, and it
+    is the routine operation this project has performed four times in two
+    days. Its own class because the answer is its own -- the index cannot be
+    unwound to meet the floor, it is set aside and rebuilt from it (D-123).
+
+    Three shapes, and the rule is one line: an index starts at the floor it
+    was built for, so one that starts anywhere else was built for another one
+    (D-130).
+
+    * The floor was RAISED past everything the index holds: every block in it
+      is unreadable.
+    * The floor was RAISED past where the index starts, so it holds blocks
+      below the floor -- a whole era of tokens and inscriptions that no node
+      reads any more, while it keeps up with the tip and looks healthy. This
+      is the one that made every reset manual, and the one a test machine was
+      sitting on while the two nodes disagreed about what existed.
+    * The floor was LOWERED below where the index starts, so the blocks
+      between are missing and nothing ever goes back for them: an index only
+      extends forward.
     """
+
+
+#: The name this was published under when it only knew one direction.
+IndexBelowFloor = IndexFromAnotherFloor
 
 
 class NodeUnreachable(Exception):
@@ -126,6 +145,23 @@ class ChainFollower:
 
         height = tip["height"]
         start = self.params.activation_height
+        bottom = self.db.conn.execute(
+            "SELECT MIN(height) AS low FROM block").fetchone()
+        low = bottom["low"] if bottom and bottom["low"] is not None else height
+        if low != start and height >= start:
+            # An index starts at the floor it was built for. Anything else --
+            # blocks below the floor that no node reads now, or a bottom that
+            # was never fetched -- is an index built for another floor, and
+            # neither can be fixed by going forward.
+            raise IndexFromAnotherFloor(
+                f"this index was built for a floor of {low:,} and the chain "
+                f"now starts at {start:,}, so it "
+                + (f"holds {start - low:,} block(s) below the floor that no "
+                   f"node reads any more" if low < start else
+                   f"is missing the {low - start:,} block(s) between, which "
+                   f"nothing would ever go back for")
+                + ". Nothing is wrong with the chain. The index is being set "
+                  f"aside and rebuilt from {start:,}.")
         if height < start:
             # The floor was raised above everything this index holds. No hash
             # is compared, and none should be: every block in here is below
@@ -134,7 +170,7 @@ class ChainFollower:
             # and the function would fall through to a reorg it never looked
             # for. Three floors in two days each reported as a catastrophic
             # reorg, and the hashes agreed perfectly every time (a test machine, D-123).
-            raise IndexBelowFloor(
+            raise IndexFromAnotherFloor(
                 f"this index was built for an older floor: it ends at "
                 f"{height:,} and the chain now starts at {start:,}, so "
                 f"everything in it is below the floor and cannot be read. "

@@ -217,19 +217,22 @@ TESTNET = Params(
     # starting both machines clean beats reasoning about what survived.
     #
     # Ten blocks above the tip, and set LAST -- after the suite, immediately
-    # before the publish. The first two of these floors were chosen before a
+    # before the publish. This one is a wipe rather than a reset: both
+    # machines delete everything the arcade wrote and start as a fresh
+    # install, keeping only their Core datadirs, so the chain below is not
+    # merely unread -- there is nothing left that remembers it (D-133). The first two of these floors were chosen before a
     # half-hour test run and were behind the chain by the time the publish
     # finished; the third was an hour ahead and made somebody wait an hour for
     # a number. The floor is one line of config and the suite is testing the
     # code, so the number is the last thing decided rather than the first
     # (the operator).
-    activation_height=1_495_811,
-    messaging_start_height=1_495_811,
-    swaps_from=1_495_811,
-    asks_from=1_495_811,
-    fills_from=1_495_811,
-    named_fills_from=1_495_811,
-    bid_fills_from=1_495_811,
+    activation_height=1_496_133,
+    messaging_start_height=1_496_133,
+    swaps_from=1_496_133,
+    asks_from=1_496_133,
+    fills_from=1_496_133,
+    named_fills_from=1_496_133,
+    bid_fills_from=1_496_133,
     datadir_subdir="testnet3",
     pubkeyhash_version=113,
     scripthash_version=196,

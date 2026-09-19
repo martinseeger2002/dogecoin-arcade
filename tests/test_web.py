@@ -2971,3 +2971,43 @@ def test_your_own_tag_is_shown_with_your_own_address(client):
     # derived for, which this fixture has no node for; it is what the running
     # wallet shows -- "@notbigchiefenergy on testnet" -- and the template
     # takes the same `mine.tag` the prose under the form already used.
+
+
+def test_a_wallet_with_no_name_is_asked_for_one(client, monkeypatch):
+    """The first thing a fresh install is asked, and the only thing.
+
+    Everything else on that page comes from the node; a @tag is the one fact
+    only the person knows. Both machines' identities predate anybody
+    watching, so this path had never run (D-131).
+    """
+    app, state = client
+    # A wallet that is up but has never been named: the node answered, so
+    # there is an identity, and the chain has no tag for it.
+    from arcade.messaging.keys import Identity
+
+    state.identity = Identity.generate()
+    monkeypatch.setattr(type(state), "my_tag", lambda self: "")
+    page = app.get("/").text
+    assert "What should people call you?" in page
+    assert 'name="tag"' in page and 'action="/publish"' in page
+    assert "first claim wins" in page
+
+    monkeypatch.setattr(type(state), "my_tag", lambda self: "robin")
+    page = app.get("/").text
+    assert "What should people call you?" not in page, \
+        "asked once, not every visit"
+
+
+def test_a_claim_on_its_way_says_so_instead_of_asking_again(client, monkeypatch):
+    """A tag is not on the chain until its block lands, and the page that
+    keeps asking in the meantime gets asked twice and paid for twice."""
+    app, state = client
+    from arcade.messaging.keys import Identity
+
+    state.identity = Identity.generate()
+    monkeypatch.setattr(type(state), "my_tag", lambda self: "")
+    state.pending_tokens.append({"txid": "a" * 64, "what": "claim @robin",
+                                 "at": 0, "network": state.messaging.network})
+    page = app.get("/").text
+    assert "Claiming <strong>@robin</strong>" in page
+    assert 'name="tag"' not in page, "nothing to fill in while one is in flight"

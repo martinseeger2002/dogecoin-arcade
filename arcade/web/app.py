@@ -449,7 +449,22 @@ def create_app(state: AppState) -> FastAPI:
             if state.store_path.exists() and state.derived_address:
                 with state.store() as store:
                     announced = store.key_for(state.derived_address) is not None
+        # A wallet with no name yet is a wallet somebody has just installed.
+        # Asked here, once, at the top of the first page they see: a @tag is
+        # how anybody addresses them -- in the address book, on a shop, on
+        # every listing they make -- and until they have one they are a
+        # 34-character address to everybody, including themselves (D-131).
+        my_tag = state.my_tag()
+        claiming = ""
+        if not my_tag:
+            for item in reversed(state.pending_tokens):
+                what = str(item.get("what") or "")
+                if (item.get("network") == state.messaging.network
+                        and what.startswith("claim @")):
+                    claiming = what[len("claim @"):]
+                    break
         return render(request, "overview.html", contact_code=code, announced=announced,
+                      my_tag=my_tag, claiming=claiming,
                       my_address=state.derived_address,
                       auto_update=bool(state.setting("auto_update", True)),
                       auto_sell=bool(state.setting("auto_sell", True)),
@@ -2857,11 +2872,6 @@ def create_app(state: AppState) -> FastAPI:
         data.update(extra)
         return data
 
-    #: A run that has not finished. These are the ones that stand in the way
-    #: of starting another: "done" means every piece was sent, and whether the
-    #: SET exists is then a question for the chain, not for this file (D-125).
-    UNFINISHED = ("running", "paused", "pausing", "pending", "starting")
-
     def _what_is_already_there(sender: str, build, label: str = "") -> dict[str, Any]:
         """What of this build is on the chain already, and what that means.
 
@@ -2905,7 +2915,8 @@ def create_app(state: AppState) -> FastAPI:
                 if job.get("sender") == sender
                 and str(job.get("name") or "").strip() in named]
         for job in mine:
-            if job.get("floor") == floor and job.get("status") in UNFINISHED:
+            if (job.get("floor") == floor
+                    and job.get("status") in collectionlib.UNFINISHED):
                 out["blocked"] = (
                     f"{collection} is already being inscribed from this "
                     f"address by run {job['id']}. Open that run and resume "

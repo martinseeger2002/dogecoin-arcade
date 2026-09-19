@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any, Callable, ContextManager, Sequence
 
 from . import payload as P
-from .chain import (ChainFollower, IndexBelowFloor, NodeUnreachable,
+from .chain import (ChainFollower, IndexFromAnotherFloor, NodeUnreachable,
                     ReorgTooDeep, SyncResult)
 from .config import Params
 from .db import Database
@@ -146,7 +146,7 @@ class LedgerIndex:
                 result = follower.sync_once(max_blocks=max_blocks)
                 for key, value in handler.stats.items():
                     self.stats[key] = self.stats.get(key, 0) + value
-        except IndexBelowFloor as exc:
+        except IndexFromAnotherFloor as exc:
             self._start_again(exc)
         except Exception as exc:
             self._stop(exc)
@@ -161,7 +161,7 @@ class LedgerIndex:
         finally:
             self._sync_lock.release()
 
-    def _start_again(self, exc: IndexBelowFloor) -> None:
+    def _start_again(self, exc: IndexFromAnotherFloor) -> None:
         """Move this index aside and rebuild it from the new floor.
 
         The move is automatic; the delete never is (D-123). An index is
@@ -197,7 +197,7 @@ class LedgerIndex:
                     source.rename(str(kept) + suffix)
                     moved = moved or not suffix
         except OSError as exc2:
-            self._stop(IndexBelowFloor(f"{exc}\n(and it could not be moved "
+            self._stop(IndexFromAnotherFloor(f"{exc}\n(and it could not be moved "
                                        f"aside automatically: {exc2})"))
             return
         if not moved:
@@ -219,7 +219,7 @@ class LedgerIndex:
             reason = (f"a transaction uses Omni message type {exc.message_type}, which "
                       f"this version does not implement. Balances after this block "
                       f"cannot be trusted until a version that does is installed.")
-        elif isinstance(exc, IndexBelowFloor):
+        elif isinstance(exc, IndexFromAnotherFloor):
             # Its own sentence, because the old one named a catastrophic
             # external event for what is a config value somebody changed on
             # purpose ten minutes earlier. A wrong diagnosis in an error

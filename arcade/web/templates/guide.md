@@ -89,6 +89,13 @@ deleted — that is the point of them.
 
 ---
 
+**A new wallet is asked what it is called.** The first page a wallet with no
+@tag opens asks for one: it is how everybody else sees you — in their address
+book, on anything you sell, beside every offer — instead of a 34-character
+address. Claimed on the chain, first claim wins, and claiming it publishes
+your key at the same time so people can write to you. While the claim is on
+its way the card says so instead of asking again.
+
 ## Tokens
 
 An Omni-style token ledger, indexed from the chain.

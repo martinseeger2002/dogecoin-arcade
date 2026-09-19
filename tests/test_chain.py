@@ -142,7 +142,7 @@ def test_an_index_below_a_raised_floor_says_so(regtest, follower, monkeypatch):
     index can unwind", with no hash compared and every hash in fact agreeing.
     A wrong diagnosis in an error message aims the investigation (D-123).
     """
-    from arcade.chain import IndexBelowFloor
+    from arcade.chain import IndexFromAnotherFloor
 
     regtest.generate(10)
     follower.sync_once()
@@ -158,7 +158,7 @@ def test_an_index_below_a_raised_floor_says_so(regtest, follower, monkeypatch):
 
     follower.params = follower.params.__class__(
         **{**follower.params.__dict__, "activation_height": tip + 100})
-    with pytest.raises(IndexBelowFloor) as complaint:
+    with pytest.raises(IndexFromAnotherFloor) as complaint:
         follower.find_fork_height()
 
     said = str(complaint.value)
@@ -193,3 +193,47 @@ def test_a_node_that_cannot_be_asked_is_not_a_reorg(regtest, follower, monkeypat
     follower.max_reorg_depth = 0
     with pytest.raises(ReorgTooDeep):
         follower.find_fork_height()
+
+
+def test_an_index_that_starts_above_a_lowered_floor_says_so(regtest, follower,
+                                                            monkeypatch):
+    """The mirror case, and the quieter one.
+
+    A floor RAISED past everything the index holds makes it obviously
+    useless. A floor LOWERED below where the index starts leaves an index
+    that keeps up with the tip and is missing its bottom -- and an index only
+    ever extends forward, so nothing goes back for those blocks. The operator hit
+    it the moment a piece turned out to be under the floor (D-130).
+    """
+    import dataclasses
+
+    from arcade.chain import IndexFromAnotherFloor
+
+    regtest.generate(12)
+    follower.sync_once()
+    low = follower.db.conn.execute("SELECT MIN(height) AS n FROM block").fetchone()["n"]
+    tip = follower.db.tip()["height"]
+
+    # Raised past where it starts: it holds blocks nobody reads any more, and
+    # keeps up with the tip while doing it. This is the shape that made every
+    # reset a manual instruction, and the one a test machine was sitting on while
+    # the two nodes disagreed about which tokens existed.
+    follower.params = dataclasses.replace(regtest.params,
+                                          activation_height=low + 3)
+    with pytest.raises(IndexFromAnotherFloor) as complaint:
+        follower.find_fork_height()
+    said = str(complaint.value)
+    assert "below the floor that no node reads any more" in said
+    assert "Nothing is wrong with the chain" in said
+
+    # Lowered below where it starts: the bottom is missing and an index only
+    # ever extends forward.
+    follower.db.conn.execute("DELETE FROM block WHERE height < ?", (low + 4,))
+    follower.params = dataclasses.replace(regtest.params, activation_height=low)
+    with pytest.raises(IndexFromAnotherFloor) as complaint:
+        follower.find_fork_height()
+    assert "is missing the" in str(complaint.value)
+
+    # And an index that starts exactly at its floor is not complained about.
+    follower.params = dataclasses.replace(regtest.params, activation_height=low + 4)
+    assert follower.find_fork_height() == tip

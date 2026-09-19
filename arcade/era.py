@@ -96,6 +96,15 @@ ERA_CHILDREN: tuple[tuple[str, str, str, str, str], ...] = (
     ("collections.sqlite", "item", "job_id", "job", "id"),
 )
 
+#: Tables that record the floor they were written under. Their current-era
+#: rows are kept even on the first sweep, which would otherwise be era-BLIND
+#: rather than era-accurate: "nothing recorded which floor these belong to"
+#: was taking rows that plainly belong to this one. A test machine's first sweep
+#: retired a 333-piece run seven minutes after it finished (D-132).
+KNOWS_ITS_FLOOR: frozenset[tuple[str, str]] = frozenset({
+    ("collections.sqlite", "job"),
+})
+
 
 def recorded(home: Path) -> dict[str, int]:
     """The floor each network's local files were last written under."""
@@ -117,6 +126,52 @@ def remember(home: Path, network: str, floor: int) -> None:
         path.write_text(json.dumps(eras, indent=1, sort_keys=True) + "\n")
     except OSError as exc:                  # nothing is lost; it retries later
         log.warning("could not record the era for %s: %s", network, exc)
+
+
+def _has_column(path: Path, table: str, column: str) -> bool:
+    """Whether `table` in `path` has that column, without touching anything."""
+    if not path.exists():
+        return False
+    try:
+        conn = sqlite3.connect(path, timeout=10)
+        try:
+            return any(row[1] == column
+                       for row in conn.execute(f"PRAGMA table_info({table})"))
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False
+
+
+def a_run_in_flight(home: Path, network: str) -> str:
+    """A collection run that is still going, said in a sentence, or "".
+
+    Read straight from the jobs file rather than through `Jobs`, because this
+    runs before anything else is built and must not drag the collection
+    machinery into the startup path.
+    """
+    from .collections import UNFINISHED
+
+    path = Path(home) / "collections.sqlite"
+    if not path.exists():
+        return ""
+    try:
+        conn = sqlite3.connect(path, timeout=10)
+        conn.row_factory = sqlite3.Row
+        try:
+            marks = ",".join("?" * len(UNFINISHED))
+            row = conn.execute(
+                f"SELECT id, name, status FROM job WHERE network = ? "
+                f"AND status IN ({marks}) LIMIT 1",
+                (network, *UNFINISHED)).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return ""                      # no jobs table yet, or nothing to read
+    if row is None:
+        return ""
+    return (f"the collection run {row['id']} ({row['name']!r}) is {row['status']} "
+            f"and its pieces must not be moved out from under it")
 
 
 def retire_old_rows(home: Path, network: str, floor: int | None) -> dict[str, int]:
@@ -147,11 +202,32 @@ def retire_old_rows(home: Path, network: str, floor: int | None) -> dict[str, in
     if was == int(floor):
         return {}
 
+    busy = a_run_in_flight(home, network)
+    if busy:
+        # Nothing moves while a collection run is going. An update restarts
+        # the service and the sweep runs at start, so a run that is paused or
+        # part-sent would have its job and its items retired out from under
+        # it: pieces broadcast, no job left to resume, which is the worst
+        # state a run can be in (D-125). Not recorded either, so the next
+        # start tries again once the run is finished (a test machine, D-132).
+        log.warning("not retiring anything for %s: %s", network, busy)
+        return {}
+
     kept: dict[str, list[dict[str, Any]]] = {}
     found: list[tuple[str, str, str, tuple[Any, ...], int]] = []
-    wheres: list[tuple[str, str, str, tuple[Any, ...]]] = [
-        (filename, table, f"{column} = ?", (network,))
-        for filename, table, column in ERA_TABLES]
+    wheres: list[tuple[str, str, str, tuple[Any, ...]]] = []
+    for filename, table, column in ERA_TABLES:
+        where, params = f"{column} = ?", (network,)
+        if ((filename, table) in KNOWS_ITS_FLOOR
+                and _has_column(home / filename, table, "floor")):
+            # It says which floor it belongs to, so it is asked rather than
+            # assumed -- and a row that says THIS one stays. Only when the
+            # column is really there: this runs before anything migrates the
+            # file, so a store written by an older version has no `floor` and
+            # asking for one would abort the sweep on every start.
+            where += " AND (floor IS NULL OR floor != ?)"
+            params += (int(floor),)
+        wheres.append((filename, table, where, params))
     # A queue, not a snapshot: a parent's rows add their children to it as
     # they are read, and the loop has to reach them.
     position = 0

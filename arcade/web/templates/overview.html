@@ -32,6 +32,36 @@
     <div class="n">{% if state.unlocked %}nothing to set up{% else %}waiting for the node{% endif %}</div></div>
 </div>
 
+{# The first thing a new wallet is asked, and the only thing it is asked.
+   Everything else here comes from the node; this is the one fact only the
+   person knows (D-131). #}
+{% if state.unlocked and not my_tag %}
+<div class="panel" style="margin-bottom:18px;border-color:var(--accent)">
+  <h2 style="margin-top:0">What should people call you?</h2>
+  {% if claiming %}
+    <p>Claiming <strong>@{{ claiming }}</strong> — it is on its way and will be
+       yours when its block lands. Nothing else to do.</p>
+  {% else %}
+    <p style="max-width:62ch">Pick a <strong>@tag</strong>. It is how everybody
+       else sees you — in their address book, on anything you sell, beside every
+       offer you make — instead of a 34-character address. It is claimed on the
+       chain, so <strong>first claim wins</strong> and it is yours until you
+       hand it on.</p>
+    <form method="post" action="/publish" class="row" style="gap:8px;align-items:center">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <div style="flex:0 0 240px">
+        <input autocomplete="off" name="tag" placeholder="yourname" autofocus
+               maxlength="24" pattern="@?[A-Za-z0-9_]{2,24}" required
+               title="letters, digits and underscore, 2 to 24 characters"></div>
+      <button type="submit">Claim it</button>
+      <span class="muted" style="font-size:.86rem">letters, digits and
+        underscore &middot; this also publishes your key, so people can write
+        to you</span>
+    </form>
+  {% endif %}
+</div>
+{% endif %}
+
 <h2>Your messaging address <span class="tag testnet">test</span></h2>
 <div class="panel">
 {% if state.unlocked %}

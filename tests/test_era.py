@@ -166,3 +166,76 @@ def test_a_runs_items_go_with_the_run(tmp_path):
     saved = json.loads((tmp_path / "collections.sqlite.before-1495900.json").read_text())
     assert sum(1 for r in saved["rows"] if r["_table"] == "item") == 100, \
         "and all of them are in the copy, not only the run"
+
+
+def a_jobs_file(home, rows, items=()):
+    conn = sqlite3.connect(home / "collections.sqlite")
+    conn.execute("CREATE TABLE IF NOT EXISTS job "
+                 "(id TEXT, network TEXT, name TEXT, status TEXT, floor INTEGER)")
+    conn.execute("CREATE TABLE IF NOT EXISTS item (job_id TEXT, edition INTEGER)")
+    conn.executemany("INSERT INTO job VALUES (?,?,?,?,?)", rows)
+    conn.executemany("INSERT INTO item VALUES (?,?)", items)
+    conn.commit()
+    conn.close()
+
+
+def test_a_run_from_this_floor_is_not_retired(tmp_path):
+    """The first sweep was era-BLIND rather than era-accurate: "nothing
+    recorded which floor these belong to" took rows that plainly belong to
+    this one. It retired a finished 333-piece run seven minutes after it
+    finished (a test machine, D-132)."""
+    a_jobs_file(tmp_path,
+                [("old", "test", "Before", "done", 1_495_420),
+                 ("new", "test", "Pixel Skull", "done", 1_495_811),
+                 ("unsaid", "test", "No floor recorded", "done", None)],
+                items=[("old", 1), ("new", 1), ("new", 2), ("unsaid", 1)])
+
+    moved = era.retire_old_rows(tmp_path, "test", 1_495_811)
+
+    assert moved == {"collections.sqlite.job": 2, "collections.sqlite.item": 2}
+    left = sqlite3.connect(tmp_path / "collections.sqlite")
+    assert [r[0] for r in left.execute("SELECT id FROM job")] == ["new"]
+    assert [r[0] for r in left.execute("SELECT job_id FROM item")] == ["new", "new"], \
+        "and its items stay with it"
+
+
+def test_nothing_is_swept_while_a_run_is_in_flight(tmp_path):
+    """An update restarts the service and the sweep runs at start. A run that
+    is paused or part-sent would lose its job and its items underneath it:
+    pieces broadcast, nothing left to resume (D-132)."""
+    a_store(tmp_path, "approvals.sqlite", "request", [("test", "a decision")])
+    a_jobs_file(tmp_path, [("busy", "test", "Pixel Skulls", "paused", 1_495_420)])
+
+    assert era.retire_old_rows(tmp_path, "test", 1_495_811) == {}
+    assert count(tmp_path, "approvals.sqlite", "request") == 1, "nothing at all moved"
+    assert era.recorded(tmp_path) == {}, "and the era is not claimed, so it tries again"
+    assert "is paused" in era.a_run_in_flight(tmp_path, "test")
+
+    # Once the run is finished the sweep goes ahead.
+    conn = sqlite3.connect(tmp_path / "collections.sqlite")
+    conn.execute("UPDATE job SET status = 'done'")
+    conn.commit()
+    conn.close()
+    assert era.retire_old_rows(tmp_path, "test", 1_495_811)["approvals.sqlite.request"] == 1
+
+
+def test_another_networks_run_does_not_hold_up_this_one(tmp_path):
+    a_store(tmp_path, "approvals.sqlite", "request", [("test", "a decision")])
+    a_jobs_file(tmp_path, [("busy", "main", "Elsewhere", "running", None)])
+    assert era.retire_old_rows(tmp_path, "test", 1_495_811) == \
+        {"approvals.sqlite.request": 1}
+
+
+def test_a_store_written_before_the_floor_column_is_still_swept(tmp_path):
+    """The sweep runs at startup, before anything migrates a file. Asking an
+    older store for a column it has never had would abort it on every start,
+    which is the livelock this already fails safe against elsewhere."""
+    conn = sqlite3.connect(tmp_path / "collections.sqlite")
+    conn.execute("CREATE TABLE job (id TEXT, network TEXT, name TEXT, status TEXT)")
+    conn.execute("INSERT INTO job VALUES ('old', 'test', 'Before', 'done')")
+    conn.commit()
+    conn.close()
+
+    assert era.retire_old_rows(tmp_path, "test", 1_495_811) == \
+        {"collections.sqlite.job": 1}
+    assert era.recorded(tmp_path) == {"test": 1_495_811}

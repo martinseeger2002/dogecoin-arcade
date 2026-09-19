@@ -71,6 +71,11 @@ IMAGE_SUFFIXES = (".png", ".gif", ".jpg", ".jpeg", ".webp", ".svg", ".mp4", ".we
 #: few per cent of the run.
 SPLIT_BATCH = 100
 
+#: A run that has not finished. These are the ones that stand in the way of
+#: starting another (D-125), and the ones whose state must not be moved out
+#: from under them (D-132).
+UNFINISHED = ("running", "paused", "pausing", "pending", "starting")
+
 #: The first gap between checks while waiting, and the longest it grows to.
 #: Doubling, because the thing being waited for is a block: at a minute a
 #: block and longer under congestion, a three-second poll asks a thousand
