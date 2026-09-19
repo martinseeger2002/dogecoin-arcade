@@ -48,6 +48,10 @@ def served(tmp_path_factory):
     from arcade.web.state import AppState, ChainContext
 
     home = tmp_path_factory.mktemp("popup")
+    # The inscription below is on the MAINNET ledger, so this asks the pages
+    # about that chain explicitly. A wallet with no choice recorded opens on
+    # the chain its identity is on (D-134); this file inherited a default.
+    (home / "tokens-chain").write_text("main\n")
     db = Database(home / "main-ledger.sqlite")
     install_schema(db)
     db.conn.execute(

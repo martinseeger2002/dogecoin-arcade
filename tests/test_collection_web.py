@@ -11,6 +11,17 @@ from test_web import app_state, client                          # noqa: F401,E40
 from test_collections import hashlips                             # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def on_mainnet(app_state):
+    """`index_with_a_collection` writes the MAINNET ledger, so the pages are
+    asked about that chain explicitly. A wallet with no choice recorded opens
+    on the chain its identity is on now (D-134); before that it opened on
+    mainnet and these tests inherited it."""
+    (app_state.home / "tokens-chain").write_text("main\n")
+    app_state._token_chain = None
+    yield
+
+
 def index_with_a_collection(home, count=5):
     """A ledger index holding a HashLips set, as the engine would have filed
     it -- plus one lone inscription that is in no set."""

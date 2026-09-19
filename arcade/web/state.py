@@ -581,17 +581,26 @@ class AppState:
 
     @property
     def token_chain(self) -> ChainContext:
-        """The chain the Tokens page is showing. Mainnet unless switched.
+        """The chain the Tokens page is showing.
 
         The choice is kept in a file so that it survives a restart: someone who
         switched to testnet to try things should not find themselves looking
         at mainnet again after an update.
+
+        With no choice made -- a fresh install -- it is the chain this wallet's
+        IDENTITY is on, which is the messaging chain. It used to be the ledger
+        chain, and the first honest fresh install showed why that was wrong: a
+        wallet claims its @tag on testnet, publishes its key there, holds its
+        contacts there, and was then shown token and inscription pages for
+        mainnet, where nothing of its own exists or can. An inscription made
+        two minutes earlier was indexed and invisible, and it reads as a node
+        that is not working rather than a page that is not looking (D-134).
         """
         if self._token_chain is None:
             try:
                 self._token_chain = self.token_chain_path.read_text().strip()
             except OSError:
-                self._token_chain = self.ledger.network
+                self._token_chain = self.messaging.network
         for chain in self.token_chains:
             if chain.network == self._token_chain:
                 return chain

@@ -20,6 +20,16 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_web import app_state, client                          # noqa: F401,E402
 
 
+@pytest.fixture(autouse=True)
+def on_mainnet(app_state):
+    """This file's fixtures write the MAINNET ledger, so the pages are asked
+    about that chain explicitly. A wallet with no choice recorded opens on
+    the chain its identity is on now (D-134); before that these inherited a
+    default."""
+    (app_state.home / "tokens-chain").write_text("main\n")
+    app_state._token_chain = None
+    yield
+
 class FakeTunnel:
     """A tunnel without a cloudflared behind it."""
 

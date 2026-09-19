@@ -188,8 +188,11 @@ def test_the_exchange_reads_the_chain_rather_than_a_list(client):
     closes by being sent away. So an empty chain is an empty exchange, and
     every tab still draws (D-037)."""
     app, _ = client
-    for tab, empty in (("mintpads", "No mintpads on this chain yet"),
-                       ("tokens", "is selling tokens"),
+    for tab, empty in (("mintpads", "No collection mintpads on this chain yet"),
+                       # Token pads live beside collection pads now: a pad is
+                       # a shop, whichever thing it hands over (D-136).
+                       ("mintpads", "is selling\n      tokens from a pad"),
+                       ("tokens", "No market has an order or a trade yet"),
                        # The marketplace is the list of collections, and an
                        # empty chain has none -- nor a shop selling a single
                        # piece under it.
@@ -418,15 +421,18 @@ def test_the_address_book_offers_a_scan(client):
     assert "Scan for published addresses" in body
 
 
-def test_a_published_key_is_offered_for_adding(client):
+def test_only_somebody_with_a_tag_is_offered_for_adding(client):
+    """The book is @tags now. A key announced by an address that claimed no
+    name is a row of base58 with nothing to check, and the page that offered
+    it was offering the thing the address book exists to avoid (D-137)."""
     app, state = client
     with state.store() as store:
         store.add_key_announcement("tx1", "nPublishedAddress", b"\x21" * 32,
                                    "aaaa bbbb cccc dddd", 500, 1000)
 
     body = app.get("/contacts").text
-    assert "nPublishedAddress" in body
-    assert "/contacts/add-published" in body
+    assert "nPublishedAddress" not in body, "no address without a name to it"
+    assert "Seen on the chain" not in body, "and nothing to offer, so no panel"
 
 
 def test_adding_a_published_key_puts_it_in_the_address_book(client):
@@ -2286,33 +2292,35 @@ def test_no_dialog_can_promise_what_the_reset_could_not_keep():
 
 
 def test_the_chain_tag_switches_tokens_between_mainnet_and_testnet(client, tmp_path):
-    """Tokens show on mainnet by default; the tag on the page switches to testnet.
+    """The tag on the page switches chains, and the choice outlives a restart.
 
-    The choice is written to a file so it survives a restart. Asserts what the
-    served page says and what a fresh AppState reads back, not that a variable
-    was set.
+    With nothing chosen the pages open on the chain this wallet's IDENTITY is
+    on, which is the messaging chain -- mainnet was the old default and it
+    showed a fresh install a chain where nothing of its own can exist
+    (D-134). Asserts what the served page says and what a fresh AppState
+    reads back, not that a variable was set.
     """
     app, state = client
     page = app.get("/tokens").text
-    assert 'name="chain" value="regtest"' in page, "the tag offers the other chain"
-    assert '<button type="submit" class="tag mainnet switch"' in page
-    assert "Every fungible token on mainnet" in page
+    assert 'name="chain" value="main"' in page, "the tag offers the other chain"
+    assert '<button type="submit" class="tag testnet switch"' in page
+    assert "Every fungible token on testnet" in page
 
-    response = app.post("/tokens/chain", data={"chain": "regtest", "csrf_token": state.csrf_token},
+    response = app.post("/tokens/chain", data={"chain": "main", "csrf_token": state.csrf_token},
                         follow_redirects=False)
     assert response.status_code == 303 and response.headers["location"] == "/tokens"
     page = app.get("/tokens").text
-    assert '<button type="submit" class="tag testnet switch"' in page
-    assert 'name="chain" value="main"' in page
-    assert "Every fungible token on testnet" in page
-    assert (state.home / "tokens-chain").read_text().strip() == "regtest"
+    assert '<button type="submit" class="tag mainnet switch"' in page
+    assert 'name="chain" value="regtest"' in page
+    assert "Every fungible token on mainnet" in page
+    assert (state.home / "tokens-chain").read_text().strip() == "main"
 
     again = AppState(home=state.home, messaging=state.messaging, ledger=state.ledger)
-    assert again.token_chain.network == "regtest", "the choice survives a restart"
+    assert again.token_chain.network == "main", "the choice survives a restart"
 
     app.post("/tokens/chain", data={"chain": "doge-main", "csrf_token": state.csrf_token},
              follow_redirects=False)
-    assert state.token_chain.network == "regtest", "a chain tokens are not on is refused"
+    assert state.token_chain.network == "main", "a chain tokens are not on is refused"
     assert "not indexed on" in app.get("/tokens").text
 
 
@@ -2962,11 +2970,13 @@ def test_your_own_tag_is_shown_with_your_own_address(client):
     from arcade.messaging.keys import Identity
 
     app, state = client
-    state.identity = Identity.generate()          # the table needs a wallet
+    state.identity = Identity.generate()          # the card needs a wallet
     body = app.get("/contacts").text
-    panel = body[body.index("You on the chain"):body.index("First claim wins")]
-    assert "Name" in panel, "the table says what you are called"
-    assert "not claimed yet" in panel, "and says so plainly when you are not"
+    panel = body[body.index("You are"):body.index("Add somebody by @tag")]
+    assert "nobody yet" in panel, "it says so plainly when you have no name"
+    assert "not published" in panel, "and whether the chain has your key"
+    assert "mainnet address" in panel and "key" in panel, \
+        "and what publishing puts on the chain under that name (D-137)"
     # The claimed case wants a derived address and a tag on the chain it was
     # derived for, which this fixture has no node for; it is what the running
     # wallet shows -- "@notbigchiefenergy on testnet" -- and the template
@@ -3011,3 +3021,62 @@ def test_a_claim_on_its_way_says_so_instead_of_asking_again(client, monkeypatch)
     page = app.get("/").text
     assert "Claiming <strong>@robin</strong>" in page
     assert 'name="tag"' not in page, "nothing to fill in while one is in flight"
+
+
+def test_a_fresh_install_opens_on_the_chain_its_identity_is_on(tmp_path, no_nodes):
+    """The first honest fresh install put the pages on the wrong chain.
+
+    `tokens-chain` records a choice, and a wipe removes it. Falling back to
+    the ledger chain showed mainnet token and inscription pages to a wallet
+    whose identity, @tag, key and contacts are all on testnet -- so an
+    inscription made two minutes earlier was indexed and invisible, which
+    reads as a node that is not working rather than a page that is not
+    looking (D-134).
+    """
+    from arcade.web.state import AppState, ChainContext
+
+    nowhere = pathlib.Path("/nonexistent")
+    state = AppState(
+        home=tmp_path,
+        messaging=ChainContext(network="test", role="messaging",
+                               label="Testnet", datadir=nowhere),
+        ledger=ChainContext(network="main", role="ledger",
+                            label="Mainnet", datadir=nowhere))
+    assert not (tmp_path / "tokens-chain").exists()
+    assert state.token_chain.network == "test", \
+        "the chain the identity is on, not the one the ledger names"
+
+    # An explicit choice still wins, and still survives a restart.
+    (tmp_path / "tokens-chain").write_text("main\n")
+    again = AppState(home=tmp_path, messaging=state.messaging, ledger=state.ledger)
+    assert again.token_chain.network == "main"
+
+
+def test_the_chain_switch_is_on_every_chain_specific_page(client):
+    """Tokens had it; Wallet, Wallet/NFTs and the Exchange did not, and all
+    three show one chain's data. A page that shows a chain should say which
+    and let you change it (D-135)."""
+    app, state = client
+    for path in ("/wallet", "/wallet/nfts", "/wallet/tokens", "/exchange",
+                 "/tokens", "/inscriptions", "/collections"):
+        page = app.get(path).text
+        assert 'action="/tokens/chain"' in page, f"{path} has no chain switch"
+        assert f'name="back" value="{path}"' in page, \
+            f"{path}'s switch does not come back to it"
+
+
+def test_the_switch_returns_to_the_page_it_was_pressed_on(client):
+    """A switch that always landed on /tokens answered a question about the
+    NFTs page by leaving it."""
+    app, state = client
+    response = app.post("/tokens/chain",
+                        data={"csrf_token": state.csrf_token, "chain": "test",
+                              "back": "/wallet/nfts"}, follow_redirects=False)
+    assert response.headers["location"] == "/wallet/nfts"
+
+    # Anywhere that is not a path of ours goes to /tokens instead.
+    for hostile in ("//evil.example/x", "https://evil.example", "", "javascript:x"):
+        response = app.post("/tokens/chain",
+                            data={"csrf_token": state.csrf_token, "chain": "test",
+                                  "back": hostile}, follow_redirects=False)
+        assert response.headers["location"] == "/tokens", hostile

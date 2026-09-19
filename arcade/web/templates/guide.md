@@ -89,6 +89,25 @@ deleted — that is the point of them.
 
 ---
 
+**Every page that shows one chain says which, and switches.** The
+mainnet/testnet tag is on the Wallet, its NFTs and Tokens tabs, the Tokens
+page and the Exchange, and pressing it stays where you are. A fresh wallet
+opens on the chain its own identity is on, not on mainnet.
+
+**The address book is @tags.** Everybody in it has claimed a name on the
+chain, and that is the only way in — search for a tag and add it. What gets
+saved is what the name points at: both addresses and their key, read from
+their own announcement. A contact shows as their @tag with any notes you
+made; addresses and key are one click away, because addresses are for
+machines. Somebody who has not claimed a tag cannot be added, and a key
+announced under no name is not offered.
+
+**Publishing your tag publishes three things**: your testnet address, your
+mainnet address and your messaging key, all under that name. One search then
+gives somebody everything they need to pay you on either chain and write to
+you. The mainnet address is chosen once and kept, so republishing says the
+same thing.
+
 **A new wallet is asked what it is called.** The first page a wallet with no
 @tag opens asks for one: it is how everybody else sees you — in their address
 book, on anything you sell, beside every offer — instead of a 34-character

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% import "_chains.html" as chains %}
 {% import "_wallettabs.html" as wt %}
+{% import "_token_confirm.html" as tk %}
 {% block title %}Your NFTs · DogecoinArcade{% endblock %}
 {% block body %}
 {% macro card(row, tags, listed) %}
@@ -51,7 +52,7 @@
 </div>
 {% endmacro %}
 
-<h1>Wallet</h1>
+<h1>Wallet {{ tk.chain_switch(chain, other_chains, csrf, "/wallet/nfts") }}</h1>
 {{ wt.tabs('nfts') }}
 <p class="sub">The inscriptions held by an address in this wallet. Put one up
   for sale and it appears in the <a href="/exchange?tab=market">Exchange</a>,

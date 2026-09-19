@@ -23,7 +23,7 @@ from ..config import MainnetRefused, Params, require_messaging_network
 from ..indexer import PrevOutCache
 from ..rpc import RpcClient
 from ..tx import TxError, extract
-from . import content, group
+from . import content, feed, group
 from ..script import b58check_encode
 from .envelope import (
     EnvelopeError,
@@ -52,6 +52,7 @@ class ScanResult:
     announcements: int = 0
     opened: int = 0
     group_posts: int = 0
+    feed_acts: int = 0
     reorg_depth: int = 0
     errors: list[str] = field(default_factory=list)
 
@@ -64,6 +65,9 @@ class ScanResult:
         if self.group_posts:
             parts.append(f"{self.group_posts} public "
                          f"post{'' if self.group_posts == 1 else 's'}")
+        if self.feed_acts:
+            parts.append(f"{self.feed_acts} "
+                         f"reaction{'' if self.feed_acts == 1 else 's'}")
         return ", ".join(parts)
 
 
@@ -280,6 +284,23 @@ class Scanner:
                     block_time, atx.sender, piece)
                 if self._assemble_group(msg_id, height, block_time):
                     result.group_posts += 1
+                continue
+
+            # What somebody did to a post: public and unsealed, exactly like
+            # a post, and read by any node whether or not it has an identity
+            # (feed.py, D-138). Read before posts because the check is a
+            # handful of bytes and posts are the common case either way.
+            if feed.is_feed_act(body):
+                try:
+                    act = feed.parse(body)
+                except EnvelopeError:
+                    continue              # a kind this version does not know
+                self.store.add_feed_act(
+                    self.params.name, atx.txid, act.kind, act.target_hex,
+                    atx.sender, act.text, height, block_time,
+                    mine=(atx.sender == self.store.get_meta(
+                        f"identity_address:{self.params.name}")))
+                result.feed_acts += 1
                 continue
 
             if group.is_group_payload(body):

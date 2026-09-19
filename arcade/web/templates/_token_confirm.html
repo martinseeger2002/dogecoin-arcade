@@ -120,12 +120,16 @@
 
 {# The chain tag. With another chain to go to it is a button that switches;
    without one (a token's own page belongs to its chain) it is just the tag. #}
-{% macro chain_switch(chain, others, csrf) %}
+{% macro chain_switch(chain, others, csrf, back='') %}
 {% set tag = 'mainnet' if chain.is_mainnet else 'testnet' %}
 {% set word = 'main' if chain.is_mainnet else 'test' %}
 {% if others %}
 <form method="post" action="/tokens/chain" style="display:inline">
   <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  {# Back to the page it was pressed on. Every chain-specific page carries
+     this now, and a switch that always landed on /tokens would answer a
+     question about the NFTs page by leaving it (D-135). #}
+  {% if back %}<input type="hidden" name="back" value="{{ back }}">{% endif %}
   <button type="submit" class="tag {{ tag }} switch" name="chain" value="{{ others[0].network }}"
           title="Switch to {{ others[0].label|lower }}">{{ word }}</button>
 </form>

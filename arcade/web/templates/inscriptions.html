@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "_chains.html" as chains %}
+{% import "_token_confirm.html" as tk %}
 {% block title %}NFTs · DogecoinArcade{% endblock %}
 {% block body %}
 {# Macros first: Jinja does not hoist them, and one
@@ -80,7 +81,7 @@
 {% endif %}
 {% endmacro %}
 
-<h1>NFTs</h1>
+<h1>NFTs {{ tk.chain_switch(chain, other_chains, csrf, "/inscriptions") }}</h1>
 <p class="sub">A file written onto the chain in full, owned by an address.
   The ones <em>you</em> hold, and the way to send them, are on the
   <a href="/wallet/nfts">wallet's NFTs tab</a>.</p>

@@ -4,7 +4,7 @@
 {% block title %}Tokens · DogecoinArcade{% endblock %}
 {% block body %}
 {% set tag = 'mainnet' if chain.is_mainnet else 'testnet' %}
-<h1>Tokens {{ tk.chain_switch(chain, other_chains, csrf) }}</h1>
+<h1>Tokens {{ tk.chain_switch(chain, other_chains, csrf, "/tokens") }}</h1>
 <p class="sub">Every fungible token on {{ chain.label|lower }}: what exists, and how to make one.
   What <em>you</em> hold, and the form that sends it, is on the
   <a href="/wallet/tokens">wallet's Tokens tab</a>.

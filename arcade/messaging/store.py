@@ -184,6 +184,38 @@ CREATE TABLE IF NOT EXISTS group_post (
 CREATE INDEX IF NOT EXISTS group_post_channel
     ON group_post(network, channel, block_time DESC);
 
+-- What people did to each other's posts: one row per transaction, one table
+-- for every kind (feed.py, D-138). Counts are queries against the index
+-- below rather than columns kept in step, and a kind this version does not
+-- know is simply a row nothing asks for -- which is what lets a kind be
+-- added without a migration.
+--
+-- Deliberately not stored: the author's @tag. It is read from the chain when
+-- a page is drawn, because a tag can move and a copy here would be a name
+-- that used to be right (D-137). Deliberately not stored either: anything
+-- the post row already holds.
+CREATE TABLE IF NOT EXISTS feed_act (
+    txid       TEXT NOT NULL,
+    network    TEXT NOT NULL,
+    kind       INTEGER NOT NULL,
+    target     TEXT NOT NULL,
+    author     TEXT NOT NULL,
+    text       TEXT NOT NULL DEFAULT '',
+    height     INTEGER NOT NULL,
+    block_time INTEGER NOT NULL,
+    mine       INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (network, txid)
+);
+CREATE INDEX IF NOT EXISTS feed_act_target ON feed_act(network, target, kind);
+CREATE INDEX IF NOT EXISTS feed_act_author ON feed_act(network, author, height DESC);
+
+-- People this machine will not draw. Local by design: it costs nothing, tells
+-- them nothing, and every node decides for itself what it shows (D-138).
+CREATE TABLE IF NOT EXISTS mute (
+    address  TEXT PRIMARY KEY,
+    muted_at INTEGER NOT NULL
+);
+
 -- Links of a public post too large for one transaction, held until the chain is
 -- complete. Not encrypted, so anyone can rejoin them -- no key, no identity.
 CREATE TABLE IF NOT EXISTS group_chunk (
@@ -946,6 +978,80 @@ class MessageStore:
         return int(self.conn.execute(
             "SELECT COUNT(*) FROM message WHERE recipient_fp=? AND read_at IS NULL",
             (recipient_fp,)).fetchone()[0])
+
+    # --- the feed ------------------------------------------------------------
+    #
+    # One table of actions, and everything else is a query against it. Counts
+    # are not kept in columns: a column has to be corrected when a reorg takes
+    # the row away, and a COUNT over an index does not (D-138).
+
+    def add_feed_act(self, network: str, txid: str, kind: int, target: str,
+                     author: str, text: str = "", height: int = 0,
+                     block_time: int = 0, mine: bool = False) -> None:
+        """Record one like, reply, share, edit, delete or tip.
+
+        Upserts on confirmation the way a post does: an action of this
+        machine's is written at broadcast with height 0 so the page moves at
+        once, and the scan then sees the same txid on the chain. `mine` is
+        never unset by a rescan -- the chain cannot tell us that.
+        """
+        self.conn.execute(
+            "INSERT INTO feed_act"
+            "(network,txid,kind,target,author,text,height,block_time,mine) "
+            "VALUES(?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(network,txid) DO UPDATE SET "
+            "  height=CASE WHEN excluded.height > 0 THEN excluded.height "
+            "              ELSE feed_act.height END, "
+            "  block_time=CASE WHEN excluded.height > 0 THEN excluded.block_time "
+            "              ELSE feed_act.block_time END, "
+            "  author=CASE WHEN excluded.author != '' THEN excluded.author "
+            "              ELSE feed_act.author END, "
+            "  mine=MAX(feed_act.mine, excluded.mine)",
+            (network, txid, int(kind), target, author, text or "",
+             int(height), int(block_time), 1 if mine else 0))
+
+    def feed_acts_on(self, network: str, targets: list[str]) -> list[sqlite3.Row]:
+        """Every action against any of these posts, oldest first.
+
+        Asked once for a page of posts rather than once per post: a feed of
+        fifty posts should be a handful of queries, not two hundred.
+        """
+        if not targets:
+            return []
+        marks = ",".join("?" * len(targets))
+        return self.conn.execute(
+            f"SELECT * FROM feed_act WHERE network = ? AND target IN ({marks}) "
+            f"ORDER BY height, block_time", (network, *targets)).fetchall()
+
+    def feed_acts_by(self, network: str, author: str, kind: int | None = None,
+                     limit: int = 200) -> list[sqlite3.Row]:
+        """What one person has done, newest first."""
+        where = "network = ? AND author = ?"
+        params: list = [network, author]
+        if kind is not None:
+            where += " AND kind = ?"
+            params.append(int(kind))
+        return self.conn.execute(
+            f"SELECT * FROM feed_act WHERE {where} "
+            f"ORDER BY height DESC, block_time DESC LIMIT ?",
+            (*params, max(1, min(limit, 1000)))).fetchall()
+
+    def feed_act_by_txid(self, network: str, txid: str) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM feed_act WHERE network = ? AND txid = ?",
+            (network, txid)).fetchone()
+
+    def muted(self) -> set[str]:
+        """Addresses this machine will not draw."""
+        return {row["address"] for row in self.conn.execute("SELECT address FROM mute")}
+
+    def mute(self, address: str, on: bool = True) -> None:
+        if on:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO mute(address, muted_at) VALUES(?,?)",
+                (address, int(time.time())))
+        else:
+            self.conn.execute("DELETE FROM mute WHERE address = ?", (address,))
 
     def group_posts(self, network: str, channel: str, limit: int = 50,
                     before_id: int | None = None) -> list[sqlite3.Row]:

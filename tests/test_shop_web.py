@@ -17,6 +17,17 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_web import app_state, client                          # noqa: F401,E402
 from test_swap import (FakeIndex, FakeNode, SELLER, BUYER, OTHER, SHOP, PIECE,  # noqa: E402
                        PIECE2, GOOF, decode, _SIGNED)
+
+@pytest.fixture(autouse=True)
+def on_mainnet(app_state):
+    """These pages are about the MAINNET ledger, which is where every helper
+    here writes. A wallet with no choice recorded opens on the chain its
+    identity is on now (D-134), so the choice is made explicitly rather than
+    inherited from a default that has moved."""
+    (app_state.home / "tokens-chain").write_text("main\n")
+    app_state._token_chain = None
+    yield
+
 from arcade.ledger import COIN                                   # noqa: E402
 from arcade.messaging.sender import SendError                    # noqa: E402
 

@@ -22,6 +22,16 @@ SHOP, BANK = bytes([1]) * 32, bytes([2]) * 32
 ME = "fp-me"
 
 
+@pytest.fixture(autouse=True)
+def on_mainnet(app_state):
+    """This file's fixtures write the MAINNET ledger, so the pages are asked
+    about that chain explicitly. A wallet with no choice recorded opens on
+    the chain its identity is on now (D-134); before that these inherited a
+    default."""
+    (app_state.home / "tokens-chain").write_text("main\n")
+    app_state._token_chain = None
+    yield
+
 def _heard(store, who, body, n):
     return store.add_api_message("regtest", f"tx{n}", 100 + n, 1000 + n, "nThem",
                                  who, ME, body, protocol=1, fingerprint=b"\0" * 4)

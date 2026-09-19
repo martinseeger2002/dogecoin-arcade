@@ -1202,6 +1202,11 @@ def create_app(state: AppState) -> FastAPI:
                     key = bytes(row["pubkey"])
                     if not row["stated"] and key in stated_keys:
                         continue      # an inferred address the key has replaced
+                    if not (row["tag"] or ""):
+                        # No name on the chain, nothing anybody could check:
+                        # offering it would be offering the row of base58 the
+                        # address book exists to avoid (D-137).
+                        continue
                     published.append({
                         "address": row["address"],
                         "hex": key.hex(),
@@ -1249,7 +1254,7 @@ def create_app(state: AppState) -> FastAPI:
                       published=published, when=_when, mine=_my_tag(), tags=found,
                       known_tags=known_tags, announced=announced,
                       matches=matches, find=find,
-                      other_address=_other_chain_address(),
+                      other_address=_mainnet_identity(),
                       announce_limit=MAX_ANNOUNCE_NAME,
                       name_limit=MAX_ANNOUNCE_NAME_CLASS_B, **kwargs)
 
@@ -1324,7 +1329,19 @@ def create_app(state: AppState) -> FastAPI:
                     "by searching for it.", "err")
                 return RedirectResponse("/contacts", status_code=303)
 
+        # What the tag itself says: a published announcement carries the
+        # key and the OTHER chain's address beside the name, so adding
+        # somebody by @tag should not leave two of the three blank and a
+        # contact nobody can message. Filled in only where the form left a
+        # gap, so an explicit value is never overwritten (D-137).
         pubkey = None
+        if testnet_address and state.store_path.exists():
+            with state.store() as store:
+                said = store.key_for(testnet_address)
+            if said is not None:
+                pubkey = pubkey or bytes(said["pubkey"])
+                mainnet_address = mainnet_address or (said["other_address"] or "")
+
         if code.strip():
             try:
                 network, pubkey = contact.decode(code.strip())
@@ -2244,9 +2261,11 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/wallet", response_class=HTMLResponse)
     def wallet(request: Request):
+        chain, _ = _token_chain()
         return render(request, "wallet.html", messaging=messaging_status(),
                       ledger=ledger_status(), prepared=None, which=None, now=time.time(),
-                      mining=_mining_json(), tab="coins")
+                      mining=_mining_json(), tab="coins", chain=chain,
+                      other_chains=[c for c in state.token_chains if c is not chain])
 
     @app.get("/wallet/tokens", response_class=HTMLResponse)
     def wallet_tokens(request: Request):
@@ -2378,9 +2397,12 @@ def create_app(state: AppState) -> FastAPI:
 
         if txid:
             return RedirectResponse("/wallet", status_code=303)
+        chain, _ = _token_chain()
         return render(request, "wallet.html", messaging=messaging_status(),
                       ledger=ledger_status(), prepared=prepared, which=which,
-                      error=error, destination=destination, amount=amount)
+                      error=error, destination=destination, amount=amount,
+                      tab="coins", chain=chain,
+                      other_chains=[c for c in state.token_chains if c is not chain])
 
     @app.post("/scan")
     def scan(request: Request, csrf_token: str = Form("")):
@@ -2800,6 +2822,8 @@ def create_app(state: AppState) -> FastAPI:
     def collections_page(request: Request, page: int = 1):
         chain, index = _token_chain()
         data: dict[str, Any] = {"chain": chain, "node": chain.status(),
+                                "other_chains": [c for c in state.token_chains
+                                                 if c is not chain],
                                 "collections": [], "node_error": None, "tags": {},
                                 "page": page, "pages": 1, "total": 0}
         try:
@@ -3327,6 +3351,55 @@ def create_app(state: AppState) -> FastAPI:
                 return b58check_encode(chain.params.pubkeyhash_version, other_hash)
         return ""
 
+    def _mainnet_identity() -> str:
+        """The one mainnet address this wallet publishes as its own.
+
+        Chosen once and remembered, because an announcement is a statement
+        about WHERE somebody is and it has to keep saying the same thing.
+        It used to be whichever address happened to be funded at the moment
+        of publishing, which follows coin selection: republish after spending
+        and the same @tag points somewhere else, with no way for anybody
+        holding the old one to know (D-137, and the same mistake D-062 fixed
+        for the messaging address).
+
+        Still best-effort: a node with no ledger wallet publishes without it
+        rather than not at all.
+        """
+        remembered = ""
+        path = state.home / "mainnet-address"
+        try:
+            remembered = path.read_text().strip()
+        except OSError:
+            remembered = ""
+        chain = next((c for c in state.token_chains
+                      if c.network != state.messaging.network), None)
+        if chain is None:
+            return ""
+        try:
+            with chain.rpc() as rpc:
+                ours = _ledger_addresses(rpc)
+        except HTTPException:
+            raise
+        except Exception:
+            return remembered         # no node: say what was said before
+        if remembered in ours:
+            return remembered
+        if not ours:
+            return ""
+        # A funded one if there is one, else the first in a fixed order --
+        # never "whichever the node listed first", which is not an order.
+        try:
+            with chain.rpc() as rpc:
+                funded = [row["address"] for row in _funded_addresses(rpc)]
+        except Exception:
+            funded = []
+        chosen = sorted(funded)[0] if funded else sorted(ours)[0]
+        try:
+            path.write_text(chosen + "\n")
+        except OSError:
+            pass                      # remembered for this run at least
+        return chosen
+
     def _announced_extras() -> tuple[bytes, str]:
         """The other chain's address (as 20 bytes) and the tag, for publishing.
 
@@ -3335,20 +3408,14 @@ def create_app(state: AppState) -> FastAPI:
         still publishes its key and its messaging address.
         """
         other_hash = b""
-        for chain in state.token_chains:
-            if chain.network == state.messaging.network:
-                continue
-            try:
-                with chain.rpc() as rpc:
-                    found = _funded_addresses(rpc) or [
-                        {"address": a} for a in _ledger_addresses(rpc)]
-                if found:
-                    _, other_hash = b58check_decode(found[0]["address"])
-            except HTTPException:
-                raise
-            except Exception:
-                other_hash = b""
-            break
+        try:
+            mine = _mainnet_identity()
+            if mine:
+                _, other_hash = b58check_decode(mine)
+        except HTTPException:
+            raise
+        except Exception:
+            other_hash = b""
         return other_hash, (_my_tag()["tag"] or "")
 
     def _tags_for(addresses) -> dict[str, str]:
@@ -4482,14 +4549,20 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "tokens.html", prepared=None, **_token_page_data())
 
     @app.post("/tokens/chain")
-    def tokens_chain(request: Request, chain: str = Form(""), csrf_token: str = Form("")):
-        """Switch the Tokens page between mainnet and testnet."""
+    def tokens_chain(request: Request, chain: str = Form(""), csrf_token: str = Form(""),
+                     back: str = Form("")):
+        """Switch between mainnet and testnet, from wherever it was pressed."""
         check_csrf(csrf_token)
         try:
             state.switch_token_chain(chain)
         except ValueError as exc:
             state.flash(str(exc), "err")
-        return RedirectResponse("/tokens", status_code=303)
+        # A path of ours and nothing else: one leading slash, no scheme, no
+        # second slash to make it protocol-relative.
+        where = (back or "").strip()
+        if not (where.startswith("/") and not where.startswith("//")):
+            where = "/tokens"
+        return RedirectResponse(where, status_code=303)
 
     def _token_action(request: Request, *, action: str, confirmed: str,
                       build, fields: dict[str, str], back: str,
@@ -6219,6 +6292,8 @@ def create_app(state: AppState) -> FastAPI:
         tab = tab if tab in EXCHANGE_TABS else "offers"
         chain, index = _token_chain()
         data: dict[str, Any] = {"tab": tab, "chain": chain, "node": chain.status(),
+                                "other_chains": [c for c in state.token_chains
+                                                 if c is not chain],
                                 "shops": [], "node_error": None, "owned": set(),
                                 "offers_in": [], "offers_out": [], "tags": {}}
         try:

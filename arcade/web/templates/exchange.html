@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "_chains.html" as chains %}
+{% import "_token_confirm.html" as tk %}
 {% block title %}Exchange · DogecoinArcade{% endblock %}
 {% block body %}
 {% macro tabs(current) %}
@@ -43,7 +44,7 @@
 </div>
 {% endmacro %}
 
-<h1>Exchange</h1>
+<h1>Exchange {{ tk.chain_switch(chain, other_chains, csrf, "/exchange") }}</h1>
 {{ tabs(tab) }}
 
 {% if node_error %}<div class="msg err">{{ node_error }}</div>{% endif %}
@@ -129,15 +130,30 @@
   {% endif %}
 
 {% elif tab == 'mintpads' %}
-  <p class="sub">Every mintpad on {{ chain.label|lower }} with pieces left.
-    A pad is an inscription: it appears here because it is on the chain, not
-    because anybody listed it.</p>
+  <p class="sub">Every pad on {{ chain.label|lower }} with something left to
+    sell &mdash; collections and tokens both. A pad is an inscription: it
+    appears here because it is on the chain, not because anybody listed it.</p>
   {% if not mintpads %}
-    <div class="panel empty"><p>No mintpads on this chain yet.</p>
+    <div class="panel empty"><p>No collection mintpads on this chain yet.</p>
       <p class="muted" style="font-size:.86rem">Inscribe a collection with the
         mintpad box ticked and it appears here by itself.</p></div>
   {% else %}
     <div class="cards">{% for s in mintpads %}{{ shopcard(s, 'Mint') }}{% endfor %}</div>
+  {% endif %}
+
+  {# Token pads sit beside collection pads rather than under the markets: a
+     pad is a shop selling something at a price it set, and which of the two
+     it hands over is a detail of the shop, not a different kind of place.
+     Under Tokens they were below the order books, where everything else is a
+     market with two sides (D-136). #}
+  <h2 style="margin-top:22px">Shops selling tokens</h2>
+  {% if not tokens %}
+    <div class="panel empty"><p>Nothing on {{ chain.label|lower }} is selling
+      tokens from a pad.</p>
+      <p class="muted" style="font-size:.86rem">Create a token with a launchpad
+        and it appears here by itself.</p></div>
+  {% else %}
+    <div class="cards">{% for s in tokens %}{{ shopcard(s, 'Buy') }}{% endfor %}</div>
   {% endif %}
 
 {% elif tab == 'tokens' %}
@@ -215,13 +231,6 @@
     {{ chain.label|lower }}.</p>
     <p class="muted" style="font-size:.86rem">Open a token from the
       <a href="/tokens">Tokens</a> page and put an order on its book.</p></div>
-  {% endif %}
-
-  <h2>Shops selling tokens</h2>
-  {% if not tokens %}
-    <div class="panel empty"><p>Nothing on {{ chain.label|lower }} is selling tokens.</p></div>
-  {% else %}
-    <div class="cards">{% for s in tokens %}{{ shopcard(s, 'Buy') }}{% endfor %}</div>
   {% endif %}
 
 
