@@ -105,3 +105,4 @@ def test_the_declaration_is_readable_before_asking():
     assert routes["power"] == {"json": "stats.power"}
     assert routes["ready"] == {"store": "ready"}
     assert len(routes) == 8
+

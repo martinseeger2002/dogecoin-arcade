@@ -52,34 +52,54 @@
       Profile picture{% if my_face %} &mdash; set{% endif %}</summary>
     <form method="post" action="/profile/picture" style="margin-top:10px">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
-      {% if pieces %}
-      <div class="row" style="flex-wrap:wrap;gap:10px">
-        <label class="facepick" style="text-align:center">
-          <input type="radio" name="piece" value="" {{ 'checked' if not my_face }}>
-          <div class="muted" style="font-size:.8rem;padding:14px 6px">none</div>
-        </label>
-        {% for piece in pieces %}
-        <label class="facepick" style="text-align:center">
-          <input type="radio" name="piece" value="{{ piece.txid }}"
-                 {{ 'checked' if my_face == piece.txid }}>
-          <img src="/content/{{ piece.txid }}" alt="" loading="lazy"
-               style="width:56px;height:56px;border-radius:50%;object-fit:cover;display:block">
-          <span class="muted" style="font-size:.72rem">#{{ piece.number }}
-            {{ piece.chain|lower }}</span>
-        </label>
-        {% endfor %}
+      {# An id, not a picker. The same answer token icons and collection
+         thumbnails arrived at: a list of what this wallet holds is a second
+         way to say one thing, and the field takes the id either way. #}
+      <div class="row">
+        <div style="flex:1"><input autocomplete="off" name="piece" class="mono"
+          spellcheck="false" value="{{ my_face or '' }}"
+          placeholder="the inscription id of a piece you hold"></div>
+        <button type="submit" class="small">Publish this picture</button>
       </div>
-      <div class="row" style="margin-top:10px">
-        <button type="submit" class="small">Use this</button>
-        <span class="muted" style="font-size:.82rem">It goes on the chain the
-          next time you publish, and it is shown only while you still hold the
-          piece.</span>
+      {% if my_face %}
+      <div class="row" style="margin-top:10px;align-items:center;gap:10px">
+        <img src="/content/{{ my_face }}" alt="" loading="lazy"
+             style="width:56px;height:56px;border-radius:50%;object-fit:cover">
+        <span class="muted" style="font-size:.82rem">This is your face while
+          the chain says you hold it. Empty the box to take it down.</span>
       </div>
-      {% else %}
-      <p class="muted" style="font-size:.86rem;margin:0">This wallet holds no
-        pictures yet. Anything you inscribe &mdash; including a file posted to
-        the <a href="/feed">feed</a> &mdash; can be your face.</p>
       {% endif %}
+      <p class="muted" style="font-size:.82rem;margin:8px 0 0">
+        Any piece you hold, on either chain &mdash; including a file you
+        posted to the <a href="/feed">feed</a>. This publishes your tag again
+        with the new picture on it: your name does not change, and everybody
+        who draws your posts picks it up. Empty the box to take it down.</p>
+    </form>
+  </details>
+
+  {# A line about yourself and a link, published with the tag. Both are what
+     YOU said -- a wallet repeating somebody's own words is not vouching for
+     them (D-145). #}
+  <details style="margin-top:10px">
+    <summary class="muted" style="cursor:pointer;font-size:.84rem">
+      Bio and link{% if my_bio or my_url %} &mdash; set{% endif %}</summary>
+    <form method="post" action="/profile/about" style="margin-top:10px">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <div class="field">
+        <input autocomplete="off" name="bio" maxlength="160"
+               value="{{ my_bio or '' }}"
+               placeholder="a line about you, shown on your feed"></div>
+      <div class="row">
+        <div style="flex:1"><input autocomplete="off" name="url" maxlength="120"
+          class="mono" spellcheck="false" value="{{ my_url or '' }}"
+          placeholder="https://somewhere-of-yours"></div>
+        <button type="submit" class="small">Publish</button>
+      </div>
+      <p class="muted" style="font-size:.82rem;margin:8px 0 0">
+        Both go on the chain under your tag, so anybody who finds you sees
+        them without asking this node anything. A link has to start with
+        https:// &mdash; it ends up on other people's pages as something to
+        click.</p>
     </form>
   </details>
 

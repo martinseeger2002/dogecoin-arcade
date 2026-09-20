@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}@{{ tag }}'s wallet · DogecoinArcade{% endblock %}
+{% block body %}
+
+<div class="row" style="align-items:center;gap:12px">
+  {% if profile.pfp %}
+    <img src="/content/{{ profile.pfp }}" alt="" loading="lazy"
+         style="width:56px;height:56px;border-radius:50%;object-fit:cover">
+  {% endif %}
+  <div>
+    <h1 style="margin:0">@{{ tag }}'s wallet</h1>
+    <a class="muted" style="font-size:.86rem" href="/u/{{ tag }}">&larr; their feed</a>
+  </div>
+</div>
+
+{% if not address %}
+<div class="panel empty" style="margin-top:16px">
+  <p>Nobody holds <strong>@{{ tag }}</strong> on this chain.</p>
+  <p class="muted">A tag exists here once its claim is in a block this node
+    has read.</p>
+</div>
+{% else %}
+
+<p class="sub" style="margin-top:14px">What they hold, read from the chain.
+  Nothing here is private &mdash; a chain is public, and this page only looks
+  up what anybody could.</p>
+
+{% for held in holdings %}
+<div class="panel" style="margin-bottom:16px">
+  <div class="row" style="align-items:baseline">
+    <h2 style="margin:0">{{ held.chain.label }}</h2>
+    <code class="mono muted" style="font-size:.76rem;margin-left:auto;word-break:break-all"
+      >{{ held.address }}</code>
+  </div>
+
+  <table style="margin-top:10px">
+    <tr><td class="muted" style="width:120px">Coins</td>
+        <td>{% if held.coins is not none %}{{ "{:,.2f}".format(held.coins) }}
+          {%- else %}<span class="muted">this node cannot see that wallet's
+          coins</span>{% endif %}</td></tr>
+    <tr><td class="muted">Tokens</td>
+        <td>{% if held.tokens %}
+          {% for row in held.tokens %}
+            <a href="/tokens/{{ row['property_id'] }}">{{ row['name'] or ('#' ~ row['property_id']) }}</a>
+            <span class="muted">{{ "{:,}".format(row['balance'] // 100000000) }}</span>{{ "," if not loop.last }}
+          {% endfor %}
+        {% else %}<span class="muted">none</span>{% endif %}</td></tr>
+  </table>
+
+  {% if held.pieces %}
+  <h3 style="margin:14px 0 8px;font-size:.95rem">Inscriptions</h3>
+  <div class="row" style="flex-wrap:wrap;gap:8px">
+    {% for piece in held.pieces %}
+    <a href="/inscriptions/{{ piece['txid'] }}/view" title="#{{ piece['number'] }}"
+       style="display:block">
+      {% if piece['content_type'].startswith('image/') %}
+        <img src="/content/{{ piece['txid'] }}" alt="" loading="lazy"
+             style="width:72px;height:72px;object-fit:cover;border-radius:8px">
+      {% else %}
+        <span class="ghost btn small">#{{ piece['number'] }}</span>
+      {% endif %}
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% else %}
+<div class="panel empty">
+  <p>@{{ tag }} has published no address on any chain this node follows.</p>
+  <p class="muted">Publishing a tag puts both addresses on the chain; until
+    somebody does that, there is nothing here to look up.</p>
+</div>
+{% endfor %}
+{% endif %}
+{% endblock %}

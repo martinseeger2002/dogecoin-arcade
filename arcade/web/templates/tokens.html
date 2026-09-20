@@ -105,10 +105,25 @@
 </div>
 <h2>All tokens</h2>
 <div class="panel">
-{% if tokens %}
+{% if tokens or pending_tokens %}
   <table class="wallets">
     <tr class="muted" style="font-size:.78rem;text-transform:uppercase;letter-spacing:.06em">
       <td colspan="2">Token</td><td>Supply</td><td>Holders</td><td>Issuer</td></tr>
+  {# Created a minute ago and not in a block yet: read from the pool, shown
+     as what it is, and gone if the transaction is dropped (D-146). #}
+  {% for t in pending_tokens %}
+    <tr>
+      <td style="width:40px"><span class="coinface"></span></td>
+      <td><strong>{{ t.name }}</strong>
+        <span class="pill warn"
+              title="In the mempool: everybody can see it, and it is a token when its block lands"
+          >waiting for its block</span></td>
+      <td class="muted">&mdash;</td><td class="muted">&mdash;</td>
+      <td>{% if tags.get(t.issuer) %}<strong>@{{ tags[t.issuer] }}</strong>
+        {%- else %}<code class="addr">{{ t.issuer }}</code>{% endif %}
+        {% if t.issuer in owned %}<span class="pill ok">you</span>{% endif %}</td>
+    </tr>
+  {% endfor %}
   {% for t in tokens %}
     <tr>
       <td style="width:40px"><a href="/tokens/{{ t.property_id }}">

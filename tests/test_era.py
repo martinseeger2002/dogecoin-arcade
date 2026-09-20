@@ -239,3 +239,66 @@ def test_a_store_written_before_the_floor_column_is_still_swept(tmp_path):
     assert era.retire_old_rows(tmp_path, "test", 1_495_811) == \
         {"collections.sqlite.job": 1}
     assert era.recorded(tmp_path) == {"test": 1_495_811}
+
+
+def a_messaging_store(home, network="test"):
+    """The store as the application makes it, with an era's worth in it."""
+    from arcade.messaging.store import MessageStore
+
+    store = MessageStore(home / f"{network}.sqlite")
+    store.add_group_post(network, "", "a" * 64, 100, 1000, "nThem", "", "a post")
+    store.add_feed_act(network, "b" * 64, 1, "a" * 64, "nThem", "", 101, 1010)
+    store.add_key_announcement("c" * 64, "nThem", b"\x21" * 32, "ff", 102, 1020)
+    store.save_contact(name="them", testnet_address="nThem")
+    store.set_meta(f"identity_address:{network}", "nMe")
+    store.set_meta(f"identity_height:{network}", "1495287")
+    store.conn.commit()
+    return store
+
+
+def test_the_messaging_store_loses_the_era_and_keeps_the_work(tmp_path):
+    """The ledger rebuilt itself and this file did not, so a node was left
+    believing it was somebody it was in a dead era: the old era's posts, its
+    key announcements, and a birth height under the chain's own floor. The
+    address book is not era state and never goes (a test machine, D-140)."""
+    store = a_messaging_store(tmp_path)
+    store.close()
+
+    moved = era.retire_old_rows(tmp_path, "test", 1_496_133)
+
+    assert moved["test.sqlite.group_post"] == 1
+    assert moved["test.sqlite.feed_act"] == 1
+    assert moved["test.sqlite.key_announcement"] == 1
+
+    conn = sqlite3.connect(tmp_path / "test.sqlite")
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM group_post").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM key_announcement").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM contact").fetchone()[0] == 1, \
+            "the address book is work, not era state"
+        keys = {r[0] for r in conn.execute("SELECT key FROM meta")}
+        assert "identity_height:test" not in keys, "a height below the floor"
+        assert "identity_address:test" in keys, \
+            "but not the identity itself: it still holds coins, and a floor " \
+            "move is no reason to become somebody else"
+    finally:
+        conn.close()
+
+    kept = json.loads((tmp_path / "test.sqlite.before-1496133.json").read_text())
+    assert {row["_table"] for row in kept["rows"]} >= {"group_post", "feed_act",
+                                                       "key_announcement"}
+
+
+def test_a_message_somebody_received_is_never_swept(tmp_path):
+    """A chain cannot give correspondence back."""
+    store = a_messaging_store(tmp_path)
+    for table in era.MESSAGING_KEPT:
+        assert table not in [t for t, _ in era.MESSAGING_TABLES]
+        assert table not in era.MESSAGING_WHOLE
+    store.close()
+    era.retire_old_rows(tmp_path, "test", 1_496_133)
+    conn = sqlite3.connect(tmp_path / "test.sqlite")
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM contact").fetchone()[0] == 1
+    finally:
+        conn.close()

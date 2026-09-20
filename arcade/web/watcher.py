@@ -114,6 +114,7 @@ class BlockWatcher:
                       lambda: self._check(self.state.ledger, public_only=True),
                       self._sync_ledgers,
                       self._check_pending_offers,
+                      self._check_pending_feed,
                       self._backfill_history_once,
                       self._check_release_notices,
                       self._announce_release,
@@ -135,6 +136,9 @@ class BlockWatcher:
     #: The offer transactions seen in the pool, per chain, so a new one bumps
     #: the generation exactly once.
     _pending_offers: dict = {}
+
+    #: The same for the feed: posts and reactions waiting for a block.
+    _pending_feed: set = frozenset()
 
     def _walk_home(self) -> None:
         """Bring what this wallet holds elsewhere back to one address.
@@ -220,6 +224,28 @@ class BlockWatcher:
             # transaction indexed, or the index stopping or resuming.
             if after != before or (result is not None and result.reorged):
                 self.state.bump_generation()
+
+    def _check_pending_feed(self) -> None:
+        """Notice a post or a reaction in the pool, so open pages refresh.
+
+        The same job `_check_pending_offers` does for the marketplace: those
+        transactions are not messages, so nothing else notices them, and a
+        feed that only moves when a block lands is a feed that looks broken
+        for a minute at a time (D-141, D-142).
+        """
+        from ..messaging import mempool as mempoollib
+
+        chain = self.state.messaging
+        try:
+            with chain.rpc() as rpc:
+                waiting = mempoollib.read(rpc, chain.params, chain.network)
+        except Exception:
+            return
+        now = ({post["txid"] for post in waiting.posts}
+               | {act["txid"] for act in waiting.acts})
+        if now != self._pending_feed:
+            self._pending_feed = now
+            self.state.bump_generation()
 
     def _check_pending_offers(self) -> None:
         """Notice an offer or an order in the pool, so the page refreshes.

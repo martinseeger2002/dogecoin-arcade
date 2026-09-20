@@ -142,6 +142,27 @@ Clicking a @tag anywhere goes to that person's page.
   your tag and shown only while the chain says you still hold it.
 * **Muting is local**: their posts vanish here, they are not told, and the
   counts on their posts do not change.
+* **Comments are folded behind their count** — "3 comments" until you open
+  them, and closed again with the same button.
+* **Everything appears as it is broadcast**, not a block later: posts,
+  likes, replies, shares, tips, tag claims and profile changes are all read
+  from the mempool and drawn marked as waiting. Nothing read that way is
+  stored — a like whose transaction is dropped leaves nothing behind.
+* **Every page refreshes itself.** A counter the block watcher keeps says
+  when something changed; pages reload when it does, and never while you are
+  half-way through typing.
+
+**A profile is a name, a face, a line and a link** — all published in the one
+announcement your tag makes, so a single lookup gives somebody everything.
+Set the bio, the link and the picture in the address book; each publishes on
+the same tag without changing it. The picture is any inscription you hold on
+either chain, shown only while the chain says you still hold it, and changing
+it updates every post you have ever made.
+
+**`@tag`'s wallet** is a page of its own: their coins, tokens and
+inscriptions on both chains, read from the chain for the addresses their tag
+names. Nothing there is private — a chain is public — and nothing there can
+be spent.
 
 ## Tokens
 
@@ -149,6 +170,8 @@ An Omni-style token ledger, indexed from the chain.
 
 * **Create** a token with a fixed supply, or a managed one you can grant and
   revoke against later.
+* **Tokens appear as they are created**, marked as waiting for their block,
+  including other people's — not just the ones this wallet made.
 * **One name, one token.** A name already issued on that chain is refused —
   first claim wins, in chain order. Names are compared folded (lower case,
   letters and digits only), so *Dogecoin Arcade*, *dogecoin arcade* and

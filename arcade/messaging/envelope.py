@@ -235,6 +235,18 @@ ANNOUNCE_TAG_HANDLE = 0x03
 #: is made on every draw rather than at announcement time.
 ANNOUNCE_TAG_PFP = 0x04
 
+#: A line about yourself, and a link. Published with the name rather than
+#: stored anywhere, for the same reason the picture is: one search gives
+#: somebody everything a profile shows, and a node that has never spoken to
+#: you can draw it (D-145). Short on purpose -- this is chain, paid for by
+#: the person writing it, and a profile is not an essay.
+ANNOUNCE_TAG_BIO = 0x05
+ANNOUNCE_TAG_URL = 0x06
+
+#: What each may say. A bio is a sentence or two; a link is a link.
+MAX_ANNOUNCE_BIO = 160
+MAX_ANNOUNCE_URL = 120
+
 #: What is left for the name once everything else is accounted for. Computed,
 #: not written down: the first attempt hardcoded 16 and was wrong, because it
 #: forgot the 4-byte AnyData wrapper that every Arcade payload carries. A
@@ -262,7 +274,8 @@ MAX_ANNOUNCE_NAME_CLASS_B = 64
 
 def build_key_announcement(public_bytes: bytes, hash160: bytes = b"",
                            name: str = "", other_hash160: bytes = b"",
-                           tag: str = "", pfp: str | bytes = b"") -> bytes:
+                           tag: str = "", pfp: str | bytes = b"",
+                           bio: str = "", url: str = "") -> bytes:
     """Header + X25519 public key, optionally saying whose key it is.
 
     The bare form is 38 bytes and is what earlier versions publish. The tail adds
@@ -315,6 +328,22 @@ def build_key_announcement(public_bytes: bytes, hash160: bytes = b"",
             raise EnvelopeError("a profile picture is an inscription, which is "
                                 "named by a 32-byte transaction id")
         out += bytes([ANNOUNCE_TAG_PFP]) + raw
+    for kind, value, ceiling, what in (
+        (ANNOUNCE_TAG_BIO, bio, MAX_ANNOUNCE_BIO, "a bio"),
+        (ANNOUNCE_TAG_URL, url, MAX_ANNOUNCE_URL, "a link"),
+    ):
+        said = " ".join((value or "").split())
+        if not said:
+            continue
+        encoded = said.encode()
+        if len(encoded) > ceiling:
+            # Refused rather than trimmed, like every other thing that goes
+            # on the chain here: a truncation is silent, permanent and paid
+            # for.
+            raise EnvelopeError(
+                f"{what} is limited to {ceiling} bytes; this one is "
+                f"{len(encoded)}")
+        out += bytes([kind, len(encoded)]) + encoded
     return out
 
 
@@ -361,7 +390,7 @@ def parse_announced_extras(payload: bytes) -> dict:
     understood up to that point is kept.
     """
     found = {"hash160": b"", "name": "", "other_hash160": b"", "tag": "",
-             "pfp": ""}
+             "pfp": "", "bio": "", "url": ""}
     at = KEY_ANNOUNCE_HEADER_LEN + 32
     if len(payload) <= at or payload[at] != ANNOUNCE_TAG_IDENTITY:
         return found              # bare announcement, or NUL padding
@@ -393,6 +422,20 @@ def parse_announced_extras(payload: bytes) -> dict:
                     break
                 found["pfp"] = piece.hex()
                 at += 33
+            elif kind in (ANNOUNCE_TAG_BIO, ANNOUNCE_TAG_URL):
+                length = payload[at + 1]
+                raw = payload[at + 2 : at + 2 + length]
+                if len(raw) != length:
+                    break
+                said = raw.decode("utf-8", "replace").strip()
+                if kind == ANNOUNCE_TAG_BIO:
+                    found["bio"] = said[:MAX_ANNOUNCE_BIO]
+                else:
+                    # A link somebody can click, so only these: this is text
+                    # anybody can publish and it lands on a page (D-097).
+                    found["url"] = said[:MAX_ANNOUNCE_URL] if said.startswith(
+                        ("https://", "http://")) else ""
+                at += 2 + length
             elif kind == ANNOUNCE_TAG_HANDLE:
                 length = payload[at + 1]
                 raw = payload[at + 2 : at + 2 + length]

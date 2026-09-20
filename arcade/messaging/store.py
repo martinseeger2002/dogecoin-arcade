@@ -46,7 +46,9 @@ CREATE TABLE IF NOT EXISTS key_announcement (
     height      INTEGER NOT NULL,
     block_time  INTEGER NOT NULL,
     seen_at     INTEGER NOT NULL,
-    pfp         TEXT NOT NULL DEFAULT ''
+    pfp         TEXT NOT NULL DEFAULT '',
+    bio         TEXT NOT NULL DEFAULT '',
+    url         TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS key_announcement_addr ON key_announcement(address, height);
 -- The inscription somebody uses as their picture, as announced. Honoured only
@@ -590,6 +592,7 @@ class MessageStore:
         self, txid: str, address: str, pubkey: bytes, fingerprint: str,
         height: int, block_time: int, stated: bool = False, name: str = "",
         tag: str = "", other_address: str = "", pfp: str = "",
+        bio: str = "", url: str = "",
     ) -> None:
         """Record an announcement.
 
@@ -602,8 +605,8 @@ class MessageStore:
         self.conn.execute(
             "INSERT INTO key_announcement"
             "(txid,address,pubkey,fingerprint,height,block_time,seen_at,stated,name,"
-            "tag,other_address,pfp) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?) "
+            "tag,other_address,pfp,bio,url) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
             # A longer name replaces a shorter one, so a rescan repairs a name an
             # older parser had cut. INSERT OR IGNORE meant the truncation was
             # permanent in the reader's store however often it was rescanned.
@@ -624,9 +627,13 @@ class MessageStore:
             # face down, and must not be read as an older parser seeing
             # nothing. The newest announcement for an address is what counts,
             # so this simply takes what arrived (D-138).
-            "  pfp=excluded.pfp",
+            # Cleared is cleared, for all three: an empty one from a NEWER
+            # announcement is somebody taking it down, not an older parser
+            # seeing nothing.
+            "  pfp=excluded.pfp, bio=excluded.bio, url=excluded.url",
             (txid, address, pubkey, fingerprint, height, block_time,
-             int(time.time()), 1 if stated else 0, name, tag, other_address, pfp),
+             int(time.time()), 1 if stated else 0, name, tag, other_address,
+             pfp, bio, url),
         )
 
     def superseded_addresses(self, pubkey: bytes) -> list[str]:

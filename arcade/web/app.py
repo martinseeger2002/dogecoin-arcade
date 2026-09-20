@@ -43,6 +43,8 @@ from .. import approvals as approvalslib
 from .. import payload as P
 from .. import feedview
 from ..messaging import feed as feedlib
+from ..messaging import mempool as mempoollib
+from ..messaging import envelope as envelopelib
 from .. import inscriptions as inscriptionlib
 from . import guide as guidelib
 from .. import charts as chartlib
@@ -1316,7 +1318,8 @@ def create_app(state: AppState) -> FastAPI:
                       known_tags=known_tags, announced=announced,
                       matches=matches, find=find,
                       other_address=_mainnet_identity(),
-                      pieces=_held_pieces(), my_face=_my_picture(),
+                      my_face=_my_picture(),
+                      my_bio=state.setting("bio", ""), my_url=state.setting("url", ""),
                       announce_limit=MAX_ANNOUNCE_NAME,
                       name_limit=MAX_ANNOUNCE_NAME_CLASS_B, **kwargs)
 
@@ -1901,29 +1904,69 @@ def create_app(state: AppState) -> FastAPI:
     #: How many posts a feed page holds before somebody has to ask for more.
     FEED_PAGE = 10
 
+    def _pending_feed(network: str):
+        """What the mempool holds for the feed right now.
+
+        A block is a minute or ten, and a like that takes ten minutes to
+        appear reads as a like that did not work. Read fresh and never
+        written down, exactly as the marketplace reads offers and asks
+        (D-117, D-141).
+        """
+        try:
+            with state.messaging.rpc() as rpc:
+                return mempoollib.read(rpc, state.messaging.params, network,
+                                       mine=state.derived_address or "")
+        except HTTPException:
+            raise
+        except Exception:
+            return mempoollib.Pending()
+
     def _feed_page(network: str, author: str = "", before: int | None = None,
-                   limit: int = FEED_PAGE) -> tuple[list[Any], int | None]:
-        """A page of posts, newest first, and the cursor for the next one."""
+                   limit: int = FEED_PAGE) -> tuple[list[Any], int | None, Any]:
+        """A page of posts, newest first, the cursor for the next, and what
+        the mempool is holding.
+
+        Pending posts go on top of the FIRST page only: they have no id to
+        page by, and a post that has not confirmed cannot be older than one
+        that has.
+        """
         with state.store() as store:
             rows = store.feed_posts(network, author=author, before=before,
                                     limit=limit + 1)
         more = rows[limit:]
         rows = rows[:limit]
-        return rows, (rows[-1]["id"] if rows and more else None)
+        cursor = rows[-1]["id"] if rows and more else None
+        waiting = _pending_feed(network)
+        if before is None:
+            known = {row["txid"] for row in rows}
+            fresh = [mempoollib.Row(post) for post in waiting.posts
+                     if post["txid"] not in known
+                     and (not author or post["sender"] == author)]
+            rows = fresh + list(rows)
+        return rows, cursor, waiting
 
-    def _shown(rows: list[Any], network: str) -> list[Any]:
-        """Posts with everything done to them applied, ready to draw."""
+    def _shown(rows: list[Any], network: str, waiting: Any = None) -> list[Any]:
+        """Posts with everything done to them applied, ready to draw.
+
+        `waiting` is the mempool's contribution: reactions that have not
+        confirmed are counted and drawn like any other, because the person
+        who pressed the button has already paid for them (D-141).
+        """
         if not rows:
             return []
         targets = [row["txid"] for row in rows]
         with state.store() as store:
-            acts = store.feed_acts_on(network, targets)
+            acts = list(store.feed_acts_on(network, targets))
             # Replies can be replied to, so their own actions are wanted too:
             # one more query rather than one per reply (D-138's leanness).
             replies = [a["txid"] for a in acts if a["kind"] == feedlib.REPLY]
             if replies:
-                acts = list(acts) + list(store.feed_acts_on(network, replies))
+                acts += list(store.feed_acts_on(network, replies))
             muted = store.muted()
+        if waiting is not None and waiting.acts:
+            known = {a["txid"] for a in acts}
+            acts += [mempoollib.Row(act) for act in waiting.acts
+                     if act["txid"] not in known]
         return feedview.assemble(rows, acts, me=state.derived_address or "",
                                  muted=muted)
 
@@ -1955,7 +1998,7 @@ def create_app(state: AppState) -> FastAPI:
             return {}
         return out
 
-    def _bylines(shown: list[Any]) -> dict[str, dict[str, Any]]:
+    def _bylines(shown: list[Any], waiting: Any = None) -> dict[str, dict[str, Any]]:
         """Who wrote these, as @tags and pictures, read from the chain.
 
         Never stored beside a post: a tag can move, and a copy would be a name
@@ -1972,9 +2015,30 @@ def create_app(state: AppState) -> FastAPI:
         out: dict[str, dict[str, Any]] = {}
         tags = _tags_for(sorted(addresses))
         for address in addresses:
-            out[address] = {"tag": tags.get(address, ""),
-                            "face": _face_for(address)}
+            # The pool first, for both: a name claimed a minute ago and a face
+            # changed a minute ago are things this node can already see, and
+            # waiting for a block to draw them is the wait the pool read was
+            # meant to remove (D-144).
+            face = (waiting.face_for(address) if waiting is not None else "")
+            tag = (waiting.tag_for(address) if waiting is not None else "")
+            out[address] = {"tag": tag or tags.get(address, ""),
+                            "face": _face_still_held(face) or _face_for(address)}
         return out
+
+    def _face_still_held(piece: str) -> str:
+        """A piece announced in the pool, if the chain says they hold it.
+
+        The same check a confirmed one gets: an announcement is somebody
+        saying something, and holding it is what makes it true (D-138).
+        """
+        if not piece:
+            return ""
+        try:
+            _, index = _token_chain()
+            row = index.inscription(piece)
+        except Exception:
+            return ""
+        return piece if row is not None else ""
 
     def _face_for(address: str) -> str:
         """The inscription somebody uses as a profile picture, if they still
@@ -2000,11 +2064,19 @@ def create_app(state: AppState) -> FastAPI:
     def feed_page(request: Request, before: int | None = None):
         """Everybody's posts, newest first."""
         chain = state.messaging
-        rows, cursor = _feed_page(chain.network, before=before)
-        shown = _shown(rows, chain.network)
+        rows, cursor, waiting = _feed_page(chain.network, before=before)
+        shown = _shown(rows, chain.network, waiting)
+        # Looking at it is reading it. Marked BEFORE the page is rendered, so
+        # the count beside Feed is gone by the time it is drawn rather than
+        # one refresh later (D-108, and the badge the operator watched stay).
+        try:
+            with state.store() as store:
+                store.mark_board_read(chain.network)
+        except Exception:
+            pass                      # a badge is not worth failing a page for
         return render(request, "feed.html", chain=chain, posts=shown,
-                      bylines=_bylines(shown), drawable=_drawable_in(shown),
-                      cursor=cursor, whose=None,
+                      bylines=_bylines(shown, waiting),
+                      drawable=_drawable_in(shown), cursor=cursor, whose=None,
                       here="/feed", mine=_my_tag(), when=_when,
                       node=chain.status())
 
@@ -2013,20 +2085,18 @@ def create_app(state: AppState) -> FastAPI:
         """One person's feed. Every @tag on every page links here."""
         chain = state.messaging
         wanted = (tag or "").strip().lstrip("@").lower()
-        address = ""
-        try:
-            _, index = _tag_chain()
-            address = index.address_of(wanted) or ""
-        except Exception:
-            address = ""
-        rows, cursor = ([], None) if not address else _feed_page(
+        address, claiming = _address_of_tag(wanted)
+        rows, cursor, waiting = ([], None, None) if not address else _feed_page(
             chain.network, author=address, before=before)
-        shown = _shown(rows, chain.network)
+        shown = _shown(rows, chain.network, waiting)
         return render(request, "feed.html", chain=chain, posts=shown,
-                      bylines=_bylines(shown), drawable=_drawable_in(shown),
-                      cursor=cursor,
+                      bylines=_bylines(shown, waiting),
+                      drawable=_drawable_in(shown), cursor=cursor,
                       whose={"tag": wanted, "address": address,
-                             "face": _face_for(address)},
+                             "claiming": claiming,
+                             "face": _face_for(address),
+                             **{k: v for k, v in _profile_of(address, waiting).items()
+                                if k in ("bio", "url")}},
                       here=f"/u/{wanted}", mine=_my_tag(), when=_when,
                       node=chain.status())
 
@@ -2069,32 +2139,6 @@ def create_app(state: AppState) -> FastAPI:
         # carrying the manifest.
         return txids[0]
 
-    def _held_pieces(limit: int = 60) -> list[dict[str, Any]]:
-        """Inscriptions this wallet holds, on either chain, that can be drawn.
-
-        Both chains because a profile picture is a picture, and which chain
-        somebody's favourite piece is on is their business (D-138).
-        """
-        out: list[dict[str, Any]] = []
-        for chain in state.token_chains:
-            try:
-                index = state.token_index(chain)
-                with chain.rpc() as rpc:
-                    mine = set(_ledger_addresses(rpc))
-                if not mine:
-                    continue
-                for row in index.inscriptions(owners=sorted(mine), limit=limit):
-                    if not str(row["content_type"] or "").startswith("image/"):
-                        continue
-                    out.append({"txid": row["txid"], "number": row["number"],
-                                "chain": chain.label,
-                                "network": chain.network})
-            except HTTPException:
-                raise
-            except Exception:
-                continue              # a chain with no node is not an error here
-        return out[:limit]
-
     def _my_picture() -> str:
         """The piece this wallet publishes as its face, if it still holds it.
 
@@ -2119,10 +2163,17 @@ def create_app(state: AppState) -> FastAPI:
                 continue
         return ""
 
-    @app.post("/profile/picture")
+    @app.post("/profile/picture", response_class=HTMLResponse)
     def set_profile_picture(request: Request, piece: str = Form(""),
                             csrf_token: str = Form("")):
-        """Choose which piece is your face. Published on the next publish."""
+        """Choose your face and put it on the chain, in one press.
+
+        A picture that is saved and not published does nothing for anybody:
+        it is the announcement that carries it, and the announcement is what
+        every other wallet reads (D-138). This publishes the SAME tag with
+        the new picture -- changing a face is not changing a name, and
+        nothing here claims anything (the operator).
+        """
         try:
             check_csrf(csrf_token)
             chosen = inscriptionlib.inscription_in(piece) if piece.strip() else ""
@@ -2130,16 +2181,15 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError("a profile picture is an inscription on one of "
                                  "these chains: give its id.")
             state.set_setting("pfp", chosen)
-            state.flash(
-                "Saved. Publish your tag to put it on the chain -- until then "
-                "it is a note to yourself." if chosen else
-                "Picture cleared. Publish your tag to take it off the chain.",
-                "ok")
         except HTTPException:
             raise
         except Exception as exc:
             state.flash(str(exc), "err")
-        return RedirectResponse("/contacts", status_code=303)
+            return RedirectResponse("/contacts", status_code=303)
+        # The same announcement the Publish button makes, with the tag left
+        # exactly as it is: `publish_key` reads the picture itself.
+        return publish_key(request, csrf_token=csrf_token, confirmed="yes",
+                           say_tag=(_my_tag()["tag"] or None))
 
     def _needs_a_name() -> str:
         """Why this wallet cannot post yet, or "".
@@ -2184,16 +2234,144 @@ def create_app(state: AppState) -> FastAPI:
             state.flash(str(exc), "err")
         return RedirectResponse("/feed", status_code=303)
 
+    def _feed_thing(network: str, txid: str) -> dict[str, Any] | None:
+        """Whatever that transaction is on the feed: a post, or a comment.
+
+        A comment is a `feed_act` row and a post is a `group_post` row, and
+        anything you can like you can tip -- so the tip page has to accept
+        either. Looking in one table is why tipping a comment said "no such
+        post on this chain" (D-143). The mempool is asked last, because
+        something broadcast a moment ago is in neither table yet.
+        """
+        with state.store() as store:
+            post = store.feed_post_by_txid(network, txid)
+            if post is not None:
+                return {"txid": txid, "author": post["sender"],
+                        "text": post["text"], "block_time": post["block_time"],
+                        "what": "post"}
+            act = store.feed_act_by_txid(network, txid)
+        if act is not None and act["kind"] in (feedlib.REPLY, feedlib.SHARE):
+            return {"txid": txid, "author": act["author"], "text": act["text"],
+                    "block_time": act["block_time"],
+                    "what": feedlib.NAMES.get(act["kind"], "comment")}
+        waiting = _pending_feed(network)
+        for row in waiting.posts:
+            if row["txid"] == txid:
+                return {"txid": txid, "author": row["sender"],
+                        "text": row["text"], "block_time": 0, "what": "post"}
+        for row in waiting.acts:
+            if row["txid"] == txid and row["kind"] in (feedlib.REPLY, feedlib.SHARE):
+                return {"txid": txid, "author": row["author"],
+                        "text": row["text"], "block_time": 0,
+                        "what": feedlib.NAMES.get(row["kind"], "comment")}
+        return None
+
+    def _profile_of(address: str, waiting: Any = None) -> dict[str, Any]:
+        """What somebody has published about themselves.
+
+        The pool first and the store second, so a bio written a minute ago
+        is on the page now (D-144). Everything here is what THEY said: a
+        wallet repeating somebody's own words is not vouching for them.
+        """
+        out = {"bio": "", "url": "", "pfp": "", "tag": "", "mainnet": ""}
+        if not address:
+            return out
+        if waiting is not None:
+            for row in reversed(waiting.said):
+                if row["address"] == address:
+                    out.update({"bio": row.get("bio", ""),
+                                "url": row.get("url", ""),
+                                "pfp": row.get("pfp", ""),
+                                "tag": row.get("tag", "")})
+                    break
+        if not any((out["bio"], out["url"], out["pfp"])):
+            try:
+                with state.store() as store:
+                    said = store.key_for(address)
+            except Exception:
+                said = None
+            if said is not None:
+                out.update({"bio": said["bio"] or "", "url": said["url"] or "",
+                            "pfp": said["pfp"] or "",
+                            "tag": said["tag"] or "",
+                            "mainnet": said["other_address"] or ""})
+        return out
+
+    @app.get("/u/{tag}/wallet", response_class=HTMLResponse)
+    def profile_wallet(request: Request, tag: str):
+        """What somebody holds, read from the chain for the addresses their
+        tag names. Not this wallet's own page: nothing here can be spent,
+        and nothing here is private -- it is a chain, and anybody can look.
+        """
+        wanted = (tag or "").strip().lstrip("@").lower()
+        address, _claiming = _address_of_tag(wanted)
+        profile = _profile_of(address)
+        holdings: list[dict[str, Any]] = []
+        for context in state.token_chains:
+            where = address if context.network == state.messaging.network \
+                else profile.get("mainnet", "")
+            if not where:
+                continue
+            entry: dict[str, Any] = {"chain": context, "address": where,
+                                     "coins": None, "tokens": [], "pieces": []}
+            try:
+                index = state.token_index(context)
+                entry["tokens"] = [row for row in index.balances([where])
+                                   if row["balance"]]
+                entry["pieces"] = index.inscriptions(owners=[where], limit=24)
+            except Exception:
+                pass
+            try:
+                with context.rpc() as rpc:
+                    entry["coins"] = sum(
+                        float(row.get("amount", 0))
+                        for row in (rpc.call("listunspent", 1, 9_999_999,
+                                             [where]) or []))
+            except HTTPException:
+                raise
+            except Exception:
+                entry["coins"] = None     # their balance is the node's to know
+            holdings.append(entry)
+        return render(request, "profile_wallet.html", tag=wanted,
+                      address=address, profile=profile, holdings=holdings)
+
+    @app.post("/profile/about")
+    def set_profile_about(request: Request, bio: str = Form(""),
+                          url: str = Form(""), csrf_token: str = Form("")):
+        """A line about yourself and a link, published with your tag."""
+        try:
+            check_csrf(csrf_token)
+            said = " ".join((bio or "").split())
+            link = (url or "").strip()
+            if len(said.encode()) > envelopelib.MAX_ANNOUNCE_BIO:
+                raise ValueError(
+                    f"a bio is at most {envelopelib.MAX_ANNOUNCE_BIO} "
+                    f"characters; this one is {len(said.encode())}")
+            if link and not link.startswith(("https://", "http://")):
+                raise ValueError("a link starts with https:// -- this ends up "
+                                 "on other people's pages as something to click")
+            if len(link.encode()) > envelopelib.MAX_ANNOUNCE_URL:
+                raise ValueError(
+                    f"a link is at most {envelopelib.MAX_ANNOUNCE_URL} characters")
+            state.set_setting("bio", said)
+            state.set_setting("url", link)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            state.flash(str(exc), "err")
+            return RedirectResponse("/contacts", status_code=303)
+        return publish_key(request, csrf_token=csrf_token, confirmed="yes",
+                           say_tag=(_my_tag()["tag"] or None))
+
     @app.get("/feed/{txid}/tip", response_class=HTMLResponse)
     def tip_page(request: Request, txid: str):
         """Who wrote this, where they take payment, and the form to send one."""
         chain = state.messaging
-        with state.store() as store:
-            row = store.feed_post_by_txid(chain.network, txid)
+        row = _feed_thing(chain.network, txid)
         if row is None:
-            state.flash("no such post on this chain", "err")
+            state.flash("nothing on this chain with that transaction id", "err")
             return RedirectResponse("/feed", status_code=303)
-        author = row["sender"]
+        author = row["author"]
         tag = _tags_for([author]).get(author, "")
         # Where they said to pay them, on each chain, from their own
         # announcement (D-137). Never guessed at: an address nobody published
@@ -2217,16 +2395,16 @@ def create_app(state: AppState) -> FastAPI:
                  amount: str = Form(""), csrf_token: str = Form("")):
         try:
             check_csrf(csrf_token)
-            with state.store() as store:
-                row = store.feed_post_by_txid(state.messaging.network, txid)
-                said = store.key_for(row["sender"]) if row is not None else None
+            row = _feed_thing(state.messaging.network, txid)
             if row is None:
-                raise ValueError("no such post on this chain")
+                raise ValueError("nothing on this chain with that transaction id")
+            with state.store() as store:
+                said = store.key_for(row["author"])
             context = next((c for c in state.token_chains
                             if c.network == network), None)
             if context is None:
                 raise ValueError("no such chain here")
-            where = row["sender"] if network == state.messaging.network else (
+            where = row["author"] if network == state.messaging.network else (
                 (said["other_address"] or "") if said is not None else "")
             if not where:
                 raise ValueError(
@@ -2665,7 +2843,9 @@ def create_app(state: AppState) -> FastAPI:
             face = _my_picture()
             payload = build_key_announcement(
                 state.identity.public_bytes, home_hash, "",
-                other_hash160=other_hash, tag=tag, pfp=face)
+                other_hash160=other_hash, tag=tag, pfp=face,
+                bio=str(state.setting("bio", "") or ""),
+                url=str(state.setting("url", "") or ""))
             # A long name will not fit one OP_RETURN, so it goes as Class B --
             # a couple of dust outputs rather than none. Better than publishing
             # half a name, permanently, for the cheaper fee.
@@ -3061,7 +3241,8 @@ def create_app(state: AppState) -> FastAPI:
             "chain": chain, "node": chain.status(),
             "other_chains": [c for c in state.token_chains if c is not chain],
             "index": index.status(node_tip=state.ledger_tips.get(chain.network)),
-            "tokens": [], "holdings": [], "funded": [], "owned": set(),
+            "tokens": [], "pending_tokens": [], "holdings": [],
+            "funded": [], "owned": set(),
             "pending": [], "node_error": None, "faces": {}, "my_pictures": [],
         }
         try:
@@ -3069,6 +3250,17 @@ def create_app(state: AppState) -> FastAPI:
         except Exception as exc:
             data["node_error"] = f"the token index could not be read: {exc}"
             return data
+        # And the ones created a minute ago. This wallet already showed its
+        # OWN from what it remembered broadcasting; anybody else's simply did
+        # not exist for a block (D-146). Marked pending, never stored, and
+        # dropped the moment the pool does.
+        try:
+            settled = {str(row["name"]).strip().lower() for row in data["tokens"]}
+            data["pending_tokens"] = [
+                row for row in index.pending_properties()
+                if str(row["name"]).strip().lower() not in settled]
+        except Exception:
+            data["pending_tokens"] = []
         try:
             with chain.rpc() as rpc:
                 owned = _ledger_addresses(rpc)
@@ -3880,6 +4072,33 @@ def create_app(state: AppState) -> FastAPI:
             other_hash = b""
         return other_hash, (_my_tag()["tag"] or "")
 
+    def _pending_tags() -> dict[str, str]:
+        """Names claimed in the pool: address -> tag."""
+        try:
+            _, index = _tag_chain()
+            return {row["address"]: row["tag"] for row in index.pending_tags()}
+        except Exception:
+            return {}
+
+    def _address_of_tag(wanted: str) -> tuple[str, bool]:
+        """Who holds that name, and whether it is still waiting for a block.
+
+        The chain first: a confirmed claim beats a pending one, because that
+        is what first-claim-wins means. The pool only answers for a name
+        nothing has settled yet (D-146).
+        """
+        try:
+            _, index = _tag_chain()
+            settled = index.address_of(wanted) or ""
+        except Exception:
+            settled = ""
+        if settled:
+            return settled, False
+        for address, tag in _pending_tags().items():
+            if tag == wanted:
+                return address, True
+        return "", False
+
     def _tags_for(addresses) -> dict[str, str]:
         """Which of these addresses hold a tag. Empty when nothing is indexed.
 
@@ -4162,6 +4381,34 @@ def create_app(state: AppState) -> FastAPI:
         index = _content_index()
         return contentlib._json({"address": address,
                                  "tag": index.tag_of(address)})
+
+    @app.get("/r/profile/{tag}")
+    def r_profile(tag: str):
+        """Who holds a name, and what they have published under it.
+
+        Public in every sense: it repeats what somebody put on the chain
+        themselves, so an inscribed page can greet a visitor by name, show a
+        shop owner's face, or link a piece to the person who made it without
+        asking this wallet anything about itself (D-145).
+
+        Read from the chain and the pool both, so a name claimed a minute
+        ago answers rather than 404s -- `pending` says which (D-146).
+        """
+        wanted = (tag or "").strip().lstrip("@").lower()
+        address, claiming = _address_of_tag(wanted)
+        if not address:
+            raise HTTPException(404, "nobody holds that tag on this chain")
+        said = _profile_of(address, _pending_feed(state.messaging.network))
+        face = _face_for(address)
+        return contentlib._json({
+            "tag": wanted, "address": address, "pending": claiming,
+            "mainnet": said.get("mainnet", ""),
+            "bio": said.get("bio", ""), "url": said.get("url", ""),
+            # The picture only while the chain says they hold it: a page
+            # showing a piece somebody has sold is showing somebody else's
+            # property (D-138).
+            "picture": face, "content": f"/content/{face}" if face else "",
+        })
 
     @app.get("/r/wallet")
     def r_wallet():

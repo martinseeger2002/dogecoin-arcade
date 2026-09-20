@@ -23,7 +23,8 @@
       {% endif %}
       <div class="muted" style="font-size:.78rem">
         {{ when(p.block_time) if p.block_time else 'just now' }}
-        {% if not p.height %}<span class="pill warn">waiting for its block</span>{% endif %}
+        {% if not p.height %}<span class="pill warn"
+          title="In the mempool: everybody's node can see it, and it is not settled until its block lands">waiting for its block</span>{% endif %}
         {% if p.edited %}&middot; edited{% endif %}
       </div>
     </div>
@@ -83,6 +84,19 @@
     {% endif %}
   </div>
 
+  {# Comments are folded behind their own count: a post with forty replies
+     is one post, and a feed that draws all forty is a feed nobody can
+     scroll (the operator). The count is always shown, so nothing is hidden
+     without saying that it is. #}
+  {% if p.replies %}
+  {% set count = p.replies|length %}
+  <button class="ghost small" type="button" style="margin-top:8px"
+          data-shut="{{ count }} comment{{ '' if count == 1 else 's' }}"
+          data-open="Hide {{ count }} comment{{ '' if count == 1 else 's' }}"
+          onclick="foldComments(this, 'thread-{{ p.txid }}')">
+    {{ count }} comment{{ '' if count == 1 else 's' }}</button>
+  {% endif %}
+
   <form method="post" action="/feed/{{ p.txid }}/reply" id="reply-{{ p.txid }}"
         hidden style="margin-top:10px">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
@@ -94,7 +108,11 @@
     </div>
   </form>
 </div>
-{% for child in p.replies %}{{ card(child, depth + 1) }}{% endfor %}
+{% if p.replies %}
+<div id="thread-{{ p.txid }}" hidden>
+  {% for child in p.replies %}{{ card(child, depth + 1) }}{% endfor %}
+</div>
+{% endif %}
 {% endmacro %}
 
 {% block body %}
@@ -105,11 +123,21 @@
            style="width:64px;height:64px;border-radius:50%;object-fit:cover">
     {% endif %}
     <div>
-      <h1 style="margin:0">@{{ whose.tag }}</h1>
-      {% if whose.address %}
-        <a class="muted" style="font-size:.86rem"
-           href="/wallet?who={{ whose.address }}">@{{ whose.tag }}'s wallet</a>
-      {% endif %}
+      <h1 style="margin:0">@{{ whose.tag }}{% if whose.claiming %}
+        <span class="pill warn" style="font-size:.6em;vertical-align:middle"
+              title="Their claim is in the mempool: every node can see it, and it is theirs when its block lands"
+          >claiming</span>{% endif %}</h1>
+      {% if whose.bio %}<p style="margin:2px 0 0;max-width:60ch">{{ whose.bio }}</p>{% endif %}
+      <div class="row" style="gap:10px;margin-top:2px">
+        {% if whose.address %}
+          <a class="muted" style="font-size:.86rem"
+             href="/u/{{ whose.tag }}/wallet">@{{ whose.tag }}'s wallet</a>
+        {% endif %}
+        {% if whose.url %}
+          <a class="muted" style="font-size:.86rem" rel="noopener noreferrer nofollow"
+             target="_blank" href="{{ whose.url }}">{{ whose.url }}</a>
+        {% endif %}
+      </div>
     </div>
   </div>
   {% if not whose.address %}
@@ -127,17 +155,37 @@
 {% if not whose %}
 <div class="panel" style="margin-bottom:18px">
   {% if mine.tag %}
-  <form method="post" action="/feed/post" enctype="multipart/form-data">
+  {# The box, the clip and the button are one row and the same height. Three
+     controls with three different paddings and three different fonts do not
+     line up by accident, and the box grows downwards as you type, so they
+     are pinned to its bottom edge (the operator). #}
+  <style>
+    .feedcomposer{display:flex;align-items:flex-end;gap:8px}
+    .feedcomposer .saybox{flex:1 1 auto;min-width:0}
+    .feedcomposer textarea{display:block;box-sizing:border-box;height:42px;
+      min-height:42px;max-height:220px;padding:10px 12px;margin:0;
+      font:inherit;font-size:.95rem;line-height:1.35;
+      font-family:inherit;resize:none;overflow:hidden}
+    .feedcomposer .attach{display:inline-flex;align-items:center;
+      justify-content:center;box-sizing:border-box;height:42px;width:42px;
+      padding:0;margin:0;font-size:1.05rem;line-height:1;cursor:pointer;flex:none}
+    .feedcomposer button{box-sizing:border-box;height:42px;padding:0 18px;
+      margin:0;flex:none}
+  </style>
+  <form method="post" action="/feed/post" enctype="multipart/form-data"
+        id="composer">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
-    <div class="field">
-      <textarea autocomplete="off" name="text" rows="3"
-        placeholder="Say something as @{{ mine.tag }}"></textarea></div>
-    <div class="row" style="align-items:center;gap:8px">
-      <input type="file" name="attachment" accept="image/*,video/*,audio/*">
-      <span class="muted" style="font-size:.8rem">A file becomes an inscription
-        you own, like any other piece</span>
-      <button type="submit" style="margin-left:auto">Post</button>
+    <div class="feedcomposer">
+      <div class="saybox">
+        <textarea autocomplete="off" name="text" id="say" rows="1"
+          placeholder="Say something as @{{ mine.tag }}"></textarea></div>
+      <label class="ghost btn attach"
+             title="Attach a file — it becomes an inscription you own">📎
+        <input type="file" name="attachment" id="attach" hidden
+               accept="image/*,video/*,audio/*"></label>
+      <button type="submit">Post</button>
     </div>
+    <div class="muted" id="attached" hidden style="font-size:.8rem;margin-top:6px"></div>
   </form>
   {% else %}
   <p style="margin:0">You need a name before you can post &mdash; it is what
@@ -164,6 +212,48 @@
 
 <script>
 function toggle(id){ var el = document.getElementById(id); if (el) el.hidden = !el.hidden; }
+
+// Comments fold both ways: a count that only opens is a count you can press
+// once (the operator).
+function foldComments(button, id){
+  var thread = document.getElementById(id);
+  if (!thread) return;
+  thread.hidden = !thread.hidden;
+  button.textContent = thread.hidden ? button.dataset.shut : button.dataset.open;
+}
+
+// Enter posts; shift-enter is a new line. The box grows with what is typed
+// rather than starting three rows tall (the operator).
+(function(){
+  var say = document.getElementById('say');
+  var composer = document.getElementById('composer');
+  if (say && composer) {
+    say.addEventListener('keydown', function(event){
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        if (say.value.trim() || document.getElementById('attach').files.length) {
+          composer.submit();
+        }
+      }
+    });
+    say.addEventListener('input', function(){
+      // Back to one row first, then to what the text needs: measuring
+      // without resetting only ever grows.
+      say.style.height = '42px';
+      say.style.height = Math.min(say.scrollHeight, 220) + 'px';
+    });
+  }
+  var attach = document.getElementById('attach');
+  var note = document.getElementById('attached');
+  if (attach && note) {
+    attach.addEventListener('change', function(){
+      var file = attach.files[0];
+      note.hidden = !file;
+      if (file) note.textContent = file.name +
+        ' — it becomes an inscription you own, like any other piece';
+    });
+  }
+})();
 
 // Ten at a time, and the next ten when somebody reaches the bottom (D-138).
 // A link is there whether or not this runs: scrolling is a convenience, not

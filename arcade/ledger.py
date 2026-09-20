@@ -1239,6 +1239,73 @@ class LedgerIndex:
         # before it confirms rather than after (D-058).
         return next((o for o in self.pending_offers() if o["txid"] == str(txid)), None)
 
+    def pending_tags(self, limit: int = 200) -> list[dict]:
+        """Tag claims sitting in the mempool.
+
+        A name claimed a minute ago is findable now rather than after a
+        block: searching for somebody and being told nobody holds that name,
+        when their claim is in every mempool on the network, is the wait the
+        pool read exists to remove (D-146).
+
+        What this does NOT do is decide anything. First claim wins is settled
+        by chain order, and a claim read here is marked pending so a page can
+        say so -- the ledger is still built from blocks alone.
+        """
+        from . import tags as taglib
+        from .indexer import PrevOutCache
+        from .tx import extract
+
+        out: list[dict] = []
+        try:
+            with self._rpc() as rpc:
+                ids = list(rpc.call("getrawmempool") or [])[:max(0, limit)]
+                if not ids:
+                    self._pool_tags = {}
+                    return []
+                known = getattr(self, "_pool_tags", {})
+                cache = PrevOutCache(rpc, self.params)
+                found: dict[str, dict | None] = {}
+                for txid in ids:
+                    if txid in known:
+                        found[txid] = known[txid]
+                        continue
+                    try:
+                        tx = rpc.call("getrawtransaction", txid, True)
+                        rtx = extract(tx, 0, 0, self.params, cache.lookup)
+                        parsed = P.decode(rtx.payload)
+                    except Exception:
+                        found[txid] = None
+                        continue
+                    data = getattr(parsed, "data", None)
+                    row = None
+                    if data:
+                        try:
+                            kind, tag = taglib.parse(data)
+                            if kind == taglib.KIND_CLAIM:
+                                row = {"tag": tag, "address": rtx.sender,
+                                       "txid": rtx.txid, "pending": True}
+                        except Exception:
+                            row = None
+                    found[txid] = row
+                self._pool_tags = found
+        except Exception as exc:
+            log.debug("mempool tags unavailable: %s", exc)
+            return []
+        return [row for row in self._pool_tags.values() if row]
+
+    def pending_properties(self, limit: int = 200) -> list[dict]:
+        """Tokens created and not yet in a block.
+
+        The Tokens page showed your own, from what this wallet remembered
+        broadcasting, and nobody else's at all -- so a token created on
+        another machine simply did not exist for a block (D-146). Same rule
+        as everything else read here: shown, marked pending, never stored.
+        """
+        return [{"property_id": None, "name": row["name"],
+                 "issuer": row["sender"], "txid": row["txid"],
+                 "ecosystem": row["ecosystem"], "pending": True}
+                for row in self.pending_names(limit=limit)]
+
     def pending_names(self, limit: int = 200) -> list[dict]:
         """Token names claimed by issuances sitting in the mempool.
 

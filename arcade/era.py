@@ -60,6 +60,49 @@ ERA_FILE = "eras.json"
 #: Every local table that holds something the chain assigns, and the column
 #: naming the network it belongs to. Order is only for a tidy log.
 #:
+#: The messaging store is `<network>.sqlite`, so its name is built rather
+#: than listed. These are its network-scoped tables -- everything the chain
+#: wrote into it.
+#:
+#: It was left out entirely until a test machine read the meta table after a floor
+#: move and found the ledger had rebuilt itself while this file had not: the
+#: old era's posts, its key announcements, and an `identity_height` pointing
+#: at a block no node reads. A node that updates and lets the rebuild happen
+#: is otherwise left believing it is somebody it was in a dead era (D-140).
+MESSAGING_TABLES: tuple[tuple[str, str], ...] = (
+    ("group_post", "network"),        # posts on a chain nobody reads
+    ("group_chunk", "network"),       # half-arrived ones
+    ("feed_act", "network"),          # likes and replies on those posts
+    ("api_message", "network"),       # node-to-node traffic
+    ("scan_state", "network"),        # where the scan got to, below the floor
+)
+
+#: Tables in that store with no network column at all. Swept whole when the
+#: messaging network's floor moves, which is safe for exactly one reason:
+#: messaging runs on testnet only (`MESSAGING_NETWORKS`), so every row in
+#: them belongs to the era that just ended. If messaging ever runs on two
+#: chains, these need a network column before they can be swept this way.
+MESSAGING_WHOLE: tuple[str, ...] = (
+    "key_announcement",               # who said what key, on a dead chain
+    "candidate",                      # raw payloads seen while scanning
+)
+
+#: Meta keys that are era state. The identity ADDRESS is not: it is this
+#: wallet's own address, it still holds coins, and a floor move is no reason
+#: to become somebody else. Its birth HEIGHT is, because it is the floor the
+#: scan starts from and it now points under the chain's own.
+MESSAGING_META: tuple[str, ...] = (
+    "identity_height:{network}",
+)
+
+#: Never swept from that store, and this is the line the whole design turns
+#: on: the address book, the messages and what was sent are WORK. A chain
+#: cannot give them back, and losing them is losing something somebody did
+#: rather than something a node derived (D-126, D-140).
+MESSAGING_KEPT: tuple[str, ...] = (
+    "contact", "message", "sent", "attachment", "seen_mark", "mute",
+)
+
 #: Left out deliberately, by the rule above and by one other:
 #:
 #: * `pagedata.sqlite`, keyed by inscription txid -- unique for ever, so its
@@ -216,7 +259,17 @@ def retire_old_rows(home: Path, network: str, floor: int | None) -> dict[str, in
     kept: dict[str, list[dict[str, Any]]] = {}
     found: list[tuple[str, str, str, tuple[Any, ...], int]] = []
     wheres: list[tuple[str, str, str, tuple[Any, ...]]] = []
-    for filename, table, column in ERA_TABLES:
+    # The messaging store, whose name is the network's (D-140). Its tables
+    # are added to the same work list as everything else, so the copy, the
+    # ordering and the failure rules are the ones already proven rather than
+    # a second implementation of them.
+    messaging = f"{network}.sqlite"
+    era_tables = list(ERA_TABLES)
+    if (home / messaging).exists():
+        era_tables += [(messaging, table, column)
+                       for table, column in MESSAGING_TABLES]
+        wheres += [(messaging, table, "1 = 1", ()) for table in MESSAGING_WHOLE]
+    for filename, table, column in era_tables:
         where, params = f"{column} = ?", (network,)
         if ((filename, table) in KNOWS_ITS_FLOOR
                 and _has_column(home / filename, table, "floor")):
@@ -300,6 +353,22 @@ def retire_old_rows(home: Path, network: str, floor: int | None) -> dict[str, in
             log.warning("old rows could not be copied to %s, so none were "
                         "moved: %s", out, exc)
             return {}
+
+    # The era's meta keys go with the rows. Not copied: a height is two
+    # numbers and both are recoverable from the chain, and a copy of one
+    # would be a file nobody could use (D-140).
+    if (home / messaging).exists() and found:
+        try:
+            conn = sqlite3.connect(home / messaging, timeout=10)
+            try:
+                for key in MESSAGING_META:
+                    conn.execute("DELETE FROM meta WHERE key = ?",
+                                 (key.format(network=network),))
+                conn.commit()
+            finally:
+                conn.close()
+        except sqlite3.Error as exc:
+            log.warning("could not clear the era's meta keys: %s", exc)
 
     moved: dict[str, int] = {}
     for filename, table, where, params, count in found:

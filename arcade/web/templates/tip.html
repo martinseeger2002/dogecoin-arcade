@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Tip {{ ('@' ~ tag) if tag else 'a post' }} · DogecoinArcade{% endblock %}
 {% block body %}
-<h1>Tip {% if tag %}<a href="/u/{{ tag }}">@{{ tag }}</a>{% else %}this post{% endif %}</h1>
+<h1>Tip {% if tag %}<a href="/u/{{ tag }}">@{{ tag }}</a>{% else %}this {{ post['what'] }}{% endif %}</h1>
 <p class="sub">One transaction: the coins move and the same transaction says
   which post they were for, so the post can show it and nobody pays twice.</p>
 
 <div class="panel" style="margin-bottom:18px">
-  <p class="muted" style="font-size:.82rem;margin:0 0 6px">The post</p>
+  <p class="muted" style="font-size:.82rem;margin:0 0 6px">The {{ post['what'] }}</p>
   <div style="white-space:pre-wrap">{{ render_post(post['text'], {}) }}</div>
   <p class="muted" style="font-size:.78rem;margin:8px 0 0">
     {{ when(post['block_time']) if post['block_time'] else 'just now' }}</p>

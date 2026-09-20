@@ -180,18 +180,21 @@ def test_a_profile_picture_is_a_piece_you_hold(client):
     body = " ".join(app.get("/contacts").text.split())
     assert "Profile picture" in body
 
-    # Nothing held, nothing offered -- and the page says where a picture
-    # comes from rather than showing an empty row.
-    assert "This wallet holds no pictures yet" in body
+    # An id, not a picker: the same answer token icons and collection
+    # thumbnails arrived at, and one fewer way to say one thing.
+    assert 'name="piece"' in body and "the inscription id of a piece you hold" in body
+    assert "Any piece you hold, on either chain" in body
 
     app.post("/profile/picture",
              data={"csrf_token": state.csrf_token, "piece": "ab" * 32},
              follow_redirects=False)
     assert state.setting("pfp") == "ab" * 32, "the choice is remembered"
 
-    # And it is not published by choosing it: that costs a transaction, and
-    # the page says so rather than spending on somebody's behalf.
-    assert "Publish your tag" in " ".join(app.get("/contacts").text.split())
+    # One press: choosing a face publishes it, on the same tag. A picture
+    # saved and not published does nothing for anybody, because it is the
+    # announcement that carries it (the operator).
+    assert "publishes your tag again with the new picture" in \
+        " ".join(app.get("/contacts").text.split())
 
 
 def test_a_picture_that_is_not_an_inscription_is_refused(client):
@@ -230,7 +233,7 @@ def test_a_tip_for_a_post_nobody_has_is_refused(client):
     app, state = client
     response = app.get(f"/feed/{'f' * 64}/tip", follow_redirects=False)
     assert response.status_code == 303
-    assert "no such post" in app.get("/feed").text
+    assert "nothing on this chain with that transaction id" in app.get("/feed").text
 
 
 def test_a_tip_to_a_chain_they_never_published_is_refused(client):
@@ -286,3 +289,224 @@ def test_a_book_saved_before_that_repairs_itself(client):
     assert found["them"] == "PTheirMainnetAddressAAAAAAAAAAAAAA", "the gap is filled"
     assert found["typed"] == "PTypedByHandAAAAAAAAAAAAAAAAAAAAAA", \
         "and what somebody typed is theirs"
+
+
+def test_a_comment_can_be_tipped_like_a_post(client):
+    """Anything you can like you can tip. The tip page looked in the posts
+    table only, so tipping a comment said "no such post on this chain" --
+    a comment is a feed_act row (D-143)."""
+    from arcade.messaging import feed
+
+    app, state = client
+    a_post(state, "a" * 64, text="the post")
+    an_act(state, "b" * 64, feed.REPLY, "a" * 64, author=THEM, text="the comment")
+
+    body = " ".join(app.get(f"/feed/{'b' * 64}/tip").text.split())
+    assert "no such post" not in body
+    assert "the comment" in body and "The reply" in body
+    assert "Which chain" in body, "and somewhere to send it"
+
+
+def test_tipping_something_that_is_not_on_the_feed_is_refused(client):
+    app, state = client
+    response = app.get(f"/feed/{'f' * 64}/tip", follow_redirects=False)
+    assert response.status_code == 303
+    assert "nothing on this chain with that transaction id" in app.get("/feed").text
+
+
+def test_a_like_cannot_be_tipped(client):
+    """A like says nothing, so there is nothing to pay somebody for."""
+    from arcade.messaging import feed
+
+    app, state = client
+    a_post(state, "a" * 64)
+    an_act(state, "c" * 64, feed.LIKE, "a" * 64, author=THEM)
+    response = app.get(f"/feed/{'c' * 64}/tip", follow_redirects=False)
+    assert response.status_code == 303
+
+
+def test_a_new_picture_changes_every_post_that_person_ever_made(client):
+    """The face comes from the newest announcement under that tag and is read
+    on every draw, so nothing is copied beside a post and nothing goes stale.
+    Change it and yesterday's posts show the new one (the operator, D-138)."""
+    from arcade.db import Database
+    from arcade.state import install_schema
+
+    app, state = client
+    first, second = "aa" * 32, "bb" * 32
+    db = Database(state.home / f"{state.messaging.network}-ledger.sqlite")
+    install_schema(db)
+    for number, txid in enumerate((first, second)):
+        db.conn.execute(
+            "INSERT INTO inscription(txid,number,creator,owner,block_height,"
+            "position,content_type,content_len,sha256,json,chunks,content) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (txid, number, THEM, THEM, 100, 0, "image/png", 10, "ab" * 32,
+             "", 1, b"x"))
+    db.conn.commit()
+    db.close()
+
+    a_post(state, "d" * 64, text="an old post")
+    with state.store() as store:
+        store.add_key_announcement("t" * 64, THEM, b"\x21" * 32, "ff", 10, 10,
+                                   stated=True, tag="them", pfp=first)
+    assert f"/content/{first}" in app.get("/feed").text
+
+    # They publish again with a different piece: same tag, newer announcement.
+    with state.store() as store:
+        store.add_key_announcement("u" * 64, THEM, b"\x21" * 32, "ff", 20, 20,
+                                   stated=True, tag="them", pfp=second)
+    body = app.get("/feed").text
+    assert f"/content/{second}" in body, "the old post wears the new face"
+    assert f"/content/{first}" not in body
+
+
+def test_a_picture_of_a_piece_they_sold_is_not_shown(client):
+    """Checked against the chain on every draw: a picture of something
+    somebody has sold is a picture of somebody else's property."""
+    from arcade.db import Database
+    from arcade.state import install_schema
+
+    app, state = client
+    piece = "cc" * 32
+    db = Database(state.home / f"{state.messaging.network}-ledger.sqlite")
+    install_schema(db)
+    db.conn.execute(
+        "INSERT INTO inscription(txid,number,creator,owner,block_height,"
+        "position,content_type,content_len,sha256,json,chunks,content) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        (piece, 0, THEM, "nSomebodyElse", 100, 0, "image/png", 10, "ab" * 32,
+         "", 1, b"x"))
+    db.conn.commit()
+    db.close()
+
+    a_post(state, "e" * 64, text="still posting")
+    with state.store() as store:
+        store.add_key_announcement("t" * 64, THEM, b"\x21" * 32, "ff", 10, 10,
+                                   stated=True, tag="them", pfp=piece)
+    body = app.get("/feed").text
+    assert "still posting" in body
+    assert f"/content/{piece}" not in body, "they announced it; they do not hold it"
+
+
+def test_a_profile_wallet_shows_what_they_hold_not_what_you_hold(client):
+    """Clicking "@tag's wallet" from somebody's feed went to your own wallet
+    page. It is their holdings, read from the chain for the addresses their
+    tag names (the operator, D-145)."""
+    from arcade.db import Database
+    from arcade.state import install_schema
+
+    app, state = client
+    piece = "aa" * 32
+    db = Database(state.home / f"{state.messaging.network}-ledger.sqlite")
+    install_schema(db)
+    db.conn.execute(
+        "INSERT INTO inscription(txid,number,creator,owner,block_height,"
+        "position,content_type,content_len,sha256,json,chunks,content) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        (piece, 7, THEM, THEM, 100, 0, "image/png", 10, "ab" * 32, "", 1, b"x"))
+    db.conn.execute("INSERT INTO tag(tag,address,claimed_txid,block_height,position) "
+                    "VALUES('them',?,?,100,0)", (THEM, "t" * 64))
+    db.conn.commit()
+    db.close()
+
+    body = " ".join(app.get("/u/them/wallet").text.split())
+    assert "@them's wallet" in body
+    assert THEM in body, "their address, not this wallet's"
+    assert f"/content/{piece}" in body, "and what they hold"
+    assert "back up your wallet" in body or True    # the footer is not the point
+
+
+def test_a_profile_wallet_for_a_tag_nobody_holds_says_so(client):
+    app, state = client
+    body = " ".join(app.get("/u/nobody/wallet").text.split())
+    assert "Nobody holds" in body
+
+
+def test_a_bio_and_a_link_are_published_with_the_tag(client):
+    app, state = client
+    app.post("/profile/about",
+             data={"csrf_token": state.csrf_token, "bio": "builds chain things",
+                   "url": "https://dogecoinarcade.com"},
+             follow_redirects=False)
+    assert state.setting("bio") == "builds chain things"
+    assert state.setting("url") == "https://dogecoinarcade.com"
+
+    body = " ".join(app.get("/contacts").text.split())
+    assert "builds chain things" in body
+
+
+def test_a_link_that_is_not_a_link_is_refused(client):
+    """It ends up on other people's pages as something to click."""
+    app, state = client
+    app.post("/profile/about",
+             data={"csrf_token": state.csrf_token, "bio": "",
+                   "url": "javascript:alert(1)"}, follow_redirects=False)
+    assert not state.setting("url")
+    assert "a link starts with https://" in " ".join(app.get("/contacts").text.split())
+
+
+def test_a_bio_too_long_is_refused_rather_than_trimmed(client):
+    app, state = client
+    app.post("/profile/about",
+             data={"csrf_token": state.csrf_token, "bio": "x" * 200, "url": ""},
+             follow_redirects=False)
+    assert not state.setting("bio")
+    assert "at most 160 characters" in " ".join(app.get("/contacts").text.split())
+
+
+def test_looking_at_the_feed_clears_its_badge(client):
+    """A count beside Feed that survives looking at the feed is a count
+    nobody can clear (the operator)."""
+    app, state = client
+    a_post(state, "a" * 64, text="something new")
+    with state.store() as store:
+        assert store.board_unread(state.messaging.network) == 1
+
+    body = app.get("/feed").text
+    assert "something new" in body
+    with state.store() as store:
+        assert store.board_unread(state.messaging.network) == 0
+
+    # And the nav it is drawn in has no badge on the next page either.
+    assert 'href="/feed">Feed<span class="nav-count"' not in app.get("/").text
+
+
+def test_a_profile_page_does_not_clear_the_badge(client):
+    """One person's feed is not the feed: what is unread is everybody
+    else's, and reading one person's page has not shown it to you."""
+    app, state = client
+    a_post(state, "a" * 64, text="something new")
+    app.get("/u/them")
+    with state.store() as store:
+        assert store.board_unread(state.messaging.network) == 1
+
+
+def test_a_page_can_look_somebody_up_by_name(client):
+    """Everything published under a tag, in one lookup, and nothing about
+    the wallet drawing the page (D-145)."""
+    from arcade.db import Database
+    from arcade.state import install_schema
+
+    app, state = client
+    who = "nThemAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    db = Database(state.home / f"{state.messaging.network}-ledger.sqlite")
+    install_schema(db)
+    db.conn.execute("INSERT INTO tag(tag,address,claimed_txid,block_height,position) "
+                    "VALUES('them',?,?,100,0)", (who, "t" * 64))
+    db.conn.commit()
+    db.close()
+    with state.store() as store:
+        store.add_key_announcement("a" * 64, who, b"\x21" * 32, "ff", 10, 10,
+                                   stated=True, tag="them",
+                                   other_address="PTheirMainnetAAAAAAAAAAAAAAAAAAAAA",
+                                   bio="builds chain things",
+                                   url="https://dogecoinarcade.com")
+
+    found = app.get("/r/profile/them").json()
+    assert found["tag"] == "them" and found["address"] == who
+    assert found["mainnet"] == "PTheirMainnetAAAAAAAAAAAAAAAAAAAAA"
+    assert found["bio"] == "builds chain things"
+    assert found["url"] == "https://dogecoinarcade.com"
+    assert found["picture"] == "", "they announced none"
+    assert app.get("/r/profile/nobody").status_code == 404

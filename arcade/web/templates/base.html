@@ -573,7 +573,10 @@ form.composer button[type=submit]{background:var(--sent);border-color:var(--sent
 }
 </style>
 </head>
-<body{% if embed %} class="embed"{% endif %}>
+{# Every page is live. The counter lives on the body rather than in an
+   element each page has to remember to add: eight templates had one and the
+   rest sat stale until somebody pressed reload (the operator, D-142). #}
+<body{% if embed %} class="embed"{% endif %} data-generation="{{ state.generation }}">
 {% if not embed %}
 <header><div class="bar">
   <span class="brand">DogecoinArcade</span>
@@ -862,9 +865,10 @@ function arcadeFileCost(bytes){
 // typed, and any open confirmation, suppresses the reload -- losing a draft to
 // an automatic refresh would be a worse bug than the staleness it fixes.
 (function () {
-  var el = document.getElementById('live');
-  if (!el) return;
-  var known = parseInt(el.dataset.generation || '0', 10);
+  var el = document.getElementById('live');       // where a notice can go
+  var known = parseInt(
+    (document.body && document.body.dataset.generation) ||
+    (el && el.dataset.generation) || '0', 10);
 
   function busy() {
     var active = document.activeElement;
@@ -881,7 +885,12 @@ function arcadeFileCost(bytes){
       .then(function (r) { return r.json(); })
       .then(function (data) {
         if (data.generation === known) return;
-        if (busy()) { el.textContent = 'new messages — finish typing to see them'; return; }
+        if (busy()) {
+          // Never interrupt somebody mid-sentence: losing a draft to an
+          // automatic refresh is a worse bug than the staleness it fixes.
+          if (el) el.textContent = 'something new — finish typing to see it';
+          return;
+        }
         location.reload();
       })
       .catch(function () { /* node or server momentarily away; try again */ });

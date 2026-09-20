@@ -291,6 +291,15 @@ class Scanner:
             # (feed.py, D-138). Read before posts because the check is a
             # handful of bytes and posts are the common case either way.
             if feed.is_feed_act(body):
+                if height == 0:
+                    # A mempool pass. Reactions are NOT written down from the
+                    # pool, unlike messages and posts: a like is a COUNT, and
+                    # a row written at height 0 for a transaction that is
+                    # then dropped counts for ever. They are read fresh
+                    # instead, every draw, by `mempool.read` -- which is also
+                    # what makes them disappear the moment the pool does
+                    # (D-141, D-144).
+                    continue
                 try:
                     act = feed.parse(body)
                 except EnvelopeError:
@@ -377,7 +386,8 @@ class Scanner:
                     atx.txid, address, pubkey, fingerprint_of(pubkey), height,
                     block_time, stated=bool(claimed_hash), name=claimed_name,
                     tag=claimed_tag, other_address=other_address,
-                    pfp=extras.get("pfp", ""),
+                    pfp=extras.get("pfp", ""), bio=extras.get("bio", ""),
+                    url=extras.get("url", ""),
                 )
                 result.announcements += 1
                 continue
