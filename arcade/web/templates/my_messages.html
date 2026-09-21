@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}Messages · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Messages</h1>
+<p class="sub">Sealed to the person you are writing to, opened only in
+  your browser. This node carries them and cannot read one.</p>
+
+<div class="msg err" id="trouble" hidden></div>
+<div class="msg ok" id="news" hidden></div>
+
+<div class="panel" id="locked" hidden>
+  <h2 style="margin-top:0">Welcome back</h2>
+  <p class="muted" style="margin:0 0 10px">This is a new tab, so your
+    wallet needs your password to open here.</p>
+  <input type="password" id="pw" autocomplete="current-password"
+         placeholder="password">
+  <button class="btn primary" id="open">Open</button>
+</div>
+
+<div id="ready" hidden>
+  <div class="panel">
+    <h2 style="margin-top:0">Write to somebody</h2>
+    <input type="text" id="to" placeholder="@name" autocomplete="off">
+    <div class="muted small" id="who"></div>
+    <textarea id="body" rows="3" autocomplete="off"
+              placeholder="what you want to say"></textarea>
+    <button class="btn primary" id="send">Send</button>
+    <p class="muted small">It costs a fee and a little dust, like anything
+      else on a chain. Whoever you write to is paid that dust, which is how
+      they know something arrived.</p>
+  </div>
+
+  <div class="panel">
+    <div class="row" style="align-items:baseline">
+      <h2 style="margin:0">Your messages</h2>
+      <button class="btn ghost small" id="check"
+              style="margin-left:auto">Check for new</button>
+    </div>
+    <p class="muted small" id="checking"></p>
+    <div id="mail">—</div>
+  </div>
+</div>
+
+<style>
+#locked input,#ready input,#ready textarea{width:100%;padding:10px 12px;
+  margin:4px 0;border:1px solid var(--line);border-radius:8px;
+  background:var(--panel);color:var(--fg);font:inherit}
+.small{font-size:.85rem}
+.letter{border-top:1px solid var(--line);padding:10px 0}
+.letter .who{font-size:.78rem;color:var(--muted);margin-bottom:2px}
+.letter .body{white-space:pre-wrap}
+</style>
+
+<script type="module">
+import * as wallet from "/wallet.js";
+import * as mail from "/messaging.js";
+
+const $ = (id) => document.getElementById(id);
+const say = (t) => { $("trouble").textContent = t; $("trouble").hidden = !t; };
+const news = (t) => { $("news").textContent = t; $("news").hidden = !t; };
+const CHAIN = {network: "{{ chain.network }}",
+               version: {{ chain.params.pubkeyhash_version }}};
+
+let keys = null, me = null;
+
+async function ready(w) {
+  keys = w;
+  me = await mail.identity(w.phrase);
+  $("locked").hidden = true;
+  $("ready").hidden = false;
+  await draw();
+}
+
+async function draw() {
+  const letters = await mail.inbox();
+  $("mail").innerHTML = "";
+  if (!letters.length) { $("mail").textContent = "nothing yet"; return; }
+  for (const letter of letters) {
+    const row = document.createElement("div");
+    row.className = "letter";
+    const who = document.createElement("div");
+    who.className = "who";
+    who.textContent = (letter.from_address || "somebody")
+      + (letter.when ? " · " + new Date(letter.when * 1000).toLocaleString() : "");
+    const body = document.createElement("div");
+    body.className = "body";
+    // textContent, always: a message is somebody else's words and an
+    // inbox that renders them as markup is an inbox that runs them.
+    body.textContent = new TextDecoder().decode(mail.unhex(letter.body));
+    row.append(who, body);
+    $("mail").appendChild(row);
+  }
+}
+
+$("open").onclick = async () => {
+  say("");
+  try {
+    const said = await wallet.state();
+    const out = await wallet.unlockHere(said.name || said.tag,
+                                        $("pw").value, CHAIN);
+    await ready(out.wallet);
+  } catch (e) { say(String(e.message || e)); }
+};
+
+// Told who they are writing to before they write it, from the chain.
+let asking = null;
+$("to").oninput = () => {
+  clearTimeout(asking);
+  asking = setTimeout(async () => {
+    const name = $("to").value.trim();
+    if (!name) { $("who").textContent = ""; return; }
+    try {
+      const them = await mail.lookUp(name);
+      $("who").textContent = them.key
+        ? `@${them.tag || name} · ${them.address}`
+        : "they have not published a key, so there is nowhere to send it";
+      $("who").style.color = them.key ? "var(--ok)" : "var(--bad)";
+    } catch (e) {
+      $("who").textContent = String(e.message || e);
+      $("who").style.color = "var(--bad)";
+    }
+  }, 300);
+};
+
+$("send").onclick = async () => {
+  say(""); news("");
+  const to = $("to").value.trim(), text = $("body").value;
+  if (!to || !text.trim()) { say("who, and what?"); return; }
+  $("send").disabled = true;
+  try {
+    const out = await mail.write(keys, me, to, text);
+    $("body").value = "";
+    news(`Sent to @${out.tag || to}. It arrives when its block does.`);
+  } catch (e) { say(String(e.message || e)); }
+  finally { $("send").disabled = false; }
+};
+
+$("check").onclick = async () => {
+  say(""); news("");
+  $("checking").textContent = "looking…";
+  try {
+    const out = await mail.collect(me, {onProgress: (p) => {
+      $("checking").textContent = `looked at ${p.looked}, opened ${p.opened}`;
+    }});
+    $("checking").textContent =
+      `Looked at ${out.looked}; ${out.opened} were yours.`;
+    await draw();
+  } catch (e) { say(String(e.message || e)); $("checking").textContent = ""; }
+};
+
+// Arrived from the address book with somebody already chosen.
+const wanted = new URLSearchParams(location.search).get("to");
+if (wanted) {
+  $("to").value = "@" + String(wanted).replace(/^@/, "");
+  $("to").dispatchEvent(new Event("input"));
+}
+
+const already = await wallet.opened(CHAIN);
+if (already) {
+  await ready(already);
+  // Check on arrival: somebody opening this page wants to know if
+  // anything came, not to press a button to find out.
+  $("check").click();
+} else {
+  $("locked").hidden = false;
+}
+document.body.dataset.messagesReady = "yes";
+</script>
+{% endblock %}

@@ -350,3 +350,65 @@ def test_no_operator_means_no_way_in_from_outside(named):
     assert state.operator == ""
     _seat(app, headers=EDGE)
     assert app.get("/wallet", headers=EDGE).status_code == 404
+
+
+# --- whose name a page shows (D-158) ------------------------------------------
+
+def test_the_feed_never_shows_the_operator_s_name_to_a_visitor(named):
+    """Found live: signed in as @gx1, the feed offered "Say something as
+    @bigchiefenergy" -- the NODE's tag. A lie about who the reader is, and
+    a disclosure about who runs the node."""
+    app, state = named
+    index = state.token_index(state.messaging)
+    with index.open() as db:
+        db.conn.execute(
+            "INSERT INTO block(height,hash,prev_hash,time,tx_count,processed_at)"
+            " VALUES(1,'h','p',0,0,0)")
+        db.conn.execute(
+            "INSERT INTO tag(tag,address,claimed_txid,block_height,position)"
+            " VALUES(?,?,?,?,?)",
+            ("bigchiefenergy", "nOperator", "aa" * 32, 1, 0))
+        db.conn.commit()
+    with state.store() as store:
+        store.set_meta(f"identity_address:{state.messaging.network}",
+                       "nOperator")
+
+    # A stranger, and then somebody signed in: neither is the operator.
+    body = app.get("/feed", headers=EDGE).text
+    assert "bigchiefenergy" not in body
+    assert "Make an account" in body
+
+    _seat(app)
+    body = app.get("/feed", headers=EDGE).text
+    assert "bigchiefenergy" not in body, "still not the operator's name"
+
+
+def test_an_account_is_greeted_by_its_own_name(named):
+    app, state = named
+    pubkey = _seat(app)
+    state.vault().put("gx1", pubkey, "nTheirs", '{"sealed":"00"}')
+    body = app.get("/feed", headers=EDGE).text
+    assert "@gx1" in body
+    assert 'href="/me"' in body, "and told where posting happens"
+
+
+def test_the_operator_still_sees_their_own_composer(named):
+    """On the machine itself nothing changes: it is their feed and their
+    node and their name on it."""
+    app, state = named
+    index = state.token_index(state.messaging)
+    with index.open() as db:
+        db.conn.execute(
+            "INSERT OR IGNORE INTO block(height,hash,prev_hash,time,tx_count,"
+            "processed_at) VALUES(1,'h','p',0,0,0)")
+        db.conn.execute(
+            "INSERT OR REPLACE INTO tag(tag,address,claimed_txid,"
+            "block_height,position) VALUES(?,?,?,?,?)",
+            ("bigchiefenergy", "nOperator", "aa" * 32, 1, 0))
+        db.conn.commit()
+    with state.store() as store:
+        store.set_meta(f"identity_address:{state.messaging.network}",
+                       "nOperator")
+    body = app.get("/feed", headers=LOCAL).text
+    assert "Say something as @bigchiefenergy" in body
+    assert 'action="/feed/post"' in body

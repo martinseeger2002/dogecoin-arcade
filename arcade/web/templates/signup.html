@@ -44,6 +44,7 @@
       <p class="muted small">It opens your wallet from any device, and
         <strong>nobody can reset it</strong> &mdash; not us, not anybody.
         You will get twelve words afterwards, which are the only way back.</p>
+      <p class="small" id="pw-says"></p>
     </div>
     <button class="btn primary" id="make">Create my account</button>
   </div>
@@ -68,6 +69,17 @@
     Not on a screenshot &mdash; on paper.</p>
   <p id="gift" class="muted" hidden></p>
   <ol class="words" id="words"></ol>
+  <div class="panel" id="setting-up" style="margin:12px 0">
+    <strong>Setting your account up</strong>
+    <ul class="steps">
+      <li id="step-coins">coins &mdash; <span>waiting</span></li>
+      <li id="step-name">your name on the chain &mdash; <span>waiting</span></li>
+      <li id="step-key">your key, so people can write to you &mdash;
+        <span>waiting</span></li>
+    </ul>
+    <p class="muted small" id="setup-note">This happens by itself while you
+      write the words down. You can leave before it finishes.</p>
+  </div>
   <label class="keepit">
     <input type="checkbox" id="kept"> I have written them down
   </label>
@@ -89,6 +101,8 @@
 .keepit{display:flex;align-items:center;gap:8px;margin:10px 0}
 .keepit input{width:auto}
 .small{font-size:.85rem}
+.steps{margin:8px 0 0;padding-left:18px;line-height:1.8}
+.steps span{color:var(--muted)}
 .field{margin-bottom:14px}
 </style>
 
@@ -116,6 +130,16 @@ function wire() {
         : (said.detail || "that name cannot be used");
       $("tag-said").style.color = said.free ? "var(--ok)" : "var(--bad)";
     }, 300);
+  };
+
+  // What they have chosen, said plainly, as they type. Not a refusal:
+  // a floor stops the person who would have picked something short and
+  // stops nobody else, and this is their wallet (D-157).
+  $("pw").oninput = () => {
+    const said = wallet.strength($("pw").value);
+    $("pw-says").textContent = said.says;
+    $("pw-says").style.color = said.ok ? "var(--ok)"
+      : said.level === "instantly" ? "var(--bad)" : "var(--warn)";
   };
 
   $("make").onclick = async () => {
@@ -146,6 +170,12 @@ function wire() {
       }
       $("forms").hidden = true;
       $("written").hidden = false;
+
+      // The two transactions that make an account real: its name on the
+      // chain, and its key where people can find it. Started here rather
+      // than offered as buttons, and running while the words are being
+      // written down.
+      setUp(made).catch(() => {});
     } catch (e) {
       say(String(e.message || e));
     } finally {
@@ -153,12 +183,37 @@ function wire() {
     }
   };
 
+  async function setUp(made) {
+    const mail = await import("/messaging.js");
+    const identity = await mail.identity(made.wallet.phrase);
+    const shown = {coins: $("step-coins"), name: $("step-name"),
+                   key: $("step-key")};
+    const out = await wallet.setUp(made.wallet, identity, made.tag, {
+      onStep: ({what, how}) => {
+        const row = shown[what];
+        if (row) row.querySelector("span").textContent = how;
+      },
+    });
+    if (out.trouble.length) {
+      $("setup-note").textContent = out.trouble.join("; ")
+        + ". You can finish this from your own page at any time.";
+      $("setup-note").style.color = "var(--warn)";
+    } else {
+      $("setup-note").textContent =
+        "Done. Your name and your key are on their way to the chain.";
+      $("setup-note").style.color = "var(--ok)";
+    }
+  }
+
   $("kept").onchange = () => { $("done").disabled = !$("kept").checked; };
   $("done").onclick = () => { location.href = "/"; };
 
   $("enter").onclick = async () => {
     say("");
     try {
+      // Signing in opens the wallet: it is the same password and the same
+      // moment, and asking for it again on the next page is asking the
+      // same question twice.
       await wallet.signIn($("in-tag").value.trim(), $("in-pw").value, CHAIN);
       location.href = "/";
     } catch (e) { say(String(e.message || e)); }

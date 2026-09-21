@@ -201,23 +201,31 @@ export function openMessage(payload, me) {
  */
 
 const READ = "arcade-messages";
+const BOOK = "book";
+
+//: One version number for one database. Two openers asking for different
+//: versions is how an upgrade silently never runs -- the second one is
+//: refused as "version change" and the store it wanted is simply absent.
+const SHELVES = 2;
 
 function shelf(mode) {
   return new Promise((ok, no) => {
-    const open = indexedDB.open(READ, 1);
-    open.onupgradeneeded = () => {
-      const db = open.result;
-      if (!db.objectStoreNames.contains("mail")) {
-        db.createObjectStore("mail", {keyPath: "txid"});
-      }
-      if (!db.objectStoreNames.contains("marks")) {
-        db.createObjectStore("marks");
-      }
-    };
+    const open = indexedDB.open(READ, SHELVES);
+    open.onupgradeneeded = () => make(open.result);
     open.onerror = () => no(open.error);
     open.onsuccess = () => ok(open.result.transaction(
       ["mail", "marks"], mode));
   });
+}
+
+function make(db) {
+  if (!db.objectStoreNames.contains("mail")) {
+    db.createObjectStore("mail", {keyPath: "txid"});
+  }
+  if (!db.objectStoreNames.contains("marks")) db.createObjectStore("marks");
+  if (!db.objectStoreNames.contains(BOOK)) {
+    db.createObjectStore(BOOK, {keyPath: "tag"});
+  }
 }
 
 const awaited = (request) => new Promise((ok, no) => {
@@ -381,4 +389,60 @@ async function workingOn(what) {
   } finally {
     delete document.body.dataset.working;
   }
+}
+
+/* --- the address book ----------------------------------------------------
+ *
+ * In this browser, and nowhere else.
+ *
+ * The wallet's own book is "stored only on this computer" (D-137) and an
+ * account's has a sharper reason to be: a book kept on the node would hand
+ * the node the list of everybody you know, which is the social graph D-155
+ * refused to leak in the messages themselves. Keeping the messages sealed
+ * and the address book on the server would be a lock on the door and a
+ * list of visitors in the window.
+ *
+ * What is in it is what the chain already says -- a name, the address it
+ * points at, and the key published under it -- so losing this book loses
+ * convenience and nothing else. Every name in it was claimed where
+ * anybody can look, which is the only way in, exactly as it is on the
+ * wallet's own page.
+ */
+
+async function bookShelf(mode) {
+  return new Promise((ok, no) => {
+    const open = indexedDB.open(READ, SHELVES);
+    open.onupgradeneeded = () => make(open.result);
+    open.onerror = () => no(open.error);
+    open.onsuccess = () => ok(open.result.transaction([BOOK], mode));
+  });
+}
+
+export async function book() {
+  try {
+    const all = await awaited((await bookShelf("readonly"))
+                             .objectStore(BOOK).getAll());
+    return all.sort((a, b) => a.tag.localeCompare(b.tag));
+  } catch (e) { return []; }
+}
+
+export async function addToBook(tag) {
+  // What the chain says right now, kept: a name that later moves to
+  // somebody else still pays the person it meant when it was added.
+  const them = await lookUp(tag);
+  const entry = {tag: them.tag || String(tag).replace(/^@/, ""),
+                 address: them.address, key: them.key || "",
+                 fingerprint: them.fingerprint || "", added: Date.now()};
+  await awaited((await bookShelf("readwrite")).objectStore(BOOK).put(entry));
+  return entry;
+}
+
+export async function removeFromBook(tag) {
+  await awaited((await bookShelf("readwrite")).objectStore(BOOK).delete(tag));
+}
+
+export async function findNames(text) {
+  const answer = await fetch(`/account/find?q=${encodeURIComponent(text)}`);
+  if (!answer.ok) return [];
+  return (await answer.json()).matches;
 }

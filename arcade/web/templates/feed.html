@@ -154,7 +154,7 @@
 
 {% if not whose %}
 <div class="panel" style="margin-bottom:18px">
-  {% if mine.tag %}
+  {% if mine.tag and not public %}
   {# The box, the clip and the button are one row and the same height. Three
      controls with three different paddings and three different fonts do not
      line up by accident, and the box grows downwards as you type, so they
@@ -189,9 +189,85 @@
   </form>
   {% else %}
   {% if public %}
-  <p style="margin:0">This is a public arcade: the feed is open to read, and
-    posting happens from the node that holds your key &mdash;
-    <a href="/clone">run your own</a>, or use the one you signed up on.</p>
+  {% if mine.tag %}
+  {# An account posts with its own key, so the composer signs in the
+     browser rather than submitting a form. Same box, same buttons; what
+     differs is that nothing is sent until it is signed here. #}
+  <div class="feedcomposer" id="account-composer">
+    <div class="saybox">
+      <textarea autocomplete="off" id="account-say" rows="1"
+        placeholder="Say something as @{{ mine.tag }}"></textarea></div>
+    <button type="button" id="account-post">Post</button>
+  </div>
+  <div class="muted small" id="account-said" style="margin-top:6px"></div>
+  <div id="account-unlock" hidden style="margin-top:8px">
+    <p class="muted small" style="margin:0 0 6px">Your wallet is locked in
+      this tab. Your password opens it here and nowhere else.</p>
+    <div class="feedcomposer">
+      <div class="saybox">
+        <input type="password" id="account-pw" autocomplete="current-password"
+               placeholder="password"></div>
+      <button type="button" id="account-open">Unlock</button>
+    </div>
+  </div>
+  <style>
+    .feedcomposer{display:flex;align-items:flex-end;gap:8px}
+    .feedcomposer .saybox{flex:1 1 auto;min-width:0}
+    .feedcomposer textarea,.feedcomposer input[type=password]{
+      display:block;box-sizing:border-box;width:100%;height:42px;
+      min-height:42px;max-height:220px;padding:10px 12px;margin:0;
+      font:inherit;font-size:.95rem;line-height:1.35;resize:none;
+      overflow:hidden;border:1px solid var(--line);border-radius:8px;
+      background:var(--panel);color:var(--fg)}
+    .feedcomposer button{box-sizing:border-box;height:42px;padding:0 18px;
+      margin:0;flex:none}
+    .small{font-size:.85rem}
+  </style>
+  <script type="module">
+    import * as wallet from "/wallet.js";
+    const CHAIN = {network: "{{ chain.network }}",
+                   version: {{ chain.params.pubkeyhash_version }}};
+    const $ = (id) => document.getElementById(id);
+    const say = (text, bad) => {
+      $("account-said").textContent = text;
+      $("account-said").style.color = bad ? "var(--bad)" : "var(--muted)";
+    };
+    let keys = await wallet.opened(CHAIN);
+    $("account-unlock").hidden = !!keys;
+
+    $("account-open").onclick = async () => {
+      say("");
+      try {
+        const out = await wallet.unlockHere("{{ mine.tag }}",
+                                            $("account-pw").value, CHAIN);
+        keys = out.wallet;
+        $("account-unlock").hidden = true;
+        $("account-pw").value = "";
+        say("Unlocked for this tab.");
+      } catch (e) { say(String(e.message || e), true); }
+    };
+
+    $("account-post").onclick = async () => {
+      say("");
+      if (!keys) { $("account-unlock").hidden = false;
+                   say("Unlock your wallet first.", true); return; }
+      const text = $("account-say").value.trim();
+      if (!text) return;
+      $("account-post").disabled = true;
+      try {
+        const out = await wallet.post(keys, text);
+        $("account-say").value = "";
+        say(`Posted. It appears here when its block lands (${out.txid.slice(0, 12)}…).`);
+      } catch (e) {
+        say(String(e.message || e), true);
+      } finally { $("account-post").disabled = false; }
+    };
+  </script>
+  {% else %}
+  <p style="margin:0">The feed is open to read.
+    <a href="/join">Make an account</a> to post, or
+    <a href="/clone">run your own arcade</a>.</p>
+  {% endif %}
   {% else %}
   <p style="margin:0">You need a name before you can post &mdash; it is what
     your posts appear under, and it is one button on the

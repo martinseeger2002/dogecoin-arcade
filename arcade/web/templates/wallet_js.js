@@ -20,7 +20,45 @@
 import * as signer from "/signin.js";
 import * as coins from "/coins.js";
 
-export const MIN_PASSWORD = 12;
+/* No minimum (D-157). A floor stops the person who would have chosen
+ * something short and stops nobody else -- an attacker does not type
+ * passwords into a form, they take the blob and try it offline. What the
+ * page owes somebody is the truth about what they have chosen, not a
+ * refusal; `strength` below is what it says. */
+export const MIN_PASSWORD = 1;
+
+//: Roughly how long the blob would stand up to somebody who has it and a
+//: graphics card. Deliberately pessimistic: 600,000 PBKDF2 iterations is
+//: about 10^5 guesses a second on hardware somebody can rent, and the
+//: number a person needs is the one that is true on the attacker's
+//: machine rather than on theirs.
+const GUESSES_A_SECOND = 100000;
+
+export function strength(password) {
+  const text = password || "";
+  if (!text) return {ok: false, says: ""};
+  let alphabet = 0;
+  if (/[a-z]/.test(text)) alphabet += 26;
+  if (/[A-Z]/.test(text)) alphabet += 26;
+  if (/[0-9]/.test(text)) alphabet += 10;
+  if (/[^a-zA-Z0-9]/.test(text)) alphabet += 33;
+  const seconds = Math.pow(alphabet, text.length) / 2 / GUESSES_A_SECOND;
+  if (seconds < 60) {
+    return {ok: false, level: "instantly", says:
+      "Somebody who knows your name can take your encrypted wallet from "
+      + "this node and open it in seconds. Your coins and your messages "
+      + "with it. Use it if you mean to \u2014 nothing here will stop you."};
+  }
+  if (seconds < 86400 * 365) {
+    return {ok: false, level: "in a while", says:
+      "This would take somebody with your encrypted wallet and a graphics "
+      + "card somewhere between minutes and months. That is shorter than "
+      + "you will want to keep this account."};
+  }
+  return {ok: true, level: "a long time", says:
+    "Long enough that taking your encrypted wallet and breaking it is not "
+    + "worth anybody's time."};
+}
 
 const enc = new TextEncoder();
 const hex = (bytes) => [...new Uint8Array(bytes)]
@@ -97,9 +135,9 @@ export async function signUp(tag, password, options) {
 }
 
 async function _signUp(tag, password, {network, version}) {
-  if ((password || "").length < MIN_PASSWORD) {
-    throw new Error(`a password of at least ${MIN_PASSWORD} characters. `
-      + "It is what opens your wallet from anywhere, and nobody can reset it.");
+  if (!(password || "")) {
+    throw new Error("a password, please -- even a short one. It is what "
+      + "opens your wallet from anywhere, and nobody can reset it.");
   }
   const phrase = await signer.generate();
   const wallet = await walletFrom(phrase, network, version);
@@ -115,6 +153,9 @@ async function _signUp(tag, password, {network, version}) {
   });
   const said = await answer.json();
   if (!answer.ok) throw new Error(said.detail || "that did not work");
+  // Open from here on. Somebody who has just chosen a password should not
+  // be asked for it again to use the thing they made.
+  remember(wallet.phrase);
   return {...said, wallet};
 }
 
@@ -145,6 +186,7 @@ async function _signIn(tag, password, {network, version}) {
   });
   const result = await opened.json();
   if (!opened.ok) throw new Error(result.detail || "that did not open anything");
+  remember(wallet.phrase);
   return {...result, tag: said.tag, address: said.address, wallet};
 }
 
@@ -216,15 +258,21 @@ export async function state() {
   return (await fetch("/account")).json();
 }
 
-/** Wait for coins to arrive, so a claim is not offered before it can pay. */
+/** Wait for coins, counting what this node has already sent.
+ *
+ * `incoming` is what the node broadcast and has not yet read back out of a
+ * block -- the faucet's payment, usually. It is spendable: the node made
+ * it and is holding it in its own pool. Waiting for the block instead
+ * would be waiting on this machine for this machine.
+ */
 export async function waitForCoins(seconds = 120) {
   const until = Date.now() + seconds * 1000;
-  while (Date.now() < until) {
+  for (;;) {
     const said = await state();
-    if (said.balance > 0) return said;
-    await new Promise((r) => setTimeout(r, 3000));
+    if ((said.balance || 0) + (said.incoming || 0) > 0) return said;
+    if (Date.now() >= until) return said;
+    await new Promise((r) => setTimeout(r, 2000));
   }
-  return state();
 }
 
 /* --- sending coins -------------------------------------------------------
@@ -304,4 +352,112 @@ export async function signAndSend(wallet, where, body) {
     if (!done.ok) throw new Error(said.detail || "the node would not take it");
     return {...said, fee: offer.fee};
   });
+}
+
+/* --- setting an account up, without asking ------------------------------
+ *
+ * A name that is only in this node's table is not a name, and an account
+ * nobody can write to is not reachable. Both are fixed by two
+ * transactions, and neither is a decision anybody should have to find a
+ * button for -- so signing up does them.
+ *
+ * It cannot happen AT signup: both spend coins, and the coins come from
+ * the faucet in a transaction that has to be in a block first. So this
+ * runs afterwards, while the twelve words are on screen being written
+ * down, which is the one moment somebody is not waiting for the page.
+ *
+ * Every step reports, and every step can fail without costing the
+ * account: the buttons on /me do the same things, so a node that was busy
+ * or a faucet that was empty means "press this later" rather than "start
+ * again".
+ */
+
+export async function setUp(wallet, identity, tag, {onStep} = {}) {
+  const step = (what, how) => { if (onStep) onStep({what, how}); };
+  const out = {claimed: "", announced: "", trouble: []};
+
+  step("coins", "waiting");
+  const said = await waitForCoins(180);
+  if (!((said.balance || 0) + (said.incoming || 0))) {
+    out.trouble.push("no coins arrived, so your name is not claimed yet");
+    step("coins", "none");
+    return out;
+  }
+  step("coins", "here");
+
+  step("name", "claiming");
+  try {
+    out.claimed = (await claim(wallet, tag)).txid;
+    step("name", "on its way");
+  } catch (e) {
+    out.trouble.push(`the name could not be claimed: ${e.message || e}`);
+    step("name", "failed");
+  }
+
+  // The key, whether or not the name went: they are separate things and
+  // somebody unreachable is worse off than somebody unnamed.
+  step("key", "publishing");
+  try {
+    const mail = await import("/messaging.js");
+    out.announced = (await mail.announce(wallet, identity, tag)).txid;
+    step("key", "on its way");
+  } catch (e) {
+    out.trouble.push(`your key was not published: ${e.message || e}`);
+    step("key", "failed");
+  }
+  return out;
+}
+
+/* --- keeping a wallet open while somebody moves around ------------------
+ *
+ * These are server-rendered pages: navigating replaces the document, and
+ * a key held in a variable goes with it. That is why posting worked on
+ * /me and nowhere else -- the feed had no key and could not sign.
+ *
+ * So an unlocked wallet is kept in `sessionStorage`, which is per TAB and
+ * is gone when the tab closes.
+ *
+ * **What that costs, said plainly.** The words are then readable by any
+ * script running on this origin. The protection is that there is no
+ * third-party script here at all -- the two vendored libraries are served
+ * from this node and pinned by hash (vendor/PROVENANCE.md), everything
+ * else is this application's own, and no post, message or inscription is
+ * ever rendered into the page as markup.
+ *
+ * `localStorage` was the alternative and is worse: it would outlive the
+ * tab, the browser and the person walking away from the machine.
+ */
+
+const OPEN_WALLET = "arcade-open-wallet";
+
+export function remember(phrase) {
+  try { sessionStorage.setItem(OPEN_WALLET, phrase); } catch (e) {}
+}
+
+export function forgetOpen() {
+  try { sessionStorage.removeItem(OPEN_WALLET); } catch (e) {}
+}
+
+/** The wallet unlocked in this tab, or null. */
+export async function opened(chain) {
+  let phrase = null;
+  try { phrase = sessionStorage.getItem(OPEN_WALLET); } catch (e) {}
+  if (!phrase) return null;
+  try {
+    return await walletFrom(phrase, chain.network, chain.version);
+  } catch (e) {
+    forgetOpen();
+    return null;
+  }
+}
+
+/** Unlock with a password. The same thing as signing in, because it is.
+ *
+ * A session cookie lasts thirty days and a tab does not, so somebody who
+ * comes back tomorrow is signed in with no wallet open. That is the only
+ * time a password is asked for twice, and the page says which of the two
+ * situations it is in rather than looking like a second login.
+ */
+export async function unlockHere(tag, password, chain) {
+  return signIn(tag, password, chain);
 }

@@ -25,10 +25,11 @@
 <div class="msg ok" id="news" hidden></div>
 
 <div class="panel" id="unlock">
-  <h2 style="margin-top:0">Unlock</h2>
-  <p class="muted" style="margin:0 0 10px">Your wallet is encrypted. Type
-    your password to open it for this tab &mdash; it is forgotten when you
-    close it, and it never leaves this browser.</p>
+  <h2 style="margin-top:0">Welcome back</h2>
+  <p class="muted" style="margin:0 0 10px">You are signed in, but this is a
+    new tab and your wallet is encrypted &mdash; so it needs your password
+    once more to open here. Signing in opens it; closing the tab shuts it
+    again. It never leaves this browser.</p>
   <input type="password" id="pw" autocomplete="current-password"
          placeholder="password">
   <button class="btn primary" id="open">Open my wallet</button>
@@ -103,6 +104,19 @@ const CHAIN = {network: "{{ chain.network }}",
 
 let me = null, keys = null;
 
+// Already open in this tab? Then there is nothing to ask for.
+(async () => {
+  const already = await wallet.opened(CHAIN);
+  if (already) {
+    keys = already;
+    me = await mail.identity(keys.phrase);
+    $("unlock").hidden = true;
+    $("doing").hidden = false;
+    await draw();
+    await refreshInbox();
+  }
+})().catch(() => {});
+
 async function draw() {
   const said = await wallet.state();
   $("tag").textContent = said.tag ? "@" + said.tag
@@ -131,13 +145,14 @@ $("open").onclick = async () => {
     const said = await wallet.state();
     const name = said.name || said.tag;
     if (!name) throw new Error("this browser is not signed in");
-    const out = await wallet.signIn(name, $("pw").value, CHAIN);
+    // Kept for this tab, so the feed and every other page can sign too.
+    const out = await wallet.unlockHere(name, $("pw").value, CHAIN);
     keys = out.wallet;
     me = await mail.identity(keys.phrase);
     $("unlock").hidden = true;
     $("doing").hidden = false;
     $("whoami").textContent =
-      "Unlocked for this tab. Closing it forgets the key.";
+      "Open in this tab. Closing it shuts the wallet again.";
     await draw();
     await refreshInbox();
   } catch (e) { say(String(e.message || e)); }

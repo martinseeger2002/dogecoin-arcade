@@ -442,12 +442,19 @@ SCRYPT_N = 1 << 15
 SCRYPT_R = 8
 SCRYPT_P = 1
 
-#: Twelve, not eight. What this password opens is pages that can spend the
-#: node's wallet -- docs/multi-user.md §2 says so plainly rather than
-#: implying a breach would expose "hashes and nothing else" -- and a floor
-#: chosen for a forum is the wrong floor for that. Said on the page, with
-#: what it guards, rather than silently enforced.
-MIN_PASSWORD = 12
+#: One character. Not a recommendation -- a decision (D-157).
+#:
+#: A floor stops the person who would have chosen something short and
+#: stops nobody else: an attacker does not type passwords into a form,
+#: they take what is stored and try it offline. What a floor does reliably
+#: is refuse somebody their own wallet on their own node.
+#:
+#: So the rule is replaced by a sentence. Both pages say exactly what a
+#: weak password means where it is typed -- and they differ, because the
+#: consequences differ: the operator's guards a wallet on their own
+#: machine, and an account's guards a blob this node hands to whoever asks
+#: for that name.
+MIN_PASSWORD = 1
 
 CREDENTIAL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS credential (
@@ -509,11 +516,8 @@ class Credentials:
         if not name or not name.replace("_", "").replace("-", "").isalnum():
             raise AccountError(
                 "a username is letters, digits, - and _, with no spaces")
-        if len(password or "") < MIN_PASSWORD:
-            raise AccountError(
-                f"a password of at least {MIN_PASSWORD} characters. This is "
-                f"the whole of what stands between somebody who found the "
-                f"address and your wallet.")
+        if not (password or ""):
+            raise AccountError("a password, please -- even a short one")
         if not is_pubkey(pubkey):
             raise AccountError("that is not a public key")
         now = int(now if now is not None else time.time())

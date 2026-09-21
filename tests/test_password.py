@@ -60,12 +60,27 @@ def test_it_cannot_be_claimed_from_outside(named):
     assert app.get("/auth/door", headers=EDGE).json()["settable"] is False
 
 
-def test_a_short_password_is_refused_with_the_reason(named):
+def test_a_short_password_is_allowed(named):
+    """No floor (D-157). A minimum stops the person who would have chosen
+    something short and stops nobody else -- an attacker does not type
+    passwords into a form. What the page owes somebody is the truth about
+    what they picked, not a refusal, and this is their wallet."""
     app, state = named
-    refused = _claim(app, password="short one")
+    assert _claim(app, password="1234").status_code == 200
+    assert state.operator != ""
+    app.cookies.clear()
+    opened = app.post("/auth/password", headers=EDGE,
+                      json={"username": "robin", "password": "1234"})
+    assert opened.status_code == 200, "and it opens what it was set on"
+
+
+def test_no_password_at_all_is_still_refused(named):
+    """A password of nothing is not a short password, it is an account
+    anybody can open by knowing the name."""
+    app, state = named
+    refused = _claim(app, password="")
     assert refused.status_code == 400
-    assert "at least" in refused.json()["detail"]
-    assert "your wallet" in refused.json()["detail"], "and why it matters"
+    assert "even a short one" in refused.json()["detail"]
     assert state.operator == ""
 
 

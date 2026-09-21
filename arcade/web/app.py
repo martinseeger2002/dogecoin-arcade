@@ -238,6 +238,8 @@ NAV = [
 #: nothing on those would be true for somebody else.
 ACCOUNT_NAV = [
     ("/me",           "Your arcade",  None,        True),
+    ("/me/messages",  "Messages",     "testnet",   True),
+    ("/me/contacts",  "Address book", None,        True),
     ("/feed",         "Feed",         "testnet",   True),
     ("/clone",        "Run your own", None,        True),
     ("/docs",         "Docs",         None,        True),
@@ -2157,7 +2159,8 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "feed.html", chain=chain, posts=shown,
                       bylines=_bylines(shown, waiting),
                       drawable=_drawable_in(shown), cursor=cursor, whose=None,
-                      here="/feed", mine=_my_tag(), when=_when,
+                      here="/feed", mine=_tag_of_whoever_is_asking(request),
+                      when=_when,
                       node=chain.status())
 
     @app.get("/u/{tag}", response_class=HTMLResponse)
@@ -2177,7 +2180,8 @@ def create_app(state: AppState) -> FastAPI:
                              "face": _face_for(address),
                              **{k: v for k, v in _profile_of(address, waiting).items()
                                 if k in ("bio", "url")}},
-                      here=f"/u/{wanted}", mine=_my_tag(), when=_when,
+                      here=f"/u/{wanted}",
+                      mine=_tag_of_whoever_is_asking(request), when=_when,
                       node=chain.status())
 
     #: How many transactions a picture posted to the feed may take. A post
@@ -4044,6 +4048,34 @@ def create_app(state: AppState) -> FastAPI:
             return index.tags_for(wanted)
         except Exception:
             return {}
+
+    def _tag_of_whoever_is_asking(request: Request) -> dict[str, Any]:
+        """Whose name to show on a page: the reader's, not the node's.
+
+        `_my_tag()` is the NODE's tag, which is right on the operator's own
+        pages and wrong everywhere else. Served publicly it showed every
+        visitor the operator's name -- "Say something as @bigchiefenergy"
+        to somebody signed in as @gx1 -- which is both a lie about who they
+        are and a disclosure about who runs the node (D-158).
+        """
+        if not _public_request(request):
+            return _my_tag()
+        chain, index = _tag_chain()
+        account = signed_in(request)
+        tag, home = None, ""
+        if account is not None:
+            home = str(state.setting(f"address:{account.pubkey}", "") or "")
+            try:
+                tag = index.tag_of(home) if home else None
+            except Exception:
+                tag = None
+            if not tag:
+                # Signed up here and not yet on the chain: their own name
+                # is still the one to call them by.
+                tag = (state.vault().by_pubkey(account.pubkey) or {}
+                       ).get("tag") or None
+        return {"tag": tag, "address": home, "chain": chain,
+                "min": taglib.MIN_LENGTH, "max": taglib.MAX_LENGTH}
 
     def _my_tag() -> dict[str, Any]:
         """Your tag as the chain has it, and the address that would hold one."""
@@ -5987,6 +6019,27 @@ def create_app(state: AppState) -> FastAPI:
         """The chain a tag lives on. Testnet, as tags always have been."""
         return state.messaging
 
+    def _note_payment(txid: str, pubkey: str, address: str) -> None:
+        """Record an output this node just paid to an account.
+
+        Read back from the node rather than assumed: `sendtoaddress`
+        chooses its own output order, and guessing which one is the payment
+        would offer a coin that is somebody's change.
+        """
+        try:
+            with _account_chain().rpc() as rpc:
+                decoded = rpc.call("decoderawtransaction",
+                                   rpc.call("getrawtransaction", txid))
+            for out in decoded.get("vout", []):
+                where = (out.get("scriptPubKey") or {}).get("addresses") or []
+                if address in where:
+                    _flights.note_incoming(
+                        pubkey, txid, int(out.get("n", 0)), address,
+                        int(round(float(out.get("value", 0)) * 100_000_000)))
+                    return
+        except Exception:
+            pass                 # it will be spendable when its block lands
+
     def _watch(address: str, why: str) -> None:
         """Start following an address's coins, so it can be funded at all."""
         index = state.token_index(_account_chain())
@@ -6091,6 +6144,11 @@ def create_app(state: AppState) -> FastAPI:
                 _account_chain(), state.faucet(), pubkey, address,
                 ip=(request.client.host if request.client else ""))
             given = gift.amount
+            # Spendable now, not in ten minutes. The node broadcast this
+            # itself, so it knows the output exists -- making somebody wait
+            # a block to claim their own name, for a transaction this
+            # machine is holding in its own pool, is a wait for nothing.
+            _note_payment(gift.txid, pubkey, address)
         except faucetlib.FaucetError as refused:
             why_not = str(refused)
         except Exception as exc:
@@ -6179,6 +6237,12 @@ def create_app(state: AppState) -> FastAPI:
                 with contextlib.closing(index.open()) as db:
                     said["balance"] = utxoslib.balance(db, address)
                     said["watching"] = utxoslib.since(db, address)
+                # What this node has broadcast to them and not yet read
+                # back out of a block. Spendable, and shown separately so
+                # the page can say "on its way" rather than "nothing".
+                said["incoming"] = sum(
+                    coin["value"]
+                    for coin in _flights.change_for(account.pubkey))
                 said["tag"] = index.tag_of(address) or ""
             except Exception:
                 pass                       # a node still catching up says 0
@@ -6200,6 +6264,43 @@ def create_app(state: AppState) -> FastAPI:
         chain = _account_chain()
         return render(request, "me.html", chain=chain,
                       node=chain.status(), when=_when)
+
+    @app.get("/me/messages", response_class=HTMLResponse)
+    def my_messages(request: Request):
+        """An account's own messages, opened in its own browser."""
+        if signed_in(request) is None:
+            return RedirectResponse("/join", status_code=303)
+        chain = _account_chain()
+        return render(request, "my_messages.html", chain=chain, when=_when)
+
+    @app.get("/me/contacts", response_class=HTMLResponse)
+    def my_contacts(request: Request):
+        """An account's own address book, kept in its own browser."""
+        if signed_in(request) is None:
+            return RedirectResponse("/join", status_code=303)
+        return render(request, "my_contacts.html", chain=_account_chain())
+
+    @app.get("/account/find")
+    def account_find(request: Request, q: str = ""):
+        """Names claimed on this chain that look like what was typed.
+
+        The same question the wallet's own address book asks, answered the
+        same way: from the index, so a name in somebody's book is a name
+        that exists on the chain rather than one they typed.
+        """
+        _signed_in_account(request)
+        wanted = (q or "").strip().lstrip("@").lower()
+        if not wanted:
+            return JSONResponse({"matches": []})
+        chain = _account_chain()
+        out = []
+        try:
+            index = state.token_index(chain)
+            for row in index.search_tags(wanted, limit=20):
+                out.append({"tag": row["tag"], "address": row["address"]})
+        except Exception:
+            pass
+        return JSONResponse({"matches": out})
 
     @app.get("/account/feed")
     def account_feed(request: Request, before: int | None = None):

@@ -169,3 +169,67 @@ def test_every_account_tab_is_one_the_door_allows(client):
     for path, label, _chain, built in webapp.ACCOUNT_NAV:
         assert built
         assert door.public_path(path), f"{label} is in the menu and refused"
+
+
+def test_signing_in_opens_the_wallet(client):
+    """The password IS the login. Asking for it again on the next page is
+    asking the same question twice."""
+    page = pathlib.Path("arcade/web/templates/wallet_js.js").read_text()
+    signup = page[page.index("async function _signUp"):page.index("async function _signIn")]
+    signin = page[page.index("async function _signIn"):]
+    assert "remember(wallet.phrase)" in signup, "signing up opens it"
+    assert "remember(wallet.phrase)" in signin.split("export")[0], \
+        "and so does signing in"
+
+
+def test_a_new_tab_says_why_it_is_asking(client):
+    """A session cookie lasts thirty days and a tab does not, so this is
+    the one time a password is wanted twice -- and the page says which of
+    the two situations it is in rather than looking like a second login."""
+    app, _ = client
+    _seat(app)
+    body = app.get("/me").text
+    assert "Welcome back" in body
+    assert "new tab" in body
+    assert "Signing in opens it" in body
+
+
+# --- the messages page --------------------------------------------------------
+
+def test_messages_needs_an_account(client):
+    app, _ = client
+    answer = app.get("/me/messages", follow_redirects=False)
+    assert answer.status_code == 303
+    assert answer.headers["location"] == "/join"
+
+
+def test_the_messages_page_is_there_and_is_in_the_menu(public):
+    """The account menu, which is what an account sees: on the machine
+    itself the operator gets their own eleven tabs instead."""
+    app, _ = public
+    _seat(app)
+    body = app.get("/me/messages", headers=EDGE).text
+    assert "Write to somebody" in body
+    assert "cannot read one" in body, "and says what the node can and cannot do"
+    assert 'href="/me/messages"' in body, "and is reachable from the menu"
+
+
+def test_a_message_is_drawn_as_words_there_too(client):
+    """The same rule as the inbox on /me: somebody else's words are never
+    rendered as markup."""
+    page = pathlib.Path("arcade/web/templates/my_messages.html").read_text()
+    assert "body.textContent = new TextDecoder()" in page
+    uses = [line.strip() for line in page.splitlines()
+            if "innerHTML" in line and not line.strip().startswith("//")]
+    assert uses == ['$("mail").innerHTML = "";'], uses
+
+
+def test_it_says_who_a_message_is_going_to_before_it_is_written(client):
+    """From the chain, not from anything typed: somebody writing to @gx1
+    should see the address their words are sealed to."""
+    app, _ = client
+    _seat(app)
+    body = app.get("/me/messages").text
+    assert 'id="who"' in body
+    assert "mail.lookUp" in body
+    assert "have not published a key" in body

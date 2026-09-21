@@ -73,9 +73,12 @@ PUBLIC_PAGES = frozenset({
     "/auth/who",
     "/auth/door",
     "/me",
+    "/me/messages",
+    "/me/contacts",
     "/account",
     "/account/feed",
     "/account/messages",
+    "/account/find",
 })
 
 #: Prefixes a stranger may read. Everything under them is public, so each

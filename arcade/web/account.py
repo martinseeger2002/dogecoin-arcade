@@ -172,5 +172,25 @@ class Flights:
                 out.extend(flight.made)
         return out
 
+    def note_incoming(self, pubkey: str, txid: str, vout: int,
+                      address: str, value: int) -> None:
+        """A payment TO an account that the node made itself.
+
+        The faucet's coins come out of this node's own wallet, so the node
+        knows that output exists the moment it broadcasts it -- there is
+        nothing to wait for. Without this an account waits a whole block
+        before it can claim its own name, for a transaction this machine
+        is holding in its own mempool.
+
+        Spending it unconfirmed is ordinary: a chain of two in the pool is
+        far inside the ancestor limit, and if the payment were ever dropped
+        the child would be dropped with it rather than being wrong.
+        """
+        self._all.append(InFlight(
+            txid=txid, pubkey=(pubkey or "").lower(), spent=(),
+            made=({"txid": txid, "vout": int(vout), "address": address,
+                   "value": int(value), "height": 0},)))
+        self.sweep()
+
     def forget(self, txid: str) -> None:
         self._all = [f for f in self._all if f.txid != txid]

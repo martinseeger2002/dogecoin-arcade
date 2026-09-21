@@ -172,12 +172,33 @@ def test_a_name_somebody_has_is_refused_before_a_wallet_is_made(loaded):
     assert "already signed up" in again["error"]
 
 
-def test_a_short_password_is_refused_with_what_it_is_for(loaded):
+def test_a_short_password_is_allowed_and_the_page_says_what_it_costs(loaded):
+    """Somebody who wants `1234` gets `1234` (D-157). What they also get is
+    a sentence saying their encrypted wallet can be taken from this node
+    and opened in seconds -- because that is true, and refusing them would
+    not have made it less so."""
     browser, base, state, home = loaded
-    said = _sign_up(browser, "brief", password="short")
-    assert "at least 12" in said["error"]
-    assert "nobody can reset it" in said["error"]
-    assert state.vault().get("brief") is None, "and nothing was written down"
+    said = _sign_up(browser, "brief", password="1234")
+    assert "error" not in said, said
+    assert state.vault().get("brief") is not None, "the account exists"
+
+    told = browser.execute_async_script("""
+        const done = arguments[0];
+        done({weak: window.w.strength("1234"),
+              middling: window.w.strength("correct horse"),
+              strong: window.w.strength("correct horse battery staple!")});""")
+    assert told["weak"]["ok"] is False
+    assert told["weak"]["level"] == "instantly"
+    assert "in seconds" in told["weak"]["says"]
+    assert "nothing here will stop you" in told["weak"]["says"]
+    assert told["strong"]["ok"] is True
+
+
+def test_no_password_at_all_is_still_refused(loaded):
+    browser, base, state, home = loaded
+    said = _sign_up(browser, "empty", password="")
+    assert "even a short one" in said["error"]
+    assert state.vault().get("empty") is None
 
 
 def test_a_free_name_can_be_checked_before_typing_a_password(loaded):

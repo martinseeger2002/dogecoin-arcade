@@ -846,7 +846,7 @@ forwarding. The mempool already gossips to every node in seconds.
   to produce another node, not a queue. Nothing is lost by going elsewhere
   -- the name, the coins and the posts are on the chain, so any node will
   do, including one you run yourself.
-* **Twenty-four words are the whole account.** Made in the browser from the
+* **Twelve words are the whole account.** Made in the browser from the
   standard BIP39 list, shown once, and confirmed by typing three of them
   back before anything is taken. They never reach the node. There is no
   reset and nobody to ask, which is why it says so at the moment they are
@@ -864,12 +864,23 @@ forwarding. The mempool already gossips to every node in seconds.
   is the same account, with the same name and the same join date.
 * **Signing up needs https, or localhost.** A browser hands out its
   cryptography only in a secure context, so over plain http on a network
-  address the page says so instead of half working. The Remote page's
-  address is https end to end.
-* **What an account does not do yet.** It gates nothing: the wallet's own
-  pages are still the wallet's own, and claiming a @tag or taking the
-  faucet waits on coin keys in the browser. The page says this rather than
-  implying otherwise.
+  address the page says so instead of half working.
+* **What an account can do.** Its own pages: *Your arcade*, *Messages*, the
+  *address book* and the feed. From them it claims a @tag, publishes its
+  messaging key, takes the faucet's testnet coins once, sends coins, posts
+  and likes, and writes sealed messages. Every one of those is a
+  transaction the node builds, the browser signs with a key the node has
+  never seen, and the node broadcasts -- it broadcasts what it *offered*,
+  not whatever came back signed.
+* **The account's address book is in the browser, not on the node.** Same
+  page as the wallet's: search a @tag, add what the chain says it points
+  at, and write to it from there. Keeping it on the node would hand over a
+  list of everybody an account knows, which is the social graph the
+  messages themselves are built to hide.
+* **What an account does not do yet.** It gates nothing else: the wallet's
+  own pages are still the wallet's own, and inscribing, tokens and the
+  exchange are the node's. The page says this rather than implying
+  otherwise.
 
 ## Wallets, keys and backup
 
