@@ -111,9 +111,14 @@ def _signed_in(browser, base):
             break
         time.sleep(0.25)
     phrase = seed.generate()
+    # Signed in AND the wallet open in this tab, which is what somebody who
+    # just made an account has: signing in opens it, and it stays open from
+    # page to page until the tab is closed.
     answer = browser.execute_async_script("""
         const done = arguments[1];
-        import("/signin.js").then(m => m.signIn(arguments[0], {join: true}))
+        Promise.all([import("/signin.js"), import("/wallet.js")])
+          .then(([s, w]) => s.signIn(arguments[0], {join: true})
+                             .then(() => { w.remember(arguments[0]); }))
           .then(() => done(true), e => done(String(e.message || e)));""",
         phrase)
     assert answer is True, answer
@@ -132,9 +137,68 @@ def _book_page(browser, base):
         raise AssertionError("the address book never finished drawing")
 
 
+@pytest.fixture(scope="module", autouse=True)
+def seated(browser, served):
+    """A seat, once, for every test here.
+
+    Not left to whichever test happens to run first: these run in a random
+    order, and a test that depended on an earlier one for its session
+    passed or failed by luck of the draw.
+    """
+    base, _ = served
+    return _signed_in(browser, base)
+
+
+def _wipe_book(browser):
+    return browser.execute_async_script("""
+        const done = arguments[0];
+        const open = indexedDB.open("arcade-messages", 2);
+        open.onupgradeneeded = () => {
+          const db = open.result;
+          if (!db.objectStoreNames.contains("mail"))
+            db.createObjectStore("mail", {keyPath: "txid"});
+          if (!db.objectStoreNames.contains("marks"))
+            db.createObjectStore("marks");
+          if (!db.objectStoreNames.contains("book"))
+            db.createObjectStore("book", {keyPath: "tag"});
+        };
+        open.onerror = () => done("open: " + open.error);
+        open.onsuccess = () => {
+          const db = open.result;
+          const tx = db.transaction(["book"], "readwrite");
+          tx.objectStore("book").clear();
+          tx.oncomplete = () => done("ok");
+          tx.onerror = () => done("clear: " + tx.error);
+        };""")
+
+
+def _add_robin(browser, base):
+    """The add flow, by hand, for the tests that need somebody in the book
+    without being about the adding."""
+    _book_page(browser, base)
+    if browser.find_elements(By.CSS_SELECTOR, "#book .card"):
+        return
+    box = browser.find_element(By.ID, "find")
+    box.clear()
+    box.send_keys("robin")
+    browser.find_element(By.ID, "search").click()
+    for _ in range(40):
+        buttons = browser.find_elements(By.CSS_SELECTOR, "#matches button")
+        if buttons:
+            break
+        time.sleep(0.25)
+    buttons[0].click()
+    for _ in range(40):
+        if browser.find_elements(By.CSS_SELECTOR, "#book .card"):
+            return
+        time.sleep(0.25)
+    raise AssertionError("could not put anybody in the book")
+
+
 def test_the_book_starts_empty_and_says_so(browser, served):
     base, _ = served
-    _signed_in(browser, base)
+    _book_page(browser, base)
+    _wipe_book(browser)
     _book_page(browser, base)
     assert browser.find_element(By.ID, "nobody").is_displayed()
     assert "empty" in browser.find_element(By.ID, "nobody").text
@@ -142,6 +206,8 @@ def test_the_book_starts_empty_and_says_so(browser, served):
 
 def test_a_name_nobody_claimed_is_not_offered(browser, served):
     base, _ = served
+    _book_page(browser, base)
+    _wipe_book(browser)
     _book_page(browser, base)
     box = browser.find_element(By.ID, "find")
     box.clear()
@@ -158,6 +224,8 @@ def test_a_name_nobody_claimed_is_not_offered(browser, served):
 def test_adding_somebody_keeps_them_across_a_reload(browser, served):
     """The point of the book: it is still there tomorrow, and it is here."""
     base, _ = served
+    _book_page(browser, base)
+    _wipe_book(browser)
     _book_page(browser, base)
     box = browser.find_element(By.ID, "find")
     box.clear()
@@ -190,7 +258,7 @@ def test_adding_somebody_keeps_them_across_a_reload(browser, served):
 def test_the_book_is_in_the_browser_and_not_on_the_node(browser, served):
     """Nothing about who is in it ever reaches the server."""
     base, state = served
-    _book_page(browser, base)
+    _add_robin(browser, base)
     stored = browser.execute_async_script("""
         const done = arguments[0];
         const open = indexedDB.open("arcade-messages");
@@ -210,22 +278,29 @@ def test_the_book_is_in_the_browser_and_not_on_the_node(browser, served):
 
 
 def test_writing_to_somebody_arrives_with_them_already_chosen(browser, served):
+    """Message opens the conversation with them, not a blank page with a
+    name to type back in."""
     base, _ = served
-    _book_page(browser, base)
+    _add_robin(browser, base)
     link = browser.find_element(By.CSS_SELECTOR, "#book .card a.btn")
     assert link.get_attribute("href").endswith("/me/messages?to=robin")
     link.click()
+    browser.execute_script(PRETEND)
     for _ in range(80):
         if browser.execute_script(
                 "return document.body.dataset.messagesReady === 'yes'"):
             break
         time.sleep(0.25)
-    assert browser.find_element(By.ID, "to").get_attribute("value") == "@robin"
+    for _ in range(40):
+        if browser.find_element(By.ID, "convo-name").text == "@robin":
+            break
+        time.sleep(0.25)
+    assert browser.find_element(By.ID, "convo-name").text == "@robin"
 
 
 def test_removing_somebody_removes_them(browser, served):
     base, _ = served
-    _book_page(browser, base)
+    _add_robin(browser, base)
     browser.execute_script("window.confirm = () => true;")
     buttons = [b for b in browser.find_elements(By.CSS_SELECTOR, "#book button")
                if b.text == "Remove"]

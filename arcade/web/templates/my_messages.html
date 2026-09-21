@@ -1,54 +1,119 @@
 {% extends "base.html" %}
 {% block title %}Messages · DogecoinArcade{% endblock %}
 {% block body %}
-<h1>Messages</h1>
-<p class="sub">Sealed to the person you are writing to, opened only in
-  your browser. This node carries them and cannot read one.</p>
-
-<div class="msg err" id="trouble" hidden></div>
-<div class="msg ok" id="news" hidden></div>
 
 <div class="panel" id="locked" hidden>
   <h2 style="margin-top:0">Welcome back</h2>
   <p class="muted" style="margin:0 0 10px">This is a new tab, so your
     wallet needs your password to open here.</p>
   <input type="password" id="pw" autocomplete="current-password"
-         placeholder="password">
+         placeholder="password" style="width:100%;padding:10px 12px;margin:4px 0;
+         border:1px solid var(--line);border-radius:8px;background:var(--panel);
+         color:var(--fg);font:inherit">
   <button class="btn primary" id="open">Open</button>
+  <p class="msg err" id="locked-trouble" hidden></p>
 </div>
 
-<div id="ready" hidden>
-  <div class="panel">
-    <h2 style="margin-top:0">Write to somebody</h2>
-    <input type="text" id="to" placeholder="@name" autocomplete="off">
-    <div class="muted small" id="who"></div>
-    <textarea id="body" rows="3" autocomplete="off"
-              placeholder="what you want to say"></textarea>
-    <button class="btn primary" id="send">Send</button>
-    <p class="muted small">It costs a fee and a little dust, like anything
-      else on a chain. Whoever you write to is paid that dust, which is how
-      they know something arrived.</p>
-  </div>
-
-  <div class="panel">
-    <div class="row" style="align-items:baseline">
-      <h2 style="margin:0">Your messages</h2>
-      <button class="btn ghost small" id="check"
-              style="margin-left:auto">Check for new</button>
+{# The same two panes as the wallet's own Messages page, and the same
+   classes, so it is the same page: on a phone the list hands over to the
+   conversation and the back button hands back; on a desktop both fit. What
+   differs is underneath -- every message here is opened and sealed in this
+   browser, and the conversations are assembled here because the node is
+   not allowed to know what they are (D-155). #}
+<div class="msgr" id="msgr" hidden>
+  <aside class="threads">
+    <div class="threads-head">
+      <strong>Conversations</strong>
+      <button type="button" class="ghost small" id="new">New</button>
     </div>
-    <p class="muted small" id="checking"></p>
-    <div id="mail">—</div>
-  </div>
+
+    <form class="newconv" id="newconv" hidden onsubmit="return false">
+      <label>Their @tag, or their address</label>
+      <input autocomplete="off" id="who-new" class="mono" spellcheck="false"
+             placeholder="@tag or their address">
+      <div class="row" style="margin-top:9px">
+        <button type="button" class="small" id="start">Start</button>
+        <button type="button" class="ghost small" id="cancel-new">Cancel</button>
+      </div>
+      <p class="muted" style="font-size:.78rem;margin:9px 0 0">
+        Anybody who has claimed a name and published a key. Your
+        <a href="/me/contacts">address book</a> is the easier way in.</p>
+      <p class="msg err" id="new-trouble" hidden
+         style="font-size:.8rem;margin:9px 0 0"></p>
+    </form>
+
+    <p class="muted empty" id="no-threads" hidden>No conversations yet. Press
+      <strong>New</strong>, or add somebody to your
+      <a href="/me/contacts">address book</a>.</p>
+    <div id="threads"></div>
+
+    <div class="threads-foot">
+      <button type="button" class="ghost small" id="check">Check for new</button>
+      <span class="muted" id="checking"></span>
+    </div>
+  </aside>
+
+  <section class="convo">
+    <div class="nothing" id="nothing">
+      <p>Select a conversation, or start one with somebody's @tag.</p>
+      <p class="muted" style="font-size:.88rem">People can only write to you
+        once your key is on the chain &mdash; that is one button on
+        <a href="/me">your arcade</a>.</p>
+    </div>
+
+    <div id="talking" class="talking" hidden>
+      <header class="convo-head">
+        <a class="back" href="#" id="back" title="All conversations"
+           aria-label="Back to all conversations">&#8592; Back</a>
+        <div>
+          <div class="convo-name" id="convo-name">—</div>
+          <div class="convo-sub" id="convo-sub"></div>
+        </div>
+        <a class="ghost small btn" id="to-book" href="/me/contacts"
+           style="margin-left:auto">Address book</a>
+      </header>
+
+      <div class="msg err" id="trouble" hidden style="margin:14px 16px 0"></div>
+
+      <div class="bubbles" id="bubbles"></div>
+
+      <form class="composer" id="composer" onsubmit="return false">
+        <textarea autocomplete="off" id="body" rows="1"
+                  placeholder="Write a message…"></textarea>
+        <button type="button" id="send">Send</button>
+      </form>
+      <p class="muted composer-note" style="padding-bottom:2px">
+        <strong>Words only, for now.</strong> Sending a file takes dozens of
+        linked transactions, and an account cannot build those yet &mdash;
+        the wallet's own Messages page can.</p>
+      <p class="muted composer-note" style="padding-bottom:2px">
+        Your own messages are kept in this browser only: each one is encrypted
+        to the person you sent it to, so it cannot be read back off the chain
+        &mdash; not by you either. They have their copy; this is yours.</p>
+      <p class="muted composer-note" id="cost-note">
+        Encrypted to them only. Costs a transaction fee and a little dust,
+        which is paid to them and is how they know something arrived.
+        Enter sends; Shift+Enter starts a new line.</p>
+    </div>
+  </section>
 </div>
 
 <style>
-#locked input,#ready input,#ready textarea{width:100%;padding:10px 12px;
-  margin:4px 0;border:1px solid var(--line);border-radius:8px;
-  background:var(--panel);color:var(--fg);font:inherit}
-.small{font-size:.85rem}
-.letter{border-top:1px solid var(--line);padding:10px 0}
-.letter .who{font-size:.78rem;color:var(--muted);margin-bottom:2px}
-.letter .body{white-space:pre-wrap}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.threads-foot{border-top:1px solid var(--line);padding:9px 14px;
+  display:flex;align-items:center;gap:8px;font-size:.78rem;
+  background:var(--bg);position:sticky;bottom:0}
+.threads-foot .muted{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+#newconv input{width:100%;padding:8px 10px;border:1px solid var(--line);
+  border-radius:8px;background:var(--panel);color:var(--fg);font:inherit}
+/* `.threads` scrolls, so the foot sits under the list and is pushed to
+   the bottom when there is room rather than floating in the middle. */
+.threads-foot{margin-top:auto}
+/* display comes from a class, never from a style attribute: an inline
+   `display:flex` beats `[hidden]{display:none}` and makes `hidden` inert
+   -- the same trap the bubble rows fell into (base.html). */
+.talking{display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
 </style>
 
 <script type="module">
@@ -57,113 +122,298 @@ import * as mail from "/messaging.js";
 
 const $ = (id) => document.getElementById(id);
 const say = (t) => { $("trouble").textContent = t; $("trouble").hidden = !t; };
-const news = (t) => { $("news").textContent = t; $("news").hidden = !t; };
 const CHAIN = {network: "{{ chain.network }}",
                version: {{ chain.params.pubkeyhash_version }}};
 
-let keys = null, me = null;
+let keys = null, me = null, here = null;   // `here` is the peer key in hex
+
+/* The same shape the rest of the application prints: a time, not a guess
+   at how long ago it was. */
+function when(seconds) {
+  if (!seconds) return "";
+  const at = new Date(seconds * 1000);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} `
+       + `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+}
+
+const nameOf = (thread) => thread.tag ? "@" + thread.tag
+  : (thread.address || "Unknown sender");
+
+async function drawThreads() {
+  const all = await mail.threads();
+  $("threads").innerHTML = "";
+  $("no-threads").hidden = all.length > 0;
+  for (const thread of all) {
+    const row = document.createElement("a");
+    row.className = "thread" + (here === thread.peer ? " on" : "");
+    row.href = "#";
+    row.onclick = (e) => { e.preventDefault(); show(thread.peer); };
+
+    const top = document.createElement("div");
+    top.className = "thread-top";
+    const who = document.createElement("span");
+    who.className = "who" + (thread.tag ? "" : " unnamed");
+    who.textContent = nameOf(thread);
+    top.appendChild(who);
+    if (thread.unread) {
+      const badge = document.createElement("span");
+      badge.className = "badge new";
+      badge.title = `${thread.unread} new`;
+      badge.textContent = thread.unread;
+      top.appendChild(badge);
+    }
+
+    const preview = document.createElement("div");
+    preview.className = "thread-preview";
+    preview.textContent = (thread.outgoing ? "You: " : "")
+                        + thread.preview.slice(0, 64);
+    const stamp = document.createElement("div");
+    stamp.className = "thread-when";
+    stamp.textContent = when(thread.last);
+
+    row.append(top, preview, stamp);
+    $("threads").appendChild(row);
+  }
+  return all;
+}
+
+function bubble(letter) {
+  const row = document.createElement("div");
+  row.className = "bubble-row " + (letter.mine ? "mine" : "theirs");
+  const box = document.createElement("div");
+  box.className = "bubble";
+  const body = document.createElement("div");
+  body.className = "text";
+  // textContent, always: a message is somebody else's words, and a page
+  // that renders them as markup is a page that runs them.
+  body.textContent = mail.text(letter);
+  const stamp = document.createElement("div");
+  stamp.className = "stamp";
+  if (letter.mine && !letter.height) {
+    // No time on an unconfirmed message of ours. The only one available is
+    // when this browser pressed send, which is not when the message exists
+    // for anybody else -- and printing it implies that it does.
+    const pending = document.createElement("span");
+    pending.className = "unconfirmed";
+    pending.textContent = "unconfirmed";
+    stamp.appendChild(pending);
+  } else if (letter.height) {
+    stamp.textContent = `${when(letter.when)} · block `
+                      + letter.height.toLocaleString();
+  } else {
+    stamp.textContent = when(letter.when) + " · ";
+    const pool = document.createElement("span");
+    pool.className = "unconfirmed";
+    pool.textContent = "in the pool, not in a block yet";
+    stamp.appendChild(pool);
+  }
+  box.append(body, stamp);
+  row.appendChild(box);
+  return row;
+}
+
+async function drawConversation() {
+  if (!here) {
+    $("talking").hidden = true;
+    $("nothing").hidden = false;
+    $("msgr").classList.remove("open");
+    return;
+  }
+  $("nothing").hidden = true;
+  $("talking").hidden = false;
+  $("msgr").classList.add("open");
+
+  const letters = await mail.conversation(here);
+  const all = await mail.threads();
+  // A conversation that has been STARTED and not yet said anything has no
+  // messages to be assembled out of, so it is named from the address book
+  // instead. Without this a new one opens as "Unknown sender" over a name
+  // the browser has written down.
+  const known = await mail.byKey(here);
+  const thread = all.find((t) => t.peer === here)
+    || {peer: here, tag: known ? known.tag : "",
+        address: known ? known.address : "", inBook: !!known};
+  $("convo-name").textContent = nameOf(thread);
+  $("convo-sub").textContent = thread.address || "";
+  $("to-book").textContent = thread.inBook ? "Address book"
+                                           : "Add to address book";
+  $("cost-note").textContent =
+    `Encrypted to ${thread.tag ? "@" + thread.tag : "them"} only. Costs a `
+    + "transaction fee and a little dust, which is paid to them and is how "
+    + "they know something arrived. Enter sends; Shift+Enter starts a new line.";
+
+  $("bubbles").innerHTML = "";
+  if (!letters.length) {
+    const none = document.createElement("p");
+    none.className = "muted nothing";
+    none.style.padding = "30px 0";
+    none.textContent = "No messages yet. Write the first one below.";
+    $("bubbles").appendChild(none);
+  }
+  for (const letter of letters) $("bubbles").appendChild(bubble(letter));
+  $("bubbles").scrollTop = $("bubbles").scrollHeight;
+  await mail.markRead(here);
+}
+
+async function show(peer) {
+  here = peer;
+  say("");
+  await drawConversation();
+  await drawThreads();
+  const url = new URL(location.href);
+  url.searchParams.delete("to");
+  url.hash = peer || "";
+  history.replaceState(null, "", url);
+}
+
+/* --- writing -------------------------------------------------------- */
+
+function grow(box) {
+  box.style.height = "auto";
+  box.style.height = Math.min(box.scrollHeight, 160) + "px";
+}
+
+async function send() {
+  const text = $("body").value;
+  if (!here || !text.trim()) return;
+  say("");
+  $("send").disabled = true;
+  const was = $("send").textContent;
+  $("send").textContent = "Sending…";
+  try {
+    // The conversation is with whoever holds this KEY. A @tag or an
+    // address is only how the chain is asked where to send it, and both
+    // can end up pointing at somebody else -- a tag because its holder
+    // let it go (D-137), an address because the answer came back for a
+    // different one. So whatever comes back is checked against the key
+    // this conversation has been with, and a mismatch is refused rather
+    // than sealed to the wrong person.
+    const thread = (await mail.threads()).find((t) => t.peer === here);
+    const asking = (thread && thread.tag) || (thread && thread.address);
+    if (!asking) throw new Error(
+      "there is no name or address for this conversation to send to");
+    const them = await mail.lookUp(asking);
+    if (them.key !== here) throw new Error(
+      `@${asking} is not who this conversation is with any more. `
+      + "Check with them before writing again.");
+    await mail.write(keys, me, asking, "" + text);
+    $("body").value = "";
+    grow($("body"));
+    await drawConversation();
+    await drawThreads();
+  } catch (e) {
+    say(String(e.message || e));
+  } finally {
+    $("send").disabled = false;
+    $("send").textContent = was;
+  }
+}
+
+$("send").onclick = send;
+$("body").addEventListener("input", () => grow($("body")));
+$("body").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || e.shiftKey) return;
+  e.preventDefault();
+  send();
+});
+
+$("new").onclick = () => {
+  $("newconv").hidden = false;
+  $("who-new").focus();
+};
+$("cancel-new").onclick = () => {
+  $("newconv").hidden = true;
+  $("new-trouble").hidden = true;
+};
+$("start").onclick = async () => {
+  $("new-trouble").hidden = true;
+  const wanted = $("who-new").value.trim();
+  if (!wanted) return;
+  try {
+    const them = await mail.reach(wanted);
+    $("newconv").hidden = true;
+    $("who-new").value = "";
+    await show(them.key);
+  } catch (e) {
+    $("new-trouble").textContent = String(e.message || e);
+    $("new-trouble").hidden = false;
+  }
+};
+$("who-new").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); $("start").click(); }
+});
+
+$("back").onclick = (e) => { e.preventDefault(); show(null); };
+
+/* --- keeping up ------------------------------------------------------ */
+
+let looking = false;
+async function check(loud) {
+  if (looking || !me) return;
+  looking = true;
+  if (loud) $("checking").textContent = "looking…";
+  try {
+    const out = await mail.collect(me, {onProgress: (p) => {
+      if (loud) $("checking").textContent =
+        `looked at ${p.looked}, opened ${p.opened}`;
+    }});
+    if (loud) {
+      $("checking").textContent =
+        `Looked at ${out.looked}; ${out.opened} were yours.`;
+    }
+    // The open conversation first: drawing it marks it read, and drawing
+    // the list before that leaves a badge on the thread being looked at.
+    if (here) await drawConversation();
+    await drawThreads();
+  } catch (e) {
+    if (loud) $("checking").textContent = String(e.message || e);
+  } finally { looking = false; }
+}
+
+$("check").onclick = () => check(true);
 
 async function ready(w) {
   keys = w;
   me = await mail.identity(w.phrase);
   $("locked").hidden = true;
-  $("ready").hidden = false;
-  await draw();
-}
+  $("msgr").hidden = false;
+  await drawThreads();
 
-async function draw() {
-  const letters = await mail.inbox();
-  $("mail").innerHTML = "";
-  if (!letters.length) { $("mail").textContent = "nothing yet"; return; }
-  for (const letter of letters) {
-    const row = document.createElement("div");
-    row.className = "letter";
-    const who = document.createElement("div");
-    who.className = "who";
-    who.textContent = (letter.from_address || "somebody")
-      + (letter.when ? " · " + new Date(letter.when * 1000).toLocaleString() : "");
-    const body = document.createElement("div");
-    body.className = "body";
-    // textContent, always: a message is somebody else's words and an
-    // inbox that renders them as markup is an inbox that runs them.
-    body.textContent = new TextDecoder().decode(mail.unhex(letter.body));
-    row.append(who, body);
-    $("mail").appendChild(row);
+  // Arrived from the address book, or from a link, with somebody chosen.
+  const wanted = new URLSearchParams(location.search).get("to");
+  if (wanted) {
+    try { await show((await mail.reach(wanted)).key); }
+    catch (e) { say(String(e.message || e)); }
+  } else if (location.hash.length > 1) {
+    await show(location.hash.slice(1));
+  } else {
+    await drawConversation();
   }
+
+  // Look on arrival, and keep looking: a message in the mempool is a
+  // message that has been sent, and the node hands those over at height 0
+  // and promotes them in place when the block lands.
+  await check(true);
+  setInterval(() => check(false), 20000);
 }
 
 $("open").onclick = async () => {
-  say("");
+  $("locked-trouble").hidden = true;
   try {
     const said = await wallet.state();
     const out = await wallet.unlockHere(said.name || said.tag,
                                         $("pw").value, CHAIN);
     await ready(out.wallet);
-  } catch (e) { say(String(e.message || e)); }
+  } catch (e) {
+    $("locked-trouble").textContent = String(e.message || e);
+    $("locked-trouble").hidden = false;
+  }
 };
-
-// Told who they are writing to before they write it, from the chain.
-let asking = null;
-$("to").oninput = () => {
-  clearTimeout(asking);
-  asking = setTimeout(async () => {
-    const name = $("to").value.trim();
-    if (!name) { $("who").textContent = ""; return; }
-    try {
-      const them = await mail.lookUp(name);
-      $("who").textContent = them.key
-        ? `@${them.tag || name} · ${them.address}`
-        : "they have not published a key, so there is nowhere to send it";
-      $("who").style.color = them.key ? "var(--ok)" : "var(--bad)";
-    } catch (e) {
-      $("who").textContent = String(e.message || e);
-      $("who").style.color = "var(--bad)";
-    }
-  }, 300);
-};
-
-$("send").onclick = async () => {
-  say(""); news("");
-  const to = $("to").value.trim(), text = $("body").value;
-  if (!to || !text.trim()) { say("who, and what?"); return; }
-  $("send").disabled = true;
-  try {
-    const out = await mail.write(keys, me, to, text);
-    $("body").value = "";
-    news(`Sent to @${out.tag || to}. It arrives when its block does.`);
-  } catch (e) { say(String(e.message || e)); }
-  finally { $("send").disabled = false; }
-};
-
-$("check").onclick = async () => {
-  say(""); news("");
-  $("checking").textContent = "looking…";
-  try {
-    const out = await mail.collect(me, {onProgress: (p) => {
-      $("checking").textContent = `looked at ${p.looked}, opened ${p.opened}`;
-    }});
-    $("checking").textContent =
-      `Looked at ${out.looked}; ${out.opened} were yours.`;
-    await draw();
-  } catch (e) { say(String(e.message || e)); $("checking").textContent = ""; }
-};
-
-// Arrived from the address book with somebody already chosen.
-const wanted = new URLSearchParams(location.search).get("to");
-if (wanted) {
-  $("to").value = "@" + String(wanted).replace(/^@/, "");
-  $("to").dispatchEvent(new Event("input"));
-}
 
 const already = await wallet.opened(CHAIN);
-if (already) {
-  await ready(already);
-  // Check on arrival: somebody opening this page wants to know if
-  // anything came, not to press a button to find out.
-  $("check").click();
-} else {
-  $("locked").hidden = false;
-}
+if (already) await ready(already);
+else $("locked").hidden = false;
 document.body.dataset.messagesReady = "yes";
 </script>
 {% endblock %}

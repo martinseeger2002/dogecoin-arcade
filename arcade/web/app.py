@@ -442,6 +442,26 @@ def create_app(state: AppState) -> FastAPI:
                 return False
         return True
 
+    def _again(where: str, **context: Any) -> RedirectResponse:
+        """Post, redirect, get -- with what the POST decided carried over.
+
+        Every one of these routes used to answer a POST by rendering the
+        page itself. That is a correct answer and a bad page: the browser
+        remembers that the URL was reached by POST, so reloading it, or
+        going back to it, asks "Firefox must send information that will
+        repeat any action performed earlier" -- and the action it offers to
+        repeat is a send. The operator met that dialog often enough to report it.
+
+        A redirect ends that: the confirmation, or the error, is held for
+        the GET that follows, and the page the browser lands on is an
+        ordinary page it may reload as often as it likes. Held by token
+        rather than put in the URL because some of it is a whole file, and
+        none of it is anybody else's business.
+        """
+        token = _hold(**context)
+        return RedirectResponse(f"{where}{'&' if '?' in where else '?'}"
+                                f"held={token}", status_code=303)
+
     def render(request: Request, template: str, **context: Any) -> HTMLResponse:
         """Render a page, never from a cache.
 
@@ -481,6 +501,10 @@ def create_app(state: AppState) -> FastAPI:
             "offers_waiting": _offers_waiting(),
         }
         base.update(context)
+        # What a POST decided, picked up by the GET it redirected to. Last,
+        # so it wins over whatever the page worked out for itself: the page
+        # is being drawn precisely to show this.
+        base.update(_picked_up(request.query_params.get("held", "")))
         # Request first: the older (name, context) signature is deprecated.
         response = TEMPLATES.TemplateResponse(request, template, base)
         # Never from a cache. These pages carry live state -- a send in flight,
@@ -1204,17 +1228,19 @@ def create_app(state: AppState) -> FastAPI:
                 "readable": describe_duration(
                     estimate_readable_seconds(plan.transactions, typical)),
             }
-        return render(request, "messages.html", threads=threads, thread=items, peer=peer,
-                      tags=_tags_for([t["address"] for t in threads]
-                                     + [(peer or {}).get("address", "")]),
-                      when=_when, fingerprint_of=fingerprint_of, prepared=prepared,
-                      plan=plan, draft=body, error=error, timing=timing,
-                      cost=(send_cost(prepared[0], plan.transactions)
-                            if prepared and plan else None),
-                      is_new_contact=not items, profile_name=state.profile_name,
-                      attached_b64=base64.b64encode(file_bytes).decode() if file_bytes else "",
-                      attached_name=file_name, attached_type=file_type,
-                      share_profile=share_profile)
+        # Only what this POST decided. The conversation itself -- the
+        # threads, the messages, who the peer is -- is the GET's job, and
+        # doing it twice is how two versions of one page drift apart.
+        return _again(
+            f"/messages/{peer_hex}",
+            prepared=prepared, plan=plan, draft=body, error=error,
+            timing=timing,
+            cost=(send_cost(prepared[0], plan.transactions)
+                  if prepared and plan else None),
+            attached_b64=(base64.b64encode(file_bytes).decode()
+                          if file_bytes else ""),
+            attached_name=file_name, attached_type=file_type,
+            share_profile=share_profile)
 
     # --- inbox ----------------------------------------------------------------
 
@@ -1278,7 +1304,7 @@ def create_app(state: AppState) -> FastAPI:
             raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             error = str(exc)
-        return render(request, "compose.html", keys=keys, plan=plan, error=error,
+        return _again("/compose", plan=plan, error=error,
                       recipient=recipient, body=body, prepared=None)
 
     @app.post("/send", response_class=HTMLResponse)
@@ -1341,7 +1367,7 @@ def create_app(state: AppState) -> FastAPI:
         if state.store_path.exists():
             with state.store() as store:
                 keys = store.all_keys()
-        return render(request, "compose.html", keys=keys, plan=None, error=error,
+        return _again("/compose", plan=None, error=error,
                       recipient=recipient, body=body, prepared=prepared,
                       broadcast=broadcast_txids)
 
@@ -2895,12 +2921,8 @@ def create_app(state: AppState) -> FastAPI:
 
         if txid:
             return RedirectResponse("/wallet", status_code=303)
-        chain, _ = _token_chain()
-        return render(request, "wallet.html", messaging=messaging_status(),
-                      ledger=ledger_status(), prepared=prepared, which=which,
-                      error=error, destination=destination, amount=amount,
-                      tab="coins", chain=chain,
-                      other_chains=[c for c in state.token_chains if c is not chain])
+        return _again("/wallet", prepared=prepared, which=which,
+                      error=error, destination=destination, amount=amount)
 
     @app.post("/scan")
     def scan(request: Request, csrf_token: str = Form("")):
@@ -3272,8 +3294,7 @@ def create_app(state: AppState) -> FastAPI:
                     sent = _inscribe_in_background(chain, sender, plan, name)
                 state.flash(f"Inscribing {name} in {plan.chunks} transactions.", "ok")
                 return RedirectResponse("/inscriptions", status_code=303)
-            return render(request, "inscriptions.html",
-                          **_inscription_page_data(plan=plan),
+            return _again("/inscriptions", plan=plan,
                           attached_b64=base64.b64encode(content).decode(),
                           attached_name=name, attached_type=kind,
                           json_field=json_field)
@@ -3281,8 +3302,7 @@ def create_app(state: AppState) -> FastAPI:
             raise
         except Exception as exc:
             error = str(exc)
-        return render(request, "inscriptions.html",
-                      **_inscription_page_data(error=error), json_field=json_field)
+        return _again("/inscriptions", error=error, json_field=json_field)
 
     def _inscribe_in_background(chain: Any, sender: str, plan: Any, name: str):
         """Broadcast the pieces on a thread, reporting as it goes.
@@ -3579,16 +3599,15 @@ def create_app(state: AppState) -> FastAPI:
             first = min(build.items, key=lambda i: i.edition) if build.items else None
             about = (inscriptionlib.collection_details(first.json)
                      if first is not None else {})
-            return render(request, "collection_wizard.html",
-                          **_collection_page_data(
-                              build=build, cost=cost, sender=sender,
-                              clash=already["blocked"], partly=already["note"],
-                              says=about, preview=build.items[:12]))
+            return _again("/inscriptions/collection",
+                          build=build, cost=cost, sender=sender,
+                          clash=already["blocked"], partly=already["note"],
+                          says=about, preview=build.items[:12])
         except HTTPException:
             raise
         except Exception as exc:
-            return render(request, "collection_wizard.html",
-                          **_collection_page_data(error=str(exc), folder=folder))
+            return _again("/inscriptions/collection",
+                          error=str(exc), folder=folder)
 
     def _save_upload(files: list[UploadFile]) -> Path:
         """Lay uploaded files out the way HashLips does, by name.
@@ -3800,16 +3819,15 @@ def create_app(state: AppState) -> FastAPI:
                 again = collectionlib.read_build(Path(folder.strip()))
                 first = (min(again.items, key=lambda i: i.edition)
                          if again.items else None)
-                return render(request, "collection_wizard.html",
-                              **_collection_page_data(
-                                  build=again, sender=fromaddress.strip(),
-                                  cost=collectionlib.estimate_build(again),
-                                  says=(inscriptionlib.collection_details(first.json)
-                                        if first is not None else {}),
-                                  preview=again.items[:12], error=str(exc),
-                                  pad_on=launchpad == "yes", pad_amount=pad_amount,
-                                  pad_kind=pad_kind, pad_token=pad_token,
-                                  pad_html=pad_html))
+                return _again("/inscriptions/collection",
+                              build=again, sender=fromaddress.strip(),
+                              cost=collectionlib.estimate_build(again),
+                              says=(inscriptionlib.collection_details(first.json)
+                                    if first is not None else {}),
+                              preview=again.items[:12], error=str(exc),
+                              pad_on=launchpad == "yes", pad_amount=pad_amount,
+                              pad_kind=pad_kind, pad_token=pad_token,
+                              pad_html=pad_html)
             except Exception:
                 state.flash(str(exc), "err")
                 return RedirectResponse("/inscriptions/collection", status_code=303)
@@ -5253,7 +5271,7 @@ def create_app(state: AppState) -> FastAPI:
 
     def _token_action(request: Request, *, action: str, confirmed: str,
                       build, fields: dict[str, str], back: str,
-                      template: str = "tokens.html", **extra):
+                      where: str = "", **extra):
         """Prepare a token transaction, show it, and broadcast on a second yes.
 
         `build(rpc)` returns (sender, payload, reference). Every action funnels
@@ -5302,14 +5320,20 @@ def create_app(state: AppState) -> FastAPI:
             error = f"{exc.__class__.__name__}: {exc}"
         if txid:
             return RedirectResponse(back, status_code=303)
+        # Back to the page this came from, carrying the confirmation with
+        # it. The page's own data is the GET's job; only what this POST
+        # decided is held.
         context = dict(error=error, prepared=prepared,
                        confirm_action=request.url.path, confirm_fields=fields,
                        confirm_what=action, back=back)
-        if template in ("tokens.html", "wallet_tokens.html"):
-            context.update(_token_page_data())
-            context["tab"] = "tokens"
         context.update(extra)
-        return render(request, template, **context)
+        # `where` is the page that SHOWS a confirmation, which is not
+        # always where a success goes: pricing a piece is confirmed on that
+        # piece's own page and lands on the market afterwards.
+        landing = (where or back or "").strip()
+        if not (landing.startswith("/") and not landing.startswith("//")):
+            landing = "/tokens"
+        return _again(landing, **context)
 
     def _amount_for(index, property_id: int, text: str) -> tuple[dict[str, Any], int]:
         prop = index.property(property_id)
@@ -5529,7 +5553,7 @@ def create_app(state: AppState) -> FastAPI:
         # confirmed on the wallet's Tokens tab (D-030).
         return _token_action(request, action="send", confirmed=confirmed, build=build,
                              fields=fields, back="/wallet/tokens",
-                             template="wallet_tokens.html", form_send=fields)
+                             form_send=fields)
 
     def _token_send_many(request: Request, parts: list[tuple[str, int]],
                          property_id: str, recipient: str, fields: dict,
@@ -5580,14 +5604,12 @@ def create_app(state: AppState) -> FastAPI:
             error, prepared = str(exc), []
         except Exception as exc:
             error, prepared = f"{exc.__class__.__name__}: {exc}", []
-        context = dict(error=error, prepared=None, parts=prepared,
-                       part_amounts=[units for _, units in parts],
-                       confirm_action=request.url.path, confirm_fields=fields,
-                       confirm_what="send", back="/wallet/tokens",
-                       form_send=fields, tab="tokens")
-        context.update(_token_page_data())
-        context["tab"] = "tokens"
-        return render(request, "wallet_tokens.html", **context)
+        return _again("/wallet/tokens",
+                      error=error, prepared=None, parts=prepared,
+                      part_amounts=[units for _, units in parts],
+                      confirm_action=request.url.path, confirm_fields=fields,
+                      confirm_what="send", back="/wallet/tokens",
+                      form_send=fields)
 
     @app.get("/tokens/{property_id}", response_class=HTMLResponse)
     def token(request: Request, property_id: int):
@@ -5717,8 +5739,7 @@ def create_app(state: AppState) -> FastAPI:
             raise
         except Exception as exc:
             state.flash(str(exc), "err")
-        return render(request, "token.html", prepared=None,
-                      **_token_detail(property_id), **extra)
+        return _again(f"/tokens/{property_id}", prepared=None, **extra)
 
     def _issuer_action(request: Request, property_id: int, action: str, confirmed: str,
                        fields: dict[str, str], build):
@@ -5729,8 +5750,7 @@ def create_app(state: AppState) -> FastAPI:
                 raise tokenlib.TokenError(f"there is no token {property_id}.")
             return build(rpc, prop, index)
         return _token_action(request, action=action, confirmed=confirmed, build=wrapped,
-                             fields=fields, back=f"/tokens/{property_id}",
-                             template="token.html", **_token_detail(property_id))
+                             fields=fields, back=f"/tokens/{property_id}")
 
     @app.post("/tokens/{property_id}/grant", response_class=HTMLResponse)
     def token_grant(request: Request, property_id: int, amount: str = Form(""),
@@ -8144,9 +8164,9 @@ def create_app(state: AppState) -> FastAPI:
 
         return _token_action(request, action="price", confirmed=confirmed,
                              build=build, fields=fields,
-                             back="/exchange?tab=market", template="sell.html",
-                             **_sell_page_data(row, chain, index, amount=amount,
-                                               kind=kind, property_id=property_id))
+                             back="/exchange?tab=market",
+                             where=f"/exchange/sell/{row['txid']}",
+                             amount=amount, kind=kind, property_id=property_id)
 
     @app.post("/exchange/unlist", response_class=HTMLResponse)
     def unlist(request: Request, inscription: str = Form(""),
@@ -8170,8 +8190,8 @@ def create_app(state: AppState) -> FastAPI:
 
         return _token_action(request, action="unlist", confirmed=confirmed,
                              build=build, fields=fields,
-                             back="/exchange?tab=market", template="sell.html",
-                             **_sell_page_data(row, chain, index))
+                             back="/exchange?tab=market",
+                             where=f"/exchange/sell/{row['txid']}")
 
     @app.get("/exchange", response_class=HTMLResponse)
     def exchange(request: Request, tab: str = "offers"):
@@ -8616,6 +8636,35 @@ a{{color:#d9a520}}
 <p>{detail}</p>
 <p><a href="/">Back to DogecoinArcade</a></p>
 </main></body></html>"""
+
+
+#: What a POST decided, waiting for the GET that will show it. Keyed by a
+#: token in the redirect, kept for ten minutes, and never popped on read --
+#: a confirmation page has to survive being reloaded, which is the whole
+#: point of putting it behind a GET.
+_HELD: dict[str, tuple[float, dict[str, Any]]] = {}
+HELD_SECONDS = 600
+
+
+def _hold(**context: Any) -> str:
+    now = time.time()
+    for token, (at, _) in list(_HELD.items()):
+        if now - at > HELD_SECONDS:
+            _HELD.pop(token, None)
+    token = secrets.token_urlsafe(9)
+    _HELD[token] = (now, context)
+    return token
+
+
+def _picked_up(token: str) -> dict[str, Any]:
+    at_and_what = _HELD.get(token or "")
+    if at_and_what is None:
+        return {}
+    at, what = at_and_what
+    if time.time() - at > HELD_SECONDS:
+        _HELD.pop(token, None)
+        return {}
+    return what
 
 
 def _when(ts: int | None = None) -> str:

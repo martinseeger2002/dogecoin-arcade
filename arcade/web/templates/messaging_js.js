@@ -256,6 +256,41 @@ export async function inbox() {
   return all.sort((a, b) => (b.when || 0) - (a.when || 0));
 }
 
+/* Anything of ours that is in the pool and not in a block.
+ *
+ * The node hands candidates out in `rowid` order and PROMOTES a mempool
+ * row in place when its block arrives -- same row, same rowid, height
+ * filled in (`store.add_candidate`). A browser that only ever asks for
+ * rows after its cursor therefore sees every message exactly once, at
+ * whatever height it had the moment it was handed over, and a message
+ * read out of the pool would say "not in a block yet" for ever.
+ *
+ * So the scan rewinds to the oldest thing of ours that is still pending
+ * and reads that window again. The node is told a cursor and nothing
+ * else: the window it re-reads contains everybody's traffic, so asking
+ * for it says nothing about which rows in it are ours. Asking about our
+ * own txids by name would be the leak D-155 exists to avoid.
+ *
+ * Bounded by time rather than by rows: something that never confirmed is
+ * stopped waiting for after six hours, and says so in the page.
+ */
+const PENDING_HOURS = 6;
+
+async function rewindTo(after) {
+  const now = Math.floor(Date.now() / 1000);
+  let oldest = after;
+  for (const letter of await inbox()) {
+    if (letter.height) continue;                   // already in a block
+    if (letter.when && now - letter.when > PENDING_HOURS * 3600) continue;
+    // `cursor` once the node has handed this row over; before that -- an
+    // outgoing message this browser has only just broadcast -- the cursor
+    // it was sent at, which is the last row that can NOT be it.
+    const seen = letter.cursor || letter.from_cursor || 0;
+    if (seen && seen - 1 < oldest) oldest = seen - 1;
+  }
+  return Math.max(0, oldest);
+}
+
 /** Fetch what the node has seen since last time, and open what is ours. */
 export async function collect(me, {onProgress} = {}) {
   let after = await cursorFor(hex(me.publicKey));
@@ -270,28 +305,52 @@ export async function collect(me, {onProgress} = {}) {
       after = said.mail_from || 0;
     } catch (e) { after = 0; }
   }
+  // Everything this browser has sent and not yet seen in a block, by the
+  // txid the node gave back. A candidate matching one of these is our own
+  // message coming back off the chain, which is the only confirmation
+  // available: it is sealed to THEM, so it will never open here.
+  const awaiting = new Map();
+  for (const letter of await inbox()) {
+    if (letter.mine && !letter.height) awaiting.set(letter.txid, letter);
+  }
+
+  const highest = after;
+  after = await rewindTo(after);
   let opened = 0, looked = 0;
   for (;;) {
     const answer = await fetch(`/account/messages?after=${after}&limit=200`);
     if (!answer.ok) throw new Error("the node would not answer");
     const said = await answer.json();
     for (const candidate of said.candidates) {
+      const ours = awaiting.get(candidate.txid);
+      if (ours) {
+        await keep({...ours, cursor: candidate.cursor,
+                    height: candidate.height,
+                    when: candidate.height ? candidate.when : ours.when});
+        continue;                     // sealed to them; nothing to open
+      }
       looked += 1;
       const out = openMessage(unhex(candidate.payload), me);
       if (out !== null) {
         await keep({
           txid: candidate.txid,
+          cursor: candidate.cursor,
           when: candidate.when,
           height: candidate.height,
           from_address: candidate.from_address,
           sender: hex(out.sender),
+          peer: hex(out.sender),
+          mine: false,
           body: hex(out.plain),
         });
         opened += 1;
       }
     }
     after = said.cursor;
-    await rememberCursor(hex(me.publicKey), after);
+    // The cursor only ever goes forward. Rewinding to re-read the pool is
+    // a read, not a rewind of what has been seen -- storing the lower
+    // number would make every later scan start from there.
+    await rememberCursor(hex(me.publicKey), Math.max(highest, after));
     if (onProgress) onProgress({looked, opened, more: said.more});
     if (!said.more) break;
   }
@@ -376,6 +435,23 @@ export async function write(wallet, me, to, text) {
     });
     const said = await done.json();
     if (!done.ok) throw new Error(said.detail || "the node would not take it");
+
+    // Our own copy, kept here and nowhere else. What went on the chain is
+    // sealed to THEM: it cannot be read back, not by this browser either,
+    // so a conversation only has two sides if the sending side writes its
+    // half down. The wallet does exactly this on its own machine (D-071).
+    await keep({
+      txid: said.txid,
+      from_cursor: await cursorFor(hex(me.publicKey)),
+      when: Math.floor(Date.now() / 1000),
+      height: 0,
+      to_address: them.address,
+      sender: hex(me.publicKey),
+      peer: them.key,
+      tag: them.tag || String(to).replace(/^@/, ""),
+      mine: true,
+      body: hex(new TextEncoder().encode(text)),
+    });
     return {...said, to: them.address, tag: them.tag, fee: offer.fee};
   });
 }
@@ -445,4 +521,107 @@ export async function findNames(text) {
   const answer = await fetch(`/account/find?q=${encodeURIComponent(text)}`);
   if (!answer.ok) return [];
   return (await answer.json()).matches;
+}
+
+/* --- conversations -------------------------------------------------------
+ *
+ * The chain carries messages; a conversation is something the reader
+ * assembles. The node cannot do it -- it would have to know which
+ * messages are yours and who each one is with, which is the graph D-155
+ * refuses to hand over -- so it happens here, over what this browser has
+ * opened and what it has sent.
+ *
+ * The peer of a message is the OTHER party's messaging key: the sender
+ * for one that arrived, the recipient for one that went out. Not the
+ * address, which changes nothing about who somebody is but does change
+ * when they move coins, and not the @tag, which its holder can let go of
+ * (D-137). A key is the one identifier in this that cannot be handed on.
+ */
+
+const peerOf = (letter) => letter.peer || letter.sender || "";
+
+/** When this browser last looked at a conversation. */
+async function readMark(peer) {
+  try {
+    const tx = await shelf("readonly");
+    return (await awaited(tx.objectStore("marks").get(`read:${peer}`))) || 0;
+  } catch (e) { return 0; }
+}
+
+export async function markRead(peer) {
+  const tx = await shelf("readwrite");
+  await awaited(tx.objectStore("marks").put(
+    Math.floor(Date.now() / 1000), `read:${peer}`));
+}
+
+/** Every conversation, most recent first, the way the list draws them. */
+export async function threads() {
+  const letters = await inbox();
+  const known = new Map((await book()).filter((e) => e.key)
+                        .map((e) => [e.key, e]));
+  const conversations = new Map();
+  for (const letter of letters) {
+    const peer = peerOf(letter);
+    if (!peer) continue;
+    let thread = conversations.get(peer);
+    if (!thread) {
+      const entry = known.get(peer);
+      thread = {peer, tag: entry ? entry.tag : (letter.tag || ""),
+                address: entry ? entry.address
+                               : (letter.from_address || letter.to_address || ""),
+                inBook: !!entry, last: 0, unread: 0, count: 0,
+                preview: "", outgoing: false};
+      conversations.set(peer, thread);
+    }
+    thread.count += 1;
+    if (!thread.tag && letter.tag) thread.tag = letter.tag;
+    if ((letter.when || 0) >= thread.last) {
+      thread.last = letter.when || 0;
+      thread.preview = text(letter);
+      thread.outgoing = !!letter.mine;
+    }
+  }
+  const out = [...conversations.values()];
+  for (const thread of out) {
+    const seen = await readMark(thread.peer);
+    thread.unread = letters.filter(
+      (l) => peerOf(l) === thread.peer && !l.mine && (l.when || 0) > seen).length;
+  }
+  return out.sort((a, b) => b.last - a.last);
+}
+
+/** One conversation, oldest first, which is the order it was said in. */
+export async function conversation(peer) {
+  const letters = await inbox();
+  return letters.filter((l) => peerOf(l) === peer)
+                .sort((a, b) => (a.when || 0) - (b.when || 0));
+}
+
+/** A message's words. Always decoded here, never handed round as markup. */
+export function text(letter) {
+  try {
+    return new TextDecoder().decode(unhex(letter.body || ""));
+  } catch (e) { return ""; }
+}
+
+/** The book entry for a key, so a conversation with nothing in it yet
+ *  still says who it is with. */
+export async function byKey(peer) {
+  for (const entry of await book()) {
+    if (entry.key && entry.key === peer) return entry;
+  }
+  return null;
+}
+
+/** Who a name belongs to, for starting a conversation with somebody new. */
+export async function reach(name) {
+  const wanted = String(name || "").trim().replace(/^@/, "");
+  for (const entry of await book()) {
+    if (entry.tag === wanted && entry.key) return entry;
+  }
+  const them = await lookUp(wanted);
+  if (!them.key) throw new Error(
+    "they have not published a key, so there is nowhere to send it");
+  return {tag: them.tag || wanted, address: them.address, key: them.key,
+          fingerprint: them.fingerprint || ""};
 }

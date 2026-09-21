@@ -2977,3 +2977,42 @@ def test_the_switch_returns_to_the_page_it_was_pressed_on(client):
                             data={"csrf_token": state.csrf_token, "chain": "test",
                                   "back": hostile}, follow_redirects=False)
         assert response.headers["location"] == "/tokens", hostile
+
+
+#: The two that answer a POST with a page on purpose. `/backup/{which}/print`
+#: hands over private keys and must not be re-servable from a token held in
+#: memory; `/rpc` answers an unbuilt section, which is not an action at all.
+POSTS_THAT_RENDER = ("/backup/{which}/print", "/rpc")
+
+
+def test_no_post_answers_with_a_page():
+    """Post, redirect, get -- everywhere it is a send.
+
+    A POST that renders is a correct answer and a bad page: the browser
+    remembers the URL was reached by POST, so reloading it or going back to
+    it asks "Firefox must send information that will repeat any action
+    (such as a search or order confirmation) that was performed earlier" --
+    and the action offered for repeat is a send. The operator met that dialog
+    often enough to report it.
+
+    Checked in the source rather than by driving every form, because the
+    ones that matter are the confirmation and the error paths and those are
+    exactly the ones a happy-path test never reaches.
+    """
+    import re
+    source = pathlib.Path("arcade/web/app.py").read_text().splitlines()
+    offenders, i = [], 0
+    while i < len(source):
+        found = re.match(r'\s*@app\.post\("([^"]+)"', source[i])
+        if not found:
+            i += 1
+            continue
+        path, j, body = found.group(1), i + 1, []
+        while j < len(source) and not re.match(r'\s*@app\.(get|post)\(', source[j]):
+            body.append(source[j])
+            j += 1
+        if "return render(" in "\n".join(body) and path not in POSTS_THAT_RENDER:
+            offenders.append(path)
+        i = j
+    assert offenders == [], (
+        f"these answer a POST with a page instead of redirecting: {offenders}")

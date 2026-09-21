@@ -877,6 +877,13 @@ forwarding. The mempool already gossips to every node in seconds.
   at, and write to it from there. Keeping it on the node would hand over a
   list of everybody an account knows, which is the social graph the
   messages themselves are built to hide.
+* **Messages are the same messenger**, with conversations down the left and
+  bubbles each way. The grouping happens in the browser, because the node
+  is not allowed to know who is talking to whom, and the browser keeps its
+  own copy of what it sent -- what went on the chain is sealed to the
+  reader and cannot be read back by the sender either. A message shows up
+  **out of the mempool**, before its block, and says so; when the block
+  lands the bubble says which one.
 * **What an account does not do yet.** It gates nothing else: the wallet's
   own pages are still the wallet's own, and inscribing, tokens and the
   exchange are the node's. The page says this rather than implying
