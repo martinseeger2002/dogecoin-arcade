@@ -66,6 +66,42 @@ def notice(revision: str) -> str:
     return NOTICE.format(revision=str(revision)[:40])
 
 
+def build_notice(revision: str) -> bytes:
+    """One node saying a version exists, as its own message type.
+
+    Not a post. It used to be one, on a board channel, which meant the
+    thing nobody reads was drawn beside the things people do -- and once the
+    board became a feed there was nowhere honest to put it (D-147). The
+    carrier changed; what it says did not, and it still carries no
+    authority: the signature on the manifest is what decides what installs
+    (D-065).
+    """
+    from .messaging.envelope import Header, TYPE_RELEASE
+
+    said = str(revision or "").strip()[:40]
+    if not said:
+        raise ValueError("a release notice names a revision")
+    return Header(type=TYPE_RELEASE).encode() + said.encode()
+
+
+def notice_in(payload: bytes) -> str:
+    """The revision a notice payload names, or "" if it is not one."""
+    from .messaging.envelope import (EnvelopeError, Header, MAGIC, VERSION,
+                                     TYPE_RELEASE)
+
+    if len(payload) < 7 or payload[:4] != MAGIC or payload[4] != VERSION:
+        return ""
+    if payload[5] != TYPE_RELEASE:
+        return ""
+    try:
+        head = Header.decode(payload)
+    except EnvelopeError:
+        return ""
+    # Class B pads with NULs and Omni does not strip them.
+    said = payload[head.length:].rstrip(b"\x00").decode("utf-8", "replace").strip()
+    return said[:40]
+
+
 def revision_in(text: str) -> str:
     """The revision a notice names, or "" if this is not a notice."""
     words = str(text or "").strip().split()

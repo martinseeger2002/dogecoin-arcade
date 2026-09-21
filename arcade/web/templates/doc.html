@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · Docs · DogecoinArcade{% endblock %}
+{% block body %}
+<p class="back-link"><a href="/docs">&larr; all docs</a></p>
+<h1>{{ title }}</h1>
+<p class="sub"><code>docs/{{ name }}</code></p>
+
+{% if sections|length > 3 %}
+<div class="panel" style="margin-bottom:20px">
+  <p style="margin:0">
+    Jump to:
+    {% for section in sections if section.title %}
+      <a href="#s{{ loop.index }}">{{ section.title }}</a>{% if not loop.last %} &middot;
+      {% endif %}
+    {% endfor %}
+  </p>
+</div>
+{% endif %}
+
+{% for section in sections %}
+  {% if section.title %}
+  <h2 id="s{{ loop.index }}" style="text-transform:none;letter-spacing:0;font-size:1.05rem">
+    {{ section.title }}</h2>
+  {% endif %}
+  <div class="panel guide-doc">{{ section.html|safe }}</div>
+{% endfor %}
+
+<p class="muted" style="margin-top:18px"><a href="/docs">&larr; all docs</a></p>
+
+<style>
+  .guide-doc p:first-child{margin-top:0}
+  .guide-doc p:last-child{margin-bottom:0}
+  .guide-doc ul{margin:0 0 10px;padding-left:20px;line-height:1.7}
+  .guide-doc li{margin-bottom:4px}
+  .guide-doc h3{font-size:.95rem;margin:14px 0 6px}
+  .guide-doc code{background:var(--code);padding:1px 4px;border-radius:4px}
+  .guide-doc table{width:100%;border-collapse:collapse;margin:8px 0;font-size:.9rem}
+  .guide-doc th{text-align:left;color:var(--muted);font-weight:600;
+    text-transform:uppercase;font-size:.74rem;letter-spacing:.06em}
+  .guide-doc th,.guide-doc td{border-bottom:1px solid var(--line);padding:5px 8px 5px 0;
+    vertical-align:top}
+</style>
+{% endblock %}

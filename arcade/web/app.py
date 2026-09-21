@@ -54,8 +54,9 @@ from .. import mintpad as mintpadlib
 from .. import tokenpad as tokenpadlib
 from .. import swap as swaplib
 from .. import tags as taglib
+from .. import txbuild
+from ..messaging import sender as sendermod
 from .. import state as statelib
-from .. import remote as remotelib
 from ..messaging import contact, content, group
 from ..script import b58check_decode, b58check_encode
 from ..messaging.derive import DerivationError, derive_identity
@@ -65,6 +66,12 @@ from ..messaging.envelope import (
 )
 from .. import pageapi
 from .. import release as releaselib
+from .. import seed as seedlib
+from .. import accounts as accountslib
+from .. import faucet as faucetlib
+from .. import funding as fundinglib
+from .. import utxos as utxoslib
+from .. import update as updatelib
 from ..messaging.keys import fingerprint_of
 from ..messaging.miner import Miner, MiningError
 from ..messaging.scanner import Scanner, find_own_announcements
@@ -75,6 +82,9 @@ from ..messaging.sender import (
     funded_address, plan_message, record_sent, recent_block_seconds,
 )
 from . import content as contentlib
+from . import account as accountlib
+from . import door as doorlib
+from .. import bootstrap as bootstraplib
 from . import watcher as watcherlib
 from . import rpc as botrpc
 from .state import AppState
@@ -220,8 +230,17 @@ NAV = [
     ("/nfts",         "NFTs",         "mainnet",   True),
     ("/exchange",     "Exchange",     "mainnet",   True),
     ("/approvals",    "Approvals",    None,        True),
-    ("/remote",       "Remote",       None,        True),
-    ("/guide",        "Guide",        None,        True),
+    ("/docs",         "Docs",         None,        True),
+]
+
+#: What an account sees instead of the operator's tabs. Their own pages
+#: drive their own keys; the operator's drive the node's wallet, and almost
+#: nothing on those would be true for somebody else.
+ACCOUNT_NAV = [
+    ("/me",           "Your arcade",  None,        True),
+    ("/feed",         "Feed",         "testnet",   True),
+    ("/clone",        "Run your own", None,        True),
+    ("/docs",         "Docs",         None,        True),
 ]
 
 
@@ -236,61 +255,130 @@ h1{font-size:1.2rem}p{color:#a0a0ab}</style>
 """
 
 
+#: The session cookie's name. At module level because the door reads it
+#: before any route exists, and the routes read it after.
+SESSION = "arcade_session"
+
+#: Hostnames a browser treats as a secure context over plain http. Everywhere
+#: else -- a LAN address, a name on the local network -- `crypto.subtle` is
+#: simply undefined, so a page that needs it must say why rather than fail
+#: half way through somebody's signup with "undefined is not an object".
+LOOPBACK = ("localhost", "127.0.0.1", "::1", "[::1]")
+
+WHY_NOT_SECURE = (
+    "This page was not served over https, so the browser will not let it use "
+    "its own cryptography \u2014 and a wallet that cannot generate a key "
+    "cannot sign anything. Open the wallet at localhost on the machine it "
+    "runs on, or through the https address on its Remote page. This is a "
+    "browser rule, not ours, and it is the right one: a key made over plain "
+    "http is a key anybody on the network watched being made.")
+
+
+def secure_context(request: Request) -> bool:
+    """Whether `crypto.subtle` will exist on the page we are about to send."""
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    if proto == "https":
+        return True
+    name = (request.headers.get("host", "").rsplit(":", 1)[0]).strip().lower()
+    return name in LOOPBACK or name.startswith("127.")
+
+
 def locked(title: str, detail: str, status: int = 403) -> HTMLResponse:
     """What a stranger sees. Deliberately plain: it names nothing about this
     wallet, because whoever is reading it has not shown they may see it."""
     return HTMLResponse(LOCKED_PAGE % (title, detail), status_code=status)
 
 
-#: What the pages' hostname serves: what a page in the sandbox may reach.
-PAGES_DOOR = ("/content/", "/r/")
+def the_door(state: AppState):
+    """The one guard, registered as middleware so it covers every route.
 
+    A door guarded route-by-route is a door that is open the first time
+    somebody forgets, and the route they forget is the one that spends.
 
-def remote_guard(state: AppState):
-    """Refuse anything that arrived from outside without the key.
+    Two shapes, chosen by how the instance is run (arcade/web/door.py):
 
-    Registered as middleware so it covers every route there is and every route
-    anyone adds later. A door guarded route-by-route is a door that is open the
-    first time somebody forgets.
+    **A wallet** -- the default, and what this has always been. One
+    person's machine, reachable from that machine. Everything is served,
+    because everything belongs to whoever is sitting there.
+
+    **A public instance** -- what `dogecoinarcade.com` runs. The address is
+    public and there is no token to hold, so only the public surface is
+    served and everything else is refused: an ALLOWLIST, including every
+    route added after it was written. A session says who somebody is; it
+    does not make the operator's wallet theirs, and nothing here consults
+    one.
+
+    The inscribed pages' hostname is separate in both shapes. A page in the
+    sandbox has an opaque origin and sends no cookie, so that hostname is
+    its whole key: good for the content and the page API and nothing else.
     """
     async def guard(request: Request, call_next):
-        tunnel = state.remote_tunnel()
-        host = request.headers.get("host", "")
-        if tunnel is not None and remotelib.same_host(host, tunnel.pages_url):
-            # The inscribed pages' door. A page in the sandbox has an opaque
-            # origin and sends no cookie, so this hostname is its whole key:
-            # given out only as the frame's address inside the viewer, and
-            # good for nothing but the content and the page API.
-            if request.url.path.startswith(PAGES_DOOR):
+        host = (request.headers.get("host", "").rsplit(":", 1)[0]).strip().lower()
+        path = request.url.path
+
+        pages_host = state.pages_hostname
+        if pages_host and host == pages_host:
+            if doorlib.pages_path(path):
                 return await call_next(request)
             return locked("Not here", "Nothing is served at this address but "
                           "inscribed pages.", status=404)
-        if not remotelib.is_remote(request.headers, host,
-                                   tunnel.url if tunnel else None):
+
+        outside = doorlib.from_outside(
+            request.headers, request.headers.get("host", ""),
+            state.public_hosts)
+
+        # Claiming a node is the one thing that is about WHERE you are
+        # rather than what the instance is: a public node on somebody's
+        # server still has an operator, and they claim it from a loopback
+        # connection to it. So this is decided by origin alone, even under
+        # `--public`.
+        if path == "/auth/operator" and not outside:
             return await call_next(request)
 
-        if tunnel is None:
-            return locked(
-                "Not open",
-                "This wallet is not accepting remote connections. It reached "
-                "this answer because the request arrived through a proxy.")
-        path = request.url.path
+        # Per request, not per process. One machine is both things at once:
+        # The operator's wallet on their desk, and the arcade on a public
+        # name. `--public` makes the whole instance public (a node that is
+        # only that); otherwise a request is public if it arrived from
+        # outside -- by one of the published names, or carrying a header
+        # only an edge adds.
+        if not (state.public or outside):
+            return await call_next(request)
+
+        if doorlib.public_path(path, request.method):
+            return await call_next(request)
+
+        # The one exception, and it is one ACCOUNT rather than one secret.
+        # Whoever runs a node reaches their own wallet from outside it by
+        # signing in as the key that node names as its operator -- the same
+        # twenty-four words, the same challenge, the same signature. A
+        # stranger holding a perfectly good session is still refused here,
+        # because the question is not "are you signed in" but "are you the
+        # person this node belongs to".
+        #
+        # This is the door's one route-independent rule, and it is written
+        # here rather than in the allowlist so that it is impossible to read
+        # `door.py` and think a session opens anything.
+        operator = state.operator
+        if operator:
+            account = state.account_for(request.cookies.get(SESSION, ""))
+            if account is not None and account.pubkey.lower() == operator:
+                return await call_next(request)
         if path.startswith("/rpc"):
-            # The bot RPC has its own key, in a file on that machine, and it can
-            # spend. It is for programs running beside the wallet, never for
-            # anything that came in over the internet.
+            # The bot RPC has its own key, in a file beside the node, and it
+            # can spend. It is for programs running on the same machine,
+            # never for anything that arrived from the internet.
             return JSONResponse({"result": None, "id": None, "error": {
                 "code": -32600,
-                "message": "the bot RPC is not available through the tunnel"}},
+                "message": "the bot RPC is not served publicly"}},
                 status_code=403)
-        if path == "/remote/unlock":
-            return await call_next(request)
-        if not secrets.compare_digest(
-                request.cookies.get(remotelib.COOKIE_NAME, ""), tunnel.token):
-            return locked("Locked",
-                          "Scan the QR code on the wallet's Remote page to open "
-                          "this. The link on its own is not enough.")
-        return await call_next(request)
+        return locked(
+            "Not here",
+            "This is a public arcade: the feed, the collections and the "
+            "chain are open to anyone, and the wallet behind it belongs to "
+            "whoever runs the node. Nothing of yours is here \u2014 your "
+            "coins and your name are on the chain, and a node you run "
+            "yourself serves them all.",
+            status=404)
 
     return guard
 
@@ -328,8 +416,29 @@ def create_app(state: AppState) -> FastAPI:
 
     app = FastAPI(title="DogecoinArcade", docs_url=None, redoc_url=None,
                   lifespan=_lifespan)
-    app.middleware("http")(remote_guard(state))
+    app.middleware("http")(the_door(state))
 
+
+    def _from_outside(request: Request) -> bool:
+        return doorlib.from_outside(request.headers,
+                                    request.headers.get("host", ""),
+                                    state.public_hosts)
+
+    def _public_request(request: Request) -> bool:
+        """Whether THIS request is being served publicly (arcade/web/door.py).
+
+        The operator, signed in, is never served publicly -- otherwise they
+        would be let through the door and then shown a splash and a
+        navigation with their own wallet missing from it.
+        """
+        if not (state.public or _from_outside(request)):
+            return False
+        operator = state.operator
+        if operator:
+            account = signed_in(request)
+            if account is not None and account.pubkey.lower() == operator:
+                return False
+        return True
 
     def render(request: Request, template: str, **context: Any) -> HTMLResponse:
         """Render a page, never from a cache.
@@ -343,7 +452,20 @@ def create_app(state: AppState) -> FastAPI:
         notice, notice_kind = state.take_notice()
         base = {
             "request": request,
-            "nav": NAV,
+            # The navigation is what the door allows, not a fixed list. A
+            # public instance showing Wallet, Messages and Backup is a site
+            # whose own menu 404s -- and the menu is the first thing a
+            # visitor uses. Filtered here rather than in each template, so a
+            # page added later cannot forget.
+            # An account gets its own tabs, not the operator's with the
+            # unreachable ones removed: a menu of four things that work
+            # beats a menu of eleven with seven missing.
+            "nav": (ACCOUNT_NAV if (_public_request(request)
+                                    and signed_in(request) is not None)
+                    else [entry for entry in NAV
+                          if not _public_request(request)
+                          or doorlib.public_path(entry[0])]),
+            "public": _public_request(request),
             "path": request.url.path,
             "state": state,
             "csrf": state.csrf_token,
@@ -486,6 +608,17 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request):
+        # On a public instance the front page is the SPLASH, not the
+        # operator's wallet. `/` is in the door's allowlist because a public
+        # arcade has to have a front page at all -- so the route itself has
+        # to be the one that is safe to serve, or the allowlist would be
+        # handing out the Overview's balances, unread counts and identity.
+        if _public_request(request):
+            # Somebody already signed in goes to their own arcade. Without
+            # this, signing up ends on the page that asks you to sign up.
+            if signed_in(request) is not None:
+                return RedirectResponse("/me", status_code=303)
+            return join_page(request)
         stats = {}
         if state.store_path.exists():
             with state.store() as store:
@@ -522,7 +655,9 @@ def create_app(state: AppState) -> FastAPI:
                         and what.startswith("claim @")):
                     claiming = what[len("claim @"):]
                     break
+        register = state.accounts()
         return render(request, "overview.html", contact_code=code, announced=announced,
+                      seats_free=register.free(), seats_total=register.seats,
                       my_tag=my_tag, claiming=claiming,
                       my_address=state.derived_address,
                       auto_update=bool(state.setting("auto_update", True)),
@@ -1797,61 +1932,6 @@ def create_app(state: AppState) -> FastAPI:
         return {"readable": describe_duration(
             estimate_readable_seconds(plan.transactions, typical))}
 
-    @app.post("/groups/resume")
-    def resume_post(request: Request, which: str = Form("messaging"),
-                    channel: str = Form(""), csrf_token: str = Form("")):
-        """Finish a public post that stopped part way.
-
-        The public path had no record at all, so there was nothing to finish:
-        an interrupted post spent the outputs it had already broadcast and left
-        no trace. The payloads are written down before the first broadcast, so
-        the rest go out unchanged under the same msg_id -- rebuilding them would
-        produce a different id and strand what is already on the chain, which is
-        the same reason the private path stores them rather than the text.
-        """
-        chain = state.ledger if which == "ledger" else state.messaging
-        try:
-            check_csrf(csrf_token)
-            record = None
-            with state.store() as store:
-                for candidate in store.pending_posts(chain.network):
-                    if not channel or candidate["channel"] == channel:
-                        record = candidate
-                        break
-            if record is None:
-                raise ValueError("there is nothing left to finish.")
-            if not state.begin_send():
-                raise ValueError("a message is already being sent.")
-
-            remaining = record["chunks"][record["sent_count"]:]
-            plan = type("ResumePost", (), {
-                "transactions": len(remaining),
-                "payloads": remaining,
-                "msg_id": record["msg_id"],
-            })()
-            local = dict(network=record["network"], channel=record["channel"],
-                         address=record["sender_address"],
-                         nickname=record["nickname"],
-                         text=record["body"].decode("utf-8", "replace"),
-                         file_name="", file_type="", file_data=None)
-            state.start_progress(f"#{record['channel']}", len(remaining),
-                                 "a few minutes")
-            with chain.rpc() as rpc:
-                sender = MessageSender(rpc, chain.params, public_only=True)
-                try:
-                    _post_in_background(sender, record["sender_address"], plan,
-                                        local)
-                except Exception:
-                    state.end_send()
-                    state.clear_progress()
-                    raise
-        except HTTPException:
-            raise          # a rejected form is a 400, not an error page
-        except Exception as exc:
-            state.flash(str(exc), "err")
-        return RedirectResponse(
-            f"/groups?which={which}&channel={channel or 'main'}", status_code=303)
-
     @app.get("/messages/sent-media/{sent_id}")
     def sent_media(request: Request, sent_id: int, download: int = 0):
         """A file we sent. Same rules as one we received."""
@@ -2227,7 +2307,7 @@ def create_app(state: AppState) -> FastAPI:
                 said = (said + f"\n/content/{piece}").strip()
             if not said:
                 raise ValueError("say something, or attach something")
-            state.post_to_board("", said)
+            state.post(said)
         except HTTPException:
             raise
         except Exception as exc:
@@ -2458,234 +2538,6 @@ def create_app(state: AppState) -> FastAPI:
         except Exception as exc:
             state.flash(str(exc), "err")
         return RedirectResponse(back or "/feed", status_code=303)
-
-    @app.get("/groups", response_class=HTMLResponse)
-    def groups(request: Request, which: str = "messaging", channel: str = "",
-               before: int | None = None):
-        chain = state.ledger if which == "ledger" else state.messaging
-        channel = (channel or group.DEFAULT_CHANNEL).strip() or group.DEFAULT_CHANNEL
-        posts, channels, balance = [], [], None
-        older = False
-        # An interrupted post leaves a record but no progress, so the bubble
-        # would sit at 0% with nothing driving it. Offer it as something that
-        # can be finished instead -- exactly as the messenger does.
-        unfinished = None
-        if not state.live_progress() and state.store_path.exists():
-            with state.store() as store:
-                for record in store.pending_posts(chain.network):
-                    if record["channel"] == channel:
-                        unfinished = {"sent": record["sent_count"],
-                                      "total": record["total"],
-                                      "channel": record["channel"]}
-                        break
-        if state.store_path.exists():
-            with state.store() as store:
-                posts = _with_media(store, store.group_posts(
-                    chain.network, channel, limit=PAGE_POSTS, before_id=before))
-                for post in posts:
-                    post["cards"] = _cards_in(post.get("text") or "")
-                channels = store.group_channels(chain.network)
-                # Looking at the board is what reading it means: there is no
-                # per-post read mark because a post is not addressed to
-                # anybody. Marked before the page is rendered, so the count
-                # beside Public is gone by the time it is drawn -- and the
-                # channel being looked at is marked on its own, so opening
-                # one does not silence the others (D-108).
-                store.mark_board_read(chain.network)
-                if channel:
-                    store.mark_channel_read(chain.network, channel)
-                    for row in channels:
-                        if row["channel"] == channel:
-                            channels = [dict(r) for r in channels]
-                            for entry in channels:
-                                if entry["channel"] == channel:
-                                    entry["unread"] = 0
-                            break
-                older = (store.group_has_older(chain.network, channel, posts[0]["id"])
-                         if posts else False)
-        try:
-            with chain.rpc() as rpc:
-                balance = float(rpc.call("getbalance") or 0)
-        except HTTPException:
-            raise          # a rejected form is a 400, not an error page
-        except Exception:
-            balance = None
-        return render(request, "groups.html", which=which, chain=chain,
-                      older=older, before=before,
-                      channel=channel, posts=posts, channels=channels,
-                      balance=balance, when=_when,
-                      room=group.max_text_bytes(channel, state.profile_name),
-                      nickname=state.profile_name, unfinished=unfinished,
-                      timing=_post_timing(chain, None), cost=None)
-
-    @app.get("/groups/media/{post_id}")
-    def group_media(request: Request, post_id: int, download: int = 0):
-        """A file attached to a public post. Same rules as a private one.
-
-        The type is decided from the bytes, never from what the poster claimed,
-        and anything unrecognised is sent as a download rather than rendered.
-        """
-        with state.store() as store:
-            row = store.group_post_file(post_id)
-        if row is None or row["file_data"] is None:
-            return Response(status_code=404)
-        data = bytes(row["file_data"])
-        name = _safe_filename(row["file_name"])
-        kind = None if download else media.renderable(data)
-        if kind is None:
-            return Response(
-                content=data, media_type="application/octet-stream",
-                headers={"Content-Disposition": f'attachment; filename="{name}"',
-                         "X-Content-Type-Options": "nosniff"})
-        return Response(
-            content=data, media_type=kind.mime,
-            headers={"Content-Disposition": "inline",
-                     "X-Content-Type-Options": "nosniff",
-                     "Content-Security-Policy": media.MEDIA_CSP,
-                     "Cache-Control": "private, max-age=300"})
-
-    @app.post("/groups/post", response_class=HTMLResponse)
-    def group_post_send(request: Request, which: str = Form("messaging"),
-                        channel: str = Form(""), text: str = Form(""),
-                        confirmed: str = Form(""), csrf_token: str = Form(""),
-                        attachment: UploadFile | None = File(None),
-                        attached_name: str = Form(""),
-                        attached_type: str = Form(""),
-                        attached_b64: str = Form("")):
-        """Sync for the same reason as `send_in_thread`: it blocks."""
-        # After posting, the newest page is the one to show: the thing you just
-        # posted is at the end of it.
-        before = None
-        chain = state.ledger if which == "ledger" else state.messaging
-        channel = (channel or group.DEFAULT_CHANNEL).strip() or group.DEFAULT_CHANNEL
-        prepared, error, plan = None, None, None
-        file_bytes, file_name, file_type = b"", attached_name, attached_type
-        try:
-            check_csrf(csrf_token)
-            if attachment is not None and attachment.filename:
-                file_bytes = attachment.file.read()
-                file_name = attachment.filename
-                file_type = attachment.content_type or "application/octet-stream"
-            elif attached_b64:
-                file_bytes = base64.b64decode(attached_b64)
-
-            plan = group.plan(group.GroupPost(
-                channel=channel, nickname=state.profile_name, text=text,
-                file_name=file_name, file_type=file_type, file_data=file_bytes))
-            with chain.rpc() as rpc:
-                # public_only=True is the narrow exception to D-010. Nothing
-                # encrypted passes it; see MessageSender.__init__.
-                sender = MessageSender(rpc, chain.params, public_only=True)
-                address = funded_address(rpc, mainnet=chain.is_mainnet)
-                # Only the first transaction is built for the preview: a chunked
-                # post chains through change outputs, so the next one's input
-                # does not exist until this one is broadcast.
-                prepared = sender.prepare(address, plan.payloads[0],
-                                          class_c=plan.class_c,
-                                          change_address=address)
-                # Testnet posts go straight out. The confirmation exists so
-                # nobody spends real coins by accident; on a chain where the
-                # coins are free it is a step between a person and the thing
-                # they just typed (D-052). Mainnet keeps it.
-                if confirmed == "yes" or not chain.is_mainnet:
-                    local = dict(
-                        network=chain.network, channel=channel, address=address,
-                        nickname=state.profile_name, text=text,
-                        file_name=group._safe_name(file_name) if file_bytes else "",
-                        file_type=file_type if file_bytes else "",
-                        file_data=file_bytes or None)
-
-                    if plan.transactions == 1:
-                        txids = [sender.broadcast(prepared)]
-                        with state.store() as store:
-                            _record_post(store, txids[0], local, txids)
-                        state.flash(
-                            f"Posted to #{channel} in 1 transaction. "
-                            f"It is public and permanent.", "ok")
-                        return RedirectResponse(
-                            f"/groups?which={which}&channel={channel}",
-                            status_code=303)
-
-                    # A chunked post used to run inside this request, with no
-                    # record, no progress and nothing reported when it finished.
-                    # a test machine measured two chunks at about 90 seconds and closed the
-                    # browser part way through: the post completed anyway, which
-                    # was luck rather than design, and nothing told anyone. A
-                    # 30 KB post would hold the request for six or seven minutes.
-                    # Same three fixes the private path already had.
-                    if not state.begin_send():
-                        raise ValueError(
-                            "a message is already being sent. Wait for it to "
-                            "finish: two sends choose their outputs without "
-                            "seeing each other's claims and can collide.")
-                    try:
-                        typical, slow = recent_block_seconds(rpc)
-                        spare = sender.spendable_outputs(address)
-                        quick, _ = estimate_send_seconds(
-                            plan.transactions, typical, slow, spare)
-                        estimate = describe_duration(quick)
-                    except Exception:
-                        estimate = "a few minutes"
-                    state.start_progress(f"#{channel}", plan.transactions,
-                                         estimate)
-                    try:
-                        _post_in_background(sender, address, plan, local)
-                    except Exception:
-                        # The thread never started, so nothing will release the
-                        # claim on its behalf.
-                        state.end_send()
-                        state.clear_progress()
-                        raise
-                    return RedirectResponse(
-                        f"/groups?which={which}&channel={channel}",
-                        status_code=303)
-        except HTTPException:
-            raise          # a rejected form is a 400, not an error page
-        except Exception as exc:
-            error = str(exc)
-
-        posts, channels, balance = [], [], None
-        older = False
-        # An interrupted post leaves a record but no progress, so the bubble
-        # would sit at 0% with nothing driving it. Offer it as something that
-        # can be finished instead -- exactly as the messenger does.
-        unfinished = None
-        if not state.live_progress() and state.store_path.exists():
-            with state.store() as store:
-                for record in store.pending_posts(chain.network):
-                    if record["channel"] == channel:
-                        unfinished = {"sent": record["sent_count"],
-                                      "total": record["total"],
-                                      "channel": record["channel"]}
-                        break
-        if state.store_path.exists():
-            with state.store() as store:
-                posts = _with_media(store, store.group_posts(
-                    chain.network, channel, limit=PAGE_POSTS, before_id=before))
-                for post in posts:
-                    post["cards"] = _cards_in(post.get("text") or "")
-                channels = store.group_channels(chain.network)
-                older = (store.group_has_older(chain.network, channel, posts[0]["id"])
-                         if posts else False)
-        try:
-            with chain.rpc() as rpc:
-                balance = float(rpc.call("getbalance") or 0)
-        except HTTPException:
-            raise          # a rejected form is a 400, not an error page
-        except Exception:
-            balance = None
-        return render(request, "groups.html", which=which, chain=chain,
-                      older=older, before=before,
-                      channel=channel, posts=posts, channels=channels,
-                      balance=balance, when=_when, prepared=prepared, error=error,
-                      plan=plan, draft=text, room=group.max_text_bytes(channel, state.profile_name),
-                      nickname=state.profile_name,
-                      attached_b64=base64.b64encode(file_bytes).decode() if file_bytes else "",
-                      attached_name=file_name, attached_type=file_type,
-                      unfinished=unfinished,
-                      timing=_post_timing(chain, plan),
-                      cost=(send_cost(prepared, plan.transactions)
-                            if prepared and plan else None))
 
     @app.post("/contacts/scan")
     def contacts_scan(request: Request, csrf_token: str = Form("")):
@@ -3532,10 +3384,14 @@ def create_app(state: AppState) -> FastAPI:
         data: dict[str, Any] = {"chain": chain, "node": chain.status(),
                                 "funded": [], "node_error": None,
                                 "jobs": jobs.list(chain.network),
-                                # The mintpad offered at step 2: on unless the
-                                # last attempt turned it off (D-036).
-                                "pad_on": True, "pad_amount": "",
+                                # The mintpad offered at step 2: OFF unless
+                                # the person asks for it. A collection and a
+                                # shop are two decisions, and inscribing a
+                                # shop front nobody asked for spends coins
+                                # on a page they did not want (D-036, D-149).
+                                "pad_on": False, "pad_amount": "",
                                 "pad_kind": "coins", "pad_token": "",
+                                "pad_html": "",
                                 "clash": "", "partly": "", "says": {},
                                 "tokens": []}
         try:
@@ -3548,6 +3404,30 @@ def create_app(state: AppState) -> FastAPI:
         except Exception as exc:
             data["node_error"] = str(exc)
         data.update(extra)
+        # The mintpad's own page, for the editor at step 2. Generated with
+        # the REAL creator address rather than a placeholder, because what
+        # the box shows is what gets inscribed -- and the two substitutions
+        # that point it at the build folder are handed over as data so the
+        # live preview cannot drift from the page it is previewing.
+        build = data.get("build")
+        folder = str(getattr(build, "folder", "") or "")
+        if build is not None and not data.get("pad_html"):
+            try:
+                data["pad_html"] = _pad_page(
+                    data.get("sender") or "",
+                    str(data.get("name") or build.collection))
+            except Exception:
+                data["pad_html"] = ""
+        # `</` is escaped because both of these are JSON embedded in an
+        # inline <script>, and PREVIEW_NOTE contains a literal `</script>`.
+        # An HTML parser ends the script block at that sequence wherever it
+        # appears -- inside a string literal included -- so the page's whole
+        # script died silently and every button on the mintpad panel did
+        # nothing. `<\/` is the same character to JavaScript and invisible
+        # to the HTML parser. Found in a browser; no server-side check
+        # could have seen it, because the bytes are correct.
+        data["pad_swaps"] = json.dumps(_preview_swaps(folder)).replace("</", "<\\/")
+        data["pad_note"] = json.dumps(PREVIEW_NOTE).replace("</", "<\\/")
         return data
 
     def _what_is_already_there(sender: str, build, label: str = "") -> dict[str, Any]:
@@ -3752,28 +3632,70 @@ def create_app(state: AppState) -> FastAPI:
         return collectionlib.read_build(
             collectionlib.find_build(Path((folder or "").strip())))
 
+    #: Said IN the page rather than around it: the frame is sandboxed with no
+    #: same-origin, so this is the only way to reach the button inside it.
+    PREVIEW_NOTE = (
+        "<script>addEventListener('DOMContentLoaded',function(){"
+        "var b=document.getElementById('buy');"
+        "if(b){b.disabled=true;b.textContent='Preview \u2014 nothing is on the chain yet';}"
+        "var f=document.getElementById('foot');"
+        "if(f){f.textContent='This is the page that will be inscribed. "
+        "The pictures are the ones in your build folder.';}});</script>")
+
+    def _preview_swaps(folder: str) -> list[list[str]]:
+        """What turns the real page into one that draws from a build folder.
+
+        Defined once and handed to the browser as data, because the wizard's
+        live editor has to make exactly the same two substitutions on
+        whatever the person has typed. Two copies of this list -- one here,
+        one in JavaScript -- is a preview that quietly stops matching what
+        gets inscribed the first time either is touched.
+        """
+        where = f"/inscriptions/collection/preview/set?folder={quote(folder)}"
+        return [
+            ["'/r/collection/' + CREATOR + '/' + COLLECTION + '?limit=100&offset='",
+             f"'{where}&offset='"],
+            ["'/content/' + id",
+             f"'/inscriptions/collection/preview/piece?folder={quote(folder)}&n=' + id"],
+        ]
+
+    def _as_preview(page: str, folder: str) -> str:
+        for old, new in _preview_swaps(folder):
+            page = page.replace(old, new)
+        return page + PREVIEW_NOTE
+
+    def _edited_pad(said: str, sender: str, collection: str) -> str:
+        """The page as typed, if it is not simply the standard one.
+
+        Compared after normalising line endings, because a textarea posts
+        CRLF whatever it was given -- so a page nobody touched came back
+        "different" on every byte of every line, and every run would have
+        carried a frozen copy of that day's template.
+        """
+        said = (said or "").replace("\r\n", "\n").strip()
+        if not said:
+            return ""
+        try:
+            standard = _pad_page(sender, collection)
+        except Exception:
+            return said
+        return "" if said == standard.replace("\r\n", "\n").strip() else said
+
+    def _pad_page(sender: str, collection: str) -> str:
+        """The standard mintpad page for this collection, as it would be
+        inscribed -- the real creator address in it, not a placeholder, so
+        that what the editor shows is what goes on the chain."""
+        return mintpadlib.page(sender or "preview",
+                               collection or "Collection").decode("utf-8")
+
     @app.get("/inscriptions/collection/preview")
-    def preview_mintpad(request: Request, folder: str = "", name: str = ""):
+    def preview_mintpad(request: Request, folder: str = "", name: str = "",
+                        creator: str = "preview"):
         """The mintpad page as it will be inscribed, pointed at the build."""
         build = _preview_build(folder)
         collection = (name or build.collection).strip() or "Collection"
-        page = mintpadlib.page("preview", collection).decode("utf-8")
-        where = f"/inscriptions/collection/preview/set?folder={quote(folder)}"
-        page = page.replace(
-            "'/r/collection/' + CREATOR + '/' + COLLECTION + '?limit=100&offset='",
-            f"'{where}&offset='")
-        page = page.replace(
-            "'/content/' + id",
-            f"'/inscriptions/collection/preview/piece?folder={quote(folder)}&n=' + id")
-        # Said in the page rather than around it, because the frame is
-        # sandboxed and this is the only way to reach the button inside it.
-        page += ("<script>addEventListener('DOMContentLoaded',function(){"
-                 "var b=document.getElementById('buy');"
-                 "if(b){b.disabled=true;b.textContent='Preview \u2014 nothing is on the chain yet';}"
-                 "var f=document.getElementById('foot');"
-                 "if(f){f.textContent='This is the page that will be inscribed. "
-                 "The pictures are the ones in your build folder.';}});</script>")
-        return HTMLResponse(page, headers={"Cache-Control": "no-store"})
+        return HTMLResponse(_as_preview(_pad_page(creator, collection), folder),
+                            headers={"Cache-Control": "no-store"})
 
     @app.get("/inscriptions/collection/preview/set")
     def preview_set(folder: str = "", limit: int = 100, offset: int = 0):
@@ -3809,7 +3731,8 @@ def create_app(state: AppState) -> FastAPI:
                          name: str = Form(""), launchpad: str = Form(""),
                          pad_amount: str = Form(""), pad_kind: str = Form("coins"),
                          pad_token: str = Form(""), thumb: str = Form(""),
-                         about: str = Form(""), site: str = Form("")):
+                         about: str = Form(""), site: str = Form(""),
+                         pad_html: str = Form("")):
         """The second press: write the job down and start it.
 
         The mintpad is decided here and inscribed by the runner when the last
@@ -3846,15 +3769,22 @@ def create_app(state: AppState) -> FastAPI:
             with chain.rpc() as rpc:
                 sender = _check_own_address(rpc, fromaddress)
             pad_json = ""
+            edited = ""
             if launchpad == "yes":
                 take = mintpadlib.take_of(pad_kind, pad_amount,
                                           int(pad_token) if pad_token else None)
                 identity = state.ensure_identity()
+                collection = name.strip() or build.collection
                 pad_json = mintpadlib.shop_json(
                     contact.encode(state.messaging.network, identity.public_bytes),
-                    name.strip() or build.collection, take)
+                    collection, take)
+                # Only kept when it was actually changed. Storing a copy of
+                # the standard page on every run would freeze each one to
+                # the template of the day it was made, so a fix to the
+                # mintpad would never reach a job written down yesterday.
+                edited = _edited_pad(pad_html, sender, collection)
             job_id = jobs.create(chain.network, sender, build, name=name.strip(),
-                                 pad_json=pad_json,
+                                 pad_json=pad_json, pad_html=edited,
                                  floor=chain.params.activation_height)
             runner.start(job_id)
         except Exception as exc:
@@ -3874,7 +3804,8 @@ def create_app(state: AppState) -> FastAPI:
                                         if first is not None else {}),
                                   preview=again.items[:12], error=str(exc),
                                   pad_on=launchpad == "yes", pad_amount=pad_amount,
-                                  pad_kind=pad_kind, pad_token=pad_token))
+                                  pad_kind=pad_kind, pad_token=pad_token,
+                                  pad_html=pad_html))
             except Exception:
                 state.flash(str(exc), "err")
                 return RedirectResponse("/inscriptions/collection", status_code=303)
@@ -5118,8 +5049,23 @@ def create_app(state: AppState) -> FastAPI:
         know there is a website, still has to be able to find out what the
         thing in front of them can do.
         """
-        return render(request, "guide.html", sections=guidelib.sections(),
+        return RedirectResponse("/docs/features.md", status_code=307)
+
+    @app.get("/docs", response_class=HTMLResponse)
+    def docs_index(request: Request):
+        """Every document that ships, which is all of them (D-152)."""
+        return render(request, "docs.html", pages=guidelib.pages(),
                       bugs_url=guidelib.BUGS_URL)
+
+    @app.get("/docs/{name:path}", response_class=HTMLResponse)
+    def docs_page(request: Request, name: str):
+        text = guidelib.page(name)
+        if text is None:
+            state.flash("there is no such document", "err")
+            return RedirectResponse("/docs", status_code=303)
+        return render(request, "doc.html", name=name,
+                      title=guidelib.title_of(name),
+                      sections=guidelib.document(text))
 
     @app.api_route("/inscriptions/{key}/send", methods=["GET", "POST"],
                    response_class=HTMLResponse)
@@ -5204,12 +5150,12 @@ def create_app(state: AppState) -> FastAPI:
         if row is None:
             state.flash("no such inscription", "err")
             return RedirectResponse("/inscriptions", status_code=303)
-        # Over the tunnel the frame is addressed to the pages' own hostname:
-        # from inside the sandbox nothing carries the cookie, and that door
-        # needs none. On this machine there is no door, and no second name.
-        tunnel = state.remote_tunnel()
-        pages = (tunnel.pages_url or "") if tunnel is not None and remotelib.is_remote(
-            request.headers, request.headers.get("host", ""), tunnel.url) else ""
+        # The frame is addressed to the pages' own hostname when the operator
+        # has configured one: from inside the sandbox nothing carries a
+        # cookie, and that door needs none. With no second name -- one
+        # person's machine -- the frame is served from here, which is the
+        # same isolation minus the extra origin.
+        pages = state.pages_origin
         mine, held, coins = False, [], 0.0
         try:
             with chain.rpc() as rpc:
@@ -5808,89 +5754,1225 @@ def create_app(state: AppState) -> FastAPI:
     # authenticated. The forms above are for people; this is for scripts, and
     # it follows the same prepare-then-broadcast rule (web/rpc.py).
 
-    # --- remote access ------------------------------------------------------
+    # --- the arcade's own face ------------------------------------------------
+    #
+    # One picture, vendored at two sizes rather than resized at runtime: the
+    # application depends on two packages on purpose, and adding an imaging
+    # library to draw a favicon would be the worst trade in the project. The
+    # 180 is the artwork as it was drawn; the 32 is a LANCZOS downscale of it
+    # made once and committed beside it.
 
-    def _remote_context(request: Request, error: str | None = None) -> dict:
-        tunnel = state.remote_tunnel()
-        return {
-            "tunnel": tunnel,
-            "qr": remotelib.qr_svg(tunnel.link) if tunnel else None,
-            "durations": remotelib.DURATIONS,
-            "default_minutes": remotelib.DEFAULT_MINUTES,
-            "cloudflared": remotelib.find_cloudflared(state.home),
-            "unlocked_here": (tunnel is not None and request.cookies.get(
-                remotelib.COOKIE_NAME) == tunnel.token),
-            "error": error,
-        }
+    ICONS = {"/icon-32.png": "icon-32.png",
+             "/icon-180.png": "icon-180.png",
+             # Browsers ask for this by name when a page carries no link tag
+             # -- an error page, or a route that answers without a template.
+             # It is a PNG under an .ico name, which every browser in use
+             # reads by its content type rather than its extension.
+             "/favicon.ico": "icon-32.png"}
 
-    @app.get("/remote", response_class=HTMLResponse)
-    def remote_page(request: Request):
-        return render(request, "remote.html", **_remote_context(request))
+    @app.get("/icon-32.png")
+    @app.get("/icon-180.png")
+    @app.get("/favicon.ico")
+    def icon(request: Request):
+        name = ICONS.get(request.url.path)
+        if name is None:
+            raise HTTPException(404, "no such icon")
+        return Response(
+            (TEMPLATE_DIR / name).read_bytes(), media_type="image/png",
+            # A year. The picture is the application's identity; when it
+            # changes, its name changes with it.
+            headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
-    @app.post("/remote/start", response_class=HTMLResponse)
-    def remote_start(request: Request, csrf_token: str = Form(""),
-                     minutes: str = Form(str(remotelib.DEFAULT_MINUTES))):
-        """Open the tunnel. Sync, because waiting for the edge takes seconds."""
-        error = None
-        claimed = False
-        try:
-            check_csrf(csrf_token)
-            wanted = int(minutes)
-            if wanted not in remotelib.DURATIONS:
-                raise ValueError("choose one of the offered lengths")
-            # Claimed before anything slow happens. Opening takes seconds, and
-            # two presses in that window would leave a second cloudflared
-            # running that nothing here holds a handle to -- an open door with
-            # no button to close it.
-            claimed = state.claim_tunnel()
-            if not claimed:
-                raise ValueError("a tunnel is already open, or one is opening. "
-                                 "Close it first.")
-            state.set_tunnel(remotelib.open_tunnel(state.port, wanted, state.home))
-        except HTTPException:
-            raise          # a rejected form is a 400, not an error page
-        except Exception as exc:
-            error = str(exc)
-        finally:
-            if claimed:
-                state.release_tunnel()
-        return render(request, "remote.html", **_remote_context(request, error))
+    # --- seats, and signing in ------------------------------------------------
+    #
+    # The node is a builder, an index and a window -- never a custodian
+    # (docs/multi-user.md). So there is no password here and no credential
+    # database: an account is an Ed25519 public key made in somebody's
+    # browser, and proving it is a signature over a nonce this node just
+    # issued. The worst thing a copy of `accounts.sqlite` gives an attacker
+    # is a list of public keys.
+    #
+    # None of this gates anything yet. The wallet's own pages are still the
+    # wallet's own, exactly as they were; what exists now is the door, the
+    # seat count and the register behind them. The page says so rather than
+    # implying an account does more than it does.
 
-    @app.post("/remote/stop")
-    def remote_stop(request: Request, csrf_token: str = Form("")):
-        try:
-            check_csrf(csrf_token)
-            remotelib.close_tunnel(state.remote_tunnel())
-            state.set_tunnel(None)
-            state.flash("The tunnel is closed.", "ok")
-        except HTTPException:
-            raise
-        except Exception as exc:
-            state.flash(str(exc), "err")
-        return RedirectResponse("/remote", status_code=303)
+    SESSION_COOKIE = SESSION
 
-    @app.get("/remote/unlock")
-    def remote_unlock(request: Request, k: str = ""):
-        """Trade the key in the QR code for a cookie, then get out of the URL.
+    def _origin(request: Request) -> str:
+        """What the browser thinks it is talking to, which is what gets signed.
 
-        Out of the URL because it would otherwise sit in the phone's history and
-        in every Referer the browser sends afterwards. The cookie is the session
-        from here on, and it dies with the tunnel.
+        `x-forwarded-proto` first: behind a proxy that terminates TLS,
+        uvicorn sees http on a loopback socket while the browser sees https,
+        and a signature over the wrong one of those would never verify.
         """
-        tunnel = state.remote_tunnel()
-        if tunnel is None:
-            return locked("Not open",
-                          "This wallet is not accepting remote connections.")
-        if not secrets.compare_digest(k, tunnel.token):
-            return locked("Wrong key", "That link does not open this wallet.")
-        response = RedirectResponse("/", status_code=303)
-        response.set_cookie(
-            remotelib.COOKIE_NAME, tunnel.token,
-            max_age=tunnel.seconds_left, httponly=True, samesite="lax",
-            # The tunnel is https end to end; a cookie that would travel in
-            # clear has no business existing.
-            secure=True)
-        return response
+        proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+        return f"{proto}://{request.headers.get('host', '')}"
+
+    def _over_https(request: Request) -> bool:
+        return (request.headers.get("x-forwarded-proto")
+                or request.url.scheme) == "https"
+
+    def signed_in(request: Request):
+        """The account this request belongs to, or None. Touches the seat."""
+        try:
+            return state.accounts().session(
+                request.cookies.get(SESSION_COOKIE, ""))
+        except Exception:
+            return None
+
+    @app.get("/bip39-english.txt")
+    def bip39_wordlist():
+        """The official 2048 words, served from the node that vendors them.
+
+        A wallet whose restore depends on somebody else's website is a wallet
+        that stops restoring. Cached hard: it is the same file for ever --
+        changing it would change every phrase ever made from it.
+        """
+        return Response(seedlib.WORDLIST_PATH.read_text(encoding="utf-8"),
+                        media_type="text/plain; charset=utf-8",
+                        headers={"Cache-Control": "public, max-age=604800"})
+
+    @app.get("/vendor/{name:path}")
+    def vendored(name: str):
+        """The two libraries WebCrypto cannot replace.
+
+        Served from here rather than from a CDN: a wallet whose
+        cryptography arrives from somebody else's server at page load is
+        one compromised mirror away from key theft. What is in the
+        directory, where it came from and how it was checked is in
+        `web/vendor/PROVENANCE.md`; `tests/test_vendor.py` pins the sums.
+        """
+        root = Path(__file__).parent / "vendor"
+        if any(part in ("..", "") for part in Path(name).parts):
+            raise HTTPException(404, "no such file")
+        target = (root / name).resolve()
+        if not str(target).startswith(str(root.resolve())) \
+                or not target.is_file() or target.suffix != ".js":
+            raise HTTPException(404, "no such file")
+        return Response(target.read_text(), media_type="application/javascript",
+                        # Immutable: the file is pinned by hash in a test,
+                        # so a changed one is a changed application.
+                        headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+    @app.get("/wallet.js")
+    def wallet_js():
+        """Signing up and signing in, as a person does it (templates/wallet_js.js)."""
+        return Response((TEMPLATE_DIR / "wallet_js.js").read_text(),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-store"})
+
+    @app.get("/messaging.js")
+    def messaging_js():
+        """Opening and sealing messages in the browser (templates/messaging_js.js)."""
+        return Response((TEMPLATE_DIR / "messaging_js.js").read_text(),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-store"})
+
+    @app.get("/coins.js")
+    def coins_js():
+        """The browser's coin half (templates/coins.js)."""
+        return Response((TEMPLATE_DIR / "coins.js").read_text(),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-store"})
+
+    @app.get("/signin.js")
+    def signin_js():
+        """The browser's half of the login (templates/signin.js).
+
+        Not cached. It is small, and a stale copy of the code that derives
+        somebody's keys is the one kind of staleness with no acceptable
+        failure mode.
+        """
+        body = (TEMPLATE_DIR / "signin.js").read_text()
+        return Response(body, media_type="application/javascript",
+                        headers={"Cache-Control": "no-store"})
+
+    @app.get("/join", response_class=HTMLResponse)
+    def join_page(request: Request):
+        """What a person meets: a name, a password, and a wallet.
+
+        `/join/keys` is the same door for somebody who would rather hold
+        their own words -- it is the older page and it is still the whole
+        of what this one does underneath.
+        """
+        register = state.accounts()
+        return render(request, "signup.html", chain=_account_chain(),
+                      seats=register.seats, free=register.free(),
+                      secure_enough=secure_context(request),
+                      why_not=WHY_NOT_SECURE)
+
+    @app.get("/join/keys", response_class=HTMLResponse)
+    def join_with_keys(request: Request):
+        register = state.accounts()
+        return render(request, "join.html",
+                      seats=register.seats,
+                      free=register.free(),
+                      idle_days=register.idle_days,
+                      repo_url=updatelib.REPO_URL,
+                      secure_enough=secure_context(request),
+                      why_not=WHY_NOT_SECURE)
+
+    @app.get("/auth/challenge")
+    def auth_challenge(request: Request):
+        """A nonce to sign, good for two minutes and for this node only."""
+        return JSONResponse(state.accounts().challenge(_origin(request)))
+
+    @app.post("/auth/login")
+    def auth_login(request: Request, payload: Any = Body(None)):
+        """Check a signed challenge, and set the session cookie.
+
+        No CSRF token on this one, deliberately: the page that posts it is
+        served to somebody who has not signed in, and handing a stranger the
+        wallet's form token to get them through the door would be a worse
+        trade than the one it protects against. What guards it instead is
+        that it is JSON -- a cross-site form cannot send
+        `application/json` without a preflight this server never answers --
+        and that the body has to contain a signature over a nonce issued
+        seconds earlier to this origin.
+        """
+        said = payload if isinstance(payload, dict) else {}
+        register = state.accounts()
+        try:
+            token = register.login(
+                str(said.get("pubkey", "")),
+                str(said.get("nonce", "")),
+                str(said.get("signature", "")),
+                origin=_origin(request),
+                ip=(request.client.host if request.client else ""),
+                join=bool(said.get("join")))
+        except accountslib.SeatsFull as full:
+            return JSONResponse({"detail": str(full),
+                                 "seats": register.seats, "free": 0},
+                                status_code=409)
+        except accountslib.AccountError as refused:
+            return JSONResponse({"detail": str(refused)}, status_code=403)
+        account = register.account(str(said.get("pubkey", "")))
+        # No name comes back, because none is kept: a @tag is chain state
+        # and a copy here would be a name that is wrong rather than one
+        # that is missing (D-147). The page says "no name claimed yet"
+        # until the claim exists, which is honest and is also true.
+        answer = JSONResponse({"pubkey": account.pubkey, "tag": "",
+                               "created": account.created,
+                               "free": register.free()})
+        answer.set_cookie(
+            SESSION_COOKIE, token,
+            max_age=accountslib.SESSION_DAYS * 86400,
+            httponly=True, samesite="strict",
+            # Secure only where the browser would keep it: marking a cookie
+            # Secure on plain http means the browser drops it, and the
+            # symptom is a login that appears to work and then does not.
+            secure=_over_https(request))
+        return answer
+
+    @app.post("/auth/logout")
+    def auth_logout(request: Request):
+        state.accounts().logout(request.cookies.get(SESSION_COOKIE, ""))
+        answer = JSONResponse({"pubkey": None})
+        answer.delete_cookie(SESSION_COOKIE)
+        return answer
+
+    # --- what an account does on the chain ------------------------------------
+    #
+    # The node builds and explains; the browser shows, asks and signs; the
+    # node checks what came back is what it offered and broadcasts. One
+    # shape for everything an account ever does (docs/multi-user.md §5).
+
+    _offers = accountlib.Offers()
+    #: What an account has broadcast and the index has not read
+    #: yet, so a second transaction does not pick the same coin.
+    _flights = accountlib.Flights()
+
+    def _account_chain():
+        """The chain a tag lives on. Testnet, as tags always have been."""
+        return state.messaging
+
+    def _watch(address: str, why: str) -> None:
+        """Start following an address's coins, so it can be funded at all."""
+        index = state.token_index(_account_chain())
+        with contextlib.closing(index.open()) as db:
+            utxoslib.watch(db, address, index.indexed_height() or 0, why)
+
+    def _signed_in_account(request: Request):
+        account = signed_in(request)
+        if account is None:
+            raise HTTPException(403, "sign in first")
+        return account
+
+    # --- signing up, which is a name and a password ---------------------------
+    #
+    # The browser makes the words, derives the keys, encrypts the seed and
+    # hands over a blob. The password never arrives here, so there is
+    # nothing to check and nothing to steal: only somebody who can decrypt
+    # the blob can produce the key that signs a challenge.
+
+    @app.get("/signup/{tag}")
+    def signup_free(tag: str):
+        """Is this name free -- here, and as far as the chain has been read.
+
+        Two answers rather than one, because they are different questions
+        with different authorities. The chain decides, first claim wins,
+        and neither answer is a promise about the next minute.
+        """
+        try:
+            wanted = taglib.validate((tag or "").strip().lstrip("@"))
+        except taglib.TagError as bad:
+            return JSONResponse({"free": False, "detail": str(bad)})
+        here = state.vault().taken(wanted)
+        on_chain = ""
+        try:
+            on_chain = state.token_index(_account_chain()).address_of(wanted) or ""
+        except Exception:
+            pass                          # a node still catching up says nothing
+        return JSONResponse({
+            "tag": wanted, "free": not here and not on_chain,
+            "here": here, "on_chain": bool(on_chain),
+            "detail": (f"@{wanted} is already signed up on this node"
+                       if here else
+                       f"@{wanted} is claimed on the chain" if on_chain else ""),
+        })
+
+    @app.post("/signup")
+    def signup(request: Request, payload: Any = Body(None)):
+        """Make an account: a name, a public key, an address, and a blob.
+
+        No password reaches this route, by design. What arrives is
+        ciphertext the node cannot read and the parameters it was made
+        with, so a stolen copy of this file is a pile of encrypted wallets
+        and no way to open one.
+        """
+        said = payload if isinstance(payload, dict) else {}
+        chain = _account_chain()
+        try:
+            wanted = taglib.validate(str(said.get("tag", "")).strip().lstrip("@"))
+            pubkey = str(said.get("pubkey", "")).strip().lower()
+            address = str(said.get("address", "")).strip()
+            blob = said.get("blob")
+            if not isinstance(blob, dict) or not blob.get("sealed"):
+                raise ValueError("that is not an encrypted wallet")
+            complaint = _check_address(address, mainnet=chain.is_mainnet)
+            if complaint:
+                raise ValueError(complaint)
+            register = state.accounts()
+            register.join(pubkey)         # a seat, and it may say there is none
+            state.vault().put(wanted, pubkey, address, json.dumps(blob))
+        except accountslib.SeatsFull as full:
+            return JSONResponse({"detail": str(full)}, status_code=409)
+        except (taglib.TagError, accountslib.AccountError, ValueError) as bad:
+            return JSONResponse({"detail": str(bad)}, status_code=400)
+        state.set_setting(f"address:{pubkey}", address)
+        coin = str(said.get("coin_pubkey", "")).strip().lower()
+        if coin:
+            state.set_setting(f"coinkey:{pubkey}", coin)
+        # Where the chain was when this account came into existence.
+        # Nobody could have written to a key that did not exist, so there
+        # is nothing before this point to look at -- and saying so costs
+        # no privacy, because the node knows when an account signed up
+        # whatever it does with that fact (D-155).
+        try:
+            with state.store() as store:
+                state.set_setting(f"mail_from:{pubkey}",
+                                  store.newest_candidate())
+        except Exception:
+            pass
+        try:
+            _watch(address, why=f"@{wanted}")
+        except Exception:
+            pass                          # it will be watched at the claim
+
+        # The coins, straight away. An account with none cannot claim its
+        # own name, post, or inscribe anything -- every one of those is a
+        # transaction and every transaction needs an input. A refusal here
+        # is never fatal: the account exists either way and the page says
+        # what happened (arcade/faucet.py).
+        given, why_not = 0, ""
+        try:
+            gift = faucetlib.pour(
+                _account_chain(), state.faucet(), pubkey, address,
+                ip=(request.client.host if request.client else ""))
+            given = gift.amount
+        except faucetlib.FaucetError as refused:
+            why_not = str(refused)
+        except Exception as exc:
+            why_not = f"the faucet could not pay just now: {exc}"
+
+        token = _open_session(pubkey)
+        answer = JSONResponse({"tag": wanted, "pubkey": pubkey,
+                               "address": address,
+                               "given": given, "no_coins": why_not})
+        _set_session(answer, token, request)
+        return answer
+
+    @app.get("/signin/{tag}")
+    def signin_blob(request: Request, tag: str):
+        """The encrypted wallet for a name, for the browser to open.
+
+        Handed to whoever asks, which is the acknowledged cost of being
+        able to sign in on a device that has never seen your words
+        (docs/multi-user.md §2). Rate-limited, because a list of blobs is
+        worth collecting even when each one is useless without a password.
+        """
+        register = state.accounts()
+        who = (request.client.host if request.client else "")
+        now = int(time.time())
+        if register._rate_limited(f"vault:{who}", now):
+            return JSONResponse(
+                {"detail": "too many in a row. Wait a few minutes."},
+                status_code=429)
+        register._attempt(f"vault:{who}", now)
+        found = state.vault().get(tag)
+        if found is None:
+            return JSONResponse({"detail": "no wallet here by that name"},
+                                status_code=404)
+        return JSONResponse({"tag": found["tag"], "pubkey": found["pubkey"],
+                             "address": found["address"],
+                             "blob": json.loads(found["blob"])})
+
+    def _open_session(pubkey: str) -> str:
+        """A session for an account that has just proved itself another way."""
+        register = state.accounts()
+        now = int(time.time())
+        token = secrets.token_urlsafe(32)
+        register.conn.execute(
+            "INSERT INTO session (token_hash, pubkey, made, expires) "
+            "VALUES (?,?,?,?)",
+            (accountslib._hash(token), pubkey.lower(), now,
+             now + accountslib.SESSION_DAYS * 86400))
+        return token
+
+    def _set_session(answer, token: str, request: Request) -> None:
+        answer.set_cookie(
+            SESSION_COOKIE, token,
+            max_age=accountslib.SESSION_DAYS * 86400,
+            httponly=True, samesite="strict", secure=_over_https(request))
+
+    @app.get("/account")
+    def account_state(request: Request):
+        """Everything the page needs to draw itself, and nothing else.
+
+        Only ever about the account making the request. An endpoint that
+        can be asked about somebody else is an endpoint somebody will ask
+        about somebody else.
+        """
+        account = signed_in(request)
+        if account is None:
+            return JSONResponse({"pubkey": None})
+        chain = _account_chain()
+        said: dict[str, Any] = {
+            "pubkey": account.pubkey, "network": chain.network,
+            "version": chain.params.pubkeyhash_version,
+            "address": "", "balance": 0, "watching": None, "tag": "",
+        }
+        mine = state.vault().by_pubkey(account.pubkey) or {}
+        said["name"] = mine.get("tag", "")
+        # The earliest candidate worth trying a key against. A browser with
+        # no cursor of its own starts here rather than at the beginning of
+        # the chain.
+        said["mail_from"] = int(
+            state.setting(f"mail_from:{account.pubkey}", 0) or 0)
+        said["claiming"] = mine.get("claimed", "")
+        address = str(state.setting(f"address:{account.pubkey}", "") or "")
+        said["address"] = address
+        if address:
+            try:
+                index = state.token_index(chain)
+                with contextlib.closing(index.open()) as db:
+                    said["balance"] = utxoslib.balance(db, address)
+                    said["watching"] = utxoslib.since(db, address)
+                said["tag"] = index.tag_of(address) or ""
+            except Exception:
+                pass                       # a node still catching up says 0
+        return JSONResponse(said)
+
+    @app.get("/me", response_class=HTMLResponse)
+    def my_arcade(request: Request):
+        """An account's own arcade: its coins, its name, its feed.
+
+        The operator's pages drive the NODE's wallet and always have. This
+        is the same application seen by somebody whose keys are in their
+        own browser -- so it is a different page rather than the same page
+        with a different balance in it, because almost nothing on the
+        operator's version would be true.
+        """
+        account = signed_in(request)
+        if account is None:
+            return RedirectResponse("/join", status_code=303)
+        chain = _account_chain()
+        return render(request, "me.html", chain=chain,
+                      node=chain.status(), when=_when)
+
+    @app.get("/account/feed")
+    def account_feed(request: Request, before: int | None = None):
+        """The feed, as an account sees it: the same posts, its own name.
+
+        Read from the same store the wallet's own feed reads. Nothing here
+        is private -- every post was public when it was mined -- so this
+        differs from `/feed` only in what it says about who is looking.
+        """
+        account = signed_in(request)
+        chain = _account_chain()
+        rows, cursor, waiting = _feed_page(chain.network, before=before)
+        shown = _shown(rows, chain.network, waiting)
+        mine = ""
+        if account is not None:
+            mine = (state.vault().by_pubkey(account.pubkey) or {}).get("tag", "")
+        return JSONResponse({
+            "mine": mine,
+            "cursor": cursor,
+            "posts": [{
+                "txid": item.txid,
+                "text": item.text,
+                "author": item.author,
+                "when": item.block_time,
+                "height": item.height,
+                "likes": item.likes,
+                "replies": len(item.replies),
+                "tips": item.tips,
+            } for item in shown],
+        })
+
+    @app.get("/account/messages")
+    def account_messages(request: Request, after: int = 0, limit: int = 200):
+        """Candidate payloads, for the browser to try its key against.
+
+        The node cannot tell which of these belong to whom: an account's
+        identity lives in its browser, and that is the whole arrangement.
+        So it hands over what it has seen and the browser finds out by
+        trying -- most will not open, and that costs a failed
+        authentication rather than anything on the chain.
+
+        Everything here is already public. These are the bytes as
+        broadcast; the only thing a reader gains is the trouble of trying a
+        key against them, which they could do by reading the chain
+        themselves.
+        """
+        _signed_in_account(request)       # a seat, so this is not an open firehose
+        limit = max(1, min(int(limit), 500))
+        with state.store() as store:
+            rows = store.candidates_for_others(after=int(after), limit=limit)
+            newest = store.newest_candidate()
+        return JSONResponse({
+            "cursor": rows[-1]["cursor"] if rows else int(after),
+            "newest": newest,
+            "more": bool(rows) and rows[-1]["cursor"] < newest,
+            "candidates": [{
+                "cursor": row["cursor"], "txid": row["txid"],
+                "height": row["height"], "when": row["block_time"],
+                "from_address": row["sender_addr"],
+                "type": row["msg_type"],
+                "msg_id": (row["msg_id"] or b"").hex() or None,
+                "countdown": row["countdown"],
+                "payload": bytes(row["payload"]).hex(),
+            } for row in rows],
+        })
+
+    @app.get("/account/who/{name}")
+    def account_who(request: Request, name: str):
+        """Where to write to somebody: their address and their published key.
+
+        A @tag or an address, and the answer is what the CHAIN says --
+        never what anybody typed into an address book. Somebody who has
+        published no key cannot be written to, and this says so rather than
+        letting a message be sealed to nothing.
+        """
+        _signed_in_account(request)
+        chain = _account_chain()
+        wanted = (name or "").strip().lstrip("@")
+        address, tag = "", ""
+        try:
+            index = state.token_index(chain)
+            if _looks_like_an_address(wanted):
+                address = wanted
+                tag = index.tag_of(address) or ""
+            else:
+                tag = taglib.validate(wanted)
+                address = index.address_of(tag) or ""
+        except (taglib.TagError, Exception) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        if not address:
+            return JSONResponse(
+                {"detail": f"nobody holds @{wanted} on this chain"},
+                status_code=404)
+        with state.store() as store:
+            said = store.key_for(address)
+        if said is None:
+            return JSONResponse({
+                "address": address, "tag": tag, "key": None,
+                "detail": "they have not published a messaging key, so "
+                          "there is nowhere to send it. Ask them to publish "
+                          "their tag -- it is one button."}, status_code=404)
+        return JSONResponse({"address": address, "tag": tag,
+                             "key": bytes(said["pubkey"]).hex(),
+                             "fingerprint": said["fingerprint"]})
+
+    @app.post("/account/write")
+    def account_write(request: Request, payload: Any = Body(None)):
+        """Offer to send a message an account has already sealed.
+
+        The sealing happened in the browser, to a key the browser looked
+        up and can check. What arrives here is ciphertext and an address:
+        the node builds the transaction that carries it and never learns
+        what is inside or, beyond the address it is paying, who it is for.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        chain = _account_chain()
+        address = str(state.setting(f"address:{account.pubkey}", "") or "")
+        if not address:
+            return JSONResponse({"detail": "this account has no address yet"},
+                                status_code=400)
+        try:
+            sealed = bytes.fromhex(str(said.get("sealed", "")))
+            if not sealed:
+                raise ValueError("there is nothing to send")
+            to = str(said.get("to", "")).strip()
+            complaint = _check_address(to, mainnet=chain.is_mainnet)
+            if complaint:
+                raise ValueError(complaint)
+            # The envelope, as the scanner will read it back: a header
+            # naming the type and the ciphertext length, then the bytes.
+            header = envelopelib.Header(
+                type=envelopelib.TYPE_SINGLE, clen=len(sealed))
+            body = header.encode() + sealed
+            outputs = _class_c_or_b(chain, address, body,
+                                    _coin_pubkey(account.pubkey))
+            # A message pays its recipient the dust that carries it, so the
+            # transaction is also how they are told something arrived.
+            outputs.append((sendermod.OUTPUT_VALUE, txbuild.p2pkh_script(to)))
+            index = state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address, outputs,
+                    rate=fees.MIN_FEE_PER_KB, what=f"a message to {to}",
+                    exclude=_flights.spent_by(account.pubkey),
+                    extra=_flights.change_for(account.pubkey))
+        except (fundinglib.FundingError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned,
+                            unsigned.what)
+        return JSONResponse({"offer": offer.id, "bytes": len(sealed),
+                             **unsigned.as_json()})
+
+    @app.post("/account/post")
+    def account_post(request: Request, payload: Any = Body(None)):
+        """Offer to say something on the feed, as this account.
+
+        A post is not encrypted and never was: every row of the feed was
+        readable by anybody with a node the moment it was mined. What
+        changes for an account is only who pays for it and whose name is on
+        it -- the byline is read from the chain, so nobody can post under a
+        name they do not hold.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        chain = _account_chain()
+        address = str(state.setting(f"address:{account.pubkey}", "") or "")
+        if not address:
+            return JSONResponse({"detail": "this account has no address yet"},
+                                status_code=400)
+        try:
+            text = str(said.get("text", "")).strip()
+            if not text:
+                raise ValueError("say something")
+            # A name first, for the same reason the wallet's own feed asks
+            # for one: everything in the feed has a person behind it, and a
+            # byline that is an address is not a person (D-138).
+            if not state.token_index(chain).tag_of(address):
+                raise ValueError(
+                    "claim your name first -- it is what your posts appear "
+                    "under, and it is one button.")
+            plan = group.plan(group.GroupPost(channel="", nickname="",
+                                              text=text))
+            if plan.transactions != 1:
+                raise ValueError(
+                    "that is too long for one transaction -- put a file in "
+                    "it instead, or say less")
+            index = state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address,
+                    _class_c_or_b(chain, address, plan.payloads[0],
+                                  _coin_pubkey(account.pubkey)),
+                    rate=fees.MIN_FEE_PER_KB, what="a post",
+                    exclude=_flights.spent_by(account.pubkey),
+                    extra=_flights.change_for(account.pubkey))
+        except (fundinglib.FundingError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned, "a post")
+        return JSONResponse({"offer": offer.id, **unsigned.as_json()})
+
+    @app.post("/account/react")
+    def account_react(request: Request, payload: Any = Body(None)):
+        """Offer to like, reply to, share or tip a post, as this account.
+
+        One route for all of them because they are one kind of thing on the
+        chain: a note saying what was done and which post it was done to
+        (D-138). A tip differs only by paying the author as well, which is
+        what makes it one transaction rather than two.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        chain = _account_chain()
+        address = str(state.setting(f"address:{account.pubkey}", "") or "")
+        if not address:
+            return JSONResponse({"detail": "this account has no address yet"},
+                                status_code=400)
+        try:
+            target = str(said.get("txid", "")).strip().lower()
+            if len(target) != 64 or not all(c in "0123456789abcdef"
+                                            for c in target):
+                raise ValueError("that is not a transaction id")
+            kind = int(said.get("kind", 0))
+            if kind not in feedlib.KINDS:
+                raise ValueError("that is not something that can be done")
+            text = str(said.get("text", ""))
+            note = feedlib.build(kind, target, text)
+
+            outputs = _class_c_or_b(chain, address, note,
+                                    _coin_pubkey(account.pubkey))
+            paid = 0
+            if kind == feedlib.TIP:
+                # A tip pays the post's author in the same transaction that
+                # says which post it was for, so nothing has to be
+                # reconciled afterwards and nobody pays twice.
+                amount = parse_amount(str(said.get("amount", "")), True)
+                if amount <= 0:
+                    raise ValueError("a tip of nothing is not a tip")
+                where = _feed_author_address(chain, target)
+                if not where:
+                    raise ValueError(
+                        "there is nowhere to send it: whoever wrote that has "
+                        "not published an address")
+                outputs.append((amount, txbuild.p2pkh_script(where)))
+                paid = amount
+
+            index = state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address, outputs,
+                    rate=fees.MIN_FEE_PER_KB,
+                    what=feedlib.NAMES.get(kind, "a reaction"),
+                    exclude=_flights.spent_by(account.pubkey),
+                    extra=_flights.change_for(account.pubkey))
+        except (fundinglib.FundingError, AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned,
+                            unsigned.what)
+        return JSONResponse({"offer": offer.id, "paid": paid,
+                             **unsigned.as_json()})
+
+    def _feed_author_address(chain, txid: str) -> str:
+        """Who wrote the post a reaction is about, from this node's store."""
+        row = _feed_thing(chain.network, txid)
+        return (row or {}).get("author", "") if row is not None else ""
+
+    @app.post("/account/announce")
+    def account_announce(request: Request, payload: Any = Body(None)):
+        """Offer to publish this account's messaging key on the chain.
+
+        Nobody can write to somebody who has not published a key, so this
+        is what makes an account reachable. The key is made in the browser
+        and arrives here as bytes to put in a transaction -- the node never
+        derives it and could not.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        chain = _account_chain()
+        address = str(state.setting(f"address:{account.pubkey}", "") or "")
+        if not address:
+            return JSONResponse({"detail": "this account has no address yet"},
+                                status_code=400)
+        try:
+            key = bytes.fromhex(str(said.get("key", "")))
+            if len(key) != 32:
+                raise ValueError("a messaging key is 32 bytes")
+            tag = str(said.get("tag", "")).strip().lstrip("@")
+            # The identity address goes in as its hash160, so a reader files
+            # the key under the address the account actually hands out
+            # rather than under whichever one funded the transaction.
+            _, our_hash = b58check_decode(address)
+            body = envelopelib.build_key_announcement(
+                key, hash160=our_hash, tag=tag)
+            index = state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address,
+                    _class_c_or_b(chain, address, body,
+                                  _coin_pubkey(account.pubkey)),
+                    rate=fees.MIN_FEE_PER_KB,
+                    what="publish your messaging key",
+                    exclude=_flights.spent_by(account.pubkey),
+                    extra=_flights.change_for(account.pubkey))
+        except (fundinglib.FundingError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned,
+                            unsigned.what)
+        return JSONResponse({"offer": offer.id, **unsigned.as_json()})
+
+    @app.post("/account/address")
+    def account_address(request: Request, payload: Any = Body(None)):
+        """Tell the node which address to watch for this account.
+
+        The browser derives it; the node is told. It is checked rather than
+        believed -- the version byte has to be this chain's, and the shape
+        has to decode -- but it is not DERIVED here, because the node has
+        no key and the only machine that can say is the one that made it.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        address = str(said.get("address", "")).strip()
+        chain = _account_chain()
+        complaint = _check_address(address, mainnet=chain.is_mainnet)
+        if complaint:
+            return JSONResponse({"detail": complaint}, status_code=400)
+        state.set_setting(f"address:{account.pubkey}", address)
+        coin = str(said.get("coin_pubkey", "")).strip().lower()
+        if coin:
+            state.set_setting(f"coinkey:{account.pubkey}", coin)
+        try:
+            _watch(address, why=f"account {account.pubkey[:12]}")
+        except Exception as exc:
+            return JSONResponse({"detail": f"the index is not ready: {exc}"},
+                                status_code=503)
+        return JSONResponse({"address": address})
+
+    @app.post("/account/claim")
+    def account_claim(request: Request, payload: Any = Body(None)):
+        """Offer to claim a @tag. Nothing is broadcast here.
+
+        First claim wins, in chain order, so this can only say the name is
+        free NOW -- and says exactly that rather than promising it.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        chain = _account_chain()
+        address = str(state.setting(f"address:{account.pubkey}", "") or "")
+        if not address:
+            return JSONResponse(
+                {"detail": "this account has no address yet"}, status_code=400)
+        try:
+            # The name they signed up with, unless they asked for another.
+            # Nobody should have to type it twice, and the one on file is
+            # the one the rest of the page is already calling them.
+            asked = str(said.get("tag", "")).strip().lstrip("@")
+            if not asked:
+                mine = state.vault().by_pubkey(account.pubkey)
+                asked = (mine or {}).get("tag", "")
+            wanted = taglib.validate(asked)
+            index = state.token_index(chain)
+            holder = index.address_of(wanted)
+            if holder and holder != address:
+                raise taglib.TagError(f"@{wanted} is taken.")
+            outputs = _class_c_or_b(chain, address, taglib.encode(wanted),
+                                    _coin_pubkey(account.pubkey))
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address, outputs,
+                    rate=fees.MIN_FEE_PER_KB, what=f"claim @{wanted}",
+                    exclude=_flights.spent_by(account.pubkey),
+                    extra=_flights.change_for(account.pubkey))
+        except (taglib.TagError, fundinglib.FundingError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned,
+                            f"claim @{wanted}")
+        return JSONResponse({"offer": offer.id, **unsigned.as_json()})
+
+    @app.post("/account/send")
+    def account_send(request: Request, payload: Any = Body(None)):
+        """Offer to send coins. Nothing is broadcast here.
+
+        The same handshake as a claim, carrying money instead of a name --
+        which is the point of there being one handshake. What is different
+        is only what the node has to say out loud before somebody signs:
+        who is being paid, how much, and what it costs.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        chain = _account_chain()
+        address = str(state.setting(f"address:{account.pubkey}", "") or "")
+        if not address:
+            return JSONResponse({"detail": "this account has no address yet"},
+                                status_code=400)
+        try:
+            to = str(said.get("to", "")).strip()
+            # A @tag is a name for an address, so it is resolved here and
+            # the ANSWER is shown: somebody paying @robin should see the
+            # address their coins are going to before they sign.
+            if to.startswith("@") or (to and not _looks_like_an_address(to)):
+                wanted = taglib.validate(to.lstrip("@"))
+                found = state.token_index(chain).address_of(wanted)
+                if not found:
+                    raise ValueError(f"nobody holds @{wanted} on this chain")
+                to = found
+            complaint = _check_address(to, mainnet=chain.is_mainnet)
+            if complaint:
+                raise ValueError(complaint)
+            if to == address:
+                raise ValueError("that is this account's own address")
+            amount = parse_amount(str(said.get("amount", "")), True)
+            if amount <= 0:
+                raise ValueError("a payment of nothing is not a payment")
+            index = state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address,
+                    [(amount, txbuild.p2pkh_script(to))],
+                    rate=fees.MIN_FEE_PER_KB,
+                    what=f"send {format_amount(amount, True)} to {to}",
+                    exclude=_flights.spent_by(account.pubkey),
+                    extra=_flights.change_for(account.pubkey))
+        except (taglib.TagError, fundinglib.FundingError, AmountError,
+                ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned,
+                            unsigned.what)
+        return JSONResponse({"offer": offer.id, "to": to, "amount": amount,
+                             **unsigned.as_json()})
+
+    def _looks_like_an_address(text: str) -> bool:
+        """Address or name? Decided by shape, and only to choose which
+        complaint to make -- both are checked properly afterwards."""
+        try:
+            b58check_decode(text)
+            return True
+        except Exception:
+            return False
+
+    @app.post("/account/sign")
+    def account_sign(request: Request, payload: Any = Body(None)):
+        """Take the signatures, check what they make, and broadcast it."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            offer = _offers.take(str(said.get("offer", "")), account.pubkey)
+            signatures = [str(x) for x in (said.get("signatures") or [])]
+            pubkey = bytes.fromhex(str(said.get("pubkey", "")))
+            signed = fundinglib.assemble(offer.unsigned, signatures, pubkey)
+        except (accountlib.OfferError, fundinglib.FundingError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+
+        chain = state.chain_named(offer.network)
+        try:
+            with chain.rpc() as rpc:
+                # What the node offered is what the node checks. The
+                # decoded transaction has to spend the coins it chose and
+                # pay the outputs it built -- a browser cannot talk it into
+                # broadcasting anything else.
+                decoded = rpc.call("decoderawtransaction", signed)
+                _same_as_offered(decoded, offer.unsigned)
+                txid = rpc.call("sendrawtransaction", signed)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"detail": f"the node refused it: {exc}"},
+                                status_code=502)
+        # Remembered until the index reads it, so the next transaction
+        # this account builds does not offer the coin this one just spent
+        # or miss the change it just made.
+        _flights.add(account.pubkey, txid, offer.unsigned,
+                     str(state.setting(f"address:{account.pubkey}", "") or ""))
+
+        # A claim is worth remembering against the account: the page can
+        # then say "on its way" rather than "no name" for the minutes
+        # between the broadcast and the block.
+        if offer.what.startswith("claim @"):
+            try:
+                state.vault().note_claim(offer.what[len("claim @"):], txid)
+            except Exception:
+                pass                       # a note is not worth failing on
+        state.bump_generation()
+        return JSONResponse({"txid": txid, "what": offer.what})
+
+    def _class_c_or_b(chain, address: str, raw: bytes,
+                      coin_pubkey: bytes = b""):
+        """The outputs that carry an arcade payload, in whichever class fits.
+
+        **It wraps in `AnyData` itself**, and that is the point of it being
+        one function. Raw, the `arcm` magic is read by the token engine as
+        an Omni header -- version "ar", type "cm" = 25453 -- and an unknown
+        message type does not get ignored, it STOPS the ledger index and
+        says balances can no longer be trusted. Three callers wrapped and
+        two did not; a test caught it, and the fix is that no caller can.
+
+        Class C where it fits: one OP_RETURN, no dust. Class B otherwise,
+        which is a marker output plus obfuscated bare-multisig outputs --
+        the same choice `TokenSender` makes, made here because that one
+        funds through the node's wallet and an account cannot.
+
+        Class B needs the sender's own public key in every output, so the
+        dust stays spendable by them rather than being burned. The node
+        does not have it and cannot derive it: the browser sends it at
+        signup and it is kept beside the address.
+        """
+        from ..encoding import (
+            MAX_CLASS_B_PAYLOAD, encode_class_b, encode_class_c,
+            max_class_c_payload,
+        )
+        from ..txbuild import multisig_script, op_return_script, p2pkh_script
+
+        payload = P.AnyData(data=raw).encode()
+        if len(payload) <= max_class_c_payload():
+            return [(0, op_return_script(encode_class_c(payload)))]
+        if len(payload) > MAX_CLASS_B_PAYLOAD:
+            raise fundinglib.FundingError(
+                f"that is {len(payload)} bytes, and one transaction carries "
+                f"at most {MAX_CLASS_B_PAYLOAD}. Longer messages go as a "
+                f"chain of transactions, which accounts cannot do yet "
+                f"(docs/multi-user.md §9).")
+        if not coin_pubkey:
+            raise fundinglib.FundingError(
+                "this account has not told the node its public key, so a "
+                "Class B payload cannot be built. Sign in again.")
+        outputs = [(sendermod.OUTPUT_VALUE, p2pkh_script(chain.params.marker))]
+        for group in encode_class_b(address, coin_pubkey, payload):
+            outputs.append((sendermod.OUTPUT_VALUE,
+                            multisig_script(list(group.keys), group.required)))
+        return outputs
+
+    def _coin_pubkey(pubkey: str) -> bytes:
+        """The account's own coin key, as the browser reported it."""
+        said = str(state.setting(f"coinkey:{pubkey}", "") or "")
+        try:
+            return bytes.fromhex(said)
+        except ValueError:
+            return b""
+
+    def _same_as_offered(decoded: dict, unsigned) -> None:
+        """Refuse anything that is not the transaction that was offered."""
+        spent = {(vin.get("txid"), int(vin.get("vout", -1)))
+                 for vin in decoded.get("vin", [])}
+        wanted = {(coin["txid"], coin["vout"]) for coin in unsigned.inputs}
+        if spent != wanted:
+            raise ValueError("that transaction does not spend what was offered")
+        outs = [(int(round(float(v.get("value", 0)) * 100_000_000),),
+                 (v.get("scriptPubKey") or {}).get("hex", ""))
+                for v in decoded.get("vout", [])]
+        offered = [(value, script.hex()) for value, script in unsigned.outputs]
+        if outs != offered:
+            raise ValueError("that transaction does not pay what was offered")
+
+    @app.post("/auth/password")
+    def auth_password(request: Request, payload: Any = Body(None)):
+        """Sign in with a username and a password.
+
+        This is the operator's door, and it is the one place in this
+        application where a password is checked. The rule it appears to
+        break -- no password on the server -- is about other people's keys:
+        a node holding a hash of the password that guards ITS OWN pages
+        creates nothing worth stealing that the machine does not already
+        hold, because the wallet is on it either way (D-154).
+        """
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            token = state.credentials().open_session(
+                str(said.get("username", "")), str(said.get("password", "")),
+                ip=(request.client.host if request.client else ""))
+        except accountslib.AccountError as refused:
+            return JSONResponse({"detail": str(refused)}, status_code=403)
+        account = state.account_for(token)
+        answer = JSONResponse({"pubkey": account.pubkey,
+                               "operator": account.pubkey.lower() == state.operator,
+                               "tag": ""})
+        answer.set_cookie(
+            SESSION_COOKIE, token,
+            max_age=accountslib.SESSION_DAYS * 86400,
+            httponly=True, samesite="strict", secure=_over_https(request))
+        return answer
+
+    @app.post("/auth/set-password")
+    def auth_set_password(request: Request, payload: Any = Body(None)):
+        """Choose the username and password this node answers to.
+
+        From the machine itself only, for the same reason claiming it is:
+        the whole security of it is that setting it requires already being
+        where the node is. Changing it later is the same act, from the same
+        place, or signed in as the operator.
+        """
+        signed_in_as = signed_in(request)
+        outside = _from_outside(request)
+        already = state.operator
+        allowed = (not outside) or (
+            already and signed_in_as is not None
+            and signed_in_as.pubkey.lower() == already)
+        if not allowed:
+            return JSONResponse(
+                {"detail": "this is set from the machine the node runs on, "
+                           "or by whoever already holds it"}, status_code=403)
+        said = payload if isinstance(payload, dict) else {}
+        creds = state.credentials()
+        register = state.accounts()
+        # The account this name opens. An existing operator keeps theirs, so
+        # changing a password does not change who the node belongs to; a
+        # node with none gets an identifier made for it -- not a coin key
+        # and not a key anybody signs with, just the id a session names.
+        pubkey = already or secrets.token_bytes(32).hex()
+        try:
+            name = creds.set(str(said.get("username", "")),
+                             str(said.get("password", "")), pubkey)
+        except accountslib.AccountError as refused:
+            return JSONResponse({"detail": str(refused)}, status_code=400)
+        if not already:
+            register.join(pubkey)
+            state.claim_operator(pubkey)
+        return JSONResponse({"username": name, "operator": pubkey})
+
+    @app.get("/auth/door")
+    def auth_door(request: Request):
+        """What the sign-in page should offer, without saying who anybody is."""
+        creds = state.credentials()
+        return JSONResponse({
+            "password": creds.anybody(),
+            # Only from the machine itself, and only while there is nothing
+            # set: a page that offers this to the internet is a page that
+            # offers the node away.
+            "settable": not _from_outside(request) and not creds.anybody(),
+            "min_password": accountslib.MIN_PASSWORD,
+        })
+
+    @app.post("/auth/operator")
+    def auth_claim_operator(request: Request):
+        """Make the signed-in account this node's operator.
+
+        Only from the machine itself. The whole security of it is that
+        becoming the operator requires already being where the node is --
+        so it is refused for any request the door would call public, which
+        includes anything that crossed an edge whatever Host it claims.
+
+        Claimed once and then only by the operator: a node that lets the
+        next person who signs in take it over is a node anybody can take
+        over by signing in.
+        """
+        if _from_outside(request):
+            return JSONResponse(
+                {"detail": "this is set from the machine the node runs on, "
+                           "not from outside it"}, status_code=403)
+        account = signed_in(request)
+        if account is None:
+            return JSONResponse(
+                {"detail": "sign in first, with the words you want this "
+                           "node to answer to"}, status_code=403)
+        held = state.operator
+        if held and held != account.pubkey.lower():
+            return JSONResponse(
+                {"detail": "this node already has an operator. Sign in as "
+                           "them to change it."}, status_code=403)
+        state.claim_operator(account.pubkey)
+        return JSONResponse({"operator": account.pubkey})
+
+    @app.get("/auth/who")
+    def auth_who(request: Request):
+        """Who this browser is, for the page to draw. Never anybody else."""
+        account = signed_in(request)
+        register = state.accounts()
+        if account is None:
+            return JSONResponse({"pubkey": None, "free": register.free(),
+                                 "seats": register.seats})
+        return JSONResponse({"pubkey": account.pubkey, "tag": "",
+                             "created": account.created, "seen": account.seen,
+                             "free": register.free(), "seats": register.seats,
+                             "operator": account.pubkey.lower() == state.operator,
+                             "claimable": not state.operator
+                             and not _from_outside(request)})
+
+    # --- making the next one --------------------------------------------------
+    #
+    # Every instance serves the application and a copy of its index, so a
+    # clone can make the next clone. A network of nodes that all send people
+    # back to one website is one website away from being no network at all.
+    #
+    # The three source names are the ones the installer already fetches, so
+    # any node can be the place somebody installs from with no new option to
+    # point at one.
+
+    def _packed_source():
+        """This instance's own source, packed if it has not been."""
+        said = bootstraplib.source(state.home)
+        revision = state.running_version or "unknown"
+        if said is None or said.get("revision") != revision:
+            try:
+                said = bootstraplib.source_archive(
+                    state.home, state.checkout, revision)
+            except bootstraplib.BootstrapError:
+                return None
+        return said
+
+    def _served_bootstrap(network: str):
+        """The published index copy for a chain, remade if it has gone stale.
+
+        The name comes out of a URL, so a chain this node does not index is
+        an answer rather than an exception.
+        """
+        context = next((c for c in state.token_chains if c.network == network),
+                       None)
+        if context is None:
+            return None
+        index = state.ledger_index_path(context)
+        tip = state.ledger_tips.get(network) or state.tips.get(network)
+        return bootstraplib.current(state.home, network, index,
+                                    context.params.activation_height, tip)
+
+    @app.get("/clone", response_class=HTMLResponse)
+    def clone_page(request: Request):
+        copies = []
+        for context in state.token_chains:
+            try:
+                snapshot = _served_bootstrap(context.network)
+            except Exception:
+                snapshot = None
+            if snapshot is not None:
+                copies.append({"chain": context, "snap": snapshot})
+        return render(request, "clone.html", source=_packed_source(),
+                      copies=copies, here=_origin(request),
+                      seats=state.accounts().seats)
+
+    @app.get("/source.tar.gz")
+    def clone_source():
+        said = _packed_source()
+        if said is None:
+            raise HTTPException(503, "this instance cannot pack its own source")
+        return Response(
+            (bootstraplib.folder(state.home) / bootstraplib.SOURCE_NAME).read_bytes(),
+            media_type="application/gzip",
+            headers={"Content-Disposition":
+                     f'attachment; filename="{bootstraplib.SOURCE_NAME}"',
+                     "Cache-Control": "no-cache"})
+
+    @app.get("/source.tar.gz.sha256")
+    def clone_source_sum():
+        said = _packed_source()
+        if said is None:
+            raise HTTPException(503, "this instance cannot pack its own source")
+        return Response(f"{said['sha256']}  {bootstraplib.SOURCE_NAME}\n",
+                        media_type="text/plain")
+
+    @app.get("/source.rev")
+    def clone_source_revision():
+        said = _packed_source()
+        if said is None:
+            raise HTTPException(503, "this instance cannot pack its own source")
+        return Response(f"{said['revision']}\n", media_type="text/plain")
+
+    @app.get("/bootstrap/{name}")
+    def clone_bootstrap(name: str):
+        """A copy of one index, or the manifest describing it."""
+        for suffix, kind in ((".sqlite.gz", "application/gzip"),
+                             (".json", "application/json")):
+            if name.endswith(suffix):
+                network = name[:-len(suffix)]
+                break
+        else:
+            raise HTTPException(404, "no such bootstrap")
+        snapshot = _served_bootstrap(network)
+        if snapshot is None:
+            raise HTTPException(
+                404, f"there is no {network} index here to copy yet")
+        path = snapshot.path if suffix == ".sqlite.gz" else snapshot.manifest
+        return Response(path.read_bytes(), media_type=kind, headers={
+            "Content-Disposition": f'attachment; filename="{path.name}"',
+            # Named by the height it was taken at, so a cached copy is never
+            # served as if it were newer than it is.
+            "X-Arcade-Height": str(snapshot.height),
+            "Cache-Control": "no-cache"})
 
     @app.post("/rpc/{which}")
     def bot_rpc(request: Request, which: str, payload: Any = Body(None)):

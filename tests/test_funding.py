@@ -1,0 +1,197 @@
+"""Spending from an address the node has no key for, proved on a real node.
+
+This is the half of the design that cannot be checked by reading it. The
+sighash algorithm is a serialisation, and a serialisation that is subtly
+wrong produces a signature that verifies against nothing: the only honest
+proof is that a real pepecoind accepts the transaction into its mempool.
+
+So the key here is made in Python with a throwaway secp256k1
+implementation used ONLY by this test -- the application never signs with
+Python -- and what is asserted is what the node said.
+"""
+
+import hashlib
+
+import pytest
+
+from arcade import funding, utxos
+from arcade.config import NETWORKS
+from arcade.db import Database, StateDB
+from arcade.script import b58check_encode, hash160
+from arcade.state import install_schema
+from arcade.txbuild import p2pkh_script
+
+PARAMS = NETWORKS["regtest"]
+COIN = 100_000_000
+
+# --- a minimal secp256k1, for the TEST only -----------------------------------
+#
+# The application signs in the browser with an audited library. This exists
+# so the test can play the part of a browser without one, and is not
+# imported by anything that ships.
+
+P = 2**256 - 2**32 - 977
+N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+G = (0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798,
+     0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8)
+
+
+def _add(p, q):
+    if p is None:
+        return q
+    if q is None:
+        return p
+    if p[0] == q[0] and (p[1] + q[1]) % P == 0:
+        return None
+    if p == q:
+        lam = (3 * p[0] * p[0]) * pow(2 * p[1], P - 2, P) % P
+    else:
+        lam = (q[1] - p[1]) * pow(q[0] - p[0], P - 2, P) % P
+    x = (lam * lam - p[0] - q[0]) % P
+    return (x, (lam * (p[0] - x) - p[1]) % P)
+
+
+def _mul(k, point=G):
+    out = None
+    while k:
+        if k & 1:
+            out = _add(out, point)
+        point = _add(point, point)
+        k >>= 1
+    return out
+
+
+def _pubkey(secret: int) -> bytes:
+    x, y = _mul(secret)
+    return bytes([2 + (y & 1)]) + x.to_bytes(32, "big")
+
+
+def _der(r: int, s: int) -> bytes:
+    def integer(value):
+        raw = value.to_bytes((value.bit_length() + 8) // 8 or 1, "big")
+        return bytes([2, len(raw)]) + raw
+    body = integer(r) + integer(s)
+    return bytes([0x30, len(body)]) + body
+
+
+def _sign(secret: int, digest: bytes) -> bytes:
+    z = int.from_bytes(digest, "big")
+    k = int.from_bytes(hashlib.sha256(digest + secret.to_bytes(32, "big")
+                                      ).digest(), "big") % N
+    while True:
+        point = _mul(k)
+        r = point[0] % N
+        if r:
+            s = (pow(k, N - 2, N) * (z + r * secret)) % N
+            if s > N // 2:                       # low-S, as the network wants
+                s = N - s
+            if s:
+                return _der(r, s) + bytes([funding.SIGHASH_ALL])
+        k += 1
+
+
+@pytest.fixture
+def db(tmp_path):
+    database = Database(tmp_path / "index.sqlite")
+    install_schema(database)
+    yield database
+    database.close()
+
+
+def test_a_transaction_signed_outside_the_node_is_accepted_by_it(regtest, db):
+    """The whole design in one test: coins at an address the node has no
+    key for, an unsigned transaction built from the index, signatures made
+    somewhere else, and a real pepecoind taking it."""
+    rpc = regtest.rpc
+    secret = 0x1122334455667788112233445566778811223344556677881122334455667788
+    pubkey = _pubkey(secret)
+    ours = b58check_encode(PARAMS.pubkeyhash_version, hash160(pubkey))
+
+    # The node does not know this address. It says so itself.
+    assert not rpc.call("validateaddress", ours).get("ismine")
+
+    # Pay it, and let the index see the block.
+    rpc.call("generate", 101)
+    funded = rpc.call("sendtoaddress", ours, 5.0)
+    height = rpc.call("getblockcount") + 1
+    rpc.call("generate", 1)
+    utxos.watch(db, ours, 0)
+    block = rpc.call("getblock", rpc.call("getblockhash", height), 2)
+    state = StateDB(db)
+    with state.block_context(height=height, block_hash=block["hash"],
+                             prev_hash=block["previousblockhash"],
+                             block_time=block["time"],
+                             tx_count=len(block["tx"]), processed_at=0):
+        utxos.on_block(state, height, block, PARAMS, {ours})
+    assert utxos.balance(db, ours) == int(5.0 * COIN), "the index saw the coins"
+
+    # Build something to send, for an address the node DOES own, so it can
+    # be checked afterwards from the other side.
+    theirs = rpc.call("getnewaddress")
+    unsigned = funding.build(db, PARAMS, ours,
+                             [(int(1.0 * COIN), p2pkh_script(theirs))],
+                             rate=100_000, what="a test payment")
+    assert unsigned.inputs and unsigned.sighashes
+    assert len(unsigned.sighashes) == len(unsigned.inputs)
+    assert unsigned.change > 0, "the rest comes back"
+
+    # Sign it as a browser would: over the bytes we were handed, nothing else.
+    signatures = [_sign(secret, bytes.fromhex(h)).hex()
+                  for h in unsigned.sighashes]
+    signed = funding.assemble(unsigned, signatures, pubkey)
+
+    # And the only opinion that counts.
+    accepted = rpc.call("sendrawtransaction", signed)
+    assert len(accepted) == 64, accepted
+    in_pool = rpc.call("getrawmempool")
+    assert accepted in in_pool
+
+    rpc.call("generate", 1)
+    got = rpc.call("gettransaction", accepted)
+    assert got["confirmations"] >= 1, "and a block took it"
+
+
+def test_the_change_comes_back_to_the_sender(regtest, db):
+    """A Class B payload's obfuscation is seeded with the largest input's
+    address, so change that wandered elsewhere would make the payload
+    unreadable by everyone."""
+    rpc = regtest.rpc
+    secret = 0x2233445566778899223344556677889922334455667788992233445566778899
+    pubkey = _pubkey(secret)
+    ours = b58check_encode(PARAMS.pubkeyhash_version, hash160(pubkey))
+    rpc.call("generate", 101)
+    rpc.call("sendtoaddress", ours, 3.0)
+    height = rpc.call("getblockcount") + 1
+    rpc.call("generate", 1)
+    utxos.watch(db, ours, 0)
+    block = rpc.call("getblock", rpc.call("getblockhash", height), 2)
+    state = StateDB(db)
+    with state.block_context(height=height, block_hash=block["hash"],
+                             prev_hash=block["previousblockhash"],
+                             block_time=block["time"],
+                             tx_count=len(block["tx"]), processed_at=0):
+        utxos.on_block(state, height, block, PARAMS, {ours})
+
+    unsigned = funding.build(db, PARAMS, ours,
+                             [(int(0.5 * COIN), p2pkh_script(rpc.call("getnewaddress")))],
+                             rate=100_000)
+    change = [value for value, script in unsigned.outputs
+              if script == p2pkh_script(ours)]
+    assert change and change[0] == unsigned.change
+
+
+def test_it_refuses_rather_than_building_something_unpayable(db):
+    utxos.watch(db, "nNobody", 0)
+    with pytest.raises(funding.FundingError) as refused:
+        funding.build(db, PARAMS, "nNobody",
+                      [(100_000, b"\x6a")], rate=100_000)
+    assert "not enough" in str(refused.value)
+
+
+def test_the_signatures_have_to_match_the_inputs(db):
+    unsigned = funding.Unsigned(raw="", inputs=[{"txid": "aa" * 32, "vout": 0,
+                                                 "value": 1, "address": "x"}],
+                                outputs=[])
+    with pytest.raises(funding.FundingError) as refused:
+        funding.assemble(unsigned, [], b"\x02" + b"\x11" * 32)
+    assert "signatures were needed" in str(refused.value)

@@ -513,22 +513,24 @@ def test_it_says_what_it_decided(monkeypatch):
     assert "refused" in state.update_status["error"], "and why"
 
 
-def test_the_newest_notice_is_the_one_taken(monkeypatch, tmp_path):
-    """A channel is handed back oldest-first so it reads like a room; the
-    watcher wants the other end. Walking it forwards made a node coming fresh
-    to two notices record the OLDER revision as seen -- harmless on a
-    receiver, but the publishing node compares the same field before
-    announcing, so an old revision landing there invites a second post for a
-    release already announced (D-087)."""
+def test_only_the_newest_notice_is_kept_and_only_the_publisher_is_heard(
+        monkeypatch, tmp_path):
+    """A notice is a nudge, not a record.
+
+    It used to be a board post, and a whole channel was re-read every pass:
+    a node coming fresh to two notices recorded the OLDER one as seen, and a
+    channel with several could make every pass find something "new" (D-087,
+    D-093). One row, overwritten by the scanner, ends both -- and the sender
+    is still checked, because anybody may broadcast (D-147).
+    """
+    import json as jsonlib
+
     from arcade.web.watcher import BlockWatcher
-    from arcade import release
 
     state = FakeState(FakeChain(tip=100), FakeChain("main", tip=5))
     watcher = BlockWatcher(state)
-    # ids as a real store hands them back: oldest first, ascending.
-    posts = [{"id": 1, "text": release.notice("0000111"), "sender": "nPub"},
-             {"id": 2, "text": "somebody says hello", "sender": "nOther"},
-             {"id": 3, "text": release.notice("2222333"), "sender": "nPub"}]
+    said = {"value": jsonlib.dumps(
+        {"revision": "2222333", "from": "nPub", "height": 3})}
 
     class Store:
         def __enter__(self):
@@ -537,15 +539,28 @@ def test_the_newest_notice_is_the_one_taken(monkeypatch, tmp_path):
         def __exit__(self, *exc):
             return False
 
-        def group_posts(self, network, channel, limit=5):
-            return posts
+        def get_meta(self, key, default=None):
+            return said["value"] if key == "release_notice" else default
 
     monkeypatch.setattr(watcher, "_release_publisher", lambda: "nPub")
     monkeypatch.setattr(type(state), "store", lambda self: Store(), raising=False)
     watcher._update_checked = 999999.0
     watcher._check_release_notices()
-    assert watcher._release_seen == "2222333", "the newest, not the first read"
+    assert watcher._release_seen == "2222333"
     assert watcher._update_checked == 0.0, "and it asks the site now"
+
+    # The same one again changes nothing: acted on once.
+    watcher._update_checked = 999999.0
+    watcher._check_release_notices()
+    assert watcher._update_checked == 999999.0
+
+    # And somebody who does not hold the release tag is not telling us
+    # about a release, whatever they broadcast.
+    said["value"] = jsonlib.dumps(
+        {"revision": "9999999", "from": "nImpostor", "height": 4})
+    watcher._check_release_notices()
+    assert watcher._release_seen == "2222333"
+    assert watcher._update_checked == 999999.0
 
 
 def test_a_successful_update_is_not_read_from_the_exit_status(monkeypatch, tmp_path):

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Docs · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Docs</h1>
+<p class="sub">Everything written about this, shipped with the application
+  rather than only on a website &mdash; so it is here when the website is
+  not, and so a copy of the program is a copy of its manual too.</p>
+
+<div class="doclist">
+  {% for doc in pages %}
+  <a class="panel docitem" href="/docs/{{ doc.name }}">
+    <strong>{{ doc.title }}</strong>
+    {% if doc.blurb %}<span class="muted">{{ doc.blurb }}</span>{% endif %}
+    <code class="muted">{{ doc.name }}</code>
+  </a>
+  {% endfor %}
+</div>
+
+<p class="muted" style="margin-top:18px">
+  Something wrong? <a href="{{ bugs_url }}" target="_blank" rel="noopener">Report
+  a bug</a>.</p>
+
+<style>
+.doclist{display:grid;gap:10px}
+.docitem{display:block;text-decoration:none;color:inherit}
+.docitem:hover{border-color:var(--accent);text-decoration:none}
+.docitem strong{display:block;font-size:1.02rem}
+.docitem span{display:block;margin-top:3px;font-size:.88rem}
+.docitem code{display:block;margin-top:6px;font-size:.74rem;background:none;padding:0}
+</style>
+{% endblock %}

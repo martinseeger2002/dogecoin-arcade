@@ -32,7 +32,7 @@ def test_the_rest_of_the_wallet_says_nothing_about_cors(client):
     """Which is what stops an inscription reading it: a cross-origin fetch
     without permission cannot see the answer."""
     app, _ = client
-    for path in ("/", "/tokens", "/wallet", "/messages", "/remote"):
+    for path in ("/", "/tokens", "/wallet", "/messages", "/feed"):
         assert "access-control-allow-origin" not in app.get(path).headers, path
 
 

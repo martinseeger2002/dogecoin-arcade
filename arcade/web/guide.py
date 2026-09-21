@@ -1,20 +1,21 @@
-"""The written guide, inside the application.
+"""The written documentation, inside the application.
 
-A user who is offline, or behind the remote tunnel, or who does not know
-there is a website, still has to be able to find out what the thing in front
-of them does. So the guide ships with the application rather than only on the
-site: `templates/guide.md` is the same file the site publishes as Features,
-copied in at release time and checked by a test (D-047).
+Somebody offline, or on a clone, or who does not know there is a website,
+still has to be able to find out what the thing in front of them does. So
+the documents ship WITH the application rather than only on a site: the
+whole of `docs/` is copied into `web/docs/` at release time and checked by
+a test, and every instance serves it -- which is also what lets a clone be
+a complete copy rather than a program with its manual somewhere else.
 
-There used to be a second, shorter guide written by hand in this module, kept
-in step with the document by a test that compared their section titles. Two
-descriptions of one program is one too many: the short one was always a
-little behind, and the test only noticed when a heading changed, never when a
-sentence went stale.
+There used to be a second, shorter guide written by hand in this module,
+kept in step by a test that compared section titles. Two descriptions of
+one program is one too many: the short one was always a little behind, and
+the test only noticed when a heading changed, never when a sentence went
+stale.
 
-Markdown is rendered here rather than by a library. The subset the document
-uses is small -- headings, bullets, emphasis, code, links, rules -- and a
-wallet should not grow a dependency to show its own help.
+Markdown is rendered here rather than by a library. The subset these
+documents use is small -- headings, bullets, emphasis, code, links, tables,
+rules -- and a wallet should not grow a dependency to show its own help.
 """
 
 from __future__ import annotations
@@ -24,6 +25,92 @@ import re
 from pathlib import Path
 
 GUIDE = Path(__file__).parent / "templates" / "guide.md"
+
+#: Everything else, as shipped. One directory, read at request time like the
+#: templates are, so a document can be corrected without a restart.
+DOCS = Path(__file__).parent / "docs"
+
+#: The order they are offered in: what somebody arriving wants first, then
+#: what somebody building on it wants, then the history. A document not
+#: named here is still served -- it goes at the end under its own file name
+#: -- so adding one to `docs/` is enough to publish it.
+ORDER = (
+    ("features.md", "What it does", "Every part of the application, in one page."),
+    ("inscription-api.md", "The inscription API",
+     "What an inscribed page may ask the wallet, and what it is refused."),
+    ("bot-rpc.md", "The bot RPC",
+     "The JSON-RPC endpoint for programs running beside the wallet."),
+    ("multi-user.md", "Letting other people in",
+     "The plan for accounts, seats and keys that never leave the browser."),
+    ("00-node-setup.md", "Setting up a node",
+     "What the installer does, and how to do it by hand."),
+    ("messaging/02-design.md", "Messaging: the design",
+     "The envelope, the encryption and what the chain carries."),
+    ("messaging/01-node.md", "Messaging: the node", "The testnet side of it."),
+    ("messaging/04-testnet-results.md", "Messaging: measured",
+     "What it actually cost and how long it actually took."),
+    ("p2p-messaging.md", "Why not peer-to-peer",
+     "The design that was rejected, and why."),
+    ("tokens-notes.md", "Tokens: notes", "Working notes on the token layer."),
+    ("03-companion-app-design.md", "The companion app", "An earlier design."),
+    ("M0-notes.md", "Milestone 0", "Working notes."),
+    ("M1-notes.md", "Milestone 1", "Working notes."),
+    ("M2-notes.md", "Milestone 2", "Working notes."),
+    ("DECISIONS.md", "Every decision, and why",
+     "The engineering record: what was chosen, what was rejected, and what "
+     "went wrong first. The longest document here and the most useful one "
+     "if you are going to change something."),
+)
+
+
+def pages() -> list[dict]:
+    """Every document that ships, in the order above and then the rest."""
+    named = {name for name, _, _ in ORDER}
+    found = []
+    for name, title, blurb in ORDER:
+        if (DOCS / name).exists() or name == "features.md":
+            found.append({"name": name, "title": title, "blurb": blurb})
+    for path in sorted(DOCS.rglob("*.md")):
+        name = str(path.relative_to(DOCS))
+        if name not in named:
+            found.append({"name": name, "title": path.stem.replace("-", " "),
+                          "blurb": ""})
+    return found
+
+
+def page(name: str) -> str | None:
+    """One document's text, or None. Never a path somebody handed us."""
+    if name == "features.md":
+        return GUIDE.read_text(encoding="utf-8") if GUIDE.exists() else None
+    if any(part in ("..", "") for part in Path(name).parts):
+        return None
+    target = (DOCS / name).resolve()
+    if not str(target).startswith(str(DOCS.resolve())) or not target.is_file():
+        return None
+    if target.suffix != ".md":
+        return None
+    return target.read_text(encoding="utf-8")
+
+
+def title_of(name: str) -> str:
+    for known, title, _ in ORDER:
+        if known == name:
+            return title
+    return Path(name).stem.replace("-", " ")
+
+
+def document(text: str) -> list[dict]:
+    """A whole document as (title, html) sections, one per `## ` heading."""
+    found: list[dict] = [{"title": "", "body": []}]
+    for line in (text or "").splitlines():
+        if line.startswith("## "):
+            found.append({"title": line[3:].strip(), "body": []})
+        elif line.startswith("# "):
+            continue                      # the document's own title
+        else:
+            found[-1]["body"].append(line)
+    return [{"title": s["title"], "html": render(s["body"])}
+            for s in found if any(line.strip() for line in s["body"])]
 
 #: Where a bug goes. In the application because that is where somebody is
 #: standing when they find one.

@@ -153,11 +153,14 @@ def test_the_loop_runs_against_a_real_store(tmp_path, monkeypatch):
         home=tmp_path,
         messaging=ChainContext(network="regtest", role="messaging", label="T"),
         ledger=ChainContext(network="main", role="ledger", label="M"))
+    import json as jsonlib
+
     store = MessageStore(state.store_path)
-    store.add_group_post("regtest", release.RELEASE_CHANNEL, "aa" * 32, 100, 1700,
-                         "nPublisher", "@them", release.notice("abc1234"))
-    store.add_group_post("regtest", release.RELEASE_CHANNEL, "bb" * 32, 101, 1701,
-                         "nSomebodyElse", "@other", release.notice("bad0000"))
+    # A notice is machine talk now: its own message type, kept as the newest
+    # one seen rather than as a post on a board (D-147). The scanner writes
+    # this; the watcher reads it.
+    store.set_meta("release_notice", jsonlib.dumps(
+        {"revision": "abc1234", "from": "nPublisher", "height": 100}))
     store.conn.commit()
 
     watcher = BlockWatcher(state)
@@ -173,12 +176,23 @@ def test_the_loop_runs_against_a_real_store(tmp_path, monkeypatch):
     watcher._check_release_notices()
     assert watcher._update_checked == 999999.0
 
-    # And a BOARD WITH SEVERAL notices does not alternate between them. One
-    # revision remembered against many posts made every pass find something
-    # "new": reset, check, reset, twelve fetches a minute from one node
+    # A notice from somebody who does not hold the release tag is ignored:
+    # anybody may broadcast, and only the publisher is telling us about a
+    # release.
+    store.set_meta("release_notice", jsonlib.dumps(
+        {"revision": "bad0000", "from": "nSomebodyElse", "height": 101}))
+    store.conn.commit()
+    watcher._update_checked = 999999.0
+    watcher._check_release_notices()
+    assert watcher._update_checked == 999999.0
+    assert watcher._release_seen == "abc1234"
+
+    # And a genuinely new one still counts. One revision remembered rather
+    # than many rows walked: the old version re-read a whole channel every
+    # pass and could find the same notice "new" twelve times a minute
     # (D-093).
-    store.add_group_post("regtest", release.RELEASE_CHANNEL, "cc" * 32, 102, 1702,
-                         "nPublisher", "@them", release.notice("dddeee1"))
+    store.set_meta("release_notice", jsonlib.dumps(
+        {"revision": "dddeee1", "from": "nPublisher", "height": 102}))
     store.conn.commit()
     watcher._update_checked = 999999.0
     watcher._check_release_notices()

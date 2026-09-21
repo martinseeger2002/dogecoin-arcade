@@ -44,6 +44,10 @@ TYPE_API = 6          # one node talking to another: sealed exactly like a priva
 TYPE_FEED_ACT = 7     # what somebody did to a post: like, reply, share, edit,
                       # delete, tip. Public, unsealed, and one type for all of
                       # them with a kind byte (feed.py, D-138)
+TYPE_RELEASE = 8      # one node telling every other that a version exists.
+                      # Machine talk: nobody reads it, the updater acts on it,
+                      # and it is NOT a post, so the feed never draws it
+                      # (release.py, D-147)
 
 # Cleartext header lengths. Both message types carry `clen`, the exact number of
 # ciphertext bytes in this payload.
@@ -101,7 +105,8 @@ class Header:
             return (MAGIC + bytes([VERSION, self.type]) + self.msg_id
                     + self.countdown.to_bytes(2, "big")
                     + self.clen.to_bytes(2, "big"))
-        if self.type in (TYPE_KEY_ANNOUNCE, TYPE_GROUP, TYPE_FEED_ACT):
+        if self.type in (TYPE_KEY_ANNOUNCE, TYPE_GROUP, TYPE_FEED_ACT,
+                         TYPE_RELEASE):
             # Neither carries `clen`. It exists to undo Class B's NUL padding
             # before opening a sealed box, and nothing here is sealed: an
             # announcement is fixed-length and a group post is plain text, where
@@ -153,7 +158,7 @@ class Header:
         """Length of the full cleartext header on chain."""
         if self.type == TYPE_KEY_ANNOUNCE:
             return KEY_ANNOUNCE_HEADER_LEN
-        if self.type in (TYPE_GROUP, TYPE_FEED_ACT):
+        if self.type in (TYPE_GROUP, TYPE_FEED_ACT, TYPE_RELEASE):
             # Public and unsealed, so neither carries `clen`: it exists to
             # undo Class B's padding before a sealed box will open.
             return GROUP_HEADER_LEN
@@ -199,7 +204,8 @@ class Header:
                 countdown=int.from_bytes(payload[14:16], "big"),
                 clen=int.from_bytes(payload[16:18], "big"),
             )
-        if msg_type not in (TYPE_KEY_ANNOUNCE, TYPE_GROUP, TYPE_FEED_ACT):
+        if msg_type not in (TYPE_KEY_ANNOUNCE, TYPE_GROUP, TYPE_FEED_ACT,
+                            TYPE_RELEASE):
             raise EnvelopeError(f"unknown message type {msg_type}")
         return cls(type=msg_type)
 

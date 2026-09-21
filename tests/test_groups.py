@@ -457,115 +457,17 @@ def feed_client(tmp_path, no_nodes):
     return TestClient(create_app(state)), state
 
 
+# The board's own page is gone: a post belongs to whoever wrote it, and the
+# feed is the only place it lives (D-147). What is tested here now is the
+# FORMAT and the STORE -- how a post is encoded, chunked, stored and read
+# back -- which the feed uses unchanged. The page tests moved to
+# test_feed_web.py, and the ones that tested channels went with the channels.
+
+
 def _post(state, channel, text, when, **file):
     with state.store() as store:
         store.add_group_post("regtest", channel, f"tx{when}", 1, when, "nA",
                              "somebody", text, **file)
-
-
-def test_the_composer_sits_above_the_posts(feed_client):
-    """A public channel is a feed: you write at the top and read down.
-
-    This asserted the opposite for a while. The board was first built as a feed,
-    then changed to match the private messenger -- read down to the newest, then
-    reply -- and then changed back, because the two are not the same thing: a
-    conversation has a bottom and a channel does not.
-    """
-    app, state = feed_client
-    _post(state, "main", "a post", 100)
-
-    body = app.get("/groups?channel=main").text
-    assert body.index('class="composer"') < body.index('class="bubble-row')
-
-
-def test_posts_are_rendered_newest_first(feed_client):
-    """The order the feed reads in, not the order the store keeps.
-
-    group_posts() stays oldest-first: the scanner and the chunk assembler both
-    depend on that, so the reversal belongs in the template.
-    """
-    import re
-
-    app, state = feed_client
-    _post(state, "main", "first thing", 100)
-    _post(state, "main", "second thing", 200)
-
-    body = app.get("/groups?channel=main").text
-    # Match the rendered posts, not the whole document: a bare substring search
-    # finds "older" inside a placeholder.
-    rendered = re.findall(r'class="text">([^<]+)', body)
-    assert rendered == ["second thing", "first thing"]
-
-    with state.store() as store:
-        kept = [p["text"] for p in store.group_posts("regtest", "main")]
-    assert kept == ["first thing", "second thing"], (
-        "the store's own order must not have been reversed to do this"
-    )
-
-
-def test_an_image_is_shown_without_a_click(feed_client):
-    app, state = feed_client
-    _post(state, "main", "look", 100, file_name="a.png", file_type="image/png",
-          file_data=b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
-
-    body = app.get("/groups?channel=main").text
-    assert '<img src="/groups/media/' in body
-
-
-def test_audio_is_a_player_that_waits_to_be_started(feed_client):
-    app, state = feed_client
-    _post(state, "main", "listen", 100, file_name="a.wav", file_type="audio/wav",
-          file_data=b"RIFF\x00\x00\x00\x00WAVEfmt " + b"\x00" * 32)
-
-    body = app.get("/groups?channel=main").text
-    assert 'audio class="media" controls' in body
-    assert 'preload="none"' in body
-
-
-def test_video_is_a_player_that_waits_to_be_started(feed_client):
-    app, state = feed_client
-    _post(state, "main", "watch", 100, file_name="a.mp4", file_type="video/mp4",
-          file_data=b"\x00\x00\x00\x20ftypisom" + b"\x00" * 64)
-
-    body = app.get("/groups?channel=main").text
-    assert 'video class="media" controls' in body
-    assert 'preload="metadata"' in body
-
-
-def test_an_unsafe_file_gets_no_player_at_all(feed_client):
-    """A feed that rendered whatever it was handed would be the whole problem."""
-    app, state = feed_client
-    _post(state, "main", "careful", 100, file_name="x.svg", file_type="image/svg+xml",
-          file_data=b"<svg onload='alert(1)'></svg>" + b" " * 40)
-
-    body = app.get("/groups?channel=main").text
-    # The class name also appears in the stylesheet, so look for the elements.
-    for element in ('<img src="/groups/media/', '<video class="media"',
-                    '<audio class="media"'):
-        assert element not in body
-    assert "x.svg" in body, "it should still be offered as a download"
-
-
-def test_starting_a_channel_needs_no_creation_step(feed_client):
-    """A channel is a name. Posting to an unused one starts it."""
-    app, state = feed_client
-
-    body = app.get("/groups?channel=brand-new").text
-    assert "#brand-new" in body
-    assert "is empty" in body
-
-    _post(state, "brand-new", "first ever", 100)
-    assert "first ever" in app.get("/groups?channel=brand-new").text
-
-
-def test_channels_are_listed_beside_the_posts(feed_client):
-    """Channels take the place conversations hold in the private messenger."""
-    app, state = feed_client
-    _post(state, "main", "a post", 100)
-
-    body = app.get("/groups?channel=main").text
-    assert 'class="threads"' in body
-    assert "a channel is just a name" in body
 
 
 def test_an_injected_chunk_cannot_block_a_real_post(tmp_path):

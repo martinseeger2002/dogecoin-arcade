@@ -274,11 +274,13 @@ def test_a_message_can_be_addressed_to_a_tag(web, monkeypatch):
 
 
 def test_an_inscription_named_in_a_post_gets_a_card_not_its_content(web):
-    """A post can name an inscription; the board shows a card for it.
+    """A post can name an inscription; the feed shows a card for it.
 
     Never the content: a post is written by a stranger and an inscription can
     be a page of scripts. The card is what this node's own index says, and
     the button opens the viewer, which has the sandbox (D-035).
+
+    (The board became the feed, D-138. Same rule, same card, one page.)
     """
     app, state, node, alice, bob = web
     index = state.token_index(state.ledger)
@@ -297,23 +299,38 @@ def test_an_inscription_named_in_a_post_gets_a_card_not_its_content(web):
         db.conn.commit()
 
     with state.store() as store:
-        store.add_group_post("regtest", "main", "tx1", 1, 0, alice, "someone",
+        store.add_group_post("regtest", "", "tx1", 1, 0, alice, "someone",
                              f"minting here: /content/{txid}", mine=False)
-        store.add_group_post("regtest", "main", "tx2", 2, 0, alice, "someone",
+        store.add_group_post("regtest", "", "tx2", 2, 0, alice, "someone",
                              "no inscription in this one", mine=False)
 
-    body = app.get("/groups").text
-    assert "Goofball Mintpad" in body
-    assert f"/inscriptions/{txid}/view" in body, "the button opens the viewer"
-    assert "&lt;b&gt;hello" not in body and "<b>hello</b>" not in body, \
-        "the content itself is never rendered, escaped or otherwise"
-    assert "text/html" in body and "240 bytes" in body
+    body = app.get("/feed").text
 
-    # An inscription this node does not have is not a card, and nothing breaks.
+    # The board showed a CARD -- name, type, size -- and refused to render
+    # the thing itself. The feed renders it, in the sandbox the viewer uses
+    # (D-138). Same guarantee by a different route: the page's own HTML
+    # never contains the inscription's, so a post cannot bring markup or a
+    # script into this document.
+    assert "&lt;b&gt;hello" not in body and "<b>hello</b>" not in body, \
+        "the content itself is never inlined, escaped or otherwise"
+    assert f'src="/content/{txid}"' in body, "it is framed, not inlined"
+    frame = body[body.index(f'src="/content/{txid}"') - 300:
+                 body.index(f'src="/content/{txid}"') + 200]
+    assert "sandbox=" in frame, "and the frame is sandboxed"
+    assert "allow-same-origin" not in frame, \
+        "no same-origin, or it could reach this page and this wallet"
+
+    # An inscription this node does not have is a link, not a frame, and
+    # nothing breaks: a thing it cannot identify is a thing it should not
+    # be drawing.
+    unknown = "ab" * 32
     with state.store() as store:
-        store.add_group_post("regtest", "main", "tx3", 3, 0, alice, "someone",
-                             "/content/" + "ab" * 32, mine=False)
-    assert app.get("/groups").status_code == 200
+        store.add_group_post("regtest", "", "tx3", 3, 0, alice, "someone",
+                             "/content/" + unknown, mine=False)
+    body = app.get("/feed").text
+    assert app.get("/feed").status_code == 200
+    assert f'src="/content/{unknown}"' not in body
+    assert f"/inscriptions/{unknown}/view" in body, "a link to the viewer"
 
 
 def test_an_offer_can_only_be_made_with_what_this_wallet_holds(web, monkeypatch):

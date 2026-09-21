@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}DogecoinArcade{% endblock %}</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png">
 <style>
 :root{
   --bg:#faf8f4; --panel:#fffdf9; --fg:#1b1a17; --muted:#6b665c; --line:#e2ddd3;
@@ -871,6 +873,14 @@ function arcadeFileCost(bytes){
     (el && el.dataset.generation) || '0', 10);
 
   function busy() {
+    // A wallet operation in flight. Set by the browser's own half while it
+    // is deriving, signing or waiting for the node (templates/wallet_js.js)
+    // -- and NOT covered by the draft checks below, which is how a page
+    // came to reload in the middle of signing a transaction: the claim
+    // bumped the generation, the poller saw it, and the keys went with the
+    // document. Nothing was lost that time because nothing had been
+    // broadcast; the next one would have been broadcast and unfinished.
+    if (document.body.dataset.working) return true;
     var active = document.activeElement;
     if (active && /^(TEXTAREA|INPUT)$/.test(active.tagName)) return true;
     var drafts = document.querySelectorAll('textarea, input[type=text]');
@@ -901,7 +911,11 @@ function arcadeFileCost(bytes){
 {% if not embed %}
 <footer class="version">
   {% if state.running_version %}running {{ state.running_version }}{% endif %}
+  {% if public %}
+  &middot; <a href="/clone">run your own</a>
+  {% else %}
   &middot; <a href="/backup">back up your wallet</a>
+  {% endif %}
 </footer>
 {% endif %}
 </body>

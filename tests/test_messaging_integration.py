@@ -439,7 +439,11 @@ def test_no_template_quotes_a_single_transaction_as_the_price():
                        "prepared.dust_sats", "prepared[0].fee_sats",
                        "prepared[0].dust_sats", "prepared[0].fee_coins")
 
-    for name in ("messages.html", "groups.html"):
+    # The private composer only. The feed has no confirm screen and no
+    # chunked send: a post is one transaction by construction, and a file
+    # attached to one becomes an inscription with its own accounting
+    # (D-138, D-147).
+    for name in ("messages.html",):
         source = (pathlib.Path("arcade/web/templates") / name).read_text()
         for attr in per_transaction:
             assert attr not in source, (

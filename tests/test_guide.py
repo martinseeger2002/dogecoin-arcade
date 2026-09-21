@@ -32,14 +32,14 @@ def test_the_guide_is_in_the_application(client):
 
 def test_it_is_reachable_from_every_page(client):
     app, _ = client
-    assert '/guide"' in app.get("/").text
+    assert '/docs"' in app.get("/").text
 
 
 def test_a_bug_has_somewhere_to_go(client):
     """Somebody finding a fault is standing in the application, not on the
     website, so the way to report one is here (D-047)."""
     app, _ = client
-    body = app.get("/guide").text
+    body = app.get("/docs").text
     assert guide.BUGS_URL in body and "Report" in body
 
 
@@ -74,8 +74,8 @@ def test_the_document_has_no_markdown_left_in_it(client):
     """Rendered, not printed: a reader should never see a pipe table or a
     row of dashes where a table belongs (D-047)."""
     app, _ = client
-    body = app.get("/guide").text
-    shown = body[body.index("<h1>Guide"):]
+    body = app.get("/docs/features.md").text
+    shown = body[body.index("<h1>What it does"):]
     assert "|---" not in shown and "| Interface |" not in shown
     assert "<table>" in shown, "the document's tables are tables"
 
@@ -97,7 +97,7 @@ def test_the_written_guide_covers_what_the_navigation_offers():
 
     text = FEATURES.read_text().lower()
     for _, label, _, built in NAV:
-        if not built or label in ("Overview", "Guide", "Keys", "Backup"):
+        if not built or label in ("Overview", "Docs", "Keys", "Backup"):
             continue
         stem = label.lower().rstrip("s")
         assert stem in text, f"{label} is in the navigation and not in the guide"

@@ -36,6 +36,7 @@ to prevent.
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import sys
@@ -317,7 +318,6 @@ class BlockWatcher:
         -- which is why the check below is worth having but is not what makes
         this safe.
         """
-        chain = self.state.messaging
         try:
             # The TAG TABLE, which is the claim on the chain, not the tag an
             # announcement states. They can disagree -- an announcement is a
@@ -326,63 +326,38 @@ class BlockWatcher:
             # reading different ones. The publisher asked the tag table and
             # announced; every receiver asked its announcements, found the old
             # name, and answered "nobody holds that" before it looked at a
-            # single post. Invisible from the publishing machine, because the
-            # half that works is the half it runs (D-086).
+            # single notice. Invisible from the publishing machine, because
+            # the half that works is the half it runs (D-086).
             who = self._release_publisher()
             if not who:
                 return                  # nobody holds that tag on this chain
             with self.state.store() as store:
-                posts = store.group_posts(chain.network, releaselib.RELEASE_CHANNEL,
-                                          limit=5)
+                said = store.get_meta("release_notice")
         except Exception:
             return
-        # Newest first. `group_posts` hands back oldest-first so a channel
-        # reads like a room, and walking it that way made a node coming fresh
-        # to two notices take the OLDER revision as the one it had seen. It
-        # costs a receiver nothing -- the revision in a notice is a dedup key,
-        # never what installs -- but on the publishing node `_announce_release`
-        # compares against the same field, so an older revision landing there
-        # invites it to announce again. And the log line should name the
-        # release a person would expect (D-087).
-        newest = max((int(p["id"]) for p in posts), default=0)
-        acted = ""
-        for post in reversed(posts):
-            # Pool rows included, deliberately. `group_posts` returns a notice
-            # at height 0 -- broadcast, not yet mined -- and acting on one is
-            # a block sooner, which is the whole point when a consensus height
-            # is near. It is safe because the notice carries no authority: it
-            # says "look now", the sender is still checked, and what installs
-            # is decided by the signature on the manifest. A notice that never
-            # confirms costs one fetch (D-087).
-            # `post["text"]`, not `post.get(...)`: group_posts returns
-            # sqlite3.Row, which indexes but has no .get. This line had never
-            # executed -- the function returned earlier while the tag lookup
-            # answered "nobody" -- so the tag fix did not break it, it
-            # unmasked it (D-090).
-            if int(post["id"]) <= self._release_after:
-                continue                 # considered on an earlier pass
-            revision = releaselib.revision_in(post["text"] or "")
-            if not revision:
-                continue
-            if post["sender"] != who:
-                # Anybody may post on a public board. Only the node that
-                # published the tag is telling us about a release.
-                continue
-            acted = revision
-            break
-        # Forward, whatever was found: posts already looked at are not looked
-        # at again, so a board that never changes costs one read per pass and
-        # resets nothing.
-        self._release_after = max(self._release_after, newest)
-        if acted:
-            self._release_seen = acted
-            # A warning rather than info, deliberately. It fires once per
-            # release, and info from this service does not reach the journal
-            # at all on a test machine -- so the one event worth diagnosing from
-            # outside was the one leaving no trace (D-093).
-            log.warning("release notice from @%s: %s -- checking now",
-                        releaselib.RELEASE_TAG, acted)
-            self._update_checked = 0.0
+        if not said:
+            return
+        try:
+            notice = json.loads(said)
+        except ValueError:
+            return
+        revision = str(notice.get("revision") or "")
+        # Anybody may broadcast. Only the node that holds the release tag is
+        # telling us about a release -- and the notice carries no authority
+        # even then: it says "look now", and what installs is decided by the
+        # signature on the manifest (D-065, D-147).
+        if not revision or notice.get("from") != who:
+            return
+        if revision == self._release_seen:
+            return                      # already acted on this one
+        self._release_seen = revision
+        # A warning rather than info, deliberately. It fires once per
+        # release, and info from this service does not reach the journal at
+        # all on a test machine -- so the one event worth diagnosing from outside
+        # was the one leaving no trace (D-093).
+        log.warning("release notice from @%s: %s -- checking now",
+                    releaselib.RELEASE_TAG, revision)
+        self._update_checked = 0.0
 
     def _release_publisher(self) -> str:
         """The address holding the release tag, as the chain has it."""
@@ -421,9 +396,8 @@ class BlockWatcher:
             return
         self._release_seen = published
         try:
-            self.state.post_to_board(releaselib.RELEASE_CHANNEL,
-                                     releaselib.notice(published))
-            log.info("announced release %s on the board", published)
+            self.state.broadcast_release(published)
+            log.info("announced release %s", published)
         except Exception as exc:
             log.warning("could not announce release %s: %s", published, exc)
 
@@ -477,7 +451,7 @@ class BlockWatcher:
         # systemd stops this process in the same cgroup, and the subprocess is
         # killed mid-flight -- so a SUCCESSFUL update returns non-zero, logs
         # "automatic update failed", and the benign progress output ("already
-        # there", "cloudflared is already installed") is printed as the error.
+        # there") is printed as the error.
         # A test machine caught it on the one run that actually worked.
         #
         # So the outcome is read from the installation, not from the exit

@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Run your own · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Run your own</h1>
+<p class="sub">Everything needed to stand up another arcade is served from
+  this one: the program, and a copy of its index so you do not start by
+  re-reading the chain from the beginning.</p>
+
+<div class="panel">
+  <h2 style="margin-top:0">Install it</h2>
+  <pre class="clone">curl -O {{ here }}/source.tar.gz
+curl -O {{ here }}/source.tar.gz.sha256
+sha256sum -c source.tar.gz.sha256
+tar xzf source.tar.gz
+python3 installer/install.py</pre>
+  <p class="muted" style="font-size:.86rem">
+    The installer fetches Pepecoin Core, verifies its checksum and its
+    signature, writes both configs, registers the services and starts
+    everything. It needs Python and nothing else.
+  </p>
+  {% if source %}
+  <table>
+    <tr><th>Revision</th><td class="mono">{{ source.revision }}</td></tr>
+    <tr><th>Size</th><td>{{ "{:,}".format(source.bytes) }} bytes</td></tr>
+    <tr><th>SHA-256</th><td class="mono" style="word-break:break-all">{{ source.sha256 }}</td></tr>
+  </table>
+  {% else %}
+  <p class="muted">This instance cannot pack its own source, so install from
+    wherever you found it.</p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2 style="margin-top:0">Start from a copy of the index</h2>
+  <p class="muted" style="font-size:.9rem">
+    Reading a chain from its floor is correct and slow, and every node has
+    already done it. These are copies of this node's indexes &mdash; derived
+    state, so the same blocks read by the same rules give the same rows on
+    any machine.
+  </p>
+  {% if copies %}
+  <p class="muted" style="font-size:.9rem">
+    <strong>It is a convenience, not an authority.</strong> A downloaded
+    index is somebody else's claim about the chain. Each one says the height
+    it was taken at and carries two digests of what it holds; re-read from
+    the floor yourself and compare them, and you have proved it rather than
+    trusted it.
+  </p>
+  {% for copy in copies %}
+  <div class="panel" style="margin:12px 0 0">
+    <div class="row" style="align-items:baseline">
+      <strong>{{ copy.chain.label }}</strong>
+      <span class="muted">block {{ "{:,}".format(copy.snap.height) }}</span>
+      <a class="btn small" style="margin-left:auto"
+         href="/bootstrap/{{ copy.chain.network }}.sqlite.gz">Download
+        ({{ "{:,}".format(copy.snap.bytes // 1024) }} KB)</a>
+    </div>
+    <table style="margin-top:8px">
+      <tr><th>Floor</th><td>{{ copy.snap.floor if copy.snap.floor else "—" }}</td></tr>
+      <tr><th>Consensus hash</th>
+          <td class="mono" style="word-break:break-all">{{ copy.snap.consensus }}</td></tr>
+      <tr><th>Index digest</th>
+          <td class="mono" style="word-break:break-all">{{ copy.snap.index }}</td></tr>
+      <tr><th>SHA-256</th>
+          <td class="mono" style="word-break:break-all">{{ copy.snap.sha256 }}</td></tr>
+      <tr><th>Manifest</th>
+          <td><a href="/bootstrap/{{ copy.chain.network }}.json">{{ copy.chain.network }}.json</a></td></tr>
+    </table>
+    <p class="muted" style="font-size:.82rem;margin:8px 0 0">
+      Unpack it to <code>~/.dogecoinarcade/{{ copy.chain.network }}-ledger.sqlite</code>
+      before the first start. The node carries on from that height.
+    </p>
+  </div>
+  {% endfor %}
+  {% else %}
+  <p class="muted">This node has no index to copy yet.</p>
+  {% endif %}
+  <p class="muted" style="font-size:.86rem;margin-top:12px">
+    What is <em>not</em> in it: messages, the address book, and any key.
+    Those are private to the node that holds them, and a bootstrap that
+    carried them would publish somebody's conversations.
+  </p>
+</div>
+
+<div class="panel">
+  <h2 style="margin-top:0">Then it is yours</h2>
+  <p class="muted">
+    You set the fee, you keep the node runner's cut on what is built through
+    your node, and you seat your own {{ seats }} people. Your users' names,
+    coins and posts are on the chain, so nothing about an account is tied to
+    the machine it was made on &mdash; and your clone serves the program and
+    the index in turn, so somebody can clone you.
+  </p>
+</div>
+
+<style>
+.clone{background:var(--code);border-radius:8px;padding:12px 14px;overflow-x:auto}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem}
+</style>
+{% endblock %}

@@ -758,6 +758,33 @@ class MessageStore:
             sql += f" LIMIT {int(limit)}"
         return list(self.conn.execute(sql))
 
+    def candidates_for_others(self, after: int = 0,
+                              limit: int = 200) -> list[sqlite3.Row]:
+        """Candidate payloads for somebody whose key this node has not got.
+
+        An account keeps its identity in a browser, so the node cannot tell
+        which of these are addressed to it -- it hands them over and the
+        browser finds out by trying. That is the cost of the node not being
+        able to read anybody's messages, and it is the point.
+
+        Ordered by `rowid`, which only ever grows, so a client keeps one
+        number and asks for what came after it. Height would not do: a
+        mempool row is height 0 until its block arrives and would be handed
+        over twice, once at 0 and once at its real height.
+
+        `opened` is deliberately ignored. It means "this node's own
+        identity opened it", which says nothing about anybody else's.
+        """
+        return list(self.conn.execute(
+            "SELECT rowid AS cursor, txid, height, block_time, sender_addr, "
+            "       payload, msg_type, msg_id, countdown "
+            "FROM candidate WHERE rowid > ? ORDER BY rowid LIMIT ?",
+            (int(after), int(limit))))
+
+    def newest_candidate(self) -> int:
+        row = self.conn.execute("SELECT MAX(rowid) FROM candidate").fetchone()
+        return int(row[0] or 0)
+
     def mark_opened(self, txid: str) -> None:
         self.conn.execute("UPDATE candidate SET opened=1 WHERE txid=?", (txid,))
 

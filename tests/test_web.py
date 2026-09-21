@@ -1107,9 +1107,12 @@ def test_a_send_that_never_started_does_not_claim_the_chain_has_part_of_it(clien
     assert "stopped after" in body and "0 of 4" in body
     assert "cannot be taken back" not in body
     assert "Nothing reached the chain" in body
-    for name in ("messages.html", "groups.html"):
-        source = pathlib.Path("arcade/web/templates", name).read_text()
-        assert "{% if unfinished.sent %}" in source, name
+    source = pathlib.Path("arcade/web/templates/messages.html").read_text()
+    assert "{% if unfinished.sent %}" in source
+    # Only the private composer. A feed post is ONE transaction by
+    # construction -- `state.post` refuses anything longer and tells the
+    # person to attach a file instead -- so there is no half-sent public
+    # post to recover and nothing to offer (D-138, D-147).
 
 
 def test_a_sent_file_is_kept_and_shown_like_a_received_one(client):
@@ -1365,12 +1368,6 @@ def test_the_poller_clears_the_whole_sending_state(client):
     assert "resetComposer('')" in body
 
 
-def test_the_public_composer_recovers_too(client):
-    body = client[0].get("/groups?channel=main").text
-    assert "function resetPoster" in body
-    assert "did not reach the application" in body
-
-
 def test_pages_are_never_served_from_a_cache(client):
     """They carry live state: a send in flight, a balance, an unread count.
 
@@ -1378,7 +1375,7 @@ def test_pages_are_never_served_from_a_cache(client):
     since finished -- part of how an interface got stuck looking busy against an
     idle server.
     """
-    for path in ("/", "/messages", "/contacts", "/groups"):
+    for path in ("/", "/messages", "/contacts", "/feed"):
         header = client[0].get(path).headers.get("cache-control", "")
         assert "no-store" in header, f"{path} may be cached"
 
@@ -1447,7 +1444,7 @@ def test_the_progress_bubble_would_otherwise_be_visible(client):
     assert all("!important" in rule for rule in rules), rules
 
 
-@pytest.mark.parametrize("path", ["/", "/messages", "/contacts", "/groups", "/backup"])
+@pytest.mark.parametrize("path", ["/", "/messages", "/contacts", "/feed", "/backup"])
 def test_every_page_carries_the_guard(path, client):
     """It is one rule in the shared stylesheet; every page must get it."""
     assert "[hidden]{display:none !important}" in _stylesheet(client[0].get(path).text)
@@ -1643,7 +1640,7 @@ def test_sending_no_longer_flashes_a_banner(client):
 # One assertion catches the whole class, needs no browser, and would have caught
 # it on the day it was introduced.
 
-TITLED_PAGES = ["/", "/contacts", "/wallet", "/messages", "/groups", "/backup"]
+TITLED_PAGES = ["/", "/contacts", "/wallet", "/messages", "/feed", "/backup"]
 
 
 @pytest.mark.parametrize("path", TITLED_PAGES)
@@ -1703,7 +1700,11 @@ def test_a_composer_offers_no_second_route_while_confirming():
     """
     root = pathlib.Path("arcade/web/templates")
 
-    for name in ("groups.html", "messages.html"):
+    # The private composer only. The feed has no confirmation to contradict:
+    # a post is one transaction, Enter sends it, and there is no second
+    # screen between the box and the chain (D-138). The hazard this test is
+    # about cannot exist where there is one button.
+    for name in ("messages.html",):
         source = (root / name).read_text()
         assert "{% if prepared %}disabled" in source, (
             f"{name}: the composer button stays live behind a confirmation"
@@ -1723,16 +1724,16 @@ def test_the_confirm_screen_quotes_the_total_not_one_component():
     screen and "about 0.03 in dust" while typing.
     """
     root = pathlib.Path("arcade/web/templates")
-    groups = (root / "groups.html").read_text()
+    source = (root / "messages.html").read_text()
     # Through `cost`, not `prepared`: see
     # test_no_template_quotes_a_single_transaction_as_the_price. `prepared` is
-    # the first chunk, so quoting it understated a post by its chunk count.
-    assert "cost.total" in groups, (
+    # the first chunk, so quoting it understated a send by its chunk count.
+    assert "cost.total" in source, (
         "the confirm screen still quotes a component rather than the total"
     )
     # And the total is ONE number. Splitting it into fee and dust gave two
     # figures where neither was the answer to "what does this cost me".
-    assert "cost.fee" not in groups and "cost.dust" not in groups, (
+    assert "cost.fee" not in source and "cost.dust" not in source, (
         "the confirm screen is breaking the cost apart again"
     )
 
@@ -1817,31 +1818,18 @@ def test_progress_on_a_post_is_recorded_per_chunk(tmp_path):
     assert store.pending_posts() == []
 
 
-def test_the_public_route_no_longer_posts_inside_the_request():
-    """A chunked post must hand off to a thread, as a private message does."""
-    import inspect
-
-    from arcade.web import app as webapp
-
-    source = inspect.getsource(webapp.create_app)
-    assert "_post_in_background" in source
-    assert 'threading.Thread(target=work, name="arcade-post"' in source
-    assert "begin_pending_post" in source
-    # The single-transaction case stays inline: there is nothing to report and
-    # nothing to resume.
-    assert "if plan.transactions == 1:" in source
-
-
-def test_an_unfinished_post_can_be_finished(client):
-    app, _ = client
-    html = app.get("/groups").text
-    assert 'action="/groups/resume"' in html or "{% if unfinished %}" in (
-        pathlib.Path("arcade/web/templates/groups.html").read_text())
-
-    source = pathlib.Path("arcade/web/templates/groups.html").read_text()
-    assert "Finish posting" in source
-    assert 'action="/groups/resume"' in source
-    assert 'id="posting-bubble"' in source, "a running post must be visible"
+# The public chunked-post tests that stood here are gone with the board.
+#
+# A feed post is ONE transaction by construction: `state.post` refuses
+# anything longer and says to attach a file instead, which becomes an
+# inscription with its own resume (D-138, D-147). So there is no background
+# post thread, no half-sent public post to finish, and no confirm screen
+# between the box and the chain -- Enter posts. What those tests protected
+# cannot happen any more, and a test for an impossible state is a test that
+# will be made to pass by whoever next changes the code around it.
+#
+# `store.begin_pending_post` and `store.pending_posts` are still there and
+# still tested at the store level above. Nothing calls them now.
 
 
 # --- resuming a send that got part way ----------------------------------------
@@ -2100,71 +2088,6 @@ def test_resuming_keeps_the_original_message_id(client, _stubbed_chain):
         )
 
 
-def test_resuming_a_post_sends_only_what_is_left(client, _stubbed_chain):
-    """The public resume path slices the same way, so it is checked the same way.
-
-    Two implementations of "send the rest" is how the CLI and the web came to
-    disagree about recording a send, and each machine then showed half a
-    conversation. These are separate routes, so they get separate tests.
-    """
-    import time as _time
-
-    app, state = client
-    msg_id = b"\xef" * 8
-    with state.store() as store:
-        store.begin_pending_post(msg_id, "regtest", "main", "a test machine", "postaddr",
-                                 b"a long public post", [b"p1", b"p2", b"p3"])
-        store.record_pending_progress(msg_id, "txid-p1")
-
-    token = re.search(r'name="csrf_token" value="([^"]+)"',
-                      app.get("/groups").text).group(1)
-    app.post("/groups/resume",
-             data={"csrf_token": token, "which": "messaging", "channel": "main"},
-             follow_redirects=False)
-
-    for _ in range(100):
-        if _stubbed_chain.sent is not None:
-            break
-        _time.sleep(0.02)
-
-    assert _stubbed_chain.sent is not None, "resume never reached the sender"
-    address, payloads = _stubbed_chain.sent
-    assert address == "postaddr"
-    assert payloads == [b"p2", b"p3"]
-
-    for _ in range(100):
-        with state.store() as store:
-            if not store.pending_posts():
-                break
-        _time.sleep(0.02)
-    with state.store() as store:
-        assert store.pending_posts() == []
-        # And the local copy of the post is written on completion, which is
-        # what makes it appear on the board afterwards.
-        assert any(p["text"] == "a long public post"
-                   for p in store.group_posts("regtest", "main"))
-
-
-def test_a_post_resume_will_not_touch_a_private_pending_send(client, _stubbed_chain):
-    """The kind filter, asserted through the route rather than the store."""
-    app, state = client
-    with state.store() as store:
-        store.begin_pending_send(b"\x01" * 8, b"\x02" * 32, "privaddr", b"m",
-                                 [b"x", b"y"])
-
-    token = re.search(r'name="csrf_token" value="([^"]+)"',
-                      app.get("/groups").text).group(1)
-    app.post("/groups/resume",
-             data={"csrf_token": token, "which": "messaging", "channel": "main"},
-             follow_redirects=False)
-
-    assert _stubbed_chain.sent is None, (
-        "a public resume reached a private message's chunks"
-    )
-    with state.store() as store:
-        assert len(store.pending_sends()) == 1, "the private record must survive"
-
-
 def test_the_timing_note_is_not_gated_on_an_attachment():
     """A long TEXT message chunks for the same reason a file does.
 
@@ -2185,46 +2108,20 @@ def test_the_timing_note_is_not_gated_on_an_attachment():
     assert "if plan is not None and plan.transactions > 1:" in source
 
 
-def test_the_public_confirm_can_show_a_readable_estimate(client):
-    """groups.html was never passed timing at all.
-
-    So the post whose chunks were measured landing two blocks apart could never
-    say how long before anyone could read it.
-    """
-    source = pathlib.Path("arcade/web/templates/groups.html").read_text()
-    assert "timing.readable" in source, (
-        "the public confirm screen cannot report a readable-by time"
-    )
-
-    import inspect
-
-    from arcade.web import app as webapp
-
-    route = inspect.getsource(webapp.create_app)
-    assert "timing=_post_timing(chain, plan)" in route, (
-        "groups.html is still passed no timing"
-    )
-    assert "estimate_readable_seconds" in route
-    # One definition, called from both render paths. Pasted into both, it raised
-    # NameError on the listing route, which has no `plan` at all.
-    assert route.count("def _post_timing(") == 1
-
-
-def test_both_confirm_screens_quote_dust_from_a_real_field(client):
+def test_the_confirm_screen_quotes_dust_from_a_real_field(client):
     """Guards the pairing, not just the presence of a figure.
 
-    A screen that renders prepared.dust_coins is only honest if prepare() fills
-    it in; the template was right and the value was structurally zero. So this
-    asserts the template reads the field AND that the field is set where the
-    messages and posts are built.
+    A screen that renders prepared.dust_coins is only honest if prepare()
+    fills it in; the template was right and the value was structurally zero.
+    So this asserts the template reads the field AND that the field is set
+    where a message is built. One screen now rather than two: the feed has
+    no confirmation (D-138).
     """
-    groups = pathlib.Path("arcade/web/templates/groups.html").read_text()
     messages = pathlib.Path("arcade/web/templates/messages.html").read_text()
-    # The screens show one figure now, but it still has to CONTAIN the dust --
+    # The screen shows one figure now, but it still has to CONTAIN the dust --
     # which for a Class B send is most of it. The check moved from "is the dust
     # displayed" to "is the dust in the total", because the first was satisfied
     # by a 0.00000 that was structurally impossible to be anything else.
-    assert "cost.total" in groups
     assert "total" in messages
 
     sender = pathlib.Path("arcade/messaging/sender.py").read_text()
@@ -2341,7 +2238,7 @@ def _fields_that_remember(html: str) -> list[str]:
     ]
 
 
-@pytest.mark.parametrize("path", GET_ROUTES + ["/groups", "/messages"])
+@pytest.mark.parametrize("path", GET_ROUTES + ["/feed", "/messages"])
 def test_no_page_lets_the_browser_remember_what_was_typed(client, path):
     """A contact code, an address, a message: the browser offers them back on
     every form it decides is similar, on a machine anyone may walk up to. The
@@ -2612,7 +2509,7 @@ def test_the_nav_counts_what_is_waiting(client, monkeypatch):
     assert 'href="/feed">Feed<span class="nav-count">1</span>' in body
 
     # Opening the board is reading it.
-    page.get("/groups")
+    page.get("/feed")
     assert '<span class="nav-count">' not in page.get("/").text
 
 

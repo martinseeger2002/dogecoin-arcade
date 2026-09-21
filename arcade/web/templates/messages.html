@@ -199,8 +199,12 @@
          by the count, the public one did not, so a post was offered at half
          its price. `cost` comes from send_cost(), which is the single
          definition both routes call. #}
-      {% set fee = cost.fee if cost else 0 %}
-      {% set dust = cost.dust if cost else 0 %}
+      {# Only the total. The fee and the dust were pulled out here too and
+         never shown -- and a component sitting in the template is how the
+         screen came to quote one: a test machine posted for 0.04568 having been shown
+         "fee 0.00568000". One number, and it is the whole number. (Named
+         without their field names on purpose: test_web sweeps this file for
+         them, and a comment is not the place to trip that.) #}
       {% set total = cost.total if cost else 0 %}
       <div class="confirm">
         {% if attached_name %}

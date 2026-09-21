@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from . import utxos
 from .config import Params
 from .db import StateDB
 from .rpc import RpcClient
@@ -95,6 +96,17 @@ class ArcadeHandler:
         self.prevouts.add_block(block)
         engine = Engine(state, self.params)
         self.stats["blocks"] += 1
+
+        # Coins first, and for every transaction in the block rather than
+        # only the arcade's own: a watched address is paid by ordinary
+        # sends far more often than by anything carrying a marker, and an
+        # index that only saw its own transactions would show a balance
+        # that is always too small (arcade/utxos.py).
+        watched = utxos.watching(state.db)
+        if watched:
+            moved = utxos.on_block(state, height, block, self.params, watched)
+            self.stats["coins_in"] = self.stats.get("coins_in", 0) + moved["added"]
+            self.stats["coins_out"] = self.stats.get("coins_out", 0) + moved["spent"]
 
         for position, tx in enumerate(block.get("tx", [])):
             try:

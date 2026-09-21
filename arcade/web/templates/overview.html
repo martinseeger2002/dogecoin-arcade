@@ -32,6 +32,19 @@
     <div class="n">{% if state.unlocked %}nothing to set up{% else %}waiting for the node{% endif %}</div></div>
 </div>
 
+{# What the node is to everybody who is not its operator. The number is
+   counted from the register (arcade/accounts.py), never typed: a seat count
+   on a page that disagrees with the table would be an invitation somebody
+   cannot accept. #}
+<div class="panel seatline">
+  <strong>{{ seats_free }} of {{ seats_total }} seats free</strong> on this node
+  &middot; <a href="/join">the page other people sign up on</a>
+  <p class="muted" style="margin:6px 0 0">
+    Keys are made in their browser and stay there. This node builds, indexes
+    and broadcasts; it never holds anybody's key.
+  </p>
+</div>
+
 {# The first thing a new wallet is asked, and the only thing it is asked.
    Everything else here comes from the node; this is the one fact only the
    person knows (D-131). #}

@@ -1,0 +1,207 @@
+"""The door: the splash, the challenge, the cookie.
+
+The route tests exist because the interesting failures of a login are not
+in the arithmetic -- `tests/test_accounts.py` covers that -- but in what
+the browser is asked to do and what it is told when it cannot.
+"""
+
+import pathlib
+import sys
+
+import pytest
+from nacl.signing import SigningKey
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from test_web import app_state, client                          # noqa: F401,E402
+
+from arcade import accounts, seed                                # noqa: E402
+
+LOCAL = {"host": "127.0.0.1:8420"}
+LAN = {"host": "192.168.1.5:8420"}
+TUNNEL = {"host": "wallet.example.com", "x-forwarded-proto": "https"}
+
+
+def _sign_in(app, key, headers=LOCAL, join=True):
+    challenge = app.get("/auth/challenge", headers=headers).json()
+    signature = key.sign(accounts.login_message(
+        challenge["origin"], challenge["nonce"])).signature
+    return app.post("/auth/login", headers=headers, json={
+        "pubkey": key.verify_key.encode().hex(),
+        "nonce": challenge["nonce"],
+        "signature": signature.hex(),
+        "join": join,
+    })
+
+
+def test_the_splash_says_how_many_seats_are_left(client):
+    app, state = client
+    body = app.get("/join", headers=LOCAL).text
+    assert f"{accounts.SEATS}" in body
+    assert "seats free" in body
+
+
+def test_the_splash_points_at_running_your_own(client):
+    """A full node is supposed to produce another node, not a queue. The
+    instructions themselves live on /clone, which serves the program and a
+    copy of the index; the splash points there rather than repeating
+    them."""
+    app, _ = client
+    body = app.get("/join", headers=LOCAL).text
+    assert 'href="/clone"' in body
+
+    whole = app.get("/clone", headers=LOCAL).text
+    assert "source.tar.gz" in whole and "installer/install.py" in whole
+
+
+def test_a_full_node_says_so_and_still_explains_the_way_out(client):
+    app, state = client
+    register = state.accounts()
+    register.seats = 1
+    _sign_in(app, SigningKey.generate())
+    body = app.get("/join", headers=LOCAL).text
+    assert "No seats free" in body
+    assert 'href="/clone"' in body, "and where else to go, on the same page"
+
+
+def test_the_number_on_the_page_is_counted_not_typed(client):
+    app, state = client
+    state.accounts().seats = 4
+    _sign_in(app, SigningKey.generate())
+    body = app.get("/join", headers=LOCAL).text
+    assert "<strong>3</strong> of 4 seats free" in body
+
+
+def test_over_plain_http_on_the_network_the_page_says_why_not(client):
+    """`crypto.subtle` does not exist outside a secure context, so the door
+    is shut and explained rather than shown and broken."""
+    app, _ = client
+    body = app.get("/join", headers=LAN).text
+    assert "https" in body and "cannot generate a key" in body
+    assert 'id="forms" hidden' in body, "and nothing is offered that cannot work"
+
+
+@pytest.mark.parametrize("headers", [LOCAL, TUNNEL])
+def test_where_the_browser_can_do_it_the_door_is_open(client, headers):
+    app, _ = client
+    body = app.get("/join", headers=headers).text
+    assert 'id="forms" hidden' not in body
+
+
+def test_signing_a_challenge_sets_a_session_cookie(client):
+    app, state = client
+    key = SigningKey.generate()
+    answer = _sign_in(app, key)
+    assert answer.status_code == 200
+    assert answer.json()["pubkey"] == key.verify_key.encode().hex()
+    who = app.get("/auth/who", headers=LOCAL).json()
+    assert who["pubkey"] == key.verify_key.encode().hex()
+
+
+def test_the_cookie_is_httponly_and_not_secure_on_localhost(client):
+    """Marking it Secure over plain http means the browser drops it, and the
+    symptom is a login that appears to work and then does not."""
+    app, _ = client
+    answer = _sign_in(app, SigningKey.generate())
+    cookie = answer.headers["set-cookie"]
+    assert "HttpOnly" in cookie and "SameSite=strict" in cookie.replace("Strict", "strict")
+    assert "Secure" not in cookie
+
+
+def test_over_https_the_cookie_is_secure(client):
+    app, _ = client
+    answer = _sign_in(app, SigningKey.generate(), headers=TUNNEL)
+    assert "Secure" in answer.headers["set-cookie"]
+
+
+def test_a_signature_for_another_origin_is_refused(client):
+    """The origin is in the signed bytes, so a session opened on one node
+    cannot be opened with the same signature on another."""
+    app, _ = client
+    key = SigningKey.generate()
+    challenge = app.get("/auth/challenge", headers=LOCAL).json()
+    elsewhere = key.sign(accounts.login_message(
+        "https://somewhere-else", challenge["nonce"])).signature
+    answer = app.post("/auth/login", headers=LOCAL, json={
+        "pubkey": key.verify_key.encode().hex(),
+        "nonce": challenge["nonce"], "signature": elsewhere.hex(), "join": True})
+    assert answer.status_code == 403
+    assert "signature" in answer.json()["detail"]
+
+
+def test_rubbish_is_refused_without_a_traceback(client):
+    app, _ = client
+    for body in ({}, {"pubkey": "x"}, {"pubkey": "ab" * 32, "nonce": "no"}):
+        answer = app.post("/auth/login", headers=LOCAL, json=body)
+        assert answer.status_code == 403
+        assert "Traceback" not in answer.text
+
+
+def test_a_full_node_answers_409_rather_than_a_page(client):
+    app, state = client
+    state.accounts().seats = 1
+    _sign_in(app, SigningKey.generate())
+    answer = _sign_in(app, SigningKey.generate())
+    assert answer.status_code == 409
+    assert answer.json()["free"] == 0
+
+
+def test_signing_out_forgets_the_session(client):
+    app, _ = client
+    _sign_in(app, SigningKey.generate())
+    app.post("/auth/logout", headers=LOCAL)
+    assert app.get("/auth/who", headers=LOCAL).json()["pubkey"] is None
+
+
+def test_who_tells_a_stranger_nothing_but_the_seat_count(client):
+    app, state = client
+    key = SigningKey.generate()
+    _sign_in(app, key)
+    app.cookies.clear()
+    said = app.get("/auth/who", headers=LOCAL).json()
+    assert said["pubkey"] is None
+    assert key.verify_key.encode().hex() not in str(said)
+
+
+def test_the_word_list_is_served_from_the_node(client):
+    """A wallet whose restore depends on somebody else's website is a wallet
+    that stops restoring."""
+    app, _ = client
+    answer = app.get("/bip39-english.txt")
+    assert answer.status_code == 200
+    words = answer.text.split()
+    assert len(words) == 2048 and words[0] == "abandon"
+
+
+def test_the_browser_half_is_served_and_derives_the_same_path(client):
+    app, _ = client
+    body = app.get("/signin.js").text
+    assert "no-store" in app.get("/signin.js").headers["cache-control"]
+    assert f"ARCADE_PURPOSE = {seed.ARCADE_PURPOSE}" in body
+    assert f"LOGIN_BRANCH = [ARCADE_PURPOSE, {seed.LOGIN_BRANCH[1]}, " \
+           f"{seed.LOGIN_BRANCH[2]}]" in body
+
+
+def test_the_overview_shows_the_seat_count_and_links_to_the_splash(client):
+    app, _ = client
+    body = app.get("/").text
+    assert "seats free" in body and 'href="/join"' in body
+
+
+def test_the_splash_renders_with_no_node(client):
+    """Signing up must not need a synced chain: it is a browser key and a row."""
+    app, _ = client
+    answer = app.get("/join", headers=LOCAL)
+    assert answer.status_code == 200
+    for marker in ("Traceback", "NameError", "KeyError"):
+        assert marker not in answer.text
+
+
+def test_an_operator_can_close_signups(client, tmp_path):
+    """`seats: 0` in settings.json means closed, and must not fall back to
+    the default -- an `or` here would quietly reopen the node."""
+    app, state = client
+    state.set_setting("seats", 0)
+    state._accounts = None
+    body = app.get("/join", headers=LOCAL).text
+    assert "No seats free" in body
+    assert _sign_in(app, SigningKey.generate()).status_code == 409

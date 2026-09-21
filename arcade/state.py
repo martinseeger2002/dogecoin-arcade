@@ -297,6 +297,11 @@ def install_schema(db: Database) -> None:
                               ("sender", "inscription_id", "countdown"))
     register_journalled_table("collection_item", ("txid",))
     register_journalled_table("inscription_piece", ("inscription", "countdown"))
+    # Coins by address, for addresses this node does not own. Installed
+    # here so it is journalled with everything else: a reorg that takes a
+    # block back has to un-spend what that block spent (arcade/utxos.py).
+    from . import utxos
+    utxos.install(db)
     _rekey_moves(db)
     _file_collections(db)
 

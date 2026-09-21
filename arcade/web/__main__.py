@@ -44,6 +44,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ledger-conf", help="mainnet config with rpcuser/rpcpassword")
     parser.add_argument("--port", type=int, default=8420)
     parser.add_argument(
+        "--public", action="store_true",
+        help="serve this as a public arcade: the feed, the collections and "
+             "the chain are open to anyone and every form is refused "
+             "(arcade/web/door.py). Without it this is a wallet, and "
+             "everything in it belongs to whoever can reach the port.")
+    parser.add_argument(
         "--host", default="127.0.0.1",
         help="deliberately defaults to loopback; changing it exposes spending authority",
     )
@@ -122,22 +128,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {context.label:8s} {context.network:10s} NOT FOUND -- "
                   f"the {context.role} sections will explain why")
 
-    # A floor that moved makes a new chain era, and the wallet's own files
-    # were written under the old one: rows naming a property id or an
-    # inscription number describe something else now, because those are
-    # assigned by the index and start again from the bottom (D-126). They are
-    # moved out of the live tables and kept beside them.
-    from .. import era as eralib
-    for context in state.token_chains:
-        try:
-            moved = eralib.retire_old_rows(state.home, context.network,
-                                           context.params.activation_height)
-        except Exception as exc:
-            print(f"  could not retire old rows for {context.network}: {exc}")
-            continue
-        for what, count in sorted(moved.items()):
-            print(f"  {context.network}: {count} row(s) of {what} were from an "
-                  f"older floor and have been set aside")
+    # There is no era sweep any more (D-151). The floor is set once and
+    # does not move again, so the only index that can be from another floor
+    # is one built before that height -- and `IndexFromAnotherFloor` still
+    # catches that, moves the index aside and rebuilds. What is gone is the
+    # machinery that retired rows in every OTHER store, which existed for a
+    # floor that moved repeatedly while the rules were being settled.
 
     # If the passphrase was saved, unlock at startup rather than making the user
     # do it on every launch. That is the entire point of saving it.
@@ -166,8 +162,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  collections could not be resumed: {exc}")
     print("  watching for new blocks")
 
-    # The remote-access page points cloudflared at this port, so it has to know.
     state.port = args.port
+    state.public = bool(args.public)
+    if state.public:
+        # Said at startup, every time. An operator who does not know which
+        # of the two things they are running is an operator who will one
+        # day put a wallet on a public address.
+        print("  PUBLIC: only the feed, the collections and the chain are "
+              "served; every form is refused")
     print(f"DogecoinArcade  ->  http://{args.host}:{args.port}")
     uvicorn.run(create_app(state), host=args.host, port=args.port, log_level="warning")
     return 0

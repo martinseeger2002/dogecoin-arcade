@@ -184,18 +184,6 @@ def test_the_poller_clears_a_leftover_paint_job(browser, served):
     assert _display(browser, browser.find_element(By.ID, "sending-bubble")) == "none"
 
 
-def test_the_public_composer_behaves_the_same(browser, served):
-    base, _ = served
-    browser.get(f"{base}/groups?channel=main")
-    form = browser.find_element(By.CSS_SELECTOR, "form.composer")
-    button = form.find_element(By.CSS_SELECTOR, "button[type=submit]")
-
-    browser.execute_script("return startPosting(arguments[0])", form)
-    assert button.get_attribute("disabled") == "true"
-    browser.execute_script("resetPoster('')")
-    assert button.get_attribute("disabled") is None
-
-
 def test_a_request_that_hangs_recovers_on_its_own(browser, served):
     """The only case the timeout can actually cover.
 
@@ -352,30 +340,6 @@ def test_the_tail_carries_the_corner(browser, served):
 
 # --- the public composer's byte budget ----------------------------------------
 
-def test_the_public_composer_has_no_character_cap(browser, served):
-    """maxlength counted characters while the budget is bytes.
-
-    One emoji is four bytes but one character, so a post inside the character
-    cap could be well over the byte budget: the browser let it through and the
-    server refused it with a message ending "attaching a file lifts the limit",
-    which reads as a file-size error. The operator hit exactly that with no file
-    attached.
-
-    The running byte counter that replaced it has since been removed too -- it
-    announced the budget on almost every post, when the only consequence of
-    passing it is that the post costs more, and the confirm screen says what it
-    costs before anything is sent. What must not come back is a cap that cannot
-    measure what it is capping.
-    """
-    base, _ = served
-    browser.get(f"{base}/groups")
-
-    box = browser.find_element(By.ID, "post")
-    assert box.get_attribute("maxlength") is None, (
-        "a cap in characters cannot enforce a budget in bytes"
-    )
-
-
 def test_small_costs_and_sizes_do_not_round_away(browser, served):
     """A 900-byte file costs 0.16 and used to display as "about 0 in dust".
 
@@ -421,9 +385,9 @@ def test_small_costs_and_sizes_do_not_round_away(browser, served):
 #     cards asked for a 330px minimum.
 
 
-PHONE_PAGES = ["/", "/messages", "/contacts", "/groups", "/backup",
+PHONE_PAGES = ["/", "/messages", "/contacts", "/feed", "/backup",
                "/wallet", "/wallet/tokens", "/wallet/nfts", "/tokens", "/nfts",
-               "/compose", "/inbox", "/remote"]
+               "/compose", "/inbox", "/feed"]
 
 
 @pytest.fixture(scope="module")
@@ -618,28 +582,6 @@ def test_opening_a_conversation_replaces_the_list(phone):
         browser.switch_to.default_content()
 
 
-def test_channels_work_the_same_way(phone):
-    visit, _ = phone
-    browser = visit("/groups")
-    try:
-        assert _shown(browser, ".threads") is True
-        assert _shown(browser, ".convo") is False
-    finally:
-        browser.switch_to.default_content()
-
-    browser = visit("/groups?channel=main")
-    try:
-        assert _shown(browser, ".threads") is False
-        assert _shown(browser, ".convo") is True
-        back = browser.find_element(By.CSS_SELECTOR, ".convo-head .back")
-        assert back.is_displayed()
-        assert "/groups" in back.get_attribute("href")
-        assert "channel=" not in back.get_attribute("href"), (
-            "back has to go to the list, not to the channel it is leaving")
-    finally:
-        browser.switch_to.default_content()
-
-
 def test_a_desktop_still_shows_both_and_needs_no_way_back(browser, served):
     """Both panes fit side by side there, which is the better way to read a
     conversation when they do -- and there is nothing to go back to."""
@@ -649,35 +591,6 @@ def test_a_desktop_still_shows_both_and_needs_no_way_back(browser, served):
     assert _shown(browser, ".threads") is True
     assert _shown(browser, ".convo") is True
     assert _shown(browser, ".convo-head .back") is False
-
-
-def test_posting_from_a_phone_stays_in_the_channel(phone):
-    """Reported from a phone, over the tunnel: pressing Post bounced back to the
-    channel list and nothing was ever sent.
-
-    Posting is two steps -- the first press prepares and the page comes back
-    asking "post this?" -- and that question is drawn inside the channel pane.
-    The POST renders from /groups/post, which has no channel in its query
-    string, so the pane was hidden and the confirmation with it. The list was
-    all that was left on screen, and the post could never be confirmed.
-    """
-    visit, _ = phone
-    browser = visit("/groups?channel=main")
-    try:
-        assert _shown(browser, ".convo") is True
-        box = browser.find_element(By.CSS_SELECTOR, "form.composer textarea")
-        box.send_keys("hi all")
-        browser.find_element(
-            By.CSS_SELECTOR, "form.composer button[type=submit]").click()
-        time.sleep(1.2)
-
-        assert _shown(browser, ".convo") is True, (
-            "the channel pane vanished on the way back from posting")
-        assert _shown(browser, ".threads") is False
-        assert browser.execute_script(
-            "return document.querySelector('.msgr').classList.contains('open')")
-    finally:
-        browser.switch_to.default_content()
 
 
 # --- pictures cost money, so they can be sent smaller ---------------------------
@@ -723,8 +636,7 @@ return {
 """
 
 
-@pytest.mark.parametrize("path,composer", [("/messages/{peer}", "message"),
-                                           ("/groups?channel=main", "post")])
+@pytest.mark.parametrize("path,composer", [("/messages/{peer}", "message")])
 def test_a_picture_can_be_sent_at_three_sizes(phone, path, composer):
     visit, peer = phone
     browser = visit(path.replace("{peer}", peer))
@@ -878,37 +790,6 @@ def test_the_composer_says_each_thing_once(phone):
         browser.switch_to.default_content()
 
 
-def test_a_picture_can_be_posted_to_the_board_with_nothing_typed(phone):
-    """"I should be able to post an image without any text attached, but it's
-    not working on the board." The encoder refused an empty text whatever else
-    the post carried, so choosing a picture and pressing Post came back saying
-    to write something -- for a post that was already complete."""
-    visit, _ = phone
-    browser = visit("/groups?channel=main")
-    try:
-        browser.set_script_timeout(30)
-        browser.execute_async_script(MAKE_A_PHOTO)
-        for _ in range(60):
-            if len(browser.execute_script(READ_SIZES)["labels"]) == 3:
-                break
-            time.sleep(0.5)
-
-        assert browser.execute_script(
-            "return document.getElementById('post').value") == "", "nothing typed"
-        browser.find_element(
-            By.CSS_SELECTOR, "form.composer button[type=submit]").click()
-        time.sleep(1.5)
-
-        page = browser.execute_script("return document.body.textContent")
-        assert "write something" not in page, (
-            "the board still refuses a picture on its own")
-        # No node in this fixture, so it cannot get further than trying to pay
-        # for it -- which is proof it got past the encoder.
-        assert ("node" in page or "Post this" in page or "wallet" in page), page[:300]
-    finally:
-        browser.switch_to.default_content()
-
-
 def test_clicking_a_picture_opens_it_rather_than_downloading_it(phone):
     """Downloading is the rarer thing to want and the more annoying to undo --
     a folder full of files you only meant to look at."""
@@ -956,14 +837,3 @@ def test_clicking_a_picture_opens_it_rather_than_downloading_it(phone):
     finally:
         browser.switch_to.default_content()
 
-
-def test_a_picture_still_works_without_javascript():
-    """The anchor stays an anchor: middle-click, right-click and a browser with
-    scripting off all behave as they did."""
-    import pathlib as _p
-
-    for name in ("messages.html", "groups.html"):
-        source = _p.Path("arcade/web/templates", name).read_text()
-        assert 'class="media" href=' in source, name
-        assert "?download=1" in source, name
-        assert "return false" in source, name

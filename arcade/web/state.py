@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import NETWORKS, Params, load_rpc_credentials, verify_connected_chain
+from .. import accounts as accounts_lib
 from ..ledger import LedgerIndex
 from ..messaging.derive import (
     DerivationError, derive_identity, resolve_identity_address,
@@ -135,18 +136,14 @@ class AppState:
     rpc_secret: str = field(default_factory=lambda: secrets.token_hex(32))
     notice: str | None = None
     notice_kind: str = "info"
-    #: The port this interface is served on. Needed by the remote-access page,
-    #: which has to tell cloudflared where to point, and by the guard that
-    #: decides whether a request came from this machine.
+    #: The port this interface is served on.
     port: int = 8420
-    #: The open Cloudflare tunnel, if the user has opened one (arcade/remote.py).
-    #: One at a time: a second would be a second door nobody is watching.
-    tunnel: Any = None
-    #: True while one is being opened. Opening takes seconds -- the edge has to
-    #: answer -- and until it does, `tunnel` is still None, so a second press of
-    #: the button would start a second cloudflared that nothing afterwards knows
-    #: about or can close. The claim is what makes the button one press.
-    tunnel_opening: bool = False
+    #: Whether this instance is served publicly (arcade/web/door.py). False
+    #: is a wallet on somebody's own machine, where everything is theirs;
+    #: True is a node on a real domain, where only the public surface is
+    #: served and every form is refused. Set once at startup, never from a
+    #: page: a door that can be opened by a request is not a door.
+    public: bool = False
     #: Whether an inscribed page may ask which wallet is looking at it. The
     #: balances themselves are public either way -- anyone with an index can
     #: look one up -- so this is about the one thing the chain does not say.
@@ -164,6 +161,8 @@ class AppState:
     ledger_tips: dict = field(default_factory=dict)
     _ledger_indexes: dict = field(default_factory=dict)
     _token_chain: str | None = None
+    #: The seat register, opened lazily by `accounts()`.
+    _accounts: Any = None
     #: Token transactions broadcast from here and not yet seen in an indexed
     #: block, so the page can say "on its way" instead of showing nothing.
     pending_tokens: list = field(default_factory=list)
@@ -193,6 +192,21 @@ class AppState:
     #: is worse than plain staleness and needs saying out loud.
     _disk_version: tuple = ("", 0.0)
     DISK_CHECK_SECONDS = 20.0
+
+    @property
+    def checkout(self) -> Path:
+        """The source this instance is running from.
+
+        Either the tree it was imported out of -- a development checkout,
+        which is what the publishing machine runs -- or the one the
+        installer fetched. Whichever it is, it is what `/clone` packs and
+        hands to the next person, so a clone is made from what is actually
+        running rather than from a website that may have moved on.
+        """
+        here = Path(__file__).resolve().parent.parent.parent
+        if (here / "arcade").is_dir():
+            return here
+        return Path.home() / ".dogecoinarcade" / "src"
 
     def _git_head(self) -> str:
         import subprocess
@@ -387,38 +401,108 @@ class AppState:
         with self._lock:
             self.generation += 1
 
-    def remote_tunnel(self):
-        """The tunnel if it is still open, and None the moment it is not.
+    @property
+    def pages_origin(self) -> str:
+        """Where an inscribed page is framed from, or "" for right here.
 
-        Checked rather than remembered: it closes on its own deadline, and
-        cloudflared can die on its own too. Anything asking whether the door is
-        open must get the truth now, not what was true when it was opened.
+        A second hostname is what gives a page in the sandbox an origin
+        that is not the wallet's, so nothing it does can reach the wallet's
+        cookies or its routes -- `arcade/web/door.py` serves that name the
+        content and the page API and nothing else. Configured by whoever
+        runs the node (`pages_host` in settings.json); with none, pages are
+        framed from here, which is the same sandbox minus the extra origin
+        and is right for one person's own machine.
         """
-        with self._lock:
-            tunnel = self.tunnel
-            if tunnel is not None and not tunnel.alive():
-                self.tunnel = None
-                return None
-            return tunnel
+        host = str(self.setting("pages_host", "") or "").strip()
+        if not host:
+            return ""
+        return host if "://" in host else f"https://{host}"
 
-    def set_tunnel(self, tunnel) -> None:
-        with self._lock:
-            self.tunnel = tunnel
+    def vault(self):
+        """Encrypted wallets by @tag. Bytes this node cannot read."""
+        from ..accounts import Vault
+        return Vault(self.accounts())
 
-    def claim_tunnel(self) -> bool:
-        """Take the right to open one. False if a tunnel is open or opening."""
-        with self._lock:
-            if self.tunnel_opening:
-                return False
-            if self.tunnel is not None and self.tunnel.alive():
-                return False
-            self.tunnel_opening = True
-            return True
+    def faucet(self):
+        """The record of what the faucet has given, and its limits.
 
-    def release_tunnel(self) -> None:
-        """Give the claim back, whether the tunnel opened or not."""
-        with self._lock:
-            self.tunnel_opening = False
+        The amount and the ceiling are settings, so an operator who would
+        rather give less -- or nothing -- changes a number rather than the
+        code. `faucet: 0` turns it off.
+        """
+        from ..faucet import Faucet, DAILY_CEILING, GIFT
+        gift = self.setting("faucet")
+        ceiling = self.setting("faucet_daily")
+        return Faucet(self.accounts(),
+                      gift=GIFT if gift is None else int(gift),
+                      ceiling=DAILY_CEILING if ceiling is None else int(ceiling),
+                      # `faucet_real_coins: true` is the deliberate act that
+                      # lets a faucet pay on a chain where the coins are
+                      # real. Off by default, and capped far lower when on.
+                      real_coins=bool(self.setting("faucet_real_coins", False)))
+
+    def credentials(self):
+        """The operator's username and password, if one has been set."""
+        from ..accounts import Credentials
+        return Credentials(self.accounts())
+
+    def account_for(self, token: str):
+        """The account a session cookie belongs to, or None.
+
+        On AppState rather than in the routes because the door needs it too,
+        and the door is registered before any route exists.
+        """
+        try:
+            return self.accounts().session(token or "")
+        except Exception:
+            return None
+
+    @property
+    def operator(self) -> str:
+        """The account this node belongs to, as a hex public key, or "".
+
+        One key, named in settings.json and settable only from the machine
+        itself (`/auth/operator`). It is what lets the person who runs a
+        node reach their own wallet from outside it: everybody else who
+        signs in gets the public surface, because they are not this key.
+
+        Not a second password and not a way in of its own -- it names an
+        account that still has to prove itself the ordinary way, with a
+        signature over a nonce this node issued (D-147).
+        """
+        return str(self.setting("operator", "") or "").strip().lower()
+
+    def claim_operator(self, pubkey: str) -> None:
+        self.set_setting("operator", (pubkey or "").strip().lower())
+
+    @property
+    def public_hosts(self) -> tuple[str, ...]:
+        """The names this node answers to publicly.
+
+        Set by whoever runs it (`public_hosts` in settings.json, one name or
+        a list). A request arriving at one of them is served the public
+        surface however it got here -- and a request carrying an edge's own
+        headers is too, so a name nobody remembered to add still lands on
+        the safe side.
+        """
+        said = self.setting("public_hosts", [])
+        if isinstance(said, str):
+            said = [said]
+        return tuple(str(name).rsplit(":", 1)[0].strip().lower()
+                     for name in said if str(name).strip())
+
+    @property
+    def pages_hostname(self) -> str:
+        """Just the name, for comparing against a Host header.
+
+        The setting may be written either way -- a bare name is the ordinary
+        case, a full origin is what a test or a non-standard port needs --
+        so the comparison is made on the one part that is in both.
+        """
+        origin = self.pages_origin
+        if not origin:
+            return ""
+        return origin.split("://", 1)[-1].split("/")[0].rsplit(":", 1)[0].lower()
 
     def flash(self, message: str, kind: str = "info") -> None:
         self.notice, self.notice_kind = message, kind
@@ -475,23 +559,29 @@ class AppState:
         except Exception:
             return ""
 
-    def post_to_board(self, channel: str, text: str) -> str:
-        """One short public post, in one transaction, with no page behind it.
+    def post(self, text: str) -> str:
+        """One post on the feed, in one transaction.
 
-        The interface's own posting path is a long one -- attachments,
-        progress, chunking, a person watching -- and none of that applies to
-        a machine saying one line. This is the short path, and it refuses
-        rather than chunks: a notice that does not fit in one transaction is
-        a notice that has gone wrong.
+        Short by construction: it refuses rather than chunks, because a post
+        that does not fit one transaction is a post with a file in it, and a
+        file posted to the feed becomes an inscription with the post
+        carrying its link (D-138).
+
+        Was `post_to_board(channel, text)` until the board became a feed and
+        the release notice stopped being a post (D-147). There are no
+        channels to name any more.
         """
         from ..messaging import group
         from ..messaging.sender import MessageSender, funded_address
 
         chain = self.messaging
-        plan = group.plan(group.GroupPost(channel=channel, nickname=self.profile_name,
-                                          text=text))
+        # No nickname: the @tag is the byline, read from the chain, so
+        # nobody can type a name they do not hold (D-138).
+        plan = group.plan(group.GroupPost(channel="", nickname="", text=text))
         if plan.transactions != 1:
-            raise ValueError("a board notice has to fit in one transaction")
+            raise ValueError(
+                "that is too long for one transaction -- put a file in it "
+                "instead, or say less")
         with chain.rpc() as rpc:
             sender = MessageSender(rpc, chain.params, public_only=True)
             address = funded_address(rpc, mainnet=chain.is_mainnet)
@@ -499,9 +589,30 @@ class AppState:
                                       class_c=plan.class_c, change_address=address)
             txid = sender.broadcast(prepared)
         with self.store() as store:
-            store.add_group_post(chain.network, channel, txid, 0, int(time.time()),
-                                 address, self.profile_name, text, mine=True,
-                                 txids=[txid])
+            store.add_group_post(chain.network, "", txid, 0, int(time.time()),
+                                 address, "", text, mine=True, txids=[txid])
+        self.bump_generation()
+        return txid
+
+    def broadcast_release(self, revision: str) -> str:
+        """Say that a version exists, as machine talk rather than a post.
+
+        It was a board post in a channel, which put the one message nobody
+        reads beside the ones people do -- and once the board became a feed
+        there was nowhere honest to put it (D-147). Same short path, same
+        lack of authority: the signature on the manifest is what decides
+        what installs.
+        """
+        from .. import release as releaselib
+        from ..messaging.sender import MessageSender, funded_address
+
+        chain = self.messaging
+        payload = releaselib.build_notice(revision)
+        with chain.rpc() as rpc:
+            sender = MessageSender(rpc, chain.params, public_only=True)
+            address = funded_address(rpc, mainnet=chain.is_mainnet)
+            prepared = sender.prepare(address, payload, change_address=address)
+            txid = sender.broadcast(prepared)
         self.bump_generation()
         return txid
 
@@ -603,6 +714,40 @@ class AppState:
     def store(self) -> MessageStore:
         return MessageStore(self.store_path)
 
+    # --- who may use this node ------------------------------------------------
+
+    @property
+    def accounts_path(self) -> Path:
+        """The seat register (arcade/accounts.py).
+
+        Not per network and not per era. A seat is permission to use this
+        machine, and the browser key that holds one has no opinion about
+        which chain is being indexed or what height the floor is at -- so a
+        floor move leaves this file alone, and everybody keeps their seat
+        and loses their tag, which is what a floor move means.
+        """
+        return self.home / "accounts.sqlite"
+
+    def accounts(self):
+        """The register, opened once per process.
+
+        One connection, shared: SQLite serialises writes itself, the rows
+        are few, and a connection per request would mean a file handle per
+        page draw for a table that is read on every one of them.
+        """
+        with self._lock:
+            if self._accounts is None:
+                from ..accounts import Accounts
+                # `seats` in settings.json overrides the default. Written
+                # this way rather than with `or` so that an operator can
+                # set it to 0 and close signups without the fallback
+                # quietly reopening them.
+                seats = self.setting("seats")
+                self._accounts = Accounts(
+                    self.accounts_path,
+                    seats=accounts_lib.SEATS if seats is None else int(seats))
+            return self._accounts
+
     # --- the token indexes ----------------------------------------------------
     #
     # Tokens are indexed on BOTH chains, always. Mainnet is the ledger (D-012)
@@ -686,7 +831,7 @@ class AppState:
         """
         index = self._ledger_indexes.get(chain.network)
         if index is None:
-            index = LedgerIndex(self.home / f"{chain.network}-ledger.sqlite",
+            index = LedgerIndex(self.ledger_index_path(chain),
                                 chain.params, chain.rpc)
             self._ledger_indexes[chain.network] = index
         return index
@@ -698,6 +843,11 @@ class AppState:
     _pagestore: Any = None
     _talk: Any = None
     _offers: Any = None
+
+    def ledger_index_path(self, chain: "ChainContext") -> Path:
+        """Where a chain's index file is. One definition, because the
+        bootstrap publishes the same file the indexer writes."""
+        return self.home / f"{chain.network}-ledger.sqlite"
 
     def chain_named(self, network: str) -> ChainContext:
         for chain in self.token_chains:

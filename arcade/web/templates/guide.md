@@ -373,12 +373,24 @@ names itself the same way.
   nothing to fix). A wall clock cannot tell those apart.
 * **Messages still go through** while a run is on: the send lock is held one
   item at a time.
-* **It can sell itself.** Tick the mintpad at the pricing step, name a price
-  in coins or in a token, and the run inscribes a mintpad when the last item
-  is on its way — a page that shows the collection and hands over a random
-  one for that price, to anyone who opens it in a wallet. Last, and only if
-  nothing failed: a pad for a collection half of which never went up would be
-  selling things that do not exist. Untick it and nothing extra is inscribed.
+* **It can sell itself, if you ask it to.** The mintpad starts OFF: a
+  collection and a shop are two decisions, and a shop front nobody asked for
+  is coins spent on a page nobody wanted. Tick it, name a price in coins or
+  in a token, and the run inscribes a mintpad when the last item is on its
+  way — a page that shows the collection and hands over a random one for
+  that price, to anyone who opens it in a wallet. Last, and only if nothing
+  failed: a pad for a collection half of which never went up would be
+  selling things that do not exist. Leave it alone and nothing but your
+  items goes on the chain.
+* **The mintpad's page is yours to edit.** Its HTML sits in a box under the
+  preview and the preview follows what you type. What is in that box is
+  what goes on the chain, exactly as written — so it is also what you pay
+  for, and the byte count moves as you type. There is a button to put the
+  standard page back. Left alone it stays the standard page, which means it
+  picks up whatever a later release improves in it; changed, your version
+  is kept with the run and inscribed as you left it. You can gut it
+  completely, and you are told rather than stopped: a page that no longer
+  names its creator and its collection cannot sell one.
 
 ---
 
@@ -727,26 +739,58 @@ published, not on any chain, and not visible to anyone you message.
 
 ---
 
-## Remote
+## Running your own
 
-Reach the wallet from your phone, from anywhere, for a while.
+Every instance serves the next one. `/clone` on any node hands over the
+program and a copy of that node's index, so a network of arcades does not
+depend on one website staying up.
 
-Press *Open the tunnel*, choose 4 hours, 12 hours or a day, and scan the QR
-code. No account, no port forwarding, nothing to change on your router.
+* **The program**, at the three names the installer already fetches:
+  `/source.tar.gz`, its `.sha256`, and `/source.rev`. Packed from the tree
+  that node is actually running, and deterministic — sorted members, fixed
+  timestamps — so two clones at one revision produce the same bytes and the
+  same hash. Nothing of the machine is in it: no virtualenv, no git, no
+  caches, no keys.
+* **A copy of the index**, gzipped, so a new node does not begin by
+  re-reading the chain from its floor. Copied with `VACUUM INTO` while the
+  indexer is still writing, and remade when somebody asks for one that has
+  gone stale — an hour, or a hundred blocks — rather than on a timer.
+* **It is a convenience, not an authority.** A downloaded index is somebody
+  else's claim about the chain. The manifest beside it names the height,
+  the floor, and two digests of what it holds: the consensus hash, and a
+  second one covering inscriptions, collections, tags and asks, which the
+  consensus hash does not. Re-read from the floor yourself, compare both,
+  and you have proved it rather than trusted it. A stale copy is never
+  wrong, only further behind.
+* **Nothing private is in it.** No messages, no address book, no key. Only
+  the ledger index — public chain state, derived, and reproducible by
+  anyone with a node.
 
-**What protects it** — not the random hostname, which is a URL and therefore
-not a secret:
+---
+
+## Two ways to run it
+
+**As a wallet** — the default, and what it has always been. One person's
+machine, everything in it theirs, reachable from where it is served.
+
+**As a public arcade** — `--public`, which is what a node on a real domain
+runs. Only the public surface is served: the feed, somebody's profile and
+holdings, the collections, the chain views, inscribed content, the page
+API, the guide and the sign-up page. **Every form is refused**, because
+every form in this application spends the NODE's wallet and none of it is
+per-account yet. Holding a seat says who you are; it does not make the
+operator's wallet yours, and no combination of cookies changes that,
+because the refusal is about the route rather than the visitor.
+
+It is an allowlist, not a blocklist: a route added tomorrow is refused
+until somebody names it, which is a visible one-line mistake, where the
+other way round the mistake is somebody's coins. It says which of the two
+it is at startup, every time.
 
 | | |
 |---|---|
-| A key | The QR carries a key as well as the address. The address alone opens a locked page. |
-| A deadline | It closes itself. A door left open by accident is the failure this exists to prevent. |
-| No bot RPC | `/rpc/*` is refused through the tunnel outright. It has its own key and it can spend. |
-| A door for the pages | An inscribed page runs in a sandbox that can carry no cookie, so it gets a second hostname of its own, opened alongside and never shown: it serves only the page's content and the page API (`/content/*`, `/r/*`), and answers 404 to everything else. |
-
-It tells a phone from this machine by Cloudflare's own headers, not by address —
-cloudflared runs on your machine and connects to `127.0.0.1`, so a phone in
-another country arrives from localhost.
+| A door for the pages | An inscribed page runs in a sandbox that can carry no cookie, so it is framed from a second hostname of its own (`pages_host`): that name serves the page's content and the page API (`/content/*`, `/r/*`) and answers 404 to everything else. With no second name configured, pages are framed from here — the same sandbox, minus the extra origin. |
+| No bot RPC | `/rpc/*` is never served publicly. It has its own key, in a file beside the node, and it can spend. |
 
 ---
 
@@ -793,6 +837,39 @@ propagate — Pepecoin tolerates an unknown command and drops it without
 forwarding. The mempool already gossips to every node in seconds.
 
 ---
+
+## Joining a node
+
+* **Fifty seats a node.** The splash at `/join` says how many are free,
+  counted from the register rather than typed, and when there are none it
+  stops apologising and prints the install command: a full node is supposed
+  to produce another node, not a queue. Nothing is lost by going elsewhere
+  -- the name, the coins and the posts are on the chain, so any node will
+  do, including one you run yourself.
+* **Twenty-four words are the whole account.** Made in the browser from the
+  standard BIP39 list, shown once, and confirmed by typing three of them
+  back before anything is taken. They never reach the node. There is no
+  reset and nobody to ask, which is why it says so at the moment they are
+  made rather than in a help page.
+* **The node holds no password and no key.** Signing in is a signature over
+  a nonce the node just issued, good for two minutes, for one use, and for
+  that node only -- the address is inside the bytes that get signed. A copy
+  of the node's account file is a list of public keys and nothing else.
+* **An encrypted copy can stay in this browser**, under a password that
+  goes nowhere: not to the node, not into a cookie. It protects the copy on
+  that machine, not the wallet, and it cannot be reset for the same reason
+  the words cannot.
+* **A seat comes back after ninety days of silence**, and nothing of yours
+  is touched when it does. Sign in again wherever there is a space and it
+  is the same account, with the same name and the same join date.
+* **Signing up needs https, or localhost.** A browser hands out its
+  cryptography only in a secure context, so over plain http on a network
+  address the page says so instead of half working. The Remote page's
+  address is https end to end.
+* **What an account does not do yet.** It gates nothing: the wallet's own
+  pages are still the wallet's own, and claiming a @tag or taking the
+  faucet waits on coin keys in the browser. The page says this rather than
+  implying otherwise.
 
 ## Wallets, keys and backup
 

@@ -188,9 +188,15 @@
     <div class="muted" id="attached" hidden style="font-size:.8rem;margin-top:6px"></div>
   </form>
   {% else %}
+  {% if public %}
+  <p style="margin:0">This is a public arcade: the feed is open to read, and
+    posting happens from the node that holds your key &mdash;
+    <a href="/clone">run your own</a>, or use the one you signed up on.</p>
+  {% else %}
   <p style="margin:0">You need a name before you can post &mdash; it is what
     your posts appear under, and it is one button on the
     <a href="/contacts">address book</a>.</p>
+  {% endif %}
   {% endif %}
 </div>
 {% endif %}

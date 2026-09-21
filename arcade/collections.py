@@ -338,6 +338,21 @@ def estimate_build(build: Build) -> dict[str, Any]:
             "total": round(fee + dust, 8)}
 
 
+def _column(row: Any, name: str, default: str = "") -> str:
+    """One column of a job row, tolerating a row that predates it.
+
+    `add_missing_columns` adds a new column when the store is opened, so a
+    live row always has it -- but a row handed in by a test, or read from a
+    store opened by an older build still running, may not, and a KeyError
+    inside the runner would stop a collection over a cosmetic field.
+    """
+    try:
+        value = row[name]
+    except (KeyError, IndexError, TypeError):
+        return default
+    return default if value is None else str(value)
+
+
 # --- the job store ------------------------------------------------------------
 
 SCHEMA = """
@@ -361,6 +376,13 @@ CREATE TABLE IF NOT EXISTS job (
     pad_json    TEXT NOT NULL DEFAULT '',
     pad_txid    TEXT NOT NULL DEFAULT '',
     pad_error   TEXT NOT NULL DEFAULT '',
+    -- The pad's own HTML, when the person editing it changed the page. Kept
+    -- whole rather than as a diff against the template: the template will
+    -- change with a release, and a diff against a page that has moved is a
+    -- page nobody can rebuild. Empty means "the standard page", which is
+    -- then generated at inscribing time and gets whatever improvements a
+    -- release has made to it since.
+    pad_html    TEXT NOT NULL DEFAULT '',
     -- The chain's floor when this run was written down. A run belongs to a
     -- chain era: after a floor moves, the pieces it inscribed are below the
     -- floor and no node reads them, so it is history of a chain nobody looks
@@ -413,7 +435,8 @@ class Jobs:
         return conn
 
     def create(self, network: str, sender: str, build: Build,
-               name: str = "", pad_json: str = "", floor: int | None = None) -> str:
+               name: str = "", pad_json: str = "", floor: int | None = None,
+               pad_html: str = "") -> str:
         """Write the job down, every item with the id its pieces will carry."""
         cost = estimate_build(build)
         job_id = secrets.token_hex(6)
@@ -421,11 +444,11 @@ class Jobs:
             conn.execute("BEGIN")
             conn.execute(
                 "INSERT INTO job (id, created, network, sender, name, folder, "
-                "status, items, chunks, fee, dust, pad_json, floor) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "status, items, chunks, fee, dust, pad_json, floor, pad_html) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (job_id, time.time(), network, sender, name or build.collection,
                  str(build.folder), "paused", cost["items"], cost["chunks"],
-                 cost["fee"], cost["dust"], pad_json, floor))
+                 cost["fee"], cost["dust"], pad_json, floor, pad_html or ""))
             for item in build.items:
                 est = inscribelib.estimate(item.size, item.content_type, item.json)
                 conn.execute(
@@ -737,7 +760,13 @@ class Runner:
             data = json.loads(job["pad_json"])
             collection = str(data.get("shop", {}).get("listings", [{}])[0]
                              .get("give", {}).get("collection") or job["name"])
-            page = mintpadlib.page(job["sender"], collection)
+            # What the person actually looked at, if they changed it. The
+            # page is theirs -- it is their shop front and it goes on the
+            # chain under their name -- so an edited one is inscribed
+            # exactly as written, not merged with the current template.
+            edited = _column(job, "pad_html")
+            page = (edited.encode("utf-8") if edited.strip()
+                    else mintpadlib.page(job["sender"], collection))
             self.jobs.note(job_id, "inscribing the mintpad")
             plan = inscribelib.plan(page, "text/html", job["pad_json"])
             txids = sender_obj.send_all(job["sender"], list(plan.payloads))

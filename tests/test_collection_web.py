@@ -585,7 +585,153 @@ def test_the_price_is_required_while_the_pad_is_on(client, tmp_path, monkeypatch
                     data={"csrf_token": state.csrf_token,
                           "folder": str(hashlips(tmp_path, count=2)),
                           "fromaddress": "nMe"}).text
-    assert 'id="pad-amount"' in page and "required" in page
+    assert 'id="pad-amount"' in page
     assert "amount.required = box.checked" in page, \
         "and it follows the tick, because a required field inside a hidden " \
         "panel cannot be filled in"
+    # The pad starts OFF, so the price starts not required: a `required`
+    # field inside a panel nobody opened is a form that will not submit and
+    # will not say why.
+    box = page[page.index('id="pad-amount"'):]
+    assert "required" not in box[:box.index(">")]
+
+
+# --- the mintpad is a separate decision (D-149) -------------------------------
+
+def _review(app, state, folder, monkeypatch):
+    import contextlib
+
+    from arcade.web import app as webapp
+    monkeypatch.setattr(type(state.token_chain), "rpc",
+                        lambda self: contextlib.nullcontext(object()), raising=False)
+    monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
+    return app.post("/inscriptions/collection/review",
+                    data={"csrf_token": state.csrf_token, "folder": str(folder),
+                          "fromaddress": "nMe"}).text
+
+
+def test_the_mintpad_is_offered_rather_than_assumed(client, tmp_path, monkeypatch):
+    """A collection and a shop are two decisions. Inscribing a shop front
+    nobody asked for spends their coins on a page they did not want."""
+    app, state = client
+    page = _review(app, state, hashlips(tmp_path, count=2), monkeypatch)
+    tick = page[page.index('id="launchpad"') - 200:page.index('id="launchpad"') + 60]
+    assert "checked" not in tick, "off unless asked for"
+    assert 'id="pad-fields" hidden' in page, "and everything about it is folded away"
+    assert "optional" in page
+
+
+def test_a_run_with_no_mintpad_writes_no_pad(client, tmp_path, monkeypatch):
+    import contextlib
+
+    from arcade.web import app as webapp
+    app, state = client
+    build = hashlips(tmp_path, count=2)
+    monkeypatch.setattr(type(state.token_chain), "rpc",
+                        lambda self: contextlib.nullcontext(object()), raising=False)
+    monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
+    app.post("/inscriptions/collection/start",
+             data={"csrf_token": state.csrf_token, "folder": str(build),
+                   "fromaddress": "nMe"}, follow_redirects=False)
+    jobs, _ = state.collections
+    job = jobs.get(jobs.list()[0]["id"])
+    assert job["pad_json"] == "" and job["pad_html"] == ""
+
+
+def test_the_html_box_holds_the_page_as_it_will_be_inscribed(client, tmp_path,
+                                                             monkeypatch):
+    """Not a placeholder version of it. What the editor shows is what goes on
+    the chain, so the creator address in the box is the real one -- the
+    preview's own `creator=preview` is a rewrite for drawing only."""
+    app, state = client
+    page = _review(app, state, hashlips(tmp_path, count=2), monkeypatch)
+    box = page[page.index('id="pad-html"'):]
+    box = box[box.index(">") + 1:box.index("</textarea>")]
+    assert "CREATOR" in box and "nMe" in box
+    assert "DOGE PUNKS MINTPAD" in box.upper()
+    assert "preview" not in box.lower(), "the real page, not the preview's"
+
+
+def test_the_live_preview_uses_the_servers_own_substitutions(client, tmp_path,
+                                                             monkeypatch):
+    """One definition of what turns the page into a preview. Two copies is a
+    preview that stops matching the page the moment either is touched."""
+    app, state = client
+    page = _review(app, state, hashlips(tmp_path, count=2), monkeypatch)
+    assert "var PAD_SWAPS = [" in page
+    assert "/inscriptions/collection/preview/set" in page
+    assert "/inscriptions/collection/preview/piece" in page
+    assert "frame.srcdoc = html + PAD_NOTE" in page, "drawn in the browser"
+    assert "nothing is on the chain yet" in page, "and it still says so"
+
+
+def test_an_unedited_page_is_not_carried_on_the_job(client, tmp_path, monkeypatch):
+    """A textarea posts CRLF whatever it was handed, so a page nobody touched
+    comes back different on every line. Comparing after normalising is what
+    keeps "I changed nothing" from freezing today's template onto the run."""
+    import contextlib
+
+    from arcade.messaging.keys import Identity
+    from arcade.web import app as webapp
+    app, state = client
+    build = hashlips(tmp_path, count=2)
+    # A pad carries the node's messaging identity in its shop JSON, so one
+    # has to exist before a pad can be asked for at all.
+    state.identity = Identity.generate()
+    monkeypatch.setattr(type(state.token_chain), "rpc",
+                        lambda self: contextlib.nullcontext(object()), raising=False)
+    monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
+
+    from arcade import mintpad as M
+    standard = M.page("nMe", "Doge Punks").decode("utf-8")
+    app.post("/inscriptions/collection/start",
+             data={"csrf_token": state.csrf_token, "folder": str(build),
+                   "fromaddress": "nMe", "launchpad": "yes", "pad_amount": "5",
+                   "pad_kind": "coins",
+                   "pad_html": standard.replace("\n", "\r\n")},
+             follow_redirects=False)
+    jobs, _ = state.collections
+    job = jobs.get(jobs.list()[0]["id"])
+    assert job["pad_json"], "the pad was asked for"
+    assert job["pad_html"] == "", "but the page was left alone"
+
+
+def test_an_edited_page_is_carried_on_the_job(client, tmp_path, monkeypatch):
+    import contextlib
+
+    from arcade.messaging.keys import Identity
+    from arcade.web import app as webapp
+    app, state = client
+    build = hashlips(tmp_path, count=2)
+    state.identity = Identity.generate()
+    monkeypatch.setattr(type(state.token_chain), "rpc",
+                        lambda self: contextlib.nullcontext(object()), raising=False)
+    monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
+
+    mine = "<!doctype html><h1>mine</h1><script>const CREATOR='nMe';</script>"
+    app.post("/inscriptions/collection/start",
+             data={"csrf_token": state.csrf_token, "folder": str(build),
+                   "fromaddress": "nMe", "launchpad": "yes", "pad_amount": "5",
+                   "pad_kind": "coins", "pad_html": mine},
+             follow_redirects=False)
+    jobs, _ = state.collections
+    job = jobs.get(jobs.list()[0]["id"])
+    assert job["pad_html"] == mine
+
+
+def test_the_page_script_survives_the_closing_tag_inside_it(client, tmp_path,
+                                                            monkeypatch):
+    """The preview note contains a literal `</script>`.
+
+    An HTML parser ends a script block at that sequence wherever it appears
+    -- inside a JavaScript string literal included -- so embedding it raw
+    killed the whole inline script and every control on the mintpad panel
+    did nothing at all. The bytes were correct server-side, which is why
+    only a browser found it; this is the cheap guard against it coming back.
+    """
+    app, state = client
+    page = _review(app, state, hashlips(tmp_path, count=2), monkeypatch)
+    script = page[page.index("var PAD_SWAPS"):]
+    script = script[:script.index("</script>")]
+    assert "</script>" not in script
+    assert "<\\/script>" in script, "the closing tag has to be escaped, not removed"

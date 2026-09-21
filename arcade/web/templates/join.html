@@ -1,0 +1,338 @@
+{% extends "base.html" %}
+{% block title %}Join · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Join this arcade</h1>
+<p class="sub">
+  Twenty-four words are the whole account. They are made in this browser,
+  they never leave it, and this node never learns them.
+</p>
+
+<div class="panel seats">
+  {% if free > 0 %}
+    <p class="count"><strong>{{ free }}</strong> of {{ seats }} seats free</p>
+    <p class="muted">
+      A node is one machine with one connection to the chain, and this one
+      seats {{ seats }} people. A seat comes back after {{ idle_days }} days
+      of silence — no sign-in, no post, no transaction — and nothing of
+      yours is touched when it does: your name, your coins and your posts
+      are on the chain, not here.
+    </p>
+  {% else %}
+    <p class="count"><strong>No seats free.</strong></p>
+    <p class="muted">
+      All {{ seats }} are taken. This is not a queue — run your own node
+      and you are the operator of it, with your own {{ seats }} seats. Your
+      name, your coins and your posts are on the chain, so they come with
+      you.
+    </p>
+  {% endif %}
+</div>
+
+{% if not secure_enough %}
+<div class="msg err">{{ why_not }}</div>
+{% endif %}
+
+<div class="panel" id="signed-in" hidden>
+  <h2>Signed in</h2>
+  <p>This browser is signed in as <code id="who-key"></code><span id="who-tag"></span>.</p>
+  <p class="muted" id="who-since"></p>
+  <div class="panel" id="claim" hidden style="border-color:var(--accent)">
+    <strong>Make this your wallet</strong>
+    <p class="muted" style="margin:6px 0 10px">
+      This node has no operator yet. Claim it and these words open its
+      wallet &mdash; its coins, its messages, its address book &mdash; from
+      anywhere, not only from the machine it runs on. Everybody else who
+      signs in still gets the public arcade, because they are not this key.
+    </p>
+    <p class="muted" style="margin:0 0 10px">
+      It can only be done from the machine itself, which is the whole of
+      why it is safe. Do it once, from here.
+    </p>
+    <button class="btn primary" id="claim-go">This node is mine</button>
+  </div>
+  <p class="muted" id="operator-note" hidden>
+    You are this node's operator. These words open its wallet from anywhere.
+  </p>
+  <button class="btn" id="signout">Sign out of this node</button>
+</div>
+
+<div class="panel" id="password-door" hidden>
+  <h2 style="margin-top:0">Sign in</h2>
+  <p class="muted" style="margin:0 0 10px">Whoever runs this node.</p>
+  <input type="text" id="username" autocomplete="username" placeholder="username">
+  <input type="password" id="password" autocomplete="current-password"
+         placeholder="password">
+  <button class="btn primary" id="password-go">Sign in</button>
+</div>
+
+<div class="panel" id="password-set" hidden style="border-color:var(--accent)">
+  <h2 style="margin-top:0">Make this node yours</h2>
+  <p class="muted" style="margin:0 0 10px">
+    Nobody has claimed it. Choose a username and a password and it answers
+    to you &mdash; from here, and from anywhere it is published. This can
+    only be done from the machine the node runs on, which is the whole of
+    why it is safe.
+  </p>
+  <input type="text" id="new-username" autocomplete="off" placeholder="username">
+  <input type="password" id="new-password" autocomplete="new-password"
+         placeholder="password">
+  <p class="muted small" id="password-rule"></p>
+  <button class="btn primary" id="password-save">This node is mine</button>
+</div>
+
+<div id="doors" {% if not secure_enough %}hidden{% endif %}>
+
+  <div class="panel">
+    <h2>Make a new wallet</h2>
+    <p class="muted">
+      Write the words down before you go on. There is no reset, no recovery
+      and nobody to ask: the words are the wallet.
+    </p>
+    <button class="btn" id="make">Show me twenty-four words</button>
+    <div id="made" hidden>
+      <ol class="words" id="wordlist"></ol>
+      <p class="muted">
+        Now type words <strong id="asked"></strong> back in, in that order,
+        separated by spaces — so that what you wrote down is what is on the
+        screen.
+      </p>
+      <input type="text" id="confirm" autocomplete="off" autocapitalize="off"
+             spellcheck="false" placeholder="three words">
+      <label class="keepit">
+        <input type="checkbox" id="keep" checked>
+        keep an encrypted copy in this browser
+      </label>
+      <input type="password" id="password" autocomplete="new-password"
+             placeholder="a password for this machine only">
+      <p class="muted small">
+        The password encrypts the words in this browser's own storage. It is
+        never sent anywhere, so it cannot be reset — and it protects the copy
+        on this machine, not the wallet itself.
+      </p>
+      <button class="btn primary" id="join">Take a seat</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>I already have words</h2>
+    <p class="muted">
+      From another node, another browser, or a wallet that is not this one.
+      Same words, same account, same name — wherever there is a seat.
+    </p>
+    <textarea id="phrase" rows="3" autocomplete="off" autocapitalize="off"
+              spellcheck="false" placeholder="your twenty-four words"></textarea>
+    <button class="btn" id="restore">Sign in</button>
+  </div>
+
+  <div class="panel" id="unlock-panel" hidden>
+    <h2>Unlock this browser</h2>
+    <p class="muted">There is an encrypted wallet kept here.</p>
+    <input type="password" id="unlock-password" autocomplete="current-password"
+           placeholder="password">
+    <button class="btn primary" id="unlock">Unlock and sign in</button>
+    <button class="btn" id="forget">Forget it</button>
+  </div>
+
+</div>
+
+<div class="msg err" id="trouble" hidden></div>
+
+<div class="panel">
+  <h2>Run your own</h2>
+  <p class="muted">
+    Every node is the same program talking to the same chains. Running one
+    makes you the operator: you set the fee, you keep the node runner's cut
+    on what is built through it, and you seat your own {{ seats }} people.
+    Nobody needs anybody's permission, and nothing about an account is tied
+    to the machine it was made on.
+  </p>
+  <pre class="clone">curl -O <span id="here">this node</span>/source.tar.gz
+tar xzf source.tar.gz
+python3 installer/install.py</pre>
+  <p class="muted small">
+    The program and a copy of this node's index are both served from here,
+    so a clone starts with the chain already read rather than spending a day
+    reading it. <a href="/clone">Everything needed is on one page</a>.
+  </p>
+  <script>
+    document.getElementById("here").textContent = location.origin;
+  </script>
+</div>
+
+<style>
+.seats .count{font-size:1.3rem;margin:0 0 6px}
+.words{columns:3;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  background:var(--code);border-radius:8px;padding:14px 14px 14px 40px;margin:12px 0}
+.words li{break-inside:avoid;padding:2px 0}
+#doors input[type=text],#doors input[type=password],#doors textarea,
+#password-door input,#password-set input{
+  width:100%;padding:10px 12px;margin:8px 0;border:1px solid var(--line);
+  border-radius:8px;background:var(--panel);color:var(--fg);font:inherit}
+.keepit{display:flex;align-items:center;gap:8px;margin-top:10px}
+.keepit input{width:auto;margin:0}
+.small{font-size:.85rem}
+.clone{background:var(--code);border-radius:8px;padding:12px 14px;overflow-x:auto}
+</style>
+
+<script type="module">
+import * as signer from "/signin.js";
+
+const $ = (id) => document.getElementById(id);
+const trouble = $("trouble");
+function say(text) {
+  trouble.textContent = text;
+  trouble.hidden = !text;
+}
+
+let phrase = "", asked = [];
+
+function show(answer) {
+  $("doors").hidden = true;
+  $("signed-in").hidden = false;
+  $("who-key").textContent = answer.pubkey.slice(0, 16) + "…";
+  // A name comes from the chain, not from this node's register, so there
+  // is nothing to show until a tag has been claimed (D-147).
+  $("who-tag").textContent = answer.tag ? " — @" + answer.tag
+    : " — no name claimed yet";
+  $("claim").hidden = !answer.claimable;
+  $("operator-note").hidden = !answer.operator;
+  $("who-since").textContent = answer.created
+    ? "Seat taken " + new Date(answer.created * 1000).toLocaleDateString()
+      + ". It is yours until ninety days of silence, and the words open it "
+      + "on any node with a space."
+    : "";
+}
+
+/* The handlers are attached BEFORE anything is awaited, and the slow
+   lookups happen afterwards.
+
+   Measured, not guessed: on a cold browser profile the first
+   `indexedDB.open` took 5.4 seconds, and while it ran every button on this
+   page was dead -- the very first thing a new visitor does is press "show
+   me twenty-four words", and for five seconds nothing happened. Wiring
+   first costs nothing and makes the page live the moment it is painted.
+
+   Wrapped, too: a page whose only script dies quietly leaves somebody
+   clicking a button that does nothing, with no way to find out why. */
+function wire() {
+  $("make").onclick = async () => {
+    say("");
+    phrase = await signer.generate();
+    const list = $("wordlist");
+    list.innerHTML = "";
+    for (const word of phrase.split(" ")) {
+      const li = document.createElement("li");
+      li.textContent = word;
+      list.appendChild(li);
+    }
+    // Three words, chosen here and now, from three different thirds of the
+    // phrase: a confirmation that always asks for the same words is a
+    // confirmation somebody learns to pass without writing anything down.
+    const third = Math.floor(phrase.split(" ").length / 3);
+    asked = [1 + Math.floor(Math.random() * third),
+             1 + third + Math.floor(Math.random() * third),
+             1 + 2 * third + Math.floor(Math.random() * third)];
+    $("asked").textContent = asked.join(", ");
+    $("made").hidden = false;
+    $("confirm").focus();
+  };
+
+  $("join").onclick = async () => {
+    say("");
+    const words = phrase.split(" ");
+    const want = asked.map((n) => words[n - 1]).join(" ");
+    if (!phrase) { say("Make a wallet first."); return; }
+    if (signer.normalise($("confirm").value) !== want) {
+      say("Those are not words " + asked.join(", ") + ". Check what you wrote "
+          + "down against the screen \u2014 this is the only moment it is free "
+          + "to get wrong.");
+      return;
+    }
+    try {
+      if ($("keep").checked) await signer.keep(phrase, $("password").value);
+      show(await signer.signIn(phrase, {join: true}));
+    } catch (e) { say(String(e.message || e)); }
+  };
+
+  $("restore").onclick = async () => {
+    say("");
+    try {
+      show(await signer.signIn($("phrase").value, {join: true}));
+    } catch (e) { say(String(e.message || e)); }
+  };
+
+  $("unlock").onclick = async () => {
+    say("");
+    try {
+      const words = await signer.unlock($("unlock-password").value);
+      show(await signer.signIn(words, {join: true}));
+    } catch (e) { say(String(e.message || e)); }
+  };
+
+  $("forget").onclick = async () => {
+    await signer.forget();
+    $("unlock-panel").hidden = true;
+  };
+
+  $("claim-go").onclick = async () => {
+    say("");
+    const answer = await fetch("/auth/operator", {method: "POST"});
+    const said = await answer.json();
+    if (!answer.ok) { say(said.detail); return; }
+    location.reload();
+  };
+
+  $("password-go").onclick = async () => {
+    say("");
+    const answer = await fetch("/auth/password", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({username: $("username").value,
+                            password: $("password").value})});
+    const said = await answer.json();
+    if (!answer.ok) { say(said.detail); return; }
+    location.href = "/";
+  };
+
+  $("password-save").onclick = async () => {
+    say("");
+    const answer = await fetch("/auth/set-password", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({username: $("new-username").value,
+                            password: $("new-password").value})});
+    const said = await answer.json();
+    if (!answer.ok) { say(said.detail); return; }
+    location.href = "/";
+  };
+
+  $("signout").onclick = async () => {
+    await fetch("/auth/logout", {method: "POST"});
+    location.reload();
+  };
+}
+
+async function look() {
+  const door = await (await fetch("/auth/door")).json();
+  $("password-door").hidden = !door.password;
+  $("password-set").hidden = !door.settable;
+  $("password-rule").textContent =
+    "At least " + door.min_password + " characters. It is the whole of what "
+    + "stands between somebody who found the address and your wallet.";
+
+  if (await signer.kept()) $("unlock-panel").hidden = false;
+  const who = await (await fetch("/auth/who")).json();
+  if (who.pubkey) show(who);
+}
+
+if (signer.usable) {
+  try {
+    wire();
+    // What the browser tests wait for: the page is usable from here on.
+    document.body.dataset.joinReady = "yes";
+    look().catch((e) => say("This node did not answer: " + (e.message || e)));
+  } catch (e) {
+    say("This page's own script stopped before the buttons worked: "
+        + String(e.message || e));
+  }
+}
+</script>
+{% endblock %}

@@ -14,7 +14,9 @@
 
 <div class="row" style="margin-bottom:14px">
   <a class="btn ghost small" href="/inscriptions">All inscriptions</a>
+  {% if not public %}
   <a class="btn small" href="/inscriptions/collection">Inscribe a collection</a>
+  {% endif %}
 </div>
 
 {% if not collections %}

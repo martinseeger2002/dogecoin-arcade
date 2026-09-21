@@ -237,35 +237,29 @@ def test_the_decision_is_on_screen_without_scrolling(browser, served):
         state.approvals.decide(rid, "denied")
 
 
-# --- over the tunnel ------------------------------------------------------------
+# --- the pages' own hostname --------------------------------------------------
 
-def test_over_the_tunnel_a_page_still_reaches_the_wallet(browser, served):
-    """Found on the live wallet: over the tunnel an inscribed page sat there
-    saying "..." -- its opaque origin sends no cookie, so every fetch it
-    made met the locked door. Stood in for here by two names for loopback:
-    the wallet at wallet.localhost, the pages at pages.localhost, and the
-    guard telling them apart by Host exactly as it does the real ones."""
-    import subprocess
+def test_from_its_own_hostname_a_page_still_reaches_the_wallet(browser, served):
+    """Found on the live wallet: framed from a second name, an inscribed page
+    sat there saying "..." -- its opaque origin sends no cookie, so every
+    fetch it made met the locked door.
 
-    from arcade.remote import COOKIE_NAME, Tunnel
-
+    Two names for loopback stand in for the real pair: the wallet at
+    wallet.localhost, the pages at pages.localhost, and the guard telling
+    them apart by Host exactly as it does `dogecoinarcade.com` and whatever
+    the operator points at the pages (`pages_host`).
+    """
     base, state = served
     port = base.rsplit(":", 1)[1]
     _add_counter_page(state)
     state.pagestore.clear(STORING)
-    sleeper = subprocess.Popen(["sleep", "120"])
-    tunnel = Tunnel(url="http://wallet.localhost", token="k" * 32, opened=time.time(),
-                    closes=time.time() + 120, process=sleeper,
-                    pages_url=f"http://pages.localhost:{port}", pages_process=sleeper)
-    state.set_tunnel(tunnel)
+    pages = f"http://pages.localhost:{port}"
+    state.set_setting("pages_host", pages)
     try:
         wallet = f"http://wallet.localhost:{port}"
-        browser.get(f"{wallet}/remote/unlock?k={tunnel.token}")
-        assert [c["name"] for c in browser.get_cookies()] == [COOKIE_NAME], (
-            "Firefox keeps a Secure cookie for localhost, which it counts as secure")
         browser.get(f"{wallet}/inscriptions/{STORING}/view")
         frame = browser.find_element(By.CSS_SELECTOR, "iframe.inscription-frame")
-        assert frame.get_attribute("src") == f"{tunnel.pages_url}/content/{STORING}"
+        assert frame.get_attribute("src") == f"{pages}/content/{STORING}"
         browser.switch_to.frame(frame)
         assert wait_for_title(browser, "visits ") == "visits 1", (
             "storage.js loaded from the pages' door and the bridge answered")
@@ -277,13 +271,11 @@ def test_over_the_tunnel_a_page_still_reaches_the_wallet(browser, served):
         assert status == 200, "the page API, cookie-less, from inside the sandbox"
         browser.switch_to.default_content()
         # And the pages' name is good for nothing else.
-        browser.get(f"{tunnel.pages_url}/approvals")
+        browser.get(f"{pages}/approvals")
         assert "Nothing is served" in browser.page_source
     finally:
         browser.switch_to.default_content()
-        state.set_tunnel(None)
-        sleeper.kill()
-        sleeper.wait()
+        state.set_setting("pages_host", "")
 
 
 # --- storage ------------------------------------------------------------------

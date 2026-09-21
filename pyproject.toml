@@ -25,10 +25,6 @@ web = [
     "uvicorn==0.34.0",
     "jinja2==3.1.5",
     "python-multipart==0.0.20",
-    # The QR code on the Remote page. Pure Python with no dependencies of its
-    # own, so it installs from a wheel on every Python -- the rule the rest of
-    # this list follows for the same reason pyzmq is not in it.
-    "segno==1.6.6",
 ]
 # httpx is not optional: fastapi.testclient imports it, so without it the web
 # tests do not skip -- collection ABORTS and the entire suite runs zero tests,
@@ -60,7 +56,17 @@ dogecoinarcade-update = "arcade.update:main"
 packages = ["arcade", "arcade.messaging", "arcade.web"]
 
 [tool.setuptools.package-data]
-"arcade.web" = ["templates/*.html", "templates/*.js", "templates/*.md"]
+# Files that are DATA rather than code and must be in the wheel, or an
+# installed copy is missing them while the source checkout works fine --
+# which is the worst shape of bug this project can have, because the mini PC
+# develops from a checkout and every other machine runs an installer build.
+#
+# `arcade/bip39-english.txt` is read at import time by arcade/seed.py, so
+# leaving it out does not degrade anything: the application does not start.
+"arcade" = ["bip39-english.txt"]
+"arcade.web" = ["templates/*.html", "templates/*.js", "templates/*.md",
+                "templates/*.png", "docs/*.md", "docs/*/*.md",
+                "vendor/*.js", "vendor/*/*.js", "vendor/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -143,57 +143,79 @@
       </div>
 
       <div class="panel" style="margin:0 0 14px">
-        <div class="row" style="align-items:baseline">
-          <strong>The mintpad, before it exists</strong>
-          <a class="btn ghost small" style="margin-left:auto" target="_blank"
-             href="/inscriptions/collection/preview?folder={{ build.folder|urlencode }}&amp;name={{ build.collection|urlencode }}">Open it full size</a>
-        </div>
-        <div class="muted" style="font-size:.86rem;margin:4px 0 10px">The page
-          that will be inscribed, drawn from the pictures in your build folder.
-          Nothing here is on the chain and nothing has been spent; minting is
-          switched off because there is nothing to mint yet.</div>
-        <iframe src="/inscriptions/collection/preview?folder={{ build.folder|urlencode }}&amp;name={{ build.collection|urlencode }}"
-                sandbox="allow-scripts" loading="lazy" title="mintpad preview"
-                style="width:100%;height:460px;border:1px solid var(--line);border-radius:10px;background:#07060c"></iframe>
-      </div>
-
-      <div class="panel" style="margin:0 0 14px">
         <label class="row" style="gap:8px;align-items:flex-start">
           <input type="checkbox" name="launchpad" value="yes" id="launchpad"
                  {{ 'checked' if pad_on }} onchange="padFields(this)">
-          <span><strong>Sell it from a mintpad</strong>
-            <span class="muted">&mdash; inscribed for you when the last item is
-            on its way. A page that shows the collection and hands over a random
-            one for the price below. Anyone can open it; the wallet that holds
-            the collection answers.</span></span>
+          <span><strong>Also sell it from a mintpad</strong>
+            <span class="muted">&mdash; optional, and off unless you ask.
+            A page, inscribed for you when the last item is on its way, that
+            shows the collection and hands over a random one for the price
+            below. Anyone can open it; the wallet that holds the collection
+            answers. Leave it alone and nothing but your items goes on the
+            chain.</span></span>
         </label>
-        <div id="pad-fields" class="row" style="gap:8px;margin-top:12px"
-             {{ '' if pad_on else 'hidden' }}>
-          <div style="flex:0 0 120px">
-            {# `required` only while the pad is on, set by padFields with the
-               panel's visibility -- a required field inside a hidden div
-               cannot be filled in and the browser refuses to submit while
-               pointing at something nobody can see. #}
-            <input autocomplete="off" name="pad_amount" inputmode="decimal"
-                   id="pad-amount" placeholder="price"
-                   value="{{ pad_amount or '' }}"
-                   {{ 'required' if pad_on }}></div>
-          <div style="flex:0 0 150px">
-            <select autocomplete="off" name="pad_kind" id="pad-kind"
-                    onchange="padToken(this)">
-              <option value="coins" {{ 'selected' if pad_kind != 'token' }}>{{ chain.label }} coins</option>
-              <option value="token" {{ 'selected' if pad_kind == 'token' }}>a token</option>
-            </select></div>
-          <div style="flex:1 1 200px" id="pad-token-wrap"
-               {{ '' if pad_kind == 'token' else 'hidden' }}>
-            <select autocomplete="off" name="pad_token" id="pad-token">
-              {% for t in tokens %}
-              <option value="{{ t.property_id }}" {{ 'selected' if pad_token|string == t.property_id|string }}>
-                {{ t.name }} &mdash; #{{ t.property_id }}</option>
-              {% else %}
-              <option value="">no tokens on this chain yet</option>
-              {% endfor %}
-            </select></div>
+
+        <div id="pad-fields" {{ '' if pad_on else 'hidden' }}>
+          <div class="row" style="gap:8px;margin-top:12px">
+            <div style="flex:0 0 120px">
+              {# `required` only while the pad is on, set by padFields with the
+                 panel's visibility -- a required field inside a hidden div
+                 cannot be filled in and the browser refuses to submit while
+                 pointing at something nobody can see. #}
+              <input autocomplete="off" name="pad_amount" inputmode="decimal"
+                     id="pad-amount" placeholder="price"
+                     value="{{ pad_amount or '' }}"
+                     {{ 'required' if pad_on }}></div>
+            <div style="flex:0 0 150px">
+              <select autocomplete="off" name="pad_kind" id="pad-kind"
+                      onchange="padToken(this)">
+                <option value="coins" {{ 'selected' if pad_kind != 'token' }}>{{ chain.label }} coins</option>
+                <option value="token" {{ 'selected' if pad_kind == 'token' }}>a token</option>
+              </select></div>
+            <div style="flex:1 1 200px" id="pad-token-wrap"
+                 {{ '' if pad_kind == 'token' else 'hidden' }}>
+              <select autocomplete="off" name="pad_token" id="pad-token">
+                {% for t in tokens %}
+                <option value="{{ t.property_id }}" {{ 'selected' if pad_token|string == t.property_id|string }}>
+                  {{ t.name }} &mdash; #{{ t.property_id }}</option>
+                {% else %}
+                <option value="">no tokens on this chain yet</option>
+                {% endfor %}
+              </select></div>
+          </div>
+
+          <div class="row" style="align-items:baseline;margin-top:14px">
+            <strong>The page, before it exists</strong>
+            <a class="btn ghost small" style="margin-left:auto" target="_blank"
+               href="/inscriptions/collection/preview?folder={{ build.folder|urlencode }}&amp;name={{ build.collection|urlencode }}&amp;creator={{ sender|urlencode }}">Open it full size</a>
+          </div>
+          <div class="muted" style="font-size:.86rem;margin:4px 0 10px">Drawn
+            from the pictures in your build folder. Nothing here is on the
+            chain and nothing has been spent; minting is switched off because
+            there is nothing to mint yet.</div>
+          <iframe id="pad-preview" sandbox="allow-scripts" title="mintpad preview"
+                  style="width:100%;height:460px;border:1px solid var(--line);border-radius:10px;background:#07060c"></iframe>
+
+          <div class="row" style="align-items:baseline;margin-top:14px">
+            <strong>Its HTML</strong>
+            <span class="muted" style="font-size:.86rem;margin-left:auto"
+                  id="pad-size"></span>
+          </div>
+          <div class="muted" style="font-size:.86rem;margin:4px 0 8px">Edit it
+            and the preview above follows as you type. What is in this box is
+            what goes on the chain, exactly as written &mdash; so it is also
+            what you pay for. Leave it as it came and it stays the standard
+            page, which picks up whatever a later release improves in it.</div>
+          <textarea name="pad_html" id="pad-html" spellcheck="false" rows="16"
+                    autocomplete="off"
+                    style="width:100%;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+                           border:1px solid var(--line);border-radius:10px;
+                           background:var(--code);color:var(--fg);padding:10px"
+                    >{{ pad_html }}</textarea>
+          <div class="row" style="gap:8px;margin-top:8px">
+            <button type="button" class="btn ghost small" id="pad-reset">Put the standard page back</button>
+            <span class="muted" style="font-size:.8rem" id="pad-warn"></span>
+          </div>
         </div>
       </div>
 
@@ -213,10 +235,65 @@
       // costing and the fields, gone, to say one word about one box (D-129).
       var amount = document.getElementById('pad-amount');
       if (amount) { amount.required = box.checked; }
+      if (box.checked) { padDraw(); }
     }
     function padToken(sel){
       document.getElementById('pad-token-wrap').hidden = sel.value !== 'token';
     }
+
+    // The two substitutions that point the page at the build folder instead
+    // of at the chain, handed over by the server (app.py `_preview_swaps`)
+    // rather than written again here. A second copy would be a preview that
+    // stops matching what is inscribed the first time either is touched.
+    var PAD_SWAPS = {{ pad_swaps|safe }};
+    var PAD_NOTE = {{ pad_note|safe }};
+    var PAD_STANDARD = document.getElementById('pad-html').defaultValue;
+
+    function padDraw(){
+      var box = document.getElementById('pad-html');
+      var frame = document.getElementById('pad-preview');
+      if (!box || !frame) { return; }
+      var html = box.value;
+      for (var i = 0; i < PAD_SWAPS.length; i++) {
+        html = html.split(PAD_SWAPS[i][0]).join(PAD_SWAPS[i][1]);
+      }
+      // srcdoc rather than a URL: there is nothing on the chain and nothing
+      // on the server to point at, and a round trip per keystroke would
+      // make "live" mean "a second late".
+      frame.srcdoc = html + PAD_NOTE;
+
+      var bytes = new TextEncoder().encode(box.value).length;
+      document.getElementById('pad-size').textContent =
+        bytes.toLocaleString() + ' bytes';
+      // The page is a shop front for a collection: it has to know which
+      // collection, and it reads that from these two constants. Said as a
+      // warning rather than enforced -- it is their page.
+      var warn = document.getElementById('pad-warn');
+      var missing = [];
+      if (box.value.indexOf('CREATOR') < 0) { missing.push('CREATOR'); }
+      if (box.value.indexOf('COLLECTION') < 0) { missing.push('COLLECTION'); }
+      warn.textContent = missing.length
+        ? 'Nothing in this page names ' + missing.join(' or ') +
+          ' any more, so it will not know which collection it is selling.'
+        : '';
+    }
+
+    (function(){
+      var box = document.getElementById('pad-html');
+      if (!box) { return; }
+      var soon = null;
+      box.addEventListener('input', function(){
+        // Debounced: re-rendering a whole page on every keystroke makes a
+        // textarea feel broken on a phone.
+        clearTimeout(soon);
+        soon = setTimeout(padDraw, 250);
+      });
+      document.getElementById('pad-reset').onclick = function(){
+        box.value = PAD_STANDARD;
+        padDraw();
+      };
+      if (document.getElementById('launchpad').checked) { padDraw(); }
+    })();
     </script>
     <p class="muted" style="margin:10px 0 0">
       The run can be paused and resumed at any time, and carries on by itself

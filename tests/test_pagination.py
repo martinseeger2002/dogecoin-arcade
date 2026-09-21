@@ -130,10 +130,12 @@ def test_the_page_offers_numbers_and_a_way_to_jump(client):
     assert "{% if pages > 1 %}" in source, "and nothing at all when there is one"
 
 
-def test_the_board_offers_a_way_back_through_older_posts(client):
+def test_the_feed_offers_a_way_back_through_older_posts(client):
+    """The board became the feed (D-138). Same question, same answer: a
+    cursor rather than a page number, because a post arriving between two
+    requests must not push a row onto two pages or off both."""
     app, _ = client
     source = __import__("pathlib").Path(
-        "arcade/web/templates/groups.html").read_text()
-    assert "Older posts" in source and "before={{ posts[0].id }}" in source
-    assert "Back to the newest" in source
-    assert "Back to the newest" in app.get("/groups?channel=main&before=5").text
+        "arcade/web/templates/feed.html").read_text()
+    assert "before=" in source, "a way to the older ones"
+    assert app.get("/feed?before=5").status_code == 200

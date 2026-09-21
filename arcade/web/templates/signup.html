@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}Join · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Join the arcade</h1>
+<p class="sub">A name and a password. Your wallet is made here, in this
+  browser, and stays yours &mdash; this node never sees your password and
+  cannot open it.</p>
+
+<div class="panel seats">
+  {% if free > 0 %}
+    <p class="count"><strong>{{ free }}</strong> of {{ seats }} seats free</p>
+    <p class="muted" style="margin:6px 0 0">Or
+      <a href="/clone">run your own arcade</a> &mdash; the program and a
+      copy of this node's index are both served from here.</p>
+  {% else %}
+    <p class="count"><strong>No seats free.</strong></p>
+    <p class="muted">All {{ seats }} are taken. <a href="/clone">Run your
+      own</a> &mdash; your name, coins and posts live on the chain, so they
+      come with you.</p>
+  {% endif %}
+</div>
+
+{% if not secure_enough %}
+<div class="msg err">{{ why_not }}</div>
+{% endif %}
+
+<div id="forms" {% if not secure_enough or free <= 0 %}hidden{% endif %}>
+  <div class="panel">
+    <h2 style="margin-top:0">Make an account</h2>
+    <div class="field">
+      <label for="tag">Your name</label>
+      <div class="tagrow">
+        <span class="at">@</span>
+        <input type="text" id="tag" autocomplete="username" autocapitalize="off"
+               spellcheck="false" placeholder="yourname">
+      </div>
+      <p class="muted small" id="tag-said">Lower case letters, digits,
+        underscores. This is how people find you.</p>
+    </div>
+    <div class="field">
+      <label for="pw">A password</label>
+      <input type="password" id="pw" autocomplete="new-password"
+             placeholder="at least twelve characters">
+      <p class="muted small">It opens your wallet from any device, and
+        <strong>nobody can reset it</strong> &mdash; not us, not anybody.
+        You will get twelve words afterwards, which are the only way back.</p>
+    </div>
+    <button class="btn primary" id="make">Create my account</button>
+  </div>
+
+  <div class="panel">
+    <h2 style="margin-top:0">Already have one?</h2>
+    <div class="tagrow">
+      <span class="at">@</span>
+      <input type="text" id="in-tag" autocomplete="username"
+             autocapitalize="off" spellcheck="false" placeholder="yourname">
+    </div>
+    <input type="password" id="in-pw" autocomplete="current-password"
+           placeholder="password">
+    <button class="btn" id="enter">Sign in</button>
+  </div>
+</div>
+
+<div class="panel" id="written" hidden style="border-color:var(--accent)">
+  <h2 style="margin-top:0">Write these down</h2>
+  <p class="muted">Twelve words. They are the only way back into your wallet
+    if you forget your password, and this is the only time they are shown.
+    Not on a screenshot &mdash; on paper.</p>
+  <p id="gift" class="muted" hidden></p>
+  <ol class="words" id="words"></ol>
+  <label class="keepit">
+    <input type="checkbox" id="kept"> I have written them down
+  </label>
+  <button class="btn primary" id="done" disabled>Take me in</button>
+</div>
+
+<div class="msg err" id="trouble" hidden></div>
+
+<style>
+.seats .count{font-size:1.3rem;margin:0 0 6px}
+.tagrow{display:flex;align-items:center;gap:6px}
+.tagrow .at{font-size:1.1rem;color:var(--muted)}
+#forms input,#written input[type=text]{width:100%;padding:10px 12px;margin:4px 0;
+  border:1px solid var(--line);border-radius:8px;background:var(--panel);
+  color:var(--fg);font:inherit}
+.words{columns:3;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  background:var(--code);border-radius:8px;padding:14px 14px 14px 40px;margin:12px 0}
+.words li{break-inside:avoid;padding:2px 0}
+.keepit{display:flex;align-items:center;gap:8px;margin:10px 0}
+.keepit input{width:auto}
+.small{font-size:.85rem}
+.field{margin-bottom:14px}
+</style>
+
+<script type="module">
+import * as wallet from "/wallet.js";
+
+const $ = (id) => document.getElementById(id);
+const say = (text) => { $("trouble").textContent = text;
+                        $("trouble").hidden = !text; };
+const CHAIN = {network: "{{ chain.network }}",
+               version: {{ chain.params.pubkeyhash_version }}};
+
+function wire() {
+  // Told as they type, not after they press: a name refused at the end of
+  // a form is a form somebody fills in twice.
+  let asking = null;
+  $("tag").oninput = () => {
+    clearTimeout(asking);
+    asking = setTimeout(async () => {
+      const wanted = $("tag").value.trim();
+      if (!wanted) { $("tag-said").textContent = ""; return; }
+      const said = await wallet.available(wanted);
+      $("tag-said").textContent = said.free
+        ? `@${said.tag} is free`
+        : (said.detail || "that name cannot be used");
+      $("tag-said").style.color = said.free ? "var(--ok)" : "var(--bad)";
+    }, 300);
+  };
+
+  $("make").onclick = async () => {
+    say("");
+    $("make").disabled = true;
+    try {
+      const made = await wallet.signUp($("tag").value.trim(),
+                                       $("pw").value, CHAIN);
+      const list = $("words");
+      list.innerHTML = "";
+      for (const word of made.wallet.phrase.split(" ")) {
+        const item = document.createElement("li");
+        item.textContent = word;
+        list.appendChild(item);
+      }
+      const gift = $("gift");
+      gift.hidden = false;
+      if (made.given) {
+        gift.textContent = "You have been sent "
+          + (made.given / 100000000).toLocaleString() + " test coins to start "
+          + "with \u2014 enough to claim your name, post, and inscribe "
+          + "something. They will arrive in a minute or two.";
+        gift.style.color = "var(--ok)";
+      } else {
+        gift.textContent = made.no_coins
+          || "No coins this time; you can still sign in.";
+        gift.style.color = "var(--muted)";
+      }
+      $("forms").hidden = true;
+      $("written").hidden = false;
+    } catch (e) {
+      say(String(e.message || e));
+    } finally {
+      $("make").disabled = false;
+    }
+  };
+
+  $("kept").onchange = () => { $("done").disabled = !$("kept").checked; };
+  $("done").onclick = () => { location.href = "/"; };
+
+  $("enter").onclick = async () => {
+    say("");
+    try {
+      await wallet.signIn($("in-tag").value.trim(), $("in-pw").value, CHAIN);
+      location.href = "/";
+    } catch (e) { say(String(e.message || e)); }
+  };
+}
+
+if (typeof crypto !== "undefined" && crypto.subtle) {
+  try {
+    wire();
+    document.body.dataset.signupReady = "yes";
+  } catch (e) {
+    say("This page's own script stopped: " + String(e.message || e));
+  }
+}
+</script>
+{% endblock %}

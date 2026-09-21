@@ -14,6 +14,7 @@ forever, which is worse than missing them because they look real.
 from __future__ import annotations
 
 import logging
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -23,6 +24,7 @@ from ..config import MainnetRefused, Params, require_messaging_network
 from ..indexer import PrevOutCache
 from ..rpc import RpcClient
 from ..tx import TxError, extract
+from .. import release as releaselib
 from . import content, feed, group
 from ..script import b58check_encode
 from .envelope import (
@@ -32,6 +34,7 @@ from .envelope import (
     TYPE_API,
     TYPE_CHUNK,
     TYPE_KEY_ANNOUNCE,
+    TYPE_RELEASE,
     TYPE_SINGLE,
     is_message_payload,
     open_message,
@@ -284,6 +287,18 @@ class Scanner:
                     block_time, atx.sender, piece)
                 if self._assemble_group(msg_id, height, block_time):
                     result.group_posts += 1
+                continue
+
+            # One node telling every other that a version exists. Machine
+            # talk: nothing draws it, the watcher acts on it, and only the
+            # newest is kept -- a notice is a nudge, not a record (D-147).
+            if len(body) >= 6 and body[5] == TYPE_RELEASE:
+                said = releaselib.notice_in(body)
+                if said:
+                    self.store.set_meta("release_notice", json.dumps(
+                        {"revision": said, "from": atx.sender,
+                         "height": height, "at": int(time.time())}))
+                    result.announcements += 1
                 continue
 
             # What somebody did to a post: public and unsealed, exactly like

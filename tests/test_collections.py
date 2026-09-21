@@ -639,3 +639,54 @@ def test_a_set_is_costed_in_whole_chunks_and_has_no_size_limit(tmp_path):
     assert isinstance(cost["chunks"], int)
     assert cost["chunks"] >= 7, "a 40 KB piece is several chunks, and is allowed"
     assert cost["items"] == 3, "and nothing refused it"
+
+
+def test_an_edited_mintpad_page_is_the_one_inscribed(tmp_path):
+    """The page is the creator's shop front and goes on the chain under
+    their name, so what they looked at in the editor is what goes up --
+    exactly as written, not merged with the template of the day."""
+    from arcade import mintpad as M
+
+    build = C.read_build(hashlips(tmp_path))
+    sender = FakeSender()
+    jobs, runner = runner_for(tmp_path, sender)
+    pad_json = M.shop_json("arcade:test:abc:1234", "Goofball",
+                           M.take_of("coins", "10"))
+    mine = ("<!doctype html><title>GOOFBALL MINTPAD</title>"
+            "<script>const CREATOR='nSender';const COLLECTION='Goofball';</script>"
+            "<h1>my own shop front</h1>")
+    job_id = jobs.create("regtest", "nSender", build, pad_json=pad_json,
+                         pad_html=mine)
+    assert runner.start(job_id)
+    wait(runner, job_id)
+
+    job = jobs.get(job_id)
+    assert job["status"] == "done" and job["pad_txid"]
+    sent = b"".join(sender.sent)
+    assert b"my own shop front" in sent
+    assert b"MINTPAD</title>" in sent
+    # And NOT the standard page: its buy button is nowhere in what went out.
+    assert b'<button id="buy"' not in sent
+
+
+def test_a_page_left_alone_is_not_frozen_onto_the_job(tmp_path):
+    """`pad_html` empty means "the standard page", generated when it is
+    inscribed -- so a mintpad improved by a later release reaches a run
+    written down before it."""
+    from arcade import mintpad as M
+
+    build = C.read_build(hashlips(tmp_path))
+    sender = FakeSender()
+    jobs, runner = runner_for(tmp_path, sender)
+    job_id = jobs.create(
+        "regtest", "nSender", build,
+        pad_json=M.shop_json("arcade:test:abc:1234", "Goofball",
+                             M.take_of("coins", "10")))
+    assert jobs.get(job_id)["pad_html"] == ""
+    assert runner.start(job_id)
+    wait(runner, job_id)
+    # The pieces are chunks of it, so the page is looked for in the whole
+    # of what went out rather than in any one payload.
+    sent = b"".join(sender.sent)
+    assert b'<button id="buy"' in sent, "the standard page, built at sending"
+    assert b"GOOFBALL MINTPAD" in sent

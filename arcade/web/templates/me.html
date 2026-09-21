@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block title %}Your arcade · DogecoinArcade{% endblock %}
+{% block body %}
+<h1 id="hello">Your arcade</h1>
+<p class="sub" id="whoami">Your keys are in this browser. This node holds
+  none of them &mdash; it builds what you ask for, you sign it, and it
+  broadcasts.</p>
+
+<div class="grid" style="margin-bottom:18px">
+  <div class="stat"><div class="k">Your name</div>
+    <div class="v" id="tag">—</div>
+    <div class="n" id="tag-note"></div></div>
+  <div class="stat"><div class="k">Coins</div>
+    <div class="v" id="balance">—</div>
+    <div class="n">{{ chain.label }}</div></div>
+  <div class="stat"><div class="k">Your address</div>
+    <div class="v mono" id="address" style="font-size:.8rem">—</div>
+    <div class="n">where people pay you</div></div>
+  <div class="stat"><div class="k">Messages</div>
+    <div class="v" id="mail">—</div>
+    <div class="n" id="mail-note">opened in this browser</div></div>
+</div>
+
+<div class="msg err" id="trouble" hidden></div>
+<div class="msg ok" id="news" hidden></div>
+
+<div class="panel" id="unlock">
+  <h2 style="margin-top:0">Unlock</h2>
+  <p class="muted" style="margin:0 0 10px">Your wallet is encrypted. Type
+    your password to open it for this tab &mdash; it is forgotten when you
+    close it, and it never leaves this browser.</p>
+  <input type="password" id="pw" autocomplete="current-password"
+         placeholder="password">
+  <button class="btn primary" id="open">Open my wallet</button>
+</div>
+
+<div id="doing" hidden>
+  <div class="panel" id="claim-panel" hidden>
+    <h2 style="margin-top:0">Claim your name</h2>
+    <p class="muted" style="margin:0 0 10px">Your name is yours once it is
+      on the chain. Until then it is only this node's note of it.</p>
+    <button class="btn primary" id="claim">Claim it</button>
+  </div>
+
+  <div class="panel" id="announce-panel" hidden>
+    <h2 style="margin-top:0">Let people write to you</h2>
+    <p class="muted" style="margin:0 0 10px">Publishing your messaging key
+      is what makes you reachable. Nobody can write to somebody who has
+      not published one.</p>
+    <button class="btn" id="announce">Publish my key</button>
+  </div>
+
+  <div class="panel">
+    <h2 style="margin-top:0">Say something</h2>
+    <textarea id="say" rows="3" placeholder="on the feed, for anyone"
+              autocomplete="off"></textarea>
+    <button class="btn" id="post">Post</button>
+  </div>
+
+  <div class="panel">
+    <h2 style="margin-top:0">Send coins</h2>
+    <div class="row" style="gap:8px">
+      <input type="text" id="to" placeholder="@name or address"
+             autocomplete="off" style="flex:2">
+      <input type="text" id="amount" placeholder="how much" inputmode="decimal"
+             autocomplete="off" style="flex:1">
+    </div>
+    <div id="confirm" class="confirm" hidden>
+      <p id="confirm-says"></p>
+      <button class="btn primary" id="confirm-yes">Send it</button>
+      <button class="btn" id="confirm-no">Cancel</button>
+    </div>
+    <button class="btn" id="send">Send</button>
+  </div>
+
+  <div class="panel">
+    <h2 style="margin-top:0">Your messages</h2>
+    <button class="btn ghost small" id="collect">Check for new ones</button>
+    <div id="inbox" class="muted" style="margin-top:10px">—</div>
+  </div>
+</div>
+
+<style>
+#unlock input,#doing input,#doing textarea{width:100%;padding:10px 12px;
+  margin:4px 0;border:1px solid var(--line);border-radius:8px;
+  background:var(--panel);color:var(--fg);font:inherit}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.letter{border-top:1px solid var(--line);padding:8px 0}
+.letter .who{font-size:.78rem;color:var(--muted)}
+</style>
+
+<script type="module">
+import * as wallet from "/wallet.js";
+import * as mail from "/messaging.js";
+
+const $ = (id) => document.getElementById(id);
+const say = (text) => { $("trouble").textContent = text;
+                        $("trouble").hidden = !text; };
+const news = (text) => { $("news").textContent = text;
+                         $("news").hidden = !text; };
+const CHAIN = {network: "{{ chain.network }}",
+               version: {{ chain.params.pubkeyhash_version }}};
+
+let me = null, keys = null;
+
+async function draw() {
+  const said = await wallet.state();
+  $("tag").textContent = said.tag ? "@" + said.tag
+                       : (said.name ? "@" + said.name : "—");
+  $("tag-note").textContent = said.tag ? "on the chain"
+    : said.claiming ? "on its way" : "not claimed yet";
+  $("balance").textContent = (said.balance / 100000000).toLocaleString();
+  $("address").textContent = said.address || "—";
+  $("claim-panel").hidden = !!said.tag || !keys;
+  $("announce-panel").hidden = !keys;
+  return said;
+}
+
+async function withWallet(what, done) {
+  say(""); news("");
+  try {
+    const out = await what();
+    if (done) news(done(out));
+    await draw();
+  } catch (e) { say(String(e.message || e)); }
+}
+
+$("open").onclick = async () => {
+  say("");
+  try {
+    const said = await wallet.state();
+    const name = said.name || said.tag;
+    if (!name) throw new Error("this browser is not signed in");
+    const out = await wallet.signIn(name, $("pw").value, CHAIN);
+    keys = out.wallet;
+    me = await mail.identity(keys.phrase);
+    $("unlock").hidden = true;
+    $("doing").hidden = false;
+    $("whoami").textContent =
+      "Unlocked for this tab. Closing it forgets the key.";
+    await draw();
+    await refreshInbox();
+  } catch (e) { say(String(e.message || e)); }
+};
+
+$("claim").onclick = () => withWallet(
+  () => wallet.claim(keys), (r) => `Claiming it: ${r.txid.slice(0, 16)}…`);
+
+$("announce").onclick = () => withWallet(
+  () => mail.announce(keys, me), () => "Your key is on its way to the chain.");
+
+$("post").onclick = () => withWallet(
+  () => wallet.post(keys, $("say").value),
+  () => { $("say").value = ""; return "Posted."; });
+
+$("send").onclick = async () => {
+  say(""); news("");
+  try {
+    const offer = await wallet.offerSend($("to").value.trim(),
+                                         $("amount").value.trim());
+    $("confirm-says").textContent =
+      `${offer.what}. It costs ${(offer.fee / 100000000).toFixed(8)} in fees.`;
+    $("confirm").hidden = false;
+    $("confirm-yes").onclick = () => withWallet(
+      async () => { $("confirm").hidden = true;
+                    return wallet.confirm(keys, offer); },
+      (r) => `Sent: ${r.txid.slice(0, 16)}…`);
+    $("confirm-no").onclick = () => { $("confirm").hidden = true; };
+  } catch (e) { say(String(e.message || e)); }
+};
+
+async function refreshInbox() {
+  const letters = await mail.inbox();
+  $("mail").textContent = letters.length;
+  $("inbox").innerHTML = "";
+  if (!letters.length) { $("inbox").textContent = "nothing yet"; return; }
+  for (const letter of letters.slice(0, 20)) {
+    const row = document.createElement("div");
+    row.className = "letter";
+    const who = document.createElement("div");
+    who.className = "who";
+    who.textContent = letter.from_address || "somebody";
+    const body = document.createElement("div");
+    // textContent, never innerHTML: a message is somebody else's words.
+    body.textContent = new TextDecoder().decode(mail.unhex(letter.body));
+    row.append(who, body);
+    $("inbox").appendChild(row);
+  }
+}
+
+$("collect").onclick = async () => {
+  say(""); news("");
+  try {
+    const out = await mail.collect(me);
+    news(`Looked at ${out.looked}, opened ${out.opened}.`);
+    await refreshInbox();
+  } catch (e) { say(String(e.message || e)); }
+};
+
+draw().catch(() => {});
+document.body.dataset.meReady = "yes";
+</script>
+{% endblock %}
