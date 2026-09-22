@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% import "_account_wallettabs.html" as wt %}
+{% block title %}Wallet · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Wallet</h1>
+{{ wt.tabs('coins') }}
+<p class="sub">Coins, one wallet per chain, from the same twelve words.
+  Testnet coins pay message fees; mainnet coins are real.</p>
+
+<p class="muted" id="shut" hidden style="font-size:.86rem">
+  Your wallet is not open in this tab, so nothing here can be signed.
+  <a href="/me">Open it</a> and come back.</p>
+
+<div class="msg err" id="trouble" hidden></div>
+<div class="msg ok" id="news" hidden></div>
+
+<div class="grid" id="wallets" style="margin-bottom:18px"></div>
+
+<div class="panel" id="send-panel">
+  <h2 style="margin-top:0">Send coins</h2>
+  <div class="row" style="gap:8px;align-items:center">
+    <select id="which" style="flex:0 0 auto"></select>
+    <input type="text" id="to" placeholder="@name or address"
+           autocomplete="off" style="flex:2">
+    <input type="text" id="amount" placeholder="how much" inputmode="decimal"
+           autocomplete="off" style="flex:1">
+  </div>
+  <p class="muted" id="which-note" style="font-size:.82rem;margin:4px 0 0"></p>
+  <div id="confirm" class="confirm" hidden>
+    <p id="confirm-says"></p>
+    <button class="btn primary" id="confirm-yes">Send it</button>
+    <button class="btn" id="confirm-no">Cancel</button>
+  </div>
+  <button class="btn" id="send">Send</button>
+</div>
+
+<style>.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}</style>
+
+<script type="module">
+import * as wallet from "/wallet.js";
+
+const $ = (id) => document.getElementById(id);
+const say = (t) => { $("trouble").textContent = t; $("trouble").hidden = !t; };
+const news = (t) => { $("news").textContent = t; $("news").hidden = !t; };
+const CHAIN = {network: "{{ chain.network }}",
+               version: {{ chain.params.pubkeyhash_version }}};
+
+let keys = null, lastSaid = {};
+const coinsOf = (n) => (n / 100000000).toLocaleString(undefined,
+  {minimumFractionDigits: 0, maximumFractionDigits: 8});
+
+function drawWallets(said) {
+  const chains = said.chains || [];
+  $("wallets").innerHTML = "";
+  for (const chain of chains) {
+    const card = document.createElement("div");
+    card.className = "stat";
+    const what = document.createElement("div");
+    what.className = "k";
+    what.textContent = chain.label + " coins";
+    const much = document.createElement("div");
+    much.className = "v";
+    much.textContent = chain.address ? coinsOf(chain.balance) : "—";
+    const note = document.createElement("div");
+    note.className = "n mono";
+    note.style.cssText = "font-size:.72rem;word-break:break-all";
+    note.textContent = chain.address || "no address yet";
+    card.append(what, much, note);
+    if (chain.incoming) {
+      const coming = document.createElement("div");
+      coming.className = "n";
+      coming.textContent = `${coinsOf(chain.incoming)} on its way`;
+      card.appendChild(coming);
+    }
+    if (chain.mainnet) {
+      const real = document.createElement("div");
+      real.className = "n";
+      real.textContent = "real coins — a send cannot be taken back";
+      card.appendChild(real);
+    }
+    $("wallets").appendChild(card);
+  }
+
+  const choose = $("which");
+  const had = choose.value;
+  choose.innerHTML = "";
+  for (const chain of chains) {
+    if (!chain.address) continue;
+    const option = document.createElement("option");
+    option.value = chain.network;
+    option.textContent = chain.label;
+    choose.appendChild(option);
+  }
+  if (had) choose.value = had;
+  sayWhich();
+}
+
+function sayWhich() {
+  const chains = lastSaid.chains || [];
+  const chain = chains.find((c) => c.network === $("which").value);
+  $("which-note").textContent = !chain ? ""
+    : chain.mainnet
+      ? `Real ${chain.label.toLowerCase()} coins, from `
+        + `${coinsOf(chain.balance)} in your wallet. Permanent once sent.`
+      : `${chain.label} coins, from ${coinsOf(chain.balance)} in your wallet.`;
+}
+
+async function draw() {
+  const said = await wallet.state();
+  lastSaid = said;
+  drawWallets(said);
+  return said;
+}
+
+$("which").onchange = sayWhich;
+
+$("send").onclick = async () => {
+  say(""); news("");
+  try {
+    if (!keys) throw new Error("your wallet is not open in this tab");
+    const offer = await wallet.offerSend($("to").value.trim(),
+                                         $("amount").value.trim(),
+                                         $("which").value);
+    $("confirm-says").textContent =
+      `${offer.what}. It costs ${(offer.fee / 100000000).toFixed(8)} in fees.`;
+    $("confirm").hidden = false;
+    $("confirm-yes").onclick = async () => {
+      $("confirm").hidden = true;
+      try {
+        const out = await wallet.confirm(keys, offer);
+        news(`Sent: ${out.txid.slice(0, 16)}…`);
+        await draw();
+      } catch (e) { say(String(e.message || e)); }
+    };
+    $("confirm-no").onclick = () => { $("confirm").hidden = true; };
+  } catch (e) { say(String(e.message || e)); }
+};
+
+keys = await wallet.opened(CHAIN);
+$("shut").hidden = !!keys;
+await draw();
+document.body.dataset.walletReady = "yes";
+</script>
+{% endblock %}

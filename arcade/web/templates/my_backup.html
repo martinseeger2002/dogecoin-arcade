@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Backup · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Backup</h1>
+<p class="sub">Your twelve words are the only thing you need to keep. This
+  is how you keep them safe.</p>
+
+<div class="note" style="margin-bottom:20px">
+  <strong>There is nothing else.</strong> No password reset, no key file, no
+  <code>wallet.dat</code>. Your twelve words were shown once, at signup, and
+  are not stored anywhere by this application &mdash; not on this node, not
+  in this browser. If you did not write them down, there is no way to see
+  them again, and nobody here can get them back for you.
+</div>
+
+<div class="panel" style="margin-bottom:18px">
+  <h2 style="margin-top:0">What the words bring back</h2>
+  <p>Signing in with your twelve words, on any device, on any node running
+     this application, gets back:</p>
+  <ul style="margin:8px 0;padding-left:22px;line-height:1.7">
+    <li>Your name, once it is on the chain</li>
+    <li>Every coin on every chain this application holds one on</li>
+    <li>Every NFT and token any of those addresses holds</li>
+    <li>The ability to publish your key again and be written to</li>
+  </ul>
+  <p class="muted" style="font-size:.88rem;margin:10px 0 0">
+    All of it, because all of it is derived from the same twelve words. There
+    is nothing else to keep for any of this.</p>
+</div>
+
+<div class="panel" style="margin-bottom:18px;border-color:var(--warn)">
+  <h2 style="margin-top:0">What stays in this browser</h2>
+  <p>Two things do <strong>not</strong> come back with the words, because they
+     were never derived from them &mdash; they are notes this browser kept:</p>
+  <ul style="margin:8px 0;padding-left:22px;line-height:1.7">
+    <li><strong>Your message history.</strong> Every message you have opened
+      or sent is decrypted and stored here, in this browser, and nowhere
+      else &mdash; that is what keeps this node from reading them. Signing
+      in on a different device opens the same account, but its inbox starts
+      empty; it has to scan the chain again to find what is addressed to it,
+      and it can only open messages sent <em>after</em> that device knew the
+      account existed.</li>
+    <li><strong>Your address book.</strong> Also this browser's alone, for
+      the same reason: a node holding everybody's address book would know
+      who talks to whom without opening a single message. A new device
+      starts with an empty book and re-adds people by searching their
+      @tag.</li>
+  </ul>
+  <p class="muted" style="font-size:.88rem;margin:10px 0 0">
+    Neither is a security problem &mdash; nothing of value lives only there
+    &mdash; but it is worth knowing before you need it: a new browser is a
+    fresh start for messages and contacts, not just a fresh tab.</p>
+</div>
+
+<div class="panel">
+  <h2 style="margin-top:0">An extra copy of your encrypted wallet</h2>
+  <p>This node already hands your encrypted wallet to anyone who asks for it
+     by your name &mdash; that is what makes signing in from a new device
+     possible at all (<a href="/docs/multi-user.md">how that works</a>).
+     Downloading a copy of your own does not create a new way in; it means
+     you are not depending on this particular node keeping it forever.</p>
+  <p class="muted" style="font-size:.86rem;margin:8px 0 14px">
+    It is useless without your password &mdash; but if you ever forget which
+    node you signed up on, or this node is gone, your password and this file
+    together open your wallet exactly as it does now.</p>
+  <button type="button" class="btn" id="download" {{ 'disabled' if not my_name }}>
+    Download my encrypted wallet</button>
+  {% if not my_name %}
+  <p class="muted" style="font-size:.84rem;margin:8px 0 0">
+    This browser is not signed in as an account, so there is nothing to
+    fetch. <a href="/join">Sign in</a> first.</p>
+  {% endif %}
+  <div class="msg err" id="trouble" hidden style="margin-top:10px"></div>
+</div>
+
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const name = {{ my_name|tojson }};
+
+$("download").onclick = async () => {
+  $("trouble").hidden = true;
+  try {
+    const answer = await fetch(`/signin/${encodeURIComponent(name)}`);
+    const said = await answer.json();
+    if (!answer.ok) throw new Error(said.detail || "the node would not answer");
+    const text = JSON.stringify(said, null, 2);
+    const blob = new Blob([text], {type: "application/json"});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `dogecoinarcade-${name}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    $("trouble").textContent = String(e.message || e);
+    $("trouble").hidden = false;
+  }
+};
+document.body.dataset.backupReady = "yes";
+</script>
+{% endblock %}

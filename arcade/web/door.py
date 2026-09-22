@@ -75,10 +75,16 @@ PUBLIC_PAGES = frozenset({
     "/me",
     "/me/messages",
     "/me/contacts",
+    "/me/backup",
+    "/me/nfts",
+    "/me/wallet",
+    "/me/wallet/tokens",
     "/account",
     "/account/feed",
     "/account/messages",
     "/account/find",
+    "/account/nfts",
+    "/account/tokens",
 })
 
 #: Prefixes a stranger may read. Everything under them is public, so each
@@ -139,6 +145,8 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/react",
                "/account/write",
                "/account/claim", "/account/send",
+               "/account/nft/send", "/account/nft/sell",
+               "/account/token/send",
                "/account/sign",
                "/signup")
 

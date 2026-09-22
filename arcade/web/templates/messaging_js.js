@@ -625,3 +625,21 @@ export async function reach(name) {
   return {tag: them.tag || wanted, address: them.address, key: them.key,
           fingerprint: them.fingerprint || ""};
 }
+
+/* --- the contact code -----------------------------------------------------
+ *
+ * `arcade:<network>:<base58 public key>:<check>` -- a way to exchange a
+ * messaging key that never touches the chain (arcade/messaging/contact.py).
+ * Built here, in the browser, from the same public key `identity()`
+ * derives: the node is not asked and has nothing to add. Two people who
+ * exchange this by any channel -- paper, chat, a QR code -- can message
+ * each other with nothing published anywhere.
+ */
+
+export async function contactCode(network, publicKey) {
+  const coins = await import("/coins.js");
+  const digest = await crypto.subtle.digest("SHA-256", publicKey);
+  const check = hex(digest).slice(0, 4);   // the first two bytes, as hex --
+                                            // matches contact.py's [:4]
+  return `arcade:${network}:${coins.base58(publicKey)}:${check}`;
+}

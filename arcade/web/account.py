@@ -123,10 +123,18 @@ IN_FLIGHT_SECONDS = 1800
 
 @dataclass
 class InFlight:
-    """One broadcast transaction, until the index has seen it."""
+    """One broadcast transaction, until the index has seen it.
+
+    `network` is not decoration. An account now holds coins on more than
+    one chain, and a coin remembered without saying which chain it is on
+    would be offered as an input on the other one -- where it does not
+    exist. The index would never have made that mistake, because it is
+    per-chain; this list sits in front of the index and has to be too.
+    """
 
     txid: str
     pubkey: str
+    network: str
     spent: tuple
     made: tuple
     at: float = field(default_factory=time.time)
@@ -138,7 +146,8 @@ class Flights:
     def __init__(self) -> None:
         self._all: list[InFlight] = []
 
-    def add(self, pubkey: str, txid: str, unsigned, address: str) -> None:
+    def add(self, pubkey: str, txid: str, unsigned, address: str,
+            network: str = "") -> None:
         spent = tuple((coin["txid"], coin["vout"]) for coin in unsigned.inputs)
         from ..txbuild import p2pkh_script
 
@@ -149,31 +158,41 @@ class Flights:
             for n, (value, script) in enumerate(unsigned.outputs)
             if script == ours)
         self._all.append(InFlight(txid=txid, pubkey=pubkey.lower(),
-                                  spent=spent, made=made))
+                                  network=network, spent=spent, made=made))
         self.sweep()
 
     def sweep(self, now: float | None = None) -> None:
         now = now if now is not None else time.time()
         self._all = [f for f in self._all if now - f.at < IN_FLIGHT_SECONDS]
 
-    def spent_by(self, pubkey: str) -> frozenset:
+    def _mine(self, pubkey: str, network: str):
+        who = (pubkey or "").lower()
+        for flight in self._all:
+            if flight.pubkey != who:
+                continue
+            # An unnamed network matches everything, so a caller that has
+            # not been told which chain it is on is no worse off than
+            # before. A caller that HAS been told gets only that chain.
+            if network and flight.network and flight.network != network:
+                continue
+            yield flight
+
+    def spent_by(self, pubkey: str, network: str = "") -> frozenset:
         self.sweep()
         out: set = set()
-        for flight in self._all:
-            if flight.pubkey == (pubkey or "").lower():
-                out.update(flight.spent)
+        for flight in self._mine(pubkey, network):
+            out.update(flight.spent)
         return frozenset(out)
 
-    def change_for(self, pubkey: str) -> list:
+    def change_for(self, pubkey: str, network: str = "") -> list:
         self.sweep()
         out: list = []
-        for flight in self._all:
-            if flight.pubkey == (pubkey or "").lower():
-                out.extend(flight.made)
+        for flight in self._mine(pubkey, network):
+            out.extend(flight.made)
         return out
 
     def note_incoming(self, pubkey: str, txid: str, vout: int,
-                      address: str, value: int) -> None:
+                      address: str, value: int, network: str = "") -> None:
         """A payment TO an account that the node made itself.
 
         The faucet's coins come out of this node's own wallet, so the node
@@ -187,7 +206,8 @@ class Flights:
         the child would be dropped with it rather than being wrong.
         """
         self._all.append(InFlight(
-            txid=txid, pubkey=(pubkey or "").lower(), spent=(),
+            txid=txid, pubkey=(pubkey or "").lower(), network=network,
+            spent=(),
             made=({"txid": txid, "vout": int(vout), "address": address,
                    "value": int(value), "height": 0},)))
         self.sweep()

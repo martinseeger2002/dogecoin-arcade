@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_chains.html" as chains %}
 {% block title %}Your arcade · DogecoinArcade{% endblock %}
 {% block body %}
 <h1 id="hello">Your arcade</h1>
@@ -6,20 +7,31 @@
   none of them &mdash; it builds what you ask for, you sign it, and it
   broadcasts.</p>
 
+{# The same chain card Overview shows, and the same status: whether the
+   chain is reachable at all. What is hidden is the node's OWN wallet
+   balance -- that money is the operator's, not this account's, and
+   showing it here would be both a leak and a lie about whose it is. #}
+<div class="chainbar">
+  {{ chains.card(chain, node, "Messenger — messages are conversational, and testnet chains get reset.",
+                 None, hide_wallet=True) }}
+</div>
+
 <div class="grid" style="margin-bottom:18px">
   <div class="stat"><div class="k">Your name</div>
     <div class="v" id="tag">—</div>
     <div class="n" id="tag-note"></div></div>
-  <div class="stat"><div class="k">Coins</div>
-    <div class="v" id="balance">—</div>
-    <div class="n">{{ chain.label }}</div></div>
-  <div class="stat"><div class="k">Your address</div>
-    <div class="v mono" id="address" style="font-size:.8rem">—</div>
-    <div class="n">where people pay you</div></div>
   <div class="stat"><div class="k">Messages</div>
     <div class="v" id="mail">—</div>
     <div class="n" id="mail-note">opened in this browser</div></div>
+  <div class="stat"><div class="k">Known contacts</div>
+    <div class="v" id="contacts">—</div>
+    <div class="n"><a href="/me/contacts">address book</a></div></div>
 </div>
+
+{# One wallet a chain, from one set of words -- a glance, not the whole
+   Wallet page. Sending lives there now, the same as locally Overview
+   shows chain cards while Wallet shows the send form. #}
+<div class="grid" id="wallets" style="margin-bottom:18px"></div>
 
 <div class="msg err" id="trouble" hidden></div>
 <div class="msg ok" id="news" hidden></div>
@@ -51,43 +63,75 @@
     <button class="btn" id="announce">Publish my key</button>
   </div>
 
-  <div class="panel">
-    <h2 style="margin-top:0">Say something</h2>
-    <textarea id="say" rows="3" placeholder="on the feed, for anyone"
-              autocomplete="off"></textarea>
-    <button class="btn" id="post">Post</button>
-  </div>
-
-  <div class="panel">
-    <h2 style="margin-top:0">Send coins</h2>
-    <div class="row" style="gap:8px">
-      <input type="text" id="to" placeholder="@name or address"
-             autocomplete="off" style="flex:2">
-      <input type="text" id="amount" placeholder="how much" inputmode="decimal"
-             autocomplete="off" style="flex:1">
+  {# Overview's "Your messaging address" panel, the same shape: an address
+     to hand out, the fuller contact code for before a key is on the
+     chain, and a way to back the account up. Built here in the browser --
+     the node is not asked and cannot answer for a key it does not hold. #}
+  <div class="panel" id="address-panel">
+    <h2 style="margin-top:0">Your messaging address
+      <span class="tag testnet">test</span></h2>
+    <p>This is how people reach you. Give it to anyone who wants to message
+       you, by any means at all &mdash; it is just an address.</p>
+    <div class="phrase" style="font-size:.95rem" id="myaddr">—</div>
+    <div class="row" style="margin:10px 0 0">
+      <button type="button" class="ghost" id="copy-addr">Copy my address</button>
+      <a class="ghost btn" href="/me/contacts">Address book</a>
+      <a class="ghost btn" href="/me/backup">Back up my account</a>
     </div>
-    <div id="confirm" class="confirm" hidden>
-      <p id="confirm-says"></p>
-      <button class="btn primary" id="confirm-yes">Send it</button>
-      <button class="btn" id="confirm-no">Cancel</button>
-    </div>
-    <button class="btn" id="send">Send</button>
-  </div>
 
-  <div class="panel">
-    <h2 style="margin-top:0">Your messages</h2>
-    <button class="btn ghost small" id="collect">Check for new ones</button>
-    <div id="inbox" class="muted" style="margin-top:10px">—</div>
+    <div class="msg info" id="not-announced" style="margin-top:14px" hidden>
+      Your address is not published on the chain yet, so someone who has
+      only your address has nothing to encrypt to. Either publish it once
+      &mdash; the button above, "Publish my key" &mdash; and your address
+      works on its own, or send the full contact code below instead.
+    </div>
+
+    <details style="margin-top:16px">
+      <summary class="muted" style="cursor:pointer;font-size:.88rem">Full
+        contact code</summary>
+      <p class="muted" style="font-size:.87rem;margin:10px 0 8px">
+        Contains your address <em>and</em> your public key, so someone can
+        write to you before your key has been seen on the chain. Longer,
+        but works immediately.</p>
+      <div class="phrase" style="font-size:.82rem" id="contact">—</div>
+      <button type="button" class="ghost" style="margin-top:9px"
+              id="copy-contact">Copy</button>
+    </details>
+
+    <div class="note" style="margin-top:16px">
+      <strong>Your twelve words are your identity.</strong> There is no
+      password reset and nothing else to write down. Losing them, or the
+      password on this account, loses the account for good &mdash; nobody
+      here can get it back for you. <a href="/me/backup">Back it up now</a>.
+    </div>
   </div>
 </div>
 
+{# What this page deliberately does not have, said rather than left as a
+   gap: Overview's auto-sell, auto-fill, update and scan settings all
+   configure the NODE's own automation, which runs on the node's own key.
+   An account has no such automation to configure -- accepting an offer,
+   filling a bid, or anything else that happens without a fresh signature
+   would need a key on this server that could spend on its own, which is
+   the one thing this design refuses to give it. Every action an account
+   takes is signed here, in this browser, at the moment it is taken. #}
+<details style="margin-top:20px">
+  <summary class="muted" style="cursor:pointer;font-size:.88rem">Why is
+    there no automatic selling, no update settings, no scan button?</summary>
+  <p class="muted" style="font-size:.87rem;margin:10px 0 0;max-width:64ch">
+    Those are on the operator's Overview because they run against the
+    node's own key, automatically, without anybody pressing anything at
+    the moment they happen. Doing the same for an account would mean this
+    server holding a key that can spend on its own -- which is exactly the
+    thing a non-custodial account refuses to give it. So there is nothing
+    here that spends without a signature you make at the time.</p>
+</details>
+
 <style>
-#unlock input,#doing input,#doing textarea{width:100%;padding:10px 12px;
+#unlock input,#doing input{width:100%;padding:10px 12px;
   margin:4px 0;border:1px solid var(--line);border-radius:8px;
   background:var(--panel);color:var(--fg);font:inherit}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.letter{border-top:1px solid var(--line);padding:8px 0}
-.letter .who{font-size:.78rem;color:var(--muted)}
 </style>
 
 <script type="module">
@@ -112,10 +156,58 @@ let me = null, keys = null;
     me = await mail.identity(keys.phrase);
     $("unlock").hidden = true;
     $("doing").hidden = false;
+    // An account made before this node ran a second chain has no address
+    // registered there, and nothing else would ever notice. Told here,
+    // where the wallet is open and the keys exist to derive it.
+    try { await wallet.tellTheNode(keys); } catch (e) {}
     await draw();
-    await refreshInbox();
   }
 })().catch(() => {});
+
+const coinsOf = (n) => (n / 100000000).toLocaleString(undefined,
+  {minimumFractionDigits: 0, maximumFractionDigits: 8});
+
+function drawWallets(said) {
+  const chains = said.chains || [];
+  $("wallets").innerHTML = "";
+  for (const chain of chains) {
+    const card = document.createElement("div");
+    card.className = "stat";
+    const what = document.createElement("div");
+    what.className = "k";
+    what.textContent = chain.label + " coins";
+    const much = document.createElement("div");
+    much.className = "v";
+    much.textContent = chain.address ? coinsOf(chain.balance) : "—";
+    const note = document.createElement("div");
+    note.className = "n mono";
+    note.style.fontSize = ".72rem";
+    note.style.wordBreak = "break-all";
+    note.textContent = chain.address || "no address yet";
+    card.append(what, much, note);
+    if (chain.incoming) {
+      const coming = document.createElement("div");
+      coming.className = "n";
+      coming.textContent = `${coinsOf(chain.incoming)} on its way`;
+      card.appendChild(coming);
+    }
+    if (chain.mainnet) {
+      const real = document.createElement("div");
+      real.className = "n";
+      real.textContent = "real coins — a send cannot be taken back";
+      card.appendChild(real);
+    }
+    $("wallets").appendChild(card);
+  }
+  const open = document.createElement("a");
+  open.className = "stat";
+  open.href = "/me/wallet";
+  open.style.cssText =
+    "display:flex;align-items:center;justify-content:center;" +
+    "text-decoration:none;font-size:1.05rem;font-weight:600";
+  open.textContent = "Open the Wallet →";
+  $("wallets").appendChild(open);
+}
 
 async function draw() {
   const said = await wallet.state();
@@ -123,11 +215,24 @@ async function draw() {
                        : (said.name ? "@" + said.name : "—");
   $("tag-note").textContent = said.tag ? "on the chain"
     : said.claiming ? "on its way" : "not claimed yet";
-  $("balance").textContent = (said.balance / 100000000).toLocaleString();
-  $("address").textContent = said.address || "—";
+  drawWallets(said);
   $("claim-panel").hidden = !!said.tag || !keys;
   $("announce-panel").hidden = !keys;
+  $("myaddr").textContent = said.address || "—";
+  $("not-announced").hidden = !said.address || !!said.announced;
+  if (keys && said.address) {
+    const code = await mail.contactCode(CHAIN.network, me.publicKey);
+    $("contact").textContent = code;
+  } else {
+    $("contact").textContent = "—";
+  }
+  await refreshCounts();
   return said;
+}
+
+async function refreshCounts() {
+  try { $("mail").textContent = (await mail.inbox()).length; } catch (e) {}
+  try { $("contacts").textContent = (await mail.book()).length; } catch (e) {}
 }
 
 async function withWallet(what, done) {
@@ -151,10 +256,10 @@ $("open").onclick = async () => {
     me = await mail.identity(keys.phrase);
     $("unlock").hidden = true;
     $("doing").hidden = false;
+    try { await wallet.tellTheNode(keys); } catch (e) {}
     $("whoami").textContent =
       "Open in this tab. Closing it shuts the wallet again.";
     await draw();
-    await refreshInbox();
   } catch (e) { say(String(e.message || e)); }
 };
 
@@ -164,55 +269,17 @@ $("claim").onclick = () => withWallet(
 $("announce").onclick = () => withWallet(
   () => mail.announce(keys, me), () => "Your key is on its way to the chain.");
 
-$("post").onclick = () => withWallet(
-  () => wallet.post(keys, $("say").value),
-  () => { $("say").value = ""; return "Posted."; });
-
-$("send").onclick = async () => {
-  say(""); news("");
-  try {
-    const offer = await wallet.offerSend($("to").value.trim(),
-                                         $("amount").value.trim());
-    $("confirm-says").textContent =
-      `${offer.what}. It costs ${(offer.fee / 100000000).toFixed(8)} in fees.`;
-    $("confirm").hidden = false;
-    $("confirm-yes").onclick = () => withWallet(
-      async () => { $("confirm").hidden = true;
-                    return wallet.confirm(keys, offer); },
-      (r) => `Sent: ${r.txid.slice(0, 16)}…`);
-    $("confirm-no").onclick = () => { $("confirm").hidden = true; };
-  } catch (e) { say(String(e.message || e)); }
+$("copy-addr").onclick = () => {
+  navigator.clipboard.writeText($("myaddr").textContent.trim());
+};
+$("copy-contact").onclick = () => {
+  navigator.clipboard.writeText($("contact").textContent.trim());
 };
 
-async function refreshInbox() {
-  const letters = await mail.inbox();
-  $("mail").textContent = letters.length;
-  $("inbox").innerHTML = "";
-  if (!letters.length) { $("inbox").textContent = "nothing yet"; return; }
-  for (const letter of letters.slice(0, 20)) {
-    const row = document.createElement("div");
-    row.className = "letter";
-    const who = document.createElement("div");
-    who.className = "who";
-    who.textContent = letter.from_address || "somebody";
-    const body = document.createElement("div");
-    // textContent, never innerHTML: a message is somebody else's words.
-    body.textContent = new TextDecoder().decode(mail.unhex(letter.body));
-    row.append(who, body);
-    $("inbox").appendChild(row);
-  }
-}
-
-$("collect").onclick = async () => {
-  say(""); news("");
-  try {
-    const out = await mail.collect(me);
-    news(`Looked at ${out.looked}, opened ${out.opened}.`);
-    await refreshInbox();
-  } catch (e) { say(String(e.message || e)); }
-};
-
-draw().catch(() => {});
+// Awaited, not fired-and-forgotten: a test (or a person) watching for
+// `meReady` should see a page that has actually finished drawing, not one
+// that merely started to.
+try { await draw(); } catch (e) {}
 document.body.dataset.meReady = "yes";
 </script>
 {% endblock %}

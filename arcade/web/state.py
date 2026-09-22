@@ -36,6 +36,91 @@ from ..messaging.keys import Identity
 from ..messaging.store import MessageStore
 from ..rpc import RpcClient
 
+#: The wallet this node signs with, which is the lane every send in `app.py`
+#: claims until it is told otherwise. An account's lane is its own public key.
+NODE_LANE = "node"
+
+
+class SendQueue:
+    """One send at a time per wallet, rather than one send at a time per node.
+
+    The single lock this replaces was correct while the node had one wallet and
+    wrong the moment it had more than one: what two sends must never do is
+    choose from the same pool of coins, and that is a property of a wallet, not
+    of a process. A forty-transaction inscription run out of the node's wallet
+    has nothing to argue about with an account's post, and blocked it anyway
+    (docs/multi-user.md §3).
+
+    Nothing here queues. A claim is refused in the same instant it always was,
+    and the caller says so in words, because a send that waits inside a request
+    is what froze the interface and made a second click look like the thing to
+    do. The order *within* one account is kept elsewhere -- an account's own
+    coins are remembered as in-flight by `arcade.web.account`, which is what
+    stops a second transaction picking a coin the first already spent.
+
+    A lane is made the first time it is claimed and kept afterwards. Dropping
+    one when it is released would allow a transaction to hold a lock that is no
+    longer in the dictionary, and a lock nobody can release is a wallet that
+    never sends again. A node capped at fifty accounts cannot grow this list
+    into anything worth the risk of shrinking it.
+    """
+
+    def __init__(self) -> None:
+        self._lanes: dict[str, threading.Lock] = {}
+        #: Guards the dictionary only, and is never held across an acquire.
+        self._guard = threading.Lock()
+
+    def _lane(self, name: str, create: bool) -> threading.Lock | None:
+        with self._guard:
+            lock = self._lanes.get(name)
+            if lock is None and create:
+                lock = self._lanes[name] = threading.Lock()
+            return lock
+
+    def begin(self, lane: str = NODE_LANE) -> bool:
+        """Claim a wallet. False if that wallet is already mid-send."""
+        return self._lane(lane, create=True).acquire(blocking=False)
+
+    def end(self, lane: str = NODE_LANE) -> None:
+        lock = self._lane(lane, create=False)
+        if lock is None:
+            return                     # never claimed; nothing to release
+        try:
+            lock.release()
+        except RuntimeError:
+            pass                       # not held; nothing to do
+
+    def held(self) -> list[str]:
+        """Which wallets are mid-send, so a page can say who is busy."""
+        with self._guard:
+            return [name for name, lock in self._lanes.items() if lock.locked()]
+
+    def close(self, grace: float = 20.0) -> bool:
+        """Take every lane within `grace` seconds, then give them all back.
+
+        True if nothing was in flight or everything finished in time. It re-reads
+        the set each pass, because a lane can be claimed by a send that started
+        just before shutdown began -- and one wallet missed here is a thread
+        outliving its own service, which is how two processes briefly shared a
+        database once already.
+        """
+        deadline = time.monotonic() + grace
+        held: list[threading.Lock] = []
+        while True:
+            pending = [lock for lock in self._lanes.values()
+                       if not any(lock is done for done in held)]
+            if not pending:
+                for lock in held:
+                    lock.release()
+                return True
+            for lock in pending:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not lock.acquire(timeout=remaining):
+                    for done in held:
+                        done.release()
+                    return False
+                held.append(lock)
+
 
 @dataclass
 class ChainContext:
@@ -266,30 +351,37 @@ class AppState:
         object.__setattr__(self, "_version", version)
         return version
 
-    #: Held for the whole of a send. A long message can take minutes -- the
-    #: wallet may be split and that split has to confirm -- and a browser shows
-    #: nothing while it waits, so a second click is the natural thing to do. Two
-    #: concurrent sends each select their own outputs without seeing the other's
-    #: claims, so they can collide and strand a half-written message on the
-    #: chain. Only one at a time, and the second is told why.
-    _sending: threading.Lock = field(default_factory=threading.Lock)
+    #: Held for the whole of a send, per wallet. A long message can take
+    #: minutes -- the wallet may be split and that split has to confirm -- and a
+    #: browser shows nothing while it waits, so a second click is the natural
+    #: thing to do. Two concurrent sends from the SAME wallet each select their
+    #: own outputs without seeing the other's claims, so they can collide and
+    #: strand a half-written message on the chain: one at a time per wallet, and
+    #: the second is told why. Wallets that share no coins hold nothing up, which
+    #: is the whole difference between lanes and a single lock
+    #: (docs/multi-user.md §3).
+    sends: SendQueue = field(default_factory=SendQueue)
 
-    #: Digest and time of the last message sent, so an identical one submitted
-    #: moments later is recognised as a double click rather than obeyed.
-    _last_send: tuple = ("", 0.0)
+    #: Digest and time of the last message sent, per lane, so an identical one
+    #: submitted moments later is recognised as a double click rather than
+    #: obeyed. Keyed by lane because the digest is over the peer and the bytes,
+    #: not over who is sending: two accounts writing the same words to the same
+    #: friend within the window are two people, not one person's second click,
+    #: and a shared record would refuse the second one.
+    _last_send: dict = field(default_factory=dict)
 
     #: How long an identical resend is treated as accidental.
     REPEAT_WINDOW = 120.0
 
-    def begin_send(self) -> bool:
-        """Claim the right to send. False if another send is already running.
+    def begin_send(self, lane: str = NODE_LANE) -> bool:
+        """Claim the right to send from `lane`. False if that wallet is sending.
 
         Refuses once shutdown has begun, so a restart cannot start work it is
         about to abandon.
         """
         if self.shutting_down:
             return False
-        return self._sending.acquire(blocking=False)
+        return self.sends.begin(lane)
 
     #: Set by the shutdown hook. Send threads are daemons, so the interpreter
     #: does not wait for them, and a test machine caught one writing to the store
@@ -300,40 +392,42 @@ class AppState:
     shutting_down: bool = False
 
     def begin_shutdown(self, grace: float = 20.0) -> bool:
-        """Stop accepting sends and wait for one in flight to finish.
+        """Stop accepting sends and wait for every one in flight to finish.
 
-        Returns True if nothing was in flight or it finished within `grace`.
-        False means a send is still running and the process is about to go
-        anyway: the caller says so rather than leaving it silent, because the
+        Returns True if nothing was in flight or they all finished within
+        `grace`. False means a send is still running and the process is about to
+        go anyway: the caller says so rather than leaving it silent, because the
         pending-send record is then the only thing that knows what happened.
+        Every lane is waited for, not just the node's own -- a shutdown that
+        missed an account's run is the same thread-outliving-its-service bug,
+        wearing somebody else's coins.
         """
         self.shutting_down = True
-        if self._sending.acquire(timeout=grace):
-            self._sending.release()
-            return True
-        return False
+        return self.sends.close(grace)
 
-    def is_repeat_send(self, digest: str) -> bool:
-        """True if this exact message was just sent.
+    def is_repeat_send(self, digest: str, lane: str = NODE_LANE) -> bool:
+        """True if this exact message was just sent, by this wallet.
 
-        The lock above stops two sends OVERLAPPING, which is not the same thing:
+        The lane above stops two sends OVERLAPPING, which is not the same thing:
         a slow send shows nothing while it works, so the second click usually
         arrives after the first has finished, and both complete. That is not
         damaging -- each is a valid message -- but it sends the file twice and
         pays for it twice, which is not what the second click meant.
+
+        Compared per lane, and that is not a detail. The digest covers the peer
+        and the bytes, never the sender, so one shared record would tell a second
+        person that their message was "just sent" because a stranger typed the
+        same words to the same friend a minute ago.
         """
-        last, when = self._last_send
+        last, when = self._last_send.get(lane, ("", 0.0))
         return bool(last) and last == digest and (
             time.monotonic() - when) < self.REPEAT_WINDOW
 
-    def note_send(self, digest: str) -> None:
-        self._last_send = (digest, time.monotonic())
+    def note_send(self, digest: str, lane: str = NODE_LANE) -> None:
+        self._last_send[lane] = (digest, time.monotonic())
 
-    def end_send(self) -> None:
-        try:
-            self._sending.release()
-        except RuntimeError:
-            pass                    # not held; nothing to do
+    def end_send(self, lane: str = NODE_LANE) -> None:
+        self.sends.end(lane)
 
     #: What a send in flight is doing, for the conversation to draw. A long send
     #: is minutes of work, so the browser is told to go away and watch rather

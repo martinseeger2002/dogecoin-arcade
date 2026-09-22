@@ -46,9 +46,14 @@ def test_an_account_gets_its_own_page(client):
     body = app.get("/me").text
     assert "Your arcade" in body
     assert "Your keys are in this browser" in body
-    # And nothing from the operator's overview.
-    assert "Known contacts" not in body
-    assert "Spendable" not in body
+    # It now mirrors the parts of Overview that genuinely apply to an
+    # account -- its own name, contacts and chain status -- but not the
+    # settings that configure automation running on the NODE's own key,
+    # which an account has no equivalent of and is not offered.
+    assert "Known contacts" in body
+    assert "Accept offers that meet my asking price" not in body
+    assert "Install updates automatically" not in body
+    assert 'id="scan"' not in body
 
 
 def test_it_asks_for_the_password_before_anything(client):
@@ -61,19 +66,19 @@ def test_it_asks_for_the_password_before_anything(client):
     assert "never leaves this browser" in body
 
 
-def test_a_message_is_drawn_as_words_not_markup(client):
-    """A message is somebody else's words, and an inbox that renders them
-    as HTML is an inbox that runs them."""
+def test_the_overview_page_renders_nothing_off_the_chain_as_markup(client):
+    """Overview no longer shows a message body at all -- that moved to the
+    Messages page, which has its own version of this test. What is left
+    here (a wallet card, a contact code) is either drawn by hand or is this
+    account's own words, never somebody else's."""
     app, _ = client
     _seat(app)
-    # The template, not the rendered page: base.html has innerHTML of its
-    # own and is not what this is about.
     page = pathlib.Path("arcade/web/templates/me.html").read_text()
-    assert "body.textContent = new TextDecoder()" in page
-    # The only innerHTML here empties the list before it is refilled.
+    # Every innerHTML here empties an element before it is refilled by
+    # hand. None of them is ever given content that came off the chain.
     uses = [line.strip() for line in page.splitlines()
             if "innerHTML" in line and not line.strip().startswith("//")]
-    assert uses == ['$("inbox").innerHTML = "";'], uses
+    assert uses == ['$("wallets").innerHTML = "";'], uses
 
 
 def test_the_feed_is_the_same_posts(client):
@@ -209,7 +214,7 @@ def test_the_messages_page_is_there_and_is_in_the_menu(public):
     app, _ = public
     _seat(app)
     body = app.get("/me/messages", headers=EDGE).text
-    assert "Write to somebody" in body
+    assert "Conversations" in body, "the same messenger as the wallet's own"
     assert "cannot read one" in body, "and says what the node can and cannot do"
     assert 'href="/me/messages"' in body, "and is reachable from the menu"
 
@@ -218,10 +223,13 @@ def test_a_message_is_drawn_as_words_there_too(client):
     """The same rule as the inbox on /me: somebody else's words are never
     rendered as markup."""
     page = pathlib.Path("arcade/web/templates/my_messages.html").read_text()
-    assert "body.textContent = new TextDecoder()" in page
+    assert "body.textContent = mail.text(letter);" in page
+    # Each of these empties an element this file then fills by hand. A
+    # message's own words never go near one.
     uses = [line.strip() for line in page.splitlines()
             if "innerHTML" in line and not line.strip().startswith("//")]
-    assert uses == ['$("mail").innerHTML = "";'], uses
+    assert uses == ['$("threads").innerHTML = "";',
+                    '$("bubbles").innerHTML = "";'], uses
 
 
 def test_it_says_who_a_message_is_going_to_before_it_is_written(client):
@@ -230,6 +238,10 @@ def test_it_says_who_a_message_is_going_to_before_it_is_written(client):
     app, _ = client
     _seat(app)
     body = app.get("/me/messages").text
-    assert 'id="who"' in body
+    # The conversation says who it is with, from the chain, above what is
+    # being typed -- and the reply checks that the key behind that name is
+    # still the key this conversation has been with before it seals
+    # anything to it.
+    assert 'id="convo-name"' in body and 'id="convo-sub"' in body
     assert "mail.lookUp" in body
-    assert "have not published a key" in body
+    assert "is not who this conversation is with any more" in body

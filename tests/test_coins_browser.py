@@ -338,3 +338,43 @@ def test_the_der_encoding_is_read_back_the_way_a_node_reads_it(loaded):
             high += 1
     assert high > 0, ("none of the forty needed a leading zero, so the rule "
                       "that needs it was never exercised")
+
+
+def test_the_same_words_make_a_different_key_on_each_chain(loaded):
+    """One secret, two wallets.
+
+    A mainnet wallet for an account is not a second seed phrase -- it is
+    the same twelve words at the other chain's coin type, m/44'/3' beside
+    m/44'/1'. So the keys differ, the addresses differ, and the version
+    byte differs; nothing extra is written down and nothing is shared
+    between them but the words.
+    """
+    browser, base, _ = loaded
+    answer = browser.execute_async_script("""
+        const done = arguments[0];
+        Promise.all([import("/wallet.js"), import("/coins.js")])
+          .then(async ([wallet, coins]) => {
+            const phrase = "abandon abandon abandon abandon abandon abandon "
+              + "abandon abandon abandon abandon abandon about";
+            const w = await wallet.walletFrom(phrase, "regtest", 111);
+            await wallet.everyChain(w, [{network: "main", version: 56}]);
+            const test = wallet.keysOn(w, "regtest");
+            const main = wallet.keysOn(w, "main");
+            done({
+              testAddress: test.address, mainAddress: main.address,
+              sameKey: coins.hex ? false : false,
+              keysMatch: JSON.stringify([...test.key])
+                      === JSON.stringify([...main.key]),
+              testPath: JSON.stringify(coins.coinPath("regtest")),
+              mainPath: JSON.stringify(coins.coinPath("main")),
+            });
+          }).catch(e => done({error: String(e.message || e)}));""")
+    assert "error" not in answer, answer
+    assert not answer["keysMatch"], "a different chain is a different key"
+    assert answer["testAddress"] != answer["mainAddress"]
+    # Pepecoin mainnet addresses start with P, the test chains' with m or n.
+    assert answer["mainAddress"][0] == "P"
+    assert answer["testAddress"][0] in "mn"
+    # And the paths are the standard ones, not something invented here.
+    assert answer["testPath"] == "[2147483692,2147483649,2147483648,0,0]"
+    assert answer["mainPath"] == "[2147483692,2147483651,2147483648,0,0]"

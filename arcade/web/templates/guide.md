@@ -872,11 +872,38 @@ forwarding. The mempool already gossips to every node in seconds.
   transaction the node builds, the browser signs with a key the node has
   never seen, and the node broadcasts -- it broadcasts what it *offered*,
   not whatever came back signed.
+* **A wallet on each chain, from the same words.** The twelve words hold
+  coins on the test chain and on mainnet, at each chain's own coin type --
+  two wallets, one secret, nothing extra to write down. The node is told
+  which address belongs to which chain and checks the version byte rather
+  than believing it; the mainnet card says on itself that those coins are
+  real. Paying a @tag on mainnet uses the address its holder published
+  with their key, and says so plainly when they have not published one.
+  The faucet is testnet only and always was.
 * **The account's address book is in the browser, not on the node.** Same
   page as the wallet's: search a @tag, add what the chain says it points
   at, and write to it from there. Keeping it on the node would hand over a
   list of everybody an account knows, which is the social graph the
   messages themselves are built to hide.
+* **Your NFTs.** What the account's addresses hold, read off the chain,
+  with Send and a price on each. Sending one cannot be undone by sending
+  it back unless whoever receives it agrees to, so it is two steps and
+  says so. Pricing one is an ask: nothing moves, nothing is held, and it
+  stands only while you still hold the piece. Inscribing is still the
+  node's -- it takes a chain of linked transactions and an account builds
+  one at a time -- and buying waits on both halves of a swap being
+  signable in a browser.
+* **Overview, Wallet and Backup match the operator's**, where an account
+  has anything to match. Overview has the same chain card and contact
+  code, built in the browser (`messaging.js:contactCode`), and says
+  plainly why there is no auto-sell, auto-fill or update setting -- those
+  run on the NODE's own key, and an account has no such automation to
+  configure. Wallet has the same three tabs: Coins (send moved here),
+  Tokens (new -- a real Omni Simple Send, never wrapped in AnyData, unlike
+  a tag claim), and NFTs. Backup explains that the twelve words are
+  everything, and that the message history and address book are this
+  browser's alone -- neither comes back on a different device, because
+  neither was ever derived from the words.
 * **Messages are the same messenger**, with conversations down the left and
   bubbles each way. The grouping happens in the browser, because the node
   is not allowed to know who is talking to whom, and the browser keeps its

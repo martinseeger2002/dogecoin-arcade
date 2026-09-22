@@ -113,7 +113,7 @@ export async function walletFrom(phrase, network, version) {
   const seed = await signer.toSeed(phrase);
   const account = await signer.accountKey(seed);      // signs into the node
   const coin = await coins.coinKey(seed, network, 0); // holds the money
-  return {
+  const wallet = {
     phrase,
     seed,
     pubkey: account.pubkey,
@@ -121,7 +121,71 @@ export async function walletFrom(phrase, network, version) {
     coinKey: coin.key,
     coinPubkey: coin.pubkey,
     address: await coins.address(coin.pubkey, version),
+    // Every chain, by network name. The tag chain is in here as well as
+    // in the fields above, so a caller that knows which chain it means
+    // never has to work out whether it is the special one.
+    on: {},
   };
+  wallet.on[network] = {network, version, key: coin.key,
+                        pubkey: coin.pubkey, address: wallet.address};
+  return wallet;
+}
+
+/* --- more than one chain -------------------------------------------------
+ *
+ * The same twelve words hold coins on every chain this node runs, at that
+ * chain's own coin type: m/44'/1'/0'/0/0 on testnet, m/44'/3'/0'/0/0 on
+ * mainnet. Two keys, one secret, and nothing extra to write down -- which
+ * is the whole reason an account can be given a mainnet wallet at all.
+ *
+ * The version byte is the other half. An address is a hash with a chain
+ * stamped on the front, and the stamp is what stops mainnet coins being
+ * sent to a testnet address that happens to hash the same way.
+ */
+
+export async function everyChain(wallet, chains) {
+  for (const chain of chains || []) {
+    if (wallet.on[chain.network]) continue;
+    const coin = await coins.coinKey(wallet.seed, chain.network, 0);
+    wallet.on[chain.network] = {
+      network: chain.network, version: chain.version,
+      key: coin.key, pubkey: coin.pubkey,
+      address: await coins.address(coin.pubkey, chain.version),
+    };
+  }
+  return wallet;
+}
+
+/** Register any address this node does not know yet. Signed-in only. */
+export async function tellTheNode(wallet) {
+  const said = await state();
+  for (const chain of said.chains || []) {
+    const keys = wallet.on && wallet.on[chain.network];
+    if (!keys || chain.address === keys.address) continue;
+    await fetch("/account/address", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({address: keys.address, chain: chain.network,
+                            coin_pubkey: coinsHex(keys.pubkey)}),
+    });
+  }
+}
+
+/** What chains this node runs for accounts, whether or not anybody is in. */
+export async function chains() {
+  try {
+    return (await (await fetch("/account")).json()).chains || [];
+  } catch (e) { return []; }
+}
+
+/** The keys for one chain, by network name. Throws rather than guessing:
+ *  signing a mainnet transaction with a testnet key produces a signature
+ *  that verifies against nothing, which is a silent failure. */
+export function keysOn(wallet, network) {
+  const found = wallet.on && wallet.on[network];
+  if (!found) {
+    throw new Error(`this wallet has no key for ${network} in this tab`);
+  }
+  return found;
 }
 
 /* --- the two things a person does ---------------------------------------- */
@@ -141,7 +205,21 @@ async function _signUp(tag, password, {network, version}) {
   }
   const phrase = await signer.generate();
   const wallet = await walletFrom(phrase, network, version);
+  // The same words on every chain this node runs, derived before signing
+  // up rather than on some later visit: an account should be payable on
+  // both from the minute it exists, and the node cannot derive either of
+  // these addresses for itself.
+  const running = await chains();
+  await everyChain(wallet, running);
   const blob = await seal(phrase, password);
+  const alsoOn = {};
+  for (const chain of running) {
+    if (chain.network === network) continue;
+    const keys = wallet.on[chain.network];
+    if (!keys) continue;
+    alsoOn[`address_${chain.network}`] = keys.address;
+    alsoOn[`coin_pubkey_${chain.network}`] = coinsHex(keys.pubkey);
+  }
   const answer = await fetch("/signup", {
     method: "POST", headers: {"Content-Type": "application/json"},
     // The coin public key travels too: a Class B payload puts it in every
@@ -149,7 +227,8 @@ async function _signUp(tag, password, {network, version}) {
     // cannot derive it from anything it holds.
     body: JSON.stringify({tag, pubkey: wallet.pubkey,
                           address: wallet.address,
-                          coin_pubkey: coinsHex(wallet.coinPubkey), blob}),
+                          coin_pubkey: coinsHex(wallet.coinPubkey),
+                          ...alsoOn, blob}),
   });
   const said = await answer.json();
   if (!answer.ok) throw new Error(said.detail || "that did not work");
@@ -169,6 +248,7 @@ async function _signIn(tag, password, {network, version}) {
   if (!found.ok) throw new Error(said.detail || "no wallet by that name");
   const phrase = await open(said.blob, password);
   const wallet = await walletFrom(phrase, network, version);
+  await everyChain(wallet, await chains());
   if (wallet.pubkey !== said.pubkey) {
     // The blob opened, and produced a different key than the node has on
     // file. That is not a wrong password -- it is a wallet that does not
@@ -187,6 +267,10 @@ async function _signIn(tag, password, {network, version}) {
   const result = await opened.json();
   if (!opened.ok) throw new Error(result.detail || "that did not open anything");
   remember(wallet.phrase);
+  // An account made before this node ran a second chain has no address
+  // registered there, and nothing else will ever notice: told here, once,
+  // on the first sign-in that can derive it.
+  try { await tellTheNode(wallet); } catch (e) { /* not worth refusing a login */ }
   return {...result, tag: said.tag, address: said.address, wallet};
 }
 
@@ -230,23 +314,7 @@ async function _claim(wallet, tag) {
   const offer = await offered.json();
   if (!offered.ok) throw new Error(offer.detail || "that cannot be claimed");
 
-  // Sign the bytes the node handed over, and nothing else. The
-  // transaction is never parsed here: a signer that reads what it signs is
-  // a signer that can be talked into reading it wrongly. What protects the
-  // person is that the node showed what it was doing, and that it
-  // broadcasts what it offered rather than what comes back.
-  const signatures = [];
-  for (const sighash of offer.sighashes) {
-    signatures.push(coinsHex(await coins.signInput(wallet.coinKey,
-                                                   unhex(sighash))));
-  }
-  const done = await fetch("/account/sign", {
-    method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({offer: offer.offer, signatures,
-                          pubkey: coinsHex(wallet.coinPubkey)}),
-  });
-  const said = await done.json();
-  if (!done.ok) throw new Error(said.detail || "the node would not take it");
+  const said = await signOffer(wallet, offer);
   return {...said, fee: offer.fee, what: offer.what};
 }
 
@@ -284,11 +352,11 @@ export async function waitForCoins(seconds = 120) {
  * without asking.
  */
 
-export async function offerSend(to, amount) {
+export async function offerSend(to, amount, chain) {
   return working(async () => {
     const asked = await fetch("/account/send", {
       method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({to, amount}),
+      body: JSON.stringify({to, amount, chain: chain || ""}),
     });
     const offer = await asked.json();
     if (!asked.ok) throw new Error(offer.detail || "that cannot be sent");
@@ -296,22 +364,36 @@ export async function offerSend(to, amount) {
   });
 }
 
-export async function confirm(wallet, offer) {
-  return working(async () => {
-    const signatures = [];
-    for (const sighash of offer.sighashes) {
-      signatures.push(coinsHex(await coins.signInput(wallet.coinKey,
-                                                     unhex(sighash))));
-    }
-    const done = await fetch("/account/sign", {
-      method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({offer: offer.offer, signatures,
-                            pubkey: coinsHex(wallet.coinPubkey)}),
-    });
-    const said = await done.json();
-    if (!done.ok) throw new Error(said.detail || "the node would not take it");
-    return said;
+/* Signing an offer, on whichever chain it was built for.
+ *
+ * The key is chosen by the offer's own `chain`, not by whatever the page
+ * happened to have to hand. Signing a mainnet transaction with a testnet
+ * key does not fail loudly: it produces a signature that verifies against
+ * nothing, and the node's refusal arrives with no clue why.
+ *
+ * What is signed is never parsed here. The transaction is the node's; it
+ * said what it was doing before anybody pressed anything, and it
+ * broadcasts what it OFFERED rather than what comes back.
+ */
+async function signOffer(wallet, offer) {
+  const keys = keysOn(wallet, offer.chain
+                      || (wallet.on && Object.keys(wallet.on)[0]));
+  const signatures = [];
+  for (const sighash of offer.sighashes) {
+    signatures.push(coinsHex(await coins.signInput(keys.key, unhex(sighash))));
+  }
+  const done = await fetch("/account/sign", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({offer: offer.offer, signatures,
+                          pubkey: coinsHex(keys.pubkey)}),
   });
+  const said = await done.json();
+  if (!done.ok) throw new Error(said.detail || "the node would not take it");
+  return said;
+}
+
+export async function confirm(wallet, offer) {
+  return working(() => signOffer(wallet, offer));
 }
 
 /* --- the feed, tips and reactions ----------------------------------------
@@ -338,18 +420,7 @@ export async function signAndSend(wallet, where, body) {
     });
     const offer = await asked.json();
     if (!asked.ok) throw new Error(offer.detail || "that cannot be done");
-    const signatures = [];
-    for (const sighash of offer.sighashes) {
-      signatures.push(coinsHex(await coins.signInput(wallet.coinKey,
-                                                     unhex(sighash))));
-    }
-    const done = await fetch("/account/sign", {
-      method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({offer: offer.offer, signatures,
-                            pubkey: coinsHex(wallet.coinPubkey)}),
-    });
-    const said = await done.json();
-    if (!done.ok) throw new Error(said.detail || "the node would not take it");
+    const said = await signOffer(wallet, offer);
     return {...said, fee: offer.fee};
   });
 }
@@ -444,7 +515,12 @@ export async function opened(chain) {
   try { phrase = sessionStorage.getItem(OPEN_WALLET); } catch (e) {}
   if (!phrase) return null;
   try {
-    return await walletFrom(phrase, chain.network, chain.version);
+    const wallet = await walletFrom(phrase, chain.network, chain.version);
+    // Every chain, not only the one the page named. A page that shows a
+    // mainnet balance and then cannot sign for it is worse than one that
+    // never offered; deriving a second key costs one PBKDF2-free
+    // derivation from a seed that is already here.
+    return await everyChain(wallet, await chains());
   } catch (e) {
     forgetOpen();
     return null;

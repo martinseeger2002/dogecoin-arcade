@@ -1,0 +1,11 @@
+{# An account's three wallet tabs, the same three the operator's Wallet
+   has (`_wallettabs.html`): coins, tokens, NFTs. What a tab shows is
+   what THIS ACCOUNT holds; /tokens, /nfts and /exchange show what exists
+   on the chain for anybody to browse (D-030). #}
+{% macro tabs(current) %}
+<nav class="row" style="gap:6px;margin:0 0 16px">
+  <a class="btn {{ 'on' if current == 'coins' else 'ghost' }} small" href="/me/wallet">Wallet</a>
+  <a class="btn {{ 'on' if current == 'tokens' else 'ghost' }} small" href="/me/wallet/tokens">Tokens</a>
+  <a class="btn {{ 'on' if current == 'nfts' else 'ghost' }} small" href="/me/nfts">NFTs</a>
+</nav>
+{% endmacro %}

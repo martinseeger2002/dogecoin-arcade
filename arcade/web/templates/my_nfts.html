@@ -1,0 +1,316 @@
+{% extends "base.html" %}
+{% import "_account_wallettabs.html" as wt %}
+{% block title %}Your NFTs · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Wallet</h1>
+{{ wt.tabs('nfts') }}
+<p class="sub">The inscriptions held by this account's addresses, read off
+  the chain. Everything inscribed here, yours or not, is on the
+  <a href="/nfts">NFTs</a> page.</p>
+
+<p class="muted" id="shut" hidden style="font-size:.86rem">
+  Your wallet is not open in this tab, so nothing here can be signed.
+  <a href="/me">Open it</a> and come back.</p>
+
+<div class="msg err" id="trouble" hidden></div>
+<div class="msg ok" id="news" hidden></div>
+
+<div id="chains"></div>
+
+<div class="panel empty" id="nothing" hidden>
+  <p>Nothing yet.</p>
+  <p class="muted" style="font-size:.86rem">Be sent one, or buy one from the
+    <a href="/exchange?tab=market">Exchange</a>. Inscribing takes a chain of
+    linked transactions and an account cannot build those yet &mdash; the
+    node's own wallet can.</p>
+</div>
+
+<div class="panel" id="pricing" hidden>
+  <h3 style="margin:0 0 6px" id="pricing-what">Put a price on it</h3>
+  <p class="muted" style="font-size:.86rem;margin:0 0 10px">
+    Nothing moves and nothing is held: the piece stays where it is and the
+    price is honoured only while you still hold it. Anybody's node can read
+    it, so it appears in the <a href="/exchange?tab=market">Exchange</a> and
+    in its collection.</p>
+  <div class="row">
+    <div style="flex:1"><input autocomplete="off" id="price" class="mono"
+      spellcheck="false" inputmode="decimal" placeholder="how much"></div>
+    <button type="button" id="price-it">Price it</button>
+    <button type="button" class="ghost" id="price-cancel">Cancel</button>
+  </div>
+  <div class="confirm" id="price-confirm" hidden>
+    <p id="price-says"></p>
+    <button class="btn primary" id="price-yes">Yes</button>
+    <button class="btn" id="price-no">No</button>
+  </div>
+</div>
+
+<div class="panel" id="sending" hidden>
+  <h3 style="margin:0 0 6px" id="sending-what">Send it</h3>
+  <p class="muted" style="font-size:.86rem;margin:0 0 10px">
+    This cannot be undone by sending it back unless whoever receives it
+    agrees to. Check the name.</p>
+  <div class="row">
+    <div style="flex:1"><input autocomplete="off" id="to" class="mono"
+      spellcheck="false" placeholder="@name or address"></div>
+    <button type="button" id="offer">Send it</button>
+    <button type="button" class="ghost" id="cancel">Cancel</button>
+  </div>
+  <div class="confirm" id="confirm" hidden>
+    <p id="confirm-says"></p>
+    <button class="btn primary" id="yes">Yes, send it</button>
+    <button class="btn" id="no">No</button>
+  </div>
+</div>
+
+<style>
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+#to{width:100%;padding:10px 12px;border:1px solid var(--line);
+  border-radius:8px;background:var(--panel);color:var(--fg);font:inherit}
+.chain-head{display:flex;align-items:baseline;gap:10px;margin:18px 0 8px}
+.chain-head h2{margin:0;font-size:1.05rem}
+</style>
+
+<script type="module">
+import * as wallet from "/wallet.js";
+
+const $ = (id) => document.getElementById(id);
+const say = (t) => { $("trouble").textContent = t; $("trouble").hidden = !t; };
+const news = (t) => { $("news").textContent = t; $("news").hidden = !t; };
+const CHAIN = {network: "{{ chain.network }}",
+               version: {{ chain.params.pubkeyhash_version }}};
+
+let keys = null, chosen = null;
+
+const commas = (n) => Number(n || 0).toLocaleString();
+
+function card(piece, chain) {
+  const box = document.createElement("div");
+  box.className = "card";
+
+  const top = document.createElement("div");
+  top.className = "row";
+  top.style.alignItems = "baseline";
+  const number = document.createElement("strong");
+  number.textContent = "#" + commas(piece.number);
+  const kind = document.createElement("span");
+  kind.className = "muted";
+  kind.textContent = piece.content_type || "";
+  const size = document.createElement("span");
+  size.className = "muted";
+  size.style.marginLeft = "auto";
+  size.textContent = commas(piece.content_len) + " bytes";
+  top.append(number, kind, size);
+  box.appendChild(top);
+
+  if ((piece.content_type || "").startsWith("image/")) {
+    const look = document.createElement("a");
+    look.className = "media";
+    look.href = `/content/${piece.txid}?download=1`;
+    const picture = document.createElement("img");
+    picture.src = `/content/${piece.txid}`;
+    picture.alt = "inscription " + piece.number;
+    picture.loading = "lazy";
+    picture.style.cssText = "max-width:100%;border-radius:8px;margin:8px 0";
+    look.appendChild(picture);
+    box.appendChild(look);
+  }
+
+  const facts = document.createElement("table");
+  const line = (label, value) => {
+    const tr = document.createElement("tr");
+    const left = document.createElement("td");
+    left.className = "muted";
+    left.style.width = "74px";
+    left.textContent = label;
+    const right = document.createElement("td");
+    right.style.wordBreak = "break-all";
+    if (value instanceof Node) right.appendChild(value);
+    else right.textContent = value;
+    tr.append(left, right);
+    facts.appendChild(tr);
+  };
+  line("Block", commas(piece.block_height));
+  if (piece.collection) {
+    const where = document.createElement("a");
+    where.href = `/collections/${encodeURIComponent(piece.creator)}`
+               + `/${encodeURIComponent(piece.collection)}`;
+    where.textContent = piece.collection
+      + (piece.edition === null || piece.edition === undefined
+         ? "" : ` #${piece.edition}`);
+    line("Collection", where);
+  }
+  box.appendChild(facts);
+
+  if (piece.sale) {
+    const forSale = document.createElement("p");
+    forSale.style.margin = "6px 0 0";
+    const pill = document.createElement("span");
+    pill.className = "pill ok";
+    pill.textContent = "for sale";
+    const price = document.createElement("strong");
+    price.textContent = " " + piece.sale.price;
+    forSale.append(pill, price);
+    box.appendChild(forSale);
+  }
+
+  const doing = document.createElement("div");
+  doing.className = "row";
+  doing.style.marginTop = "8px";
+  const open = document.createElement("a");
+  open.className = "btn ghost small";
+  open.href = `/inscriptions/${piece.txid}/view`;
+  open.textContent = "Open";
+  const sell = document.createElement("button");
+  sell.className = "btn ghost small";
+  sell.textContent = piece.sale ? "Change the price" : "Sell it";
+  sell.onclick = () => pricing(piece, chain);
+  const send = document.createElement("button");
+  send.className = "btn small";
+  send.textContent = "Send";
+  send.onclick = () => choose(piece, chain);
+  doing.append(open, sell, send);
+  if (piece.sale) {
+    const off = document.createElement("button");
+    off.className = "btn ghost small";
+    off.textContent = "Take it off";
+    off.onclick = () => unlist(piece, chain);
+    doing.appendChild(off);
+  }
+  box.appendChild(doing);
+  return box;
+}
+
+function choose(piece, chain) {
+  say(""); news("");
+  chosen = {piece, chain};
+  $("sending-what").textContent =
+    `Send #${commas(piece.number)} on ${chain.label}`;
+  $("confirm").hidden = true;
+  $("pricing").hidden = true;
+  $("sending").hidden = false;
+  $("to").value = "";
+  $("to").focus();
+  $("sending").scrollIntoView({behavior: "smooth", block: "nearest"});
+}
+
+$("cancel").onclick = () => { $("sending").hidden = true; chosen = null; };
+$("price-cancel").onclick = () => {
+  $("pricing").hidden = true; chosen = null;
+};
+
+function pricing(piece, chain) {
+  say(""); news("");
+  chosen = {piece, chain};
+  $("pricing-what").textContent =
+    `Price #${commas(piece.number)} on ${chain.label}`;
+  $("price-confirm").hidden = true;
+  $("sending").hidden = true;
+  $("pricing").hidden = false;
+  $("price").value = "";
+  $("price").focus();
+}
+
+/** Ask for an offer, show what it says, and sign it if they say yes. */
+async function offerAndConfirm(where, body, says, done) {
+  say(""); news("");
+  try {
+    const asked = await fetch(where, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body),
+    });
+    const offer = await asked.json();
+    if (!asked.ok) throw new Error(offer.detail || "that cannot be done");
+    if (!confirm(says(offer))) return;
+    if (!keys) throw new Error("your wallet is not open in this tab");
+    const out = await wallet.confirm(keys, offer);
+    news(done(out, offer));
+    $("pricing").hidden = true;
+    await draw();
+  } catch (e) { say(String(e.message || e)); }
+}
+
+$("price-it").onclick = async () => {
+  if (!chosen) return;
+  await offerAndConfirm("/account/nft/sell",
+    {piece: chosen.piece.txid, amount: $("price").value.trim(),
+     kind: "coins", chain: chosen.chain.network},
+    (offer) => `${offer.what}? It costs `
+      + `${(offer.fee / 100000000).toFixed(8)} in fees.`,
+    (out) => `Priced: ${out.txid.slice(0, 16)}… It is for sale from the `
+      + "block it lands in.");
+};
+
+async function unlist(piece, chain) {
+  chosen = {piece, chain};
+  await offerAndConfirm("/account/nft/sell",
+    {piece: piece.txid, unlist: true, chain: chain.network},
+    (offer) => `${offer.what}? It costs `
+      + `${(offer.fee / 100000000).toFixed(8)} in fees.`,
+    (out) => `Taken off: ${out.txid.slice(0, 16)}…`);
+}
+
+$("offer").onclick = async () => {
+  say(""); news("");
+  if (!chosen) return;
+  try {
+    const asked = await fetch("/account/nft/send", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({piece: chosen.piece.txid, to: $("to").value.trim(),
+                            chain: chosen.chain.network}),
+    });
+    const offer = await asked.json();
+    if (!asked.ok) throw new Error(offer.detail || "that cannot be sent");
+    $("confirm-says").textContent =
+      `#${commas(offer.number)} goes to ${offer.to}. `
+      + `It costs ${(offer.fee / 100000000).toFixed(8)} in fees and cannot `
+      + `be taken back.`;
+    $("confirm").hidden = false;
+    $("yes").onclick = async () => {
+      $("confirm").hidden = true;
+      try {
+        if (!keys) throw new Error("your wallet is not open in this tab");
+        const done = await wallet.confirm(keys, offer);
+        news(`Sent: ${done.txid.slice(0, 16)}… It moves when its block does.`);
+        $("sending").hidden = true;
+        await draw();
+      } catch (e) { say(String(e.message || e)); }
+    };
+    $("no").onclick = () => { $("confirm").hidden = true; };
+  } catch (e) { say(String(e.message || e)); }
+};
+
+async function draw() {
+  const said = await (await fetch("/account/nfts")).json();
+  const chains = said.chains || [];
+  $("chains").innerHTML = "";
+  let any = 0;
+  for (const chain of chains) {
+    if (!chain.pieces.length) continue;
+    any += chain.pieces.length;
+    const head = document.createElement("div");
+    head.className = "chain-head";
+    const title = document.createElement("h2");
+    title.textContent = chain.label;
+    const where = document.createElement("span");
+    where.className = "muted mono";
+    where.style.fontSize = ".78rem";
+    where.textContent = chain.address;
+    head.append(title, where);
+    const cards = document.createElement("div");
+    cards.className = "cards";
+    for (const piece of chain.pieces) cards.appendChild(card(piece, chain));
+    $("chains").append(head, cards);
+  }
+  $("nothing").hidden = any > 0;
+  if (!any) { $("sending").hidden = true; $("pricing").hidden = true; }
+}
+
+keys = await wallet.opened(CHAIN);
+// Said before anything is pressed. A page that only mentions a shut
+// wallet at the confirmation is a page that wasted somebody's decision.
+$("shut").hidden = !!keys;
+await draw();
+document.body.dataset.nftsReady = "yes";
+</script>
+{% endblock %}

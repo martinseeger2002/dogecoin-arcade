@@ -236,13 +236,24 @@ NAV = [
 #: What an account sees instead of the operator's tabs. Their own pages
 #: drive their own keys; the operator's drive the node's wallet, and almost
 #: nothing on those would be true for somebody else.
+#: In the same order the operator's own NAV is: identity, messaging,
+#: address book, the feed, backup, then the wallet and the shared
+#: marketplace pages. Two things on the operator's are deliberately not
+#: here: Approvals has no account equivalent (Overview explains why --
+#: an account never delegates a signature ahead of time, so there is
+#: nothing to review afterward), and /clone is reachable from every
+#: page's own footer already.
 ACCOUNT_NAV = [
-    ("/me",           "Your arcade",  None,        True),
-    ("/me/messages",  "Messages",     "testnet",   True),
-    ("/me/contacts",  "Address book", None,        True),
-    ("/feed",         "Feed",         "testnet",   True),
-    ("/clone",        "Run your own", None,        True),
-    ("/docs",         "Docs",         None,        True),
+    ("/me",              "Your arcade",  None,        True),
+    ("/me/messages",     "Messages",     "testnet",   True),
+    ("/me/contacts",     "Address book", None,        True),
+    ("/feed",            "Feed",         "testnet",   True),
+    ("/me/backup",       "Backup",       None,        True),
+    ("/me/wallet",       "Wallet",       None,        True),
+    ("/tokens",          "Tokens",       "mainnet",   True),
+    ("/nfts",            "NFTs",         "mainnet",   True),
+    ("/exchange",        "Exchange",     "mainnet",   True),
+    ("/docs",            "Docs",         None,        True),
 ]
 
 
@@ -6039,7 +6050,55 @@ def create_app(state: AppState) -> FastAPI:
         """The chain a tag lives on. Testnet, as tags always have been."""
         return state.messaging
 
-    def _note_payment(txid: str, pubkey: str, address: str) -> None:
+    def _account_chains() -> tuple:
+        """Every chain an account can hold coins on, the tag chain first.
+
+        One set of words, a key on each chain, and the node told which
+        address belongs to which. On a node whose ledger IS the messaging
+        chain there is only one -- a test node, usually -- and saying so
+        once here stops every caller having to.
+        """
+        out = [_account_chain()]
+        for chain in (state.ledger,):
+            if chain is not None and chain.network != _account_chain().network:
+                out.append(chain)
+        return tuple(out)
+
+    def _chain_asked(said: dict, field: str = "chain"):
+        """Which chain a request is about. The tag chain unless it says.
+
+        By NETWORK, not by a word like "mainnet": an account that names a
+        chain this node does not run should be told so, rather than
+        quietly served the other one -- which on these routes would mean
+        building a payment on the wrong chain.
+        """
+        wanted = str((said or {}).get(field, "") or "").strip().lower()
+        if not wanted:
+            return _account_chain()
+        for chain in _account_chains():
+            if wanted in (chain.network, chain.label.lower(),
+                          "mainnet" if chain.is_mainnet else "testnet"):
+                return chain
+        raise ValueError(f"this node does not run {wanted}")
+
+    #: Where an account's coins live, by chain. The tag chain keeps the
+    #: unqualified key it has always had, so an account made before there
+    #: was a second chain is not asked to register its address again.
+    def _address_key(pubkey: str, chain) -> str:
+        if chain.network == _account_chain().network:
+            return f"address:{pubkey}"
+        return f"address:{chain.network}:{pubkey}"
+
+    def _account_address(pubkey: str, chain) -> str:
+        return str(state.setting(_address_key(pubkey, chain), "") or "")
+
+    def _coinkey_key(pubkey: str, chain) -> str:
+        if chain.network == _account_chain().network:
+            return f"coinkey:{pubkey}"
+        return f"coinkey:{chain.network}:{pubkey}"
+
+    def _note_payment(txid: str, pubkey: str, address: str,
+                      network: str = "") -> None:
         """Record an output this node just paid to an account.
 
         Read back from the node rather than assumed: `sendtoaddress`
@@ -6055,14 +6114,15 @@ def create_app(state: AppState) -> FastAPI:
                 if address in where:
                     _flights.note_incoming(
                         pubkey, txid, int(out.get("n", 0)), address,
-                        int(round(float(out.get("value", 0)) * 100_000_000)))
+                        int(round(float(out.get("value", 0)) * 100_000_000)),
+                        network=network or _account_chain().network)
                     return
         except Exception:
             pass                 # it will be spendable when its block lands
 
-    def _watch(address: str, why: str) -> None:
+    def _watch(address: str, why: str, chain=None) -> None:
         """Start following an address's coins, so it can be funded at all."""
-        index = state.token_index(_account_chain())
+        index = state.token_index(chain or _account_chain())
         with contextlib.closing(index.open()) as db:
             utxoslib.watch(db, address, index.indexed_height() or 0, why)
 
@@ -6137,6 +6197,27 @@ def create_app(state: AppState) -> FastAPI:
         coin = str(said.get("coin_pubkey", "")).strip().lower()
         if coin:
             state.set_setting(f"coinkey:{pubkey}", coin)
+        # The same words also hold coins on the other chain, and the
+        # browser derived that address at the same moment. Registered here
+        # rather than on a later visit, so an account is payable on both
+        # from the minute it exists -- and refused rather than half-stored
+        # if it does not check out, which would leave somebody with an
+        # address on their screen that the node is not watching.
+        for other in _account_chains()[1:]:
+            elsewhere = str(said.get(f"address_{other.network}", "")).strip()
+            if not elsewhere:
+                continue
+            if _check_address(elsewhere, mainnet=other.is_mainnet):
+                continue
+            state.set_setting(_address_key(pubkey, other), elsewhere)
+            their_key = str(said.get(f"coin_pubkey_{other.network}",
+                                     "")).strip().lower()
+            if their_key:
+                state.set_setting(_coinkey_key(pubkey, other), their_key)
+            try:
+                _watch(elsewhere, why=f"@{wanted}", chain=other)
+            except Exception:
+                pass                      # watched again when it is used
         # Where the chain was when this account came into existence.
         # Nobody could have written to a key that did not exist, so there
         # is nothing before this point to look at -- and saying so costs
@@ -6168,7 +6249,8 @@ def create_app(state: AppState) -> FastAPI:
             # itself, so it knows the output exists -- making somebody wait
             # a block to claim their own name, for a transaction this
             # machine is holding in its own pool, is a wait for nothing.
-            _note_payment(gift.txid, pubkey, address)
+            _note_payment(gift.txid, pubkey, address,
+                          network=_account_chain().network)
         except faucetlib.FaucetError as refused:
             why_not = str(refused)
         except Exception as exc:
@@ -6233,13 +6315,22 @@ def create_app(state: AppState) -> FastAPI:
         about somebody else.
         """
         account = signed_in(request)
+        chains = [{"network": one.network, "label": one.label,
+                   "version": one.params.pubkeyhash_version,
+                   "mainnet": bool(one.is_mainnet),
+                   "tags": one is _account_chain()}
+                  for one in _account_chains()]
         if account is None:
-            return JSONResponse({"pubkey": None})
+            # Which chains this node runs is not a secret and is needed
+            # BEFORE anybody signs up: the browser derives a key on each
+            # from the same words and hands over both addresses at once.
+            return JSONResponse({"pubkey": None, "chains": chains})
         chain = _account_chain()
         said: dict[str, Any] = {
             "pubkey": account.pubkey, "network": chain.network,
             "version": chain.params.pubkeyhash_version,
             "address": "", "balance": 0, "watching": None, "tag": "",
+            "announced": False,
         }
         mine = state.vault().by_pubkey(account.pubkey) or {}
         said["name"] = mine.get("tag", "")
@@ -6249,7 +6340,7 @@ def create_app(state: AppState) -> FastAPI:
         said["mail_from"] = int(
             state.setting(f"mail_from:{account.pubkey}", 0) or 0)
         said["claiming"] = mine.get("claimed", "")
-        address = str(state.setting(f"address:{account.pubkey}", "") or "")
+        address = _account_address(account.pubkey, chain)
         said["address"] = address
         if address:
             try:
@@ -6261,29 +6352,64 @@ def create_app(state: AppState) -> FastAPI:
                 # back out of a block. Spendable, and shown separately so
                 # the page can say "on its way" rather than "nothing".
                 said["incoming"] = sum(
-                    coin["value"]
-                    for coin in _flights.change_for(account.pubkey))
+                    coin["value"] for coin in
+                    _flights.change_for(account.pubkey, chain.network))
                 said["tag"] = index.tag_of(address) or ""
+                with state.store() as store:
+                    said["announced"] = store.key_for(address) is not None
             except Exception:
                 pass                       # a node still catching up says 0
+
+        # Every chain this account can hold coins on, the tag chain first
+        # and named the same way whichever it is. One set of words, a key
+        # on each: what differs is the version byte, the index that is
+        # read, and whether the coins are worth anything.
+        said["chains"] = []
+        for one in _account_chains():
+            here = _account_address(account.pubkey, one)
+            row = {"network": one.network, "label": one.label,
+                   "version": one.params.pubkeyhash_version,
+                   "mainnet": bool(one.is_mainnet),
+                   "address": here, "balance": 0, "incoming": 0,
+                   "watching": None, "tags": one.network == chain.network}
+            if here:
+                try:
+                    index = state.token_index(one)
+                    with contextlib.closing(index.open()) as db:
+                        row["balance"] = utxoslib.balance(db, here)
+                        row["watching"] = utxoslib.since(db, here)
+                    row["incoming"] = sum(
+                        coin["value"] for coin in
+                        _flights.change_for(account.pubkey, one.network))
+                except Exception:
+                    pass                   # a node still catching up says 0
+            said["chains"].append(row)
         return JSONResponse(said)
 
     @app.get("/me", response_class=HTMLResponse)
     def my_arcade(request: Request):
-        """An account's own arcade: its coins, its name, its feed.
+        """An account's own Overview: its name, its address, its chains.
 
-        The operator's pages drive the NODE's wallet and always have. This
-        is the same application seen by somebody whose keys are in their
-        own browser -- so it is a different page rather than the same page
-        with a different balance in it, because almost nothing on the
-        operator's version would be true.
+        The operator's Overview is a control panel for the NODE -- update
+        settings, auto-sell, a scan button -- because the node is a single
+        machine with one operator. An account has none of that to control:
+        it holds no automation running on its behalf (accepting an offer
+        automatically would mean a key on this server that could spend
+        without asking, which is exactly what an account does not have),
+        so this page is the identity half of Overview and nothing else --
+        who you are, how to be reached, and where the rest of the
+        application lives. Coins are the Wallet page's; messages are the
+        Messages page's.
         """
         account = signed_in(request)
         if account is None:
             return RedirectResponse("/join", status_code=303)
         chain = _account_chain()
+        register = state.accounts()
         return render(request, "me.html", chain=chain,
-                      node=chain.status(), when=_when)
+                      node=chain.status(), when=_when,
+                      messaging=messaging_status(), ledger=ledger_status(),
+                      seats_free=register.free(), seats_total=register.seats)
 
     @app.get("/me/messages", response_class=HTMLResponse)
     def my_messages(request: Request):
@@ -6321,6 +6447,312 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             pass
         return JSONResponse({"matches": out})
+
+    @app.get("/account/nfts")
+    def account_nfts(request: Request):
+        """What this account holds, on every chain it has an address on.
+
+        The same index the wallet's own NFT tab reads, asked about a
+        different address. Ownership is the chain's answer and not this
+        node's opinion of it: an inscription moves when its transfer is in
+        a block, and until then it is still where it was.
+        """
+        account = _signed_in_account(request)
+        out: list[dict[str, Any]] = []
+        for chain in _account_chains():
+            address = _account_address(account.pubkey, chain)
+            if not address:
+                continue
+            try:
+                index = state.token_index(chain)
+                held = index.inscriptions(owner=address, limit=200)
+                listed = _nft_listings(index, chain)
+            except Exception:
+                continue           # a chain this node has no index for
+            out.append({
+                "network": chain.network, "label": chain.label,
+                "mainnet": bool(chain.is_mainnet), "address": address,
+                "pieces": [{
+                    "txid": row["txid"], "number": row["number"],
+                    "content_type": row["content_type"],
+                    "content_len": row["content_len"],
+                    "block_height": row["block_height"],
+                    "collection": row.get("collection") or "",
+                    "edition": row.get("edition"),
+                    "creator": row["creator"],
+                    "sale": listed.get(row["txid"]),
+                } for row in held],
+            })
+        return JSONResponse({"chains": out})
+
+    @app.post("/account/nft/send")
+    def account_nft_send(request: Request, payload: Any = Body(None)):
+        """Offer to hand one inscription to somebody. Nothing is broadcast.
+
+        A transfer is an arcade payload plus a REFERENCE output: a dust
+        payment to the recipient, which is how the engine reads who the
+        piece went to (`tx.determine_reference`). The change goes back to
+        the sender, as it must -- a Class B payload's obfuscation is seeded
+        from the sender, so change that wandered elsewhere would make the
+        payload unreadable by everybody.
+
+        Two steps, and for a stronger reason than a coin send: this one
+        cannot be undone by sending it back unless the person on the other
+        end agrees to.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        try:
+            index = state.token_index(chain)
+            row = index.inscription(contentlib._key(str(said.get("piece", ""))))
+            if row is None:
+                raise ValueError("no such inscription on this node")
+            if row["owner"] != address:
+                raise ValueError("that piece is not this account's to send")
+            to = str(said.get("to", "")).strip()
+            if taglib.looks_like_a_tag(to):
+                to = _where_to_pay(taglib.normalise(to), chain)
+            complaint = _check_address(to, mainnet=chain.is_mainnet)
+            if complaint:
+                raise ValueError(complaint)
+            if to == address:
+                raise ValueError("that is this account's own address")
+            body = inscriptionlib.Transfer(
+                txid=bytes.fromhex(row["txid"])).encode()
+            outputs = _class_c_or_b(chain, address, body,
+                                    _coin_pubkey(account.pubkey, chain))
+            # The recipient's dust, last: the reference rule skips the
+            # first output back to the sender as change and takes the last
+            # of the rest, so this is the one it lands on either way.
+            outputs.append((sendermod.OUTPUT_VALUE, txbuild.p2pkh_script(to)))
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address, outputs,
+                    rate=fees.MIN_FEE_PER_KB,
+                    what=f"send inscription #{row['number']} to {to}",
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+        except (taglib.TagError, fundinglib.FundingError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned,
+                            unsigned.what)
+        return JSONResponse({"offer": offer.id, "to": to,
+                             "number": row["number"], "chain": chain.network,
+                             **unsigned.as_json()})
+
+    @app.post("/account/nft/sell")
+    def account_nft_sell(request: Request, payload: Any = Body(None)):
+        """Offer to put a price on a piece, or to take the price off.
+
+        An ask is a standing, public instruction and not an escrow: the
+        piece stays where it is and the ask is honoured only while its
+        owner still holds it, which is why the engine refuses one from
+        anybody but the owner (D-037). So there is no reference output and
+        nothing moves -- what goes on the chain is the price.
+
+        Taking it off is the same payload with nothing in the take leg.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        try:
+            index = state.token_index(chain)
+            row = index.inscription(contentlib._key(str(said.get("piece", ""))))
+            if row is None:
+                raise ValueError("no such inscription on this node")
+            if row["owner"] != address:
+                raise ValueError(
+                    "only whoever holds a piece can price it, and this one "
+                    f"is held by {row['owner']}")
+            if said.get("unlist"):
+                take = inscriptionlib.Leg(inscriptionlib.LEG_NONE)
+                what = f"take the price off inscription #{row['number']}"
+            else:
+                take = swaplib.leg_of(
+                    mintpadlib.take_of(
+                        str(said.get("kind", "coins")),
+                        str(said.get("amount", "")),
+                        int(said["property_id"]) if said.get("property_id")
+                        else None),
+                    index)
+                what = f"price inscription #{row['number']}"
+            body = inscriptionlib.Ask(txid=bytes.fromhex(row["txid"]),
+                                      take=take).encode()
+            outputs = _class_c_or_b(chain, address, body,
+                                    _coin_pubkey(account.pubkey, chain))
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address, outputs,
+                    rate=fees.MIN_FEE_PER_KB, what=what,
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+        except (tokenlib.TokenError, fundinglib.FundingError, AmountError,
+                ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned, what)
+        return JSONResponse({"offer": offer.id, "what": what,
+                             "number": row["number"], "chain": chain.network,
+                             **unsigned.as_json()})
+
+    @app.get("/account/tokens")
+    def account_tokens(request: Request):
+        """What this account holds in tokens, on every chain it has an
+        address on -- the same question `index.balances()` answers for
+        the node's own wallet, asked about a different address."""
+        account = _signed_in_account(request)
+        out: list[dict[str, Any]] = []
+        for chain in _account_chains():
+            address = _account_address(account.pubkey, chain)
+            if not address:
+                continue
+            try:
+                index = state.token_index(chain)
+                held = index.balances([address])
+            except Exception:
+                continue
+            out.append({
+                "network": chain.network, "label": chain.label,
+                "mainnet": bool(chain.is_mainnet), "address": address,
+                "tokens": [{
+                    "property_id": row["property_id"], "name": row["name"],
+                    "issuer": row["issuer"], "divisible": row["divisible"],
+                    "balance": row["balance"], "display": row["display"],
+                } for row in held],
+            })
+        return JSONResponse({"chains": out})
+
+    @app.post("/account/token/send")
+    def account_token_send(request: Request, payload: Any = Body(None)):
+        """Offer to send a token. Nothing is broadcast here.
+
+        A genuine Omni Simple Send (type 0), built the way `TokenSender`
+        builds one -- NOT wrapped in AnyData, because it is not an arcade
+        payload piggybacking on the chain, it IS the transaction the token
+        engine reads a balance change out of. The recipient's dust output
+        is what the engine's reference rule (`tx.determine_reference`)
+        resolves the payment to; the change goes back to the sender, which
+        a Class B payload's obfuscation requires either way.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        try:
+            index = state.token_index(chain)
+            property_id = int(said.get("property_id", 0))
+            prop = index.property(property_id)
+            if prop is None:
+                raise tokenlib.TokenError(f"there is no token {property_id}.")
+            to = str(said.get("to", "")).strip()
+            if taglib.looks_like_a_tag(to):
+                to = _where_to_pay(taglib.normalise(to), chain)
+            complaint = _check_address(to, mainnet=chain.is_mainnet)
+            if complaint:
+                raise ValueError(complaint)
+            if to == address:
+                raise ValueError("that is this account's own address")
+            amount = parse_amount(str(said.get("amount", "")),
+                                       prop["divisible"])
+            held = index.balance(address, property_id)
+            if amount > held:
+                raise tokenlib.TokenError(
+                    f"only {format_amount(held, prop['divisible'])} "
+                    f"of {prop['name']} is here to send.")
+            body = tokenlib.send_payload(property_id, amount)
+            outputs = _class_c_or_b(chain, address, body,
+                                    _coin_pubkey(account.pubkey, chain),
+                                    wrap=False)
+            # Last, so the reference rule finds it: it skips the first
+            # output back to the sender as change and takes the last of
+            # the rest, which is exactly the shape a Class B or Class C
+            # payload plus this one output produces.
+            outputs.append((sendermod.OUTPUT_VALUE, txbuild.p2pkh_script(to)))
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address, outputs,
+                    rate=fees.MIN_FEE_PER_KB,
+                    what=f"send {format_amount(amount, prop['divisible'])} "
+                         f"{prop['name']} to {to}",
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+        except (taglib.TagError, tokenlib.TokenError, fundinglib.FundingError,
+                AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned,
+                            unsigned.what)
+        return JSONResponse({"offer": offer.id, "to": to,
+                             "property_id": property_id, "name": prop["name"],
+                             "chain": chain.network, **unsigned.as_json()})
+
+    @app.get("/me/backup", response_class=HTMLResponse)
+    def my_backup(request: Request):
+        """Backup, for an account: there is no wallet.dat, so there is no
+        file to show. What there is instead is said plainly -- the twelve
+        words are the whole account, and what lives only in this browser."""
+        account = signed_in(request)
+        if account is None:
+            return RedirectResponse("/join", status_code=303)
+        mine = state.vault().by_pubkey(account.pubkey) or {}
+        return render(request, "my_backup.html", chain=_account_chain(),
+                      my_name=mine.get("tag", ""))
+
+    @app.get("/me/wallet", response_class=HTMLResponse)
+    def my_wallet(request: Request):
+        """An account's Wallet: coins, one per chain, and the send form.
+
+        The Coins tab of the three the operator's Wallet has. Tokens is
+        `/me/wallet/tokens`; NFTs is `/me/nfts`, built first because
+        the operator asked for it first -- the tab bar links all three.
+        """
+        if signed_in(request) is None:
+            return RedirectResponse("/join", status_code=303)
+        return render(request, "my_wallet.html", chain=_account_chain())
+
+    @app.get("/me/wallet/tokens", response_class=HTMLResponse)
+    def my_wallet_tokens(request: Request):
+        """The Tokens tab: what this account's addresses hold, and a form
+        to send some of it -- read the same way `/account/nfts` reads
+        what an account holds in inscriptions."""
+        if signed_in(request) is None:
+            return RedirectResponse("/join", status_code=303)
+        return render(request, "my_wallet_tokens.html", chain=_account_chain())
+
+    @app.get("/me/nfts", response_class=HTMLResponse)
+    def my_nfts(request: Request):
+        """What an account holds, and the one button that sends one on."""
+        if signed_in(request) is None:
+            return RedirectResponse("/join", status_code=303)
+        return render(request, "my_nfts.html", chain=_account_chain())
 
     @app.get("/account/feed")
     def account_feed(request: Request, before: int | None = None):
@@ -6438,7 +6870,7 @@ def create_app(state: AppState) -> FastAPI:
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         chain = _account_chain()
-        address = str(state.setting(f"address:{account.pubkey}", "") or "")
+        address = _account_address(account.pubkey, chain)
         if not address:
             return JSONResponse({"detail": "this account has no address yet"},
                                 status_code=400)
@@ -6465,13 +6897,14 @@ def create_app(state: AppState) -> FastAPI:
                 unsigned = fundinglib.build(
                     db, chain.params, address, outputs,
                     rate=fees.MIN_FEE_PER_KB, what=f"a message to {to}",
-                    exclude=_flights.spent_by(account.pubkey),
-                    extra=_flights.change_for(account.pubkey))
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
         except (fundinglib.FundingError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         offer = _offers.add(account.pubkey, chain.network, unsigned,
                             unsigned.what)
         return JSONResponse({"offer": offer.id, "bytes": len(sealed),
+                             "chain": chain.network,
                              **unsigned.as_json()})
 
     @app.post("/account/post")
@@ -6487,7 +6920,7 @@ def create_app(state: AppState) -> FastAPI:
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         chain = _account_chain()
-        address = str(state.setting(f"address:{account.pubkey}", "") or "")
+        address = _account_address(account.pubkey, chain)
         if not address:
             return JSONResponse({"detail": "this account has no address yet"},
                                 status_code=400)
@@ -6515,12 +6948,13 @@ def create_app(state: AppState) -> FastAPI:
                     _class_c_or_b(chain, address, plan.payloads[0],
                                   _coin_pubkey(account.pubkey)),
                     rate=fees.MIN_FEE_PER_KB, what="a post",
-                    exclude=_flights.spent_by(account.pubkey),
-                    extra=_flights.change_for(account.pubkey))
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
         except (fundinglib.FundingError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         offer = _offers.add(account.pubkey, chain.network, unsigned, "a post")
-        return JSONResponse({"offer": offer.id, **unsigned.as_json()})
+        return JSONResponse({"offer": offer.id, "chain": chain.network,
+                             **unsigned.as_json()})
 
     @app.post("/account/react")
     def account_react(request: Request, payload: Any = Body(None)):
@@ -6534,7 +6968,7 @@ def create_app(state: AppState) -> FastAPI:
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         chain = _account_chain()
-        address = str(state.setting(f"address:{account.pubkey}", "") or "")
+        address = _account_address(account.pubkey, chain)
         if not address:
             return JSONResponse({"detail": "this account has no address yet"},
                                 status_code=400)
@@ -6573,13 +7007,14 @@ def create_app(state: AppState) -> FastAPI:
                     db, chain.params, address, outputs,
                     rate=fees.MIN_FEE_PER_KB,
                     what=feedlib.NAMES.get(kind, "a reaction"),
-                    exclude=_flights.spent_by(account.pubkey),
-                    extra=_flights.change_for(account.pubkey))
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
         except (fundinglib.FundingError, AmountError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         offer = _offers.add(account.pubkey, chain.network, unsigned,
                             unsigned.what)
         return JSONResponse({"offer": offer.id, "paid": paid,
+                             "chain": chain.network,
                              **unsigned.as_json()})
 
     def _feed_author_address(chain, txid: str) -> str:
@@ -6599,7 +7034,7 @@ def create_app(state: AppState) -> FastAPI:
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         chain = _account_chain()
-        address = str(state.setting(f"address:{account.pubkey}", "") or "")
+        address = _account_address(account.pubkey, chain)
         if not address:
             return JSONResponse({"detail": "this account has no address yet"},
                                 status_code=400)
@@ -6612,8 +7047,21 @@ def create_app(state: AppState) -> FastAPI:
             # the key under the address the account actually hands out
             # rather than under whichever one funded the transaction.
             _, our_hash = b58check_decode(address)
+            # The other chain's address goes in as its hash160, so anybody
+            # who finds this account by name can pay it on either chain
+            # without asking for anything (D-032). Its version byte is the
+            # OTHER chain's and is put back by whoever reads it -- what
+            # travels is twenty bytes with no chain in them.
+            other = b""
+            for one in _account_chains():
+                if one.network == chain.network:
+                    continue
+                elsewhere = _account_address(account.pubkey, one)
+                if elsewhere:
+                    _, other = b58check_decode(elsewhere)
+                    break
             body = envelopelib.build_key_announcement(
-                key, hash160=our_hash, tag=tag)
+                key, hash160=our_hash, tag=tag, other_hash160=other)
             index = state.token_index(chain)
             with contextlib.closing(index.open()) as db:
                 unsigned = fundinglib.build(
@@ -6622,13 +7070,14 @@ def create_app(state: AppState) -> FastAPI:
                                   _coin_pubkey(account.pubkey)),
                     rate=fees.MIN_FEE_PER_KB,
                     what="publish your messaging key",
-                    exclude=_flights.spent_by(account.pubkey),
-                    extra=_flights.change_for(account.pubkey))
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
         except (fundinglib.FundingError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         offer = _offers.add(account.pubkey, chain.network, unsigned,
                             unsigned.what)
-        return JSONResponse({"offer": offer.id, **unsigned.as_json()})
+        return JSONResponse({"offer": offer.id, "chain": chain.network,
+                             **unsigned.as_json()})
 
     @app.post("/account/address")
     def account_address(request: Request, payload: Any = Body(None)):
@@ -6642,20 +7091,26 @@ def create_app(state: AppState) -> FastAPI:
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         address = str(said.get("address", "")).strip()
-        chain = _account_chain()
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
         complaint = _check_address(address, mainnet=chain.is_mainnet)
         if complaint:
             return JSONResponse({"detail": complaint}, status_code=400)
-        state.set_setting(f"address:{account.pubkey}", address)
+        state.set_setting(_address_key(account.pubkey, chain), address)
         coin = str(said.get("coin_pubkey", "")).strip().lower()
         if coin:
-            state.set_setting(f"coinkey:{account.pubkey}", coin)
+            # The coin key is per chain too: a Class B payload puts the
+            # SENDER's key in every output, and the sender on mainnet is a
+            # different key derived from the same words.
+            state.set_setting(_coinkey_key(account.pubkey, chain), coin)
         try:
-            _watch(address, why=f"account {account.pubkey[:12]}")
+            _watch(address, why=f"account {account.pubkey[:12]}", chain=chain)
         except Exception as exc:
             return JSONResponse({"detail": f"the index is not ready: {exc}"},
                                 status_code=503)
-        return JSONResponse({"address": address})
+        return JSONResponse({"address": address, "chain": chain.network})
 
     @app.post("/account/claim")
     def account_claim(request: Request, payload: Any = Body(None)):
@@ -6667,7 +7122,7 @@ def create_app(state: AppState) -> FastAPI:
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         chain = _account_chain()
-        address = str(state.setting(f"address:{account.pubkey}", "") or "")
+        address = _account_address(account.pubkey, chain)
         if not address:
             return JSONResponse(
                 {"detail": "this account has no address yet"}, status_code=400)
@@ -6690,13 +7145,14 @@ def create_app(state: AppState) -> FastAPI:
                 unsigned = fundinglib.build(
                     db, chain.params, address, outputs,
                     rate=fees.MIN_FEE_PER_KB, what=f"claim @{wanted}",
-                    exclude=_flights.spent_by(account.pubkey),
-                    extra=_flights.change_for(account.pubkey))
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
         except (taglib.TagError, fundinglib.FundingError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         offer = _offers.add(account.pubkey, chain.network, unsigned,
                             f"claim @{wanted}")
-        return JSONResponse({"offer": offer.id, **unsigned.as_json()})
+        return JSONResponse({"offer": offer.id, "chain": chain.network,
+                             **unsigned.as_json()})
 
     @app.post("/account/send")
     def account_send(request: Request, payload: Any = Body(None)):
@@ -6709,11 +7165,15 @@ def create_app(state: AppState) -> FastAPI:
         """
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
-        chain = _account_chain()
-        address = str(state.setting(f"address:{account.pubkey}", "") or "")
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
         if not address:
-            return JSONResponse({"detail": "this account has no address yet"},
-                                status_code=400)
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
         try:
             to = str(said.get("to", "")).strip()
             # A @tag is a name for an address, so it is resolved here and
@@ -6721,10 +7181,7 @@ def create_app(state: AppState) -> FastAPI:
             # address their coins are going to before they sign.
             if to.startswith("@") or (to and not _looks_like_an_address(to)):
                 wanted = taglib.validate(to.lstrip("@"))
-                found = state.token_index(chain).address_of(wanted)
-                if not found:
-                    raise ValueError(f"nobody holds @{wanted} on this chain")
-                to = found
+                to = _where_to_pay(wanted, chain)
             complaint = _check_address(to, mainnet=chain.is_mainnet)
             if complaint:
                 raise ValueError(complaint)
@@ -6739,16 +7196,50 @@ def create_app(state: AppState) -> FastAPI:
                     db, chain.params, address,
                     [(amount, txbuild.p2pkh_script(to))],
                     rate=fees.MIN_FEE_PER_KB,
-                    what=f"send {format_amount(amount, True)} to {to}",
-                    exclude=_flights.spent_by(account.pubkey),
-                    extra=_flights.change_for(account.pubkey))
+                    what=(f"send {format_amount(amount, True)} "
+                          f"{chain.label.lower()} to {to}"),
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
         except (taglib.TagError, fundinglib.FundingError, AmountError,
                 ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         offer = _offers.add(account.pubkey, chain.network, unsigned,
                             unsigned.what)
         return JSONResponse({"offer": offer.id, "to": to, "amount": amount,
+                             "chain": chain.network, "label": chain.label,
                              **unsigned.as_json()})
+
+    def _where_to_pay(tag: str, chain) -> str:
+        """The address a @tag points at on the chain being paid.
+
+        Tags are claimed on ONE chain -- the messaging chain, as they
+        always have been -- so a mainnet payment to @robin cannot simply
+        look the tag up: there is no claim there to find. What there is, is
+        the other address the holder PUBLISHED with their key, which is the
+        whole reason that field exists: "anybody who searches for @you can
+        pay you on either chain" (D-032).
+
+        So the tag is resolved where tags live, and the answer is then
+        translated to the chain being paid. A holder who has not published
+        one is not payable there, and this says so rather than paying an
+        address on the wrong chain -- which on a real chain is coins gone.
+        """
+        home = _account_chain()
+        found = state.token_index(home).address_of(tag)
+        if not found:
+            raise ValueError(f"nobody holds @{tag} on this chain")
+        if chain.network == home.network:
+            return found
+        with state.store() as store:
+            said = store.key_for(found)
+        other = str((said["other_address"] if said is not None
+                     and "other_address" in said.keys() else "") or "")
+        if not other:
+            raise ValueError(
+                f"@{tag} has not published a {chain.label.lower()} address, "
+                f"so there is nowhere on {chain.label.lower()} to pay them. "
+                f"Ask them for an address.")
+        return other
 
     def _looks_like_an_address(text: str) -> bool:
         """Address or name? Decided by shape, and only to choose which
@@ -6764,56 +7255,84 @@ def create_app(state: AppState) -> FastAPI:
         """Take the signatures, check what they make, and broadcast it."""
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
+        # This account's own lane (docs/multi-user.md §3). Claimed BEFORE the
+        # offer is taken, not after: an offer is single-use, so a refusal that
+        # consumed one would leave somebody building the whole transaction
+        # again just to send it. It covers the broadcast and the note that
+        # follows, not the build that came before -- a lane held across two
+        # requests could be wedged shut by a tab somebody closed, and a wallet
+        # that cannot spend is the worse of those two failures.
+        lane = f"account {account.pubkey}"
+        if not state.begin_send(lane):
+            return JSONResponse(
+                {"detail": "one of your transactions is still going. Wait for "
+                           "it to be broadcast and try again -- signing two at "
+                           "once from one wallet spends the same coin twice."},
+                status_code=409)
         try:
-            offer = _offers.take(str(said.get("offer", "")), account.pubkey)
-            signatures = [str(x) for x in (said.get("signatures") or [])]
-            pubkey = bytes.fromhex(str(said.get("pubkey", "")))
-            signed = fundinglib.assemble(offer.unsigned, signatures, pubkey)
-        except (accountlib.OfferError, fundinglib.FundingError, ValueError) as exc:
-            return JSONResponse({"detail": str(exc)}, status_code=400)
-
-        chain = state.chain_named(offer.network)
-        try:
-            with chain.rpc() as rpc:
-                # What the node offered is what the node checks. The
-                # decoded transaction has to spend the coins it chose and
-                # pay the outputs it built -- a browser cannot talk it into
-                # broadcasting anything else.
-                decoded = rpc.call("decoderawtransaction", signed)
-                _same_as_offered(decoded, offer.unsigned)
-                txid = rpc.call("sendrawtransaction", signed)
-        except ValueError as exc:
-            return JSONResponse({"detail": str(exc)}, status_code=400)
-        except Exception as exc:
-            return JSONResponse({"detail": f"the node refused it: {exc}"},
-                                status_code=502)
-        # Remembered until the index reads it, so the next transaction
-        # this account builds does not offer the coin this one just spent
-        # or miss the change it just made.
-        _flights.add(account.pubkey, txid, offer.unsigned,
-                     str(state.setting(f"address:{account.pubkey}", "") or ""))
-
-        # A claim is worth remembering against the account: the page can
-        # then say "on its way" rather than "no name" for the minutes
-        # between the broadcast and the block.
-        if offer.what.startswith("claim @"):
             try:
-                state.vault().note_claim(offer.what[len("claim @"):], txid)
-            except Exception:
-                pass                       # a note is not worth failing on
-        state.bump_generation()
-        return JSONResponse({"txid": txid, "what": offer.what})
+                offer = _offers.take(str(said.get("offer", "")), account.pubkey)
+                signatures = [str(x) for x in (said.get("signatures") or [])]
+                pubkey = bytes.fromhex(str(said.get("pubkey", "")))
+                signed = fundinglib.assemble(offer.unsigned, signatures, pubkey)
+            except (accountlib.OfferError, fundinglib.FundingError,
+                    ValueError) as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=400)
+
+            chain = state.chain_named(offer.network)
+            try:
+                with chain.rpc() as rpc:
+                    # What the node offered is what the node checks. The
+                    # decoded transaction has to spend the coins it chose and
+                    # pay the outputs it built -- a browser cannot talk it into
+                    # broadcasting anything else.
+                    decoded = rpc.call("decoderawtransaction", signed)
+                    _same_as_offered(decoded, offer.unsigned)
+                    txid = rpc.call("sendrawtransaction", signed)
+            except ValueError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=400)
+            except Exception as exc:
+                return JSONResponse({"detail": f"the node refused it: {exc}"},
+                                    status_code=502)
+            # Remembered until the index reads it, so the next transaction
+            # this account builds does not offer the coin this one just spent
+            # or miss the change it just made.
+            _flights.add(account.pubkey, txid, offer.unsigned,
+                         _account_address(account.pubkey, chain),
+                         network=chain.network)
+
+            # A claim is worth remembering against the account: the page can
+            # then say "on its way" rather than "no name" for the minutes
+            # between the broadcast and the block.
+            if offer.what.startswith("claim @"):
+                try:
+                    state.vault().note_claim(
+                        offer.what[len("claim @"):], txid)
+                except Exception:
+                    pass                   # a note is not worth failing on
+            state.bump_generation()
+            return JSONResponse({"txid": txid, "what": offer.what})
+        finally:
+            state.end_send(lane)
 
     def _class_c_or_b(chain, address: str, raw: bytes,
-                      coin_pubkey: bytes = b""):
-        """The outputs that carry an arcade payload, in whichever class fits.
+                      coin_pubkey: bytes = b"", wrap: bool = True):
+        """The outputs that carry a payload, in whichever class fits.
 
-        **It wraps in `AnyData` itself**, and that is the point of it being
-        one function. Raw, the `arcm` magic is read by the token engine as
-        an Omni header -- version "ar", type "cm" = 25453 -- and an unknown
-        message type does not get ignored, it STOPS the ledger index and
-        says balances can no longer be trusted. Three callers wrapped and
-        two did not; a test caught it, and the fix is that no caller can.
+        **It wraps in `AnyData` by default**, and that is the point of it
+        being one function. Raw, the `arcm` magic is read by the token
+        engine as an Omni header -- version "ar", type "cm" = 25453 -- and
+        an unknown message type does not get ignored, it STOPS the ledger
+        index and says balances can no longer be trusted. Three callers
+        wrapped and two did not; a test caught it, and the fix is that no
+        caller can.
+
+        `wrap=False` is for a payload that is ALREADY a genuine Omni
+        message -- a token send, built the same way `TokenSender` builds
+        one. Wrapping that in AnyData too would turn a real type-0 Simple
+        Send into an opaque type-200 blob the token engine cannot credit
+        to anybody; it would be paid for and invisible, the same failure
+        `inscribe.py`'s own docstring records for inscriptions.
 
         Class C where it fits: one OP_RETURN, no dust. Class B otherwise,
         which is a marker output plus obfuscated bare-multisig outputs --
@@ -6831,7 +7350,7 @@ def create_app(state: AppState) -> FastAPI:
         )
         from ..txbuild import multisig_script, op_return_script, p2pkh_script
 
-        payload = P.AnyData(data=raw).encode()
+        payload = P.AnyData(data=raw).encode() if wrap else raw
         if len(payload) <= max_class_c_payload():
             return [(0, op_return_script(encode_class_c(payload)))]
         if len(payload) > MAX_CLASS_B_PAYLOAD:
@@ -6850,9 +7369,10 @@ def create_app(state: AppState) -> FastAPI:
                             multisig_script(list(group.keys), group.required)))
         return outputs
 
-    def _coin_pubkey(pubkey: str) -> bytes:
-        """The account's own coin key, as the browser reported it."""
-        said = str(state.setting(f"coinkey:{pubkey}", "") or "")
+    def _coin_pubkey(pubkey: str, chain=None) -> bytes:
+        """The account's own coin key on a chain, as the browser said."""
+        said = str(state.setting(
+            _coinkey_key(pubkey, chain or _account_chain()), "") or "")
         try:
             return bytes.fromhex(said)
         except ValueError:
