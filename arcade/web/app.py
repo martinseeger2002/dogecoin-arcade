@@ -3694,7 +3694,16 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/inscriptions/collection", response_class=HTMLResponse)
     def collection_wizard(request: Request):
-        return render(request, "collection_wizard.html", **_collection_page_data())
+        # The held context goes in BEFORE the page data is built, not only after
+        # it, because the mintpad's HTML box is generated from the build, and the
+        # build only ever arrives with the redirect now that the POSTs answer
+        # with one. Asked to build the page without it, this looked for a build
+        # that was not there yet and handed the editor an empty box -- which the
+        # page's own JavaScript then treats as "the standard page to put back".
+        # (2026-09-22, found from a test of what the box holds.)
+        return render(request, "collection_wizard.html",
+                      **_collection_page_data(
+                          **_picked_up(request.query_params.get("held", ""))))
 
     @app.post("/inscriptions/collection/review", response_class=HTMLResponse)
     def collection_review(request: Request, csrf_token: str = Form(""),

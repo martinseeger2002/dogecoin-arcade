@@ -292,17 +292,22 @@ def test_a_set_already_on_the_chain_cannot_be_inscribed_again(client, tmp_path,
 
     # The node answers, so the refusal is the wizard's own and not the
     # absence of a node standing in for it.
-    monkeypatch.setattr(type(state.token_chain), "rpc",
-                        lambda self: contextlib.nullcontext(object()), raising=False)
+    for opened in (state.ledger, state.messaging):
+        monkeypatch.setattr(opened, "rpc",
+                            lambda: contextlib.nullcontext(object()))
     monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
 
     response = app.post("/inscriptions/collection/start",
                         data={"csrf_token": state.csrf_token, "folder": str(build),
                               "fromaddress": "nMe"}, follow_redirects=False)
-    # The answer lands on the page it was asked from, not two pages back.
-    assert response.status_code == 200
-    assert "already on this chain from this address" in response.text
-    assert "5 pieces" in response.text
+    # The answer lands on the page it was asked from, not two pages back --
+    # which, since the POSTs stopped answering with a page, means a redirect
+    # and the refusal held for the GET that follows it. (2026-09-22: this still
+    # asserted the older direct render, so it read the 303 as a start.)
+    assert response.status_code == 303
+    page = app.get(response.headers["location"]).text
+    assert "already on this chain from this address" in page
+    assert "5 pieces" in page
 
     jobs, _ = state.collections
     assert jobs.list() == [], "and nothing was written down"
@@ -324,7 +329,7 @@ def test_a_run_already_under_way_is_not_started_twice(client, tmp_path):
                         data={"csrf_token": state.csrf_token,
                               "folder": str(build.folder), "fromaddress": "nMe"},
                         follow_redirects=False)
-    assert "is already being inscribed" in response.text
+    assert "is already being inscribed" in app.get(response.headers["location"]).text
     assert len(jobs.list()) == 1
 
     # Somebody else's set of the same name is their own, and is not in the way.
@@ -332,7 +337,7 @@ def test_a_run_already_under_way_is_not_started_twice(client, tmp_path):
                         data={"csrf_token": state.csrf_token,
                               "folder": str(build.folder), "fromaddress": "nSomebodyElse"},
                         follow_redirects=False)
-    assert "is already being inscribed" not in response.text
+    assert "is already being inscribed" not in app.get(response.headers["location"]).text
 
 
 def test_a_half_finished_set_is_finished_rather_than_paid_for_twice(
@@ -352,11 +357,11 @@ def test_a_half_finished_set_is_finished_rather_than_paid_for_twice(
     # Far enough for the route to write the job down: the address is the
     # creator's, and the runner is never started here.
     chain = state.token_chain
-    monkeypatch.setattr(type(chain), "rpc",
-                        lambda self: contextlib.nullcontext(object()), raising=False)
+    for opened in (state.ledger, state.messaging):
+        monkeypatch.setattr(opened, "rpc", lambda: contextlib.nullcontext(object()))
     monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
     jobs, runner = state.collections
-    monkeypatch.setattr(type(runner), "start", lambda self, job_id: True)
+    monkeypatch.setattr(runner, "start", lambda job_id: True)
 
     response = app.post("/inscriptions/collection/start",
                         data={"csrf_token": state.csrf_token,
@@ -393,10 +398,10 @@ def test_a_run_from_an_older_floor_does_not_block_a_new_one(client, tmp_path,
                       floor=(floor or 0) - 1000)
     assert jobs.get(old)["status"] != "failed", "and it is not a failed run"
 
-    monkeypatch.setattr(type(chain), "rpc",
-                        lambda self: contextlib.nullcontext(object()), raising=False)
+    for opened in (state.ledger, state.messaging):
+        monkeypatch.setattr(opened, "rpc", lambda: contextlib.nullcontext(object()))
     monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
-    monkeypatch.setattr(type(runner), "start", lambda self, job_id: True)
+    monkeypatch.setattr(runner, "start", lambda job_id: True)
 
     response = app.post("/inscriptions/collection/start",
                         data={"csrf_token": state.csrf_token,
@@ -427,11 +432,11 @@ def test_a_run_from_this_floor_still_blocks(client, tmp_path):
     jobs.create(chain.network, "nMe", build, name="Doge Punks",
                 floor=chain.params.activation_height)
 
-    page = app.post("/inscriptions/collection/start",
-                    data={"csrf_token": state.csrf_token,
-                          "folder": str(build.folder), "fromaddress": "nMe"},
-                    follow_redirects=False).text
-    assert "is already being inscribed" in page
+    response = app.post("/inscriptions/collection/start",
+                        data={"csrf_token": state.csrf_token,
+                              "folder": str(build.folder), "fromaddress": "nMe"},
+                        follow_redirects=False)
+    assert "is already being inscribed" in app.get(response.headers["location"]).text
     assert len(jobs.list()) == 1
 
 
@@ -451,10 +456,11 @@ def test_a_finished_run_does_not_say_go_and_resume_it(client, tmp_path):
                          floor=chain.params.activation_height)
     jobs.set_status(job_id, "done", note="every item is on its way")
 
-    page = app.post("/inscriptions/collection/start",
-                    data={"csrf_token": state.csrf_token,
-                          "folder": str(build.folder), "fromaddress": "nMe"},
-                    follow_redirects=False).text
+    response = app.post("/inscriptions/collection/start",
+                        data={"csrf_token": state.csrf_token,
+                              "folder": str(build.folder), "fromaddress": "nMe"},
+                        follow_redirects=False)
+    page = app.get(response.headers["location"]).text
     assert "resume it" not in page, "there is nothing to resume"
     assert "already inscribed Doge Punks on this chain" in page
     assert "None of it is indexed yet" in page, \
@@ -462,11 +468,12 @@ def test_a_finished_run_does_not_say_go_and_resume_it(client, tmp_path):
 
     # And once the chain shows the set, the chain is what answers.
     index_with_a_collection(state.home, count=5)
-    page = app.post("/inscriptions/collection/start",
-                    data={"csrf_token": state.csrf_token,
-                          "folder": str(hashlips(tmp_path / "again")),
-                          "fromaddress": "nMe"}, follow_redirects=False).text
-    assert "already on this chain from this address" in page
+    response = app.post("/inscriptions/collection/start",
+                        data={"csrf_token": state.csrf_token,
+                              "folder": str(hashlips(tmp_path / "again")),
+                              "fromaddress": "nMe"}, follow_redirects=False)
+    assert "already on this chain from this address" in app.get(
+        response.headers["location"]).text
 
 
 def test_the_review_says_what_number_one_will_say_about_the_set(client, tmp_path,
@@ -494,8 +501,9 @@ def test_the_review_says_what_number_one_will_say_about_the_set(client, tmp_path
                               "description": "five punks"}
     listing.write_text(jsonlib.dumps(items))
 
-    monkeypatch.setattr(type(state.token_chain), "rpc",
-                        lambda self: contextlib.nullcontext(object()), raising=False)
+    for opened in (state.ledger, state.messaging):
+        monkeypatch.setattr(opened, "rpc",
+                            lambda: contextlib.nullcontext(object()))
     monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
 
     page = app.post("/inscriptions/collection/review",
@@ -525,8 +533,9 @@ def test_a_set_entirely_on_the_chain_says_so_instead_of_crashing(client, tmp_pat
     index_with_a_collection(state.home, count=5)      # Doge Punks #1..#5 from nMe
     build = hashlips(tmp_path, count=5)               # the same five
 
-    monkeypatch.setattr(type(state.token_chain), "rpc",
-                        lambda self: contextlib.nullcontext(object()), raising=False)
+    for opened in (state.ledger, state.messaging):
+        monkeypatch.setattr(opened, "rpc",
+                            lambda: contextlib.nullcontext(object()))
     monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
 
     page = app.post("/inscriptions/collection/review",
@@ -554,15 +563,18 @@ def test_a_mintpad_with_no_price_keeps_the_review(client, tmp_path, monkeypatch)
 
     app, state = client
     build = hashlips(tmp_path, count=2)
-    monkeypatch.setattr(type(state.token_chain), "rpc",
-                        lambda self: contextlib.nullcontext(object()), raising=False)
+    for opened in (state.ledger, state.messaging):
+        monkeypatch.setattr(opened, "rpc",
+                            lambda: contextlib.nullcontext(object()))
     monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
 
-    page = app.post("/inscriptions/collection/start",
-                    data={"csrf_token": state.csrf_token, "folder": str(build),
-                          "fromaddress": "nMe", "launchpad": "yes",
-                          "pad_amount": "", "pad_kind": "coins"},
-                    follow_redirects=False)
+    response = app.post("/inscriptions/collection/start",
+                        data={"csrf_token": state.csrf_token, "folder": str(build),
+                              "fromaddress": "nMe", "launchpad": "yes",
+                              "pad_amount": "", "pad_kind": "coins"},
+                        follow_redirects=False)
+    assert response.status_code == 303
+    page = app.get(response.headers["location"])
     assert page.status_code == 200, "the review, not a redirect to the top"
     assert "say what one costs" in page.text
     assert "Doge Punks" in page.text and "Inscribe" in page.text, \
@@ -578,8 +590,9 @@ def test_the_price_is_required_while_the_pad_is_on(client, tmp_path, monkeypatch
     from arcade.web import app as webapp
 
     app, state = client
-    monkeypatch.setattr(type(state.token_chain), "rpc",
-                        lambda self: contextlib.nullcontext(object()), raising=False)
+    for opened in (state.ledger, state.messaging):
+        monkeypatch.setattr(opened, "rpc",
+                            lambda: contextlib.nullcontext(object()))
     monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
     page = app.post("/inscriptions/collection/review",
                     data={"csrf_token": state.csrf_token,
@@ -602,8 +615,9 @@ def _review(app, state, folder, monkeypatch):
     import contextlib
 
     from arcade.web import app as webapp
-    monkeypatch.setattr(type(state.token_chain), "rpc",
-                        lambda self: contextlib.nullcontext(object()), raising=False)
+    for opened in (state.ledger, state.messaging):
+        monkeypatch.setattr(opened, "rpc",
+                            lambda: contextlib.nullcontext(object()))
     monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
     return app.post("/inscriptions/collection/review",
                     data={"csrf_token": state.csrf_token, "folder": str(folder),
@@ -627,8 +641,9 @@ def test_a_run_with_no_mintpad_writes_no_pad(client, tmp_path, monkeypatch):
     from arcade.web import app as webapp
     app, state = client
     build = hashlips(tmp_path, count=2)
-    monkeypatch.setattr(type(state.token_chain), "rpc",
-                        lambda self: contextlib.nullcontext(object()), raising=False)
+    for opened in (state.ledger, state.messaging):
+        monkeypatch.setattr(opened, "rpc",
+                            lambda: contextlib.nullcontext(object()))
     monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
     app.post("/inscriptions/collection/start",
              data={"csrf_token": state.csrf_token, "folder": str(build),
@@ -678,8 +693,9 @@ def test_an_unedited_page_is_not_carried_on_the_job(client, tmp_path, monkeypatc
     # A pad carries the node's messaging identity in its shop JSON, so one
     # has to exist before a pad can be asked for at all.
     state.identity = Identity.generate()
-    monkeypatch.setattr(type(state.token_chain), "rpc",
-                        lambda self: contextlib.nullcontext(object()), raising=False)
+    for opened in (state.ledger, state.messaging):
+        monkeypatch.setattr(opened, "rpc",
+                            lambda: contextlib.nullcontext(object()))
     monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
 
     from arcade import mintpad as M
@@ -704,8 +720,9 @@ def test_an_edited_page_is_carried_on_the_job(client, tmp_path, monkeypatch):
     app, state = client
     build = hashlips(tmp_path, count=2)
     state.identity = Identity.generate()
-    monkeypatch.setattr(type(state.token_chain), "rpc",
-                        lambda self: contextlib.nullcontext(object()), raising=False)
+    for opened in (state.ledger, state.messaging):
+        monkeypatch.setattr(opened, "rpc",
+                            lambda: contextlib.nullcontext(object()))
     monkeypatch.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
 
     mine = "<!doctype html><h1>mine</h1><script>const CREATOR='nMe';</script>"
