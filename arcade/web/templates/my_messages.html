@@ -88,7 +88,8 @@
       <p class="muted composer-note" style="padding-bottom:2px">
         <strong>Words only, for now.</strong> Sending a file takes dozens of
         linked transactions, and an account cannot build those yet &mdash;
-        the wallet's own Messages page can.</p>
+        the wallet's own Messages page can. What somebody sends <em>you</em>
+        arrives whole, pictures included, and is shown here.</p>
       <p class="muted composer-note" style="padding-bottom:2px">
         Your own messages are kept in this browser only: each one is encrypted
         to the person you sent it to, so it cannot be read back off the chain
@@ -143,6 +144,68 @@ function when(seconds) {
 const nameOf = (thread) => thread.tag ? "@" + thread.tag
   : (thread.address || "Unknown sender");
 
+/* An attachment is somebody else's bytes opened inside the origin that
+   holds a wallet, so it is shown for what its OWN leading bytes are and
+   never for the name or the type that arrived with them -- the same rule
+   `arcade/media.py` applies on the node's own page, applied here because
+   this page is the same page with the node left out. A file that is not a
+   picture or a sound still arrives whole, as a file to save.
+
+   The URLs are revoked between draws rather than left behind: a long
+   conversation redrawn a dozen times would otherwise hold a dozen copies
+   of every picture in it. */
+let urls = [];
+function forgetUrls() {
+  for (const url of urls) URL.revokeObjectURL(url);
+  urls = [];
+}
+
+function fileBox(file) {
+  const shown = file.media || null;
+  const url = URL.createObjectURL(
+    new Blob([file.bytes], {type: shown ? shown.mime : "application/octet-stream"}));
+  urls.push(url);
+
+  const box = document.createElement("div");
+  if (shown && shown.kind === "image") {
+    const img = document.createElement("img");
+    img.className = "media";
+    img.alt = file.name;
+    img.loading = "lazy";
+    img.src = url;
+    img.onclick = () => window.arcadeOpenImage(url, file.name, url);
+    box.appendChild(img);
+  } else if (shown && (shown.kind === "audio" || shown.kind === "video")) {
+    const player = document.createElement(shown.kind === "audio" ? "audio" : "video");
+    player.className = "media";
+    player.controls = true;
+    player.preload = shown.kind === "audio" ? "none" : "metadata";
+    player.src = url;
+    box.appendChild(player);
+  }
+
+  const link = document.createElement("a");
+  link.className = "file";
+  link.href = url;
+  link.download = file.name;
+  const icon = document.createElement("span");
+  icon.className = "file-icon";
+  icon.textContent = {image: "\u{1F5BC}", audio: "\u{1F3B5}",
+                      video: "\u{1F3AC}"}[shown ? shown.kind : ""] || "\u{1F4C4}";
+  const meta = document.createElement("span");
+  meta.className = "file-meta";
+  const name = document.createElement("strong");
+  name.textContent = file.name;
+  const size = document.createElement("span");
+  size.className = "muted";
+  size.textContent = `${shown ? shown.label : "file"} · `
+                   + window.arcadeSize(file.size) + " · save";
+  meta.append(name, size);
+  link.append(icon, meta);
+  box.appendChild(link);
+  return box;
+}
+
 async function drawThreads() {
   const all = await mail.threads();
   $("threads").innerHTML = "";
@@ -191,6 +254,20 @@ function bubble(letter) {
   // textContent, always: a message is somebody else's words, and a page
   // that renders them as markup is a page that runs them.
   body.textContent = mail.text(letter);
+  const parts = [body];
+  const file = mail.attachment(letter);
+  if (file) parts.push(fileBox(file));
+  // What the sender volunteered about themselves, which they may not have:
+  // a first message can carry a name and addresses so this page can say who
+  // is writing, instead of a string of base58. It is their claim, not a fact.
+  const said = mail.profile(letter);
+  if (said) {
+    const who = document.createElement("div");
+    who.className = "muted";
+    who.textContent = [said.name, said.testnet_address, said.mainnet_address]
+      .filter(Boolean).join(" · ");
+    if (who.textContent) parts.push(who);
+  }
   const stamp = document.createElement("div");
   stamp.className = "stamp";
   if (letter.mine && !letter.height) {
@@ -211,7 +288,8 @@ function bubble(letter) {
     pool.textContent = "in the pool, not in a block yet";
     stamp.appendChild(pool);
   }
-  box.append(body, stamp);
+  parts.push(stamp);
+  for (const part of parts) box.appendChild(part);
   row.appendChild(box);
   return row;
 }
@@ -246,6 +324,7 @@ async function drawConversation() {
     + "transaction fee and a little dust, which is paid to them and is how "
     + "they know something arrived. Enter sends; Shift+Enter starts a new line.";
 
+  forgetUrls();
   $("bubbles").innerHTML = "";
   if (!letters.length) {
     const none = document.createElement("p");

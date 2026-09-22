@@ -148,16 +148,43 @@ export function sealEnvelope(plain, me, recipientPublic) {
 export const MAGIC = [0x61, 0x72, 0x63, 0x6d];     // "arcm"
 export const VERSION = 1;
 export const TYPE_SINGLE = 1;
+export const TYPE_CHUNK = 2;
+
+//: Chunk framing, as `envelope.py` defines it. The countdown is deliberately
+//: NOT authenticated: a chunked message is sealed once, as a whole, so there
+//: is exactly one authenticated header, while every chunk carries its own
+//: countdown. `clen` is THIS CHUNK's ciphertext length -- which is what lets
+//: the NUL padding under the last one be thrown away without knowing the
+//: total.
+const CHUNK_HEADER_LEN = 18;          // magic4 version1 type1 msg_id8 clen2 countdown2
+const CHUNK_BOUND_LEN = 14;           // magic4 version1 type1 msg_id8
 
 export function readHeader(payload) {
   if (payload.length < 6) return null;
   for (let i = 0; i < 4; i++) if (payload[i] !== MAGIC[i]) return null;
   if (payload[4] !== VERSION) return null;
   const type = payload[5];
-  if (type !== TYPE_SINGLE) return null;      // chunks and API are not read here
+  if (type === TYPE_CHUNK) return null;         // reassembled, not read here
+  if (type !== TYPE_SINGLE) return null;        // and API is not read here either
   if (payload.length < 8) return null;
   const clen = (payload[6] << 8) | payload[7];
   return {type, clen, length: 8, bound: payload.subarray(0, 6)};
+}
+
+/** One link of a chained message, read for what reassembly needs. */
+export function readChunk(payload) {
+  if (payload.length < CHUNK_HEADER_LEN) return null;
+  for (let i = 0; i < 4; i++) if (payload[i] !== MAGIC[i]) return null;
+  if (payload[4] !== VERSION || payload[5] !== TYPE_CHUNK) return null;
+  return {
+    type: TYPE_CHUNK,
+    id: hex(payload.subarray(6, 14)),
+    clen: (payload[14] << 8) | payload[15],
+    countdown: (payload[16] << 8) | payload[17],
+    length: CHUNK_HEADER_LEN,
+    bound: payload.subarray(0, CHUNK_BOUND_LEN),
+    cipher: payload.subarray(CHUNK_HEADER_LEN),
+  };
 }
 
 function sameBytes(a, b) {
@@ -165,6 +192,32 @@ function sameBytes(a, b) {
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
   return diff === 0;
+}
+
+function concat(parts) {
+  const all = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const part of parts) { all.set(part, at); at += part.length; }
+  return all;
+}
+
+/** The two layers and the framing, given the ciphertext and its header.
+ *
+ * Both the single-payload path and the reassembled one end here, so the
+ * checks cannot drift apart between them -- and the header compared is the
+ * one copied inside the box, not the one the node happened to hand over.
+ */
+function openWith(cipher, me, bound) {
+  const envelope = openSealedBox(cipher, me);
+  if (envelope === null) return null;
+  const opened = openEnvelope(envelope, me);
+  if (opened === null) return null;
+  // The cleartext header, compared against the copy sealed inside. A
+  // message whose framing was altered on the way is refused rather than
+  // shown with the alteration.
+  const inside = opened.plain.subarray(0, bound.length);
+  if (!sameBytes(inside, bound)) return null;
+  return {sender: opened.sender, plain: opened.plain.subarray(bound.length)};
 }
 
 /** Both layers and the framing: what is on the chain, opened. */
@@ -176,17 +229,138 @@ export function openMessage(payload, me) {
     if (header.clen > blob.length) return null;
     blob = blob.subarray(0, header.clen);     // discard Class B padding
   }
-  const envelope = openSealedBox(blob, me);
-  if (envelope === null) return null;
-  const opened = openEnvelope(envelope, me);
-  if (opened === null) return null;
-  // The cleartext header, compared against the copy sealed inside. A
-  // message whose framing was altered on the way is refused rather than
-  // shown with the alteration.
-  const inside = opened.plain.subarray(0, header.bound.length);
-  if (!sameBytes(inside, header.bound)) return null;
-  return {sender: opened.sender,
-          plain: opened.plain.subarray(header.bound.length)};
+  return openWith(blob, me, header.bound);
+}
+
+/** Open what a chunked message turned out to be, given every chunk of it.
+ *
+ * `parts` is the chunk candidates this browser has and has not read -- the
+ * rows the node handed over, in any order, belonging to anybody. The
+ * framing is read out of each payload rather than out of a column, because
+ * the payload is the part that gets authenticated.
+ *
+ * Completion is self-describing: the final chunk carries countdown 0 and
+ * the rest count down to it, so an abandoned message is simply never
+ * complete, and a message with a gap in it is not surfaced as a partial one.
+ *
+ * Groups are keyed by SENDER as well as by message id, because the id sits
+ * in a cleartext header in plain view on the chain: anybody who reads one
+ * can publish a chunk claiming it, and one injected chunk with an unused
+ * countdown would make the real message look permanently incomplete.
+ * Grouped this way an injected chunk forms its own group, which just fails
+ * to decrypt, instead of poisoning the real one.
+ *
+ * `opened` is what arrived; `waiting` counts the groups left holding
+ * something -- short of a piece, or apparently whole and not its own;
+ * `spent` names the chunks that were READ, which are the only ones worth
+ * deleting: nothing can tell a message that has not finished arriving from
+ * one that never will, so the rest waits and ages out instead.
+ */
+export function assemble(parts, me) {
+  const groups = new Map();
+  for (const part of parts) {
+    const chunk = readChunk(unhex(part.payload));
+    if (chunk === null) continue;
+    const key = `${part.from_address || ""}|${chunk.id}`;
+    if (!groups.has(key)) groups.set(key, new Map());
+    groups.get(key).set(chunk.countdown, {part, chunk});
+  }
+  const opened = [];
+  const spent = [];
+  let waiting = 0;
+  for (const chunks of groups.values()) {
+    const last = Math.max(...chunks.keys());
+    if (!chunks.has(0) || chunks.size !== last + 1) {
+      waiting += 1;
+      continue;                       // the tail, or a piece of the middle, is out
+    }
+    const ordered = [];
+    for (let n = last; n >= 0; n--) ordered.push(chunks.get(n));
+    const cipher = concat(ordered.map(({chunk}) => chunk.clen
+      ? chunk.cipher.subarray(0, chunk.clen) : chunk.cipher));
+    const out = openWith(cipher, me, ordered[0].chunk.bound);
+    // Nothing. Either it is not ours or it is not the whole of it, and the
+    // two cannot be told apart: the countdown runs down to zero, so a
+    // message whose FIRST chunk has not landed looks exactly like a shorter
+    // message that is complete. So the pieces stay -- a group is only
+    // thrown away once it has actually been read, and everything else ages
+    // out on its own.
+    if (out === null) { waiting += 1; continue; }
+    const txids = ordered.map(({part}) => part.txid);
+    const tail = ordered[ordered.length - 1].part;
+    spent.push(...txids);
+    // The first chunk is the one the conversation points at, and the last
+    // is the one whose block it really finished in -- the same two the
+    // scanner stores for a chunked message.
+    opened.push({
+      sender: out.sender, plain: out.plain,
+      txid: ordered[0].part.txid, from_address: ordered[0].part.from_address,
+      when: tail.when, height: tail.height, cursor: tail.cursor,
+    });
+  }
+  return {opened, waiting, spent};
+}
+
+/* --- pieces waiting for the rest of themselves ---------------------------
+ *
+ * A chunked message arrives over dozens of transactions, and the node hands
+ * over whatever has landed. A browser that threw away the pieces it could
+ * not finish would depend on which page of the chain it happened to be
+ * looking at: the first chunk and the last can be hours apart, and the
+ * cursor only ever moves forward. So an unfinished group waits here, in
+ * this browser, and for no longer than a day -- a message that was never
+ * finished is not worth carrying, and one that was is deleted on being read.
+ */
+
+const PART_DAY = 86400;
+//: Not a limit on message size -- a limit on what a browser that receives
+//: nobody's mail in particular can end up holding. A chunk that is not
+//: anybody's here is still somebody's, and it stays until it either
+//: finishes or ages out.
+const PART_CAP = 400;
+
+async function stashParts(parts) {
+  // `got` is when THIS browser first saw the row, which is the only clock
+  // that answers "how long have I been holding this". A block time is not:
+  // a chain that is syncing, a reorg, or a chain whose blocks run behind
+  // the wall all make pieces look years old, and the message would be
+  // thrown away before it was ever finished.
+  const got = Math.floor(Date.now() / 1000);
+  const tx = await partShelf("readwrite");
+  for (const part of parts) await awaited(tx.objectStore("parts").put(
+    {...part, got}));
+}
+
+async function spentParts(txids) {
+  const tx = await partShelf("readwrite");
+  for (const txid of txids) await awaited(tx.objectStore("parts").delete(txid));
+}
+
+/** What is held, longest-held first, with the stale and the excess gone. */
+async function waitingParts() {
+  const tx = await partShelf("readwrite");
+  const store = tx.objectStore("parts");
+  const held = (await awaited(store.getAll()))
+    .sort((a, b) => (a.got || 0) - (b.got || 0));
+  const cutoff = Math.floor(Date.now() / 1000) - PART_DAY;
+  const fresh = [];
+  for (const part of held) {
+    if ((part.got || 0) >= cutoff && held.length - fresh.length <= PART_CAP) {
+      fresh.push(part);
+      continue;
+    }
+    await awaited(store.delete(part.txid));
+  }
+  return fresh;
+}
+
+/** Open whatever of the held pieces is complete now; leave the rest waiting. */
+async function finishParts(me) {
+  const parts = await waitingParts();
+  if (!parts.length) return {opened: [], waiting: 0, spent: []};
+  const out = assemble(parts, me);
+  if (out.spent.length) await spentParts(out.spent);
+  return out;
 }
 
 /* --- what the node hands over, and what this does with it ----------------
@@ -202,11 +376,15 @@ export function openMessage(payload, me) {
 
 const READ = "arcade-messages";
 const BOOK = "book";
+const PARTS = "parts";
 
 //: One version number for one database. Two openers asking for different
 //: versions is how an upgrade silently never runs -- the second one is
 //: refused as "version change" and the store it wanted is simply absent.
-const SHELVES = 2;
+//: Three now: the messages this browser opened, the marks and cursors that
+//: say what it has read, and the pieces of chunked messages it is waiting
+//: to finish. (The address book shares the same database, in `book`.)
+const SHELVES = 3;
 
 function shelf(mode) {
   return new Promise((ok, no) => {
@@ -218,6 +396,15 @@ function shelf(mode) {
   });
 }
 
+function partShelf(mode) {
+  return new Promise((ok, no) => {
+    const open = indexedDB.open(READ, SHELVES);
+    open.onupgradeneeded = () => make(open.result);
+    open.onerror = () => no(open.error);
+    open.onsuccess = () => ok(open.result.transaction(PARTS, mode));
+  });
+}
+
 function make(db) {
   if (!db.objectStoreNames.contains("mail")) {
     db.createObjectStore("mail", {keyPath: "txid"});
@@ -225,6 +412,9 @@ function make(db) {
   if (!db.objectStoreNames.contains("marks")) db.createObjectStore("marks");
   if (!db.objectStoreNames.contains(BOOK)) {
     db.createObjectStore(BOOK, {keyPath: "tag"});
+  }
+  if (!db.objectStoreNames.contains(PARTS)) {
+    db.createObjectStore(PARTS, {keyPath: "txid"});
   }
 }
 
@@ -321,6 +511,7 @@ export async function collect(me, {onProgress} = {}) {
     const answer = await fetch(`/account/messages?after=${after}&limit=200`);
     if (!answer.ok) throw new Error("the node would not answer");
     const said = await answer.json();
+    const loose = [];
     for (const candidate of said.candidates) {
       const ours = awaiting.get(candidate.txid);
       if (ours) {
@@ -330,7 +521,21 @@ export async function collect(me, {onProgress} = {}) {
         continue;                     // sealed to them; nothing to open
       }
       looked += 1;
-      const out = openMessage(unhex(candidate.payload), me);
+      const bytes = unhex(candidate.payload);
+      // What a row IS comes out of its own first bytes, never out of a
+      // column: the framing is inside the thing that gets authenticated,
+      // and a node that described a row wrongly would otherwise describe
+      // its way into changing what this browser thinks it read.
+      const header = readHeader(bytes);
+      if (header === null) {
+        if (readChunk(bytes) === null) continue;
+        loose.push({txid: candidate.txid, cursor: candidate.cursor,
+                    when: candidate.when, height: candidate.height,
+                    from_address: candidate.from_address,
+                    payload: candidate.payload});
+        continue;
+      }
+      const out = openMessage(bytes, me);
       if (out !== null) {
         await keep({
           txid: candidate.txid,
@@ -345,6 +550,20 @@ export async function collect(me, {onProgress} = {}) {
         });
         opened += 1;
       }
+    }
+    // The pieces of this page join the pieces kept from every earlier one,
+    // and whatever is now whole gets opened. A message in pieces is one
+    // message, so it is filed under the transaction that started it -- the
+    // row the node promotes when the pool copy finally lands in a block.
+    if (loose.length) await stashParts(loose);
+    for (const piece of (await finishParts(me)).opened) {
+      await keep({
+        txid: piece.txid, cursor: piece.cursor, when: piece.when,
+        height: piece.height, from_address: piece.from_address,
+        sender: hex(piece.sender), peer: hex(piece.sender),
+        mine: false, body: hex(piece.plain),
+      });
+      opened += 1;
     }
     after = said.cursor;
     // The cursor only ever goes forward. Rewinding to re-read the pool is
@@ -597,11 +816,185 @@ export async function conversation(peer) {
                 .sort((a, b) => (a.when || 0) - (b.when || 0));
 }
 
-/** A message's words. Always decoded here, never handed round as markup. */
-export function text(letter) {
+/* --- what is inside a message ---------------------------------------------
+ *
+ * `arcade/messaging/content.py` says what a decrypted body means and
+ * `arcade/media.py` says which of its bytes are safe to show. The wallet's
+ * own page has always gone through them; this is the same page with the
+ * node left out, so it goes through the same rules, written out again for a
+ * browser that has to apply them alone.
+ *
+ * A body with no marker is exactly what it always was -- words -- so a
+ * message from before any of this existed still reads, and a message that
+ * was built wrong still shows as whatever it is rather than vanishing.
+ */
+
+const BODY_MAGIC = new Uint8Array([0x01, 0x41, 0x52, 0x43, 0x42]);
+const BODY_VERSION = 1;
+const INLINE_MAX = 12 * 1024 * 1024;
+
+const decodeBytes = (bytes) => new TextDecoder("utf-8", {fatal: false}).decode(bytes);
+
+/** Do `bytes` start with `prefix` -- spelled as text or as bytes -- at `at`? */
+function begins(bytes, prefix, at) {
+  const from = at || 0;
+  if (bytes.length < from + prefix.length) return false;
+  for (let i = 0; i < prefix.length; i++) {
+    const want = typeof prefix === "string" ? prefix.charCodeAt(i) : prefix[i];
+    if (bytes[from + i] !== want) return false;
+  }
+  return true;
+}
+
+function span(bytes, from, to) {
+  return String.fromCharCode.apply(null, bytes.subarray(from, to));
+}
+
+/** What a sender chose to call a file. It is a display name and nothing
+ *  more -- this browser never writes it to a disk -- but it is somebody
+ *  else's string, so it is cleaned exactly where the node cleans it. */
+function safeName(given) {
+  const path = String(given || "").replace(/\\/g, "/");
+  const leaf = path.slice(path.lastIndexOf("/") + 1);
+  let clean = "";
+  for (const c of leaf) {
+    const at = c.codePointAt(0);
+    if (at < 0x20 || (at >= 0x7f && at <= 0x9f)) continue;
+    if ('<>:"|?*'.indexOf(c) >= 0) continue;
+    clean += c;
+  }
+  clean = clean.trim().replace(/^\.+/, "").replace(/\.+$/, "");
+  return clean.length ? clean.slice(0, 120) : "attachment";
+}
+
+/** Which files may be SHOWN, from their own leading bytes and never from
+ *  the type the sender declared -- which is theirs to invent.
+ *
+ * The list is formats a decoder reads, not a language that runs. SVG and
+ * PDF are missing from it on purpose: both are XML or worse with an
+ * execution model, and an attachment is somebody else's bytes opened inside
+ * the origin that holds a wallet. Anything else still arrives, whole, and
+ * is offered as a file to save.
+ */
+export function sniff(bytes) {
+  if (bytes.length > INLINE_MAX || bytes.length < 12) return null;
+  const media = (kind, mime, label) => ({kind, mime, label});
+  if (begins(bytes, "\u0089PNG\r\n\u001a\n", 0)) return media("image", "image/png", "PNG image");
+  if (begins(bytes, "\u00ff\u00d8\u00ff", 0)) return media("image", "image/jpeg", "JPEG image");
+  if (begins(bytes, "GIF87a", 0) || begins(bytes, "GIF89a", 0)) {
+    return media("image", "image/gif", "GIF image");
+  }
+  if (begins(bytes, "RIFF", 0) && begins(bytes, "WEBP", 8)) {
+    return media("image", "image/webp", "WebP image");
+  }
+  if (begins(bytes, "RIFF", 0) && begins(bytes, "WAVE", 8)) {
+    return media("audio", "audio/wav", "WAV audio");
+  }
+  if (begins(bytes, "ID3", 0)) return media("audio", "audio/mpeg", "MP3 audio");
+  // A bare MPEG frame sync: eleven set bits, and a layer that is not the
+  // reserved one. Checked narrowly because two loose bytes match a great deal.
+  if (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0 && (bytes[1] & 0x06) !== 0) {
+    return media("audio", "audio/mpeg", "MP3 audio");
+  }
+  if (begins(bytes, "OggS", 0)) {
+    const head = decodeBytes(bytes.subarray(0, 64));
+    if (head.indexOf("theora") >= 0 || head.indexOf("video") >= 0) {
+      return media("video", "video/ogg", "Ogg video");
+    }
+    return media("audio", "audio/ogg", "Ogg audio");
+  }
+  if (begins(bytes, "ftyp", 4)) {
+    const brand = span(bytes, 8, 12);
+    if (["isom", "iso2", "mp41", "mp42", "avc1", "MSNV", "dash", "M4V ", "mmp4"]
+      .indexOf(brand) >= 0) return media("video", "video/mp4", "MP4 video");
+    if (brand === "M4A " || brand === "M4B ") {
+      return media("audio", "audio/mp4", "M4A audio");
+    }
+    if (brand === "qt  ") return media("video", "video/quicktime", "QuickTime video");
+    return null;                       // an unknown brand stays a download
+  }
+  if (begins(bytes, "\u001aE\u00df\u00a3", 0)) {
+    const head = span(bytes, 0, Math.min(bytes.length, 256));
+    if (head.indexOf("webm") >= 0) return media("video", "video/webm", "WebM video");
+    if (head.indexOf("matroska") >= 0) {
+      return media("video", "video/x-matroska", "Matroska video");
+    }
+    return null;
+  }
+  return null;
+}
+
+/** A body: its words, its file, and what the sender said about themselves.
+ *  Never throws -- these bytes came from somebody else. */
+export function parseBody(body) {
+  const bytes = body instanceof Uint8Array ? body : unhex(body || "");
+  const plain = () => ({text: decodeBytes(bytes), file: null, profile: null,
+                        plain: true});
+  if (!begins(bytes, BODY_MAGIC, 0) || bytes.length < BODY_MAGIC.length + 3) {
+    return plain();
+  }
+  if (bytes[BODY_MAGIC.length] !== BODY_VERSION) return plain();   // newer, or not one
+  const size = (bytes[6] << 8) | bytes[7];
+  let said;
   try {
-    return new TextDecoder().decode(unhex(letter.body || ""));
-  } catch (e) { return ""; }
+    said = JSON.parse(decodeBytes(bytes.subarray(8, 8 + size)));
+  } catch (e) { return plain(); }
+  if (said === null || typeof said !== "object" || Array.isArray(said)) return plain();
+
+  let file = null;
+  if (said.file !== null && typeof said.file === "object") {
+    let data = bytes.subarray(8 + size);
+    // The bytes that are here, not the length that was claimed: a message
+    // that stopped early gives a short file rather than a broken one.
+    if (Number.isInteger(said.file.size) && said.file.size >= 0
+      && said.file.size <= data.length) data = data.subarray(0, said.file.size);
+    file = {name: safeName(said.file.name || ""),
+            type: String(said.file.type || "") || "application/octet-stream",
+            bytes: data, size: data.length, media: sniff(data)};
+  }
+  let profile = null;
+  if (said.profile !== null && typeof said.profile === "object") {
+    // Only what was said. `Profile.as_dict` on the node leaves an empty
+    // field out altogether, and a profile that is all blanks is no profile.
+    const part = (value, cap) => String(value || "").slice(0, cap);
+    const name = part(said.profile.name, 80);
+    const testnet = part(said.profile.testnet_address, 64);
+    const mainnet = part(said.profile.mainnet_address, 64);
+    if (name || testnet || mainnet) {
+      profile = {};
+      if (name) profile.name = name;
+      if (testnet) profile.testnet_address = testnet;
+      if (mainnet) profile.mainnet_address = mainnet;
+    }
+  }
+  return {text: typeof said.text === "string" ? said.text : "",
+          file, profile, plain: false};
+}
+
+function bodyOf(letter) {
+  try {
+    return parseBody(unhex(letter.body || ""));
+  } catch (e) {
+    return {text: "", file: null, profile: null, plain: true};
+  }
+}
+
+/** A message's words, whatever else it carried. Always decoded here, never
+ *  handed round as markup. */
+export function text(letter) {
+  const body = bodyOf(letter);
+  if (body.file === null) return body.text;
+  return body.text || `[sent ${body.file.name}]`;
+}
+
+/** A message's file, with what can safely be done with it. */
+export function attachment(letter) {
+  return bodyOf(letter).file;
+}
+
+/** What the sender volunteered about themselves, which they may not have. */
+export function profile(letter) {
+  return bodyOf(letter).profile;
 }
 
 /** The book entry for a key, so a conversation with nothing in it yet

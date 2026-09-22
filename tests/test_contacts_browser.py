@@ -152,7 +152,7 @@ def seated(browser, served):
 def _wipe_book(browser):
     return browser.execute_async_script("""
         const done = arguments[0];
-        const open = indexedDB.open("arcade-messages", 2);
+        const open = indexedDB.open("arcade-messages", 3);
         open.onupgradeneeded = () => {
           const db = open.result;
           if (!db.objectStoreNames.contains("mail"))
@@ -161,6 +161,8 @@ def _wipe_book(browser):
             db.createObjectStore("marks");
           if (!db.objectStoreNames.contains("book"))
             db.createObjectStore("book", {keyPath: "tag"});
+          if (!db.objectStoreNames.contains("parts"))
+            db.createObjectStore("parts", {keyPath: "txid"});
         };
         open.onerror = () => done("open: " + open.error);
         open.onsuccess = () => {
