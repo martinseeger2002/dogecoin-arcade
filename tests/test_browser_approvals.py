@@ -71,7 +71,8 @@ def served(tmp_path_factory):
     )
     port = _free_port()
     server = uvicorn.Server(uvicorn.Config(create_app(state), host="127.0.0.1",
-                                           port=port, log_level="error"))
+                                           port=port, log_level="error",
+                                           timeout_graceful_shutdown=1.0))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     for _ in range(100):
@@ -83,6 +84,7 @@ def served(tmp_path_factory):
     yield f"http://127.0.0.1:{port}", state
     server.should_exit = True
     thread.join(timeout=5)
+    assert not thread.is_alive(), "the server is still serving a keep-alive connection"
 
 
 def wait_for_title(browser, *prefixes: str, timeout: int = 10) -> str:

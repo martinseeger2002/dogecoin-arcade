@@ -60,7 +60,7 @@ def served(tmp_path_factory, regtest):
 
     port = _free_port()
     config = uvicorn.Config(create_app(state), host="127.0.0.1", port=port,
-                            log_level="error")
+                            log_level="error", timeout_graceful_shutdown=1.0)
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -73,6 +73,7 @@ def served(tmp_path_factory, regtest):
     yield f"http://127.0.0.1:{port}", state, regtest
     server.should_exit = True
     thread.join(timeout=5)
+    assert not thread.is_alive(), "the server is still serving a keep-alive connection"
 
 
 def _catch_up(state):
@@ -99,6 +100,32 @@ def _catch_up(state):
         index.sync(max_blocks=500)
         time.sleep(0.05)
     raise AssertionError(f"the index will not catch up: {index.status(tip)}")
+
+
+def _keys(browser, chain):
+    """The open wallet, taken the way a page takes it after a reload.
+
+    The page reloads itself. `base.html` polls `/events` every five seconds and
+    reloads when the generation moves; signing up and claiming both bump it, and
+    `_catch_up` then takes as long as the poll to finish, which is long enough
+    for the refresh to land in the middle of a test and hand back a new
+    document. What that costs is the handle, and the handle is not something
+    this file can keep for itself: a wallet holds functions as well as bytes, so
+    there is no version of it that holds the keys in Python and passes them back
+    in. wallet.js answers this already -- `signUp` remembers the words in
+    sessionStorage and `opened` rebuilds the keys from them, which is what every
+    page that needs a key calls after a navigation. Asking the module the way a
+    reloaded page does is the difference between a test that survives the
+    refresh and one that reads `window.w is undefined` and calls it a flake.
+    """
+    got = browser.execute_async_script("""
+        const done = arguments[arguments.length - 1];
+        import("/wallet.js").then((m) => { window.w = m;
+                                           return m.opened(arguments[0]); })
+          .then((wallet) => { if (wallet) window.wallet = wallet;
+                              done(!!wallet); },
+                (e) => done(String(e)));""", chain)
+    assert got is True, "this tab has no open wallet left to sign with"
 
 
 @pytest.fixture
@@ -129,6 +156,8 @@ def funded(browser, served):
     node.rpc.call("sendtoaddress", made["address"], 50.0)
     node.rpc.call("generate", 1)
     _catch_up(state)
+    _keys(browser, {"network": "regtest",
+                    "version": state.messaging.params.pubkeyhash_version})
     browser.execute_async_script("""
         const done = arguments[0];
         window.w.waitForCoins(30).then(done);""")
@@ -185,6 +214,8 @@ def test_a_tag_is_resolved_and_the_address_is_shown(funded):
     assert "error" not in claimed, claimed
     node.rpc.call("generate", 1)
     _catch_up(state)
+    _keys(browser, {"network": "regtest",
+                    "version": state.messaging.params.pubkeyhash_version})
 
     offer = browser.execute_async_script("""
         const done = arguments[2];

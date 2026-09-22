@@ -90,7 +90,8 @@ def showcased(tmp_path_factory):
                             label="Regtest", datadir=nowhere))
     port = _free_port()
     server = uvicorn.Server(uvicorn.Config(create_app(state), host="127.0.0.1",
-                                           port=port, log_level="error"))
+                                           port=port, log_level="error",
+                                           timeout_graceful_shutdown=1.0))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     for _ in range(100):
@@ -103,6 +104,7 @@ def showcased(tmp_path_factory):
     yield f"http://127.0.0.1:{port}", library_id, page_id
     server.should_exit = True
     thread.join(timeout=5)
+    assert not thread.is_alive(), "the server is still serving a keep-alive connection"
 
 
 @pytest.fixture(scope="module")
@@ -263,7 +265,8 @@ def hours(tmp_path_factory):
                             label="Regtest", datadir=nowhere))
     port = _free_port()
     server = uvicorn.Server(uvicorn.Config(create_app(state), host="127.0.0.1",
-                                           port=port, log_level="error"))
+                                           port=port, log_level="error",
+                                           timeout_graceful_shutdown=1.0))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     for _ in range(100):
@@ -275,6 +278,7 @@ def hours(tmp_path_factory):
         browser = browsers.launch()
     except BaseException:                 # a skip included: stop the server
         server.should_exit = True
+        thread.join(timeout=5)
         raise
 
     browser.set_window_size(900, 1100)
@@ -310,8 +314,15 @@ def hours(tmp_path_factory):
     }
     browser.switch_to.default_content()
     browser.quit()
-    server.should_exit = True
-    yield result
+    # Stopped after the test rather than before the yield, because this is the
+    # one server in the suite whose fixture never joined: `should_exit` was set
+    # and the thread was left serving for the rest of the session.
+    try:
+        yield result
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+        assert not thread.is_alive(), "the server is still serving a keep-alive connection"
 
 
 def test_the_artwork_paints_itself(hours):

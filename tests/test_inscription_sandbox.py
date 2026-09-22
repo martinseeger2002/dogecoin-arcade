@@ -105,7 +105,8 @@ def inscribed():
                             label="Regtest", datadir=nowhere))
     port = _free_port()
     server = uvicorn.Server(uvicorn.Config(create_app(state), host="127.0.0.1",
-                                           port=port, log_level="error"))
+                                           port=port, log_level="error",
+                                           timeout_graceful_shutdown=1.0))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     for _ in range(100):
@@ -118,6 +119,7 @@ def inscribed():
     yield f"http://127.0.0.1:{port}", txid
     server.should_exit = True
     thread.join(timeout=5)
+    assert not thread.is_alive(), "the server is still serving a keep-alive connection"
 
 
 @pytest.fixture(scope="module")

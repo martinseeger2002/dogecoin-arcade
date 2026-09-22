@@ -58,7 +58,7 @@ def served(tmp_path_factory):
     )
     port = _free_port()
     config = uvicorn.Config(create_app(state), host="127.0.0.1", port=port,
-                            log_level="error")
+                            log_level="error", timeout_graceful_shutdown=1.0)
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -71,6 +71,7 @@ def served(tmp_path_factory):
     yield f"http://127.0.0.1:{port}", state
     server.should_exit = True
     thread.join(timeout=5)
+    assert not thread.is_alive(), "the server is still serving a keep-alive connection"
 
 
 #: Load the module and hang it on `window` so the tests can call into it.
