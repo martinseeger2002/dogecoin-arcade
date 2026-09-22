@@ -122,8 +122,9 @@ def test_the_page_is_there_and_in_the_account_menu(public):
     assert 'href="/me/nfts"' in body, "and is reachable from the menu"
     assert 'href="/me/wallet"' in body and 'href="/me/wallet/tokens"' in body
     # It says what an account cannot do rather than leaving a missing
-    # button to be discovered.
-    assert "cannot build those yet" in body
+    # button to be discovered. One piece is no longer that sentence -- so
+    # the page has to name the thing that still is, which is a run.
+    assert "cannot run one of those yet" in body
 
 
 def test_a_stranger_is_sent_to_sign_up(client):
