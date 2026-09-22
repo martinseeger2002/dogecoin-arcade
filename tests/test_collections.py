@@ -11,6 +11,7 @@ import pytest
 from arcade import collections as C
 from arcade import inscribe
 from arcade import inscriptions as I
+from arcade.web.state import SendQueue
 
 
 def hashlips(tmp_path, count=3, prefix="Doge Punks", sizes=None):
@@ -267,6 +268,57 @@ def test_pause_stops_between_pieces_and_resume_sends_only_the_rest(tmp_path):
         "nothing sent twice, nothing missed"
 
 
+def test_a_pause_while_waiting_for_the_lane_gives_the_lane_back(tmp_path, monkeypatch):
+    """Pausing in that gap used to lock a wallet out of its own sends.
+
+    `_hold_send_lock` waits by asking for the lane over and over, so a run told
+    to pause while it waits still gets the lane the instant somebody else's send
+    finishes -- and it used to return right there, holding it, because the stop
+    check sat between taking the lane and the `try` that hands it back. After
+    that nothing else this wallet sends could go, and resuming the job waited
+    for a lane the job itself had taken. Pressing Pause on a run while a message
+    is going out is exactly when this lands, and waking the sleep out of the
+    wait made it likelier, not less.
+
+    The lane is the real `SendQueue` and not a pair of counters, so what gets
+    asserted is `held()` -- the same call a busy page makes, through the same
+    begin and end the app wires into a run.
+    """
+    build = C.read_build(hashlips(tmp_path, count=3))
+    sender = FakeSender()
+    sends = SendQueue()
+    assert sends.begin() is True, "another send is in flight"
+    asks: list[int] = []
+
+    def begin():
+        asks.append(1)
+        got = sends.begin()
+        if got and len(asks) > 1:
+            runner.pause(job_id)        # the pause lands as the lane is taken
+        return got
+
+    jobs = C.Jobs(tmp_path / "collections.sqlite")
+    runner = C.Runner(jobs, chain_for=lambda n: FakeChain(),
+                      index_for=lambda n: FakeIndex(),
+                      send_lock=(begin, sends.end),
+                      make_sender=lambda rpc, params: sender)
+    job_id = jobs.create("regtest", "nSender", build)
+    monkeypatch.setattr(C, "POLL", 0.02)
+    runner.start(job_id)
+    deadline = time.time() + 5
+    while "waiting for another send" not in jobs.get(job_id)["note"] and time.time() < deadline:
+        time.sleep(0.01)
+    assert "waiting for another send" in jobs.get(job_id)["note"]
+    assert sends.held() and sender.sent == [], "it is waiting, not sending"
+
+    sends.end()                          # the other send finishes
+    wait(runner, job_id)
+    assert jobs.get(job_id)["status"] == "paused"
+    assert sends.held() == [], "the run gave the lane back on the way out"
+    assert sends.begin() is True, "and nobody holds it"
+    sends.end()
+
+
 def test_a_crash_is_resumed_on_the_next_start_without_resending(tmp_path):
     build = C.read_build(hashlips(tmp_path, count=3, sizes={1: 20_000}))
     sender = FakeSender()
@@ -445,6 +497,94 @@ def test_blocks_passing_without_our_pieces_is_a_different_fault(tmp_path, monkey
     assert "blocks have come" in job["error"] and "fee is too low" in job["error"]
     assert "no block at all" not in job["error"], "the other fault, and not this one"
     assert sender.sent == [] and sender.splits == 0
+
+
+def test_pausing_a_run_that_is_waiting_for_a_block_does_not_wait_with_it(tmp_path,
+                                                                         monkeypatch):
+    """A minute asleep is not a minute paused.
+
+    Between two pieces a run is asleep, and the gaps double to a minute. A
+    pause that only took effect when the sleep happened to end was a dead
+    button for a minute -- and a minute is more than either shutdown or a test
+    teardown is willing to give, so a run that ignored its own stop flag was a
+    thread that outlived the process that started it (2026-09-22).
+    """
+    build = C.read_build(hashlips(tmp_path, count=3))
+    sender = FakeSender()
+    real_send_all = sender.send_all
+    refusals = []
+
+    def send_all(address, payloads, approve=None, on_broadcast=None, on_progress=None):
+        if len(sender.sent) >= 1 and sender.height == 100:
+            refusals.append(len(sender.sent))
+            raise RuntimeError("sendrawtransaction: [-26] 64: too-long-mempool-chain")
+        return real_send_all(address, payloads, approve=approve,
+                             on_broadcast=on_broadcast)
+
+    sender.send_all = send_all
+    monkeypatch.setattr(C, "POLL", 30.0)          # nobody sleeps a minute in a test
+    monkeypatch.setattr(C, "POLL_MAX", 30.0)
+    jobs, runner = runner_for(tmp_path, sender)
+    job_id = jobs.create("regtest", "nSender", build)
+    runner.start(job_id)
+    thread = runner._threads[job_id]
+    deadline = time.time() + 5
+    while ("waiting for a block" not in jobs.get(job_id)["note"]
+           and time.time() < deadline):
+        time.sleep(0.01)
+    assert "waiting for a block" in jobs.get(job_id)["note"], jobs.get(job_id)["note"]
+    time.sleep(0.3)
+    assert thread.is_alive(), "with a 30s gap to the next ask it is asleep, not working"
+
+    runner.pause(job_id)
+    thread.join(5)
+    assert not thread.is_alive(), "it slept through the pause"
+    assert jobs.get(job_id)["status"] == "paused"
+
+
+def test_a_pause_that_arrives_as_the_run_settles_leaves_it_paused(tmp_path, monkeypatch):
+    """The button and the run's last word are the same instant, sometimes.
+
+    `pause` writes "pausing" so the page can say *finishing the piece in
+    flight*. A run that had already written down that it stopped was
+    overwritten by that write -- there is a moment when the thread is still
+    alive and the job is already stopped -- and the job then claimed a piece
+    was in flight forever. The wizard reads that as "already being inscribed",
+    and `resume_interrupted` reads it as "start it again" (2026-09-22: a test
+    of the wake only passed when the machine was slow enough to lose the race
+    the other way).
+    """
+    build = C.read_build(hashlips(tmp_path, count=1))
+    sender = FakeSender()
+
+    def send_all(address, payloads, approve=None, on_broadcast=None, on_progress=None):
+        raise RuntimeError("sendrawtransaction: [-26] 56: bad-txns-inputs-missingorspent")
+
+    sender.send_all = send_all
+    jobs, runner = runner_for(tmp_path, sender)
+    job_id = jobs.create("regtest", "nSender", build)
+
+    settled, released = threading.Event(), threading.Event()
+    real_set_status = C.Jobs.set_status
+    main_thread = threading.main_thread()
+
+    def set_status(self, id, status, note=None, error=None, only_from=()):
+        wrote = real_set_status(self, id, status, note, error, only_from)
+        # Hold the run's thread on its way out, so that the pause below lands
+        # in the gap it is meant to be tested against rather than before it.
+        if (id == job_id and status == note == "paused"
+                and threading.current_thread() is not main_thread):
+            settled.set()
+            released.wait(5)
+        return wrote
+
+    monkeypatch.setattr(C.Jobs, "set_status", set_status)
+    runner.start(job_id)
+    assert settled.wait(5), "the run did not pause itself"
+    runner.pause(job_id)              # pressed in that gap
+    released.set()
+    wait(runner, job_id)
+    assert jobs.get(job_id)["status"] == "paused", "the pause overwrote the run's own word"
 
 
 def test_the_wait_backs_off_rather_than_asking_a_thousand_times():

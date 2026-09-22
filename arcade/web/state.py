@@ -401,9 +401,24 @@ class AppState:
         Every lane is waited for, not just the node's own -- a shutdown that
         missed an account's run is the same thread-outliving-its-service bug,
         wearing somebody else's coins.
+
+        A collection run is waited for separately, and before the lanes, because
+        waiting for a lane does not wait for a run: between two pieces it holds
+        nothing and is merely asleep waiting for the next block, which is up to a
+        minute of looking finished. `Runner.quiesce` pauses it awake and joins
+        the thread. The two waits share the one `grace`, so a restart is never
+        slower than it already promised to be.
         """
         self.shutting_down = True
-        return self.sends.close(grace)
+        started = time.monotonic()
+        # Only if the runs were ever opened: shutdown must not be the thing that
+        # creates the collection store on a node that never inscribes anything.
+        quiet = self.collections[1].quiesce(grace) if self._collections else True
+        left = max(0.0, grace - (time.monotonic() - started))
+        # Both halves, not the first one that looks clean: a run that did not
+        # come back is precisely when the lanes still have to be drained.
+        lanes = self.sends.close(left)
+        return quiet and lanes
 
     def is_repeat_send(self, digest: str, lane: str = NODE_LANE) -> bool:
         """True if this exact message was just sent, by this wallet.

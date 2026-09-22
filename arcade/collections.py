@@ -540,7 +540,17 @@ class Jobs:
         return pieces, biggest
 
     def set_status(self, job_id: str, status: str, note: str | None = None,
-                   error: str | None = None) -> None:
+                   error: str | None = None,
+                   only_from: tuple[str, ...] = ()) -> bool:
+        """Write the status down. False if `only_from` said otherwise.
+
+        `only_from` makes it one atomic compare-and-set rather than a read
+        followed by a write: whoever else is writing at the same moment -- the
+        run's own thread, a pause from a request handler -- either won and this
+        write is skipped, or lost and the run's write stands. A check in Python
+        first would be both slower and wrong, because the answer changes
+        between asking and writing.
+        """
         assert status in STATUSES, status
         with self._open() as conn:
             sets, args = ["status = ?"], [status]
@@ -549,7 +559,12 @@ class Jobs:
             if error is not None:
                 sets.append("error = ?"); args.append(error)
             args.append(job_id)
-            conn.execute(f"UPDATE job SET {', '.join(sets)} WHERE id = ?", args)
+            where = "WHERE id = ?"
+            if only_from:
+                where += f" AND status IN ({','.join('?' * len(only_from))})"
+                args += list(only_from)
+            return conn.execute(
+                f"UPDATE job SET {', '.join(sets)} {where}", args).rowcount > 0
 
     def set_pad(self, job_id: str, txid: str = "", error: str = "") -> None:
         """What became of the mintpad this job was asked to inscribe."""
@@ -618,6 +633,7 @@ class Runner:
         self.make_sender = make_sender or self._default_sender
         self._threads: dict[str, threading.Thread] = {}
         self._stop: set[str] = set()
+        self._wake: dict[str, threading.Event] = {}
         self._lock = threading.Lock()
 
     @staticmethod
@@ -644,6 +660,7 @@ class Runner:
             if self.running(job_id):
                 return False
             self._stop.discard(job_id)
+            self._wake[job_id] = threading.Event()
             self.jobs.retry_failed(job_id)
             self.jobs.set_status(job_id, "running", note="starting", error="")
             thread = threading.Thread(target=self._run, args=(job_id,),
@@ -653,7 +670,14 @@ class Runner:
             return True
 
     def pause(self, job_id: str) -> None:
-        """Stop after the piece in flight. The thread reports when it has."""
+        """Stop after the piece in flight. The thread reports when it has.
+
+        A run between pieces is asleep waiting for the next block -- three
+        seconds at first, up to a minute as it settles in -- and a pause that
+        only took effect when that sleep ended was a minute of pretending. The
+        event is the knock on the door: the wait gives up at once and the
+        thread notices `_stop` is set on the next line it runs.
+        """
         with self._lock:
             if not self.running(job_id):
                 job = self.jobs.get(job_id)
@@ -661,7 +685,19 @@ class Runner:
                     self.jobs.set_status(job_id, "paused", note="paused")
                 return
             self._stop.add(job_id)
-            self.jobs.set_status(job_id, "pausing", note="finishing the piece in flight")
+            # Only a run that is still going can be "finishing the piece in
+            # flight". Between its last word and the thread actually ending
+            # there is a moment when `running` is still true and the job is
+            # already written down as stopped; writing over that left the job
+            # claiming a piece was in flight forever -- which the wizard reads
+            # as "already being inscribed" and `resume_interrupted` reads as
+            # "restart it" (2026-09-22).
+            self.jobs.set_status(job_id, "pausing",
+                                 note="finishing the piece in flight",
+                                 only_from=("running",))
+            wake = self._wake.get(job_id)
+        if wake is not None:
+            wake.set()
 
     def resume_interrupted(self) -> list[str]:
         """Pick up every job that was running when the process last stopped.
@@ -678,8 +714,37 @@ class Runner:
                     resumed.append(job["id"])
         return resumed
 
+    def quiesce(self, grace: float = 20.0) -> bool:
+        """Pause every run going right now and wait for the threads to return.
+
+        Shutdown calls this, and so does a test that started a run: a run left
+        asleep between two pieces is a thread that outlives the thing that
+        started it, still holding a node connection and still writing to a job
+        book nobody is reading any more. `pause` wakes rather than waits, so
+        `grace` is seconds, not a block's worth of patience. False if one did
+        not come back -- the caller says so out loud; the job stays `pausing`,
+        which is what a run cut off mid-piece actually is.
+        """
+        with self._lock:
+            live = [(job_id, thread) for job_id, thread in self._threads.items()
+                    if thread.is_alive()]
+        for job_id, _ in live:
+            self.pause(job_id)
+        deadline = time.monotonic() + grace
+        for _, thread in live:
+            thread.join(max(0.0, deadline - time.monotonic()))
+        return not any(thread.is_alive() for _, thread in live)
+
     def _stopping(self, job_id: str) -> bool:
         return job_id in self._stop
+
+    def _wait(self, job_id: str, seconds: float) -> None:
+        """Sleep, but wake early if this job is asked to stop. See `pause`."""
+        wake = self._wake.get(job_id)
+        if wake is None:
+            time.sleep(seconds)
+        else:
+            wake.wait(seconds)
 
     # -- the work --
 
@@ -701,14 +766,15 @@ class Runner:
                     if item is None:
                         break
                     job = self.jobs.get(job_id)
-                    self._hold_send_lock(job_id)
-                    if self._stopping(job_id):
-                        self.jobs.set_status(job_id, "paused", note="paused")
-                        return
+                    held = self._hold_send_lock(job_id)
                     try:
+                        if self._stopping(job_id):
+                            self.jobs.set_status(job_id, "paused", note="paused")
+                            return
                         outcome = self._send_item(job, item, sender_obj, index)
                     finally:
-                        self.end_send()
+                        if held:
+                            self.end_send()
                     if outcome == "paused":
                         self.jobs.set_status(job_id, "paused", note="paused")
                         return
@@ -743,6 +809,7 @@ class Runner:
             self.jobs.set_status(job_id, "paused", note="stopped", error=str(exc))
         finally:
             self._stop.discard(job_id)
+            self._wake.pop(job_id, None)
 
     def _inscribe_pad(self, job_id: str, sender_obj: Any) -> None:
         """Put the collection's mintpad on the chain, once every item has gone.
@@ -782,16 +849,25 @@ class Runner:
             log.warning("mintpad for %s could not be inscribed: %s", job_id, exc)
             self.jobs.set_pad(job_id, error=str(exc))
 
-    def _hold_send_lock(self, job_id: str) -> None:
-        """Wait for the application's send lock, checking for a pause meanwhile."""
+    def _hold_send_lock(self, job_id: str) -> bool:
+        """Wait for the application's send lock, checking for a pause meanwhile.
+
+        Returns whether it is holding the lane, and the caller has to know: a
+        lane taken and never given back stops every send this wallet makes, and
+        stops this very job against itself when somebody resumes it. So the
+        pause is checked where giving the lane back is unavoidable (see `_run`),
+        not in a gap between taking it and the `try` that returns it.
+        """
         waited = False
-        while not self.begin_send():
+        while True:
+            if self.begin_send():
+                return True
             if not waited:
                 self.jobs.note(job_id, "waiting for another send to finish")
                 waited = True
             if self._stopping(job_id):
-                return
-            time.sleep(POLL)
+                return False
+            self._wait(job_id, POLL)
 
     def _send_item(self, job: dict, item: dict, sender_obj: Any, index: Any) -> str:
         """One item: whatever pieces of it are not yet on their way.
@@ -895,7 +971,7 @@ class Runner:
         while sender_obj.rpc.get_block_count() == start:
             if self._stopping(job_id) or time.time() > deadline:
                 return False
-            time.sleep(wait)
+            self._wait(job_id, wait)
             wait = backoff(wait)
         return True
 
@@ -943,7 +1019,7 @@ class Runner:
                 job_id,
                 f"waiting for a block before splitting again "
                 f"({moved} since the last pieces went out)")
-            time.sleep(wait)
+            self._wait(job_id, wait)
             wait = backoff(wait)
         wanted = max(need, min(SPLIT_BATCH, ahead))
         sender_obj.ensure_outputs(

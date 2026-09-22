@@ -1,5 +1,7 @@
 """Protocol state transitions, in isolation from the chain."""
 
+import time
+
 import pytest
 
 from arcade import payload as P
@@ -279,8 +281,71 @@ def test_shutdown_reports_a_send_it_could_not_wait_out(tmp_path):
     assert state.begin_shutdown(grace=0.2) is True
 
 
-# --- managed properties: grant, revoke, change issuer ------------------------
+def test_shutdown_joins_a_collection_run_and_not_just_a_send(tmp_path, monkeypatch):
+    """A run asleep between two pieces looks exactly like an idle process.
 
+    `sends.close` waits for a lane, and a run holds one only while a piece is
+    actually going out. Between pieces it holds nothing -- it is asleep waiting
+    for the next block, for up to a minute -- so a restart could honestly say
+    nothing was in flight while a thread was still in the middle of somebody's
+    collection, writing into a job book the new process had already opened
+    (2026-09-22, the same bug the lanes were meant to close).
+    """
+    from pathlib import Path
+
+    from arcade import collections as C
+    from arcade.web.state import AppState, ChainContext
+    from test_collections import FakeSender, hashlips, runner_for
+
+    state = AppState(
+        home=tmp_path,
+        messaging=ChainContext(network="regtest", role="messaging",
+                               label="Testnet", datadir=Path("/nonexistent")),
+        ledger=ChainContext(network="main", role="ledger", label="Mainnet",
+                            datadir=Path("/nonexistent")))
+
+    build = C.read_build(hashlips(tmp_path / "build"))
+
+    # A run that is waiting for a block rather than sending: the node takes one
+    # piece and refuses the next until the chain moves.
+    sender = FakeSender()
+    real_send_all = sender.send_all
+    refusals = []
+
+    def send_all(address, payloads, approve=None, on_broadcast=None, on_progress=None):
+        if len(sender.sent) >= 1 and sender.height == 100:
+            refusals.append(len(sender.sent))
+            raise RuntimeError("sendrawtransaction: [-26] 64: too-long-mempool-chain")
+        return real_send_all(address, payloads, approve=approve,
+                             on_broadcast=on_broadcast)
+
+    sender.send_all = send_all
+    here = tmp_path / "runs"
+    here.mkdir()
+    jobs, runner = runner_for(here, sender)
+    state._collections = (jobs, runner)
+    job_id = jobs.create("regtest", "nSender", build)
+    monkeypatch.setattr(C, "POLL", 30.0)         # it is asleep, not idle
+    monkeypatch.setattr(C, "POLL_MAX", 30.0)
+    runner.start(job_id)
+    deadline = time.time() + 5
+    while ("waiting for a block" not in jobs.get(job_id)["note"]
+           and time.time() < deadline):
+        time.sleep(0.01)
+    assert "waiting for a block" in jobs.get(job_id)["note"], jobs.get(job_id)["note"]
+    time.sleep(0.3)                       # parked in the wait, not between asks
+
+    # The lanes are free, which is what the old shutdown checked, and what it
+    # therefore got wrong.
+    assert state.sends.close(0.0) is True, "no lane held"
+    assert runner.running(job_id) is True
+
+    assert state.begin_shutdown(grace=2.0) is True
+    assert not runner.running(job_id), "the run was waited out, not abandoned"
+    assert jobs.get(job_id)["status"] == "paused"
+
+
+# --- managed properties: grant, revoke, change issuer ------------------------
 
 def issue_managed(state, engine, sender=ALICE, height=1, name="Managed"):
     msg = P.IssuanceManaged(

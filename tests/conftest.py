@@ -1,4 +1,6 @@
+import os
 import sqlite3
+import threading
 
 import pytest
 
@@ -67,3 +69,83 @@ def no_nodes(monkeypatch):
                         raising=False)
     monkeypatch.setattr(arcade.discovery, "best", lambda *a, **k: None)
     return None
+
+
+#: How long a collection run is given to come back when the test that started
+#: it ends. `Runner.pause` wakes a run out of its block wait instead of waiting
+#: for the wait to end, so this is a few seconds and not a block's minute.
+QUIESCE = 5.0
+
+
+@pytest.fixture(autouse=True)
+def collection_runs(monkeypatch):
+    """Finish the collection runs a test started before the next one begins.
+
+    A run is a thread that keeps polling the node for as long as the job has
+    pieces left, and nothing joined it -- not the route that started it, not
+    the test that pressed the button. Tests hand the route a fake node and take
+    it back at teardown; a thread from a finished test does not notice the swap,
+    and spends the next test's coins or trips on the node the next test did not
+    bring. That is why whole files passed alone and failed in the middle of a
+    run (the 2026-09-22 census, and ARCADE_THREADWATCH below).
+
+    The joining is this fixture's own business, not production shutdown's --
+    a test ending is not an app closing, and what shutdown does about a run in
+    flight has its own test.
+    """
+    import arcade.collections as C
+
+    runners: list = []
+    start = C.Runner.start
+
+    def tracked_start(self, job_id):
+        went = start(self, job_id)
+        if went and self not in runners:
+            runners.append(self)
+        return went
+
+    monkeypatch.setattr(C.Runner, "start", tracked_start)
+    yield
+    for runner in runners:
+        if not runner.quiesce(QUIESCE):
+            left = [t.name for t in threading.enumerate()
+                    if t.name.startswith("arcade-collection-")]
+            pytest.fail(f"a collection run outlived its test: {left}")
+
+
+#: Set ARCADE_THREADWATCH to a path to record every thread that outlived the test
+#: that started it, as "running<TAB>thread<TAB>born in". A suite where a file
+#: passes alone and fails in the middle of the run is a suite with a thread still
+#: talking to the next test's fakes: a patch on the CLASS (`setattr(type(chain),
+#: "rpc", ...)`) reaches the ChainContext of every test that comes after, so a
+#: run left running from an earlier test spends the next test's coins. The web
+#: tests patch their own instances now; the watch is how the next one of these is
+#: found rather than guessed at. The line names which test to fix. Off by default.
+_WATCH = os.environ.get("ARCADE_THREADWATCH", "")
+_orIGIN = ["(collected)"]
+
+if _WATCH:
+    _start = threading.Thread.start
+
+    def _tracked_start(self, *args, **kwargs):
+        self.arcade_origin = _orIGIN[0]
+        return _start(self, *args, **kwargs)
+
+    threading.Thread.start = _tracked_start
+
+
+@pytest.fixture(autouse=True)
+def threadwatch(request):
+    """Note the threads that arrived from an earlier test. See above."""
+    if not _WATCH:
+        return
+    here = threading.current_thread()
+    with open(_WATCH, "a") as log:
+        for other in threading.enumerate():
+            if other is here or not other.is_alive():
+                continue
+            born = getattr(other, "arcade_origin", "(collected)")
+            if born != request.node.name:
+                print(f"threadwatch {request.node.name} <- {other.name} from {born}",
+                      file=log)
+    _orIGIN[0] = request.node.name
