@@ -7,20 +7,46 @@ import pytest
 
 from arcade import payload as P
 from arcade.ledger import AmountError, LedgerIndex, format_amount, parse_amount
+from arcade.regtest import RegtestNode
 from test_end_to_end import chain, send_class_c  # noqa: F401  (fixture re-export)
 
 
 @pytest.fixture
 def ledger(tmp_path, chain):
     node, alice, bob = chain
+    params, index = _index_on(node, tmp_path)
+    return node, alice, bob, params, index
+
+
+def _index_on(node, home):
+    """An index that starts reading at the block this node is on right now."""
     params = dataclasses.replace(
         node.params,
         activation_height=node.rpc.get_block_count() + 1,
         marker_address=node.rpc.call("getnewaddress"),
     )
-    index = LedgerIndex(tmp_path / "ledger.sqlite", params,
-                        lambda: contextlib.nullcontext(node.rpc))
-    return node, alice, bob, params, index
+    return params, LedgerIndex(home / "ledger.sqlite", params,
+                               lambda: contextlib.nullcontext(node.rpc))
+
+
+@pytest.fixture
+def alone():
+    """A chain of this test's own, for a thing a chain cannot survive.
+
+    Two of the tests below change what the chain *is* rather than what an
+    index knows: one mines a message type no version here can read, and the
+    engine stops at that block forever -- not a state an index can be reset
+    out of, because the block stays. The other orphans a block and takes the
+    chain back. On the session's node either one is a booby trap for every
+    file that indexes that chain afterwards; a full-suite run lost seven of
+    them to the first one alone, all of them saying "the index stopped".
+    """
+    with RegtestNode() as node:
+        node.generate(200)                    # past coinbase maturity
+        alice = node.rpc.call("getnewaddress")
+        node.rpc.call("sendtoaddress", alice, 1000)
+        node.generate(1)
+        yield node, alice
 
 
 def create_fixed(node, alice, name="Fixed", amount=1_000 * 10**8, divisible=True):
@@ -88,9 +114,10 @@ def test_a_send_shows_up_for_both_addresses(ledger):
     assert index.transaction(txid)["property_id"] == pid
 
 
-def test_an_unimplemented_message_stops_the_index_and_says_so(ledger):
+def test_an_unimplemented_message_stops_the_index_and_says_so(alone, tmp_path):
     """Hard rule #2, surfaced: the stop names the block and the type."""
-    node, alice, bob, params, index = ledger
+    node, alice = alone
+    params, index = _index_on(node, tmp_path)
     create_fixed(node, alice, name="Before")
     node.generate(1)
     assert index.sync() is not None
@@ -114,8 +141,9 @@ def test_an_unimplemented_message_stops_the_index_and_says_so(ledger):
     assert index.status()["indexed_height"] == bad - 1
 
 
-def test_a_reorg_is_unwound(ledger):
-    node, alice, bob, params, index = ledger
+def test_a_reorg_is_unwound(alone, tmp_path):
+    node, alice = alone
+    params, index = _index_on(node, tmp_path)
     create_fixed(node, alice, name="Kept")
     node.generate(1)
     index.sync()
