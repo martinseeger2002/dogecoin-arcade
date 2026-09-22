@@ -319,6 +319,48 @@ def test_a_pause_while_waiting_for_the_lane_gives_the_lane_back(tmp_path, monkey
     sends.end()
 
 
+def test_a_run_that_was_never_given_the_lane_does_not_send(tmp_path, monkeypatch):
+    """No lane, no send -- whatever the pause did in the meantime.
+
+    `_hold_send_lock` answers False for one reason, a pause arriving while it is
+    waiting, and `_run` acted on that by asking `_stopping` a second time inside
+    the `try` that hands the lane back. Two questions about one fact: a resume
+    landing between them leaves a run holding nothing about to spend a fee while
+    another send is choosing coins from the same wallet, which is the entire
+    reason there are lanes. `_stopping` answers True once here, on the call
+    `_hold_send_lock` makes, because that ordering -- pause, refused, resumed --
+    is what the race is. The point is not how often it happens; it is that
+    nothing now depends on when.
+    """
+    build = C.read_build(hashlips(tmp_path, count=3))
+    sender = FakeSender()
+    sends = SendQueue()
+    assert sends.begin() is True, "another send is in flight"
+    asks: list[int] = []
+
+    jobs = C.Jobs(tmp_path / "collections.sqlite")
+    runner = C.Runner(jobs, chain_for=lambda n: FakeChain(),
+                      index_for=lambda n: FakeIndex(),
+                      send_lock=(sends.begin, sends.end),
+                      make_sender=lambda rpc, params: sender)
+    job_id = jobs.create("regtest", "nSender", build)
+    real = runner._stopping
+
+    def stopping(id_):
+        asks.append(1)
+        return len(asks) == 2 or real(id_)
+
+    monkeypatch.setattr(C, "POLL", 0.02)
+    monkeypatch.setattr(runner, "_stopping", stopping)
+    runner.start(job_id)
+    runner._threads[job_id].join(timeout=5)
+    assert sender.sent == [], "nothing goes out of a lane nobody holds"
+    assert jobs.get(job_id)["status"] == "paused", jobs.get(job_id)
+    assert not runner.running(job_id), "the run is still going"
+    assert sends.begin() is False, "and the other send kept its own lane"
+    sends.end()
+
+
 def test_a_crash_is_resumed_on_the_next_start_without_resending(tmp_path):
     build = C.read_build(hashlips(tmp_path, count=3, sizes={1: 20_000}))
     sender = FakeSender()

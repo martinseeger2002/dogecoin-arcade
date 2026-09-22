@@ -767,14 +767,23 @@ class Runner:
                         break
                     job = self.jobs.get(job_id)
                     held = self._hold_send_lock(job_id)
+                    if not held:
+                        # False only ever means a pause arrived while the lane
+                        # was being waited for, and a lane this run never took
+                        # is not this run's to hand back. Checked before the
+                        # `try`, so the release below is unconditional and
+                        # nothing is sent from a lane that is not held.
+                        self.jobs.set_status(job_id, "paused", note="paused")
+                        return
                     try:
                         if self._stopping(job_id):
+                            # The loop-top check has already run, and this is
+                            # the last point before a fee is spent.
                             self.jobs.set_status(job_id, "paused", note="paused")
                             return
                         outcome = self._send_item(job, item, sender_obj, index)
                     finally:
-                        if held:
-                            self.end_send()
+                        self.end_send()
                     if outcome == "paused":
                         self.jobs.set_status(job_id, "paused", note="paused")
                         return
