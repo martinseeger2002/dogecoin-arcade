@@ -77,12 +77,29 @@ def served(tmp_path_factory, regtest):
 
 
 def _catch_up(state):
+    """Index every block the node has before the test reads anything.
+
+    `sync()` answers None when another thread is already mid-pass -- the page
+    poll in the server this test drives, usually -- and that is not the same
+    thing as being caught up. Reading it as caught up is why these files passed
+    alone and failed in a full run: alone, one pass covers the session node's
+    short chain, and in a full run that node has mined thousands of blocks and
+    one lost pass leaves the rest unwalked. `current` is what a page shows, and
+    it counts an index as current when the floor is above the tip and there is
+    genuinely nothing to read.
+    """
     index = state.token_index(state.messaging)
-    for _ in range(50):
-        result = index.sync(max_blocks=500)
-        if result is None or not result.connected:
-            break
-    return index
+    tip = 0
+    for _ in range(200):
+        with state.messaging.rpc() as rpc:
+            tip = rpc.get_block_count()
+        if index.status(tip)["current"]:
+            return index
+        if index.stopped is not None:
+            raise AssertionError(f"the index stopped: {index.stopped}")
+        index.sync(max_blocks=500)
+        time.sleep(0.05)
+    raise AssertionError(f"the index will not catch up: {index.status(tip)}")
 
 
 def test_signing_up_claims_the_name_and_publishes_the_key(browser, served):
@@ -131,7 +148,15 @@ def test_signing_up_claims_the_name_and_publishes_the_key(browser, served):
     from arcade.messaging.scanner import Scanner
     with state.messaging.rpc() as rpc:
         with state.store() as store:
-            Scanner(rpc, state.messaging.params, store, identity=None).scan()
+            # Until a pass reads nothing: one scan() is 2000 blocks, and the
+            # block with the announcement in it is at the end of a walk that a
+            # full run's shared node leaves several passes long.
+            for _ in range(50):
+                if Scanner(rpc, state.messaging.params, store,
+                           identity=None).scan().blocks == 0:
+                    break
+            else:
+                raise AssertionError("the scanner never reached the tip")
         with state.store() as store:
             said = store.key_for(index.address_of("byitself"))
     assert said is not None, "and the key is published where people look"

@@ -12,6 +12,7 @@ result -- are all parts that look right on paper.
 import contextlib
 import pathlib
 import sys
+import time
 
 import pytest
 
@@ -74,13 +75,28 @@ def _sign_in(app):
 
 
 def _catch_up(state, rpc):
-    """Let the index read every block the node has."""
+    """Let the index read every block the node has.
+
+    `sync()` answers None when another thread is already mid-pass -- a request
+    still being served by the same state, usually -- and that is not the same
+    thing as being caught up. Reading it as caught up is why these files passed
+    alone and failed in a full run: alone, one pass covers the session node's
+    short chain, and in a full run that node has mined thousands of blocks and
+    one lost pass leaves the rest unwalked. `current` is what a page shows, and
+    it counts an index as current when the floor is above the tip and there is
+    genuinely nothing to read.
+    """
     index = state.token_index(state.messaging)
-    for _ in range(50):
-        result = index.sync(max_blocks=500)
-        if result is None or not result.connected:
-            break
-    return index
+    tip = 0
+    for _ in range(200):
+        tip = rpc.call("getblockcount")
+        if index.status(tip)["current"]:
+            return index
+        if index.stopped is not None:
+            raise AssertionError(f"the index stopped: {index.stopped}")
+        index.sync(max_blocks=500)
+        time.sleep(0.05)
+    raise AssertionError(f"the index will not catch up: {index.status(tip)}")
 
 
 def test_an_account_claims_a_name_with_a_key_the_node_never_saw(arcade):

@@ -124,12 +124,20 @@ def node(tmp_path_factory, regtest):
 
 
 def _settle(*node, blocks=1):
-    """Mine what is waiting and read it back, as the watcher thread would."""
+    """Mine what is waiting and read it back, as the watcher thread would.
+
+    The scan runs to the tip rather than one bounded pass: a cursor already in
+    the store makes that cheap after the first call, and one pass is not the tip
+    on a chain as long as the one a full suite leaves.
+    """
     daemon, state = node[0], node[1]
     daemon.generate(blocks)
     BlockWatcher(state)._sync_ledgers()
     with state.messaging.rpc() as rpc, state.store() as store:
-        Scanner(rpc, state.messaging.params, store, identity=None).scan()
+        for _ in range(50):
+            if Scanner(rpc, state.messaging.params, store,
+                       identity=None).scan().blocks == 0:
+                break
 
 
 def _offer(person, where, body):

@@ -9,6 +9,7 @@ from the chain, so nobody posts under one they do not hold.
 import contextlib
 import pathlib
 import sys
+import time
 
 import pytest
 
@@ -65,12 +66,29 @@ def _sign_in(app):
 
 
 def _catch_up(state):
+    """Index every block the node has before the test reads anything.
+
+    `sync()` answers None when another thread is already mid-pass -- a request
+    still being served by the same state, usually -- and that is not the same
+    thing as being caught up. Reading it as caught up is why these files passed
+    alone and failed in a full run: alone, one pass covers the session node's
+    short chain, and in a full run that node has mined thousands of blocks and
+    one lost pass leaves the rest unwalked. `current` is what a page shows, and
+    it counts an index as current when the floor is above the tip and there is
+    genuinely nothing to read.
+    """
     index = state.token_index(state.messaging)
-    for _ in range(50):
-        result = index.sync(max_blocks=500)
-        if result is None or not result.connected:
-            break
-    return index
+    tip = 0
+    for _ in range(200):
+        with state.messaging.rpc() as rpc:
+            tip = rpc.get_block_count()
+        if index.status(tip)["current"]:
+            return index
+        if index.stopped is not None:
+            raise AssertionError(f"the index stopped: {index.stopped}")
+        index.sync(max_blocks=500)
+        time.sleep(0.05)
+    raise AssertionError(f"the index will not catch up: {index.status(tip)}")
 
 
 def _do(app, where, body, secret, pubkey):
@@ -131,7 +149,12 @@ def test_an_account_posts_with_its_own_coins(account):
     from arcade.messaging.scanner import Scanner
     with state.messaging.rpc() as node:
         with state.store() as store:
-            Scanner(node, state.messaging.params, store, identity=None).scan()
+            # One scan() is 2000 blocks. Keep going until a pass reads nothing,
+            # so a chain as long as a full run leaves it does not hide the post.
+            for _ in range(50):
+                if Scanner(node, state.messaging.params, store,
+                           identity=None).scan().blocks == 0:
+                    break
         with state.store() as store:
             posts = store.feed_posts(state.messaging.network, limit=20)
     assert any(p["text"] == "posted by an account" for p in posts), \
@@ -182,7 +205,12 @@ def test_a_tip_pays_the_author_in_the_same_transaction(account):
     from arcade.messaging.scanner import Scanner
     with state.messaging.rpc() as node:
         with state.store() as store:
-            Scanner(node, state.messaging.params, store, identity=None).scan()
+            # One scan() is 2000 blocks. Keep going until a pass reads nothing,
+            # so a chain as long as a full run leaves it does not hide the post.
+            for _ in range(50):
+                if Scanner(node, state.messaging.params, store,
+                           identity=None).scan().blocks == 0:
+                    break
 
     offered = app.post("/account/react", json={
         "txid": target, "kind": feedlib.TIP, "amount": "2"})

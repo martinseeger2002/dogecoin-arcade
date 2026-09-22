@@ -246,9 +246,14 @@ def test_an_index_below_a_raised_floor_moves_itself_aside(tmp_path, regtest):
     index = LedgerIndex(path, regtest.params, rpc_factory=lambda: regtest.rpc)
     index.sync()
     assert index.indexed_height() is not None
-    was = index.indexed_height()
 
-    floor = was + 500
+    # Above the tip, deliberately. A floor just over what this index happens to
+    # hold is below the tip whenever the chain is longer than one sync pass --
+    # which is every shared node in a full run -- and then the rebuild below the
+    # second floor has real blocks to find, so the second move lands on `.3` and
+    # this asserts against a file that was never going to be that name. Above the
+    # tip there is nothing for a rebuild to do, alone or in a full suite.
+    floor = regtest.rpc.call("getblockcount") + 500
     index.params = dataclasses.replace(regtest.params, activation_height=floor)
     index.sync()
 
