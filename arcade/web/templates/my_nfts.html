@@ -19,10 +19,22 @@
 
 <div class="panel empty" id="nothing" hidden>
   <p>Nothing yet.</p>
-  <p class="muted" style="font-size:.86rem">Be sent one, or buy one from the
-    <a href="/exchange?tab=market">Exchange</a>. Inscribing takes a chain of
-    linked transactions and an account cannot build those yet &mdash; the
-    node's own wallet can.</p>
+  <p class="muted" style="font-size:.86rem">Be sent one, buy one from the
+    <a href="/exchange?tab=market">Exchange</a>, or inscribe one below.</p>
+</div>
+
+<div class="panel" id="inscribing">
+  <h3 style="margin:0 0 6px">Inscribe one thing</h3>
+  <p class="muted" style="font-size:.86rem;margin:0 0 10px">
+    One piece &mdash; a little under 7,000 bytes &mdash; in one transaction,
+    paid for by this account and signed in this tab, so this node never sees
+    the key that spent it. It cannot be taken back afterwards. A bigger file,
+    or a whole collection, is a run of pieces with a block waited between
+    them, and an account cannot run one of those yet.</p>
+  <div class="row">
+    <div style="flex:1"><input type="file" id="file"></div>
+    <button type="button" id="inscribe-it">Inscribe it</button>
+  </div>
 </div>
 
 <div class="panel" id="pricing" hidden>
@@ -305,6 +317,31 @@ async function draw() {
   $("nothing").hidden = any > 0;
   if (!any) { $("sending").hidden = true; $("pricing").hidden = true; }
 }
+
+$("inscribe-it").onclick = async () => {
+  const file = $("file").files[0];
+  if (!file) { say("choose a file first"); return; }
+  say("");
+  // Read here rather than uploaded: the bytes the browser pays to put on the
+  // chain are the bytes it chose, and this node never holds a copy of a file
+  // it is being asked to make permanent.
+  let b64 = "";
+  try {
+    b64 = await new Promise((ready, failed) => {
+      const reader = new FileReader();
+      reader.onload = () => ready(String(reader.result).split(",")[1]);
+      reader.onerror = () => failed(new Error("that file could not be read"));
+      reader.readAsDataURL(file);
+    });
+  } catch (e) { say(String(e.message || e)); return; }
+  await offerAndConfirm("/account/inscribe",
+    {content: b64, content_type: file.type || "application/octet-stream",
+     name: file.name, chain: CHAIN.network},
+    (offer) => `${offer.bytes} bytes, on the chain forever, for `
+      + `${(offer.fee / 100000000).toFixed(8)} in fees. ${offer.what}?`,
+    (out) => `Inscribed: ${out.txid.slice(0, 16)}… It shows up when its block `
+      + "is mined.");
+};
 
 keys = await wallet.opened(CHAIN);
 // Said before anything is pressed. A page that only mentions a shut

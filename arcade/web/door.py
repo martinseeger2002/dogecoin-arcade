@@ -145,7 +145,7 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/react",
                "/account/mainnet",        # own opt-in to real coins, own flag
                "/account/write",
-               "/account/claim", "/account/send",
+               "/account/claim", "/account/send", "/account/inscribe",
                "/account/nft/send", "/account/nft/sell",
                "/account/token/send",
                "/account/sign",

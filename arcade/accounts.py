@@ -91,13 +91,19 @@ DAY = 86400
 #: ways an account puts a key or a name on the chain for itself; a person does
 #: each of those once, and something doing them five times an hour is not a
 #: person.
+#: `inscribe` is the ten. Everything else here can be spoken over -- a post
+#: is followed by another post, a send is answered by sending it back. An
+#: inscription is a piece of the chain that stays, and this node carries it
+#: forever, so it is the one action that is not the same kind of thing at
+#: thirty an hour. The bytes below still bound how much of it a day adds up
+#: to; this bounds how fast.
 PER_HOUR = {"post": 30, "react": 60, "message": 30, "send": 30, "list": 30,
-            "name": 5}
+            "name": 5, "inscribe": 10}
 
 #: What each is called in a sentence, so the refusal and the page cannot
 #: disagree about what ran out.
 LABELS = {"post": "posts", "react": "reactions", "message": "messages",
-          "send": "sends", "list": "listings",
+          "send": "sends", "list": "listings", "inscribe": "inscriptions",
           "name": "name and key claims"}
 
 #: Bytes an account may push onto the chain in a day, whatever carried them --

@@ -844,7 +844,7 @@ def create_app(state: AppState) -> FastAPI:
                    post: str = Form(""), react: str = Form(""),
                    message: str = Form(""), send: str = Form(""),
                    listings: str = Form(""), claims: str = Form(""),
-                   payload: str = Form("")):
+                   inscribe: str = Form(""), payload: str = Form("")):
         """How much of this node one account may take.
 
         The defaults (arcade/accounts.py) are sized for a node that seats
@@ -869,9 +869,11 @@ def create_app(state: AppState) -> FastAPI:
                   "list": (listings, "listings an hour", accountslib.CEILING),
                   "name": (claims, "name and key claims an hour",
                            accountslib.CEILING),
+                  "inscribe": (inscribe, "inscriptions an hour",
+                               accountslib.CEILING),
                   "bytes": (payload, "bytes a day", accountslib.BYTE_CEILING)}
-        # Read all seven before writing any. A form with one bad number in it
-        # saving the six it liked would leave the operator looking at a page
+        # Read all eight before writing any. A form with one bad number in it
+        # saving the seven it liked would leave the operator looking at a page
         # that claims the set they typed is in force, when it is not.
         numbers: dict[str, int] = {}
         for kind, (said, label, ceiling) in wanted.items():
@@ -6709,6 +6711,76 @@ def create_app(state: AppState) -> FastAPI:
                 } for row in held],
             })
         return JSONResponse({"chains": out})
+
+    @app.post("/account/inscribe")
+    def account_inscribe(request: Request, payload: Any = Body(None)):
+        """Offer to put one piece of something on the chain, as this account.
+
+        The same inscription the node's own wallet writes at
+        `/inscriptions/create`, built the way an account has to have it
+        built: as an unsigned offer naming this account's own coins, which
+        its browser signs and this node has no way of signing itself. What
+        comes back is checked against what was offered, and what is
+        broadcast is the offer, not whatever arrives.
+
+        One piece, which is as much as one transaction carries -- one
+        OP_RETURN where the content is short, the Class B packet outputs
+        when it is not. A file bigger than that is not refused for being
+        big: it is several pieces, and the piece after the first spends the
+        first one's output, so it cannot be built until that one is in a
+        block. That is a job which outlives a request, and jobs are not
+        built for accounts yet (§9). It is worth saying here because the
+        alternative is a page that starts an inscription, pays for half of
+        it, and leaves the rest unpaid.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        try:
+            try:
+                content = base64.b64decode(str(said.get("content", "")),
+                                           validate=True)
+            except ValueError:
+                raise ValueError("the content has to arrive encoded in "
+                                 "base64, the way a file read in the browser "
+                                 "does") from None
+            if not content:
+                raise ValueError("there is nothing to inscribe")
+            kind = str(said.get("content_type") or "application/octet-stream")
+            plan = inscribelib.plan(content, kind, str(said.get("json", "")))
+            if plan.chunks > 1:
+                raise ValueError(
+                    f"that is {plan.chunks} pieces, and an account can put up "
+                    f"one piece today. The pieces after the first have to "
+                    f"wait for a block before they can be built, which is a "
+                    f"run, and runs are not built for accounts yet "
+                    f"(docs/multi-user.md §9). Nothing has been paid for.")
+            label = (str(said.get("name") or "").strip()[:60]
+                     or kind.split(";")[0])
+            outputs = _class_c_or_b(chain, address, plan.payloads[0],
+                                    _coin_pubkey(account.pubkey, chain))
+            index = state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address, outputs,
+                    rate=fees.MIN_FEE_PER_KB, what=f"inscribe {label}",
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "inscribe", len(content))
+        except (fundinglib.FundingError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned,
+                            unsigned.what)
+        return JSONResponse({"offer": offer.id, "bytes": plan.content_len,
+                             "chain": chain.network, **unsigned.as_json()})
 
     @app.post("/account/nft/send")
     def account_nft_send(request: Request, payload: Any = Body(None)):

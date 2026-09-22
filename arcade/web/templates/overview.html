@@ -79,6 +79,9 @@
       <div><label for="q-name">Name and key claims an hour</label>
         <input id="q-name" autocomplete="off" type="number" min="0" step="1"
                name="claims" value="{{ quota.hour.name }}"></div>
+      <div><label for="q-inscribe">Inscriptions an hour</label>
+        <input id="q-inscribe" autocomplete="off" type="number" min="0" step="1"
+               name="inscribe" value="{{ quota.hour.inscribe }}"></div>
       <div><label for="q-bytes">Bytes a day on the chain</label>
         <input id="q-bytes" autocomplete="off" type="number" min="0" step="1000"
                name="payload" value="{{ quota.bytes }}"></div>
@@ -88,8 +91,10 @@
       A post, a reaction, a message and a send are each one transaction. A
       block comes about a minute after the last one, so thirty an hour is one
       every two minutes, held all day &mdash; more than anybody writes prose
-      at, less than a bot needs. The bytes are what one person may make this
-      node store and carry forever.</p>
+      at, less than a bot needs. An inscription is counted smaller because it
+      is the one that stays: a post is answered by the next post, and an
+      inscription is a piece of the chain this node carries forever. The bytes
+      are what one person may make this node store and carry forever.</p>
   </form>
 </div>
 
