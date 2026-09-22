@@ -107,6 +107,20 @@
   </div>
 </div>
 
+{# What this node lets this account do, and how much of it is left. Said
+   here rather than at the moment it runs out, because a number that only
+   appears as a refusal reads as a broken site — and this is one machine
+   shared with everybody else signed up on it. The operator sets these on
+   their Overview; nothing here can move them. #}
+<div class="panel" id="room" hidden style="margin-top:18px">
+  <h2 style="margin-top:0">What this node lets you do</h2>
+  <p class="muted" style="margin:0 0 12px;max-width:64ch">
+    One machine is shared with everybody who signed up on it, so there are
+    numbers on how much of it one account may take. Yours are these, and
+    they open again as the hour runs on.</p>
+  <div class="statbar" id="room-grid"></div>
+</div>
+
 {# What this page deliberately does not have, said rather than left as a
    gap: Overview's auto-sell, auto-fill, update and scan settings all
    configure the NODE's own automation, which runs on the node's own key.
@@ -167,6 +181,12 @@ let me = null, keys = null;
 const coinsOf = (n) => (n / 100000000).toLocaleString(undefined,
   {minimumFractionDigits: 0, maximumFractionDigits: 8});
 
+// Bytes are counted in thousands on this page: 250000 is a number nobody
+// reads, and 250k is.
+const kilos = (n) => (n >= 1000
+  ? `${(n / 1000).toLocaleString(undefined, {maximumFractionDigits: 1})}k`
+  : String(n));
+
 function drawWallets(said) {
   const chains = said.chains || [];
   $("wallets").innerHTML = "";
@@ -209,8 +229,44 @@ function drawWallets(said) {
   $("wallets").appendChild(open);
 }
 
+// The node's numbers for one account, and what of them is used. Read from
+// the node rather than copied from a page: an allowance the browser
+// remembered would be a number that a second tab makes wrong.
+function drawRoom(said) {
+  const quota = said.quota;
+  $("room").hidden = !quota;
+  if (!quota) {
+    $("room-grid").replaceChildren();
+    return;
+  }
+  const rows = [];
+  for (const one of quota.actions || []) {
+    rows.push([`${one.used} of ${one.limit}`, `${one.label} an hour`]);
+  }
+  if (quota.bytes) {
+    rows.push([`${kilos(quota.bytes.used)} of ${kilos(quota.bytes.limit)}`,
+               "bytes a day on the chain"]);
+  }
+  const cells = [];
+  for (const [value, what] of rows) {
+    const cell = document.createElement("div");
+    cell.className = "stat";
+    const b = document.createElement("b");
+    b.textContent = value;
+    const span = document.createElement("span");
+    span.textContent = what;
+    cell.append(b, span);
+    cells.push(cell);
+  }
+  // replaceChildren rather than emptying innerHTML: a test
+  // (test_me_page) counts the innerHTML uses on this page to keep the
+  // promise that nothing off the chain is ever handed to it as markup.
+  $("room-grid").replaceChildren(...cells);
+}
+
 async function draw() {
   const said = await wallet.state();
+  drawRoom(said);
   $("tag").textContent = said.tag ? "@" + said.tag
                        : (said.name ? "@" + said.name : "—");
   $("tag-note").textContent = said.tag ? "on the chain"

@@ -287,6 +287,26 @@ WHY_NOT_SECURE = (
     "http is a key anybody on the network watched being made.")
 
 
+def _count(text: Any, label: str, ceiling: int) -> int:
+    """One allowance read off a form: a number, not negative, not pretend.
+
+    Refused rather than guessed, because a settings file that quietly holds
+    `null` is an allowance nobody set. Zero is a real answer -- it closes the
+    action, and the account is told that is what happened.
+    """
+    said = str(text or "").strip().replace(",", "").replace(" ", "")
+    try:
+        value = int(said)
+    except ValueError:
+        raise ValueError(f"{label} has to be a whole number, not {said or 'nothing'}.")
+    if value < 0:
+        raise ValueError(f"{label} cannot be below zero. Zero closes it.")
+    if value > ceiling:
+        raise ValueError(f"{label} cannot be above {ceiling:,} -- past that "
+                         f"it is not an allowance, it is no limit.")
+    return value
+
+
 def secure_context(request: Request) -> bool:
     """Whether `crypto.subtle` will exist on the page we are about to send."""
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme
@@ -703,6 +723,8 @@ def create_app(state: AppState) -> FastAPI:
                       update_status=state.update_status, when=_when,
                       update_every=watcherlib.BlockWatcher.UPDATE_EVERY,
                       release_key=releaselib.PUBLIC_KEY,
+                      quota=accountslib.limits(state.settings()),
+                      quota_labels=accountslib.LABELS,
                       messaging=messaging_status(), ledger=ledger_status(), stats=stats)
 
     @app.post("/settings/updates")
@@ -758,6 +780,54 @@ def create_app(state: AppState) -> FastAPI:
             "Your bids will take any ask they cross."
             if auto == "on" else
             "Your orders will rest until you take a price yourself.", "ok")
+        return RedirectResponse("/", status_code=303)
+
+    @app.post("/settings/quotas")
+    def set_quotas(request: Request, csrf_token: str = Form(""),
+                   post: str = Form(""), react: str = Form(""),
+                   message: str = Form(""), send: str = Form(""),
+                   listings: str = Form(""), claims: str = Form(""),
+                   payload: str = Form("")):
+        """How much of this node one account may take.
+
+        The defaults (arcade/accounts.py) are sized for a node that seats
+        fifty people, and a node is not always that. An operator running one
+        for four friends should not have to inherit a number meant for
+        strangers, and an operator running a public arcade wants to be able
+        to close a door without editing code while the traffic is arriving.
+
+        Zero is allowed and means zero: an operator who sets it is closing
+        that action, and the account is told so plainly rather than being
+        given a number it can never reach. This route saves what it is given
+        and enforces nothing -- the enforcement is in the build routes, which
+        read the settings each time so a change lands on the NEXT action and
+        not on the next restart.
+        """
+        check_csrf(csrf_token)
+        wanted = {"post": (post, "posts an hour", accountslib.CEILING),
+                  "react": (react, "reactions an hour", accountslib.CEILING),
+                  "message": (message, "messages an hour",
+                              accountslib.CEILING),
+                  "send": (send, "sends an hour", accountslib.CEILING),
+                  "list": (listings, "listings an hour", accountslib.CEILING),
+                  "name": (claims, "name and key claims an hour",
+                           accountslib.CEILING),
+                  "bytes": (payload, "bytes a day", accountslib.BYTE_CEILING)}
+        # Read all seven before writing any. A form with one bad number in it
+        # saving the six it liked would leave the operator looking at a page
+        # that claims the set they typed is in force, when it is not.
+        numbers: dict[str, int] = {}
+        for kind, (said, label, ceiling) in wanted.items():
+            try:
+                numbers[kind] = _count(said, label, ceiling)
+            except ValueError as exc:
+                state.flash(str(exc), "err")
+                return RedirectResponse("/", status_code=303)
+        for kind, value in numbers.items():
+            state.set_setting(f"quota:{kind}", value)
+        state.flash("Those are the allowances accounts have here now. Each "
+                    "one is measured again from the next thing they ask for.",
+                    "ok")
         return RedirectResponse("/", status_code=303)
 
     # --- identity -------------------------------------------------------------
@@ -6127,6 +6197,40 @@ def create_app(state: AppState) -> FastAPI:
             return f"coinkey:{pubkey}"
         return f"coinkey:{chain.network}:{pubkey}"
 
+    def _quota(account, kind: str, nbytes: int = 0) -> None:
+        """What this node lets one account do, checked where the work is done.
+
+        Two things, in the order they cost the machine something:
+
+        * **The pile of unsigned offers.** Building a transaction is free to
+          ask for and costs this node a read of the index and a thing held in
+          memory naming specific coins, so an account cannot be allowed an
+          unlimited number of asks outstanding. This is §6's "one active run
+          at a time", in the only shape an account has today.
+        * **The allowance for the action itself** (arcade/accounts.py), which
+          is counted AFTER this node built the transaction and before it is
+          offered. Before the build and the refusal would be about a thing
+          that costs the account nothing to attempt; after the offer and a
+          build that failed for an unrelated reason -- no coins, a name not
+          claimed -- would have spent an allowance on something that never
+          went near the chain.
+
+        The numbers are the operator's to move and the page's to show; what
+        is not movable is that there are numbers (§6: enforced and said, not
+        enforced silently).
+        """
+        if len(_offers.waiting(account.pubkey)) >= accountslib.OFFERS_WAITING:
+            raise ValueError(
+                "this node is still waiting to hear about the other offers it "
+                "made you. Sign one or let a few minutes go by and ask again "
+                "-- each one names specific coins, and two of them spending "
+                "the same coin is a transaction the network refuses.")
+        try:
+            state.accounts().charge(account.pubkey, kind, nbytes,
+                                    caps=accountslib.limits(state.settings()))
+        except accountslib.AccountError as exc:
+            raise ValueError(str(exc))
+
     def _note_payment(txid: str, pubkey: str, address: str,
                       network: str = "") -> None:
         """Record an output this node just paid to an account.
@@ -6419,6 +6523,13 @@ def create_app(state: AppState) -> FastAPI:
                 except Exception:
                     pass                   # a node still catching up says 0
             said["chains"].append(row)
+
+        # What this node lets this account do, and how much of it is left.
+        # The other half of §6: a number that only appears when somebody runs
+        # into it is a number enforced silently, and the page they were
+        # reading looks broken rather than limited.
+        said["quota"] = state.accounts().room(
+            account.pubkey, caps=accountslib.limits(state.settings()))
         return JSONResponse(said)
 
     @app.get("/me", response_class=HTMLResponse)
@@ -6576,6 +6687,7 @@ def create_app(state: AppState) -> FastAPI:
                     what=f"send inscription #{row['number']} to {to}",
                     exclude=_flights.spent_by(account.pubkey, chain.network),
                     extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "send")
         except (taglib.TagError, fundinglib.FundingError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         except Exception as exc:
@@ -6640,6 +6752,7 @@ def create_app(state: AppState) -> FastAPI:
                     rate=fees.MIN_FEE_PER_KB, what=what,
                     exclude=_flights.spent_by(account.pubkey, chain.network),
                     extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "list")
         except (tokenlib.TokenError, fundinglib.FundingError, AmountError,
                 ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
@@ -6738,6 +6851,7 @@ def create_app(state: AppState) -> FastAPI:
                          f"{prop['name']} to {to}",
                     exclude=_flights.spent_by(account.pubkey, chain.network),
                     extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "send")
         except (taglib.TagError, tokenlib.TokenError, fundinglib.FundingError,
                 AmountError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
@@ -6945,6 +7059,7 @@ def create_app(state: AppState) -> FastAPI:
                     rate=fees.MIN_FEE_PER_KB, what=f"a message to {to}",
                     exclude=_flights.spent_by(account.pubkey, chain.network),
                     extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "message", len(sealed))
         except (fundinglib.FundingError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         offer = _offers.add(account.pubkey, chain.network, unsigned,
@@ -6996,6 +7111,7 @@ def create_app(state: AppState) -> FastAPI:
                     rate=fees.MIN_FEE_PER_KB, what="a post",
                     exclude=_flights.spent_by(account.pubkey, chain.network),
                     extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "post", len(plan.payloads[0]))
         except (fundinglib.FundingError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         offer = _offers.add(account.pubkey, chain.network, unsigned, "a post")
@@ -7055,6 +7171,7 @@ def create_app(state: AppState) -> FastAPI:
                     what=feedlib.NAMES.get(kind, "a reaction"),
                     exclude=_flights.spent_by(account.pubkey, chain.network),
                     extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "react", len(note))
         except (fundinglib.FundingError, AmountError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         offer = _offers.add(account.pubkey, chain.network, unsigned,
@@ -7118,6 +7235,7 @@ def create_app(state: AppState) -> FastAPI:
                     what="publish your messaging key",
                     exclude=_flights.spent_by(account.pubkey, chain.network),
                     extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "name", len(body))
         except (fundinglib.FundingError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         offer = _offers.add(account.pubkey, chain.network, unsigned,
@@ -7227,6 +7345,7 @@ def create_app(state: AppState) -> FastAPI:
                     rate=fees.MIN_FEE_PER_KB, what=f"claim @{wanted}",
                     exclude=_flights.spent_by(account.pubkey, chain.network),
                     extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "name")
         except (taglib.TagError, fundinglib.FundingError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         offer = _offers.add(account.pubkey, chain.network, unsigned,
@@ -7280,6 +7399,7 @@ def create_app(state: AppState) -> FastAPI:
                           f"{chain.label.lower()} to {to}"),
                     exclude=_flights.spent_by(account.pubkey, chain.network),
                     extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "send")
         except (taglib.TagError, fundinglib.FundingError, AmountError,
                 ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)

@@ -45,6 +45,54 @@
   </p>
 </div>
 
+{# What one account may take from a node that is shared. One machine, one
+   chain connection, fifty people: without a number, whoever writes a loop is
+   a denial of service with a byline, and the blocks and the disk it fills are
+   paid for here. The same numbers are on every account's own page &mdash;
+   a limit that only appears when somebody runs into it reads as a broken
+   site, and the support message for it lands on you. #}
+<div class="panel" style="margin-top:12px">
+  <form method="post" action="/settings/quotas" id="quotas">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <h2 style="margin-top:0">What one account may do here</h2>
+    <p class="muted" style="margin:0 0 12px;max-width:66ch">
+      Counted per account, over a rolling hour, and shown to them on their
+      own page before they reach it. Zero closes an action completely and
+      says so &mdash; nothing of anybody&rsquo;s is lost by that, they can do
+      it on another node or their own.</p>
+    <div class="grid" style="margin-bottom:12px">
+      <div><label for="q-post">Posts an hour</label>
+        <input id="q-post" autocomplete="off" type="number" min="0" step="1"
+               name="post" value="{{ quota.hour.post }}"></div>
+      <div><label for="q-react">Reactions an hour</label>
+        <input id="q-react" autocomplete="off" type="number" min="0" step="1"
+               name="react" value="{{ quota.hour.react }}"></div>
+      <div><label for="q-message">Messages an hour</label>
+        <input id="q-message" autocomplete="off" type="number" min="0" step="1"
+               name="message" value="{{ quota.hour.message }}"></div>
+      <div><label for="q-send">Sends an hour</label>
+        <input id="q-send" autocomplete="off" type="number" min="0" step="1"
+               name="send" value="{{ quota.hour.send }}"></div>
+      <div><label for="q-list">Listings an hour</label>
+        <input id="q-list" autocomplete="off" type="number" min="0" step="1"
+               name="listings" value="{{ quota.hour.list }}"></div>
+      <div><label for="q-name">Name and key claims an hour</label>
+        <input id="q-name" autocomplete="off" type="number" min="0" step="1"
+               name="claims" value="{{ quota.hour.name }}"></div>
+      <div><label for="q-bytes">Bytes a day on the chain</label>
+        <input id="q-bytes" autocomplete="off" type="number" min="0" step="1000"
+               name="payload" value="{{ quota.bytes }}"></div>
+    </div>
+    <button class="btn primary" type="submit">Save</button>
+    <p class="muted" style="margin:10px 0 0;font-size:.86rem">
+      A post, a reaction, a message and a send are each one transaction. A
+      block comes about a minute after the last one, so thirty an hour is one
+      every two minutes, held all day &mdash; more than anybody writes prose
+      at, less than a bot needs. The bytes are what one person may make this
+      node store and carry forever.</p>
+  </form>
+</div>
+
 {# The first thing a new wallet is asked, and the only thing it is asked.
    Everything else here comes from the node; this is the one fact only the
    person knows (D-131). #}

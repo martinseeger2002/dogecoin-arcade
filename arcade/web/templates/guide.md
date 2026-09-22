@@ -890,6 +890,13 @@ forwarding. The mempool already gossips to every node in seconds.
   sentence on it rather than a lock, and the page says so: what it stops is
   moving money out of a browser you can never come back to, which is the one
   loss this cannot undo.
+* **There are numbers on what one account may do.** Posts, reactions,
+  messages, sends, listings and name claims are each counted per account over
+  a rolling hour, and the bytes you put on the chain are counted over a day --
+  because one machine is shared, and somebody writing a loop is a denial of
+  service with a byline. Your own numbers, and what of them you have used, are
+  on your page before you reach them rather than in a refusal after it. The
+  operator can move them; what they cannot do is make them invisible.
 * **The account's address book is in the browser, not on the node.** Same
   page as the wallet's: search a @tag, add what the chain says it points
   at, and write to it from there. Keeping it on the node would hand over a

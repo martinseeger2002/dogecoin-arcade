@@ -36,6 +36,10 @@ CUSTODIAL = [
     "/tokens/create", "/tokens/send", "/tokens/chain",
     "/inscriptions/create", "/inscriptions/collection",
     "/settings/updates", "/setup-identity", "/r/wallet", "/fund",
+    # What one account may do here is the operator's to set, on their own
+    # page. A public instance serves the splash, so the form is not even
+    # drawn -- and a stranger must not be able to move the numbers either.
+    "/settings/quotas",
 ]
 
 
@@ -77,7 +81,7 @@ def test_every_form_is_refused(public):
     app, state = public
     for path in ("/feed/post", "/wallet/send", "/tokens/send", "/contacts/save",
                  "/inscriptions/collection/start", "/exchange/offer",
-                 "/settings/updates", "/messages/start"):
+                 "/settings/updates", "/settings/quotas", "/messages/start"):
         answer = app.post(path, data={"csrf_token": state.csrf_token},
                           headers=LOCAL)
         assert answer.status_code == 404, f"{path} answered {answer.status_code}"

@@ -68,6 +68,92 @@ CHALLENGE_SECONDS = 120
 ATTEMPTS = 20
 ATTEMPT_WINDOW = 300
 
+# --- what one account may do on a node everybody shares ------------------------
+#
+# One machine, one chain connection, and up to `SEATS` people on it. Without a
+# number on each action, the person who writes a loop is a denial of service
+# with a byline -- and it is the operator who pays for the blocks and the disk
+# the loop fills (docs/multi-user.md §6). So there is a number, it is said on
+# the page before it is reached rather than after, and the operator can move it
+# on their own Overview. What is not movable is that there is one.
+#
+# The sizes come out of how fast the chain is, not out of a hunch. A block
+# arrives about a minute after the last one and every one of these actions is
+# one transaction, so thirty an hour is one every two minutes held all day:
+# more than anybody writes prose at, and less than a bot needs. A reaction is
+# the same transaction with less inside it, and scrolling and liking genuinely
+# is faster than writing, so the like gets twice the room.
+
+HOUR = 3600
+DAY = 86400
+
+#: Actions counted per hour, with the default for each. `name` covers the two
+#: ways an account puts a key or a name on the chain for itself; a person does
+#: each of those once, and something doing them five times an hour is not a
+#: person.
+PER_HOUR = {"post": 30, "react": 60, "message": 30, "send": 30, "list": 30,
+            "name": 5}
+
+#: What each is called in a sentence, so the refusal and the page cannot
+#: disagree about what ran out.
+LABELS = {"post": "posts", "react": "reactions", "message": "messages",
+          "send": "sends", "list": "listings",
+          "name": "name and key claims"}
+
+#: Bytes an account may push onto the chain in a day, whatever carried them --
+#: the ceiling on how much of the chain one person can make this node store
+#: and carry forever. Fifty accounts at this ceiling is about twelve megabytes
+#: a day, which is the number the operator is actually buying with the dial.
+#: A post is already capped at one transaction by the feed's own rule, so this
+#: is mostly about messages, which can be as big as a person seals them.
+BYTES_PER_DAY = 250_000
+
+#: How many unsigned offers one account may have standing at once. This is §6's
+#: "one active run at a time" translated into what an account can do today,
+#: which is build transactions rather than inscribe them: building is free and
+#: an offer is a thing held in memory naming coins, so a page that builds and
+#: never brings a signature back would otherwise pile them up without limit.
+#: Four, rather than one, because a person who changed their mind should not
+#: have to wait out an expired offer to ask for the next one.
+OFFERS_WAITING = 4
+
+#: The largest allowance that means anything. Past these a number is not a
+#: limit somebody set but a limit they stopped believing in, and a form is a
+#: place for a stray digit to arrive.
+CEILING = 100_000
+BYTE_CEILING = 50_000_000
+
+
+def _number(said: dict, key: str, default: int, ceiling: int) -> int:
+    """One allowance out of the settings, clamped to what a person can mean.
+
+    Clamped rather than trusted: the page cannot write anything else, but a
+    settings.json edited in a text file can hold a negative -- which would
+    mean "refuse everything" by accident -- or a nine-digit number, which
+    would mean "no limit" by accident. An allowance that goes wrong goes
+    wrong by being small.
+    """
+    try:
+        value = int(said.get(key, default))
+    except (TypeError, ValueError):
+        return int(default)
+    return max(0, min(value, ceiling))
+
+
+def limits(overrides: dict | None = None) -> dict:
+    """The allowance for this node: the defaults, with the operator's numbers over them.
+
+    Read per request rather than cached, so a change on the Overview applies
+    to the next action and not to the next restart. A `0` means zero -- an
+    operator closing posts out is a decision, not a missing value, so it is
+    never replaced by the default.
+    """
+    said = overrides or {}
+    return {"hour": {kind: _number(said, f"quota:{kind}", cap, CEILING)
+                     for kind, cap in PER_HOUR.items()},
+            "bytes": _number(said, "quota:bytes", BYTES_PER_DAY, BYTE_CEILING)}
+
+
 SCHEMA = """
 -- One row per account ever seated here. `released` is when the seat was
 -- given back (idle sweep, or the person asked); a released row is kept
@@ -116,6 +202,20 @@ CREATE TABLE IF NOT EXISTS attempt (
     at    INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS attempt_who ON attempt(who, at);
+
+-- What each account did, for the allowances above. Rows exist to be counted
+-- and then deleted when their window closes -- this is not a history, and
+-- there is deliberately nothing in it that says WHAT a post said, WHO a
+-- message went to or WHICH coins a send moved. The chain holds all of that
+-- and this node already indexes it; a copy here would be a second place for
+-- the same facts to leak from.
+CREATE TABLE IF NOT EXISTS deed (
+    pubkey TEXT NOT NULL,
+    kind   TEXT NOT NULL,
+    at     INTEGER NOT NULL,
+    bytes  INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS deed_who ON deed(pubkey, kind, at);
 """
 
 
@@ -217,6 +317,10 @@ class Accounts:
         self.conn.execute("DELETE FROM session WHERE expires < ?", (now,))
         self.conn.execute("DELETE FROM attempt WHERE at < ?",
                           (now - ATTEMPT_WINDOW,))
+        # A deed older than the longest window says nothing that is still
+        # worth counting, and a table nobody deletes would be a file that
+        # only grows on a machine whose whole job is to be shared.
+        self.conn.execute("DELETE FROM deed WHERE at < ?", (now - DAY,))
         return [row["pubkey"] for row in rows]
 
     def taken(self, now: int | None = None) -> int:
@@ -280,6 +384,95 @@ class Accounts:
         self.conn.execute("UPDATE account SET released = ? WHERE pubkey = ?",
                           (now, pubkey))
         self.conn.execute("DELETE FROM session WHERE pubkey = ?", (pubkey,))
+
+    # --- the allowance, because the node is shared ----------------------------
+
+    def used(self, pubkey: str, kind: str, *, now: int | None = None) -> int:
+        """How many of one thing this account did in the last hour."""
+        now = int(now if now is not None else time.time())
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM deed WHERE pubkey = ? AND kind = ? AND at > ?",
+            (pubkey, kind, now - HOUR)).fetchone()[0]
+
+    def pushed(self, pubkey: str, *, now: int | None = None) -> int:
+        """Bytes this account put on the chain in the last day."""
+        now = int(now if now is not None else time.time())
+        return self.conn.execute(
+            "SELECT COALESCE(SUM(bytes), 0) FROM deed WHERE pubkey = ? AND at > ?",
+            (pubkey, now - DAY)).fetchone()[0]
+
+    def charge(self, pubkey: str, kind: str, nbytes: int = 0, *,
+               caps: dict | None = None, now: int | None = None) -> dict:
+        """Count one thing an account did, or refuse it and count nothing.
+
+        Called by the node AFTER it built the transaction and BEFORE it hands
+        the offer to the browser. Before the build, and the refusal would be
+        a lie about a thing that costs nothing to attempt; after the offer,
+        and a build that failed for an unrelated reason -- no coins, a name
+        not claimed yet -- would have spent an allowance on something that
+        never went near the chain.
+
+        Refusing counts nothing, which matters for the honest sentence on the
+        page: `used` says what actually reached the chain, and a loop that is
+        being refused does not inflate it.
+        """
+        now = int(now if now is not None else time.time())
+        caps = caps or limits()
+        cap = caps["hour"].get(kind)
+        if cap is not None:
+            already = self.used(pubkey, kind, now=now)
+            if already >= int(cap):
+                if not int(cap):
+                    # Zero is a decision somebody made on their own page, not
+                    # a number this account ran out of. Say which it is.
+                    raise AccountError(
+                        f"this node is not taking {LABELS.get(kind, kind)} "
+                        f"from accounts right now -- its operator closed "
+                        f"them. Nothing of yours is lost; try another node, "
+                        f"or your own.")
+                # When the oldest of them leaves the window is when room
+                # appears, so this is the only honest number to give: not
+                # "try later", but the minute the page can say.
+                oldest = self.conn.execute(
+                    "SELECT MIN(at) FROM deed WHERE pubkey = ? AND kind = ? "
+                    "AND at > ?", (pubkey, kind, now - HOUR)).fetchone()[0]
+                raise AccountError(
+                    f"that is {int(cap)} {LABELS.get(kind, kind)} in an hour "
+                    f"on this node, and this account has used them. Room "
+                    f"appears again in "
+                    f"{max(1, round(((oldest or now) + HOUR - now) / 60))} "
+                    f"minutes.")
+        if nbytes:
+            room = caps["bytes"] - self.pushed(pubkey, now=now)
+            if int(nbytes) > room:
+                raise AccountError(
+                    f"that is more than the {caps['bytes']:,} bytes a day one "
+                    f"account may put on the chain here, and "
+                    f"{max(room, 0):,} of them are left.")
+        self.conn.execute(
+            "INSERT INTO deed (pubkey, kind, at, bytes) VALUES (?,?,?,?)",
+            (pubkey, kind, now, int(nbytes or 0)))
+        return self.room(pubkey, caps=caps, now=now)
+
+    def room(self, pubkey: str, *, caps: dict | None = None,
+             now: int | None = None) -> dict:
+        """What the page shows: the numbers, what is used, and nothing else.
+
+        Said rather than enforced silently is the whole point of §6. A person
+        who finds a wall they were never told about concludes the node is
+        broken, and the operator gets the support message for it.
+        """
+        now = int(now if now is not None else time.time())
+        caps = caps or limits()
+        return {
+            "hour": HOUR, "day": DAY,
+            "actions": [{"kind": kind, "label": LABELS.get(kind, kind),
+                         "limit": int(cap),
+                         "used": self.used(pubkey, kind, now=now)}
+                        for kind, cap in caps["hour"].items()],
+            "bytes": {"limit": int(caps["bytes"]),
+                      "used": self.pushed(pubkey, now=now)},
+        }
 
     # --- proving who you are --------------------------------------------------
 
