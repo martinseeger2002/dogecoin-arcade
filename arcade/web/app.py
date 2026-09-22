@@ -3623,11 +3623,16 @@ def create_app(state: AppState) -> FastAPI:
         collection = build.collection
         if not sender or not collection:
             return out
-        try:
-            chain, index = _token_chain()
-            done = index.collection_editions(sender, collection)
-        except Exception:
-            return out                    # the index is the wizard's business
+        # What this node wrote down about its own runs, which asks nothing of a
+        # node: `token_chain` reads a file and `jobs.list` reads the job book. The
+        # guard that refuses a run already under way is about those records alone,
+        # so it no longer sits behind the index read below. It used to, which
+        # meant an index that would not answer -- a node restarting, a chain set
+        # to one this node is not indexing -- switched the refusal off, and the
+        # press then started a second run of the same set and paid for every piece
+        # twice. (D-120 is about this refusal costing nothing to hear; this is
+        # about it not being switchable off by a fault somewhere else.)
+        chain = state.token_chain
         jobs, _ = state.collections
         named = {collection, label.strip()} - {""}
         floor = chain.params.activation_height
@@ -3643,6 +3648,14 @@ def create_app(state: AppState) -> FastAPI:
                     f"it rather than starting a second one.")
                 return out
 
+        try:
+            done = state.token_index(chain).collection_editions(sender, collection)
+        except Exception:
+            # The index is the wizard's business, and "nothing of it is indexed"
+            # is the honest reading of an index that will not answer. The
+            # finished-at-this-floor scan below is what speaks on that reading, so
+            # an out-of-the-way index makes this say less, not nothing.
+            done = set()
         out["skip"] = {item.edition for item in build.items if item.edition in done}
         if out["skip"] and len(out["skip"]) == len(build.items):
             out["blocked"] = (
@@ -3720,7 +3733,7 @@ def create_app(state: AppState) -> FastAPI:
             build = collectionlib.read_build(Path(folder.strip()))
             if not build.items:
                 raise ValueError("no items with both metadata and an image.")
-            chain, _ = _token_chain()
+            chain = state.token_chain
             with chain.rpc() as rpc:
                 sender = (_check_own_address(rpc, fromaddress) if fromaddress
                           else funded_address(rpc, mainnet=chain.is_mainnet))
@@ -3910,7 +3923,7 @@ def create_app(state: AppState) -> FastAPI:
         for rather than after (D-036).
         """
         check_csrf(csrf_token)
-        chain, _ = _token_chain()
+        chain = state.token_chain          # the rpc and the floor, not the index
         jobs, runner = state.collections
         try:
             build = collectionlib.read_build(Path(folder.strip()))

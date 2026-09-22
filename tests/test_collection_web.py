@@ -340,6 +340,54 @@ def test_a_run_already_under_way_is_not_started_twice(client, tmp_path):
     assert "is already being inscribed" not in app.get(response.headers["location"]).text
 
 
+def test_a_run_under_way_is_refused_even_with_the_index_out_of_the_way(
+        client, tmp_path, monkeypatch):
+    """The refusal cannot be switched off by a fault in something else.
+
+    Both of the run-list guards sat inside the same `try` as the index read, so an
+    index that raised -- a node restarting, a chain set to one this node is not
+    indexing -- returned before either of them ran, and the press started a second
+    run of a set that is already being inscribed and paid for every piece twice.
+    What that guard reads is this node's own job book, which asks nothing of a
+    node, so it is outside the `try` now: an out-of-the-way index can make the
+    answer say less, not make it say nothing.
+    """
+    from arcade import collections as C
+
+    app, state = client
+    build = C.read_build(hashlips(tmp_path, count=2))
+    jobs, _ = state.collections
+    chain = state.token_chain
+    jobs.create(chain.network, "nMe", build, name="Doge Punks",
+                floor=chain.params.activation_height)
+
+    real = state.token_index
+
+    class IndexThatCannotAnswer:
+        """There is an index and it answers everything except the one read that
+        goes through to the node -- which is the failure an index actually has.
+        `LedgerIndex` holds no connection and its `__init__` only assigns
+        attributes, so the object itself is never what is missing; a query is."""
+
+        def __init__(self, index):
+            self._index = index
+
+        def collection_editions(self, *args, **kwargs):
+            raise RuntimeError("the index is not answering")
+
+        def __getattr__(self, name):
+            return getattr(self._index, name)
+
+    monkeypatch.setattr(state, "token_index",
+                        lambda chain: IndexThatCannotAnswer(real(chain)))
+    response = app.post("/inscriptions/collection/start",
+                        data={"csrf_token": state.csrf_token,
+                              "folder": str(build.folder), "fromaddress": "nMe"},
+                        follow_redirects=False)
+    assert "is already being inscribed" in app.get(response.headers["location"]).text
+    assert len(jobs.list()) == 1, "and no second run was written down"
+
+
 def test_a_half_finished_set_is_finished_rather_than_paid_for_twice(
         client, tmp_path, monkeypatch):
     """The other shape of the same mistake. Five of the set are up, the run
