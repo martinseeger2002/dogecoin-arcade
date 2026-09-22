@@ -8,6 +8,7 @@ auth is used, so no password exists anywhere.
 from __future__ import annotations
 
 import dataclasses
+import os
 import shutil
 import socket
 import subprocess
@@ -24,6 +25,125 @@ def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+#: Every datadir this module makes carries this prefix and nothing else on the
+#: box uses it, which is what lets the leftovers of an interrupted run be told
+#: apart from a node somebody cares about. The real ones keep their data in
+#: ~/.pepecoin-testnet and /var/lib/pepecoind, so they cannot match it.
+DATADIR_PREFIX = "arcade-regtest-"
+
+
+def _alive(pid: int) -> bool:
+    """Is this process still something that could be serving a datadir?
+
+    A zombie is not: it has closed its files and waits only for a parent to ask
+    how it died, and `kill(pid, 0)` cannot see the difference. Unreadable is
+    answered alive, because the only cost of being wrong that way is leaving one
+    more directory for the next run.
+    """
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    try:
+        after = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1]
+    except OSError:
+        return True
+    return after.split(None, 1)[0].strip() != "Z"
+
+
+def _live_datadirs() -> dict[str, int]:
+    """datadir -> pid, for the regtest daemons the kernel still has.
+
+    Read out of /proc rather than from a formatted table: a datadir path cannot
+    be mistaken for part of somebody else's arguments. A process that exits
+    between being listed and being read is simply not in the answer.
+    """
+    found: dict[str, int] = {}
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            args = entry.joinpath("cmdline").read_bytes().split(b"\0")
+        except OSError:                     # it exited, or it is not ours to read
+            continue
+        for arg in args:
+            text = arg.decode("utf8", "replace")
+            if not text.startswith("-datadir="):
+                continue
+            datadir = text[len("-datadir="):]
+            if datadir.rsplit("/", 1)[-1].startswith(DATADIR_PREFIX):
+                found[datadir] = int(entry.name)
+    return found
+
+
+def _serving(pid: int, datadir: str) -> bool:
+    """Does this process still name this datadir among its own arguments?
+
+    Asked again at the moment of signalling rather than trusted from the scan a
+    few lines above, because a pid is a number the kernel hands out again. Being
+    wrong here means sending SIGTERM to whatever took the number after the daemon
+    that owned it went away, which is somebody's editor, not a node.
+    """
+    try:
+        args = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    except OSError:                       # gone, or not ours to read
+        return False
+    return f"-datadir={datadir}".encode() in args
+
+
+def reap_leftovers(older_than: float = 7200.0,
+                   live: dict[str, int] | None = None) -> str:
+    """Reclaim what an interrupted run left behind, and say what came away.
+
+    `stop` removes the datadir, so a directory still sitting here belongs to a
+    run that never reached its teardown -- ctrl-C, a killed pytest, a machine
+    that rebooted mid-suite. A directory with no process of ours behind it is
+    leftover, full stop: it is only disk, and six of them is a suite whose
+    timing depends on what else is running.
+
+    A *process* is a different thing, so it is only old enough to stop once its
+    datadir predates a whole suite. Two runs can share this box and one must not
+    stop the other's node, so a young daemon is left alone even when it is known
+    to be somebody's leftover in an hour.
+
+    `live` is injectable so a test can drive those decisions without a
+    /proc of its own.
+    """
+    running = _live_datadirs() if live is None else live
+    now = time.time()
+    targets: list[tuple[Path, int | None]] = []
+    for path in sorted(Path(tempfile.gettempdir()).glob(DATADIR_PREFIX + "*")):
+        try:
+            made = path.stat()
+        except OSError:                     # it went away as we looked
+            continue
+        if made.st_uid != os.getuid() or not path.is_dir():
+            continue
+        pid = running.get(str(path))
+        if pid is None or now - made.st_ctime > older_than:
+            targets.append((path, pid))
+    stopped = 0
+    for path, pid in targets:
+        if pid is None or not _serving(pid, str(path)):
+            continue                        # debris rather than a daemon: nothing to stop
+        subprocess.run(["kill", "-TERM", str(pid)], check=False)
+        stopped += 1
+        for _ in range(20):                 # a daemon takes a moment to notice
+            if not _alive(pid):
+                break
+            time.sleep(0.5)
+    removed = 0
+    for path, pid in targets:
+        if pid is not None and _serving(pid, str(path)):
+            continue                        # still serving; leave its data be
+        if path.exists():
+            shutil.rmtree(path, ignore_errors=True)
+            removed += 1
+    left = len(targets) - removed
+    return (f"reaped {stopped} stale regtest daemon(s) and {removed} datadir(s)"
+            + (f", {left} left running" if left else ""))
 
 
 class RegtestNode:

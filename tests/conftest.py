@@ -5,7 +5,7 @@ import threading
 import pytest
 
 from arcade.db import Database, StateDB, register_journalled_table
-from arcade.regtest import RegtestNode
+from arcade.regtest import RegtestNode, reap_leftovers
 
 # A toy state table, used to prove the undo journal works without waiting for the
 # real protocol tables that arrive in M2.
@@ -31,6 +31,20 @@ def db(tmp_path):
 @pytest.fixture
 def state(db):
     return StateDB(db)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _previous_runs_do_not_inherit():
+    """Do not start a run holding the last run's nodes.
+
+    A run that is interrupted never reaches `RegtestNode.stop`, so its daemon and
+    its datadir stay up -- RAM and disk that the next run pays for, which is how
+    one commit comes back green once and red once. A node with a live process
+    behind it is only stopped if its datadir predates a whole suite, so a run
+    already going on this box is not disturbed, and neither is this one, whose
+    own node has not started yet.
+    """
+    reap_leftovers()
 
 
 @pytest.fixture(scope="session")
