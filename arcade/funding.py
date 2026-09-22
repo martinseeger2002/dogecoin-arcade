@@ -67,6 +67,10 @@ class Unsigned:
     fee: int = 0
     change: int = 0
     what: str = ""
+    #: The first input this address signs. Zero everywhere except a trade,
+    #: where the inputs before it are the counterparty's and stay unsigned
+    #: until the counterparty signs them.
+    signed_from: int = 0
 
     def as_json(self) -> dict:
         return {
@@ -75,6 +79,7 @@ class Unsigned:
                         "value": i["value"], "address": i["address"]}
                        for i in self.inputs],
             "sighashes": self.sighashes,
+            "signed_from": self.signed_from,
             "fee": self.fee,
             "change": self.change,
             "what": self.what,
@@ -220,20 +225,101 @@ def build(db, params: Params, address: str, payload_outputs: list,
                     fee=fee, change=change, what=what)
 
 
+def build_partial(db, params: Params, address: str, foreign: list,
+                  payload_outputs: list, rate: int, what: str = "",
+                  dust: int = 0, exclude=frozenset(),
+                  extra: list | None = None) -> Unsigned:
+    """A trade: the counterparty's coins in front, this address paying the rest.
+
+    `foreign` are outpoints somebody else owns and will sign -- the piece
+    being bought, usually. They go first and stay unsigned, and the sighashes
+    handed back are only for the inputs `address` must sign, so a browser is
+    never asked for a signature over a coin that is not its own. Change comes
+    back to `address`, as always, and `address` pays the whole fee: it is the
+    one asking.
+
+    This is what `swap.build` does with a wallet it holds the keys to
+    (arcade/swap.py:1256), redone for a node that holds nobody's key. Until
+    it existed an account could hand over coins and receive nothing: every
+    route that buys anything ended at `door.py`, because `assemble` puts one
+    pubkey in every scriptSig and there was no way to offer a transaction
+    whose first input belonged to someone else.
+    """
+    given = []
+    for piece in foreign:
+        txid = str(piece.get("txid") or "")
+        vout, value = int(piece.get("vout", -1)), int(piece.get("value", 0))
+        if len(txid) != 64 or vout < 0 or value <= 0:
+            raise FundingError("that is not something the node can put in a "
+                               "transaction: a coin needs a 32-byte txid, an "
+                               "index, and an amount above nothing")
+        given.append({"txid": txid, "vout": vout, "value": value,
+                      "address": str(piece.get("address") or "")})
+
+    spend = sum(value for value, _ in payload_outputs)
+    theirs = sum(g["value"] for g in given)
+    # What has to come from this address, once the counterparty's coins and
+    # the fee are accounted for. Priced with a payment back in it, as `build`
+    # is: the guess picks the coins, then the fee is what it really is.
+    #
+    # The foreign outpoints are excluded from the choice even though they are
+    # not this address's to spend: if a caller names one wrongly, the honest
+    # answer is a refusal below, not a transaction that spends the same coin
+    # twice -- once unsigned, once signed -- which the network rejects for
+    # reasons nobody reading the offer would recognise.
+    guess = price(len(given) + 1, payload_outputs, rate, change=True)
+    asked = spend + guess - theirs
+    if asked <= 0:
+        raise FundingError("that needs nothing from this address, so there is "
+                           "nothing here for it to sign")
+    mine = exclude | {(g["txid"], g["vout"]) for g in given}
+    chosen = choose(db, address, asked, exclude=mine, extra=extra)
+    fee = price(len(given) + len(chosen), payload_outputs, rate, change=True)
+    asked = spend + fee - theirs
+    if sum(c["value"] for c in chosen) < asked:
+        chosen = choose(db, address, asked, exclude=mine, extra=extra)
+        fee = price(len(given) + len(chosen), payload_outputs, rate, change=True)
+
+    total = theirs + sum(c["value"] for c in chosen)
+    change = total - spend - fee
+    outputs = list(payload_outputs)
+    if change > dust:
+        outputs.append((change, p2pkh_script(address)))
+    else:
+        fee += max(0, change)
+        change = 0
+
+    every = given + chosen
+    raw = build_raw_tx([(c["txid"], c["vout"]) for c in every], outputs)
+    script = p2pkh_script(address)
+    hashes = [sighash(every, outputs, len(given) + n, script).hex()
+              for n in range(len(chosen))]
+    return Unsigned(raw=raw, inputs=every, outputs=outputs, sighashes=hashes,
+                    fee=fee, change=change, what=what, signed_from=len(given))
+
+
 def assemble(unsigned: Unsigned, signatures: list[str], pubkey: bytes) -> str:
-    """Put the signatures in and hand back a broadcastable transaction.
+    """Put the signatures in and hand back a transaction.
 
     The node does this rather than the browser so that what goes out is
     built from what the node offered: the browser returns signatures over
     the bytes it was given, and nothing else it says is used.
+
+    Inputs before `unsigned.signed_from` are left with an empty scriptSig --
+    they belong to a counterparty that has not signed yet, and the network
+    refuses the result until it does. That is the point: the node cannot
+    sign them and must not be able to.
     """
-    if len(signatures) != len(unsigned.inputs):
+    first = unsigned.signed_from
+    if len(signatures) != len(unsigned.inputs) - first:
         raise FundingError(
-            f"{len(unsigned.inputs)} signatures were needed and "
+            f"{len(unsigned.inputs) - first} signatures were needed and "
             f"{len(signatures)} came back")
     raw = (1).to_bytes(4, "little") + varint(len(unsigned.inputs))
     for n, coin in enumerate(unsigned.inputs):
-        script_sig = push(bytes.fromhex(signatures[n])) + push(pubkey)
+        script_sig = b""
+        if n >= first:
+            script_sig = push(bytes.fromhex(signatures[n - first])) + push(pubkey)
         raw += bytes.fromhex(coin["txid"])[::-1]
         raw += int(coin["vout"]).to_bytes(4, "little")
         raw += varint(len(script_sig)) + script_sig

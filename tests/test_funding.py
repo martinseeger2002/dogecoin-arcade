@@ -17,6 +17,7 @@ import pytest
 from arcade import fees, funding, utxos
 from arcade.config import NETWORKS
 from arcade.db import Database, StateDB
+from arcade.rpc import RpcError
 from arcade.script import b58check_encode, hash160
 from arcade.state import install_schema
 from arcade.txbuild import multisig_script, p2pkh_script
@@ -243,3 +244,74 @@ def test_the_fee_offered_is_the_one_a_block_would_take(regtest, db):
         f"{fees.virtual_size(raw, sigops)}")
     assert piece.fee > 3 * payment.fee, (
         "four payload outputs cost several times what four payments cost")
+
+
+def test_an_account_signs_half_a_trade(regtest, db):
+    """A trade has two signers, and the node holds the key of neither.
+
+    `swap.build` already makes a half-signed transaction, but the half it
+    leaves empty is the seller's, because the empty one is always whoever the
+    node cannot sign for. This is the shape the other way round: the coin in
+    front belongs to the node's own wallet, the coin behind it belongs to an
+    account the node will never hold a key for. Three things have to hold and
+    the node is asked to say each of them: the browser is offered a signature
+    for its own input and not for the other one; while the front input is
+    empty nothing will take the transaction; and `signrawtransaction` -- which
+    is what countersigning a trade is, and is the only thing the node can do
+    with a coin it owns -- finishes it without touching the half it was not
+    given.
+    """
+    rpc = regtest.rpc
+    secret = 0x4455667788990011445566778899001144556677889900114455667788990011
+    pubkey = _pubkey(secret)
+    ours = b58check_encode(PARAMS.pubkeyhash_version, hash160(pubkey))
+
+    rpc.call("generate", 101)
+    seller = rpc.call("getnewaddress")
+    rpc.call("sendtoaddress", seller, 2.0)
+    rpc.call("sendtoaddress", ours, 5.0)
+    height = rpc.call("getblockcount") + 1
+    rpc.call("generate", 1)
+    utxos.watch(db, ours, 0)
+    block = rpc.call("getblock", rpc.call("getblockhash", height), 2)
+    state = StateDB(db)
+    with state.block_context(height=height, block_hash=block["hash"],
+                             prev_hash=block["previousblockhash"],
+                             block_time=block["time"],
+                             tx_count=len(block["tx"]), processed_at=0):
+        utxos.on_block(state, height, block, PARAMS, {ours})
+    assert utxos.balance(db, ours) == 5 * COIN
+
+    sold = rpc.call("listunspent", 1, 9999999, [seller])[0]
+    owed = int(round(sold["amount"] * COIN)) + COIN
+    piece = rpc.call("getnewaddress")
+
+    trade = funding.build_partial(
+        db, PARAMS, ours,
+        [{"txid": sold["txid"], "vout": sold["vout"],
+          "value": int(round(sold["amount"] * COIN))}],
+        [(owed, p2pkh_script(piece))], rate=100_000, what="a test trade")
+
+    assert trade.signed_from == 1, "the bought piece goes first"
+    assert len(trade.sighashes) == 1, "one input is ours, so one signature is asked for"
+    assert trade.inputs[0]["txid"] == sold["txid"]
+    assert trade.fee > 0 and trade.change > 0
+
+    half = funding.assemble(trade, [_sign(secret, bytes.fromhex(h)).hex()
+                                    for h in trade.sighashes], pubkey)
+    with pytest.raises(RpcError):
+        rpc.call("sendrawtransaction", half)
+
+    signed = rpc.call("signrawtransaction", half)
+    assert signed.get("complete") is True, (
+        "the node signed the one input it owns and nobody else's")
+    txid = rpc.call("sendrawtransaction", signed["hex"])
+    rpc.call("generate", 1)
+    landed = rpc.call("getrawtransaction", txid, 1)
+    assert landed["confirmations"] >= 1, "and a block took it"
+    assert {(f"{float(out['value']):.8f}", out["scriptPubKey"]["hex"])
+            for out in landed["vout"]} == {
+                (f"{value / COIN:.8f}", script.hex())
+                for value, script in trade.outputs}, (
+        "two signers, one transaction, and it paid what was offered")
+
