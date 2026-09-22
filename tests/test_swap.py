@@ -28,6 +28,8 @@ def addr(n: int) -> str:
 
 
 SELLER, BUYER, OTHER = addr(1), addr(2), addr(3)
+#: Somebody else's wallet -- the address a node says its cut goes to.
+CUTTER = addr(7)
 SHOP = "5" * 64
 PIECE = "a" * 64          # an inscription the seller holds
 PIECE2 = "b" * 64         # one the buyer holds
@@ -883,3 +885,150 @@ def test_an_old_note_does_not_fall_off_the_page(world):
         "the page it used to iterate cannot see it"
     S.expire(seller, offers, "test")
     assert offers.get_fill(stale)["status"] == "unanswered"
+
+
+# --- the node's cut on a trade (§1d) -----------------------------------------
+
+def _cut_offer(world, listing=0, bps=250, to=CUTTER):
+    """An offer made by a node that asks a percentage of the trades it prices."""
+    index, seller, _, offers = world
+    return S.make_offer(seller, index, offers, "test", shop_row(index), listing,
+                        BUYER, "ff" * 32, own=[SELLER], cut={"bps": bps, "to": to})
+
+
+def test_a_nodes_cut_travels_in_the_offer_and_is_paid_on_top(world):
+    """§1d: the price keeps meaning what the seller asked for, and the cut is
+    an output beside it -- so the engine's leg checks are untouched."""
+    index, seller, buyer, offers = world
+    offer = _cut_offer(world, bps=250)               # 2.5% of 2 coins
+    assert offer["cut"] == {"bps": 250, "to": CUTTER}
+    assert offers.get(offer["id"])["cut"] == {"bps": 250, "to": CUTTER}
+    assert offer["take"] == _offer(world, 0)["take"], "the price says what it always said"
+
+    built = S.build(buyer, index, offer, own=[BUYER])
+    assert built.cut == {"bps": 250, "sats": 5_000_000, "to": CUTTER}
+    decoded = decode(built.hex)
+    paid_seller = sum(o["value"] for o in decoded["vout"]
+                      if o["scriptPubKey"]["addresses"] == [SELLER])
+    assert paid_seller == pytest.approx(2.02), "its input back and the whole price"
+    to_cutter = [o["value"] for o in decoded["vout"]
+                 if o["scriptPubKey"]["addresses"] == [CUTTER]]
+    assert to_cutter == [pytest.approx(0.05)]
+    assert built.outputs[2]["is_cut"] and not built.outputs[2]["is_recipient"]
+    # And the seller signs it: the cut it announced is in the bytes.
+    S.countersign(seller, index, offers, offers.get(offer["id"]), built.hex)
+    assert seller.sent == [built.hex]
+
+
+def test_the_seller_signs_nothing_that_dropped_its_cut(world):
+    """The other half of the rule: a node that signed whatever came back would
+    be signing away its own percentage without noticing. A larger payment to
+    the seller is not the cut either -- the offer said where it goes."""
+    index, seller, buyer, offers = world
+    from arcade import payload as P
+    from arcade.encoding import encode_class_c
+    from arcade.txbuild import build_raw_tx, op_return_script, p2pkh_script
+    offer = _cut_offer(world, bps=250)
+    give, take = S.leg_from_json(offer["give"]), S.leg_from_json(offer["take"])
+    ret = op_return_script(encode_class_c(
+        P.AnyData(data=I.Swap(give=give, take=take).encode()).encode()))
+    seller_in = (offer["outpoint"]["txid"], offer["outpoint"]["vout"])
+    buyer_in = ("2" * 64, 0)
+    price = [(0, ret), (int(2.02 * COIN), p2pkh_script(SELLER)),
+             (int(2.9 * COIN), p2pkh_script(BUYER))]
+    with_cut = [price[0], price[1],
+                (int(0.05 * COIN), p2pkh_script(CUTTER)), price[2]]
+
+    def signed_by_buyer(outputs):
+        return buyer.call("signrawtransaction",
+                          build_raw_tx([seller_in, buyer_in], outputs))["hex"]
+
+    for outputs, why in ((price, "does not carry the cut"),
+                         ([(0, ret), (int(2.07 * COIN), p2pkh_script(SELLER)),
+                           (int(2.88 * COIN), p2pkh_script(BUYER))],
+                          "does not carry the cut")):
+        with pytest.raises(S.SwapError, match=why):
+            S.countersign(seller, index, offers, offers.get(offer["id"]),
+                          signed_by_buyer(outputs))
+        assert seller.sent == []
+
+    S.countersign(seller, index, offers, offers.get(offer["id"]),
+                  signed_by_buyer(with_cut))
+    assert len(seller.sent) == 1
+
+
+def test_a_cut_too_small_to_be_an_output_is_not_charged(world):
+    """§1d says small trades go free rather than meeting a minimum that would
+    eat one whole. Both sides work it out the same way, so neither can be
+    surprised by the other's rounding."""
+    assert S.cut_sats(200, 500 * S.MIN_CHANGE) == 10 * S.MIN_CHANGE
+    assert S.cut_sats(200, 50 * S.MIN_CHANGE) == S.MIN_CHANGE
+    assert S.cut_sats(200, 40 * S.MIN_CHANGE) == 0, "0.008 of an output: nothing"
+    assert S.cut_sats(0, 100 * S.MIN_CHANGE) == 0
+    assert S.cut_sats(200, 0) == 0
+    assert S.cut_sats({"bps": 25, "to": CUTTER}, 2 * COIN) == 0
+
+    index, seller, buyer, offers = world
+    offer = _cut_offer(world, bps=25)                 # 0.25% of 2 coins: dust
+    assert offer["cut"] == {"bps": 25, "to": CUTTER}, "still announced, still seen"
+    built = S.build(buyer, index, offer, own=[BUYER])
+    assert built.cut == {}
+    assert [o["is_cut"] for o in built.outputs] == [False, False, False]
+    S.countersign(seller, index, offers, offers.get(offer["id"]), built.hex)
+    assert seller.sent == [built.hex], "a free trade is not a refused one"
+
+
+def test_a_trade_paid_in_tokens_carries_no_cut(world):
+    """There is no coin price to take a percentage of, and taking one out of
+    a leg is the thing §1d rules out. So the cut is announced, applies to
+    nothing, and must not stop the swap."""
+    index, seller, buyer, offers = world
+    offer = _cut_offer(world, listing=3, bps=250)     # 1 token for 1.5 coins
+    assert S.coins_in(S.leg_from_json(offer["take"])) == 0
+    built = S.build(buyer, index, offer, own=[BUYER])
+    assert built.cut == {} and len(built.outputs) == 3
+    S.countersign(seller, index, offers, offers.get(offer["id"]), built.hex)
+    assert seller.sent == [built.hex]
+
+
+def test_a_cut_is_refused_before_it_costs_anybody_a_message(world):
+    index, seller, *_ = world
+    for cut, why in (({"bps": 20_000, "to": CUTTER}, "past the ceiling"),
+                     ({"bps": "many", "to": CUTTER}, "not a rate"),
+                     ({"bps": 200, "to": "not an address"}, "not an address"),
+                     ({"bps": 200, "to": ""}, "not an address"),
+                     ("2 per cent", "a rate and an address")):
+        with pytest.raises(S.SwapError, match=why):
+            S.make_offer(seller, index, world[3], "test", shop_row(index), 0,
+                         BUYER, "", own=[SELLER], cut=cut)
+    assert seller.locked == set(), "refused before an output was held for it"
+
+
+def test_an_offer_cannot_announce_a_cut_nobody_can_pay(world):
+    """The buyer is about to be shown a fee and asked to sign it, so the rate
+    and the address in an offer are checked before the page draws either."""
+    index, seller, buyer, offers = world
+    offer = _cut_offer(world)
+    other_chain = b58check_encode(NETWORKS["main"].pubkeyhash_version, bytes([7]) * 20)
+    for cut, why in (({"bps": 20_000, "to": CUTTER}, "as much as a node may ask"),
+                     ({"bps": "many", "to": CUTTER}, "not a rate"),
+                     ({"bps": 200, "to": "not an address"}, "not an address"),
+                     ({"bps": 200, "to": other_chain}, "not this chain")):
+        with pytest.raises(S.SwapError, match=why):
+            S.check_offer(dict(offer, cut=cut), shop=SHOP, own=[BUYER],
+                          height=None, params=TEST)
+    assert S.check_offer(dict(offer, cut={"bps": 0, "to": ""}), shop=SHOP,
+                         own=[BUYER], height=None, params=TEST)["cut"] == {}
+    assert S.check_offer(dict(offer, cut=None), shop=SHOP, own=[BUYER],
+                         height=None, params=TEST)["cut"] == {}, \
+        "an offer from an older node simply has none"
+
+
+def test_a_percentage_becomes_basis_points_once():
+    """Both nodes multiply the price by the same integer, so the two answers
+    cannot drift apart on the way through a settings file and a JSON message."""
+    assert S.cut_bps("2") == 200 and S.cut_bps(2.5) == 250
+    assert S.cut_bps("0.5%") == 50 and S.cut_bps(" 0 ") == 0
+    for nonsense in ("", "  ", "two", None, "nan", "inf", -3):
+        assert S.cut_bps(nonsense) == 0
+    assert S.cut_bps("400") == S.CUT_CEILING, "clamped, not believed"

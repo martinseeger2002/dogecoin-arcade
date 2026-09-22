@@ -84,6 +84,7 @@ from . import payload as P
 from .encoding import decode_class_c, encode_class_c
 from .ledger import COIN, format_amount, parse_amount as parse_token_amount
 from .messaging.sender import OUTPUT_VALUE
+from .script import b58check_decode
 from .txbuild import build_raw_tx, op_return_script, p2pkh_script
 from .wallet import parse_amount as parse_coin_amount
 
@@ -99,6 +100,74 @@ MIN_CHANGE = OUTPUT_VALUE
 #: How many listings a shop may have. A page can show more than this; it
 #: cannot ask a node to price them all.
 MAX_LISTINGS = 200
+
+#: What a node may ask of a trade it made the offer for, in basis points --
+#: §1d. An offer carries the rate, not an amount, so both sides work out the
+#: same number from the same price and neither has to trust the other's
+#: arithmetic.
+CUT_CEILING = 10_000
+
+
+def cut_sats(cut: Any, price: int) -> int:
+    """What an offer's cut comes to on a price, in satoshis; 0 for none.
+
+    Floored, so a node is never paid more than the rate it announced. And 0
+    when the result could not be an output at all: §1d's "nothing below the
+    dust floor". A trade too small to carry a cut goes free rather than being
+    refused by a minimum that would eat the whole of it -- which is avoidable
+    by trading in pieces, and accepted.
+    """
+    bps = int((cut or {}).get("bps") or 0) if isinstance(cut, dict) else int(cut or 0)
+    if not 0 < bps <= CUT_CEILING or int(price) <= 0:
+        return 0
+    sats = int(price) * bps // 10_000
+    return sats if sats >= MIN_CHANGE else 0
+
+
+def cut_bps(said: Any) -> int:
+    """A percentage as an operator typed it, as whole basis points.
+
+    Integers on the wire rather than a float in an offer: a rate both nodes
+    multiply by the price has to land on the same satoshi on both, and a
+    percent that has been through JSON, a settings file and a form does not
+    reliably do that.
+    """
+    try:
+        percent = float(str(said).strip().rstrip("%").strip())
+    except (TypeError, ValueError):
+        return 0
+    if not math.isfinite(percent) or percent <= 0:
+        return 0
+    return min(int(round(percent * 100)), CUT_CEILING)
+
+
+def _cut(cut: Any) -> dict:
+    """A node's announced cut, checked well enough to be worth offering.
+
+    Checked here rather than at each caller, because the alternative is that
+    a buyer's node finds out: an offer naming no address, or one no
+    transaction could pay, costs the buyer a message fee and leaves the
+    seller's output locked for nothing.
+    """
+    cut = cut or {}
+    if not isinstance(cut, dict):
+        raise SwapError("a cut is a rate and an address to pay it to")
+    try:
+        bps = int(cut.get("bps") or 0)
+    except (TypeError, ValueError):
+        raise SwapError(f"{cut.get('bps')!r} is not a rate") from None
+    if bps <= 0:
+        return {}
+    if bps > CUT_CEILING:
+        raise SwapError(f"a cut of {bps} basis points is past the ceiling of "
+                        f"{CUT_CEILING} -- that is the whole trade and more")
+    to = str(cut.get("to") or "")
+    try:
+        p2pkh_script(to)
+    except Exception:
+        raise SwapError(f"{to or 'nothing'} is not an address to pay a cut to") from None
+    return {"bps": bps, "to": to}
+
 
 STATUSES = ("open", "sent", "expired", "refused", "failed")
 
@@ -355,6 +424,13 @@ CREATE TABLE IF NOT EXISTS offer (
     outpoint_txid TEXT NOT NULL,
     outpoint_vout INTEGER NOT NULL,
     outpoint_value INTEGER NOT NULL,
+    -- §1d: what this node takes of a trade it made the offer for, and where
+    -- it says to pay it. The RATE travels, never an amount, because both
+    -- sides must be able to work the amount out of the price for themselves
+    -- -- and an offer that announced a number could announce a different one
+    -- to each of them.
+    cut_bps       INTEGER NOT NULL DEFAULT 0,
+    cut_to        TEXT NOT NULL DEFAULT '',
     created       REAL NOT NULL,
     expires       REAL NOT NULL,
     status        TEXT NOT NULL DEFAULT 'open',
@@ -438,13 +514,16 @@ class Offers:
             conn.execute(
                 'INSERT INTO offer(id, network, shop, "order", listing, seller, buyer, '
                 "buyer_pubkey, give, take, outpoint_txid, outpoint_vout, outpoint_value, "
-                "created, expires) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "cut_bps, cut_to, created, expires) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (offer["id"], offer["network"], offer["shop"],
                  str(offer.get("order") or ""), int(offer["listing"]),
                  offer["seller"], offer["buyer"], offer.get("buyer_pubkey", ""),
                  json.dumps(offer["give"]), json.dumps(offer["take"]),
                  offer["outpoint"]["txid"], int(offer["outpoint"]["vout"]),
-                 int(offer["outpoint"]["value"]), offer["created"], offer["expires"]))
+                 int(offer["outpoint"]["value"]),
+                 int((offer.get("cut") or {}).get("bps") or 0),
+                 str((offer.get("cut") or {}).get("to") or ""),
+                 offer["created"], offer["expires"]))
 
     def get(self, offer_id: str) -> dict | None:
         with self._open() as conn:
@@ -602,6 +681,8 @@ def _offer_row(row: sqlite3.Row) -> dict:
         "give": json.loads(data["give"]), "take": json.loads(data["take"]),
         "outpoint": {"txid": data["outpoint_txid"], "vout": data["outpoint_vout"],
                      "value": data["outpoint_value"]},
+        "cut": {"bps": int(data.get("cut_bps") or 0),
+                "to": data.get("cut_to") or ""},
         "created": data["created"], "expires": data["expires"],
         "status": data["status"], "txid": data["txid"] or None,
         "error": data["error"] or None,
@@ -617,6 +698,12 @@ def public(offer: dict) -> dict:
     # made against the offer itself rather than against who called what.
     if offer.get("order"):
         out["order"] = str(offer["order"])
+    # And so does the cut, when this node takes one: it is a term of the
+    # trade, and a fee the buyer's wallet has not been shown is a fee it is
+    # being asked to sign away blind (§1d).
+    cut = offer.get("cut") or {}
+    if int(cut.get("bps") or 0) > 0:
+        out["cut"] = {"bps": int(cut["bps"]), "to": str(cut.get("to") or "")}
     return out
 
 
@@ -685,13 +772,21 @@ def _bid_row(row: Any) -> dict:
 
 
 def make_offer(rpc: Any, index: Any, offers: Offers, network: str, shop_row: dict,
-               listing_no: int, buyer: str, buyer_pubkey: str, own: list[str]) -> dict:
+               listing_no: int, buyer: str, buyer_pubkey: str, own: list[str],
+               cut: Any = None) -> dict:
     """Price one listing for one buyer, lock an output, and write it down.
 
     Everything that can be refused here is: a shop this wallet cannot sell
     from, a listing that is not there, a give the shop no longer holds, a
     take the buyer does not hold. What is left is an offer the buyer can act
-    on as it stands."""
+    on as it stands.
+
+    `cut` is this node's announced percentage (§1d) -- the node that made the
+    offer is the one that did the matching and the pricing, so it is the one
+    the trade pays, and the buyer pays it on top of the price rather than out
+    of what the seller asked for.
+    """
+    announced = _cut(cut)          # refused before an output is locked for it
     seller = shop_row["owner"]
     if shop_row["creator"] != seller or seller not in own:
         raise SwapError("this wallet did not create this shop, or no longer holds it")
@@ -740,7 +835,7 @@ def make_offer(rpc: Any, index: Any, offers: Offers, network: str, shop_row: dic
     offer = {"id": secrets.token_hex(8), "network": network, "shop": shop_row["txid"],
              "listing": int(listing_no), "seller": seller, "buyer": buyer,
              "buyer_pubkey": buyer_pubkey, "give": leg_json(give, index),
-             "take": leg_json(take, index), "outpoint": outpoint,
+             "take": leg_json(take, index), "outpoint": outpoint, "cut": announced,
              "created": now, "expires": now + OFFER_TTL}
     offers.add(offer)
     return public(offer)
@@ -748,7 +843,7 @@ def make_offer(rpc: Any, index: Any, offers: Offers, network: str, shop_row: dic
 
 def offer_for_order(rpc: Any, index: Any, offers: Offers, network: str,
                     order_txid: str, tokens: int, buyer: str, buyer_pubkey: str,
-                    own: list[str]) -> dict:
+                    own: list[str], cut: Any = None) -> dict:
     """The maker's half of a swap that fills one of its own standing orders.
 
     This is what a node answers when somebody asks to take a price off its
@@ -764,7 +859,13 @@ def offer_for_order(rpc: Any, index: Any, offers: Offers, network: str,
     out of this order to other buyers is subtracted before more is offered.
     The engine will check the finished transaction again (D-062), and an
     offer that cannot become one is a message fee spent on a refusal.
+
+    `cut` is this node's percentage, announced the same way a shop's offer
+    announces it (§1d). A fill paid in tokens carries nothing: there is no
+    coin amount on this side to add a percentage to, and taking one out of
+    what either side hands over is the thing §1d rules out.
     """
+    announced = _cut(cut)
     expire(rpc, offers, network)
     order = index.order(str(order_txid))
     if order is None:
@@ -833,13 +934,14 @@ def offer_for_order(rpc: Any, index: Any, offers: Offers, network: str,
              "order": str(order_txid), "listing": -1, "seller": seller,
              "buyer": buyer, "buyer_pubkey": buyer_pubkey,
              "give": leg_json(give, index), "take": leg_json(take, index),
-             "outpoint": outpoint, "created": now, "expires": now + OFFER_TTL}
+             "outpoint": outpoint, "cut": announced,
+             "created": now, "expires": now + OFFER_TTL}
     offers.add(offer)
     return public(offer)
 
 
 def offer_for_bid(rpc: Any, index: Any, offers: Offers, network: str,
-                  bid: dict, own: list[str]) -> dict:
+                  bid: dict, own: list[str], cut: Any = None) -> dict:
     """The seller's half of a swap, for an offer somebody made on an NFT.
 
     The same offer a shop would make, for an item nobody listed: the holder
@@ -847,8 +949,10 @@ def offer_for_bid(rpc: Any, index: Any, offers: Offers, network: str,
     checked here too -- the item is still theirs, the buyer holds what they
     promised, an output is locked to carry it -- because the engine will
     check the transaction again and an offer that cannot become one is a
-    fee spent on a refusal (D-038).
+    fee spent on a refusal (D-038). `cut` is this node's percentage, as in
+    the other two makers (§1d).
     """
+    announced = _cut(cut)
     expire(rpc, offers, network)
     row = index.inscription(str(bid["inscription"]))
     if row is None:
@@ -890,7 +994,8 @@ def offer_for_bid(rpc: Any, index: Any, offers: Offers, network: str,
              "listing": 0, "seller": seller, "buyer": buyer,
              "buyer_pubkey": str(bid.get("peer_pubkey", "")),
              "give": leg_json(give, index), "take": leg_json(take, index),
-             "outpoint": outpoint, "created": now, "expires": now + OFFER_TTL}
+             "outpoint": outpoint, "cut": announced,
+             "created": now, "expires": now + OFFER_TTL}
     offers.add(offer)
     return public(offer)
 
@@ -974,14 +1079,15 @@ def countersign(rpc: Any, index: Any, offers: Offers, offer: dict, hex_: str) ->
 
     give, take = leg_from_json(offer["give"]), leg_from_json(offer["take"])
     named = offer.get("order") or ""
-    swaps, paid = [], 0
+    swaps, outs = [], []
     for out in decoded.get("vout") or []:
         script = out.get("scriptPubKey", {})
         if script.get("type") == "nulldata":
             swaps.append(_swap_in(script.get("hex", "")))
             continue
-        if seller in (script.get("addresses") or []):
-            paid += int(round(float(out.get("value", 0)) * COIN))
+        outs.append((int(round(float(out.get("value", 0)) * COIN)),
+                     script.get("addresses") or [], script.get("hex", "")))
+    paid = sum(value for value, addresses, _ in outs if seller in addresses)
     if len(swaps) != 1:
         raise SwapError("a swap has exactly one OP_RETURN")
     swap = swaps[0]
@@ -998,6 +1104,26 @@ def countersign(rpc: Any, index: Any, offers: Offers, offer: dict, hex_: str) ->
     if paid < owed:
         raise SwapError(f"the seller is paid {paid / COIN:.8f}, not the "
                         f"{owed / COIN:.8f} the offer says")
+    # And the cut the offer announced, checked as a term rather than put up
+    # with. A seller that signed whatever came back would be signing away its
+    # own percentage without noticing, which is the same blindness §1d asks
+    # the buyer's side not to have -- and an output nobody counted is an
+    # output nobody agreed to.
+    want = cut_sats(offer.get("cut"), max(coins_in(take) - coins_in(give), 0))
+    if want:
+        to = str((offer.get("cut") or {}).get("to") or "")
+        try:
+            pays = p2pkh_script(to).hex()
+        except Exception:
+            raise SwapError(f"the cut this offer announced cannot be checked: "
+                            f"{to or 'no address'} is not one") from None
+        # By script, not by address: the same payment spelled in another chain's
+        # alphabet is still this payment, and this is what was offered.
+        if not any(value == want and script_hex == pays for value, _, script_hex in outs):
+            raise SwapError(
+                f"the transaction does not carry the cut this offer announced "
+                f"({want / COIN:.8f} to {to}). Nothing is signed until it is "
+                f"there -- if their wallet is an older release, that is why")
     for who, leg in ((seller, give), (buyer, take)):
         if who == seller and named and leg.kind == I.LEG_TOKEN:
             continue          # backed by the order's reserve, not the balance
@@ -1053,10 +1179,18 @@ class Built:
     give: dict
     take: dict
     outputs: list[dict] = field(default_factory=list)
+    #: What the offer's maker takes on this trade, as {bps, sats, to} -- empty
+    #: when there is none. It is shown, never folded into anything else,
+    #: because a fee somebody did not see is a fee they did not agree to (§1d).
+    cut: dict = field(default_factory=dict)
 
     @property
     def what(self) -> str:
         return f"{describe_leg(self.take)} for {describe_leg(self.give)}"
+
+    @property
+    def cut_coins(self) -> float:
+        return int(self.cut.get("sats") or 0) / COIN
 
 
 def check_offer(offer: Any, *, shop: str, own: list[str], height: int | None,
@@ -1090,6 +1224,32 @@ def check_offer(offer: Any, *, shop: str, own: list[str], height: int | None,
         raise SwapError(f"swaps are read from block {params.swaps_from:,}; "
                         f"the chain is at {height:,}")
     leg_from_json(out["give"]), leg_from_json(out["take"])
+    # A cut is optional, and an offer from an older node has none. What one
+    # that carries it says has to be a rate inside the ceiling and an address
+    # this chain could actually pay: the buyer is about to be shown a fee and
+    # asked to sign it, and neither of those is worth doing on a number that
+    # cannot be spent -- or one that turns the transaction into a fee to an
+    # address on another network.
+    out["cut"] = {}
+    said = offer.get("cut")
+    if isinstance(said, dict) and said.get("bps"):
+        try:
+            bps = int(said["bps"])
+        except (TypeError, ValueError):
+            raise SwapError(f"the cut in that offer is not a rate: {said['bps']!r}") from None
+        if not 0 < bps <= CUT_CEILING:
+            raise SwapError(f"the cut in that offer is {bps} basis points, and "
+                            f"{CUT_CEILING} is as much as a node may ask")
+        to = str(said.get("to") or "")
+        try:
+            version, hash160 = b58check_decode(to)
+        except Exception:
+            raise SwapError("the cut in that offer names "
+                            f"{to or 'no address'}, which is not an address") from None
+        if version != params.pubkeyhash_version or len(hash160) != 20:
+            raise SwapError("the cut in that offer names an address that is not "
+                            "this chain's")
+        out["cut"] = {"bps": bps, "to": to}
     return out
 
 
@@ -1099,8 +1259,11 @@ def build(rpc: Any, index: Any, offer: dict, own: list[str],
 
     The seller's outpoint first, then the buyer's own outputs, from the one
     address that pays and receives. Outputs: the swap, the seller made whole
-    (its input back, plus the coins it is owed, less any it gives), and the
-    buyer's change. The buyer pays the fee: the buyer is the one asking."""
+    (its input back, plus the coins it is owed, less any it gives), the cut of
+    whatever the offer announced for the node that made it, and the buyer's
+    change. The buyer pays the fee: the buyer is the one asking, and it pays
+    the announced cut on top of the price rather than out of it, so the price
+    keeps meaning what the seller asked for (§1d)."""
     buyer, seller = offer["buyer"], offer["seller"]
     if buyer not in own:
         raise SwapError(f"{buyer} is not this wallet's")
@@ -1142,6 +1305,20 @@ def build(rpc: Any, index: Any, offer: dict, own: list[str],
     seller_out = offer["outpoint"]["value"] + owes
     if seller_out < MIN_CHANGE:
         raise SwapError("the seller's output would be dust; ask for another offer")
+    # What the offer announced for its maker's node (§1d), worked out here
+    # from the price rather than taken from anywhere: the same arithmetic the
+    # seller will do when it countersigns, on the same numbers, so the two
+    # nodes cannot disagree about a term they both read from the same offer.
+    cut = cut_sats(offer.get("cut"), max(owes, 0))
+    cut_to = str((offer.get("cut") or {}).get("to") or "") if cut else ""
+    cut_script = b""
+    if cut:
+        try:
+            cut_script = p2pkh_script(cut_to)
+        except Exception:
+            raise SwapError("the cut this offer announces cannot be paid: "
+                            f"{cut_to or 'no address'} is not one") from None
+    lines = 3 + (1 if cut else 0)
 
     # Name the order this fills, so the engine takes it from the book rather
     # than from whatever the seller happens to hold loose (D-082). Empty for
@@ -1158,11 +1335,11 @@ def build(rpc: Any, index: Any, offer: dict, own: list[str],
     for utxo in unspent:
         chosen.append((utxo["txid"], int(utxo["vout"])))
         total += int(round(float(utxo["amount"]) * COIN))
-        fee = _fee(len(chosen) + 1, 3, len(payload))
-        if total - max(owes, 0) - fee >= 0:
+        fee = _fee(len(chosen) + 1, lines, len(payload))
+        if total - max(owes, 0) - cut - fee >= 0:
             break
     else:
-        need = max(owes, 0) + _fee(len(chosen) + 1, 3, len(payload))
+        need = max(owes, 0) + cut + _fee(len(chosen) + 1, lines, len(payload))
         raise SwapError(f"{buyer} holds {total / COIN:.8f} spendable, and this swap "
                         f"needs {need / COIN:.8f} (what is owed plus the fee)")
     # What is left for the MESSAGE that carries this half. The signed half
@@ -1179,10 +1356,12 @@ def build(rpc: Any, index: Any, offer: dict, own: list[str],
             f"pay for the message that carries it. Split the address into a few "
             f"outputs first -- Wallet, Fast sending -- and ask for another offer")
 
-    fee = _fee(len(chosen) + 1, 3, len(payload))
-    change = total - owes - fee
+    fee = _fee(len(chosen) + 1, lines, len(payload))
+    change = total - owes - cut - fee
     outputs = [(0, op_return_script(encode_class_c(payload))),
                (seller_out, p2pkh_script(seller))]
+    if cut:
+        outputs.append((cut, cut_script))
     if change >= MIN_CHANGE:
         outputs.append((change, p2pkh_script(buyer)))
     else:
@@ -1212,12 +1391,18 @@ def build(rpc: Any, index: Any, offer: dict, own: list[str],
         script = out.get("scriptPubKey", {})
         addresses = script.get("addresses") or []
         where = addresses[0] if addresses else script.get("type", "unknown")
+        # The cut is recognised by its script, not by its address: an address
+        # spelled in another chain's alphabet is the same payment, and this is
+        # the output this builder put there.
         shown.append({"value": float(out.get("value", 0)), "where": where,
                       "is_change": bool(addresses) and addresses[0] == buyer,
-                      "is_recipient": bool(addresses) and addresses[0] == seller})
+                      "is_recipient": bool(addresses) and addresses[0] == seller,
+                      "is_cut": bool(cut) and script.get("hex", "") == cut_script.hex()})
     return Built(hex=signed["hex"], txid=decoded["txid"], fee_sats=fee,
                  size=len(signed["hex"]) // 2, buyer=buyer, seller=seller,
-                 give=offer["give"], take=offer["take"], outputs=shown)
+                 give=offer["give"], take=offer["take"], outputs=shown,
+                 cut={"bps": int((offer.get("cut") or {}).get("bps") or 0),
+                      "sats": cut, "to": cut_to} if cut else {})
 
 
 def _fee(inputs: int, outputs: int, payload_len: int) -> int:

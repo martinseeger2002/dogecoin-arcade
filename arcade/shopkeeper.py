@@ -225,8 +225,10 @@ class Shopkeeper:
             bid = {"inscription": offer["inscription"],
                    "take": _take_of(offer, index),
                    "buyer": offer["buyer"], "peer_pubkey": peer.hex()}
+            from .web.app import _node_cut
             half = swaplib.offer_for_bid(rpc, index, state.offers, chain.network,
-                                         bid, own=_own_addresses(rpc))
+                                         bid, own=_own_addresses(rpc),
+                                         cut=_node_cut(state))
             self._reply(rpc, chain, identity, peer,
                         {"swap": "bid", "swapv": swaplib.PROTOCOL,
                          "id": offer["txid"], "ok": True, "offer": half})
@@ -492,22 +494,24 @@ class Shopkeeper:
                 # cannot work out alone is which of this wallet's outputs
                 # carries the swap; the price comes from the order, never
                 # from the question (D-063).
-                from .web.app import _ledger_addresses
+                from .web.app import _ledger_addresses, _node_cut
                 offer = swaplib.offer_for_order(
                     rpc, index, offers, chain.network,
                     str(question.get("order") or ""), int(question.get("tokens", 0)),
                     str(question.get("buyer") or ""),
-                    bytes(row["sender_pubkey"]).hex(), own=_ledger_addresses(rpc))
+                    bytes(row["sender_pubkey"]).hex(), own=_ledger_addresses(rpc),
+                    cut=_node_cut(state))
                 reply.update(ok=True, offer=offer)
             elif kind == "offer":
                 shop = index.inscription(str(question.get("shop") or ""))
                 if shop is None:
                     raise swaplib.SwapError("no such inscription on this node")
-                from .web.app import _ledger_addresses
+                from .web.app import _ledger_addresses, _node_cut
                 offer = swaplib.make_offer(
                     rpc, index, offers, chain.network, shop,
                     int(question.get("listing", -1)), str(question.get("buyer") or ""),
-                    bytes(row["sender_pubkey"]).hex(), own=_ledger_addresses(rpc))
+                    bytes(row["sender_pubkey"]).hex(), own=_ledger_addresses(rpc),
+                    cut=_node_cut(state))
                 reply.update(ok=True, offer=offer)
             else:
                 offer = offers.get(str(question.get("offer") or ""))

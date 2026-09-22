@@ -473,6 +473,15 @@ node listens; the page inscribed with it is the storefront.
 * **The buyer is asked, once.** The offer arrives as a node-to-node message,
   the buyer's wallet builds the transaction and shows it in the approvals
   pop-up like any other send, and Approve signs the buyer's half only.
+* **A node may ask something for making the offer, and says so in it.** The
+  percentage is the node runner's, set on the Overview; it travels in the
+  offer as a rate and an address, and the wallet on the other side pays it
+  *on top of* the price — an ask of 100 still means the seller receives 100.
+  The node that made the offer looks for that output before it signs its
+  half, so nobody signs a fee they were not shown. A percentage too small to
+  be an output is not charged, and a leg paid in tokens has no price to take
+  a percentage of. Running your own node means *this* node takes nothing of
+  yours; an offer from somebody else's shop still says what theirs asks.
 * **Any kind for any kind**: tokens for coins, a random NFT for tokens, one
   inscription for another. Send the shop inscription away and the shop is
   closed.

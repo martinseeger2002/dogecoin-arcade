@@ -10,13 +10,20 @@ import pytest
 
 from arcade import approvals as approvalslib
 from arcade import swap as S
+from arcade.config import NETWORKS
 from arcade.messaging import api
 from arcade.messaging.keys import Identity, fingerprint_of
+from arcade.script import b58check_encode
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_web import app_state, client                          # noqa: F401,E402
-from test_swap import (FakeIndex, FakeNode, SELLER, BUYER, OTHER, SHOP, PIECE,  # noqa: E402
+from test_swap import (FakeIndex, FakeNode, SELLER, BUYER, OTHER, SHOP, PIECE,  # noqa: F401,E402
                        PIECE2, GOOF, decode, _SIGNED)
+
+#: The address a node says its cut goes to, in this chain's alphabet: an offer
+#: that names one from another chain is refused before it costs anybody a sign.
+CUTTER = b58check_encode(NETWORKS["regtest"].pubkeyhash_version, bytes([7]) * 20)
+
 
 @pytest.fixture(autouse=True)
 def on_mainnet(app_state):
@@ -157,6 +164,76 @@ def test_a_page_buys_from_the_shop_it_is(shopfront):
     assert heard[-1]["json"]["txid"] == txid
     assert decode(held.hex)["vin"][0] == {"txid": offer["outpoint"]["txid"],
                                           "vout": offer["outpoint"]["vout"]}
+
+
+def test_a_shops_cut_is_shown_before_anybody_signs(shopfront):
+    """§1d: a fee somebody did not see is a fee they did not agree to. The cut
+    a shop's node announced has to reach the page that asks, in words, and the
+    line that says what the trade was."""
+    app, state, index, node, shopkey, sent = shopfront
+    door, csrf = f"/swap/{SHOP}", state.csrf_token
+    app.post(door, json={"csrf_token": csrf, "op": "offer", "listing": 0})
+    seller_node = FakeNode({SELLER}, UNSPENT)
+    offers = S.Offers(state.home / "seller-swaps.sqlite")
+    offer = S.make_offer(seller_node, index, offers, "regtest", index.rows[SHOP], 0,
+                         BUYER, state.identity.public_bytes.hex(), own=[SELLER],
+                         cut={"bps": 250, "to": CUTTER})
+    _heard(state, shopkey, {"swap": "offer", "swapv": S.PROTOCOL, "ok": True,
+                            "re": "msg-1", "offer": offer}, 1)
+    filed = app.post(door, json={"csrf_token": csrf, "op": "accept",
+                                 "offer": offer}).json()
+    assert filed["ok"], filed
+
+    waiting = app.get("/approvals/waiting").json()
+    assert waiting["requests"][0]["summary"] == (
+        "swap 2 coins for 100 Arcade Test, plus 0.05000000 to the node that "
+        "made the offer")
+    page = app.get(f"/approvals/{filed['request']}?embed=1").text
+    assert "Node cut" in page and "0.05000000" in page and CUTTER in page
+    assert "the node that made this offer, not this wallet" in page
+    assert "the cut the offer announced for the node that made it" in page
+    assert "2 coins" in page, "the price is still the price"
+    held = next(p for (net, txid), p in state.prepared_tokens.items() if net == "regtest")
+    assert held.cut == {"bps": 250, "sats": 5_000_000, "to": CUTTER}
+
+    # The shop's node signs because its share is in the bytes, and the sale it
+    # writes down says what it took.
+    S.countersign(seller_node, index, offers, offers.get(offer["id"]), held.hex)
+    assert seller_node.sent == [held.hex]
+    assert "and took 0.05000000 as this node's cut" in approvalslib.summary(
+        {"kind": "swap", "origin": "shop", "totag": "", "toaddress": SELLER,
+         "offer": json.dumps(offer)})
+
+
+def test_a_node_says_what_it_takes_of_a_trade(client):
+    """One field for one rule (§1d), and the number in it is what every offer
+    this node makes will say -- so a number typed badly is refused rather than
+    saved as zero, which would read back as a decision nobody made."""
+    from arcade.web.app import _node_cut
+    app, state = client
+    csrf = state.csrf_token
+    assert _node_cut(state) == {}, "a node that never set one asks nothing"
+
+    saved = app.post("/settings/cut", follow_redirects=False,
+                     data={"csrf_token": csrf, "percent": "2.5"})
+    assert saved.status_code == 303, saved.text
+    assert _node_cut(state) == {"bps": 250, "to": state.derived_address}
+    assert state.notice_kind == "ok"
+    page = app.get("/").text
+    assert "trades made here" in page and 'value="2.5"' in page
+
+    for said, why in (("-1", "below zero"), ("120", "above 100"),
+                      ("two", "a percentage"), ("", "a percentage")):
+        bad = app.post("/settings/cut", follow_redirects=False,
+                       data={"csrf_token": csrf, "percent": said})
+        assert bad.status_code == 303 and state.notice_kind == "err", said
+        assert "The cut on trades" in state.notice, why
+        assert _node_cut(state) == {"bps": 250, "to": state.derived_address}, \
+            "a number that was refused changed nothing"
+
+    again = app.post("/settings/cut", follow_redirects=False,
+                     data={"csrf_token": csrf, "percent": "0"})
+    assert again.status_code == 303 and _node_cut(state) == {}
 
 
 def test_the_shop_door_refuses_what_it_should(shopfront, monkeypatch):

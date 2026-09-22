@@ -221,6 +221,31 @@
   </form>
 </div>
 
+{# §1d: the one place a node is allowed to ask for money, said where the
+   person who runs it will read it and where anybody looking at their node
+   page can find it. It is a percentage of the price and the buyer pays it on
+   top, so nothing here changes what a seller asks for. #}
+<div class="panel" style="margin-top:12px">
+  <form method="post" action="/settings/cut" id="cut">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <div class="row" style="gap:10px;align-items:flex-end;flex-wrap:wrap">
+      <div>
+        <label for="trade-cut">A cut of the trades made here, per cent</label>
+        <input id="trade-cut" autocomplete="off" type="number" min="0" max="100"
+               step="0.1" name="percent" value="{{ '%g'|format(trade_cut) }}">
+      </div>
+      <button class="btn primary" type="submit">Save</button>
+    </div>
+    <p class="muted" style="margin:10px 0 0;font-size:.86rem;max-width:66ch">
+      What this node takes of a trade it made the offer for &mdash; a sale from
+      your shop, a fill of your order, an offer you accepted. The buyer pays it
+      <em>on top of</em> the price, so an ask of 100 still means the seller
+      receives 100. It travels in the offer, so it is on the page before
+      anybody signs, and a percentage too small to be an output is not charged
+      at all. Zero, which is where this starts, asks nothing of anybody.</p>
+  </form>
+</div>
+
 <h2>Updates</h2>
 <div class="panel">
   <form method="post" action="/settings/updates" id="updates">

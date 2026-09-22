@@ -50,6 +50,17 @@
             <span class="muted">&mdash; pays, and receives</span></td></tr>
       <tr><td class="muted">Seller</td>
           <td class="mono" style="word-break:break-all">{{ row.toaddress }}</td></tr>
+      {% if prepared.cut %}
+      <tr><td class="muted">Node cut</td>
+          <td><strong>{{ "%.8f"|format(prepared.cut_coins) }}</strong>
+            <span class="muted">&mdash; {{ "%g"|format(prepared.cut.bps / 100) }}% of the
+              price, on top of it, paid to
+              <span class="mono" style="word-break:break-all">{{ prepared.cut.to }}</span>
+              {%- if prepared.cut.to == prepared.sender %}, which is the address
+                paying, so it comes back to this wallet
+              {%- else %}, which is the node that made this offer, not this wallet{% endif %}.
+              The price is unchanged: the seller is paid what it asked.</span></td></tr>
+      {% endif %}
       <tr><td class="muted">Offer</td>
           <td class="mono">{{ offer.id }} <span class="muted">&mdash; good for
             {{ ((offer.expires - now) / 60)|round|int }} more minutes</span></td></tr>
@@ -84,6 +95,7 @@
       <tr><td style="white-space:nowrap">{{ "%.8f"|format(o.value) }}</td>
           <td class="mono" style="word-break:break-all">{{ o.where }}
             {% if o.is_recipient and row.kind == 'swap' %}<span class="muted">&mdash; the seller: its own input back, plus what you pay</span>
+            {% elif o.is_cut %}<span class="muted">&mdash; the cut the offer announced for the node that made it</span>
             {% elif o.is_recipient %}<span class="muted">&mdash; the recipient</span>
             {% elif o.is_change %}<span class="muted">&mdash; change, back to you</span>{% endif %}</td></tr>
       {% endfor %}

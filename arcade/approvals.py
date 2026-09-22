@@ -303,8 +303,31 @@ def describe(row: dict) -> dict:
         "txid": row["txid"] or None,
         "error": row["error"] or None,
         "offer": json.loads(row["offer"]) if row["offer"] else None,
+        # The cut worked out against the price, not just the rate the offer
+        # announced, so the answer to "what is waiting?" answers the same
+        # money question the page does (§1d).
+        "cut": _cut_of(row),
         "page": row["page"] or None,
     }
+
+
+def _cut_of(row: dict) -> dict:
+    """What a request's offer takes, in coins, or {} when it takes nothing."""
+    if row["kind"] != "swap" or not row["offer"]:
+        return {}
+    from . import swap
+    try:
+        offer = json.loads(row["offer"])
+        sats = swap.cut_sats(offer.get("cut"), max(
+            swap.coins_in(swap.leg_from_json(offer["take"]))
+            - swap.coins_in(swap.leg_from_json(offer["give"])), 0))
+    except Exception:
+        return {}
+    if not sats:
+        return {}
+    return {"sats": sats, "coins": sats / COIN,
+            "bps": int((offer.get("cut") or {}).get("bps") or 0),
+            "to": str((offer.get("cut") or {}).get("to") or "")}
 
 
 def summary(row: dict) -> str:
@@ -315,12 +338,26 @@ def summary(row: dict) -> str:
     if row["kind"] == "token":
         return f"{row['amount']} {row['propertyname'] or 'token ' + str(row['propertyid'])} to {to}"
     if row["kind"] == "swap":
+        from . import swap
         from .swap import describe_leg
         offer = json.loads(row["offer"])
+        # The cut goes on the LINE, not only in the transaction (§1d): what a
+        # trade cost belongs beside what it bought, on both sides -- the buyer
+        # sees what it paid beyond the price, and the node that made the offer
+        # sees its own share named in the same sentence.
+        cut = swap.cut_sats(offer.get("cut"), max(
+            swap.coins_in(swap.leg_from_json(offer["take"]))
+            - swap.coins_in(swap.leg_from_json(offer["give"])), 0))
         if row["origin"] == "shop":
             # The shop's own side: it hands over `give` and is paid `take`.
-            return f"sold {describe_leg(offer['give'])} for {describe_leg(offer['take'])}"
-        return f"swap {describe_leg(offer['take'])} for {describe_leg(offer['give'])}"
+            return (f"sold {describe_leg(offer['give'])} for "
+                    f"{describe_leg(offer['take'])}"
+                    + (f", and took {cut / COIN:.8f} as this node's cut"
+                       if cut else ""))
+        return (f"swap {describe_leg(offer['take'])} for "
+                f"{describe_leg(offer['give'])}"
+                + (f", plus {cut / COIN:.8f} to the node that made the offer"
+                   if cut else ""))
     if row["kind"] == "mint":
         # What it costs and how long it takes, in the line itself: an
         # inscription is the one request whose bill depends on its content,
@@ -477,6 +514,9 @@ class Prepared:
     dust_sats: int
     size: int
     outputs: list[dict] = field(default_factory=list)
+    #: A trade's cut on it, as {bps, sats, to} -- empty for anything that is
+    #: not a swap, and for a swap whose offer announced nothing (§1d).
+    cut: dict = field(default_factory=dict)
 
     @property
     def fee_coins(self) -> float:
@@ -485,6 +525,10 @@ class Prepared:
     @property
     def total_coins(self) -> float:
         return (self.fee_sats + self.dust_sats) / COIN
+
+    @property
+    def cut_coins(self) -> float:
+        return int(self.cut.get("sats") or 0) / COIN
 
 
 def prepare(row: dict, rpc: Any, params: Any, index: Any, own: list[str]) -> Prepared:
@@ -515,7 +559,7 @@ def prepare(row: dict, rpc: Any, params: Any, index: Any, own: list[str]) -> Pre
         built = swaplib.build(rpc, index, json.loads(row["offer"]), own)
         return Prepared(hex=built.hex, txid=built.txid, what=built.what,
                         sender=built.buyer, fee_sats=built.fee_sats, dust_sats=0,
-                        size=built.size, outputs=built.outputs)
+                        size=built.size, outputs=built.outputs, cut=built.cut)
     if row["kind"] == "inscription":
         found = index.inscription(row["inscription"])
         if found is None:

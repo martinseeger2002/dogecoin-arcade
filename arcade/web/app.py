@@ -14,6 +14,7 @@ import datetime as dt
 import hashlib
 import json
 import logging
+import math
 import re
 import threading
 import time
@@ -304,6 +305,29 @@ def _count(text: Any, label: str, ceiling: int) -> int:
     if value > ceiling:
         raise ValueError(f"{label} cannot be above {ceiling:,} -- past that "
                          f"it is not an allowance, it is no limit.")
+    return value
+
+
+def _percent(text: Any, label: str) -> float:
+    """A percentage read off a form: a number, not negative, not over a hundred.
+
+    The same rule as `_count` -- refused rather than guessed, because a
+    settings file that quietly holds `null` is a rate nobody set. A hundred is
+    the ceiling because past that it is not a cut in the trade, it is the
+    whole trade and more.
+    """
+    said = str(text or "").strip().replace(",", "").replace(" ", "").rstrip("%")
+    try:
+        value = float(said)
+    except ValueError:
+        raise ValueError(f"{label} has to be a percentage, not {said or 'nothing'}.")
+    if not math.isfinite(value):
+        raise ValueError(f"{label} has to be a number, not {said}.")
+    if value < 0:
+        raise ValueError(f"{label} cannot be below zero. Zero charges nothing.")
+    if value > 100:
+        raise ValueError(f"{label} cannot be above 100 -- past that it is not a "
+                         f"cut, it is the whole trade and more.")
     return value
 
 
@@ -720,6 +744,8 @@ def create_app(state: AppState) -> FastAPI:
                       auto_update=bool(state.setting("auto_update", True)),
                       auto_sell=bool(state.setting("auto_sell", True)),
                       auto_fill=bool(state.setting("auto_fill", True)),
+                      trade_cut=swaplib.cut_bps(state.setting("trade_cut",
+                                                              TRADE_CUT)) / 100,
                       update_status=state.update_status, when=_when,
                       update_every=watcherlib.BlockWatcher.UPDATE_EVERY,
                       release_key=releaselib.PUBLIC_KEY,
@@ -780,6 +806,37 @@ def create_app(state: AppState) -> FastAPI:
             "Your bids will take any ask they cross."
             if auto == "on" else
             "Your orders will rest until you take a price yourself.", "ok")
+        return RedirectResponse("/", status_code=303)
+
+    @app.post("/settings/cut")
+    def set_trade_cut(request: Request, csrf_token: str = Form(""),
+                      percent: str = Form("")):
+        """What this node takes of a trade it made the offer for (§1d).
+
+        One field for one rule. It is a percentage OF THE PRICE, paid by the
+        buyer on top of it, so an ask of 100 still means the seller receives
+        100: the alternatives are that an advertised price stops meaning what
+        the seller gets, or that the engine's leg checks get rewritten to know
+        about a fee, and both are worse than one extra output.
+
+        Zero is the default and is the ordinary node, asking nothing of
+        anybody. A node that sets a number should say so somewhere people read
+        before they buy -- and every one of its offers says it anyway, on the
+        page a person looks at before signing, because a fee somebody did not
+        see is a fee they did not agree to.
+        """
+        check_csrf(csrf_token)
+        try:
+            value = _percent(percent, "The cut on trades")
+        except ValueError as exc:
+            state.flash(str(exc), "err")
+            return RedirectResponse("/", status_code=303)
+        state.set_setting("trade_cut", value)
+        state.flash(
+            f"Offers this node makes now ask {value:g}% of the buyer, on top of "
+            f"the price and named in the offer." if value else
+            "Offers this node makes carry nothing on top of the price again.",
+            "ok")
         return RedirectResponse("/", status_code=303)
 
     @app.post("/settings/quotas")
@@ -8599,7 +8656,8 @@ def create_app(state: AppState) -> FastAPI:
                        "take": _take_json(found, index),
                        "buyer": found["buyer"], "peer_pubkey": to.hex()}
                 offer = swaplib.offer_for_bid(rpc, index, state.offers,
-                                              chain.network, bid, own=own)
+                                              chain.network, bid, own=own,
+                                              cut=_node_cut(state))
             _page_send(found["inscription"], chain, to,
                        json.dumps({"swap": "bid", "swapv": swaplib.PROTOCOL,
                                    "id": offer_txid, "ok": True,
@@ -9293,6 +9351,26 @@ def _ledger_addresses(rpc) -> list[str]:
         if not real or _is_arcade_account(utxo.get("account", utxo.get("label"))):
             found.setdefault(utxo["address"], None)
     return list(found)
+
+
+#: What this node takes of a trade it made the offer for, as a percentage of
+#: the price (§1d). Zero is the default for the same reason every other
+#: number a node runs on is: the operator says what theirs charges, and a node
+#: that never sets one asks nothing of anybody.
+TRADE_CUT = 0.0
+
+
+def _node_cut(state) -> dict:
+    """What this node asks of a trade it made the offer for (§1d).
+
+    The RATE, never an amount: an offer carries the percentage and each node
+    works the number out of the price itself, so neither side is taking the
+    other's word for what the fee was. And the address is this node's own --
+    the one its overview page already shows -- because a cut that goes where
+    nobody can see it beforehand is not a cut, it is a leak.
+    """
+    bps = swaplib.cut_bps(state.setting("trade_cut", TRADE_CUT))
+    return {"bps": bps, "to": state.derived_address} if bps else {}
 
 
 def _tag_address(state, destination: str, *, mainnet: bool) -> str:
