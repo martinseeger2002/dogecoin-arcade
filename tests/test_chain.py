@@ -39,20 +39,40 @@ def seen(db):
     return {r["height"]: r["hash"] for r in db.conn.execute("SELECT * FROM seen_block")}
 
 
+def caught_up(follower):
+    """Sync to the node's tip, however many passes that takes.
+
+    One pass connects at most 1000 blocks. Run on its own, the shared node is
+    barely past activation and one pass is the whole chain; run inside a full
+    suite, every test before this one has mined on that same node, and an
+    index starting here is a good deal further behind than the cap. Asserting
+    against a single pass only ever held while nothing else had run.
+    """
+    connected = 0
+    reorged = False
+    for _ in range(40):
+        result = follower.sync_once()
+        connected += len(result.connected)
+        reorged = reorged or result.reorged
+        if not result.connected:
+            return result, connected, reorged
+    raise AssertionError("the index never reached the node's tip")
+
+
 def test_connects_blocks_from_activation(regtest, follower):
     regtest.generate(10)
-    result = follower.sync_once()
+    result, connected, reorged = caught_up(follower)
 
     assert result.node_tip >= 10
-    assert not result.reorged
+    assert not reorged
     assert follower.db.tip()["height"] == result.node_tip
     # Every connected block was handed to the handler.
-    assert len(seen(follower.db)) == len(result.connected)
+    assert len(seen(follower.db)) == connected
 
 
 def test_sync_is_idempotent(regtest, follower):
     regtest.generate(5)
-    follower.sync_once()
+    caught_up(follower)
     tip_before = follower.db.tip()["height"]
 
     second = follower.sync_once()
@@ -64,6 +84,19 @@ def test_respects_max_blocks(regtest, follower):
     regtest.generate(20)
     result = follower.sync_once(max_blocks=5)
     assert len(result.connected) == 5
+
+
+def test_a_pass_that_stops_short_leaves_the_next_to_finish(regtest, follower):
+    """The one thing `caught_up` above depends on: stopping mid-chain is not
+    an error and the next pass picks up where it stopped."""
+    regtest.generate(20)
+    first = follower.sync_once(max_blocks=3)
+    assert len(first.connected) == 3
+    behind = follower.db.tip()["height"]
+
+    result, connected, _ = caught_up(follower)
+    assert connected > 0, "the blocks the first pass left behind were never connected"
+    assert follower.db.tip()["height"] == result.node_tip > behind
 
 
 def test_real_reorg_is_detected_and_rolled_back(regtest, follower):
