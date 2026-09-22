@@ -5,7 +5,7 @@ import threading
 import pytest
 
 from arcade.db import Database, StateDB, register_journalled_table
-from arcade.regtest import RegtestNode, reap_leftovers
+from arcade.regtest import RegtestNode, reap_leftovers, reap_stale_basetemps
 
 # A toy state table, used to prove the undo journal works without waiting for the
 # real protocol tables that arrive in M2.
@@ -45,6 +45,21 @@ def _previous_runs_do_not_inherit():
     own node has not started yet.
     """
     reap_leftovers()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _previous_runs_leave_no_temp_files(tmp_path_factory):
+    """Do not start a run measuring itself against the last run's debris.
+
+    The other half of what a killed run leaves behind. `RegtestNode.stop` removes
+    a datadir and pytest removes a `tmp_path`, and neither teardown runs when a
+    session is killed, so both piles just sit here: this box had fifteen numbered
+    `pytest-N` directories, 645 MB, back to three days before. Anything younger
+    than a suite is left alone, which is the same guard `_previous_runs_do_not_inherit`
+    uses, because a gated commit and a census can be running on this box at the
+    same time and neither is entitled to delete the other's files.
+    """
+    reap_stale_basetemps(mine=tmp_path_factory.getbasetemp())
 
 
 @pytest.fixture(scope="session")

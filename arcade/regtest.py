@@ -8,6 +8,7 @@ auth is used, so no password exists anywhere.
 from __future__ import annotations
 
 import dataclasses
+import getpass
 import os
 import shutil
 import socket
@@ -144,6 +145,59 @@ def reap_leftovers(older_than: float = 7200.0,
     left = len(targets) - removed
     return (f"reaped {stopped} stale regtest daemon(s) and {removed} datadir(s)"
             + (f", {left} left running" if left else ""))
+
+
+def reap_stale_basetemps(base: Path | None = None, older_than: float = 7200.0,
+                         mine: Path | None = None) -> str:
+    """Delete the `tmp_path` directories that interrupted runs left, and say what came away.
+
+    pytest numbers these -- `/tmp/pytest-of-you/pytest-701` -- and prunes them
+    when a session ENDs, which is a promise that only holds if something reaches
+    the teardown. A run killed by a timeout, a ctrl-C, or a machine that
+    rebooted leaves its numbered directory standing with everything in it: sqlite
+    files, wallets, half-written blocks. Fifteen had piled up on this box to
+    645 MB, back to three days before, and a suite whose `tmp_path` sits on a
+    partition with 645 MB of nobody's debris times its own growth is a suite
+    whose failures depend on the weather.
+
+    The guard is the one in `reap_leftovers`: anything younger than a suite is
+    somebody's, most likely the run going on elsewhere on this machine, and is
+    left alone. `mine` is this run's own directory, which is never a candidate
+    however strange its siblings look.
+
+    pytest's own pruning is not a substitute and is not disturbed by this: it
+    keeps the three most recent numbered directories whose lock it can take, and
+    on this box the locks of killed runs were gone while the directories were
+    not, which is exactly the case that never gets cleaned.
+    """
+    base = (Path(tempfile.gettempdir()) / f"pytest-of-{getpass.getuser()}"
+            if base is None else Path(base))
+    now = time.time()
+    removed = kept = young = 0
+    for entry in sorted(base.glob("pytest-*")):
+        if entry.is_symlink():
+            continue                        # `pytest-current`, which is a pointer
+        try:
+            made = entry.stat()
+        except OSError:                     # it went away as we looked
+            continue
+        if not entry.is_dir() or made.st_uid != os.getuid():
+            continue
+        if mine is not None:
+            try:
+                if entry.samefile(mine):
+                    kept += 1
+                    continue
+            except OSError:
+                continue
+        if now - made.st_mtime <= older_than:
+            young += 1
+            continue
+        shutil.rmtree(entry, ignore_errors=True)
+        removed += 1
+    return (f"reaped {removed} stale pytest temp director{'y' if removed == 1 else 'ies'}"
+            + (f", {young} left young" if young else "")
+            + (f", {kept} this run's own" if kept else ""))
 
 
 class RegtestNode:
