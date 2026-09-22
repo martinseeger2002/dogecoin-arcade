@@ -61,8 +61,17 @@ def served(tmp_path_factory):
 
     # The review needs an address it believes is this node's, and a chain it
     # can open. Neither is a node: nothing here broadcasts.
-    webapp._ledger_addresses = lambda rpc: ["nMe"]
-    type(state.ledger).rpc = lambda self: contextlib.nullcontext(object())
+    #
+    # Undoed by name, not left set. This fixture is module-scoped, so a bare
+    # assignment here outlived the module: `state.ledger.rpc` stayed a stub for
+    # every test that ran after this file in alphabetical order, and a wallet
+    # test in another file was the one that went red. (2026-09-22 -- other
+    # files' failures, none of them this one's.)
+    patches = pytest.MonkeyPatch()
+    patches.setattr(webapp, "_ledger_addresses", lambda rpc: ["nMe"])
+    for chain in (state.ledger, state.messaging):
+        patches.setattr(chain, "rpc",
+                        lambda: contextlib.nullcontext(object()))
 
     port = _free_port()
     config = uvicorn.Config(create_app(state), host="127.0.0.1", port=port,
@@ -77,6 +86,7 @@ def served(tmp_path_factory):
     else:
         pytest.skip("test server did not start")
     yield f"http://127.0.0.1:{port}", str(build), state
+    patches.undo()
     server.should_exit = True
     thread.join(timeout=5)
 

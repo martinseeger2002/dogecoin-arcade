@@ -678,7 +678,7 @@ def test_a_plain_message_needs_no_confirmation(monkeypatch, client):
     class FakeRpc:
         def __enter__(self): return self
         def __exit__(self, *a): return False
-    monkeypatch.setattr(type(state.messaging), "rpc", lambda self: FakeRpc())
+    monkeypatch.setattr(state.messaging, "rpc", lambda: FakeRpc())
     state.ensure_identity = lambda: None
     from arcade.messaging.keys import Identity
     state.identity = Identity.generate()

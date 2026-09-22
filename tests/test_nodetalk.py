@@ -114,7 +114,7 @@ def _fake_node(monkeypatch, state, sent):
         def __exit__(self, *a): return False
     monkeypatch.setattr("arcade.web.app.MessageSender", FakeSender)
     monkeypatch.setattr("arcade.web.app.funded_address", lambda *a, **k: "nAddr")
-    monkeypatch.setattr(type(state.messaging), "rpc", lambda self: FakeRpc())
+    monkeypatch.setattr(state.messaging, "rpc", lambda: FakeRpc())
     state.identity = Identity.generate()
     state.ensure_identity = lambda: state.identity
 

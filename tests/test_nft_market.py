@@ -70,7 +70,7 @@ def wallet_holding(state, monkeypatch, *addresses):
     from arcade.messaging.keys import Identity
 
     node = Wallet(*addresses)
-    monkeypatch.setattr(type(state.ledger), "rpc", lambda self: node)
+    monkeypatch.setattr(state.ledger, "rpc", lambda: node)
     state.identity = Identity.generate()
     state.ensure_identity = lambda: state.identity
     return node

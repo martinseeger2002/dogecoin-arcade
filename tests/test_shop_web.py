@@ -54,7 +54,12 @@ def shopfront(monkeypatch, client):
     index.rows[SHOP]["json"] = json.dumps(shop)
     monkeypatch.setattr(type(state), "token_index", lambda self, chain: index)
     node = FakeNode({BUYER}, UNSPENT)
-    monkeypatch.setattr(type(state.messaging), "rpc", lambda self: node)
+    # Both chains. A page that has to answer "testnet only" opens the ledger
+    # chain to find that out first, and this patched the class before -- which
+    # covered both by accident and reached every test that ran after it
+    # (2026-09-22).
+    for chain in (state.ledger, state.messaging):
+        monkeypatch.setattr(chain, "rpc", lambda: node)
     sent = {}
 
     class FakeSender:
@@ -334,7 +339,8 @@ def shop(monkeypatch, client):
     index.rows[SHOP]["json"] = json.dumps(shop)
     monkeypatch.setattr(type(state), "token_index", lambda self, chain: index)
     node = FakeNode({SELLER}, UNSPENT)
-    monkeypatch.setattr(type(state.messaging), "rpc", lambda self: node)
+    for chain in (state.ledger, state.messaging):     # as in `shopfront`
+        monkeypatch.setattr(chain, "rpc", lambda: node)
     answers = []
 
     class FakeSender:
@@ -461,11 +467,11 @@ def test_the_shopkeeper_keeps_out_of_mainnet_and_survives_a_dead_node(shop, monk
     _ask(state, buyer, {"swap": "offer", "swapv": S.PROTOCOL, "shop": SHOP,
                         "listing": 0, "buyer": BUYER}, 1)
 
-    def dead(self):
+    def dead():
         raise ConnectionError("gone")
-    monkeypatch.setattr(type(state.messaging), "rpc", dead)
+    monkeypatch.setattr(state.messaging, "rpc", dead)
     assert keeper.tick() == 0, "not raised"
-    monkeypatch.setattr(type(state.messaging), "rpc", lambda self: node)
+    monkeypatch.setattr(state.messaging, "rpc", lambda: node)
     assert keeper.tick() == 1, "the order is still there for the next tick"
 
 

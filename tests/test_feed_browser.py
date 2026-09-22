@@ -58,7 +58,12 @@ def feed_page(tmp_path_factory):
         ledger=ChainContext(network="main", role="ledger", label="Mainnet",
                             datadir=pathlib.Path("/nonexistent")),
     )
-    type(state).derived_address = property(lambda self: mine)
+    # Undoed by name, not left set: this fixture is module-scoped, so a bare
+    # assignment here served `derived_address` to every test that ran after this
+    # file, in a process that had no reason to expect a stranger's address
+    # (2026-09-22 -- other files' failures, none of them this one's).
+    patches = pytest.MonkeyPatch()
+    patches.setattr(type(state), "derived_address", property(lambda self: mine))
 
     port = _free_port()
     server = uvicorn.Server(uvicorn.Config(create_app(state), host="127.0.0.1",
@@ -72,6 +77,7 @@ def feed_page(tmp_path_factory):
     else:
         pytest.skip("test server did not start")
     yield f"http://127.0.0.1:{port}"
+    patches.undo()
     server.should_exit = True
     thread.join(timeout=5)
 
