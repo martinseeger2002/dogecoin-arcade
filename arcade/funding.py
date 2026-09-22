@@ -34,17 +34,20 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import utxos
+from . import fees, utxos
 from .config import Params
 from .script import b58check_decode
 from .txbuild import build_raw_tx, p2pkh_script, push, varint
 
-#: What a transaction of this shape costs, at the node's own relay fee. Not
-#: a guess dressed as a fact: it is recomputed from the real size once the
-#: inputs are chosen, and the caller is told both.
-BYTES_PER_INPUT = 148          # outpoint + a P2PKH scriptSig + sequence
-BYTES_PER_OUTPUT = 34
+#: What an input costs once it is signed: the outpoint, the sequence number
+#: and a P2PKH scriptSig. Not a guess dressed as a fact: it is recomputed
+#: from the real outputs once they are chosen, and the caller is told both.
+BYTES_PER_INPUT = 148
 BYTES_OVERHEAD = 10
+
+#: A payment back to the sender: eight bytes of value, one of length, and the
+#: twenty-five of a P2PKH script.
+BYTES_PER_CHANGE = 34
 
 SIGHASH_ALL = 1
 
@@ -114,10 +117,35 @@ def choose(db, address: str, target: int, exclude=frozenset(),
         f"{target / 100_000_000:.8f} needed, at this address.")
 
 
-def estimate(inputs: int, outputs: int, rate: int) -> int:
-    """The fee for a transaction of this shape, in satoshis."""
-    size = BYTES_OVERHEAD + inputs * BYTES_PER_INPUT + outputs * BYTES_PER_OUTPUT
-    return max(1, (size * rate) // 1000)
+def price(inputs: int, outputs: list, rate: int, change: bool = False) -> int:
+    """Satoshis that get a transaction with these outputs into a block.
+
+    Priced on the mempool's *virtual* size, because that is the number a
+    miner divides the fee by -- not on its bytes. A bare multisig output,
+    which is what every Class B payload output is, is around 105 bytes and
+    twenty sigops, so it weighs 400 bytes to whoever fills the block. The
+    note at the top of arcade/fees.py is what that looked like on testnet
+    when it was not being counted: seventy-six pieces waiting, one taken per
+    block. Counting a flat 34 bytes for every output offered an account a
+    fee that relay accepts and block assembly walks past, which is a worse
+    surprise than being asked for the money up front.
+
+    The inputs are counted at their signed size, since they are not built
+    yet; `outputs` are the real scripts. `change` adds the payment back to
+    the sender by shape rather than by script: a P2PKH output is 34 bytes
+    and one sigop whoever the owner is, and working it out from the address
+    here would mean decoding that address before anybody had said whether
+    there are coins to spend at all.
+    """
+    raw = BYTES_OVERHEAD + inputs * BYTES_PER_INPUT
+    sigops = 0
+    for _value, script in outputs:
+        raw += 8 + len(varint(len(script))) + len(script)
+        sigops += fees.legacy_sigops(script)
+    if change:
+        raw += BYTES_PER_CHANGE
+        sigops += 1
+    return fees.fee_for(raw, sigops, rate)
 
 
 def sighash(raw_inputs: list[dict], outputs: list[tuple[int, bytes]],
@@ -162,14 +190,16 @@ def build(db, params: Params, address: str, payload_outputs: list,
     payload would be unreadable by everyone (docs/multi-user.md §3).
     """
     spend = sum(value for value, _ in payload_outputs)
-    # One guess to pick coins, then the real number once their count is
-    # known. Told to the caller as the number it actually is.
-    guess = estimate(1, len(payload_outputs) + 1, rate)
+    # Priced as though there will be a payment back to the sender, since
+    # that is what the finished transaction carries whenever anything is left
+    # over. The guess picks the coins; the fee is recomputed once their count
+    # is known. Told to the caller as the number it actually is.
+    guess = price(1, payload_outputs, rate, change=True)
     chosen = choose(db, address, spend + guess, exclude=exclude, extra=extra)
-    fee = estimate(len(chosen), len(payload_outputs) + 1, rate)
+    fee = price(len(chosen), payload_outputs, rate, change=True)
     if sum(c["value"] for c in chosen) < spend + fee:
         chosen = choose(db, address, spend + fee, exclude=exclude, extra=extra)
-        fee = estimate(len(chosen), len(payload_outputs) + 1, rate)
+        fee = price(len(chosen), payload_outputs, rate, change=True)
 
     total = sum(c["value"] for c in chosen)
     change = total - spend - fee

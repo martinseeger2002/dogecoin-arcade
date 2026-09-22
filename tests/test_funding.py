@@ -14,12 +14,12 @@ import hashlib
 
 import pytest
 
-from arcade import funding, utxos
+from arcade import fees, funding, utxos
 from arcade.config import NETWORKS
 from arcade.db import Database, StateDB
 from arcade.script import b58check_encode, hash160
 from arcade.state import install_schema
-from arcade.txbuild import p2pkh_script
+from arcade.txbuild import multisig_script, p2pkh_script
 
 PARAMS = NETWORKS["regtest"]
 COIN = 100_000_000
@@ -195,3 +195,51 @@ def test_the_signatures_have_to_match_the_inputs(db):
     with pytest.raises(funding.FundingError) as refused:
         funding.assemble(unsigned, [], b"\x02" + b"\x11" * 32)
     assert "signatures were needed" in str(refused.value)
+
+
+def test_the_fee_offered_is_the_one_a_block_would_take(regtest, db):
+    """The fee an account is shown has to be the fee a block asks for.
+
+    Until 2026-09-22 this module counted a flat 34 bytes for every output,
+    which is what a payment back to the sender is and nothing like a payload
+    output. A bare multisig is around a hundred bytes and twenty sigops, and
+    where sigops x 20 is the larger number, that is the size a miner divides
+    the fee by. So an offer to write something was offered at a fraction of
+    its real cost: relay takes it, mempool holds it, and block assembly
+    walks past it -- the seventy-six-pieces-one-per-block note in
+    arcade/fees.py is that, seen from outside.
+
+    Sized here by the node's own `decoderawtransaction`, so the assertion is
+    against what the network says the transaction is and not against the
+    arithmetic that set the fee.
+    """
+    rpc = regtest.rpc
+    secret = 0x3344556677889900334455667788990033445566778899003344556677889900
+    pubkey = _pubkey(secret)
+    ours = b58check_encode(PARAMS.pubkeyhash_version, hash160(pubkey))
+    utxos.watch(db, ours, 0)
+    for n in (1, 2):
+        # A txid is 32 bytes. Longer than that builds a transaction the node
+        # will not even decode, which is the only way this was found.
+        db.conn.execute(
+            "INSERT OR REPLACE INTO utxo(txid,vout,address,value,height) "
+            "VALUES (?,?,?,?,?)", (("%02x" % n) * 32, 0, ours, 10 * COIN, 1))
+
+    payment = funding.build(db, PARAMS, ours,
+                            [(COIN, p2pkh_script(rpc.call("getnewaddress")))],
+                            rate=100_000)
+    piece = funding.build(db, PARAMS, ours,
+                          [(10_000, multisig_script([pubkey, pubkey]))] * 4,
+                          rate=100_000)
+
+    signed = funding.assemble(piece, [_sign(secret, bytes.fromhex(h)).hex()
+                                      for h in piece.sighashes], pubkey)
+    decoded = rpc.call("decoderawtransaction", signed)
+    raw = len(signed) // 2
+    sigops = fees.sigops_of(decoded)
+    assert fees.virtual_size(raw, sigops) > raw, "sigops, not bytes, decide this one"
+    assert piece.fee >= fees.fee_for(raw, sigops, 100_000), (
+        f"offered {piece.fee} for a transaction the node sizes at "
+        f"{fees.virtual_size(raw, sigops)}")
+    assert piece.fee > 3 * payment.fee, (
+        "four payload outputs cost several times what four payments cost")
