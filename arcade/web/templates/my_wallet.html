@@ -26,6 +26,11 @@
            autocomplete="off" style="flex:1">
   </div>
   <p class="muted" id="which-note" style="font-size:.82rem;margin:4px 0 0"></p>
+  <p class="muted" id="which-lock" hidden
+     style="font-size:.82rem;margin:4px 0 0">
+    This account cannot spend real coins yet. Typing your twelve words back
+    on <a href="/me/backup">Backup</a> switches them on &mdash; and until you
+    have them written down, that is the honest reason to wait.</p>
   <div id="confirm" class="confirm" hidden>
     <p id="confirm-says"></p>
     <button class="btn primary" id="confirm-yes">Send it</button>
@@ -103,6 +108,7 @@ function sayWhich() {
       ? `Real ${chain.label.toLowerCase()} coins, from `
         + `${coinsOf(chain.balance)} in your wallet. Permanent once sent.`
       : `${chain.label} coins, from ${coinsOf(chain.balance)} in your wallet.`;
+  $("which-lock").hidden = !(chain && chain.locked);
 }
 
 async function draw() {

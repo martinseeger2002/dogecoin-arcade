@@ -879,7 +879,17 @@ forwarding. The mempool already gossips to every node in seconds.
   than believing it; the mainnet card says on itself that those coins are
   real. Paying a @tag on mainnet uses the address its holder published
   with their key, and says so plainly when they have not published one.
-  The faucet is testnet only and always was.
+  The faucet pays out testnet coins; real ones are held back by a setting
+  that is off, not by a rule that cannot be changed.
+* **Real coins are switched off for an account until it asks.** The mainnet
+  wallet exists from the minute the account does, and it can be paid into,
+  but nothing can be spent out of it until the twelve words have been typed
+  back on *Backup* -- the only place they are ever asked for, and they are
+  checked in the browser against the address they are supposed to make, so
+  the node is told the answer and never the words. It is a speed bump with a
+  sentence on it rather than a lock, and the page says so: what it stops is
+  moving money out of a browser you can never come back to, which is the one
+  loss this cannot undo.
 * **The account's address book is in the browser, not on the node.** Same
   page as the wallet's: search a @tag, add what the chain says it points
   at, and write to it from there. Keeping it on the node would hand over a

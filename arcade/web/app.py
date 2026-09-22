@@ -6092,6 +6092,36 @@ def create_app(state: AppState) -> FastAPI:
     def _account_address(pubkey: str, chain) -> str:
         return str(state.setting(_address_key(pubkey, chain), "") or "")
 
+    def _real_coins_open(account) -> bool:
+        """Whether this account has asked to spend coins that are money.
+
+        §1b's opt-in. It is a setting and not a check, and the reason is
+        worth having in the file rather than in a comment somewhere else:
+        the node CANNOT verify that somebody wrote their twelve words down
+        without knowing the words, and a server that knows an account's
+        words is the one thing every other decision here exists to make
+        impossible. So the browser verifies them the only way that keeps
+        that true -- by deriving the account's own mainnet key out of the
+        words as typed and comparing it with the one already in use -- and
+        sends only the answer.
+
+        Which means this stops the person who never wrote the words down
+        from putting real money somewhere nothing can bring it back from,
+        and it stops nobody who is determined to be stopped. That is what
+        it is for. The page says so rather than showing a padlock.
+        """
+        return str(state.setting(f"mainnet:{account.pubkey}", "") or "") == "yes"
+
+    def _real_coins_gate(account, chain) -> None:
+        """Refuse to spend real coins from an account that never opted in."""
+        if chain.is_mainnet and not _real_coins_open(account):
+            raise ValueError(
+                "those are real coins, and this account has not asked for "
+                "them. Type your twelve words back on the Backup page to "
+                "switch them on -- what this account can spend is only yours "
+                "for as long as you hold those words, and nothing here can "
+                "bring them back.")
+
     def _coinkey_key(pubkey: str, chain) -> str:
         if chain.network == _account_chain().network:
             return f"coinkey:{pubkey}"
@@ -6371,7 +6401,12 @@ def create_app(state: AppState) -> FastAPI:
                    "version": one.params.pubkeyhash_version,
                    "mainnet": bool(one.is_mainnet),
                    "address": here, "balance": 0, "incoming": 0,
-                   "watching": None, "tags": one.network == chain.network}
+                   "watching": None, "tags": one.network == chain.network,
+                   # Not a secret and not a judgement: the page needs it to
+                   # put the twelve-words box in front of a send rather than
+                   # after it, where it would arrive too late to be read.
+                   "locked": bool(one.is_mainnet)
+                             and not _real_coins_open(account)}
             if here:
                 try:
                     index = state.token_index(one)
@@ -6724,7 +6759,18 @@ def create_app(state: AppState) -> FastAPI:
             return RedirectResponse("/join", status_code=303)
         mine = state.vault().by_pubkey(account.pubkey) or {}
         return render(request, "my_backup.html", chain=_account_chain(),
-                      my_name=mine.get("tag", ""))
+                      my_name=mine.get("tag", ""),
+                      # The chains where the coins are money, and the address
+                      # this browser has to check its words against -- the
+                      # words themselves never come here, and this page is the
+                      # one place they are ever asked for (§1b).
+                      real_chains=[{"network": one.network, "label": one.label,
+                                    "version": one.params.pubkeyhash_version,
+                                    "address": _account_address(
+                                        account.pubkey, one)}
+                                   for one in _account_chains()
+                                   if one.is_mainnet],
+                      real_on=_real_coins_open(account))
 
     @app.get("/me/wallet", response_class=HTMLResponse)
     def my_wallet(request: Request):
@@ -7112,6 +7158,40 @@ def create_app(state: AppState) -> FastAPI:
                                 status_code=503)
         return JSONResponse({"address": address, "chain": chain.network})
 
+    @app.post("/account/mainnet")
+    def account_mainnet(request: Request, payload: Any = Body(None)):
+        """Switch this account's real coins on, or report why it did not.
+
+        The twelve words are NOT part of this request and never will be: a
+        node that could check them is a node that knows them, which is the
+        failure mode this whole side of the application is built to avoid
+        (§2). So the browser derives this account's mainnet coin key out of
+        the words as they were typed and compares it with the key already in
+        use -- which is a check that can only pass if the words are right --
+        and sends the answer and nothing else.
+
+        What that does and does not buy is said here rather than implied by
+        a padlock: it stops the person who never wrote the words down from
+        moving money they could never recover, because the only way through
+        is to type the words and see them work. It does not stop a browser
+        that lies about the answer, and no design can, because the machine
+        holding the keys is the machine being asked. The words stay the
+        account's own backup; this is a speed bump with a sentence on it.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        if not said.get("words_match"):
+            return JSONResponse(
+                {"detail": "those are not your words, so nothing is switched "
+                           "on. Nothing was spent and nothing was changed -- "
+                           "check the order and the spelling and try again."},
+                status_code=400)
+        state.set_setting(f"mainnet:{account.pubkey}", "yes")
+        return JSONResponse({"mainnet": True,
+                             "chains": [one.network for one
+                                        in _account_chains()
+                                        if one.is_mainnet]})
+
     @app.post("/account/claim")
     def account_claim(request: Request, payload: Any = Body(None)):
         """Offer to claim a @tag. Nothing is broadcast here.
@@ -7270,8 +7350,24 @@ def create_app(state: AppState) -> FastAPI:
                            "once from one wallet spends the same coin twice."},
                 status_code=409)
         try:
+            # Real coins are refused HERE rather than in the eleven routes that
+            # build an offer, so that no route can forget to ask -- and looked
+            # up without consuming, for the same reason the lane is claimed
+            # before the offer is taken: a refusal that ate an offer sends the
+            # browser off to build the whole transaction again, and this one is
+            # followed by a trip to the Backup page and back.
+            offered = str(said.get("offer", ""))
+            for pending in _offers.waiting(account.pubkey):
+                if pending.id != offered:
+                    continue
+                try:
+                    _real_coins_gate(account, state.chain_named(
+                        pending.network))
+                except ValueError as exc:
+                    return JSONResponse({"detail": str(exc)}, status_code=400)
+                break
             try:
-                offer = _offers.take(str(said.get("offer", "")), account.pubkey)
+                offer = _offers.take(offered, account.pubkey)
                 signatures = [str(x) for x in (said.get("signatures") or [])]
                 pubkey = bytes.fromhex(str(said.get("pubkey", "")))
                 signed = fundinglib.assemble(offer.unsigned, signatures, pubkey)

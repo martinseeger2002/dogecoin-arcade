@@ -13,6 +13,49 @@
   them again, and nobody here can get them back for you.
 </div>
 
+{% if real_chains %}
+<div class="panel" style="margin-bottom:18px;border-color:var(--warn)"
+     id="real-coins">
+  <h2 style="margin-top:0">Coins that are money</h2>
+  {% if real_on %}
+  <p>This account is allowed to spend
+     {%- for chain in real_chains %} {{ chain.label }}{% if not loop.last %}
+     and{% endif %}{% endfor %} coins &mdash; the ones worth money. It was
+     switched on here, by typing the twelve words back and watching them make
+     the right address.</p>
+  <p class="muted" style="font-size:.86rem;margin:8px 0 0">Nothing else about
+     your account changed, and there is nothing to switch back off: this only
+     says that this account may touch those coins.</p>
+  {% else %}
+  <p>This account cannot spend
+     {%- for chain in real_chains %} {{ chain.label }}{% if not loop.last %}
+     and{% endif %}{% endfor %} coins yet &mdash; the ones that are worth
+     money rather than the ones for trying things out. Pressing a button will
+     not change that. <strong>Typing your twelve words in below
+     will</strong>, and that is the whole point: money you can move from a
+     browser you can never come back to is money you will lose, and the words
+     are the only thing that brings the account back.</p>
+  <p class="muted" style="font-size:.86rem;margin:8px 0 12px">
+    The words are checked <em>here</em>, in this browser, against the address
+    this account already has &mdash; which only the right words can make. This
+    node is told the answer and nothing else, because a node that could check
+    your words is a node that knows them. So this stops the person who never
+    wrote them down; it is a speed bump with a sentence on it, not a lock, and
+    it would be dishonest to call it anything else.</p>
+  <textarea id="words" rows="3" style="width:100%;box-sizing:border-box"
+            spellcheck="false" autocapitalize="off" autocorrect="off"
+            placeholder="your twelve words, in order, separated by spaces"
+            aria-label="Your twelve words"></textarea>
+  <p style="margin:10px 0 0">
+    <button type="button" class="btn" id="turn-on">Check them and switch
+      real coins on</button></p>
+  <div class="msg err" id="not-them" hidden style="margin-top:10px"></div>
+  <p class="muted" style="font-size:.84rem;margin:10px 0 0">Nothing is sent
+     anywhere until they match, and nothing is spent by doing this.</p>
+  {% endif %}
+</div>
+{% endif %}
+
 <div class="panel" style="margin-bottom:18px">
   <h2 style="margin-top:0">What the words bring back</h2>
   <p>Signing in with your twelve words, on any device, on any node running
@@ -76,6 +119,46 @@
 <script type="module">
 const $ = (id) => document.getElementById(id);
 const name = {{ my_name|tojson }};
+const REAL = {{ real_chains|tojson }};
+
+/* The words are asked for here and checked here, against the address this
+ * account already has on each chain where coins are money. Only the right
+ * words make that address, which is the whole check -- and the only thing
+ * that ever leaves this page is the answer, because a node able to verify
+ * the words is a node holding them (docs/multi-user.md §1b).
+ */
+const turn = $("turn-on");
+if (turn) turn.onclick = async () => {
+  const box = $("not-them");
+  box.hidden = true;
+  const say = (text) => { box.textContent = text; box.hidden = false; };
+  try {
+    const signin = await import("/signin.js");
+    if (!signin.usable) throw new Error(
+      "this page cannot do arithmetic here. It needs https or localhost.");
+    const coins = await import("/coins.js");
+    const seed = await signin.toSeed($("words").value);
+    for (const chain of REAL) {
+      if (!chain.address) throw new Error(
+        `this account has no ${chain.label.toLowerCase()} address yet, so`
+        + ` there is nothing here to check the words against. Open the Wallet`
+        + ` and let this browser register it, then come back.`);
+      const key = await coins.coinKey(seed, chain.network);
+      const made = await coins.address(key.pubkey, chain.version);
+      if (made !== chain.address) throw new Error(
+        `those words make ${made}, and this account is ${chain.address}.`
+        + ` Those are not the same account, so nothing was switched on.`);
+    }
+    const answer = await fetch("/account/mainnet", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({words_match: true})});
+    const back = await answer.json();
+    if (!answer.ok) throw new Error(back.detail || "the node would not take it");
+    location.reload();            // the panel says which chains are open now
+  } catch (e) {
+    say(String(e.message || e));
+  }
+};
 
 $("download").onclick = async () => {
   $("trouble").hidden = true;
