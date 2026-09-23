@@ -46,6 +46,12 @@ class Offer:
     unsigned: Any
     what: str
     made: float = field(default_factory=time.time)
+    #: Called with the txid once this offer has been broadcast and checked.
+    #: Nothing else can do this job: a run's book has to hear that a piece
+    #: went out at the moment it went out, and only `/account/sign` knows
+    #: that. A route with somewhere to record passes a closure over its own
+    #: book; a route with nowhere to record leaves it None.
+    done: Any = None
 
     @property
     def stale(self) -> bool:
@@ -63,10 +69,11 @@ class Offers:
     def __init__(self) -> None:
         self._by_id: dict[str, Offer] = {}
 
-    def add(self, pubkey: str, network: str, unsigned, what: str) -> Offer:
+    def add(self, pubkey: str, network: str, unsigned, what: str,
+            done: Any = None) -> Offer:
         self.sweep()
         offer = Offer(id=secrets.token_urlsafe(18), pubkey=pubkey.lower(),
-                      network=network, unsigned=unsigned, what=what)
+                      network=network, unsigned=unsigned, what=what, done=done)
         self._by_id[offer.id] = offer
         return offer
 

@@ -98,6 +98,15 @@ def test_an_account_inscribes_one_piece_with_a_key_the_node_never_saw(seated):
     app, state, rpc, pubkey, mine = seated
     text = "the first thing this account put on the chain by itself"
 
+    # Every account test signs for the same key on the session's chain, so
+    # this address already holds other tests' pieces by the time this one
+    # runs -- and a run of them inscribes a dozen. What this test asks is
+    # whether the page gained the piece this test paid for, not how many
+    # pieces that key has ever held, so it asks it as a difference.
+    held = lambda: {piece["txid"]
+                    for piece in app.get("/account/nfts").json()["chains"][0]["pieces"]}
+    before = held()
+
     offered = _ask(app, text.encode(), name="a note")
     assert offered.status_code == 200, offered.text
     offer = offered.json()
@@ -122,8 +131,7 @@ def test_an_account_inscribes_one_piece_with_a_key_the_node_never_saw(seated):
 
     # And the account's own page can see it, which is how they find out it
     # landed -- without this, a piece that only the index could name.
-    held = app.get("/account/nfts").json()["chains"][0]["pieces"]
-    assert [piece["txid"] for piece in held] == [txid]
+    assert held() - before == {txid}
 
 
 def test_more_than_one_piece_is_refused_before_anything_is_paid(seated):

@@ -28,12 +28,36 @@
   <p class="muted" style="font-size:.86rem;margin:0 0 10px">
     One piece &mdash; a little under 7,500 bytes &mdash; in one transaction,
     paid for by this account and signed in this tab, so this node never sees
-    the key that spent it. It cannot be taken back afterwards. A bigger file,
-    or a whole collection, is a run of pieces with a block waited between
-    them, and an account cannot run one of those yet.</p>
+    the key that spent it. It cannot be taken back afterwards. A bigger file
+    does not fit in one transaction, and the pieces of one file chain onto
+    each other, so it is not something this account can put up at all: split
+    it, or make it smaller.</p>
   <div class="row">
     <div style="flex:1"><input type="file" id="file"></div>
     <button type="button" id="inscribe-it">Inscribe it</button>
+  </div>
+</div>
+
+<div class="panel" id="running">
+  <h3 style="margin:0 0 6px">Run a collection</h3>
+  <p class="muted" style="font-size:.86rem;margin:0 0 10px">
+    A folder laid out the way the Art Engine leaves one &mdash;
+    <code>json/_metadata.json</code> and the pictures. Each item goes up in
+    its own transaction, signed here, one at a time: this tab stays open while
+    the run is going, and if it closes the run is still there when you come
+    back, at the piece it stopped on. Your node paces it by the inscriptions it
+    will take in an hour, and it keeps the pictures you uploaded &mdash;
+    nothing throws them away yet.</p>
+  <div class="row">
+    <div style="flex:1"><input type="file" id="build" webkitdirectory
+      directory multiple></div>
+    <button type="button" id="run-start">Upload it</button>
+  </div>
+  <div class="row" id="run-go" hidden>
+    <div style="flex:1" class="muted" id="run-says"
+      style="font-size:.86rem"></div>
+    <button type="button" id="run-piece">Inscribe the next piece</button>
+    <button type="button" class="ghost" id="run-stop">Stop</button>
   </div>
 </div>
 
@@ -343,11 +367,107 @@ $("inscribe-it").onclick = async () => {
       + "is mined.");
 };
 
+/* -- a run of them, one transaction at a time -- */
+
+function showed(row) {
+  $("run-go").hidden = !row;
+  $("run-piece").dataset.run = row ? row.run : "";
+  $("run-stop").dataset.run = row ? row.run : "";
+  if (!row) return;
+  $("run-says").textContent = `${row.name}: ${commas(row.sent)} of `
+    + `${commas(row.items)} on the chain`
+    + (row.next ? `, next is ${row.next}` : ".");
+}
+
+/** Where this account left off. Asked on load, not when a button is pressed:
+ *  the sentence above promises that a closed tab loses a run nothing, and a
+ *  promise the page never checks is a hope rather than a statement.
+ */
+async function runs() {
+  try {
+    const said = await (await fetch("/account/run")).json();
+    showed((said.runs || []).find((row) => row.status !== "done"
+                                      && row.status !== "stopped") || null);
+  } catch (e) { say(String(e.message || e)); }
+}
+
+$("run-start").onclick = async () => {
+  const files = $("build").files;
+  if (!files.length) { say("choose the folder the Art Engine left"); return; }
+  say(""); news("");
+  // The bytes go up because the node has to read them again for every one of
+  // the forty-odd transactions a run is, and it cannot ask a tab that will be
+  // closed by the third one. Nothing is inscribed by this request.
+  const form = new FormData();
+  for (const file of files) form.append("files", file);
+  form.append("run_chain", CHAIN.network);
+  try {
+    const asked = await fetch("/account/run/start",
+                              {method: "POST", body: form});
+    const start = await asked.json();
+    if (!asked.ok) throw new Error(start.detail || "that is not a build");
+    news(`Written down: ${start.name}, ${commas(start.items)} items, one `
+      + `transaction each, about ${(start.fee / 100000000).toFixed(8)} in `
+      + "fees. Nothing is on the chain yet.");
+    showed({run: start.run, name: start.name, items: start.items, sent: 0,
+            next: start.next});
+  } catch (e) { say(String(e.message || e)); }
+};
+
+$("run-piece").onclick = async () => {
+  const where = $("run-piece").dataset.run;
+  if (!where) return;
+  say(""); news("");
+  try {
+    const asked = await fetch("/account/run/piece", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({run: where}),
+    });
+    const offer = await asked.json();
+    if (!asked.ok) throw new Error(offer.detail || "that piece cannot go out");
+    if (offer.finished) {
+      news(`That run is finished. All ${commas(offer.items)} of them are on `
+        + "the chain.");
+      await runs();
+      return;
+    }
+    if (!confirm(`${offer.name}: ${commas(offer.bytes)} bytes on the chain `
+                 + `forever, for ${(offer.fee / 100000000).toFixed(8)} in `
+                 + `fees. ${commas(offer.sent)} of ${commas(offer.items)} are `
+                 + "already there.")) return;
+    if (!keys) throw new Error("your wallet is not open in this tab");
+    const out = await wallet.confirm(keys, offer);
+    news(`Inscribed: ${out.txid.slice(0, 16)}… Piece ${offer.piece} of `
+      + `${commas(offer.items)}. It shows up when its block is mined.`);
+    await runs();
+    await draw();
+  } catch (e) { say(String(e.message || e)); }
+};
+
+$("run-stop").onclick = async () => {
+  const where = $("run-stop").dataset.run;
+  if (!where) return;
+  say(""); news("");
+  try {
+    const asked = await fetch("/account/run/stop", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({run: where}),
+    });
+    const stop = await asked.json();
+    if (!asked.ok) throw new Error(stop.detail || "that cannot be stopped");
+    news(`${stop.name} is filed as stopped at ${commas(stop.sent)} of `
+      + `${commas(stop.items)}. What is already on the chain stays there, `
+      + "and asking for a piece starts it going again.");
+    await runs();
+  } catch (e) { say(String(e.message || e)); }
+};
+
 keys = await wallet.opened(CHAIN);
 // Said before anything is pressed. A page that only mentions a shut
 // wallet at the confirmation is a page that wasted somebody's decision.
 $("shut").hidden = !!keys;
 await draw();
+await runs();
 document.body.dataset.nftsReady = "yes";
 </script>
 {% endblock %}

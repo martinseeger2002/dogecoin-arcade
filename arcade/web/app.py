@@ -84,6 +84,7 @@ from ..messaging.sender import (
 )
 from . import content as contentlib
 from . import account as accountlib
+from .. import accountruns as accountrunslib
 from . import door as doorlib
 from .. import bootstrap as bootstraplib
 from . import watcher as watcherlib
@@ -6193,6 +6194,11 @@ def create_app(state: AppState) -> FastAPI:
     # shape for everything an account ever does (docs/multi-user.md §5).
 
     _offers = accountlib.Offers()
+    #: Collection runs an account owns. Its own book, not `collections.Jobs`,
+    #: for the reason in `accountruns`: the operator's Runner resumes every row
+    #: it finds with the node's own wallet as the signer, and an account's run
+    #: must never be signed by this node at all.
+    _runs = accountrunslib.Runs(state.home / "accountruns.sqlite")
     #: What an account has broadcast and the index has not read
     #: yet, so a second transaction does not pick the same coin.
     _flights = accountlib.Flights()
@@ -6758,11 +6764,14 @@ def create_app(state: AppState) -> FastAPI:
             plan = inscribelib.plan(content, kind, str(said.get("json", "")))
             if plan.chunks > 1:
                 raise ValueError(
-                    f"that is {plan.chunks} pieces, and an account can put up "
-                    f"one piece today. The pieces after the first have to "
-                    f"wait for a block before they can be built, which is a "
-                    f"run, and runs are not built for accounts yet "
-                    f"(docs/multi-user.md §9). Nothing has been paid for.")
+                    f"that is {plan.chunks} pieces in one item, and a piece is "
+                    f"as much as one transaction carries. A collection goes "
+                    f"out as a run, one transaction per item "
+                    f"(`/account/run/start`), but the pieces of a single item "
+                    f"chain onto each other and have to wait for a block "
+                    f"between them, which is a wait no request can sit "
+                    f"through. A smaller file, or the same picture split, is "
+                    f"what fits. Nothing has been paid for.")
             label = (str(said.get("name") or "").strip()[:60]
                      or kind.split(";")[0])
             outputs = _class_c_or_b(chain, address, plan.payloads[0],
@@ -6780,6 +6789,183 @@ def create_app(state: AppState) -> FastAPI:
         offer = _offers.add(account.pubkey, chain.network, unsigned,
                             unsigned.what)
         return JSONResponse({"offer": offer.id, "bytes": plan.content_len,
+                             "chain": chain.network, **unsigned.as_json()})
+
+    @app.post("/account/run/start")
+    def account_run_start(request: Request, files: list[UploadFile] = File([]),
+                          name: str = Form(""), run_chain: str = Form("")):
+        """Write a collection down as this account's run. Nothing is inscribed.
+
+        One upload, one run, and no transaction in it. The pieces are asked
+        for one at a time afterwards, which is the only shape an account can
+        use: the node cannot sign for it, and a browser that closes its tab
+        cannot finish anything. The run outlives both, which is the entire
+        point of writing it here rather than doing it inside the request.
+
+        The uploaded build stays on this node, and nothing ages it out or
+        deletes it yet -- stated rather than left implicit, because it means
+        an account's pictures sit on somebody else's disk indefinitely, and an
+        operator should know that before offering the page.
+        """
+        account = _signed_in_account(request)
+        try:
+            chain = _chain_asked({"chain": run_chain})
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        # One run going at a time, which is a rule rather than a courtesy. Two
+        # runs from one address would be offered interleaved, and the account
+        # signing piece nine could not know which collection it was paying for.
+        # Checked before the upload is read: this is the one question that can
+        # be answered without touching the disk.
+        ahead = _runs.due(account.pubkey, chain.network)
+        if ahead is not None:
+            return JSONResponse(
+                {"detail": f"{ahead['name']} is still going, at {ahead['sent']} "
+                           f"of {ahead['items']} pieces. Finish it or stop it "
+                           "before starting another. Nothing has been paid "
+                           "for."}, status_code=400)
+        try:
+            build = collectionlib.read_build(
+                collectionlib.find_build(_save_upload(files)))
+            run_id = _runs.create(account.pubkey, address, build,
+                                  chain.network,
+                                  name=name.strip()[:60] or build.collection)
+        except (collectionlib.CollectionError, accountrunslib.TooBig,
+                ValueError, OSError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        run = _runs.get(run_id)
+        return JSONResponse({"run": run_id, "name": run["name"],
+                             "items": run["items"], "fee": run["fee"],
+                             "dust": run["dust"], "chain": chain.network,
+                             "next": run["next"]})
+
+    @app.post("/account/run")
+    def account_runs(request: Request):
+        """This account's runs, unfinished first.
+
+        A read, and its own route rather than a side effect of asking for a
+        piece, because asking for a piece BUILDS an offer: a page that checked
+        whether a run was finished by asking for its next piece would reserve
+        coins against an offer nobody meant to sign. This is what lets the
+        page's promise -- that a run is still there when the tab comes back --
+        be true rather than aspirational.
+        """
+        account = _signed_in_account(request)
+        mine = [run for run in _runs.list(account=account.pubkey)]
+        mine.sort(key=lambda run: (run["status"] == "done", -run["created"]))
+        return JSONResponse({"runs": [{"run": run["id"], "name": run["name"],
+                                       "items": run["items"],
+                                       "sent": run["sent"],
+                                       "status": run["status"],
+                                       "next": run["next"],
+                                       "chain": run["network"]}
+                                      for run in mine]})
+
+    @app.post("/account/run/stop")
+    def account_run_stop(request: Request, payload: Any = Body(None)):
+        """File a run as stopped, so it is no longer the run this account is on.
+
+        Nothing is cancelled by it. There is no thread to stop -- the pieces
+        that are already on the chain stay there whatever this row says, and
+        the ones still owed were never going out by themselves. What it changes
+        is the answer to "which run is this account working on", which would
+        otherwise be answered by a run its owner walked away from, for as long
+        as this node exists: an account is only allowed one run going at a time,
+        and a run that was abandoned rather than finished would hold that place
+        forever.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        run = _runs.get(str(said.get("run", "")))
+        if run is None:
+            return JSONResponse({"detail": "there is no run of that id"},
+                                status_code=404)
+        if run["account"] != account.pubkey.lower():
+            return JSONResponse({"detail": "that run belongs to somebody else"},
+                                status_code=403)
+        # `only_from` because a finished run has nothing to stop, and saying
+        # `stopped` over `done` would make a collection that is entirely on the
+        # chain read as one that was abandoned.
+        _runs.set_status(run["id"], "stopped", only_from=("open", "running"))
+        run = _runs.get(run["id"])
+        return JSONResponse({"run": run["id"], "name": run["name"],
+                             "sent": run["sent"], "items": run["items"],
+                             "status": run["status"]})
+
+    @app.post("/account/run/piece")
+    def account_run_piece(request: Request, payload: Any = Body(None)):
+        """Offer the next piece of a run, or say that the run is finished.
+
+        The piece is built the way a single inscription is -- `_class_c_or_b`
+        over the account's own coins -- carrying the id written down when the
+        run was, so an offer that expired and was rebuilt inscribes the same
+        piece rather than a new one beside it. `next_piece` answers the piece
+        an offer has already gone out for before it answers one never
+        offered, which is what makes a closed tab and an expired offer the
+        same recoverable event rather than a lost piece.
+
+        The hour's `inscribe` dial paces a run rather than being waived for
+        it. A hundred pieces at ten an hour takes ten hours, and that is the
+        operator's number doing its job on the one action this node carries
+        forever -- not an obstacle for a run to route around.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        run = _runs.get(str(said.get("run", "")))
+        if run is None:
+            return JSONResponse({"detail": "there is no run of that id"},
+                                status_code=404)
+        if run["account"] != account.pubkey.lower():
+            return JSONResponse({"detail": "that run belongs to somebody else"},
+                                status_code=403)
+        chain = state.chain_named(run["network"])
+        piece = _runs.next_piece(run["id"])
+        if piece is None:
+            return JSONResponse({"run": run["id"], "sent": run["sent"],
+                                 "items": run["items"], "finished": True})
+        try:
+            content = (Path(run["folder"]) / piece["image"]).read_bytes()
+            plan = inscribelib.plan(content, piece["content_type"],
+                                    piece["json"],
+                                    inscription_id=bytes.fromhex(
+                                        piece["inscription_id"]))
+            outputs = _class_c_or_b(chain, run["address"], plan.payloads[0],
+                                    _coin_pubkey(account.pubkey, chain))
+            index = state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, run["address"], outputs,
+                    rate=fees.MIN_FEE_PER_KB,
+                    what=f"inscribe {piece['name']}",
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "inscribe", len(content))
+        except (fundinglib.FundingError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        if run["status"] == "stopped":
+            # Asking for the next piece is how an account takes back its own
+            # "stop" without a second button whose only job is to undo the
+            # first. The pieces were always still owed; what `stopped` gave up
+            # was the run's place as the one this account is working on.
+            _runs.set_status(run["id"], "running")
+        # Before the offer goes out, not after: a browser that never comes
+        # back has to leave the piece `sending`, which is the state
+        # `next_piece` puts first again, rather than looking never-asked-for
+        # to everything except the coins the offer has already reserved.
+        _runs.offer_piece(run["id"], piece["edition"])
+        offer = _offers.add(
+            account.pubkey, chain.network, unsigned, unsigned.what,
+            done=lambda txid: _runs.record_piece(run["id"], piece["edition"],
+                                                 txid))
+        return JSONResponse({"offer": offer.id, "run": run["id"],
+                             "piece": piece["edition"], "items": run["items"],
+                             "sent": run["sent"], "name": piece["name"],
+                             "bytes": plan.content_len,
                              "chain": chain.network, **unsigned.as_json()})
 
     @app.post("/account/nft/send")
@@ -7667,6 +7853,25 @@ def create_app(state: AppState) -> FastAPI:
             _flights.add(account.pubkey, txid, offer.unsigned,
                          _account_address(account.pubkey, chain),
                          network=chain.network)
+
+            # Somewhere to write the txid down, if the route that built this
+            # had somewhere. A run's next piece is chosen from what its book
+            # believes is already on the chain, so a piece that went out and
+            # was not recorded would be inscribed twice -- which money cannot
+            # undo and a second attempt cannot fix. So this one is not
+            # swallowed the way the note below is: the transaction is out
+            # either way, and the only honest answer is to say so with the
+            # txid in it and let the run be read before another piece is asked
+            # for.
+            if offer.done is not None:
+                try:
+                    offer.done(txid)
+                except Exception as exc:
+                    return JSONResponse(
+                        {"detail": f"it went out ({txid}) but this node could "
+                                   f"not write it down: {exc}. Read the run "
+                                   "before asking for another piece."},
+                        status_code=500)
 
             # A claim is worth remembering against the account: the page can
             # then say "on its way" rather than "no name" for the minutes

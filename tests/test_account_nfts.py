@@ -122,9 +122,11 @@ def test_the_page_is_there_and_in_the_account_menu(public):
     assert 'href="/me/nfts"' in body, "and is reachable from the menu"
     assert 'href="/me/wallet"' in body and 'href="/me/wallet/tokens"' in body
     # It says what an account cannot do rather than leaving a missing
-    # button to be discovered. One piece is no longer that sentence -- so
-    # the page has to name the thing that still is, which is a run.
-    assert "cannot run one of those yet" in body
+    # button to be discovered. One piece is no longer that sentence, and
+    # neither is a whole collection -- so the page names the thing that is
+    # left, which is an item too big for one transaction.
+    assert "does not fit in one transaction" in body
+    assert "Run a collection" in body
 
 
 def test_a_stranger_is_sent_to_sign_up(client):
