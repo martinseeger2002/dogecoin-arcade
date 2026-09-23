@@ -566,3 +566,201 @@ def test_the_same_words_make_a_different_key_on_each_chain(loaded):
     # And the paths are the standard ones, not something invented here.
     assert answer["testPath"] == "[2147483692,2147483649,2147483648,0,0]"
     assert answer["mainPath"] == "[2147483692,2147483651,2147483648,0,0]"
+
+
+# --- a listing's leg, checked before either signature is made -----------------
+#
+# A leg is the one thing in this application that is signed and never
+# broadcast, so nothing downstream ever tells the browser it got one wrong: a
+# leg that commits to the wrong output is a listing that sells something else,
+# filed with a valid-looking signature and discovered months later. Which makes
+# `coins.verifyLeg` the only check it gets. The legs below are built by
+# `arcade/funding.py` -- the same builder the route uses -- hashed here, hashed
+# again in the browser, and compared.
+#
+# Nothing here touches a chain: a leg is arithmetic and serialisation until a
+# signature comes back, and the piece it names is a number that never has to
+# exist anywhere.
+
+#: Rate, satoshis per kB: what `fees.MIN_FEE_PER_KB` asks of a block.
+RATE = 100_000
+
+#: The piece a listing names. Any 32 bytes will do -- nothing is looked up.
+PIECE = "ab" * 32
+
+KEY_HERE = """
+    const done = arguments[0];
+    (async () => {
+      try {
+        const c = window.coins;
+        const coin = await c.coinKey(
+          c.unhex("000102030405060708090a0b0c0d0e0f"), "regtest", 0);
+        done({pubkey: c.hex(coin.pubkey),
+              address: await c.address(coin.pubkey, 111)});
+      } catch (e) { done({error: String(e && e.message || e)}); }
+    })();"""
+
+CHECK_LEG = """
+    const done = arguments[1];
+    (async () => {
+      try {
+        const c = window.coins;
+        const coin = await c.coinKey(
+          c.unhex("000102030405060708090a0b0c0d0e0f"), "regtest", 0);
+        const out = await c.verifyLeg(JSON.parse(arguments[0]), {
+          pubkey: coin.pubkey, address: await c.address(coin.pubkey, 111)});
+        done({hashes: out.hashes, says: out.says,
+              listing: [out.listing.txid, Number(out.listing.sats)],
+              paid: out.back, reserved: out.reserved,
+              signs: [out.signs.from, out.signs.of]});
+      } catch (e) { done({error: String(e && e.message || e)}); }
+    })();"""
+
+
+def _key(browser) -> str:
+    """The address these tests' words control, asked of the browser itself."""
+    here = browser.execute_async_script(KEY_HERE)
+    assert "error" not in here, here
+    return here["address"]
+
+
+def _listing_payload(txid: str = PIECE, price: int = COIN) -> bytes:
+    """What a listing writes at output 0, from arcade's own encoders."""
+    from arcade import encoding, inscriptions as I, payload as P
+    body = I.Swap(give=I.Leg(I.LEG_INSCRIPTION, txid=bytes.fromhex(txid)),
+                  take=I.Leg(I.LEG_COINS, amount=price)).encode()
+    return encoding.encode_class_c(P.AnyData(data=body).encode())
+
+
+def _seller_coins(mine: str) -> list[dict]:
+    """Two coins of one address, which is what a leg names a piece with."""
+    return [{"txid": "%064x" % 7, "vout": 0, "value": 4 * COIN,
+             "address": mine},
+            {"txid": "%064x" % 9, "vout": 1, "value": 1 * COIN,
+             "address": mine}]
+
+
+def test_a_leg_is_hashed_the_same_in_python_and_in_the_browser(loaded):
+    """Two digests, one per input, and the browser's are Python's.
+
+    The narrowness is the whole thing: SINGLE|ANYONECANPAY keeps an input to
+    its own coin and to the output standing under it, so a leg that names a
+    piece is signed twice -- over the bytes naming it, and over the payment.
+    One digest, or a second digest built as if it were input 0's with one more
+    output beside it, and the signature is worth nothing while looking exact.
+    """
+    from arcade import funding
+    from arcade.config import NETWORKS
+
+    browser, _, _ = loaded
+    mine = _key(browser)
+    held = _seller_coins(mine)
+    leg = funding.build_leg(NETWORKS["regtest"], mine, held[0], coins=COIN,
+                            rate=RATE, payload=_listing_payload(),
+                            coin=held[1], what="a leg the node built")
+
+    shown = browser.execute_async_script(CHECK_LEG, json.dumps(leg.as_json()))
+    assert "error" not in shown, shown
+    assert shown["hashes"] == leg.sighashes, (
+        "the browser's digests are not Python's, so it would sign a listing "
+        "beside the one this node built")
+    assert len(set(shown["hashes"])) == 2, "two inputs, two different digests"
+    assert shown["signs"] == [0, 2], "a leg has no counterparty's coins to skip"
+    assert shown["listing"] == [PIECE, COIN], "read off the payload, not sent"
+    assert shown["paid"] == leg.paid
+    assert shown["reserved"] == leg.fee
+    # And the sentence a person decides on is worked out here, from the bytes
+    # the signatures stand over -- not repeated from `what`, which is a claim.
+    assert PIECE[:16] in shown["says"] and "1.00000000 coins" in shown["says"]
+    assert "a leg the node built" not in shown["says"]
+
+
+def test_a_leg_that_pays_the_price_to_somebody_else_is_refused(loaded):
+    """Output 1 is what the price signature stands over. It has to be yours.
+
+    The shape of a leg makes this the easiest trick in the world to miss: the
+    payment output looks like the seller's own coin back plus the price, and it
+    is only which address is written into it that decides who sells.
+    """
+    from arcade import funding
+    from arcade.txbuild import build_raw_tx, op_return_script, p2pkh_script
+
+    browser, _, _ = loaded
+    mine = _key(browser)
+    held = _seller_coins(mine)
+    payload = _listing_payload()
+    paid = sum(c["value"] for c in held) + COIN - 1000
+    outs = [(0, op_return_script(payload)),
+            (paid, p2pkh_script(SOMEWHERE_ELSE))]
+    script = p2pkh_script(mine)
+    leg = {"raw": build_raw_tx([(c["txid"], c["vout"]) for c in held], outs),
+           "inputs": held, "sighash_type": 0x83,
+           "sighashes": [funding.sighash(held, outs, n, script,
+                          sighash_type=funding.SINGLE_ANYONECANPAY).hex()
+                         for n in range(2)]}
+
+    refused = browser.execute_async_script(CHECK_LEG, json.dumps(leg))
+    assert "hashes" not in refused, refused
+    assert "pay this address" in refused["error"], refused
+    assert "Nothing was signed" in refused["error"], refused
+
+
+def test_a_leg_signed_once_or_signed_with_the_wrong_type_is_refused(loaded):
+    """One signature buys a listing nothing, and so does the wrong kind.
+
+    Both refusals are about a leg that would otherwise look fine on the page:
+    the payment signed by nobody is invisible until a buyer turns up, and a
+    SIGHASH_ALL signature over a leg would commit the seller to coins it has
+    never seen, which is the one thing a signature handed out in advance must
+    not do.
+    """
+    from arcade import funding
+    from arcade.config import NETWORKS
+
+    browser, _, _ = loaded
+    mine = _key(browser)
+    held = _seller_coins(mine)
+    honest = funding.build_leg(NETWORKS["regtest"], mine, held[0], coins=COIN,
+                               rate=RATE, payload=_listing_payload(),
+                               coin=held[1]).as_json()
+
+    for tampered, says in (({**honest, "sighashes": honest["sighashes"][:1]},
+                            "signed twice"),
+                           ({**honest, "sighash_type": 1},
+                            "SINGLE|ANYONECANPAY")):
+        refused = browser.execute_async_script(CHECK_LEG, json.dumps(tampered))
+        assert "hashes" not in refused, refused
+        assert says in refused["error"], refused
+        assert "Nothing was signed" in refused["error"], refused
+
+
+def test_a_leg_whose_payload_is_not_a_listing_is_refused(loaded):
+    """A leg that signs bytes it cannot read is a leg that signs anything.
+
+    The payload is output 0, so the first signature covers it exactly -- but
+    covering it is only worth something if the browser can say what it covers.
+    Here the digests are honest and recomputed over the transfer's bytes, so
+    nothing but the payload itself is wrong, and that is enough to refuse.
+    """
+    from arcade import encoding, funding, inscriptions as I, payload as P
+    from arcade.config import NETWORKS
+    from arcade.txbuild import build_raw_tx, op_return_script, p2pkh_script
+
+    browser, _, _ = loaded
+    mine = _key(browser)
+    held = _seller_coins(mine)
+    body = P.AnyData(data=I.Transfer(txid=bytes.fromhex(PIECE)).encode())
+    payload = encoding.encode_class_c(body.encode())
+    paid = sum(c["value"] for c in held) + COIN - 1000
+    outs = [(0, op_return_script(payload)), (paid, p2pkh_script(mine))]
+    script = p2pkh_script(mine)
+    leg = {"raw": build_raw_tx([(c["txid"], c["vout"]) for c in held], outs),
+           "inputs": held, "sighash_type": 0x83,
+           "sighashes": [funding.sighash(held, outs, n, script,
+                          sighash_type=funding.SINGLE_ANYONECANPAY).hex()
+                         for n in range(2)]}
+
+    refused = browser.execute_async_script(CHECK_LEG, json.dumps(leg))
+    assert "hashes" not in refused, refused
+    assert "not a swap" in refused["error"], refused
+    assert "Nothing was signed" in refused["error"], refused

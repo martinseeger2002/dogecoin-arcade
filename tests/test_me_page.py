@@ -183,7 +183,15 @@ def test_signing_in_opens_the_wallet(client):
     signup = page[page.index("async function _signUp"):page.index("async function _signIn")]
     signin = page[page.index("async function _signIn"):]
     assert "remember(wallet.phrase)" in signup, "signing up opens it"
-    assert "remember(wallet.phrase)" in signin.split("export")[0], \
+    # Signing in goes to `seatWith` rather than remembering for itself, and so
+    # does opening a backup file: the words come from the node's blob one way
+    # and from a saved file the other, and the two used to carry their own copy
+    # of the line that keeps the tab open. One place does it now, so the check
+    # is that each way in arrives there and that it is the place that remembers.
+    assert "await seatWith(wallet)" in \
+        signin.split("async function _openFile")[0], "signing in goes there"
+    seat = page[page.index("async function seatWith"):]
+    assert "remember(wallet.phrase)" in seat.split("export")[0], \
         "and so does signing in"
 
 

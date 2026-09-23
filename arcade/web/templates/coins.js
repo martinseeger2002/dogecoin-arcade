@@ -457,7 +457,10 @@ function listingPayload(data) {
   if (field(1, "has no second leg")[0] !== LEG_COINS) {
     refuse("takes something besides coins, which nobody has signed");
   }
-  const sats = readLE(field(8, "names no price"), 0, 8);
+  // Big-endian, because the payload is the protocol's own encoding and not the
+  // transaction's: every number in a leg is written the other way round from
+  // every number in the serialisation above it.
+  const sats = toBig(field(8, "names no price"));
   if (at !== data.length) refuse("longer than the trade it states");
   return {txid, sats};
 }
