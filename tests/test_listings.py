@@ -66,6 +66,29 @@ def _listed(rpc, db, book, secret=SELLER, price=COIN, rate=RATE,
     return listing, pubkey, address
 
 
+def _asked(rpc, db, secret=SELLER, price=COIN, rate=RATE,
+           amount=5.0) -> tuple[funding.Leg, bytes, str]:
+    """The half of a listing that exists before a browser has signed anything.
+
+    The leg and its signature are what the second request carries back; nothing
+    here remembers the first one, which is the thing these tests are about.
+    """
+    pubkey, address = _key(rpc, db, secret, amount)
+    leg = funding.build_leg(PARAMS, address, _coin(db, address), coins=price,
+                            rate=rate)
+    return leg, pubkey, address
+
+
+def _filed(book, rpc, leg, secret, pubkey, address, price=COIN,
+           what="a piece, priced"):
+    """File a leg the way the route will: bytes in, nothing remembered."""
+    signature = _sign(secret, bytes.fromhex(leg.sighash),
+                      funding.SINGLE_ANYONECANPAY).hex()
+    return book.register(rpc, raw=leg.raw, signature=signature, pubkey=pubkey,
+                         network=NETWORK, owner=address, price=price,
+                         seconds=LISTED_FOR, what=what)
+
+
 def _buy(rpc, db, secret, address, listing, rate=RATE) -> funding.Unsigned:
     """The buyer's half, the way a node that holds nobody's key builds one.
 
@@ -84,6 +107,26 @@ def _buy(rpc, db, secret, address, listing, rate=RATE) -> funding.Unsigned:
 
 def _signatures(secret, unsigned: funding.Unsigned) -> list[str]:
     return [_sign(secret, bytes.fromhex(h)).hex() for h in unsigned.sighashes]
+
+
+def _withdraw(rpc, db, secret, address, value: int) -> str:
+    """Spend a wallet's whole coin back to itself, without this node's help.
+
+    Twice in this file and once more below, because it is the one action that
+    matters twice over: it is how a piece comes off the market, and it is the
+    only way a listing is ever cancelled. The key never comes near this node, so
+    the transaction is made here -- and the payment has to leave room for a fee
+    priced the way a listing prices everything, at what a block asks.
+    """
+    fee = funding.price(1, [(0, p2pkh_script(address))], RATE, change=True)
+    away = funding.build(db, PARAMS, address, [(value - fee,
+                                                p2pkh_script(address))],
+                         rate=RATE, what="withdrawing it")
+    raw = funding.assemble(away, [_sign(secret, bytes.fromhex(h)).hex()
+                                  for h in away.sighashes], _pubkey(secret))
+    txid = rpc.call("sendrawtransaction", raw)
+    rpc.call("generate", 1)
+    return txid
 
 
 def _landed(rpc, txid: str) -> list[tuple[int, str]]:
@@ -133,6 +176,90 @@ def test_a_listing_fills_and_pays_what_the_leg_said(regtest, db, book):
     assert again["owner"] == seller
 
 
+def test_a_listing_is_filed_from_its_bytes_and_not_from_a_memory(regtest, db,
+                                                                 book):
+    """The door a route files through: two requests, nothing kept between them.
+
+    `from_leg` is what code that just built a leg calls. This is what happens
+    when the signature arrives in a later request, possibly at a node that has
+    been restarted since: the leg's bytes and the chain are the whole evidence,
+    and the arithmetic has to close against both.
+    """
+    rpc = regtest.rpc
+    leg, seller_key, seller = _asked(rpc, db, SELLER, price=COIN)
+    listing = _filed(book, rpc, leg, SELLER, seller_key, seller, price=COIN)
+
+    assert listing["fee"] == funding.swap_fee(RATE), \
+        "a row priced from memory would say something else here"
+    assert listing["price"] == COIN and listing["owner"] == seller
+    assert listing["status"] == "open"
+
+    buyer_key, buyer = _key(rpc, db, BUYER, 8.0)
+    half = _buy(rpc, db, BUYER, buyer, listing)
+    raw = listings.paste_leg(rpc, listing, half, _signatures(BUYER, half),
+                             buyer_key)
+    filled = rpc.call("sendrawtransaction", raw)
+    rpc.call("generate", 1)
+    landed = _landed(rpc, filled)
+    assert (int(listing["output"]["value"]),
+            listing["output"]["script"]) in landed, \
+        "a listing filed from bytes has to pay exactly what one filed from a Leg pays"
+    assert (int(listing["input"]["value"]), p2pkh_script(buyer).hex()) in landed
+
+
+def test_a_leg_is_refused_unless_its_numbers_close(regtest, db, book):
+    """The price is not in the signature, so it is arithmetic or nothing.
+
+    A leg pays its seller `piece + price - fee`. Post a price that is not the one
+    the signed output was built from and the row would advertise a bargain no
+    signature commits to -- which is the same lie as an unsigned listing, only
+    quieter, because the row looks checked.
+    """
+    rpc = regtest.rpc
+    leg, seller_key, seller = _asked(rpc, db, SELLER, price=COIN)
+    with pytest.raises(listings.ListingError) as refused:
+        _filed(book, rpc, leg, SELLER, seller_key, seller, price=2 * COIN)
+    assert "not built from this piece at this price" in str(refused.value), \
+        str(refused.value)
+
+    _withdraw(rpc, db, SELLER, seller, int(leg.input["value"]))
+    with pytest.raises(listings.ListingError) as gone:
+        _filed(book, rpc, leg, SELLER, seller_key, seller, price=COIN)
+    assert "not a piece to list" in str(gone.value), str(gone.value)
+    assert book.open_listings(NETWORK) == [], \
+        "a refusal that filed a row would have put a ghost on the listings page"
+
+
+def test_a_leg_is_refused_when_the_bytes_are_not_a_legs(regtest, db, book):
+    """A signature for a different transaction, and a leg that arrived finished.
+
+    A SIGHASH_ALL signature over a leg's own digest is not a seller's leg: it
+    commits to every output, so the swap it belongs to has to be known before
+    the key is used -- exactly the thing a leg exists to avoid. It would be
+    refused by the network eventually, when the buyer's own outputs were added,
+    and by then a listing page would be advertising a piece nobody can buy.
+    """
+    rpc = regtest.rpc
+    leg, seller_key, seller = _asked(rpc, db, SELLER, price=COIN)
+    with pytest.raises(listings.ListingError) as signed:
+        book.register(rpc, raw=leg.raw,
+                      signature=_sign(SELLER, bytes.fromhex(leg.sighash)).hex(),
+                      pubkey=seller_key, network=NETWORK, owner=seller,
+                      price=COIN, seconds=LISTED_FOR)
+    assert "SINGLE|ANYONECANPAY" in str(signed.value), str(signed.value)
+
+    pasted = listings.sign_leg(leg, _sign(SELLER, bytes.fromhex(leg.sighash),
+                                         funding.SINGLE_ANYONECANPAY).hex(),
+                               seller_key)
+    with pytest.raises(listings.ListingError) as twice:
+        book.register(rpc, raw=pasted,
+                      signature=_sign(SELLER, bytes.fromhex(leg.sighash),
+                                      funding.SINGLE_ANYONECANPAY).hex(),
+                      pubkey=seller_key, network=NETWORK, owner=seller,
+                      price=COIN, seconds=LISTED_FOR)
+    assert "already has a scriptSig" in str(twice.value), str(twice.value)
+
+
 def test_a_listing_is_cancelled_by_spending_the_piece(regtest, db, book):
     """The only cancellation there is, and the refusal it leaves behind.
 
@@ -144,15 +271,7 @@ def test_a_listing_is_cancelled_by_spending_the_piece(regtest, db, book):
     """
     rpc = regtest.rpc
     listing, _seller_key, seller = _listed(rpc, db, book, SELLER)
-    piece = int(listing["input"]["value"])
-    fee = funding.price(1, [(0, p2pkh_script(seller))], RATE, change=True)
-    away = funding.build(db, PARAMS, seller,
-                         [(piece - fee, p2pkh_script(seller))], rate=RATE,
-                         what="withdrawing it")
-    gone = funding.assemble(away, [_sign(SELLER, bytes.fromhex(h)).hex()
-                                   for h in away.sighashes], _pubkey(SELLER))
-    txid = rpc.call("sendrawtransaction", gone)
-    rpc.call("generate", 1)
+    txid = _withdraw(rpc, db, SELLER, seller, int(listing["input"]["value"]))
     assert len(txid) == 64 and rpc.call("getrawtransaction", txid, 1)["confirmations"] >= 1, \
         "the seller took its own piece off the market the only way there is"
 
@@ -175,16 +294,7 @@ def test_a_page_reads_the_chain_and_not_the_row(regtest, db, book):
     assert listings.piece_held(rpc, listing) == int(listing["input"]["value"]), \
         "a piece that is sitting there has to read as sitting there"
 
-    piece = int(listing["input"]["value"])
-    fee = funding.price(1, [(0, p2pkh_script(seller))], RATE, change=True)
-    away = funding.build(db, PARAMS, seller, [(piece - fee,
-                                               p2pkh_script(seller))],
-                         rate=RATE, what="withdrawing it")
-    gone = funding.assemble(away, [_sign(SELLER, bytes.fromhex(h)).hex()
-                                   for h in away.sighashes], _pubkey(SELLER))
-    rpc.call("sendrawtransaction", gone)
-    rpc.call("generate", 1)
-
+    _withdraw(rpc, db, SELLER, seller, int(listing["input"]["value"]))
     assert listings.piece_held(rpc, listing) is None, \
         "the only cancellation there is happened, and this is where it shows"
     assert book.get(listing["id"])["status"] == "open", \

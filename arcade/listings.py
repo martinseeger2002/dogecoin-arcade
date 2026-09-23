@@ -42,11 +42,17 @@ from typing import Any, Iterator
 
 from . import fees
 from .db import add_missing_columns
-from .funding import SINGLE_ANYONECANPAY, Leg
+from .funding import SINGLE_ANYONECANPAY, Leg, swap_fee
 from .script import b58check_decode, hash160, iter_pushes
 from .txbuild import p2pkh_script, push, varint
 
 COIN = 100_000_000
+
+#: How long a listing is put in front of a buyer when the seller does not say.
+#: This is not a term of the signature -- there is no lock time in a leg -- it is
+#: how long this node keeps advertising it. A seller who wants a deadline sells
+#: by spending the piece.
+LISTED_FOR = 24 * 60 * 60
 
 #: What a listing is worth completing at, per virtual kB. A leg reserves its
 #: own fee when it is signed, so this is the floor the finished swap has to
@@ -127,6 +133,29 @@ def sign_leg(leg: Leg, signature: str, pubkey: bytes) -> str:
                       [leg.output])
 
 
+def listing_row(network: str, owner: str, raw: str, piece: dict,
+                paid: tuple[int, bytes], fee: int, price: int, what: str,
+                seconds: float) -> dict:
+    """A listing in the shape `check_leg` reads, before anybody is told it exists.
+
+    One builder, because there are two ways a leg gets here -- handed a `Leg` by
+    code that built it, or handed raw bytes by a browser two requests later --
+    and a row that differed between the two would mean a listing page said one
+    thing about a piece listed by a route and another about the same piece
+    listed by the other.
+    """
+    return {
+        "id": secrets.token_urlsafe(18), "network": network, "owner": owner,
+        "leg": raw,
+        "input": {"txid": str(piece["txid"]), "vout": int(piece["vout"]),
+                  "value": int(piece["value"])},
+        "output": {"value": int(paid[0]), "script": bytes(paid[1]).hex()},
+        "fee": int(fee), "price": int(price), "what": what,
+        "status": "open", "created": time.time(),
+        "expires": time.time() + seconds,
+    }
+
+
 class Listings:
     """Every leg this node is holding, open or closed, in one file.
 
@@ -184,17 +213,75 @@ class Listings:
         numbers on a public page that no signature backs.
         """
         raw = sign_leg(leg, signature, pubkey)
-        listing = {
-            "id": secrets.token_urlsafe(18), "network": network, "owner": owner,
-            "leg": raw,
-            "input": {"txid": leg.input["txid"], "vout": int(leg.input["vout"]),
-                      "value": int(leg.input["value"])},
-            "output": {"value": int(leg.output[0]),
-                       "script": leg.output[1].hex()},
-            "fee": int(leg.fee), "price": int(price), "what": leg.what,
-            "status": "open", "created": time.time(),
-            "expires": time.time() + seconds,
-        }
+        listing = listing_row(network, owner, raw, leg.input, leg.output,
+                              leg.fee, price, leg.what, seconds)
+        check_leg(rpc, listing)
+        return self.add(listing)
+
+    def register(self, rpc: Any, *, raw: str, signature: str, pubkey: bytes,
+                 network: str, owner: str, price: int,
+                 seconds: float = LISTED_FOR, what: str = "") -> dict:
+        """File a leg a browser signed, with nothing remembered from before.
+
+        A listing is two requests: this node builds a leg and shows it, the tab
+        signs it and posts it back. Nothing is held between them. That costs a
+        binding, and the binding is bought back with arithmetic rather than with
+        state -- the piece's value comes from the chain, the payment and the
+        outpoint come from the leg's own bytes, and a leg whose numbers do not
+        close against this piece at this price is refused instead of filed. So a
+        node that restarted between the two requests files exactly the row it
+        would have filed anyway, which is more than an in-memory book of
+        pending legs would have survived.
+
+        The arithmetic is not a courtesy to the seller. `price` is the one number
+        a listing row states for itself -- it is not in the signature and cannot
+        be -- so it is derived here from the piece, the payment and the fee, and
+        `check_leg` then refuses the row again if the two ever disagree.
+        """
+        try:
+            leg = rpc.call("decoderawtransaction", str(raw))
+        except Exception as exc:
+            raise ListingError(f"that is not a transaction: {exc}") from None
+        vin, vout = leg.get("vin") or [], leg.get("vout") or []
+        if len(vin) != 1 or len(vout) != 1:
+            raise ListingError(
+                "a leg is one coin in and one payment out, and this is "
+                f"{len(vin)} in and {len(vout)} out")
+        if str((vin[0].get("scriptSig") or {}).get("hex") or ""):
+            raise ListingError(
+                "that leg already has a scriptSig. A leg comes here unsigned "
+                "and the signature comes beside it, because the two are checked "
+                "against each other and a pre-pasted one cannot be")
+        sig = bytes.fromhex(str(signature))
+        if not sig or sig[-1] != SINGLE_ANYONECANPAY:
+            raise ListingError(
+                "a leg is signed with SINGLE|ANYONECANPAY, and this signature "
+                f"says {sig[-1] if sig else 'nothing'} at the end, so it commits "
+                "to a different transaction from the leg it came with")
+
+        piece = {"txid": str(vin[0].get("txid") or ""),
+                 "vout": int(vin[0].get("vout", -1))}
+        held = piece_held(rpc, {"input": piece})
+        if held is None:
+            raise ListingError(
+                f"{piece['txid'][:16]}…:{piece['vout']} is spent or unseen here, "
+                f"so it is not a piece to list -- it sold, or its owner spent it")
+        paid = vout[0]
+        out_value = int(round(float(paid.get("value", 0)) * COIN))
+        script = bytes.fromhex(str((paid.get("scriptPubKey") or {})
+                                   .get("hex") or ""))
+        fee = swap_fee(FEE_FLOOR_PER_KB)
+        if out_value != held + int(price) - fee:
+            raise ListingError(
+                f"a piece worth {held} listed at {int(price)} pays its seller "
+                f"{held + int(price) - fee} once the {fee} it reserves for a "
+                f"block is taken out, and this leg pays {out_value}, so it was "
+                f"not built from this piece at this price")
+        signed = _serialise([(piece["txid"], piece["vout"],
+                              push(sig) + push(pubkey))], [(out_value, script)])
+        listing = listing_row(network, owner, signed, {**piece, "value": held},
+                              (out_value, script), fee, int(price), what,
+                              seconds)
         check_leg(rpc, listing)
         return self.add(listing)
 
