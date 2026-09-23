@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Listings · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Listings</h1>
+<p class="sub">Legs this node is holding a signature for. None of them is this
+  node's offer to sell, and none of them can be spent from here.</p>
+
+{% if book_error %}<div class="msg err">{{ book_error }}</div>{% endif %}
+
+<div class="msg">
+  <strong>What one of these is.</strong> Somebody priced a piece in their own
+  browser and handed this node the signature: one coin of theirs in, one payment
+  out to themselves, the price fixed in the bytes they signed. The piece is
+  still theirs &mdash; this node holds a signature, not the coin, and it could
+  not spend the piece if it wanted to.
+</div>
+
+<div class="msg">
+  <strong>How one ends.</strong> There are three ways and this page says which
+  one happened.
+  <ul>
+    <li>A buyer completes it, a block spends the piece, and both sides get what
+      they priced.</li>
+    <li>The seller spends that coin on something else. <em>That is cancelling
+      it.</em> There is no withdraw button anywhere, and there is not going to
+      be one: the signature has already left their browser, and a page cannot
+      unsay it. The only thing that stills a signature is a transaction that
+      spends what it was made from.</li>
+    <li>The time runs out, which means this node stops advertising it. Nothing
+      inside a signature expires &mdash; there is no lock time in a leg &mdash;
+      so anything already handed to a buyer is still good until a block spends
+      the piece, past that date or not.</li>
+  </ul>
+  So the difference between the first and the second is who spent it, and this
+  node cannot always tell. What it can tell you is whether the piece is still
+  there, which is the only part of a listing it ever controlled.
+</div>
+
+{% if not groups %}
+  <p class="muted">Nothing is listed on this node. A listing appears here the
+  moment somebody's browser signs a leg and hands it over.</p>
+{% endif %}
+
+{% for g in groups %}
+  <h2>{{ g.chain.label }}</h2>
+  {% if not g.asked %}
+    <div class="msg err">This node could not ask {{ g.chain.label }} whether
+      these pieces are still there, so nothing below says whether they are.
+      <span class="mono">{{ g.why }}</span></div>
+  {% endif %}
+  <table>
+    <tr><th>Seller</th><th>For</th><th>Piece</th><th>The piece, now</th>
+        <th>Advertised for</th></tr>
+    {% for row in g.rows %}
+    <tr>
+      <td class="mono" style="word-break:break-all">
+        {% if row.tag %}<a href="/u/{{ row.tag }}">@{{ row.tag }}</a>
+        {%- else %}{{ row.seller }}{% endif %}</td>
+      <td>{{ row.price }} coins{% if row.what %}
+        <div class="muted">{{ row.what }}</div>{% endif %}</td>
+      <td class="mono">{{ row.piece }}</td>
+      <td>
+        {% if not g.asked %}<span class="muted">not asked</span>
+        {%- elif row.held is none %}<span class="err">spent &mdash; this listing
+          is done</span>
+        {%- else %}still the seller's{% endif %}</td>
+      <td class="muted">{{ row.listed|ago }}, {{ row.left }} left</td>
+    </tr>
+    {% endfor %}
+  </table>
+{% endfor %}
+{% endblock %}

@@ -47,7 +47,7 @@ def client(app_state):
 GET_ROUTES = ["/", "/inbox", "/compose", "/contacts", "/backup", "/wallet",
               "/wallet/tokens", "/wallet/nfts", "/tokens", "/nfts", "/exchange",
               "/exchange?tab=mintpads", "/exchange?tab=tokens",
-              "/exchange?tab=market"]
+              "/exchange?tab=market", "/listings"]
 
 
 @pytest.mark.parametrize("path", GET_ROUTES)

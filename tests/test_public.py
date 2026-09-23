@@ -55,7 +55,7 @@ def test_a_stranger_reaches_nothing_custodial(public, path):
 
 
 PUBLIC = ["/", "/join", "/feed", "/guide", "/collections", "/tokens",
-          "/nfts", "/inscriptions", "/exchange", "/favicon.ico",
+          "/nfts", "/inscriptions", "/exchange", "/listings", "/favicon.ico",
           "/icon-32.png", "/signin.js", "/bip39-english.txt", "/events"]
 
 

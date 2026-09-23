@@ -71,6 +71,7 @@ from .. import seed as seedlib
 from .. import accounts as accountslib
 from .. import faucet as faucetlib
 from .. import funding as fundinglib
+from .. import listings as listingslib
 from .. import utxos as utxoslib
 from .. import update as updatelib
 from ..messaging.keys import fingerprint_of
@@ -9431,6 +9432,75 @@ def create_app(state: AppState) -> FastAPI:
                              build=build, fields=fields,
                              back="/exchange?tab=market",
                              where=f"/exchange/sell/{row['txid']}")
+
+    def _listing_groups() -> tuple[list[dict[str, Any]], str]:
+        """What this node is advertising on somebody else's signature.
+
+        The chain is asked whether each piece is still where the listing says
+        it is, and the answer is kept apart from the question: `asked` says this
+        node read a chain, and `held` says what it read. Collapsed into one, a
+        node whose daemon is down would tell a seller their piece sold -- and
+        `piece_held` returning None means "not there", which is only the same
+        thing as "spent" to a node that actually looked (arcade/listings.py).
+        """
+        groups, book_error = [], ""
+        for chain in state.token_chains:
+            try:
+                # Looking is what keeps the book's idea of time current, the way
+                # reading the feed is what marks it read. `expired` costs nothing
+                # to write and unlocks nothing -- it says this node stopped
+                # advertising, which is the only thing an expiry ever was.
+                state.listings.expire_due(chain.network)
+                rows = state.listings.open_listings(chain.network)
+            except Exception as exc:
+                book_error = f"the listing book could not be read: {exc}"
+                rows = []
+            if not rows:
+                continue
+            asked, why, held = True, "", {}
+            try:
+                with chain.rpc() as rpc:
+                    for row in rows:
+                        held[row["id"]] = listingslib.piece_held(rpc, row)
+            except Exception as exc:
+                asked, why = False, str(exc)
+            named = _tags_for([row["owner"] for row in rows])
+            groups.append({
+                "chain": chain, "asked": asked, "why": why,
+                "rows": [{
+                    "id": row["id"],
+                    "what": row["what"],
+                    "seller": row["owner"],
+                    "tag": named.get(row["owner"], ""),
+                    "price": f"{int(row['price']) / listingslib.COIN:.8f}".rstrip("0").rstrip("."),
+                    "piece": f"{row['input']['txid'][:16]}…:{row['input']['vout']}",
+                    "held": held.get(row["id"]),
+                    "listed": row["created"],
+                    "left": describe_duration(max(0, int(row["expires"] - time.time()))),
+                } for row in rows],
+            })
+        return groups, book_error
+
+    @app.get("/listings", response_class=HTMLResponse)
+    def listings_page(request: Request):
+        """The legs this node is holding a signature for, and nothing else.
+
+        Nothing on this page is this node's offer to sell. Every row is a
+        signature somebody made in their own browser and handed over: one coin
+        of theirs in, one payment out, the price in the bytes they signed. This
+        node can complete that or stand out of the way, and it cannot spend the
+        piece -- which is the whole reason the book exists separate from
+        `state.offers`, where every row is this wallet's own signature.
+
+        So the page has to be the place where what a listing IS gets said. A
+        seller cannot withdraw one from here, and the honest words for why are
+        on the page rather than in a manual: cancelling is spending the piece,
+        and a signature that has already left a browser stays good until a block
+        spends it, expiry or no expiry.
+        """
+        groups, book_error = _listing_groups()
+        return render(request, "listings.html", groups=groups,
+                      book_error=book_error)
 
     @app.get("/exchange", response_class=HTMLResponse)
     def exchange(request: Request, tab: str = "offers"):

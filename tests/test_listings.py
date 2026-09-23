@@ -19,6 +19,7 @@ the node is never given either key, which is the difference between this book
 and `swap.Offers`.
 """
 
+import inspect
 import time
 from types import SimpleNamespace
 
@@ -561,3 +562,84 @@ def _row(secret: int, created: float | None = None) -> dict:
         "fee": fee, "price": COIN, "what": "a piece", "status": "open",
         "created": now, "expires": now + LISTED_FOR, "spent_by": None,
     }
+
+
+# --- the page that says what a listing is -------------------------------------
+#
+# Everything above is the book and the bytes. This is the words, which are the
+# part a seller acts on. The page is read here with no node at all -- which is
+# both the only way to render it without a chain and the state where its copy
+# matters most: a node whose daemon is down knows nothing about any piece on it,
+# and must not say one sold.
+
+from test_web import app_state, client                                  # noqa: E402
+
+
+def test_the_page_says_spending_the_piece_is_the_only_cancel(client):
+    """No withdraw button, and the page says why rather than leaving it out.
+
+    A seller who reads a listings page and finds no way to take something off
+    it will conclude the node is holding their piece. It is not: it is holding a
+    signature the seller's own browser sent, and the one thing a signature
+    cannot do is unmake itself. That is the sentence the page owes.
+
+    The prose is matched with its whitespace folded, because it is prose: it is
+    wrapped in the template for the browser's sake, and a test that reads it as
+    one line is the only honest way to say what has to be said.
+    """
+    app, state = client
+    state.listings.add(_row(SELLER))
+    words = " ".join(app.get("/listings").text.split())
+    assert "no withdraw button" in words, words[:2000]
+    assert "That is cancelling it" in words
+    assert "a block spends the piece" in words
+    assert "no lock time in a leg" in words, \
+        "the expiry is not a deadline; the page has to say which is which"
+    assert "1 coins" in words, "the price a signature commits to"
+
+
+def test_a_page_that_could_not_ask_says_so_rather_than_that_a_piece_sold(client):
+    """`piece_held` answers None for two different worlds, and only one of them
+    is "spent". A page that reads the node being down as the piece being gone
+    tells a seller their listing sold, and they go looking for coins that were
+    never moved."""
+    app, state = client
+    row = _row(SELLER)
+    state.listings.add(row)
+    words = " ".join(app.get("/listings").text.split())
+    assert "could not ask" in words
+    assert "is done" not in words, "nothing was learned about this piece"
+    assert state.listings.get(row["id"])["status"] == "open", \
+        "a page that cannot read the chain has no business changing the row"
+
+
+def test_the_page_stops_advertising_what_is_past_its_date(client):
+    """The expiry is this node's promise about its own front page, and nothing
+    else. So it arrives by the page being read, and it files the row without
+    unsaying anything: no unlock, because nothing was locked, and the piece is
+    still the seller's to sell again the same minute."""
+    app, state = client
+    row = _row(SELLER, created=time.time() - LISTED_FOR - 10)
+    state.listings.add(row)
+    body = app.get("/listings").text
+    assert PIECE["txid"][:16] not in body, "an expired listing is still advertised"
+    assert state.listings.get(row["id"])["status"] == "expired"
+
+
+def test_the_listing_page_has_nothing_to_press(client):
+    """Not an oversight: a control on this page could only ever lie.
+
+    The one thing that takes a piece off the market is a block spending what the
+    leg was made from, so a withdraw button would be a button that changes a row
+    and changes nothing else -- worse than no button, because the signature
+    stays live and the seller believes it does not. `listings.py` uses the word
+    "withdrawn" in its own prose for exactly that gap: a row this node deleted
+    is withdrawn, and the piece is not. What must never exist is a STATUS by
+    that name, and a page that offers to set one.
+    """
+    app, state = client
+    state.listings.add(_row(SELLER))
+    body = app.get("/listings").text
+    assert "<form" not in body and "csrf_token" not in body, \
+        "a listings page that can be pressed is one that can lie"
+    assert "status='withdrawn'" not in inspect.getsource(listings)
