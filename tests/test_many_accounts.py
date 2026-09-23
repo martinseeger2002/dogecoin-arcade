@@ -12,11 +12,19 @@ holding both halves, so none of them can reach it.
 
 What is here is what an account can already do, and that list has holes in it
 on purpose. `door.py` refuses every POST that would spend the NODE's wallet,
-and three things are still that shape: inscribing a collection, creating a
-token, and buying (a swap needs both halves signed and only one half is in a
-browser). So there is no hundred-piece collection in this file and no purchase
-in it. Where one of those three becomes an account action, its half of the test
-belongs in this file rather than in a new one.
+and two things are still that shape: inscribing a collection and creating a
+token. So there is no hundred-piece collection in this file. Where one of those
+two becomes an account action, its half of the test belongs in this file rather
+than in a new one.
+
+Buying came off that list, and it changed what this file can prove. A swap used
+to need both halves signed and only one half was ever in a browser, so no test
+of one was an account's. Now a seller signs a leg alone and what finishes the
+trade is the buyer's signature pasted onto it -- a transaction this node could
+not have made and does not sign. Which is also why a purchase needs two
+accounts: an account cannot buy from its own shop, and a test that tried would
+be asserting the refusal rather than the buy. Both halves are here, in that
+order.
 
 Two conventions, said before they surprise anybody:
 
@@ -53,7 +61,7 @@ from test_tokens_web import (RegtestContext, mine_and_index,  # noqa: E402
                              shown)
 
 from arcade import accounts as accountslib                  # noqa: E402
-from arcade import inscribe, seed, utxos                    # noqa: E402
+from arcade import funding, inscribe, seed, utxos           # noqa: E402
 from arcade import inscriptions as pieces                   # noqa: E402
 from arcade import payload as protocol                      # noqa: E402
 from arcade.messaging import envelope                       # noqa: E402
@@ -660,3 +668,166 @@ def test_an_ask_is_public_and_only_the_holder_prices_it(node, crowd):
     too = _do(ferns, "/account/nft/sell", {"piece": piece, "amount": "1"})
     assert too.status_code == 400
     assert "only whoever holds" in too.json()["detail"]
+
+
+# --- buying from each other ---------------------------------------------------
+
+def _listed(person, piece: str, amount: str):
+    """Put a piece on the shelf: the leg the node built, twice signed, filed.
+
+    Two requests with nothing kept between them, so this helper makes both
+    halves and the row has to stand on its own arithmetic. The two signatures
+    are why a listing needs two of the seller's coins -- one reaches the bytes
+    naming the piece, the other the payment -- and neither half of it is a
+    broadcast: a listing is a signature this node holds, not a transaction it
+    makes.
+    """
+    asked = _offer(person, "/account/list",
+                   {"piece": piece, "amount": amount})
+    if asked.status_code != 200:
+        return asked
+    leg = asked.json()
+    return person.client.post("/account/list/sign", json={
+        "raw": leg["raw"], "amount": amount, "pubkey": person.pubkey.hex(),
+        "signatures": [_sign(person.secret, bytes.fromhex(digest),
+                             funding.SINGLE_ANYONECANPAY).hex()
+                       for digest in leg["sighashes"]]})
+
+
+def _bought(person, listing: str):
+    """Both halves of a buy, signing only the half that is the buyer's.
+
+    Not `_do`, and the count of digests is the reason: a swap is not an offer
+    this node signs afterwards. The listing's coins lead the input list already
+    signed, and `signed_from` is where this account's own inputs start.
+    """
+    asked = _offer(person, "/account/buy", {"listing": listing})
+    if asked.status_code != 200:
+        return asked
+    said = asked.json()
+    return person.client.post("/account/buy/sign", json={
+        "raw": said["raw"], "listing": listing, "pubkey": person.pubkey.hex(),
+        "signatures": [_sign(person.secret, bytes.fromhex(digest)).hex()
+                       for digest in said["sighashes"]]})
+
+
+def test_an_account_buys_a_piece_out_of_somebody_elses_shop(node, crowd):
+    """The purchase this file said it could not have, with two wallets in it.
+
+    Maple signs a leg for a piece it still holds -- nothing is escrowed, the
+    piece stays where it is until a block spends it -- and Ferns's half is built
+    by the same node that holds the key of neither, then finished by pasting
+    rather than by countersigning. So every assertion below needs two people to
+    be true: the piece changes hands in the index, the seller nets its price to
+    the satoshi and nothing else, and the row on the node's shelf is closed by
+    the transaction that did it.
+
+    One thing here surprises anybody who has only read the transfer tests: the
+    finished swap spends no coin of the piece's. Owning an inscription is the
+    engine's reading of a payload and a reference output and not of a coin --
+    `Engine._check_leg` asks only whose name the index holds -- and what a leg
+    has to pin down is the seller's FIRST input, because Class C makes that
+    input's address the sender of the swap and `inscriptions.Swap` has no room
+    to name a buyer.
+    """
+    daemon, state = node[0], node[1]
+    maple, ferns = crowd[0], crowd[1]
+    piece = _inscribed(*node, owner=maple.address, name="Bought piece",
+                       content=b"arcade" * 48)
+    priced = _listed(maple, piece, "6")
+    assert priced.status_code == 200, priced.text
+
+    row = state.listings.get(priced.json()["listed"])
+    assert row["status"] == "open" and row["owner"] == maple.address
+    assert int(row["price"]) == 6 * COIN, "a row prices itself off its own leg"
+    index = state.token_index(state.messaging)
+    assert index.inscription(piece)["owner"] == maple.address, \
+        "a listing holds nothing: this is still maple's piece"
+
+    sold = _balance(state, maple.address)
+    had = _balance(state, ferns.address)
+    asked = _offer(ferns, "/account/buy", {"listing": row["id"]})
+    assert asked.status_code == 200, asked.text
+    said = asked.json()
+    assert said["seller"] == maple.address and int(said["price"]) == 6 * COIN
+    assert said["what"].startswith("buy "), said["what"]
+    assert said["signed_from"] == 2, \
+        "the listing's two coins lead the inputs, signed by maple and nobody else"
+    assert [coin["txid"] for coin in said["inputs"][:2]] == \
+        [row["input"]["txid"], row["coin"]["txid"]], said["inputs"]
+    assert len(said["sighashes"]) == len(said["inputs"]) - said["signed_from"], \
+        "not one digest is offered for a coin this account does not hold"
+
+    done = _bought(ferns, row["id"])
+    assert done.status_code == 200, done.text
+    assert done.json()["seller"] == maple.address
+    _settle(*node)
+
+    assert index.inscription(piece)["owner"] == ferns.address, "the piece moved"
+    assert piece in [p["txid"] for p in _pieces(ferns)], _pieces(ferns)
+    assert piece not in [p["txid"] for p in _pieces(maple)], "and it left maple"
+
+    raw = daemon.rpc.call("getrawtransaction", done.json()["txid"])
+    decoded = daemon.rpc.call("decoderawtransaction", raw)
+    pays = [out for out in decoded["vout"]
+            if int(round(float(out["value"]) * COIN))
+            == int(row["output"]["value"])]
+    assert len(pays) == 1, "the signed payment is in there, unsigned and whole"
+    key = pays[0]["scriptPubKey"]
+    assert (key.get("address") or key["addresses"][0]) == maple.address
+
+    filed = state.listings.get(row["id"])
+    assert filed["status"] == "filled"
+    assert filed["spent_by"] == done.json()["txid"], "the row says what closed it"
+    assert daemon.rpc.call("getrawmempool") == []
+
+    # What the seller NETS is the price, to the satoshi -- the engine's own test
+    # of a coin leg (`tx.paid_to` is outputs minus inputs), and the reason the
+    # leg's fee reservation is handed back rather than kept: an output fixed at
+    # signing time cannot also be what a block turns out to cost.
+    sold_by = _balance(state, maple.address) - sold
+    assert sold_by == 6 * COIN, f"maple netted {sold_by} on a listing at 6"
+    # And the buyer pays that price plus the whole of the fee, because it is the
+    # one asking -- the §1d rule `swap.build` has always followed for a swap the
+    # node signs, now honoured by a swap the node only pastes together.
+    paid = had - _balance(state, ferns.address)
+    assert 6 * COIN < paid < 6 * COIN + COIN // 10, \
+        f"ferns paid {paid} for a piece listed at 6"
+
+
+def test_an_account_cannot_buy_from_its_own_shop(node, crowd):
+    """A listing is a promise made to a stranger, and that is the whole rule.
+
+    [2026-09-22: "An account should not be able to buy from its own
+    shop, you'll have to make a separate account to buy from the shop."] Filling
+    your own listing is two transactions that move nothing while printing a
+    price and a volume nobody paid on a public page -- and it would fail by
+    itself anyway, because `paste_leg` refuses a buyer input that pays to the
+    seller and in a self-fill every buyer input does. So the refusal goes at the
+    front, at the point where the trade is only still an intention, and it uses
+    the sentence `swap.countersign` has used for the operator's wallet since
+    before there were accounts.
+    """
+    daemon, state = node[0], node[1]
+    maple = crowd[0]
+    piece = _inscribed(*node, owner=maple.address, name="Shop piece",
+                       content=b"arcade" * 32)
+    priced = _listed(maple, piece, "6")
+    assert priced.status_code == 200, priced.text
+    row = state.listings.get(priced.json()["listed"])
+
+    shown = maple.client.post("/account/buy", json={"listing": row["id"]})
+    assert shown.status_code == 400, shown.text
+    assert shown.json()["detail"] == "a wallet cannot fill its own order"
+
+    # The other half takes the same route through the row, so a signature posted
+    # straight at it meets the same answer instead of a building error.
+    signed = maple.client.post("/account/buy/sign", json={"listing": row["id"]})
+    assert signed.status_code == 400, signed.text
+    assert signed.json()["detail"] == "a wallet cannot fill its own order"
+
+    assert daemon.rpc.call("getrawmempool") == [], "a refusal spends nothing"
+    assert state.listings.get(row["id"])["status"] == "open", \
+        "and costs the listing nothing: a stranger can still buy it"
+    assert state.token_index(state.messaging).inscription(piece)["owner"] \
+        == maple.address

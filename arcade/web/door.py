@@ -156,6 +156,13 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # broadcasts -- a listing is a signature the node holds, not
                # a transaction it makes.
                "/account/list", "/account/list/sign",
+               # the pair that fills one of those listings: the first shows a
+               # buyer the transaction, the second pastes its signatures onto
+               # the seller's leg and broadcasts. Neither reaches
+               # `/account/sign`, and neither could: this node signs nothing on
+               # this path, and an account that made the listing is refused at
+               # both halves.
+               "/account/buy", "/account/buy/sign",
                "/account/token/send", "/account/token/create",
                "/account/sign",
                "/signup")

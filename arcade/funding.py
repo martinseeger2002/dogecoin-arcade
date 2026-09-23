@@ -490,8 +490,13 @@ def swap_fee(rate: int, payload_script: bytes = b"") -> int:
     side that knows the real size. `listings.paste_leg` is what keeps the two
     honest with each other -- it refuses a finished swap whose total falls under
     what a block asks, which is the only way a quiet-market listing fails loudly
-    instead of relaying forever. Reserving more than the swap costs buys a
-    listing nothing: it moves value from the seller to the buyer's change.
+    instead of relaying forever. What the completion does with the reservation
+    is hand it back: a swap's coin leg is checked against what the receiving
+    side NETS (`tx.paid_to` is outputs minus inputs at that address), so keeping
+    it would leave the seller a little under its own price and the index would
+    call the trade invalid. Reserving more than the swap costs therefore buys a
+    listing nothing -- it is money held back for a block that never arrives, and
+    returned the moment one does.
 
     `payload_script` is the OP_RETURN output as it will really be written, or
     nothing for a leg that promises only a payment. It decides the count of
@@ -539,10 +544,11 @@ def build_leg(params: Params, address: str, piece: dict, coins: int,
     be the second input, and it comes back to the seller inside `paid`.
 
     The fee is reserved here, at listing time, because the seller's output is
-    fixed the moment it signs and cannot be adjusted later: whatever the
-    finished swap costs comes out of this reservation and out of the buyer's
-    own inputs, and `paste_leg` refuses the transaction if the two do not add
-    up to what a block asks for.
+    fixed the moment it signs and cannot be adjusted later. It is a reservation
+    and not a payment: the buyer pays what the finished transaction really costs
+    out of its own change and hands this back to the seller, because the engine
+    reads a coin leg as what the seller NETS -- and `paste_leg` still refuses the
+    transaction if the whole of it does not add up to what a block asks for.
     """
     txid = str(piece.get("txid") or "")
     vout, value = int(piece.get("vout", -1)), int(piece.get("value", 0))
