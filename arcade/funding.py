@@ -52,8 +52,8 @@ BYTES_PER_CHANGE = 34
 SIGHASH_ALL = 1
 
 #: A seller signing ONE coin of its own, before it knows who the buyer will
-#: be. `SINGLE` commits it to the single output standing at its own input's
-#: index and to no other output; `ANYONECANPAY` commits it to its own input
+#: be. `SINGLE` commits it to the output standing at its own input's index and
+#: to no other output's CONTENTS; `ANYONECANPAY` commits it to its own input
 #: and to no other input. Together they are the only way to hand out a
 #: signature in advance without signing a stranger's coins, which is what a
 #: listing has to do -- the piece is promised before anybody turns up to pay
@@ -61,6 +61,13 @@ SIGHASH_ALL = 1
 SIGHASH_SINGLE = 3
 SIGHASH_ANYONECANPAY = 0x80
 SINGLE_ANYONECANPAY = SIGHASH_SINGLE | SIGHASH_ANYONECANPAY
+
+#: An output with nothing in it, written the way the legacy preimage does:
+#: `CTxOut::SetNull()`, value -1 and no scriptPubKey. A SINGLE signature at
+#: index i puts one of these in every output slot before i, so the length of
+#: the output list it signs is `i + 1` and no more. Only a preimage's
+#: construction: no transaction has an output like this in it.
+NULL_OUTPUT = (-1, b"")
 
 
 class FundingError(Exception):
@@ -181,11 +188,16 @@ def sighash(raw_inputs: list[dict], outputs: list[tuple[int, bytes]],
     `sighash_type` defaults to SIGHASH_ALL, which is every input and every
     output, and is what everything that pays a fee from its own coins uses.
     SINGLE|ANYONECANPAY is the other one this builds ever asks for, and it
-    narrows the serialisation instead: the preimage carries this input alone
-    and the output standing at this input's INDEX alone. That is a seller's
-    leg -- see `build_leg`, which is why that is built one-in, one-out, so
-    index 0 is the piece and the payment at once and the index rule holds by
-    construction rather than by luck.
+    narrows the serialisation instead: the preimage carries this input alone,
+    and an output list `index + 1` long -- each slot BEFORE this one's
+    serialised empty, at value -1 and no script, and the output standing at
+    this input's own index for real. At index 0 that is one input and one
+    output, which is what `build_leg` builds and why it is built one-in and
+    one-out; at index 1 it is NOT index 0's shape with one more output beside
+    it, and a digest that assumed so is a signature no node will ever agree
+    with. Settled against a real pepecoind rather than against the
+    algorithm's prose -- see `test_funding_leg.py`, "which output a signature
+    has to be standing over".
 
     A SINGLE type whose index runs past the end of the outputs is refused
     rather than computed. The legacy rule substitutes the constant
@@ -204,8 +216,8 @@ def sighash(raw_inputs: list[dict], outputs: list[tuple[int, bytes]],
                 f"input {index} has no output {index} to commit to, and the "
                 f"preimage for that is a constant, so a signature over it "
                 f"would authorise every transaction there is")
-        inputs, signed_at, outs = (raw_inputs[index:index + 1], 0,
-                                  outputs[index:index + 1])
+        inputs, signed_at = raw_inputs[index:index + 1], 0
+        outs = [NULL_OUTPUT] * index + outputs[index:index + 1]
     else:
         raise FundingError(
             f"this builds a sighash for SIGHASH_ALL and for "
@@ -222,7 +234,12 @@ def sighash(raw_inputs: list[dict], outputs: list[tuple[int, bytes]],
         raw += b"\xff\xff\xff\xff"
     raw += varint(len(outs))
     for value, script_out in outs:
-        raw += value.to_bytes(8, "little") + varint(len(script_out)) + script_out
+        # Masked rather than written straight, because the empty output a
+        # SINGLE preimage pads its list with carries -1, which is all-ones on
+        # the wire -- and an OverflowError here would be a builder that cannot
+        # make the one digest a second input needs.
+        raw += (value & 0xFFFFFFFFFFFFFFFF).to_bytes(8, "little")
+        raw += varint(len(script_out)) + script_out
     raw += locktime.to_bytes(4, "little")
     raw += sighash_type.to_bytes(4, "little")
     return hashlib.sha256(hashlib.sha256(raw).digest()).digest()

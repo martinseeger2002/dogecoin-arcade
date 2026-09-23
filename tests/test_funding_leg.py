@@ -23,7 +23,7 @@ from arcade import funding, utxos
 from arcade.db import StateDB
 from arcade.rpc import RpcError
 from arcade.script import b58check_encode, hash160
-from arcade.txbuild import build_raw_tx, p2pkh_script, push
+from arcade.txbuild import build_raw_tx, op_return_script, p2pkh_script, push
 
 from test_funding import COIN, PARAMS, _pubkey, _sign, db
 
@@ -304,3 +304,241 @@ def test_a_leg_whose_payment_was_changed_after_signing_is_refused(regtest, db):
         rpc.call("sendrawtransaction", done["hex"])
     assert "bad-sign" in str(refused.value) or "16:" in str(refused.value), (
         f"the network took a leg whose payment had been changed: {refused.value}")
+
+
+# --- which output a signature has to be standing over -------------------------
+#
+# A leg that names its payment and nothing else is an order against every piece
+# the seller holds: whoever completes it writes the payload, and the signature
+# says nothing about what it says. Closing that means a SECOND digest, over the
+# output that carries the payload, which is only honest if a real node takes two
+# signatures at two different input indices -- and takes the second one as
+# covering the second output.
+#
+# What the node answered, and what these tests then hold: a SINGLE preimage at
+# index i carries the signed input ALONE and `i + 1` output slots, the ones
+# before i written empty (value -1, no script) and only the one at i for real.
+# At index 0 that is what this file always built, so a digest for a second
+# input is not index 0's shape with an output added beside it, and the code that
+# thought otherwise produced a signature no node would ever take.
+
+
+def _payload(what: bytes) -> bytes:
+    """An OP_RETURN, standing in for a listing's payload.
+
+    These bytes are not a valid arcade swap and that is deliberate. A
+    pepecoind does not read them at all: it checks the signature over the
+    output that carries them. The arcade index is what reads a payload, and it
+    takes the two parties from the transaction's INPUTS
+    (`state.Engine._swap`), not from any output -- so the only thing here that
+    can be wrong is which output a signature stands over.
+    """
+    return op_return_script(b"arc-swap" + what)
+
+
+def _two_coins(rpc, db, seller: str) -> list[dict]:
+    """A second coin at the seller's own address, seen by the index.
+
+    One `sendtoaddress` leaves exactly one: its change goes back into the
+    node's wallet, not to the address it was paying, and a second input needs
+    a second coin of the seller's.
+    """
+    rpc.call("sendtoaddress", seller, 2.0)
+    _index(rpc, db, {seller})
+    coins = utxos.unspent(db, seller)
+    assert len(coins) > 1, "a two-input leg needs two coins of the seller's"
+    return coins
+
+
+def _buyer_side(rpc, seller: str, price: int, extra: int) -> tuple[str, dict, int]:
+    """A buyer the node holds the key for, and the change it gets back.
+
+    `extra` is what the buyer adds on top of the price, so the fee the finished
+    transaction pays is the leg's reservation plus that much -- enough that
+    nothing in these tests can fail for a reason other than a signature.
+    """
+    buyer = rpc.call("getnewaddress")
+    theirs = [u for u in rpc.call("listunspent", 1, 9999999)
+              if u["address"] != seller and not u.get("spend")][0]
+    back = int(round(theirs["amount"] * COIN)) - price - extra
+    assert back > 546, "the buyer's change has to be an output worth making"
+    return buyer, theirs, back
+
+
+def test_the_second_digest_commits_its_own_output_and_no_other():
+    """What a digest at index 1 holds, and what it cannot, without a chain.
+
+    The rule the node gave, stated where it can be checked in arithmetic: two
+    output slots, the first of them empty. So the payment's signature is blind
+    to the payload lying beside it, and the payload's is blind to the payment.
+    Two signatures, each seeing one output, is the shape -- which is why a
+    listing needs both and not one digest made over a longer output list.
+    """
+    piece = {"txid": "ab" * 32, "vout": 0, "value": 3 * COIN}
+    spare = {"txid": "cd" * 32, "vout": 1, "value": COIN}
+    payload = (0, _payload(b"the-piece" * 3))
+    payment = (3 * COIN, p2pkh_script(SELLER))
+    script = p2pkh_script(SELLER)
+    second = funding.sighash([piece, spare], [payload, payment], 1, script,
+                             sighash_type=funding.SINGLE_ANYONECANPAY)
+
+    # What the payload says is nowhere in it. This is the exact blindness the
+    # payload's own digest exists to close, in the other direction from the
+    # test below that shows it on the wire.
+    for naming in (b"another-piece" * 3, b"cheaper-piece" * 3):
+        assert funding.sighash(
+            [piece, spare], [(0, _payload(naming)), payment], 1, script,
+            sighash_type=funding.SINGLE_ANYONECANPAY) == second
+
+    # The payment is in it, coin and amount both.
+    assert funding.sighash([piece, spare], [payload, (payment[0] + 1, payment[1])],
+                           1, script,
+                           sighash_type=funding.SINGLE_ANYONECANPAY) != second
+    assert funding.sighash([piece, spare], [payload, (payment[0], p2pkh_script(BUYER))],
+                           1, script,
+                           sighash_type=funding.SINGLE_ANYONECANPAY) != second
+    # And a second digest is not a first one with company: the same payment
+    # signed from index 0 is a different number, because the list it stood in
+    # was one output long instead of two.
+    assert funding.sighash([piece], [payment], 0, script,
+                           sighash_type=funding.SINGLE_ANYONECANPAY) != second
+
+
+def test_two_seller_signatures_at_two_indices_are_both_taken_by_a_node(regtest, db):
+    """Shape of a listing that says what it sells: two inputs, two digests.
+
+    Input 0 stands at the payload, input 1 at the payment, and each input
+    signs the output at its own index. Whether a node accepts a transaction
+    whose two signatures were each made over a different one-input,
+    one-output preimage is not something this file can settle by hashing.
+    """
+    rpc = regtest.rpc
+    secret = 0x5566778899001122556677889900112255667788990011225566778899001122
+    pubkey, seller = _key(rpc, db, secret)
+    first, second = _two_coins(rpc, db, seller)[:2]
+    price = int(1.0 * COIN)
+
+    script = p2pkh_script(seller)
+    paid = first["value"] + second["value"] + price - 60_000
+    outputs = [(0, _payload(b"the-piece" * 3)), (paid, script)]
+    digests = [funding.sighash([first, second], outputs, n, script,
+                               sighash_type=funding.SINGLE_ANYONECANPAY)
+               for n in (0, 1)]
+    assert digests[0] != digests[1], \
+        "one digest standing for two outputs is the mistake this is here to catch"
+    sigs = [push(_sign(secret, digest, funding.SINGLE_ANYONECANPAY)) + push(pubkey)
+            for digest in digests]
+
+    buyer, theirs, back = _buyer_side(rpc, seller, price, 20_000)
+    finished = build_raw_tx(
+        [(first["txid"], first["vout"]), (second["txid"], second["vout"]),
+         (theirs["txid"], theirs["vout"])],
+        outputs + [(back, p2pkh_script(buyer))])
+    # Descending, because `_paste` counts blank inputs from the front and the
+    # first paste makes the transaction longer behind it.
+    half = _paste(_paste(finished, 1, sigs[1]), 0, sigs[0])
+    done = rpc.call("signrawtransaction", half)
+    assert done.get("complete") is True, (
+        "both seller signatures were pasted and only the buyer's half was left to sign")
+
+    taken = rpc.call("sendrawtransaction", done["hex"])
+    rpc.call("generate", 1)
+    assert rpc.call("gettransaction", taken)["confirmations"] >= 1, (
+        "a block refused a leg whose payload and payment were each pinned by "
+        "their own signature")
+    landed = rpc.call("getrawtransaction", taken, True)["vout"]
+    assert [out["scriptPubKey"]["hex"] for out in landed] == \
+        [outputs[0][1].hex(), script.hex(), p2pkh_script(buyer).hex()], \
+        "the outputs travelled to the block in the order they were signed at"
+    assert int(round(landed[1]["value"] * COIN)) == paid
+
+
+def test_a_byte_changed_in_a_pinned_payload_is_refused_by_the_node(regtest, db):
+    """The same transaction, with the payload's contents quietly changed.
+
+    One byte of the payload, and the payment left exactly as it was: the only
+    signature that can notice is the one standing at the payload's index. This
+    is the whole reason for a second digest, asked of a node instead of
+    asserted here.
+    """
+    rpc = regtest.rpc
+    secret = 0x6677889900112233667788990011223366778899001122336677889900112233
+    pubkey, seller = _key(rpc, db, secret)
+    first, second = _two_coins(rpc, db, seller)[:2]
+    price = int(1.0 * COIN)
+
+    script = p2pkh_script(seller)
+    paid = first["value"] + second["value"] + price - 60_000
+    outputs = [(0, _payload(b"the-piece" * 3)), (paid, script)]
+    digests = [funding.sighash([first, second], outputs, n, script,
+                               sighash_type=funding.SINGLE_ANYONECANPAY)
+               for n in (0, 1)]
+    sigs = [push(_sign(secret, digest, funding.SINGLE_ANYONECANPAY)) + push(pubkey)
+            for digest in digests]
+
+    buyer, theirs, back = _buyer_side(rpc, seller, price, 20_000)
+    pieces = [(first["txid"], first["vout"]), (second["txid"], second["vout"]),
+              (theirs["txid"], theirs["vout"])]
+    finished = build_raw_tx(pieces, outputs + [(back, p2pkh_script(buyer))])
+    half = _paste(_paste(finished, 1, sigs[1]), 0, sigs[0])
+    done = rpc.call("signrawtransaction", half)
+    assert done.get("complete") is True, "the buyer's half signed onto the pasted pair"
+
+    # One byte of the payload, same length, same everything else.
+    payload = bytearray(outputs[0][1])
+    payload[-1] ^= 0x01
+    swapped = build_raw_tx(pieces, [(0, bytes(payload)), outputs[1]]
+                           + [(back, p2pkh_script(buyer))])
+    tampered = _paste(_paste(swapped, 1, sigs[1]), 0, sigs[0])
+    done = rpc.call("signrawtransaction", tampered)
+    with pytest.raises(RpcError) as refused:
+        rpc.call("sendrawtransaction", done["hex"])
+    assert "bad-sign" in str(refused.value) or "16:" in str(refused.value), (
+        f"the network took a payload the seller never signed: {refused.value}")
+
+
+def test_a_leg_that_signs_its_payment_only_cannot_name_the_piece(regtest, db):
+    """The hole a second digest closes, shown rather than described.
+
+    This is a leg as it is built today: one input, its own payment, and the
+    payload left to whoever completes the listing. Two payloads that name two
+    different pieces give the SAME digest, so one signature is good for both,
+    and the node takes the transaction without ever having been shown either.
+    A listing like that is not an order for one piece; it is an order for
+    whichever piece the completer chose to write.
+    """
+    rpc = regtest.rpc
+    secret = 0x7788990011223344778899001122334477889900112233447788990011223344
+    pubkey, seller = _key(rpc, db, secret)
+    piece = _coin(db, seller)
+    price = int(1.0 * COIN)
+
+    leg = funding.build_leg(PARAMS, seller, piece, coins=price, rate=RATE)
+    mine = funding.sighash([piece], [(leg.paid, leg.output[1])], 0,
+                           p2pkh_script(seller),
+                           sighash_type=funding.SINGLE_ANYONECANPAY)
+    assert leg.sighash == mine.hex()
+
+    # What the seller signed says nothing about either payload, and cannot:
+    # `SINGLE` takes the output standing at the signed input's index alone, so
+    # an output after it is invisible here. Both completions below are
+    # authorised by the one signature above.
+    for naming in (b"the-piece" * 3, b"another-piece" * 3):
+        assert funding.sighash([piece], [(leg.paid, leg.output[1]),
+                                         (0, _payload(naming))], 0,
+                               p2pkh_script(seller),
+                               sighash_type=funding.SINGLE_ANYONECANPAY) == mine
+
+    signed = push(_sign(secret, bytes.fromhex(leg.sighash),
+                        funding.SINGLE_ANYONECANPAY)) + push(pubkey)
+    buyer, theirs, back = _buyer_side(rpc, seller, price, 10_000)
+    # The payload appended at index 1: an output no signature stands at, since
+    # the one signature there is is over the output at index 0.
+    finished = build_raw_tx(
+        [(piece["txid"], piece["vout"]), (theirs["txid"], theirs["vout"])],
+        [leg.output, (0, _payload(b"the-piece" * 3)), (back, p2pkh_script(buyer))])
+    taken = rpc.call("sendrawtransaction",
+                    rpc.call("signrawtransaction", _paste(finished, 0, signed))["hex"])
+    assert len(taken) == 64, (
+        "the node was expected to take this one happily -- the point is that it "
+        f"took a payload it was never shown: {taken}")
