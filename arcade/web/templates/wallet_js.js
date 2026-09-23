@@ -456,6 +456,76 @@ export async function confirm(wallet, offer) {
   return working(() => signOffer(wallet, offer));
 }
 
+/* --- listing a piece ----------------------------------------------------
+ *
+ * Two calls, like a send, and only the second of them costs anything.
+ *
+ * `/account/list` builds the leg and spends nothing doing it: an account that
+ * holds the key could compute the same bytes for itself, so charging for the
+ * reading would be charging for arithmetic. `/account/list/sign` is the request
+ * that puts a row on a public page, and that is where the allowance goes.
+ * Neither one broadcasts -- a listing is a signature the node holds, not a
+ * transaction it makes.
+ *
+ * This is why the signing is written out here rather than handed to
+ * `signOffer`, which is where every other path in this file ends: `signOffer`
+ * signs EVERY input with SIGHASH_ALL and posts to `/account/sign`, which
+ * broadcasts what comes back. A leg wants two signatures of a different type,
+ * and it wants neither of them broadcast. So this is the one place in this file
+ * where a key is used with no `/account/sign` anywhere near it, and what keeps
+ * it safe is `coins.verifyLeg`, which refuses a leg whose two digests are not
+ * the ones this browser worked out for itself.
+ */
+
+export async function offerListing(piece, amount, chain) {
+  return working(async () => {
+    const asked = await fetch("/account/list", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({piece, amount, chain: chain || ""}),
+    });
+    const leg = await asked.json();
+    if (!asked.ok) throw new Error(leg.detail || "that cannot be listed");
+    return leg;
+  });
+}
+
+/** What this browser makes of a leg, before anything is signed. */
+export async function checkedListing(leg, wallet) {
+  const keys = keysOn(wallet, leg.chain
+                      || (wallet.on && Object.keys(wallet.on)[0]));
+  return coins.verifyLeg(leg, keys);
+}
+
+/** Sign a leg twice and hand it in. Nothing here is broadcast: it could not be.
+ *
+ * The price sent with it is read off the payload the check above just parsed,
+ * not off `leg.price` -- the payload is what the signatures stand over, and a
+ * row priced from anywhere else could carry a number no signature covers.
+ */
+export async function list(wallet, leg) {
+  return working(() => _list(wallet, leg));
+}
+
+async function _list(wallet, leg) {
+  const keys = keysOn(wallet, leg.chain
+                      || (wallet.on && Object.keys(wallet.on)[0]));
+  const shown = await coins.verifyLeg(leg, keys);
+  const signatures = [];
+  for (const sighash of shown.hashes) {
+    signatures.push(coinsHex(await coins.signInput(
+      keys.key, unhex(sighash), coins.SINGLE_ANYONECANPAY)));
+  }
+  const done = await fetch("/account/list/sign", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({raw: leg.raw, chain: leg.chain || "",
+                          amount: shown.coinsOf(shown.listing.sats),
+                          pubkey: coinsHex(keys.pubkey), signatures}),
+  });
+  const said = await done.json();
+  if (!done.ok) throw new Error(said.detail || "the node would not take it");
+  return {...said, says: shown.says, reserved: shown.reserved};
+}
+
 /* --- the feed, tips and reactions ----------------------------------------
  *
  * Nothing here is encrypted and nothing ever was: every row of the feed

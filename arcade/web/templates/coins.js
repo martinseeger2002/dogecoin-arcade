@@ -310,6 +310,44 @@ export async function sighashAll(tx, index, scriptPubKey) {
   return hash256(join(parts));
 }
 
+//: SINGLE|ANYONECANPAY, the type a listing signs with. ANYONECANPAY because a
+//: listing is signed while the buyer is a stranger, so it must not commit to
+//: any coin but the one signing. SINGLE because what is left is one output --
+//: the one standing under the input that signs it. `arcade/funding.py:sighash`
+//: is the authority for the shape; `arcade/listings.py` is what refuses a leg
+//: whose digests do not match these bytes.
+export const SINGLE_ANYONECANPAY = 0x83;
+
+/** The 32 bytes input `index` signs under SINGLE|ANYONECANPAY.
+ *
+ * Narrower than `sighashAll` in two ways, and the second is the one Python got
+ * wrong first: the preimage carries this input ALONE, and an output list
+ * `index + 1` long -- every slot before this one's serialised as
+ * `CTxOut::SetNull()` (value -1, no scriptPubKey) and the output standing at
+ * this input's own index for real. So the digest for input 1 is NOT the digest
+ * for input 0 with one more output beside it, and a browser that assumed so
+ * would sign a listing that no node will ever file.
+ */
+export async function sighashLeg(tx, index, scriptPubKey) {
+  if (index >= tx.outputs.length) {
+    throw new Error(`input ${index} has no output ${index} to stand over, and`
+      + " what a SINGLE signature falls back to there is one fixed number --"
+      + " a signature over it would authorise every transaction there is");
+  }
+  const input = tx.inputs[index];
+  const parts = [writeLE(tx.version, 4), sizeOf(1n),
+                 unhex(input.txid).reverse(), writeLE(input.vout, 4),
+                 sizeOf(BigInt(scriptPubKey.length)), scriptPubKey,
+                 writeLE(0xffffffffn, 4), sizeOf(BigInt(index + 1))];
+  // -1n little-endian is eight 0xff bytes, which is SetNull on the wire:
+  // BigInt's shift keeps the sign, so no masking is needed to write it.
+  for (let n = 0; n < index; n++) parts.push(writeLE(-1n, 8), sizeOf(0n));
+  const out = tx.outputs[index];
+  parts.push(writeLE(out.value, 8), sizeOf(BigInt(out.script.length)), out.script,
+             writeLE(tx.locktime, 4), writeLE(BigInt(SINGLE_ANYONECANPAY), 4));
+  return hash256(join(parts));
+}
+
 /** The bytes a payload output actually carries, ignoring its opcodes. */
 function payloadBytes(script) {
   let at = 0, total = 0;
@@ -326,6 +364,102 @@ function payloadBytes(script) {
     at += 1;
   }
   return total;
+}
+
+/* --- what a listing's own bytes say --------------------------------------
+ *
+ * The payload at output 0 is the one part of a listing that both of its
+ * signatures stand over, and `arcade/listings.py` files a row only after
+ * reading these bytes back out of the transaction. So they are read here too,
+ * and the sentence a person is shown comes from them rather than from the
+ * words the node sent beside them.
+ *
+ * The shape, from `arcade/config.py`, `arcade/payload.py` and
+ * `arcade/inscriptions.py`:
+ *
+ *   "arcd"            the marker every output of ours opens with
+ *   0x0000 0x00c8     an Omni AnyData header: version 0, type 200
+ *   "INSC" 0x01 0x05  an inscription, version 1, kind 5 -- a swap
+ *   0x01 + txid(32)   what the seller gives: a piece, named by its txid
+ *   0x03 + sats(8)    what the seller takes, paid in the same transaction
+ *
+ * Anything else is refused rather than described. A listing that says what
+ * this browser cannot read is a listing whose words would be a guess, and the
+ * words are the reason a signature is being asked for.
+ */
+
+const MARKER = [0x61, 0x72, 0x63, 0x64];              // "arcd"
+const INSC = [0x49, 0x4e, 0x53, 0x43];                // "INSC"
+const ANYDATA = 200;                                 // the inscription carrier
+const INSCRIPTION_VERSION = 1;
+const KIND_SWAP = 5;
+const LEG_INSCRIPTION = 1;
+const LEG_COINS = 3;
+
+/** The single push an OP_RETURN output carries, opcodes gone, or null.
+ *
+ * Stricter than `payloadBytes` on purpose: that one counts every push a script
+ * holds, which is right for a Class B multisig output, while a Class C output
+ * is one push after the OP_RETURN and anything else is not a listing this
+ * repository wrote.
+ */
+function opreturnData(script) {
+  if (!script.length || script[0] !== 0x6a) return null;
+  let at = 1, length;
+  const flag = script[at];
+  if (flag > 0 && flag < 0x4c) { length = flag; at += 1; }
+  else if (flag === 0x4c) { length = script[at + 1]; at += 2; }
+  else return null;
+  if (length === undefined || at + length !== script.length) return null;
+  return script.slice(at, at + length);
+}
+
+/** What a listing's payload promises, read off those bytes: {txid, sats}.
+ *
+ * `gives` is an inscription and `takes` is coins, because that is the only
+ * trade a pre-signed leg can make -- the other half of a piece-for-a-piece
+ * swap would need a signature that does not exist yet.
+ */
+function listingPayload(data) {
+  const refuse = (what) => {
+    throw new Error(`that listing writes ${what}. Nothing was signed.`);
+  };
+  const eq = (bytes, want) => bytes.length === want.length
+    && bytes.every((b, n) => b === want[n]);
+  let at = 0;
+  const field = (n, short) => {
+    if (at + n > data.length) refuse(short);
+    const out = data.subarray(at, at + n);
+    at += n;
+    return out;
+  };
+
+  if (!eq(field(MARKER.length, "shorter than its marker"), MARKER)) {
+    refuse("no marker this repository writes");
+  }
+  field(2, "shorter than its header");                  // AnyData's version
+  if (!eq(field(2, "shorter than its header"), [0x00, ANYDATA])) {
+    refuse("not an inscription carrier");
+  }
+  if (!eq(field(INSC.length, "shorter than its magic"), INSC)) {
+    refuse("not an inscription");
+  }
+  if (field(1, "names no inscription version")[0] !== INSCRIPTION_VERSION) {
+    refuse("an inscription version this browser cannot read");
+  }
+  if (field(1, "names no kind")[0] !== KIND_SWAP) {
+    refuse("not a swap, and a leg is a swap waiting for its buyer");
+  }
+  if (field(1, "has no first leg")[0] !== LEG_INSCRIPTION) {
+    refuse("gives something besides a piece, which no signature here covers");
+  }
+  const txid = hex(field(32, "names no piece"));
+  if (field(1, "has no second leg")[0] !== LEG_COINS) {
+    refuse("takes something besides coins, which nobody has signed");
+  }
+  const sats = readLE(field(8, "names no price"), 0, 8);
+  if (at !== data.length) refuse("longer than the trade it states");
+  return {txid, sats};
 }
 
 /* --- what this key may sign ---------------------------------------------
@@ -439,6 +573,119 @@ export async function verifyOffer(offer, keys) {
     + (change > 0n ? `, ${coinsOf(change)} of it coming back to you` : "");
   return {tx, hashes, pays, fee: Number(fee), change: Number(change),
           what: offer.what || "", signs: {from, of: tx.inputs.length},
+          coinsOf, says};
+}
+
+/** What this browser makes of a listing, before either signature is made.
+ *
+ * A leg is not an offer and `verifyOffer` cannot read it, which is worth
+ * saying out loud because the two look alike. An offer is broadcast the moment
+ * it is signed and wants SIGHASH_ALL over every input; a leg is a signature
+ * the node holds and never broadcasts, it names no buyer, and it wants to be
+ * signed TWICE -- once standing over the bytes that name the piece, once over
+ * the payment. So four questions, and the order they are asked in is the order
+ * that fails loudest:
+ *
+ *   the type. SINGLE|ANYONECANPAY or nothing, because that pairing is the only
+ *     one that promises a piece without committing to coins never seen before.
+ *   every coin is this key's. A leg has no counterparty in it, so an input
+ *     this address does not hold is not somebody else's half of a trade-- it
+ *     is a coin being promised that nobody agreed to promise.
+ *   two digests, one per input, each the preimage THIS browser builds for that
+ *     index. One digest is a listing whose price is signed by nobody.
+ *   output 0 reads as a listing and output 1 pays this address. Those are what
+ *     the two signatures stand over; what is not stood over is not promised,
+ *     and the buyer's half does not exist yet.
+ *
+ * What stays the node's numbers: the VALUES of the coins, exactly as in
+ * `verifyOffer` -- they are in neither digest. The outpoints are checked, and
+ * the outpoints are the part both signatures cover.
+ */
+export async function verifyLeg(leg, keys) {
+  if (!leg || !leg.raw) {
+    throw new Error("that listing has no transaction in it, so there is nothing "
+      + "to check against. Nothing was signed.");
+  }
+  const type = Number(leg.sighash_type === undefined ? 1 : leg.sighash_type);
+  if (type !== SINGLE_ANYONECANPAY) {
+    throw new Error("a listing is signed with SINGLE|ANYONECANPAY, which is what "
+      + "keeps it from committing to coins you have never seen. This one asks "
+      + `for sighash type ${type}. Nothing was signed.`);
+  }
+  const tx = parseTx(leg.raw);
+  if (tx.outputs.length < tx.inputs.length) {
+    throw new Error(`that transaction spends ${tx.inputs.length} coins and has `
+      + `${tx.outputs.length} outputs, so an input would stand over no output `
+      + "at all -- and what a SINGLE signature falls back to there is one fixed "
+      + "number, good for every transaction there is. Nothing was signed.");
+  }
+  const named = leg.inputs || [];
+  if (named.length !== tx.inputs.length) {
+    throw new Error(`that listing names ${named.length} coins and its `
+      + `transaction spends ${tx.inputs.length}. Nothing was signed.`);
+  }
+  const asked = (leg.sighashes || []).map((h) => String(h).toLowerCase());
+  if (asked.length !== tx.inputs.length) {
+    throw new Error(`that transaction spends ${tx.inputs.length} coins and asks `
+      + `for ${asked.length} signatures. One signature stands over one output, `
+      + "so a listing that says what it sells is signed twice -- over the bytes "
+      + "naming the piece, and over the price. Nothing was signed.");
+  }
+
+  const mine = p2pkh(await hash160(keys.pubkey));
+  const own = keys.address || await address(keys.pubkey, keys.version);
+  const hashes = [];
+  for (let n = 0; n < tx.inputs.length; n++) {
+    if (tx.inputs[n].txid !== String(named[n].txid || "").toLowerCase()
+        || tx.inputs[n].vout !== Number(named[n].vout)) {
+      throw new Error(`input ${n} of that transaction is not the coin the `
+        + "listing names. Nothing was signed.");
+    }
+    if (String(named[n].address || "").toLowerCase() !== own.toLowerCase()) {
+      throw new Error(`that listing promises a coin at input ${n} that this key `
+        + "does not hold. Nothing was signed.");
+    }
+    const derived = hex(await sighashLeg(tx, n, mine));
+    if (derived !== asked[n]) {
+      throw new Error("those signatures were asked for over different bytes "
+        + `than this transaction -- what this browser worked out for input ${n} `
+        + "is not what the listing carries. Nothing was signed.");
+    }
+    hashes.push(derived);
+  }
+
+  const data = opreturnData(tx.outputs[0].script);
+  if (tx.outputs[0].value !== 0n || data === null) {
+    throw new Error("output 0 of that listing is not bytes written to the chain, "
+      + "and output 0 is what the first signature stands over. Nothing was "
+      + "signed.");
+  }
+  const listing = listingPayload(data);
+  if (!SAME(tx.outputs[1].script, mine)) {
+    throw new Error("output 1 of that listing -- the output the signature over "
+      + "the price stands over -- does not pay this address. The price would "
+      + "come back to somebody else. Nothing was signed.");
+  }
+
+  // The arithmetic of a leg is not an offer's: its payment output is the
+  // seller's own coins PLUS the price minus what it reserved for the fee, so
+  // paying out more than it takes in is the correct shape here rather than a
+  // fraud sign. What must not go negative is the reservation.
+  let taken = 0n;
+  for (const coin of named) taken += BigInt(coin.value || 0);
+  const back = tx.outputs[1].value;
+  const reserved = taken + listing.sats - back;
+  if (reserved < 0n) {
+    throw new Error("that listing pays out more than its coins plus the price "
+      + "it names, so nothing is left for a block, and it would sit in the "
+      + "mempool until it fell out. Nothing was signed.");
+  }
+  const coinsOf = (sats) => (Number(sats) / 100000000).toFixed(8);
+  const says = `gives inscription ${listing.txid.slice(0, 16)}… and takes `
+    + `${coinsOf(listing.sats)} coins; ${coinsOf(back)} comes back to you when `
+    + `it sells, ${coinsOf(reserved)} of it reserved for the fee`;
+  return {tx, hashes, listing, reserved: Number(reserved), back: Number(back),
+          what: leg.what || "", signs: {from: 0, of: tx.inputs.length},
           coinsOf, says};
 }
 

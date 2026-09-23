@@ -7161,6 +7161,205 @@ def create_app(state: AppState) -> FastAPI:
                              "number": row["number"], "chain": chain.network,
                              **unsigned.as_json()})
 
+    def _ask_payload(row: dict, price: int) -> bytes:
+        """What a listing writes at output 0: the trade the finished swap IS.
+
+        A swap payload rather than an ask payload, and that choice is what makes
+        a pre-signed listing possible at all: by the time a block carries these
+        bytes the buyer's input is in the same transaction, and
+        `state.Engine._swap` reads both parties from the INPUTS because
+        `inscriptions.Swap` has no room to name a buyer. So the bytes can be
+        written, signed and advertised while the other party is still a
+        stranger -- which is exactly the promise a leg is.
+
+        Wrapped in `AnyData` for the reason `_class_c_or_b` gives, and Class C
+        only: a leg's two outputs are the bytes it sells and the payment it
+        accepts, with one signature standing over each, so there is nowhere to
+        put the dust outputs a longer payload would need.
+        """
+        from ..encoding import EncodingError, encode_class_c
+
+        body = inscriptionlib.Swap(
+            give=inscriptionlib.Leg(inscriptionlib.LEG_INSCRIPTION,
+                                    txid=bytes.fromhex(row["txid"])),
+            take=inscriptionlib.Leg(inscriptionlib.LEG_COINS,
+                                    amount=price)).encode()
+        try:
+            return encode_class_c(P.AnyData(data=body).encode())
+        except EncodingError as exc:
+            raise ValueError(
+                f"{exc} A listing is written in one OP_RETURN because a leg has "
+                f"two outputs and both are signed: what it sells, and what it "
+                f"costs.") from None
+
+    def _listing_words(naming: bytes, chain) -> str:
+        """What a filed listing's own bytes say it sells, in words.
+
+        The other direction from `_ask_payload`, and it is only honest to read
+        the row's payload rather than repeat what the browser said, because
+        the payload is the one part of a listing that a signature actually
+        stands over. `Listings.register` compares those bytes against the leg
+        byte for byte, so a sentence worked out from them cannot promise a
+        trade the signatures do not back -- which is more than any wording
+        handed in with the request could claim.
+
+        Returns nothing rather than guessing: a payload this repository cannot
+        read is a listing that sold anyway, and the price beside it is the
+        truth a page has to carry.
+        """
+        from ..encoding import decode_class_c
+
+        body = decode_class_c(bytes(naming))
+        if body is None:
+            return ""
+        try:
+            swap = inscriptionlib.parse(P.decode(body).data)
+        except (P.PayloadError, inscriptionlib.InscriptionError):
+            return ""
+        if not isinstance(swap, inscriptionlib.Swap):
+            return ""
+        index = state.token_index(chain)
+        try:
+            give = swaplib.describe_leg(swaplib.leg_json(swap.give, index))
+            take = swaplib.describe_leg(swaplib.leg_json(swap.take, index))
+        except swaplib.SwapError:
+            return ""
+        return f"gives {give} and takes {take}"
+
+    @app.post("/account/list")
+    def account_list(request: Request, payload: Any = Body(None)):
+        """Show an account the leg it is about to sign, and stop there.
+
+        Two requests, with nothing kept between them, because the signature
+        outlives the tab that made it: this one reads the index and builds a
+        leg, the next takes the signatures back and files the row. What binds
+        them is the arithmetic in `Listings.register` and not a memory of this
+        one, so a node that restarts in the middle files the identical listing
+        instead of stranding a signature the browser has already made.
+
+        Nothing is spent here, so nothing is charged: an account could compute
+        this leg itself, since it holds the key and this node never sees it. The
+        allowance is spent at `/account/list/sign`, which is the request that
+        puts a row on a public page.
+
+        What comes back is the leg's own bytes, the TWO digests it asks to be
+        signed, and the words -- the words first, because they are what is being
+        decided on. One signature is over the bytes naming the piece and the
+        other over the price, and a leg that got that pairing wrong would be
+        sold by a signature that promises something else.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        try:
+            price = parse_amount(str(said.get("amount", "")), True)
+            if price <= 0:
+                raise ValueError("a listing names a price, and that is nothing")
+            index = state.token_index(chain)
+            row = index.inscription(contentlib._key(str(said.get("piece", ""))))
+            if row is None:
+                raise ValueError("no such inscription on this node")
+            if row["owner"] != address:
+                raise ValueError(
+                    "only whoever holds a piece can price it, and this one "
+                    f"is held by {row['owner']}")
+            naming = _ask_payload(row, price)
+            piece = swaplib.describe_leg(swaplib.leg_json(
+                swaplib.leg_of({"inscription": row["txid"]}, index), index))
+            cost = swaplib.describe_leg(swaplib.leg_json(
+                inscriptionlib.Leg(inscriptionlib.LEG_COINS, amount=price),
+                index))
+            what = f"list {piece} for {cost}"
+            with contextlib.closing(index.open()) as db:
+                held = [c for c in utxoslib.unspent(db, address)
+                        if (c["txid"], c["vout"])
+                        not in _flights.spent_by(account.pubkey, chain.network)]
+                if len(held) < 2:
+                    raise ValueError(
+                        f"this address has {len(held)} coin to spend and a "
+                        f"listing that says what it sells needs two of them: "
+                        f"one input signs the bytes naming the piece, the other "
+                        f"signs the price. Send yourself a little change and "
+                        f"list it again.")
+                leg = fundinglib.build_leg(
+                    chain.params, address, held[0], coins=price,
+                    rate=fees.MIN_FEE_PER_KB, what=what,
+                    payload=naming, coin=held[1])
+        except (fundinglib.FundingError, inscriptionlib.InscriptionError,
+                swaplib.SwapError, AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"chain": chain.network,
+                             "price": price, "number": row["number"],
+                             **leg.as_json()})
+
+    @app.post("/account/list/sign")
+    def account_list_sign(request: Request, payload: Any = Body(None)):
+        """File the leg this browser signed, from its bytes and the chain alone.
+
+        `Listings.register` is the whole of it: the piece's value comes from
+        `gettxout`, the payload and the price and the outpoints come from the
+        leg's own bytes, and the row is refused unless the numbers close. So
+        this route needs nothing left over from `/account/list`, and an account
+        that built the leg somewhere else files the same row it would have
+        filed anyway -- there is no privileged path.
+
+        The allowance is spent here, before the filing, and deliberately not
+        after it: a leg can be built offline by anyone holding the key, so this
+        is the request that can be looped, and what the loop would buy is rows
+        on a public page. A refusal therefore costs an allowance it did not use,
+        which is the direction an allowance is allowed to go wrong in.
+
+        The owner is not taken on faith either: `check_leg` refuses a leg whose
+        public key does not hash to the address it is listed from, so an account
+        cannot credit its sale to somebody else.
+
+        No sentence is stored with the row, and none is taken from this request
+        either. A listing's words belong to its payload -- which is signed, and
+        which `register` compares byte for byte -- so the sentence is read back
+        out of the row below rather than written beside it. A seller's note
+        about their own piece is a post, and there is a route for that.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        raw = str(said.get("raw") or "")
+        try:
+            _quota(account, "list", nbytes=len(bytes.fromhex(raw)))
+            price = parse_amount(str(said.get("amount", "")), True)
+            with chain.rpc() as rpc:
+                listing = state.listings.register(
+                    rpc, raw=raw,
+                    signatures=[str(s) for s in (said.get("signatures") or [])],
+                    pubkey=bytes.fromhex(str(said.get("pubkey") or "")),
+                    network=chain.network, owner=address, price=price,
+                    seconds=listingslib.LISTED_FOR)
+        except (listingslib.ListingError, fundinglib.FundingError,
+                swaplib.SwapError, AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"listed": listing["id"],
+                             "what": _listing_words(
+                                 bytes.fromhex(listing["payload"]), chain),
+                             "chain": chain.network,
+                             "expires": listing["expires"],
+                             "piece": f"{listing['input']['txid'][:16]}…"
+                                      f":{listing['input']['vout']}"})
+
     @app.get("/account/tokens")
     def account_tokens(request: Request):
         """What this account holds in tokens, on every chain it has an
