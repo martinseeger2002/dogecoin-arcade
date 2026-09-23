@@ -44,6 +44,13 @@
       <p class="muted small">It opens your wallet from any device, and
         <strong>nobody can reset it</strong> &mdash; not us, not anybody.
         You will get twelve words afterwards, which are the only way back.</p>
+      <p class="muted small">This password is the only thing standing between
+        a stranger and your coins. This node hands your encrypted wallet to
+        anybody who asks for your name, so somebody can take it away and guess
+        at it as long as they like &mdash; nothing counts the tries and nothing
+        stops them. The node never sees the password itself, which is why
+        nobody can hand it back to you and why a password you would pick to
+        type quickly is not a convenience.</p>
       <p class="small" id="pw-says"></p>
     </div>
     <button class="btn primary" id="make">Create my account</button>
@@ -59,6 +66,28 @@
     <input type="password" id="in-pw" autocomplete="current-password"
            placeholder="password">
     <button class="btn" id="enter">Sign in</button>
+    <p class="muted small" style="margin:10px 0 0">This node kept your
+      encrypted wallet when you signed up. It did not keep it? Use the file
+      its Backup page saved, below.</p>
+  </div>
+
+  <div class="panel">
+    <h2 style="margin-top:0">I have a backup file</h2>
+    <p class="muted">
+      The file a node&rsquo;s Backup page saves &mdash; from any node you
+      made this account on. Your password opens it in this browser, so the
+      words never leave here and the password never comes here either. This
+      page asks for no words, and no page that is really this one ever will:
+      <strong>anybody asking for the twelve words is stealing them.</strong></p>
+    <p class="muted">
+      A node you hand a file to keeps no copy of it, which means it cannot
+      send it back afterwards &mdash; the copy on your disk is the copy.
+      Your name, coins and posts are on the chain, not here, so they are
+      what opens at the next node, not this one.</p>
+    <input type="file" id="backup-file" accept=".json,application/json">
+    <input type="password" id="backup-pw" autocomplete="current-password"
+           placeholder="password">
+    <button class="btn" id="open-file">Open it</button>
   </div>
 </div>
 
@@ -67,6 +96,13 @@
   <p class="muted">Twelve words. They are the only way back into your wallet
     if you forget your password, and this is the only time they are shown.
     Not on a screenshot &mdash; on paper.</p>
+  <p class="rule">These are typed once, now, and never again. After this,
+    this site unlocks with your password and does not ask for the words
+    &mdash; not to verify anything, not to restore anything, not to migrate
+    anything, and not on any other node you move to. A page that asks for
+    them is stealing them, whichever name it is sitting under. Type them
+    only on a domain you typed yourself, never one you followed a link
+    to.</p>
   <p id="gift" class="muted" hidden></p>
   <ol class="words" id="words"></ol>
   <div class="panel" id="setting-up" style="margin:12px 0">
@@ -100,6 +136,7 @@
 .words li{break-inside:avoid;padding:2px 0}
 .keepit{display:flex;align-items:center;gap:8px;margin:10px 0}
 .keepit input{width:auto}
+.rule{border-left:3px solid var(--warn);padding-left:10px;margin:12px 0}
 .small{font-size:.85rem}
 .steps{margin:8px 0 0;padding-left:18px;line-height:1.8}
 .steps span{color:var(--muted)}
@@ -215,6 +252,24 @@ function wire() {
       // moment, and asking for it again on the next page is asking the
       // same question twice.
       await wallet.signIn($("in-tag").value.trim(), $("in-pw").value, CHAIN);
+      location.href = "/";
+    } catch (e) { say(String(e.message || e)); }
+  };
+
+  $("open-file").onclick = async () => {
+    say("");
+    const file = $("backup-file").files[0];
+    if (!file) { say("choose the file the Backup page saved"); return; }
+    let said;
+    try { said = JSON.parse(await file.text()); }
+    catch (e) { say("that file is not something this can read."); return; }
+    try {
+      // Read and opened in this tab, and nowhere else. This node is told
+      // nothing about the file at all until the key inside it signs
+      // something, which is the only thing a node believes -- so an
+      // account whose wallet was made elsewhere can be used here without
+      // this node ever holding what makes it spendable.
+      await wallet.openFile(said, $("backup-pw").value, CHAIN);
       location.href = "/";
     } catch (e) { say(String(e.message || e)); }
   };

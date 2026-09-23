@@ -255,7 +255,48 @@ async function _signIn(tag, password, {network, version}) {
     // match its own name, and going on would sign in as somebody else.
     throw new Error("that wallet does not match this name. Nothing was opened.");
   }
-  // Prove it to the node the ordinary way: a signature over a nonce.
+  const result = await seatWith(wallet);
+  return {...result, tag: said.tag, address: said.address, wallet};
+}
+
+/** Open a wallet this node has never held, from the file the Backup page
+ *  saves, and take the seat the words entitle.
+ *
+ *  The file is read in this tab and thrown away in this tab. Nothing is
+ *  asked of the node until a key has to prove itself with a signature, so
+ *  an account can come to a node that does not know it. The cost is stated
+ *  on the page rather than here: a node that was shown a wallet rather than
+ *  given one keeps no copy, so it cannot send it back afterwards.
+ */
+export async function openFile(said, password, options) {
+  return working(() => _openFile(said, password, options));
+}
+
+async function _openFile(said, password, {network, version}) {
+  // The Backup page saves this node's whole `/signin/{tag}` answer, so the
+  // file may be an envelope or a bare blob. Both are the same wallet.
+  const blob = (said && said.blob) ? said.blob : said;
+  if (!blob || !blob.sealed || !blob.salt || !blob.iterations) {
+    throw new Error("that file is not a wallet backup. Nothing was opened.");
+  }
+  const phrase = await open(blob, password);
+  const wallet = await walletFrom(phrase, network, version);
+  await everyChain(wallet, await chains());
+  if (said && said.pubkey && wallet.pubkey !== String(said.pubkey).toLowerCase()) {
+    // The file's two halves disagree -- an envelope that opens to a key
+    // other than the name it carries. Going on would sign in as somebody
+    // else, and it is the file that is at fault, not this node.
+    throw new Error("that file's wallet does not match the name it carries. "
+      + "Nothing was opened.");
+  }
+  const result = await seatWith(wallet);
+  return {...result, tag: (said && said.tag) || "", wallet};
+}
+
+/** Prove a wallet to the node the only way a node believes, and open it
+ *  from here -- the same two requests whichever way the words arrived.
+ */
+async function seatWith(wallet) {
   const challenge = await (await fetch("/auth/challenge")).json();
   const signature = await wallet.sign(
     signer.loginMessage(challenge.origin, challenge.nonce));
@@ -271,7 +312,7 @@ async function _signIn(tag, password, {network, version}) {
   // registered there, and nothing else will ever notice: told here, once,
   // on the first sign-in that can derive it.
   try { await tellTheNode(wallet); } catch (e) { /* not worth refusing a login */ }
-  return {...result, tag: said.tag, address: said.address, wallet};
+  return result;
 }
 
 /* --- claiming the name on the chain --------------------------------------

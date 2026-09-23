@@ -87,6 +87,85 @@ def test_where_the_browser_can_do_it_the_door_is_open(client, headers):
     assert 'id="forms" hidden' not in body
 
 
+def test_the_page_a_newcomer_lands_on_offers_no_box_for_a_phrase(client):
+    """The rule the whole sign-in design rests on, on the page people reach.
+
+    A wallet's seed lives in the browser storage of the origin that made it,
+    so a clone on another domain cannot read it -- the only way it gets the
+    key is by asking for the words. The defence is to make the legitimate
+    occasions almost none, so that being asked is itself the answer. This
+    page offers a name and a password, or a file and a password, and it has
+    nowhere to type a seed.
+    """
+    app, _ = client
+    body = app.get("/join", headers=LOCAL).text
+    assert 'id="backup-file"' in body and 'id="open-file"' in body
+    assert "<textarea" not in body, "no box for a seed on the front door"
+    assert "asking for the twelve words is stealing them" in \
+        " ".join(body.split())
+
+
+def test_the_rule_is_said_where_the_words_are_shown(client):
+    """Not in a help page: at the one moment somebody is about to hold a
+    wallet in their hands and could still be told what it costs."""
+    app, _ = client
+    body = app.get("/join", headers=LOCAL).text
+    written = " ".join(body.split("id=\"written\"", 1)[1].split())
+    assert "typed once" in written
+    assert "this site unlocks with your password" in written
+    assert "never one you followed a link to" in written
+
+
+def test_the_page_that_sets_the_password_says_what_has_to_hold_it_up(client):
+    """The encrypted wallet is handed to anybody who asks for the name, so the
+    password carries the whole weight of a stranger's guessing at leisure,
+    with no rate limit that means anything. That exposure was accepted as the
+    price of a transfer that works when the old device is gone, so the page
+    has to say it outright rather than leave the strength meter to be the only
+    place anybody meets it.
+    """
+    app, _ = client
+    said = " ".join(app.get("/join", headers=LOCAL).text.split())
+    assert "hands your encrypted wallet to anybody who asks for your name" in said
+    assert "nothing counts the tries" in said
+
+
+def test_the_phrase_page_says_the_rule_and_asks_first(client):
+    """Typing the words stays possible and stops being ordinary.
+
+    `/join/keys` is the older page and the only place in the tree with a
+    phrase box, so this is where the softener has to live. It is behind a
+    thing a person says out loud, with the rule next to it and the file path
+    pointed at, rather than a textarea sitting in the middle of the doors.
+    """
+    app, _ = client
+    body = app.get("/join/keys", headers=LOCAL).text
+    assert "I have lost my backup file" in body
+    assert 'id="lost"' in body
+    assert 'id="words-in" hidden' in body, "shut until they say they must"
+    assert 'href="/join"' in body, "and the file is the way it points at first"
+    said = " ".join(body.split())
+    assert "Any site asking for your twelve words" in said
+    assert "twenty-four" not in said, "twelve is what the page actually shows"
+
+
+def test_a_wallet_that_arrived_with_a_file_is_not_this_nodes_copy(client):
+    """What the file path lands on, said by the page rather than discovered.
+
+    `/auth/login` seats a key and writes no vault row -- the only route that
+    writes one is the signup that made the wallet here. So an account that
+    came with a file has a seat, no name in this node's table, and no copy
+    this node could ever send back. That is the price of the path, and the
+    Backup page is where it has to be written.
+    """
+    app, state = client
+    key = SigningKey.generate()
+    assert _sign_in(app, key).status_code == 200
+    assert state.vault().by_pubkey(key.verify_key.encode().hex()) is None
+    body = app.get("/me/backup", headers=LOCAL).text
+    assert "no copy to send back" in body
+
+
 def test_signing_a_challenge_sets_a_session_cookie(client):
     app, state = client
     key = SigningKey.generate()

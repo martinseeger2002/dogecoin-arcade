@@ -105,14 +105,17 @@
      you are not depending on this particular node keeping it forever.</p>
   <p class="muted" style="font-size:.86rem;margin:8px 0 14px">
     It is useless without your password &mdash; but if you ever forget which
-    node you signed up on, or this node is gone, your password and this file
-    together open your wallet exactly as it does now.</p>
+    node you signed up on, or that node is gone, this file and your password
+    open the wallet at <a href="/join">any node&rsquo;s join page</a>, which
+    asks for the file and the password and never for your words. A node you
+    hand it to keeps no copy, so the copy on your disk is the copy.</p>
   <button type="button" class="btn" id="download" {{ 'disabled' if not my_name }}>
     Download my encrypted wallet</button>
   {% if not my_name %}
   <p class="muted" style="font-size:.84rem;margin:8px 0 0">
-    This browser is not signed in as an account, so there is nothing to
-    fetch. <a href="/join">Sign in</a> first.</p>
+    This node never made your wallet &mdash; you opened it here from the file
+    it made elsewhere, so it has no copy to send back. There is nothing to
+    download from here. The file on your disk is the copy.</p>
   {% endif %}
   <div class="msg err" id="trouble" hidden style="margin-top:10px"></div>
 </div>

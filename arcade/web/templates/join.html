@@ -3,8 +3,9 @@
 {% block body %}
 <h1>Join this arcade</h1>
 <p class="sub">
-  Twenty-four words are the whole account. They are made in this browser,
-  they never leave it, and this node never learns them.
+  Twelve words are the whole account. They are made in this browser, they
+  are typed once, and this node never learns them &mdash; so it never asks
+  for them again, either.
 </p>
 
 <div class="panel seats">
@@ -88,9 +89,13 @@
       Write the words down before you go on. There is no reset, no recovery
       and nobody to ask: the words are the wallet.
     </p>
-    <button class="btn" id="make">Show me twenty-four words</button>
+    <button class="btn" id="make">Show me twelve words</button>
     <div id="made" hidden>
       <ol class="words" id="wordlist"></ol>
+      <p class="rule">You will never type these words again. Afterwards this
+        site unlocks with your password, and a site that asks for the words
+        &mdash; to verify, to restore, for any reason &mdash; is stealing
+        them.</p>
       <p class="muted">
         Now type words <strong id="asked"></strong> back in, in that order,
         separated by spaces — so that what you wrote down is what is on the
@@ -116,14 +121,33 @@
   </div>
 
   <div class="panel">
-    <h2>I already have words</h2>
+    <h2>I have lost my backup file</h2>
     <p class="muted">
-      From another node, another browser, or a wallet that is not this one.
-      Same words, same account, same name — wherever there is a seat.
+      The last way in, and the one to be careful with. If you have the file
+      a node's Backup page saved, <a href="/join">use it on the join
+      page</a> &mdash; it opens the wallet with the password and never asks
+      for the words. This is for the case where that file is gone.
     </p>
-    <textarea id="phrase" rows="3" autocomplete="off" autocapitalize="off"
-              spellcheck="false" placeholder="your twenty-four words"></textarea>
-    <button class="btn" id="restore">Sign in</button>
+    <p class="rule">
+      Your twelve words are typed once, when you make the wallet. After
+      that, a site unlocks with your password and never asks for them
+      again. Any site asking for your twelve words &mdash; to verify, to
+      restore, to migrate, for any reason &mdash; is stealing them.
+    </p>
+    <p class="muted small">
+      Whoever is handed the words can spend the wallet, and this node has
+      no way to tell a restore from a theft. Type them only on a domain you
+      typed into the address bar yourself, never one you followed a link to.
+    </p>
+    <label class="keepit">
+      <input type="checkbox" id="lost"> I have no backup file, and I typed
+      this address myself
+    </label>
+    <div id="words-in" hidden>
+      <textarea id="phrase" rows="3" autocomplete="off" autocapitalize="off"
+                spellcheck="false" placeholder="your twelve words"></textarea>
+      <button class="btn" id="restore">Sign in</button>
+    </div>
   </div>
 
   <div class="panel" id="unlock-panel" hidden>
@@ -172,6 +196,7 @@ python3 installer/install.py</pre>
   border-radius:8px;background:var(--panel);color:var(--fg);font:inherit}
 .keepit{display:flex;align-items:center;gap:8px;margin-top:10px}
 .keepit input{width:auto;margin:0}
+.rule{border-left:3px solid var(--warn);padding-left:10px;margin:12px 0}
 .small{font-size:.85rem}
 .clone{background:var(--code);border-radius:8px;padding:12px 14px;overflow-x:auto}
 </style>
@@ -211,7 +236,7 @@ function show(answer) {
    Measured, not guessed: on a cold browser profile the first
    `indexedDB.open` took 5.4 seconds, and while it ran every button on this
    page was dead -- the very first thing a new visitor does is press "show
-   me twenty-four words", and for five seconds nothing happened. Wiring
+   me twelve words", and for five seconds nothing happened. Wiring
    first costs nothing and makes the page live the moment it is painted.
 
    Wrapped, too: a page whose only script dies quietly leaves somebody
@@ -255,6 +280,13 @@ function wire() {
       show(await signer.signIn(phrase, {join: true}));
     } catch (e) { say(String(e.message || e)); }
   };
+
+  // The words are the last way in, so typing them is behind something a
+  // person has to say first. Not to stop anybody -- nothing on a page stops
+  // somebody determined -- but so that the legitimate occasions are rare
+  // enough that "this site is asking for your twelve words" is, on its own,
+  // the whole answer.
+  $("lost").onchange = () => { $("words-in").hidden = !$("lost").checked; };
 
   $("restore").onclick = async () => {
     say("");

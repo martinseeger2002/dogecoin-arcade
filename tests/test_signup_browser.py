@@ -339,3 +339,64 @@ def test_a_new_account_is_told_about_its_coins(loaded):
         "the page says something about coins either way"
     # The account exists whether or not the faucet could pay.
     assert state.vault().get("thirsty") is not None
+
+
+def test_a_file_and_a_password_open_a_wallet_this_node_never_held(
+        loaded, tmp_path):
+    """The new-device path, which is the reason the blob exists at all.
+
+    The ciphertext is made in the browser because it is WebCrypto and the
+    node could not make one if it wanted to -- that is the design, not an
+    accident -- so the file is written out here from what the browser
+    produced and handed back through the picker, which is what somebody who
+    changed computers actually has. Typing the words is not in this test
+    because they are not typed on this path, and a node that could be handed
+    them would be the hole the path exists to close.
+    """
+    from selenium.webdriver.common.by import By
+
+    from arcade import seed
+
+    browser, base, state, home = loaded
+    # This module's node already holds the other tests' accounts, and a seat
+    # refused for that reason would be a test about the fixture.
+    state.accounts().seats = max(state.accounts().seats, 40)
+    _ready(browser, base)
+
+    phrase = seed.generate()
+    pubkey = seed.login_pubkey(phrase)
+    # Imported here rather than off `window.w`: the fixture put that there on
+    # a page this test has since navigated away from, and a module object does
+    # not survive the navigation.
+    blob = browser.execute_async_script("""
+        const done = arguments[2];
+        import("/wallet.js").then((m) => m.seal(arguments[0], arguments[1]))
+          .then(done, (e) => done({error: String(e.message || e)}));""",
+        phrase, "a long enough password")
+    assert "error" not in blob, blob
+
+    # The shape the Backup page actually saves, which is this node's whole
+    # answer to GET /signin/{name} rather than the bare blob.
+    path = tmp_path / "dogecoinarcade-stranger.json"
+    path.write_text(json.dumps({"tag": "stranger", "pubkey": pubkey,
+                               "address": "", "blob": blob}, indent=2))
+
+    free = state.accounts().free()
+    _ready(browser, base)
+    browser.find_element(By.ID, "backup-file").send_keys(str(path))
+    browser.find_element(By.ID, "backup-pw").send_keys("a long enough password")
+    browser.find_element(By.ID, "open-file").click()
+    for _ in range(120):
+        if browser.current_url.rstrip("/") == base:
+            break
+        time.sleep(0.25)
+    assert browser.current_url.rstrip("/") == base, \
+        "it takes them in the way a sign-in does"
+
+    who = browser.execute_async_script("""
+        const done = arguments[0];
+        fetch('/auth/who').then((r) => r.json()).then(done);""")
+    assert who["pubkey"] == pubkey, "the key in the file, not one made here"
+    assert state.accounts().free() == free - 1, "the words took a seat"
+    assert state.vault().by_pubkey(pubkey) is None, \
+        "this node was shown the wallet, not given it"

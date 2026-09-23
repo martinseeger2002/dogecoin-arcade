@@ -1,7 +1,7 @@
 /* The half of the login that the node must never be able to do.
  *
- * Everything here runs in the browser and stays there: the twenty-four
- * words, the seed they make, the keys derived from it and the password
+ * Everything here runs in the browser and stays there: the twelve words,
+ * the seed they make, the keys derived from it and the password
  * that encrypts them. What crosses the wire is a public key and a
  * signature over a nonce the node just issued -- neither of which is worth
  * stealing, which is the point of doing it this way (docs/multi-user.md
