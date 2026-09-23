@@ -81,24 +81,30 @@ def _coin(db, address: str) -> dict:
             "address": address}
 
 
-def _key(rpc, db, secret: int) -> tuple[int, str]:
-    """An address the node has no key for, funded, and seen by the index."""
-    pubkey = _pubkey(secret)
-    address = b58check_encode(PARAMS.pubkeyhash_version, hash160(pubkey))
-    assert not rpc.call("validateaddress", address).get("ismine"), \
-        "the whole point is that this node cannot sign for it"
-    rpc.call("generate", 101)
-    rpc.call("sendtoaddress", address, 5.0)
+def _index(rpc, db, addresses: set[str]) -> None:
+    """Mine the next block and connect it to the index, for those addresses."""
     height = rpc.call("getblockcount") + 1
     rpc.call("generate", 1)
-    utxos.watch(db, address, 0)
+    for address in addresses:
+        utxos.watch(db, address, 0)
     block = rpc.call("getblock", rpc.call("getblockhash", height), 2)
     state = StateDB(db)
     with state.block_context(height=height, block_hash=block["hash"],
                              prev_hash=block["previousblockhash"],
                              block_time=block["time"],
                              tx_count=len(block["tx"]), processed_at=0):
-        utxos.on_block(state, height, block, PARAMS, {address})
+        utxos.on_block(state, height, block, PARAMS, addresses)
+
+
+def _key(rpc, db, secret: int, amount: float = 5.0) -> tuple[int, str]:
+    """An address the node has no key for, funded, and seen by the index."""
+    pubkey = _pubkey(secret)
+    address = b58check_encode(PARAMS.pubkeyhash_version, hash160(pubkey))
+    assert not rpc.call("validateaddress", address).get("ismine"), \
+        "the whole point is that this node cannot sign for it"
+    rpc.call("generate", 101)
+    rpc.call("sendtoaddress", address, amount)
+    _index(rpc, db, {address})
     return pubkey, address
 
 

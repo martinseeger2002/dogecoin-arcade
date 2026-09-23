@@ -440,7 +440,18 @@ P2PKH_SHAPE = bytes([0x76, 0xa9, 0x14]) + b"\x00" * 20 + bytes([0x88, 0xac])
 
 
 def swap_fee(rate: int, payload_bytes: int = 0) -> int:
-    """What the finished swap will cost, as closely as a listing can know it."""
+    """What the finished swap will cost, as closely as a listing can know it.
+
+    This is the seller's CONTRIBUTION to the fee, not the fee. The seller's
+    output is fixed the moment it signs, so whatever it reserves comes out of
+    that output and cannot be adjusted afterwards; what the finished transaction
+    actually pays is settled by whoever completes the listing, since that is the
+    side that knows the real size. `listings.paste_leg` is what keeps the two
+    honest with each other -- it refuses a finished swap whose total falls under
+    what a block asks, which is the only way a quiet-market listing fails loudly
+    instead of relaying forever. Reserving more than the swap costs buys a
+    listing nothing: it moves value from the seller to the buyer's change.
+    """
     outputs = [(0, P2PKH_SHAPE), (0, P2PKH_SHAPE)]
     if payload_bytes:
         outputs.append((0, b"\x6a" + varint(payload_bytes) + b"\x00" * payload_bytes))
