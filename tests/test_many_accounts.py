@@ -12,11 +12,13 @@ holding both halves, so none of them can reach it.
 
 What is here is what an account can already do, and the list has gone the way
 of the ones before it. `door.py` refuses every POST that would spend the NODE's
-wallet, and what is left behind that door is the open exchange, the mintpads
-and the offers -- so three sentences are still missing from this file, and they
-are missing because the routes are: nobody here places an order, buys from a
-mintpad, or answers an offer. Inscribe a piece, run a whole collection, issue a
-token and buy out of somebody else's shop all came off that list, and each
+wallet, and what is left behind that door is the open exchange and the offers --
+so two sentences are still missing from this file, and they are missing because
+the routes are: nobody here places an order or answers an offer. A mintpad is a
+shop whose listing picks a random item, so its door came with the shop's and has
+still not been bought from here -- a gap in the testing rather than a missing
+route. Inscribe a piece, run a whole collection, issue a token, buy out of
+somebody else's listing and buy out of a shop all came off that list, and each
 brought its half of this file with it rather than going somewhere else to live.
 
 A swap needs two accounts, and that is a rule rather than a convenience. A
@@ -50,6 +52,7 @@ import dataclasses
 import json
 import pathlib
 import sys
+import time
 from typing import Any
 
 import pytest
@@ -66,12 +69,16 @@ from arcade import accounts as accountslib                  # noqa: E402
 from arcade import funding, inscribe, seed, utxos           # noqa: E402
 from arcade import inscriptions as pieces                   # noqa: E402
 from arcade import payload as protocol                      # noqa: E402
+from arcade import swap as swaplib                          # noqa: E402
 from arcade import tokens as tokenlib                       # noqa: E402
+from arcade.messaging import api as apilib                  # noqa: E402
 from arcade.messaging import envelope                       # noqa: E402
 from arcade.messaging import feed as feedlib                # noqa: E402
 from arcade.messaging.keys import Identity                  # noqa: E402
 from arcade.messaging.scanner import Scanner                # noqa: E402
+from arcade.messaging.sender import funded_address          # noqa: E402
 from arcade.script import b58check_encode, hash160          # noqa: E402
+from arcade.shopkeeper import Shopkeeper                    # noqa: E402
 from arcade.tokens import TokenSender                       # noqa: E402
 from arcade.web.app import create_app                       # noqa: E402
 from arcade.web.state import AppState                       # noqa: E402
@@ -857,6 +864,364 @@ def test_an_account_cannot_buy_from_its_own_shop(node, crowd):
         "and costs the listing nothing: a stranger can still buy it"
     assert state.token_index(state.messaging).inscription(piece)["owner"] \
         == maple.address
+
+
+# --- buying from a shop, which is a different animal --------------------------
+
+def _a_shop_on_the_node(*node, name: str, price: str) -> tuple[str, str, str]:
+    """A shop on the chain, whose seller is this node's own wallet.
+
+    Two inscriptions from one fresh address in the daemon's wallet: the thing
+    for sale, and the page whose JSON sells it. The shop has to belong to a
+    wallet rather than to an account because of a rule in `swap.make_offer` --
+    a shop answers only when its `creator` still holds it and the wallet
+    answering holds that address. That rule is why the shopkeeper can be trusted
+    with nobody at the keyboard, so an account-run shop is not a thing this
+    harness can build; the test after this one reaches the same refusal from the
+    other side, by handing an account a shop it happens to own.
+
+    The `node` in the shop's JSON is this node's own messaging key, which is what
+    makes what follows a round trip instead of a loopback: the order leaves
+    sealed under maple's key, and is opened on the same machine by the one
+    program allowed to answer it -- a program that can spend maple's coins and
+    cannot see maple's key.
+    """
+    daemon, state = node[0], node[1]
+    keeper = daemon.rpc.call("getnewaddress")
+    daemon.rpc.call("sendtoaddress", keeper, 12.0)
+    _settle(*node, blocks=2)
+
+    stock = inscribe.plan(b"arcade" * 40, "image/png", '{"name": "%s stock"}' % name)
+    assert stock.chunks == 1, "one transaction, so the shop below has one to look at"
+    piece = _put(daemon, state.messaging.params, keeper, stock.payloads)[0]
+    _settle(*node, blocks=2)
+
+    terms = json.dumps({"name": name,
+                        "shop": {"node": state.ensure_identity().public_bytes.hex(),
+                                 "listings": [{"give": {"inscription": piece},
+                                               "take": {"coins": price}}]}},
+                       separators=(",", ":"))
+    # A shop is a page that carries its terms in the JSON field, not a JSON
+    # inscription -- an empty page is nothing to inscribe. This is the shape
+    # `mintpad.page` and `tokenpad.page` make, with their template left out.
+    page = inscribe.plan(("<html><body>%s</body></html>" % name).encode("utf-8"),
+                         "text/html", terms)
+    assert page.chunks == 1, page.estimate.describe()
+    shop = _put(daemon, state.messaging.params, keeper, page.payloads)[0]
+    _settle(*node, blocks=2)
+
+    index = state.token_index(state.messaging)
+    assert index.inscription(piece)["owner"] == keeper
+    assert swaplib.shop_of(index.inscription(shop))["listings"][0]["give"] \
+        == {"inscription": piece}, "the shop says what it sells, on the chain"
+    assert index.inscription(shop)["creator"] == keeper == \
+        index.inscription(shop)["owner"], "make_offer insists on both halves of that"
+
+    # The answer to an order is paid for out of this node's own wallet, and the
+    # coins it picks there decide whether anyone can read what it sent. `generate`
+    # mines to the wallet as pay-to-pubkey, and `tx.extract` refuses a pubkey
+    # input outright (rules.cpp:416-430), so a message funded from a coinbase is
+    # invisible to every scanner -- including the one on the machine that made it
+    # -- and an order at this shop would sit unanswered as far as maple can see.
+    # `funded_address` wants one address that can pay and takes the pile holding
+    # the most, which after 200 mined blocks is the mining address and its
+    # coinbase; `_select_inputs` then takes the smallest of that address's
+    # outputs that still covers the target. Ordinary sends are what produce such
+    # an output, and one per answer a buy costs -- the change of the first may
+    # land elsewhere, so the second is not left hunting.
+    answerer = funded_address(daemon.rpc, prefer=state.derived_address)
+    for _ in range(2):
+        daemon.rpc.call("sendtoaddress", answerer, 3.0)
+        _settle(*node, blocks=2)
+    assert funded_address(daemon.rpc, prefer=state.derived_address) == answerer, \
+        "the address that answers has to stay the one that can pay"
+
+    # A shopkeeper's first pass on a chain only parks its cursor: what was in the
+    # inbox before there was a shopkeeper was not an order to it. Without this,
+    # the first shop buy in the file is answered by the second one.
+    assert Shopkeeper(state).tick() == 0
+    return shop, piece, keeper
+
+
+def _opened(*node):
+    """Mine, and let the node open the machine messages that were for it.
+
+    The one place in this file that hands a Scanner an identity. Everything else
+    here goes between two accounts, and the node carries those sealed and cannot
+    read them, which is the arrangement D-155 says must stay true. An order at a
+    shop is the exception: it is addressed to a program, and the program has to
+    open it to act on it.
+    """
+    daemon, state = node[0], node[1]
+    _settle(*node)
+    with state.messaging.rpc() as rpc, state.store() as store:
+        scanner = Scanner(rpc, state.messaging.params, store,
+                          identity=state.ensure_identity())
+        scanner.scan()
+        # scan() opens what it fetched and nothing else: the opening hangs off
+        # its tail, and the tail is never reached once the cursor is already at
+        # the tip. `_settle` gets there first, scanning as it mines with no
+        # identity to open with, so the candidate is filed and left shut. The
+        # watcher does not have this problem -- its mempool pass opens each
+        # message the block before it confirms -- so ask here, by name.
+        scanner.open_pending()
+
+
+def _answered(*node) -> int:
+    """The shop's turn: read what arrived, answer it, land the answers."""
+    _opened(*node)
+    answered = Shopkeeper(node[1]).tick()
+    _opened(*node)                       # so the buyer can read the reply back
+    return answered
+
+
+def _answers(person, after: int = 0) -> list[dict]:
+    """What the shop said, opened by the only key that can.
+
+    Read off `/account/messages` rather than out of a node-side inbox because
+    that is the whole arrangement: the answer comes back sealed to the account's
+    own messaging key, which the node that relayed it cannot open.
+
+    What will not open is passed over, exactly as `_letters` does it. This
+    account's OWN orders are on the same list, sealed to a shop rather than to
+    whoever wrote them, so a reader that could open every row here would be a
+    reader that opens strangers' trades. Which is why counting what comes back
+    says something: one row is the order going out and one is the answer
+    coming in, and only one of the two opens.
+    """
+    said = person.client.get(f"/account/messages?after={after}")
+    assert said.status_code == 200, said.text
+    out = []
+    for row in said.json()["candidates"]:
+        if int(row["type"]) != envelope.TYPE_API:
+            continue
+        try:
+            sender, plain, _ = envelope.open_message(
+                person.identity, bytes.fromhex(row["payload"]))
+        except envelope.EnvelopeError:
+            continue
+        version, fingerprint, body = apilib.read_stamp(plain)
+        assert version == apilib.PROTOCOL
+        assert fingerprint == apilib.api_fingerprint()
+        out.append(json.loads(body.decode()))
+    return out
+
+
+def _seal_for_program(person, key: bytes, body: dict) -> str:
+    """The ciphertext half of an API message, which is all the node is given.
+
+    `apilib.seal` is not what goes here: it returns a finished payload, header
+    included, and the route writes the header itself -- the same split `_write`
+    above uses for a private message, and for the same reason. A second header
+    in front of the node's is the difference between an order and a transaction
+    the node scans past without a word, which is the bug this helper exists to
+    keep out of the file. The stamp travels inside the encryption, so the page
+    that checks it is the one that has to put it there.
+    """
+    return envelope.seal_ciphertext(
+        person.identity, key, envelope.Header(type=envelope.TYPE_API),
+        apilib.stamp() + json.dumps(body).encode()).hex()
+
+
+def test_an_account_buys_from_a_shop_its_own_node_runs(node, crowd):
+    """A shop buy with the account's key at one end and a wallet at the other.
+
+    The whole conversation, four times over what the operator's wallet spends:
+    the order, the offer it gets back, the signed half, and the message carrying
+    it. Two of those are transactions this node built and broadcast on maple's
+    behalf without ever holding the key that paid for them, and the trade itself
+    is broadcast by nobody until the shop signs it -- which is the arrangement
+    `/swap/{txid}` has always had, now reachable from an account.
+
+    What makes this worth a test rather than a route is that the shop is not
+    another node. It is this one. The order leaves from an account's key, goes
+    out through the machine that will answer it, and comes back sealed to a key
+    that machine cannot open; if any part of that were quietly done by the node
+    on the account's behalf, the round trip would still appear to work and only
+    the key would be missing from the design.
+    """
+    daemon, state = node[0], node[1]
+    maple = crowd[0]
+    # A shop buy pays for three transactions on top of its price -- the order
+    # going out, the trade the shop broadcasts, and the message that carries this
+    # account's signature onto a trade it cannot broadcast itself -- and all three
+    # come out of the buyer's coins. The middle one spends coins that stay held
+    # as committed until the shop lands them, so the last message has to be paid
+    # for out of a coin the trade did not touch. Hence two piles: one big enough
+    # to buy with, and one it has no reason to reach for.
+    _funded(*node, who=maple, amount=5.0)
+    _funded(*node, who=maple, amount=0.5)
+    shop, piece, keeper = _a_shop_on_the_node(*node, name="Node shop", price="2")
+    key = state.ensure_identity().public_bytes
+    index = state.token_index(state.messaging)
+    seen = maple.client.get("/account/messages").json()["newest"]
+
+    # 1. The shop, read off the chain rather than from anything the page said.
+    front = maple.client.post("/account/shop", json={"shop": shop, "op": "shop"})
+    assert front.status_code == 200, front.text
+    said = front.json()
+    assert said["seller"] == keeper and said["buyer"] == maple.address
+    assert said["node"] == key.hex(), "the shop answers to this node's own key"
+    assert said["mine"] is False and said["open"] is True
+    assert said["can_buy"] is True, "maple has the two outputs a buy costs (D-051)"
+    assert said["ready"] is True and said["from"] == 0
+    assert said["listings"][0]["give"]["txid"] == piece
+    assert int(said["listings"][0]["take"]["sats"]) == 2 * COIN
+    assert len(said["stamp"]) == 16, "the browser checks this before it seals"
+
+    # 2. The order, written by this node so both doors write the same one.
+    asked = maple.client.post("/account/shop",
+                              json={"shop": shop, "op": "offer", "listing": 0})
+    assert asked.status_code == 200, asked.text
+    order = asked.json()
+    assert order["order"] == {"swap": "offer", "swapv": swaplib.PROTOCOL,
+                              "shop": shop, "listing": 0,
+                              "buyer": maple.address}, order
+    assert order["seal_to"] == key.hex() and order["to"] == keeper
+    assert "2 coins" in order["buying"], order["buying"]
+
+    # 3. Sealed here, carried by a transaction maple signs and this node sends.
+    sent = _do(maple, "/account/shop",
+               {"shop": shop, "op": "send",
+                "sealed": _seal_for_program(maple, key, order["order"])})
+    assert sent.status_code == 200, sent.text
+    assert daemon.rpc.call("getrawmempool"), "the order went out"
+
+    assert _answered(*node) == 1, "one order in, one answer out"
+    heard = _answers(maple, seen)
+    assert len(heard) == 1, heard
+    back = heard[0]
+    assert back["swap"] == "offer" and back["ok"] is True, back
+    offer = back["offer"]
+    assert offer["shop"] == shop and offer["listing"] == 0
+    assert offer["seller"] == keeper and offer["buyer"] == maple.address
+    assert offer["give"]["txid"] == piece
+    assert int(offer["take"]["sats"]) == 2 * COIN
+    assert "cut" not in offer, "this node announced no cut, and asks none (§1d)"
+
+    # 4. The buyer's half, with the shop's coin sitting in front of it unsigned.
+    had = _balance(state, maple.address)
+    shown = maple.client.post("/account/shop",
+                              json={"shop": shop, "op": "accept", "offer": offer})
+    assert shown.status_code == 200, shown.text
+    half = shown.json()
+    assert half["signed_from"] == 1, \
+        "the offered output leads the inputs, and this account signs none before it"
+    assert [half["inputs"][0]["txid"], half["inputs"][0]["vout"]] == \
+        [offer["outpoint"]["txid"], offer["outpoint"]["vout"]], half["inputs"]
+    assert len(half["sighashes"]) == len(half["inputs"]) - 1, \
+        "not one digest is offered for a coin that is not maple's"
+    assert half["what"].startswith("buy "), half["what"]
+    assert half["cut"] == {}
+
+    done = maple.client.post("/account/shop/sign", json={
+        "raw": half["raw"], "shop": shop, "offer": offer,
+        "pubkey": maple.pubkey.hex(),
+        "signatures": [_sign(maple.secret, bytes.fromhex(d)).hex()
+                       for d in half["sighashes"]]})
+    assert done.status_code == 200, done.text
+    signed = done.json()
+    assert signed["order"] == {"swap": "sign", "swapv": swaplib.PROTOCOL,
+                               "offer": offer["id"], "hex": signed["hex"]}, signed
+    assert signed["seal_to"] == key.hex() and signed["to"] == keeper
+    assert daemon.rpc.call("getrawmempool") == [], \
+        "a shop buy is finished by the shop: signing it broadcast nothing"
+
+    # 5. The half goes to the shop the same way the order did, and the shop
+    #    signs exactly what it offered and broadcasts the trade itself.
+    sent = _do(maple, "/account/shop",
+               {"shop": shop, "op": "send",
+                "sealed": _seal_for_program(maple, key, signed["order"])})
+    assert sent.status_code == 200, sent.text
+    assert _answered(*node) == 1
+    answer = _answers(maple, seen)[-1]
+    assert answer["swap"] == "sign" and answer["ok"] is True, answer
+
+    assert index.inscription(piece)["owner"] == maple.address, "the piece moved"
+    assert piece in [p["txid"] for p in _pieces(maple)], _pieces(maple)
+
+    # The seller is made whole to the satoshi -- its own output back, plus the
+    # price -- which is the arithmetic `countersign` refuses to sign without.
+    decoded = daemon.rpc.call("decoderawtransaction",
+                              daemon.rpc.call("getrawtransaction", answer["txid"]))
+    pays = [out for out in decoded["vout"]
+            if int(round(float(out["value"]) * COIN))
+            == int(offer["outpoint"]["value"]) + 2 * COIN]
+    assert len(pays) == 1, decoded["vout"]
+    where = pays[0]["scriptPubKey"]
+    assert (where.get("address") or where["addresses"][0]) == keeper
+
+    # And maple paid for the whole conversation, not just the trade: the price,
+    # the dust each of its two messages leaves behind (0.01 to the shop, plus
+    # what carries the bytes), and the fee on three transactions -- including
+    # the trade's own, which the shop broadcasts but maple's coins pay for
+    # (§1d's rule, seen from the side that pays it). The shop's coin stays out
+    # of maple's reaching the whole time, which is what `note_committed` is for:
+    # without it the message that carries the swap would pay for itself by
+    # spending the swap.
+    paid = had - _balance(state, maple.address)
+    assert 2 * COIN < paid < 2 * COIN + (2 * COIN) // 5, \
+        f"maple paid {paid} for a piece priced at 2"
+    assert daemon.rpc.call("getrawmempool") == []
+
+
+def test_a_shop_an_account_owns_sells_nothing_to_it(node, crowd):
+    """The self-sale refusal, on the shop side, where nothing else would catch it.
+
+    [2026-09-22: "An account should not be able to buy from its own
+    shop."] `test_an_account_cannot_buy_from_its_own_shop` covers the listing
+    half, where `paste_leg` would have caught it anyway. Here nothing else
+    would: `check_offer` and `swap.countersign` both ask whether the seller sits
+    in the buyer's wallet, and an account's address is in no wallet at all --
+    which is the whole design. So the check is in the route, and this is the test
+    that says it is not decoration: a shop is handed to an account, and the
+    account is then refused its own shelf, having spent nothing.
+    """
+    daemon, state = node[0], node[1]
+    maple = crowd[0]
+    shop, piece, keeper = _a_shop_on_the_node(*node, name="Maple's shop", price="3")
+    moved = protocol.AnyData(
+        data=pieces.Transfer(txid=bytes.fromhex(shop)).encode()).encode()
+    sender = TokenSender(daemon.rpc, state.messaging.params)
+    sender.broadcast(sender.prepare(keeper, moved, maple.address))
+    _settle(*node)
+    index = state.token_index(state.messaging)
+    assert index.inscription(shop)["owner"] == maple.address
+
+    # Reading it stays allowed. It is public, and `mine` is how a page knows to
+    # hide the buy button rather than the shop.
+    front = maple.client.post("/account/shop", json={"shop": shop, "op": "shop"})
+    assert front.status_code == 200, front.text
+    assert front.json()["mine"] is True
+    assert front.json()["seller"] == maple.address
+
+    for body, what in (({"op": "offer", "listing": 0}, "an order"),
+                       ({"op": "send", "sealed": "00" * 40}, "a message")):
+        refused = maple.client.post("/account/shop", json={"shop": shop, **body})
+        assert refused.status_code == 400, f"{what}: {refused.text}"
+        assert refused.json()["detail"] == "this is your own shop", what
+
+    # The trade half is refused one check earlier, and which one is worth
+    # writing down: an offer that names this shop's owner as its seller is
+    # refused by `check_offer` for naming a seller this account holds the key to,
+    # and one that names anybody else never gets to be called the shop's. So the
+    # refusal in `_not_your_own_shop` is for the case where the shop's own terms
+    # are the honest ones -- and there is no road from an account to its own
+    # shelf either way, which is the thing that had to be true.
+    forged = {"id": "0" * 16, "network": "regtest", "shop": shop, "listing": 0,
+              "seller": keeper, "buyer": maple.address,
+              "give": {"kind": "inscription", "txid": piece},
+              "take": {"kind": "coins", "amount": "3", "sats": 3 * COIN},
+              "outpoint": {"txid": "1" * 64, "vout": 0, "value": COIN},
+              "created": time.time(), "expires": time.time() + 60}
+    refused = maple.client.post("/account/shop",
+                                json={"shop": shop, "op": "accept", "offer": forged})
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["detail"] == ("the offer is not from the wallet that "
+                                        "holds this shop")
+
+    assert daemon.rpc.call("getrawmempool") == [], "a refusal spends nothing"
+    assert index.inscription(piece)["owner"] == keeper, "and sells nothing"
 
 
 # --- what they say about themselves -------------------------------------------

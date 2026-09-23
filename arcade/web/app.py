@@ -7655,6 +7655,340 @@ def create_app(state: AppState) -> FastAPI:
         finally:
             state.end_send(lane)
 
+    # --- a shop, for an account: the same door, paid for by the buyer --------
+    #
+    # `/swap/{txid}` is where a page buys, and behind it every step that costs
+    # money is this machine's wallet: it seals the order, it carries the
+    # message, it asks its owner to approve the trade. An account has a key
+    # instead of a wallet, so each of those steps is offered here and signed
+    # there. What the node still does on its own is build transactions and
+    # broadcast the ones it was handed signatures for.
+    #
+    # The far end does not change at all. `swap.make_offer` answers an order
+    # from a public key that belongs to no wallet it knows, exactly as it
+    # answers the node next door, and `swap.countersign` signs what it offered
+    # and nothing else. A shop cannot tell an account from another node and,
+    # by design, has no reason to want to.
+    #
+    # What that costs is three transactions where the operator's wallet spends
+    # two: the order, the trade, and the message carrying the trade. The first
+    # and the third exist because the key that opens the answer is the
+    # account's and is not on this machine, so this machine cannot open the
+    # channel on somebody's behalf -- and a node that could would be holding
+    # the arrangement up by its own end.
+
+    def _account_shop(said: dict):
+        """The shop an account is asking about, and the node that answers for it.
+
+        Read off the inscription every time, because that is the one copy of
+        the terms both sides trust: what is for sale, what it costs, whose key
+        answers. Nothing is remembered between one request and the next, so
+        every half of a buy decides the same thing again from the chain.
+        """
+        from .. import nodetalk
+        chain = _chain_asked(said)
+        if chain.network == "main" or chain.params.swaps_from is None:
+            raise swaplib.SwapError("shops are testnet only")
+        row = _shop_page(str(said.get("shop") or ""), chain)
+        shop = swaplib.shop_of(row)
+        return chain, row, shop, nodetalk.parse_pubkey(shop["node"])
+
+    def _not_your_own_shop(row: dict, address: str) -> None:
+        """A shop may not sell to the account that runs it.
+
+        `swap.countersign` has refused a wallet filling its own order since
+        before there were accounts, and `check_offer` refuses an offer whose
+        seller sits in the buyer's wallet. Neither of them reaches an account:
+        the `own` list they check is the shop's wallet, and this address is not
+        in it -- which is the whole point of an account, and the hole this
+        closes. A self-sale is two transactions that move nothing while
+        printing a price and a volume on a public page as though a stranger had
+        paid it.
+        """
+        if row["owner"] == address:
+            raise swaplib.SwapError("this is your own shop")
+
+    def _shop_order(row: dict, address: str, listing_no: int) -> dict:
+        """What an order at this shop says, word for word.
+
+        Written here rather than in the browser so the two doors cannot drift
+        apart on what a shop is being asked to do. The shop answers the address
+        in it, not the key: the key rides in the envelope, which is what lets
+        the answer come back sealed to somebody this node has never met.
+        """
+        return {"swap": "offer", "swapv": swaplib.PROTOCOL, "shop": row["txid"],
+                "listing": int(listing_no), "buyer": address}
+
+    def _shop_half(account, chain, address: str, offer: dict) -> tuple:
+        """An offer, and the transaction this account's signature completes.
+
+        The shape `_listing_to_fill` gives a listing, from an offer instead of
+        a row: the shop's output first and unsigned, the trade named in one
+        OP_RETURN, the seller made whole, the cut the offering node announced,
+        and the change back here. That ordering is not cosmetics -- the shop's
+        signature at countersign time stands over its own input in slot 0 and
+        the payment it is owed, and `build_partial` puts the buyer's coins
+        behind them and never moves either.
+
+        Both sides are checked before a coin is chosen, the way `swap.build`
+        checks them before it touches a wallet. A trade that cannot land is a
+        message fee already spent finding that out.
+        """
+        from ..encoding import encode_class_c
+        give = swaplib.leg_from_json(offer["give"])
+        take = swaplib.leg_from_json(offer["take"])
+        named = str(offer.get("order") or "")
+        payload = P.AnyData(data=inscriptionlib.Swap(
+            give=give, take=take,
+            order=bytes.fromhex(named) if named else b"").encode()).encode()
+        # What the shop nets: its own input back, plus the coins this way
+        # round, less the coins it hands over. `countersign` measures the same
+        # expression when it decides whether it was paid, so the two sides
+        # cannot end up reading one price two ways.
+        owes = swaplib.coins_in(take) - swaplib.coins_in(give)
+        outpoint = offer["outpoint"]
+        seller_out = int(outpoint["value"]) + owes
+        if seller_out < swaplib.MIN_CHANGE:
+            raise swaplib.SwapError("the seller's output would be dust; ask for "
+                                    "another offer")
+        cut = swaplib.cut_sats(offer.get("cut"), max(owes, 0))
+        cut_to = str((offer.get("cut") or {}).get("to") or "") if cut else ""
+        outputs = [(0, txbuild.op_return_script(encode_class_c(payload))),
+                   (seller_out, txbuild.p2pkh_script(offer["seller"]))]
+        if cut:
+            outputs.append((cut, txbuild.p2pkh_script(cut_to)))
+        index = state.token_index(chain)
+        with chain.rpc() as rpc:
+            for who, leg, name in ((offer["seller"], give, "the shop"),
+                                   (address, take, "this account")):
+                problem = swaplib.holds(index, rpc, who, leg)
+                if problem:
+                    raise swaplib.SwapError(f"{name} cannot give that: {problem}")
+        what = (f"buy {swaplib.describe_leg(swaplib.leg_json(give, index))}"
+                f" for {swaplib.describe_leg(swaplib.leg_json(take, index))}")
+        with contextlib.closing(index.open()) as db:
+            unsigned = fundinglib.build_partial(
+                db, chain.params, address, [outpoint], outputs,
+                rate=fees.MIN_FEE_PER_KB, what=what,
+                exclude=_flights.spent_by(account.pubkey, chain.network),
+                extra=_flights.change_for(account.pubkey, chain.network))
+        return unsigned, what, cut, cut_to
+
+    @app.post("/account/shop")
+    def account_shop(request: Request, payload: Any = Body(None)):
+        """A shop, asked by the person whose key this node will never see.
+
+        `shop` reads the listings; `offer` says what an order at this shop
+        reads as, and to which key it has to be sealed; `send` offers the API
+        message that carries it; `accept` shows the trade. Each of the two
+        messages is a transaction this account signs and this node broadcasts,
+        and the trade itself is signed at `/account/shop/sign`, which
+        broadcasts nothing.
+
+        The sealing happens in the browser and the node never learns what is
+        inside -- exactly as with a private message from an account, which is
+        the only reason the shop's answer can come back sealed to somebody
+        this node cannot read for. What is checked here is what can be checked
+        without opening anything: that the listing exists, that the buyer is
+        not the shop's own account, and that one transaction can carry the
+        bytes.
+        """
+        from .. import nodetalk
+        from ..messaging import api as apilib
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        op = str(said.get("op") or "")
+        try:
+            chain, row, shop, node = _account_shop(said)
+            address = _account_address(account.pubkey, chain)
+            if not address:
+                raise ValueError(f"this account has no {chain.label.lower()} "
+                                 f"address yet")
+            index = state.token_index(chain)
+            listing_no = int(said.get("listing", -1))
+            if op == "shop":
+                height = index.indexed_height()
+                with contextlib.closing(index.open()) as db:
+                    coins = utxoslib.unspent(db, address)
+                return JSONResponse({
+                    "ok": True, "shop": row["txid"], "node": node.hex(),
+                    "seller": row["owner"], "buyer": address,
+                    "chain": chain.network, "network": chain.network,
+                    "stamp": apilib.stamp().hex(),
+                    "listings": swaplib.listings_json(row, index),
+                    # D-051, asked of the index instead of of a wallet: a buy is
+                    # two transactions from this side, and an address with one
+                    # output left learns that at the last step, after paying for
+                    # the order and waiting for an offer.
+                    "can_buy": len(coins) >= OUTPUTS_FOR_A_SWAP,
+                    # For the account, `mine` is the refusal rather than the
+                    # owner's toolkit: there are no owner's controls here, and
+                    # a shop's own account is not a customer of it.
+                    "mine": row["owner"] == address,
+                    "open": row["creator"] == row["owner"],
+                    "height": height, "from": chain.params.swaps_from,
+                    "ready": height is not None
+                             and height >= chain.params.swaps_from})
+            if op == "offer":
+                if not 0 <= listing_no < len(shop["listings"]):
+                    raise swaplib.SwapError(f"no listing {listing_no}")
+                _not_your_own_shop(row, address)
+                take = swaplib.leg_of(shop["listings"][listing_no]["take"], index)
+                return JSONResponse({
+                    "ok": True, "chain": chain.network,
+                    "order": _shop_order(row, address, listing_no),
+                    "seal_to": node.hex(), "to": row["owner"],
+                    "stamp": apilib.stamp().hex(),
+                    "buying": swaplib.describe_leg(swaplib.leg_json(take, index))})
+            if op == "send":
+                sealed = bytes.fromhex(str(said.get("sealed") or ""))
+                if not sealed:
+                    raise ValueError("there is nothing to send")
+                _not_your_own_shop(row, address)
+                # Type 6 rather than type 1: the same sealed envelope, read by
+                # a program at the other end instead of landing in somebody's
+                # chat, and answered from a book rather than from a person. The
+                # header is written HERE and not in the browser, which is what
+                # `/account/write` does with a private message -- and the length
+                # of what fits in one transaction is said once, by the function
+                # that builds it, rather than twice from two different
+                # measurements of bytes this node cannot count.
+                header = envelopelib.Header(type=envelopelib.TYPE_API,
+                                            clen=len(sealed))
+                outputs = _class_c_or_b(chain, address, header.encode() + sealed,
+                                        _coin_pubkey(account.pubkey))
+                outputs.append((sendermod.OUTPUT_VALUE,
+                                txbuild.p2pkh_script(row["owner"])))
+                with contextlib.closing(index.open()) as db:
+                    unsigned = fundinglib.build(
+                        db, chain.params, address, outputs,
+                        rate=fees.MIN_FEE_PER_KB,
+                        what=f"a message to the shop at {row['txid'][:12]}\u2026",
+                        exclude=_flights.spent_by(account.pubkey, chain.network),
+                        extra=_flights.change_for(account.pubkey, chain.network))
+                _quota(account, "message", len(sealed))
+                offered = _offers.add(account.pubkey, chain.network, unsigned,
+                                      unsigned.what)
+                return JSONResponse({"ok": True, "offer": offered.id,
+                                     "bytes": len(sealed), "to": row["owner"],
+                                     "node": node.hex(), "chain": chain.network,
+                                     **unsigned.as_json()})
+            if op == "accept":
+                offer = swaplib.check_offer(
+                    said.get("offer"), shop=row["txid"], own=[address],
+                    height=index.indexed_height(), params=chain.params)
+                if offer["seller"] != row["owner"]:
+                    raise swaplib.SwapError("the offer is not from the wallet "
+                                            "that holds this shop")
+                _not_your_own_shop(row, address)
+                unsigned, what, cut, cut_to = _shop_half(
+                    account, chain, address, offer)
+                return JSONResponse({"ok": True, "shop": row["txid"],
+                                     "listing": offer["listing"],
+                                     "seller": offer["seller"],
+                                     "what": what, "chain": chain.network,
+                                     "cut": ({"bps": int((offer.get("cut") or {})
+                                                         .get("bps") or 0),
+                                              "sats": cut, "to": cut_to}
+                                             if cut else {}),
+                                     **unsigned.as_json()})
+            raise swaplib.SwapError("op must be shop, offer, send or accept")
+        except (swaplib.SwapError, fundinglib.FundingError, nodetalk.TalkError,
+                accountslib.AccountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            return JSONResponse({"detail": f"the node could not do it: {exc}"},
+                                status_code=502)
+
+    @app.post("/account/shop/sign")
+    def account_shop_sign(request: Request, payload: Any = Body(None)):
+        """Complete the buyer's half, and hand it back rather than broadcast it.
+
+        The one difference from `/account/buy/sign` that matters. A listing is
+        filled by this node pasting two signatures it already holds onto a
+        third; a shop buy is finished by the shop, which is the only machine
+        that can spend the piece. So nothing goes out here -- there is nothing
+        yet that the network would accept -- and what comes back is the bytes,
+        for the browser to seal into the message that carries them.
+
+        The half is worked out again from the offer, as `/account/buy/sign`
+        works it out from the row, and the raw bytes are compared before
+        anything else: if this account's coins moved since the trade was
+        shown, these signatures are over a different transaction, and the shop
+        would be right to refuse them. Better to say so here.
+
+        The coins are then held back as committed with no broadcast behind
+        them, which is what a listing's leg does for the same wait. Without
+        it, the index still calls the trade's own inputs spendable -- including
+        by the very message that carries them, which would pay for the swap by
+        spending it.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain, row, _shop, node = _account_shop(said)
+            address = _account_address(account.pubkey, chain)
+            if not address:
+                raise ValueError(f"this account has no {chain.label.lower()} "
+                                 f"address yet")
+            offer = swaplib.check_offer(
+                said.get("offer"), shop=row["txid"], own=[address],
+                height=state.token_index(chain).indexed_height(),
+                params=chain.params)
+            if offer["seller"] != row["owner"]:
+                raise swaplib.SwapError("the offer is not from the wallet that "
+                                        "holds this shop")
+            _not_your_own_shop(row, address)
+            unsigned, what, cut, cut_to = _shop_half(account, chain, address, offer)
+            if str(said.get("raw") or "") != unsigned.raw:
+                return JSONResponse(
+                    {"detail": "this node would build you a different "
+                               "transaction now than the one you signed -- a "
+                               "block landed, or one of your other transactions "
+                               "went out. Ask for the trade again and sign that; "
+                               "the shop would refuse these signatures, and a "
+                               "message spent finding that out is a message fee "
+                               "gone."}, status_code=409)
+            signatures = [str(x) for x in (said.get("signatures") or [])]
+            pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
+            if not pubkey:
+                raise ValueError("this request names no public key, and a "
+                                 "transaction nobody can trace to a key is not "
+                                 "a transaction this node will finish")
+            if hash160(pubkey) != b58check_decode(address)[1]:
+                raise ValueError("that public key is not the key behind this "
+                                 "account's "
+                                 f"{chain.label.lower()} address, so finishing "
+                                 "it would write a trade one wallet paid and "
+                                 "another is named on")
+            try:
+                hex_ = fundinglib.assemble(unsigned, signatures, pubkey)
+            except fundinglib.FundingError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=400)
+            _flights.note_committed(
+                account.pubkey,
+                spent=tuple((coin["txid"], coin["vout"])
+                            for coin in unsigned.inputs[unsigned.signed_from:]),
+                network=chain.network)
+            return JSONResponse({
+                "hex": hex_, "what": what, "chain": chain.network,
+                "shop": row["txid"], "seller": offer["seller"],
+                "cut": ({"bps": int((offer.get("cut") or {}).get("bps") or 0),
+                         "sats": cut, "to": cut_to} if cut else {}),
+                "order": {"swap": "sign", "swapv": swaplib.PROTOCOL,
+                          "offer": offer["id"], "hex": hex_},
+                "seal_to": node.hex(), "to": row["owner"]})
+        except (swaplib.SwapError, fundinglib.FundingError,
+                accountslib.AccountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            return JSONResponse({"detail": f"the node could not do it: {exc}"},
+                                status_code=502)
+
     @app.get("/account/tokens")
     def account_tokens(request: Request):
         """What this account holds in tokens, on every chain it has an
