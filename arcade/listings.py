@@ -337,6 +337,24 @@ def check_leg(rpc: Any, listing: dict) -> dict:
     return leg
 
 
+def piece_held(rpc: Any, listing: dict) -> int | None:
+    """Satoshis still sitting at the listed outpoint, or None if it is gone.
+
+    One definition, because two readers need the same answer. `paste_leg`
+    refuses to finish a swap over a piece the chain no longer holds, and a
+    listing page has to say the same thing in the same words: "cancelled" is
+    not a state this book can create. A row goes stale when a BLOCK spends the
+    input, and until that happens a signature already handed out still works.
+    Reading it here rather than in two places is what keeps the page and the
+    combiner from ever disagreeing about whether a piece is for sale.
+    """
+    piece = listing["input"]
+    held = rpc.call("gettxout", piece["txid"], int(piece["vout"]), True)
+    if not held:
+        return None
+    return int(round(float(held.get("value", 0)) * COIN))
+
+
 def paste_leg(rpc: Any, listing: dict, unsigned: Any, signatures: list[str],
               pubkey: bytes) -> str:
     """Finish a swap out of a stored leg. Checks first, bytes second.
@@ -364,13 +382,13 @@ def paste_leg(rpc: Any, listing: dict, unsigned: Any, signatures: list[str],
         raise ListingError(f"that listing is {listing['status']}")
 
     piece = listing["input"]
-    held = rpc.call("gettxout", piece["txid"], int(piece["vout"]), True)
-    if not held:
+    held = piece_held(rpc, listing)
+    if held is None:
         raise ListingError(
             f"{piece['txid'][:16]}…:{piece['vout']} is spent or unseen here, so "
             f"this piece is not this listing's to sell any more -- it sold, or "
             f"its owner spent it, which is the only way to cancel one")
-    if int(round(float(held.get("value", 0)) * COIN)) != int(piece["value"]):
+    if held != int(piece["value"]):
         raise ListingError(
             "that piece is not the size this listing says it is, so the price "
             "on it would be arithmetic done on a number that changed")

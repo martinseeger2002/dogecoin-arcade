@@ -952,6 +952,7 @@ class AppState:
     _pagestore: Any = None
     _talk: Any = None
     _offers: Any = None
+    _listings: Any = None
 
     def ledger_index_path(self, chain: "ChainContext") -> Path:
         """Where a chain's index file is. One definition, because the
@@ -1012,6 +1013,22 @@ class AppState:
             from ..swap import Offers
             self._offers = Offers(self.home / "swaps.sqlite")
         return self._offers
+
+    @property
+    def listings(self):
+        """The other book, on purpose (arcade/listings.py).
+
+        `offers` is what this wallet signed with its own key, which means this
+        node holds that key. `listings` is what this node was handed: a
+        signature somebody else made in their own browser, for a piece this
+        node cannot move. Two states the multi-user plan exists to keep apart,
+        so they are two files and two properties, and nothing that reads one
+        should reach the other by accident.
+        """
+        if self._listings is None:
+            from ..listings import Listings
+            self._listings = Listings(self.home / "listings.sqlite")
+        return self._listings
 
     # --- identity, derived from the wallet ------------------------------------
     #

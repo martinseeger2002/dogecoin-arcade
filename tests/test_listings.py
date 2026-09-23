@@ -161,6 +161,36 @@ def test_a_listing_is_cancelled_by_spending_the_piece(regtest, db, book):
     assert "spent or unseen" in str(refused.value), str(refused.value)
 
 
+def test_a_page_reads_the_chain_and_not_the_row(regtest, db, book):
+    """`piece_held` is the one answer a listing page is allowed to show.
+
+    An open row and a spent piece are both true at the same time, and a page
+    that read the row would advertise a piece that no longer exists. This is
+    the same reading `paste_leg` refuses on, which is the reason for having one
+    function give the answer instead of a page and a combiner each computing
+    their own.
+    """
+    rpc = regtest.rpc
+    listing, _seller_key, seller = _listed(rpc, db, book, SELLER)
+    assert listings.piece_held(rpc, listing) == int(listing["input"]["value"]), \
+        "a piece that is sitting there has to read as sitting there"
+
+    piece = int(listing["input"]["value"])
+    fee = funding.price(1, [(0, p2pkh_script(seller))], RATE, change=True)
+    away = funding.build(db, PARAMS, seller, [(piece - fee,
+                                               p2pkh_script(seller))],
+                         rate=RATE, what="withdrawing it")
+    gone = funding.assemble(away, [_sign(SELLER, bytes.fromhex(h)).hex()
+                                   for h in away.sighashes], _pubkey(SELLER))
+    rpc.call("sendrawtransaction", gone)
+    rpc.call("generate", 1)
+
+    assert listings.piece_held(rpc, listing) is None, \
+        "the only cancellation there is happened, and this is where it shows"
+    assert book.get(listing["id"])["status"] == "open", \
+        "the row was left alone, which is the honest half of the story"
+
+
 def test_a_buyer_cannot_pay_for_a_listing_out_of_the_sellers_coins(regtest, db,
                                                                   book):
     """`swap.countersign`'s oldest rule, carried to the path that has no seller.
