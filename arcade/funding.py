@@ -37,7 +37,7 @@ from typing import Any
 from . import fees, utxos
 from .config import Params
 from .script import b58check_decode
-from .txbuild import build_raw_tx, p2pkh_script, push, varint
+from .txbuild import build_raw_tx, op_return_script, p2pkh_script, push, varint
 
 #: What an input costs once it is signed: the outpoint, the sequence number
 #: and a P2PKH scriptSig. Not a guess dressed as a fact: it is recomputed
@@ -192,12 +192,13 @@ def sighash(raw_inputs: list[dict], outputs: list[tuple[int, bytes]],
     and an output list `index + 1` long -- each slot BEFORE this one's
     serialised empty, at value -1 and no script, and the output standing at
     this input's own index for real. At index 0 that is one input and one
-    output, which is what `build_leg` builds and why it is built one-in and
-    one-out; at index 1 it is NOT index 0's shape with one more output beside
+    output; at index 1 it is NOT index 0's shape with one more output beside
     it, and a digest that assumed so is a signature no node will ever agree
-    with. Settled against a real pepecoind rather than against the
-    algorithm's prose -- see `test_funding_leg.py`, "which output a signature
-    has to be standing over".
+    with. `build_leg` asks for both of them at once, and its shape -- the piece
+    at input 0 standing over the payload, a coin of the seller's at input 1
+    standing over the payment -- is that rule rather than a preference. Settled
+    against a real pepecoind rather than against the algorithm's prose -- see
+    `test_funding_leg.py`, "which output a signature has to be standing over".
 
     A SINGLE type whose index runs past the end of the outputs is refused
     rather than computed. The legacy rule substitutes the constant
@@ -394,7 +395,8 @@ def assemble(unsigned: Unsigned, signatures: list[str], pubkey: bytes) -> str:
 
 @dataclass
 class Leg:
-    """What a seller signs before it knows its buyer: one coin in, one out.
+    """What a seller signs before it knows its buyer: its own coins in, and
+    the one payment it will accept out.
 
     Not an `Unsigned`. An `Unsigned` is a transaction waiting for signatures
     and there is exactly one of those in flight; a `Leg` is half of one that
@@ -402,18 +404,38 @@ class Leg:
     going to receive a signature over this and then build the rest of the
     transaction around it, so the type that says "this was signed first, on
     its own" has to be a different type.
+
+    It is one input and one output when it commits to nothing but a payment,
+    which is honest for a coin -- a coin has nothing else to promise. It is two
+    of each the moment it names the thing being sold, because a `SINGLE`
+    signature reaches the output standing at its own input's index and no
+    other: an output that has to be committed to needs an input standing under
+    it. So the piece is input 0 and signs the payload, and a coin of the
+    seller's own is input 1 and signs the payment. `sighashes` is one digest
+    per input, index for index with `inputs`, and a leg whose second signature
+    is missing commits to a payment and calls it a sale.
     """
 
     raw: str
-    input: dict[str, Any]
-    output: tuple[int, bytes]
-    sighash: str
+    #: The seller's own inputs, signing order first: the piece, then the coin
+    #: behind the second signature when there is one.
+    inputs: list[dict[str, Any]]
+    #: Output 0 is the payload when the leg names a thing, and the payment when
+    #: it does not. The payment is always the last of them.
+    outputs: list[tuple[int, bytes]]
+    #: One digest per input, in signing order.
+    sighashes: list[str]
     fee: int
-    #: What the seller's output pays, and to whom: its own coin back plus the
+    #: What the seller's output pays, and to whom: its own coins back plus the
     #: price, less the fee it reserved. The buyer sees this number, and the
     #: paste checks the finished transaction still pays it.
     pays: str
     paid: int
+    #: The bytes output 0 carries, or nothing. This is the reason for the
+    #: two-input shape, so it is carried here and stored by `listings` rather
+    #: than derived: what a buyer is shown about a listing is read out of these
+    #: bytes, and a completion that changes them is refused.
+    payload: bytes = b""
     #: The type the browser must sign with. Not a knob to turn: it is
     #: SINGLE|ANYONECANPAY or the leg would commit to coins the seller has
     #: never seen.
@@ -423,24 +445,26 @@ class Leg:
     def as_json(self) -> dict:
         return {
             "raw": self.raw,
-            "input": {"txid": self.input["txid"], "vout": self.input["vout"],
-                      "value": self.input["value"],
-                      "address": self.input.get("address", "")},
-            "output": {"value": self.output[0],
-                       "script": self.output[1].hex()},
-            "sighash": self.sighash,
+            "inputs": [{"txid": i["txid"], "vout": i["vout"],
+                        "value": i["value"], "address": i.get("address", "")}
+                       for i in self.inputs],
+            "outputs": [{"value": value, "script": script.hex()}
+                        for value, script in self.outputs],
+            "sighashes": self.sighashes,
             "sighash_type": self.sighash_type,
             "fee": self.fee,
             "pays": self.pays,
             "paid": self.paid,
+            "payload": self.payload.hex(),
             "what": self.what,
         }
 
 
-#: What the finished swap costs the seller to reserve against: its own signed
-#: input, the buyer's input, the payment to the seller, the piece to the buyer,
-#: and the OP_RETURN carrying the two legs. The buyer's script is not known
-#: when a leg is signed, so this is an estimate of a P2PKH.
+#: What the finished swap costs the seller to reserve against: the leg's own
+#: input or two, the buyer's input, the payment to the seller, the buyer's
+#: change, and the OP_RETURN naming what changed hands. The buyer's script is
+#: not known when a leg is signed, so both of its outputs are priced as a
+#: P2PKH by shape.
 #:
 #: An estimate, and deliberately generous rather than tight: a leg that
 #: reserves too little is a listing whose transactions will not confirm, and a
@@ -456,7 +480,7 @@ SWAP_INPUTS = 2
 P2PKH_SHAPE = bytes([0x76, 0xa9, 0x14]) + b"\x00" * 20 + bytes([0x88, 0xac])
 
 
-def swap_fee(rate: int, payload_bytes: int = 0) -> int:
+def swap_fee(rate: int, payload_script: bytes = b"") -> int:
     """What the finished swap will cost, as closely as a listing can know it.
 
     This is the seller's CONTRIBUTION to the fee, not the fee. The seller's
@@ -468,27 +492,51 @@ def swap_fee(rate: int, payload_bytes: int = 0) -> int:
     what a block asks, which is the only way a quiet-market listing fails loudly
     instead of relaying forever. Reserving more than the swap costs buys a
     listing nothing: it moves value from the seller to the buyer's change.
+
+    `payload_script` is the OP_RETURN output as it will really be written, or
+    nothing for a leg that promises only a payment. It decides the count of
+    inputs as well as their size, because the two shapes of leg are different
+    transactions: naming a thing costs the seller one extra input -- the coin
+    behind the signature that output 0 needs -- on top of the buyer's.
     """
     outputs = [(0, P2PKH_SHAPE), (0, P2PKH_SHAPE)]
-    if payload_bytes:
-        outputs.append((0, b"\x6a" + varint(payload_bytes) + b"\x00" * payload_bytes))
+    if payload_script:
+        outputs.append((0, payload_script))
+        return price(SWAP_INPUTS + 1, outputs, rate)
     return price(SWAP_INPUTS, outputs, rate)
 
 
 def build_leg(params: Params, address: str, piece: dict, coins: int,
-              rate: int, what: str = "", payload_bytes: int = 0) -> Leg:
-    """The transaction a seller signs to LIST: that one coin in, that one payment out.
+              rate: int, what: str = "", payload: bytes | None = None,
+              coin: dict | None = None) -> Leg:
+    """The transaction a seller signs to LIST: its own coins in, one payment
+    out, and -- when it names the thing it is selling -- the bytes that say so.
 
     The other half of `build_partial`, and its mirror in one respect that
     matters: `build_partial` is what a BUYER signs when it already knows what
     it is buying, and this is what a SELLER signs when it cannot yet know who
     is buying. A listing has to promise the piece before a buyer exists, so
     the signature has to be over as little of a transaction as can possibly be
-    honest -- one input, the piece, and one output, the payment this seller
-    will accept and nothing else. That is what `SINGLE|ANYONECANPAY` buys, and
-    it only works because this transaction is one input wide: `SINGLE` commits
-    to the output at the signed input's own index, and building it any other
-    way would leave that rule to chance.
+    honest -- the seller's own inputs, and the outputs it is willing to accept.
+    That is what `SINGLE|ANYONECANPAY` buys, and the shape below is that rule
+    followed out rather than a layout anyone picked: `SINGLE` commits to the
+    output standing at the signed input's index, so every output worth
+    committing to needs an input standing under it. The piece is input 0 and
+    signs the payload; `coin` is input 1 and signs the payment.
+
+    `payload` is what output 0 will carry, the OP_RETURN data, and it is the
+    reason a leg that sells a thing looks different from a leg that sells a
+    coin: without it there is one input and one output, and the payment is
+    every atom of what the signature reaches. That is honest for a coin, which
+    has nothing else to promise, and it is the whole reason
+    `test_a_leg_that_signs_its_payment_only_cannot_name_the_piece` ends the way
+    it does. An asset surface that built one would be advertising a piece its
+    seller's signature says nothing about.
+
+    `coin` is the seller's own -- a second outpoint at `address`, named by the
+    caller the same way `piece` is, because this function looks nothing up.
+    Its value is not needed for anything except the arithmetic: it is there to
+    be the second input, and it comes back to the seller inside `paid`.
 
     The fee is reserved here, at listing time, because the seller's output is
     fixed the moment it signs and cannot be adjusted later: whatever the
@@ -509,20 +557,56 @@ def build_leg(params: Params, address: str, piece: dict, coins: int,
     if coins < 0:
         raise FundingError("a price below nothing is not a price")
 
-    fee = swap_fee(rate, payload_bytes)
-    paid = value + coins - fee
+    payload = bytes(payload or b"")
+    if payload and coin is None:
+        raise FundingError(
+            "a leg that names what it sells needs a second coin of the "
+            "seller's to stand under its payment. One input signs one output, "
+            "and that output has to be the payment, so the bytes naming the "
+            "piece would be sitting in the transaction signed by nobody")
+    if coin is not None and not payload:
+        raise FundingError(
+            f"{str(coin.get('txid') or '')[:16]}… was given as a second input "
+            f"to a leg that names nothing, and a second input exists only to "
+            f"carry the second signature a payload needs")
+
+    inputs = [{"txid": txid, "vout": vout, "value": value, "address": address}]
+    if coin is not None:
+        ctxid = str(coin.get("txid") or "")
+        cvout, cvalue = int(coin.get("vout", -1)), int(coin.get("value", 0))
+        if len(ctxid) != 64 or cvout < 0 or cvalue <= 0:
+            raise FundingError("that is not a coin to sign a second output "
+                               "with: it needs a 32-byte txid, an index, and an "
+                               "amount above nothing")
+        if (ctxid, cvout) == (txid, vout):
+            raise FundingError(
+                f"{ctxid[:16]}…:{cvout} was handed as both the piece and the "
+                f"coin behind the second signature. A transaction that spends "
+                f"one outpoint twice is invalid, and this one would also be "
+                f"signing the same coin over two different outputs")
+        owner = str(coin.get("address") or "")
+        if owner and owner != address:
+            raise FundingError(f"{ctxid[:16]}…:{cvout} belongs to {owner}, not "
+                               f"to {address}, so this wallet cannot sign a "
+                               f"second input out of it")
+        inputs.append({"txid": ctxid, "vout": cvout, "value": cvalue,
+                       "address": address})
+
+    payload_script = op_return_script(payload) if payload else b""
+    fee = swap_fee(rate, payload_script)
+    held = sum(spent["value"] for spent in inputs)
+    paid = held + coins - fee
     if paid <= 0:
         raise FundingError(
             f"the price ({coins} sats) does not cover what a block costs "
-            f"({fee} sats) plus keeping the coin ({value} sats), so there is "
-            f"no output this seller could sign")
+            f"({fee} sats) plus keeping what is being sold ({held} sats), so "
+            f"there is no output this seller could sign")
 
     script = p2pkh_script(address)
-    outputs = [(paid, script)]
-    raw = build_raw_tx([(txid, vout)], outputs)
-    digest = sighash([{"txid": txid, "vout": vout, "value": value}], outputs,
-                     0, script, sighash_type=SINGLE_ANYONECANPAY)
-    return Leg(raw=raw, input={"txid": txid, "vout": vout, "value": value,
-                               "address": address},
-               output=outputs[0], sighash=digest.hex(), fee=fee,
-               pays=address, paid=paid, what=what)
+    outputs = ([(0, payload_script)] if payload else []) + [(paid, script)]
+    raw = build_raw_tx([(c["txid"], c["vout"]) for c in inputs], outputs)
+    digests = [sighash(inputs, outputs, n, script,
+                       sighash_type=SINGLE_ANYONECANPAY).hex()
+               for n in range(len(inputs))]
+    return Leg(raw=raw, inputs=inputs, outputs=outputs, sighashes=digests,
+               fee=fee, pays=address, paid=paid, payload=payload, what=what)

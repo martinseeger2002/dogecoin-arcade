@@ -114,14 +114,20 @@ def test_a_leg_is_one_coin_in_and_one_payment_out():
     The seller's output is its own coin back plus the price less the fee it
     reserved. That number is fixed the moment it signs, so getting it wrong is
     not a mistake a later step can correct.
+
+    This is the shape a LEG FOR A COIN keeps: nothing but a payment to commit
+    to, so nothing but a payment is committed to. What a leg that names a thing
+    looks like is below, in "a leg that names a thing signs it twice".
     """
     piece = {"txid": "ab" * 32, "vout": 1, "value": 3 * COIN, "address": SELLER}
     leg = funding.build_leg(PARAMS, SELLER, piece, coins=1 * COIN, rate=RATE)
 
-    assert leg.input["txid"] == piece["txid"] and leg.input["vout"] == 1
-    assert leg.output[1] == p2pkh_script(SELLER), "it pays the seller, not the node"
+    assert [i["txid"] for i in leg.inputs] == [piece["txid"]]
+    assert leg.inputs[0]["vout"] == 1
+    assert leg.outputs[-1][1] == p2pkh_script(SELLER), "it pays the seller, not the node"
     assert leg.paid == 3 * COIN + 1 * COIN - leg.fee
-    assert leg.output[0] == leg.paid
+    assert leg.outputs[-1][0] == leg.paid
+    assert leg.payload == b"", "a coin has nothing to say beyond its payment"
     assert leg.fee == funding.swap_fee(RATE), "the reservation is the swap's real cost"
     assert leg.sighash_type == funding.SINGLE_ANYONECANPAY == 0x83
 
@@ -130,9 +136,9 @@ def test_a_leg_is_one_coin_in_and_one_payment_out():
     raw = bytes.fromhex(leg.raw)
     assert raw[4] == 1, "one input"
     assert raw[5 + BLANK_INPUT] == 1, "one output, at index 0, the one it signed"
-    assert leg.sighash == funding.sighash(
+    assert leg.sighashes == [funding.sighash(
         [piece], [(leg.paid, p2pkh_script(SELLER))], 0,
-        p2pkh_script(SELLER), sighash_type=funding.SINGLE_ANYONECANPAY).hex()
+        p2pkh_script(SELLER), sighash_type=funding.SINGLE_ANYONECANPAY).hex()]
 
 
 def test_the_leg_commits_to_its_payment_and_to_nothing_else():
@@ -148,7 +154,7 @@ def test_the_leg_commits_to_its_payment_and_to_nothing_else():
     paid = leg.paid
     mine = funding.sighash([piece], [(paid, script)], 0, script,
                            sighash_type=funding.SINGLE_ANYONECANPAY)
-    assert leg.sighash == mine.hex()
+    assert leg.sighashes == [mine.hex()]
 
     buyer = {"txid": "ee" * 32, "vout": 3, "value": 4 * COIN, "address": BUYER}
     theirs = (3 * COIN, p2pkh_script(BUYER))
@@ -227,7 +233,7 @@ def test_a_leg_signed_before_the_buyer_existed_unlocks_the_coin(regtest, db):
 
     price = int(1.0 * COIN)
     leg = funding.build_leg(PARAMS, seller, piece, coins=price, rate=RATE)
-    signed = _sign(secret, bytes.fromhex(leg.sighash),
+    signed = _sign(secret, bytes.fromhex(leg.sighashes[0]),
                    funding.SINGLE_ANYONECANPAY)
     leg_sig = push(signed) + push(pubkey)
 
@@ -244,7 +250,7 @@ def test_a_leg_signed_before_the_buyer_existed_unlocks_the_coin(regtest, db):
 
     finished = build_raw_tx(
         [(piece["txid"], piece["vout"]), (theirs["txid"], theirs["vout"])],
-        [leg.output, (back, p2pkh_script(buyer))])
+        [leg.outputs[-1], (back, p2pkh_script(buyer))])
     half = _paste(finished, 0, leg_sig)
 
     done = rpc.call("signrawtransaction", half)
@@ -263,7 +269,7 @@ def test_a_leg_signed_before_the_buyer_existed_unlocks_the_coin(regtest, db):
     # not an amount.
     landed = rpc.call("getrawtransaction", taken, True)["vout"]
     assert any(int(round(out["value"] * COIN)) == leg.paid
-               and out["scriptPubKey"]["hex"] == leg.output[1].hex()
+               and out["scriptPubKey"]["hex"] == leg.outputs[-1][1].hex()
                for out in landed), \
         "the payment the seller signed is not the payment it got"
 
@@ -281,7 +287,7 @@ def test_a_leg_whose_payment_was_changed_after_signing_is_refused(regtest, db):
     price = int(1.0 * COIN)
 
     leg = funding.build_leg(PARAMS, seller, piece, coins=price, rate=RATE)
-    signed = _sign(secret, bytes.fromhex(leg.sighash),
+    signed = _sign(secret, bytes.fromhex(leg.sighashes[0]),
                    funding.SINGLE_ANYONECANPAY)
 
     buyer = rpc.call("getnewaddress")
@@ -293,7 +299,7 @@ def test_a_leg_whose_payment_was_changed_after_signing_is_refused(regtest, db):
     back = theirs_value - price - 10_000
     assert back > 546
 
-    grown = (leg.paid + 10_000, leg.output[1])
+    grown = (leg.paid + 10_000, leg.outputs[-1][1])
     finished = build_raw_tx(
         [(piece["txid"], piece["vout"]), (theirs["txid"], theirs["vout"])],
         [grown, (back, p2pkh_script(buyer))])
@@ -310,17 +316,25 @@ def test_a_leg_whose_payment_was_changed_after_signing_is_refused(regtest, db):
 #
 # A leg that names its payment and nothing else is an order against every piece
 # the seller holds: whoever completes it writes the payload, and the signature
-# says nothing about what it says. Closing that means a SECOND digest, over the
+# says nothing about what it says. Closing that needs a SECOND digest, over the
 # output that carries the payload, which is only honest if a real node takes two
 # signatures at two different input indices -- and takes the second one as
 # covering the second output.
 #
-# What the node answered, and what these tests then hold: a SINGLE preimage at
-# index i carries the signed input ALONE and `i + 1` output slots, the ones
-# before i written empty (value -1, no script) and only the one at i for real.
-# At index 0 that is what this file always built, so a digest for a second
-# input is not index 0's shape with an output added beside it, and the code that
-# thought otherwise produced a signature no node would ever take.
+# What the node answered, and what these tests hold: a SINGLE preimage at index
+# i carries the signed input ALONE and `i + 1` output slots, the ones before i
+# written empty (value -1, no script) and only the one at i for real. At index 0
+# that is what this file always built, so a digest for a second input is not
+# index 0's shape with an output added beside it, and the code that thought
+# otherwise produced a signature no node would ever take. `build_leg` now builds
+# that second digest itself, and the tests below ask it rather than hand-rolling
+# the digests -- which is the only way they catch the builder getting the shape
+# wrong rather than the hasher.
+
+
+def _named(what: bytes) -> bytes:
+    """Payload DATA for `build_leg`, which takes the bytes and writes the output."""
+    return b"arc-swap" + what
 
 
 def _payload(what: bytes) -> bytes:
@@ -333,7 +347,7 @@ def _payload(what: bytes) -> bytes:
     (`state.Engine._swap`), not from any output -- so the only thing here that
     can be wrong is which output a signature stands over.
     """
-    return op_return_script(b"arc-swap" + what)
+    return op_return_script(_named(what))
 
 
 def _two_coins(rpc, db, seller: str) -> list[dict]:
@@ -500,12 +514,14 @@ def test_a_byte_changed_in_a_pinned_payload_is_refused_by_the_node(regtest, db):
 def test_a_leg_that_signs_its_payment_only_cannot_name_the_piece(regtest, db):
     """The hole a second digest closes, shown rather than described.
 
-    This is a leg as it is built today: one input, its own payment, and the
-    payload left to whoever completes the listing. Two payloads that name two
-    different pieces give the SAME digest, so one signature is good for both,
-    and the node takes the transaction without ever having been shown either.
-    A listing like that is not an order for one piece; it is an order for
-    whichever piece the completer chose to write.
+    This is a leg built with no payload, which is what a COIN still uses and is
+    honest for: one input, its own payment, and whatever the completer feels
+    like writing. Two payloads that name two different pieces give the SAME
+    digest, so one signature is good for both, and the node takes the
+    transaction without ever having been shown either. A listing like that is not
+    an order for one piece; it is an order for whichever piece the completer chose
+    to write -- which is why `build_leg` refuses to make one for an asset, and why
+    `listings` keeps the bytes in a column of their own.
     """
     rpc = regtest.rpc
     secret = 0x7788990011223344778899001122334477889900112233447788990011223344
@@ -514,31 +530,106 @@ def test_a_leg_that_signs_its_payment_only_cannot_name_the_piece(regtest, db):
     price = int(1.0 * COIN)
 
     leg = funding.build_leg(PARAMS, seller, piece, coins=price, rate=RATE)
-    mine = funding.sighash([piece], [(leg.paid, leg.output[1])], 0,
+    mine = funding.sighash([piece], [(leg.paid, leg.outputs[-1][1])], 0,
                            p2pkh_script(seller),
                            sighash_type=funding.SINGLE_ANYONECANPAY)
-    assert leg.sighash == mine.hex()
+    assert leg.sighashes == [mine.hex()]
 
     # What the seller signed says nothing about either payload, and cannot:
     # `SINGLE` takes the output standing at the signed input's index alone, so
     # an output after it is invisible here. Both completions below are
     # authorised by the one signature above.
     for naming in (b"the-piece" * 3, b"another-piece" * 3):
-        assert funding.sighash([piece], [(leg.paid, leg.output[1]),
+        assert funding.sighash([piece], [(leg.paid, leg.outputs[-1][1]),
                                          (0, _payload(naming))], 0,
                                p2pkh_script(seller),
                                sighash_type=funding.SINGLE_ANYONECANPAY) == mine
 
-    signed = push(_sign(secret, bytes.fromhex(leg.sighash),
+    signed = push(_sign(secret, bytes.fromhex(leg.sighashes[0]),
                         funding.SINGLE_ANYONECANPAY)) + push(pubkey)
     buyer, theirs, back = _buyer_side(rpc, seller, price, 10_000)
     # The payload appended at index 1: an output no signature stands at, since
     # the one signature there is is over the output at index 0.
     finished = build_raw_tx(
         [(piece["txid"], piece["vout"]), (theirs["txid"], theirs["vout"])],
-        [leg.output, (0, _payload(b"the-piece" * 3)), (back, p2pkh_script(buyer))])
+        [leg.outputs[-1], (0, _payload(b"the-piece" * 3)),
+         (back, p2pkh_script(buyer))])
     taken = rpc.call("sendrawtransaction",
                     rpc.call("signrawtransaction", _paste(finished, 0, signed))["hex"])
     assert len(taken) == 64, (
         "the node was expected to take this one happily -- the point is that it "
         f"took a payload it was never shown: {taken}")
+
+
+def test_a_leg_that_names_a_thing_is_two_inputs_and_two_digests():
+    """No node: the shape `build_leg` builds for an asset, in the arithmetic.
+
+    The piece signs the payload and a second coin of the seller's signs the
+    payment, because a `SINGLE` digest reaches the output standing at its own
+    input's index and no other -- so two outputs worth pinning need two inputs
+    standing under them. The seller's second coin pays for nothing: it comes back
+    inside the seller's own output, and its whole job is to be signed at index 1.
+    """
+    piece = {"txid": "ab" * 32, "vout": 0, "value": 3 * COIN, "address": SELLER}
+    spare = {"txid": "cd" * 32, "vout": 1, "value": COIN, "address": SELLER}
+    naming = _named(b"the-piece" * 3)
+    leg = funding.build_leg(PARAMS, SELLER, piece, coins=COIN, rate=RATE,
+                            payload=naming, coin=spare)
+    script = p2pkh_script(SELLER)
+
+    assert [(i["txid"], i["vout"]) for i in leg.inputs] == \
+        [(piece["txid"], 0), (spare["txid"], 1)], \
+        "the piece is input 0: it is the input that makes the seller the seller"
+    assert leg.payload == naming, "the bytes come back out, not a hash of them"
+    assert leg.outputs[0] == (0, op_return_script(naming)), \
+        "what is being sold is output 0, where the first signature reaches"
+    assert leg.outputs[-1] == (leg.paid, script), "and the payment at the other"
+    assert leg.paid == 3 * COIN + COIN + COIN - leg.fee
+    assert leg.fee == funding.swap_fee(RATE, op_return_script(naming)), \
+        "the reservation is priced at the swap this leg becomes: three in, three out"
+
+    raw = bytes.fromhex(leg.raw)
+    assert raw[4] == 2, "two inputs"
+    assert raw[5 + 2 * BLANK_INPUT] == 2, "two outputs, at the two indices they sign"
+    assert leg.sighashes == [
+        funding.sighash([piece, spare], leg.outputs, n, script,
+                        sighash_type=funding.SINGLE_ANYONECANPAY).hex()
+        for n in (0, 1)]
+    assert leg.sighashes[0] != leg.sighashes[1], \
+        "one digest covering both outputs is the mistake the shape exists to avoid"
+
+
+def test_a_leg_cannot_name_a_thing_it_cannot_sign_twice():
+    """Each way the two-input shape can be got wrong, refused where it is built.
+
+    None of these need a chain, and none of them are hypothetical: they are the
+    four ways a caller can ask for a leg that says it sells something while
+    signing only what it is paid for it.
+    """
+    piece = {"txid": "ab" * 32, "vout": 0, "value": 3 * COIN, "address": SELLER}
+    spare = {"txid": "cd" * 32, "vout": 1, "value": COIN, "address": SELLER}
+    naming = _named(b"the-piece" * 3)
+
+    with pytest.raises(funding.FundingError) as refused:
+        funding.build_leg(PARAMS, SELLER, piece, coins=COIN, rate=RATE,
+                          payload=naming)
+    assert "signed by nobody" in str(refused.value), \
+        "a payload with no second input is a payload nobody signed"
+
+    with pytest.raises(funding.FundingError) as refused:
+        funding.build_leg(PARAMS, SELLER, piece, coins=COIN, rate=RATE,
+                          coin=spare)
+    assert "names nothing" in str(refused.value), \
+        "a second input buys a second signature, and buys nothing else"
+
+    with pytest.raises(funding.FundingError) as refused:
+        funding.build_leg(PARAMS, SELLER, piece, coins=COIN, rate=RATE,
+                          payload=naming, coin=piece)
+    assert "twice" in str(refused.value), \
+        "the same outpoint cannot be both the piece and the coin under it"
+
+    with pytest.raises(funding.FundingError) as refused:
+        funding.build_leg(PARAMS, SELLER, piece, coins=COIN, rate=RATE,
+                          payload=naming, coin={**spare, "address": STRANGER})
+    assert "cannot sign a second input" in str(refused.value), \
+        "an input the seller cannot sign is an input nobody signs"

@@ -27,10 +27,10 @@ import pytest
 
 from arcade import fees, funding, listings, utxos
 from arcade.script import b58check_encode, hash160
-from arcade.txbuild import build_raw_tx, p2pkh_script, push
+from arcade.txbuild import build_raw_tx, op_return_script, p2pkh_script, push
 
 from test_funding import COIN, PARAMS, _pubkey, _sign, db
-from test_funding_leg import _coin, _index, _key, _paste
+from test_funding_leg import _coin, _index, _key, _named, _paste, _two_coins
 
 NETWORK = "regtest"
 
@@ -48,6 +48,15 @@ BUYER = 0x6677889900112233667788990011223366778899001122336677889900112233
 #: the chain.
 PIECE = {"txid": "ab" * 32, "vout": 0, "value": 5 * COIN}
 
+#: A second coin of the same seller's, for the same reason. A leg that names
+#: what it sells has two of these, because one signature reaches one output.
+SPARE = {"txid": "cd" * 32, "vout": 2, "value": COIN}
+
+#: What a named listing sells, as payload DATA. Not a valid arcade swap on
+#: purpose: a pepecoind never reads these bytes, it only checks that a
+#: signature stands over the output carrying them.
+NAMING = _named(b"the-piece" * 3)
+
 
 @pytest.fixture
 def book(tmp_path):
@@ -60,9 +69,10 @@ def _listed(rpc, db, book, secret=SELLER, price=COIN, rate=RATE,
     pubkey, address = _key(rpc, db, secret, amount)
     piece = _coin(db, address)
     leg = funding.build_leg(PARAMS, address, piece, coins=price, rate=rate)
-    signature = _sign(secret, bytes.fromhex(leg.sighash),
-                      funding.SINGLE_ANYONECANPAY).hex()
-    listing = book.from_leg(rpc, leg, signature, pubkey, NETWORK, address,
+    signatures = [_sign(secret, bytes.fromhex(digest),
+                        funding.SINGLE_ANYONECANPAY).hex()
+                  for digest in leg.sighashes]
+    listing = book.from_leg(rpc, leg, signatures, pubkey, NETWORK, address,
                             price, LISTED_FOR)
     return listing, pubkey, address
 
@@ -71,7 +81,7 @@ def _asked(rpc, db, secret=SELLER, price=COIN, rate=RATE,
            amount=5.0) -> tuple[funding.Leg, bytes, str]:
     """The half of a listing that exists before a browser has signed anything.
 
-    The leg and its signature are what the second request carries back; nothing
+    The leg and its signatures are what the second request carries back; nothing
     here remembers the first one, which is the thing these tests are about.
     """
     pubkey, address = _key(rpc, db, secret, amount)
@@ -83,11 +93,12 @@ def _asked(rpc, db, secret=SELLER, price=COIN, rate=RATE,
 def _filed(book, rpc, leg, secret, pubkey, address, price=COIN,
            what="a piece, priced"):
     """File a leg the way the route will: bytes in, nothing remembered."""
-    signature = _sign(secret, bytes.fromhex(leg.sighash),
-                      funding.SINGLE_ANYONECANPAY).hex()
-    return book.register(rpc, raw=leg.raw, signature=signature, pubkey=pubkey,
-                         network=NETWORK, owner=address, price=price,
-                         seconds=LISTED_FOR, what=what)
+    signatures = [_sign(secret, bytes.fromhex(digest),
+                        funding.SINGLE_ANYONECANPAY).hex()
+                  for digest in leg.sighashes]
+    return book.register(rpc, raw=leg.raw, signatures=signatures,
+                         pubkey=pubkey, network=NETWORK, owner=address,
+                         price=price, seconds=LISTED_FOR, what=what)
 
 
 def _buy(rpc, db, secret, address, listing, rate=RATE) -> funding.Unsigned:
@@ -108,6 +119,50 @@ def _buy(rpc, db, secret, address, listing, rate=RATE) -> funding.Unsigned:
 
 def _signatures(secret, unsigned: funding.Unsigned) -> list[str]:
     return [_sign(secret, bytes.fromhex(h)).hex() for h in unsigned.sighashes]
+
+
+def _named_listing(rpc, db, book, secret=SELLER, price=COIN, rate=RATE,
+                   amount=5.0, naming: bytes = NAMING) -> tuple[dict, bytes, str]:
+    """A piece put up for sale with the bytes that say what it is.
+
+    `_listed`'s twin in the other shape: two coins of the seller's go in, one to
+    sign the payload and one to sign the payment, because a `SINGLE` signature
+    reaches the output standing at its own input's index and no other.
+
+    `utxos.unspent` answers largest first, so the bigger coin is always the
+    piece. That matters in the tests that spend one of the two: the one they
+    leave behind has to be the one the listing still names.
+    """
+    pubkey, address = _key(rpc, db, secret, amount)
+    piece, spare = _two_coins(rpc, db, address)[:2]
+    leg = funding.build_leg(PARAMS, address, piece, coins=price, rate=rate,
+                            payload=naming, coin=spare)
+    signatures = [_sign(secret, bytes.fromhex(digest),
+                        funding.SINGLE_ANYONECANPAY).hex()
+                  for digest in leg.sighashes]
+    listing = book.from_leg(rpc, leg, signatures, pubkey, NETWORK, address,
+                            price, LISTED_FOR)
+    return listing, pubkey, address
+
+
+def _bid(rpc, db, secret, address, listing, rate=RATE) -> funding.Unsigned:
+    """The buyer's half of a listing that names its piece.
+
+    Both of the seller's coins come first and neither is signed here: input 0 is
+    the piece and input 1 is the coin its second signature stands on. Then the
+    payload at output 0 and the payment at output 1, in that order and nowhere
+    else -- those two positions are what the seller's two digests were made
+    over, and a byte moved between them is a different trade.
+    """
+    piece, coin = listing["input"], listing["coin"]
+    payload = bytes.fromhex(listing["payload"])
+    paid = (int(listing["output"]["value"]),
+            bytes.fromhex(listing["output"]["script"]))
+    return funding.build_partial(
+        db, PARAMS, address, [piece, coin],
+        [(0, op_return_script(payload)), paid,
+         (int(piece["value"]), p2pkh_script(address))],
+        rate=rate, what="a listing that names its piece")
 
 
 def _withdraw(rpc, db, secret, address, value: int) -> str:
@@ -223,7 +278,7 @@ def test_a_leg_is_refused_unless_its_numbers_close(regtest, db, book):
     assert "not built from this piece at this price" in str(refused.value), \
         str(refused.value)
 
-    _withdraw(rpc, db, SELLER, seller, int(leg.input["value"]))
+    _withdraw(rpc, db, SELLER, seller, int(leg.inputs[0]["value"]))
     with pytest.raises(listings.ListingError) as gone:
         _filed(book, rpc, leg, SELLER, seller_key, seller, price=COIN)
     assert "not a piece to list" in str(gone.value), str(gone.value)
@@ -244,18 +299,19 @@ def test_a_leg_is_refused_when_the_bytes_are_not_a_legs(regtest, db, book):
     leg, seller_key, seller = _asked(rpc, db, SELLER, price=COIN)
     with pytest.raises(listings.ListingError) as signed:
         book.register(rpc, raw=leg.raw,
-                      signature=_sign(SELLER, bytes.fromhex(leg.sighash)).hex(),
+                      signatures=[_sign(SELLER, bytes.fromhex(leg.sighashes[0]),
+                                        funding.SIGHASH_ALL).hex()],
                       pubkey=seller_key, network=NETWORK, owner=seller,
                       price=COIN, seconds=LISTED_FOR)
     assert "SINGLE|ANYONECANPAY" in str(signed.value), str(signed.value)
 
-    pasted = listings.sign_leg(leg, _sign(SELLER, bytes.fromhex(leg.sighash),
-                                         funding.SINGLE_ANYONECANPAY).hex(),
-                               seller_key)
+    pasted = listings.sign_leg(
+        leg, [_sign(SELLER, bytes.fromhex(leg.sighashes[0]),
+                    funding.SINGLE_ANYONECANPAY).hex()], seller_key)
     with pytest.raises(listings.ListingError) as twice:
         book.register(rpc, raw=pasted,
-                      signature=_sign(SELLER, bytes.fromhex(leg.sighash),
-                                      funding.SINGLE_ANYONECANPAY).hex(),
+                      signatures=[_sign(SELLER, bytes.fromhex(leg.sighashes[0]),
+                                        funding.SINGLE_ANYONECANPAY).hex()],
                       pubkey=seller_key, network=NETWORK, owner=seller,
                       price=COIN, seconds=LISTED_FOR)
     assert "already has a scriptSig" in str(twice.value), str(twice.value)
@@ -362,6 +418,143 @@ def test_a_finished_swap_that_shorts_the_block_is_refused(regtest, db, book):
     assert "for a block and it costs" in str(refused.value), str(refused.value)
 
 
+# --- listings that say what they sell ----------------------------------------
+#
+# Everything above trades a coin, where the coin IS the thing and one signature
+# over one payment says the whole deal. Below is a listing that names a piece:
+# the bytes that identify it ride in the swap as an output, and they are pinned
+# by a second signature over a second coin of the seller's. That is two digests
+# instead of one, which is two chances to get the pairing wrong, and the refusals
+# below are each one of those ways.
+
+def test_a_listing_that_names_its_piece_fills_unchanged(regtest, db, book):
+    """List, buy, broadcast, mine -- with the description riding along.
+
+    Nothing here needed the node to be trusted with a key: the seller signed the
+    payload before it had a buyer, the buyer read the bytes off the listing and
+    paid for a transaction carrying exactly those, and a pepecoind checked two
+    signatures and read none of the bytes. What a block took is the proof.
+    """
+    rpc = regtest.rpc
+    listing, _seller_key, seller = _named_listing(rpc, db, book)
+    assert listing["payload"] == NAMING.hex(), \
+        "the row holds the bytes, not a hash of them"
+    assert listing["coin"] and listing["coin"]["txid"] != \
+        listing["input"]["txid"], "the second signature stands on its own coin"
+    assert listing["fee"] == funding.swap_fee(RATE, op_return_script(NAMING)), \
+        "the reservation is priced at the swap this listing became"
+
+    buyer_key, buyer = _key(rpc, db, BUYER, 8.0)
+    half = _bid(rpc, db, BUYER, buyer, listing)
+    assert half.signed_from == 2, \
+        "both of the seller's coins are in front, and neither is ours to sign"
+    assert half.outputs[0] == (0, op_return_script(NAMING))
+
+    raw = listings.paste_leg(rpc, listing, half, _signatures(BUYER, half),
+                             buyer_key)
+    filled = rpc.call("sendrawtransaction", raw)
+    rpc.call("generate", 1)
+    assert len(filled) == 64 and rpc.call("getrawtransaction", filled, 1)["confirmations"] >= 1, \
+        "a block would not take a swap signed over the wrong output"
+
+    landed = _landed(rpc, filled)
+    assert (0, op_return_script(NAMING).hex()) in landed, \
+        "the block does not say what was sold, which was the whole point"
+    assert (int(listing["output"]["value"]),
+            listing["output"]["script"]) in landed, \
+        "the seller was not paid what its own second signature committed to"
+    assert (int(listing["input"]["value"]), p2pkh_script(buyer).hex()) in landed, \
+        "the buyer did not end up holding the piece it paid for"
+    assert len(landed) == 4, "payload, seller, piece, change: an output nobody counted"
+
+    book.close(listing["id"], "filled", spent_by=filled)
+    assert book.get(listing["id"])["status"] == "filled"
+
+
+def test_a_completion_that_rewrites_the_bytes_is_refused(regtest, db, book):
+    """One byte changed, in the payload and nowhere else.
+
+    Every other check in `paste_leg` passes this completion -- the payment is
+    exactly as listed, both of the seller's coins are in place, the buyer's
+    coins are real and its change is honest. A coin-only listing cannot tell
+    the difference, which is precisely why the payload is compared here: output
+    0 is the one output the seller's FIRST signature reaches, and a buyer that
+    quietly renamed the piece would be spending against a signature over a
+    thing its seller never agreed to sell.
+    """
+    rpc = regtest.rpc
+    listing, _seller_key, _seller = _named_listing(rpc, db, book)
+    buyer_key, buyer = _key(rpc, db, BUYER, 8.0)
+    half = _bid(rpc, db, BUYER, buyer, listing)
+    script = half.outputs[0][1]
+    rewritten = funding.Unsigned(
+        raw=half.raw, inputs=half.inputs,
+        outputs=[(0, script[:-1] + bytes([script[-1] ^ 0x01]))]
+        + list(half.outputs[1:]),
+        sighashes=half.sighashes, what=half.what,
+        signed_from=half.signed_from)
+
+    with pytest.raises(listings.ListingError) as refused:
+        listings.paste_leg(rpc, listing, rewritten,
+                           _signatures(BUYER, rewritten), buyer_key)
+    assert "does not carry the bytes this listing sells" in str(refused.value), \
+        str(refused.value)
+
+
+def test_a_listing_whose_second_coin_is_spent_is_refused(regtest, db, book):
+    """The seller spent the coin behind its own second signature, and not the piece.
+
+    This is the new failure the second input brings: the listing is still
+    halfway alive. `piece_held` still says the piece is sitting there, so the
+    page still advertises it, and it is right to -- but the payment on it is now
+    signed by nothing, because the outpoint that signature stands on is in
+    somebody else's transaction. Completing it would pay a seller out of a
+    signature the chain has already walked past.
+
+    So this one is not cancelled and has to say so differently: the seller has
+    to go build a new leg out of coins it still holds.
+    """
+    rpc = regtest.rpc
+    listing, _seller_key, seller = _named_listing(rpc, db, book)
+    assert listings.piece_held(rpc, listing) == int(listing["input"]["value"])
+
+    _withdraw(rpc, db, SELLER, seller, int(listing["coin"]["value"]))
+
+    assert listings.piece_held(rpc, listing) == int(listing["input"]["value"]), \
+        "the piece is untouched -- this is not a listing being cancelled"
+    with pytest.raises(listings.ListingError) as refused:
+        listings.paste_leg(rpc, listing, _no_half(), [], _pubkey(BUYER))
+    assert "the coin the seller's second signature stands on" in (
+        str(refused.value)), str(refused.value)
+    assert book.get(listing["id"])["status"] == "open", \
+        "the row is the honest half of the story: nothing here could cancel it"
+
+
+def test_a_leg_signed_once_is_not_a_listing_that_names_a_thing(regtest, db, book):
+    """What a browser that lost half its work would post back.
+
+    Filed, the row would advertise the payload as sold while the only signature
+    behind it was made over the payment -- which says nothing about any piece.
+    The count comes out of the leg's own inputs, so refusing it asks nothing of
+    a memory of what this node once offered.
+    """
+    rpc = regtest.rpc
+    pubkey, seller = _key(rpc, db, SELLER, 5.0)
+    piece, spare = _two_coins(rpc, db, seller)[:2]
+    leg = funding.build_leg(PARAMS, seller, piece, coins=COIN, rate=RATE,
+                            payload=NAMING, coin=spare)
+    one = _sign(SELLER, bytes.fromhex(leg.sighashes[0]),
+                funding.SINGLE_ANYONECANPAY).hex()
+
+    with pytest.raises(listings.ListingError) as refused:
+        book.register(rpc, raw=leg.raw, signatures=[one], pubkey=pubkey,
+                      network=NETWORK, owner=seller, price=COIN,
+                      seconds=LISTED_FOR, what="a piece, named")
+    assert "signature came with it" in str(refused.value), str(refused.value)
+    assert book.open_listings(NETWORK) == [], \
+        "a leg with an unsigned output is not a listing to put on a page"
+
+
 def test_a_row_whose_numbers_do_not_match_its_leg_is_refused(regtest):
     """A listing page reads its price straight out of this table.
 
@@ -420,10 +613,16 @@ def test_a_leg_signed_by_a_key_that_is_not_the_listed_address_is_refused(regtest
         str(refused.value))
 
 
-def test_a_leg_that_is_not_one_in_and_one_out_is_refused(regtest):
+def test_a_leg_that_does_not_sign_one_output_each_is_refused(regtest):
     """Not a style rule. `SINGLE` binds an output to its input's INDEX, so a leg
-    with a second input, or a second output, is a signature over a transaction
-    nobody described to the signer."""
+    with a second input and one output, or a second output and one input, is a
+    signature over a transaction nobody described to the signer.
+
+    Two inputs and two outputs IS a leg -- that is the shape that names a piece
+    -- and `test_a_listing_that_names_its_piece_fills_unchanged` is the proof.
+    What is refused here is a leg whose counts disagree, because then one of its
+    two outputs is signed by nothing.
+    """
     rpc = regtest.rpc
     row = _row(SELLER)
     wider = build_raw_tx([(PIECE["txid"], PIECE["vout"]),
@@ -432,7 +631,7 @@ def test_a_leg_that_is_not_one_in_and_one_out_is_refused(regtest):
                            bytes.fromhex(row["output"]["script"]))])
     with pytest.raises(listings.ListingError) as refused:
         listings.check_leg(rpc, {**row, "leg": _script_into(wider, row["leg"])})
-    assert "one coin in and one payment out" in str(refused.value), (
+    assert "one output for every signature" in str(refused.value), (
         str(refused.value))
 
     paid = int(row["output"]["value"])
@@ -441,7 +640,7 @@ def test_a_leg_that_is_not_one_in_and_one_out_is_refused(regtest):
                            (paid - paid // 2, p2pkh_script(row["owner"]))])
     with pytest.raises(listings.ListingError) as refused:
         listings.check_leg(rpc, {**row, "leg": _script_into(taller, row["leg"])})
-    assert "one coin in and one payment out" in str(refused.value), (
+    assert "one output for every signature" in str(refused.value), (
         str(refused.value))
 
 
@@ -513,6 +712,11 @@ def test_a_listing_shows_a_buyer_its_terms_and_not_its_bookkeeping(regtest):
     assert "status" not in shown and "spent_by" not in shown
     assert shown["leg"] == row["leg"] and shown["price"] == COIN
 
+    named_row = _named_row(SELLER, NAMING)
+    named = listings.public(named_row)
+    assert named["payload"] == NAMING.hex() and named["coin"] == named_row["coin"], \
+        "a buyer cannot complete a named listing without the bytes and the coin"
+
 
 # --- the parts of a listing that never needed a chain -------------------------
 
@@ -558,10 +762,83 @@ def _row(secret: int, created: float | None = None) -> dict:
         "network": NETWORK, "owner": address, "leg": _leg_of(secret),
         "input": {"txid": PIECE["txid"], "vout": PIECE["vout"],
                   "value": PIECE["value"]},
+        "coin": None, "payload": "",
         "output": {"value": paid, "script": p2pkh_script(address).hex()},
         "fee": fee, "price": COIN, "what": "a piece", "status": "open",
         "created": now, "expires": now + LISTED_FOR, "spent_by": None,
     }
+
+
+def _named_row(secret: int, naming: bytes) -> dict:
+    """The same, for a leg that NAMES the piece it sells: two inputs, two digests.
+
+    `_row`'s mirror in the other shape. Nothing here asks a chain either, so the
+    drift a listing page is exposed to -- a column disagreeing with the bytes it
+    is a column for -- can be shown without one.
+    """
+    _pub, address = _address_of(secret)
+    script = p2pkh_script(address)
+    fee = funding.swap_fee(RATE, op_return_script(naming))
+    paid = PIECE["value"] + SPARE["value"] + COIN - fee
+    outputs = [(0, op_return_script(naming)), (paid, script)]
+    digests = [funding.sighash([PIECE, SPARE], outputs, n, script,
+                               sighash_type=funding.SINGLE_ANYONECANPAY)
+               for n in (0, 1)]
+    unsigned = funding.build_raw_tx([(PIECE["txid"], PIECE["vout"]),
+                                     (SPARE["txid"], SPARE["vout"])], outputs)
+    signed = unsigned
+    for n in (1, 0):          # descending: `_paste` counts blank inputs from the front
+        signed = _paste(signed, n,
+                        push(_sign(secret, digests[n],
+                                   funding.SINGLE_ANYONECANPAY))
+                        + push(_pubkey(secret)))
+    now = time.time()
+    return {
+        "id": "named-" + format(secret & 0xFFFFFF, "x"),
+        "network": NETWORK, "owner": address, "leg": signed,
+        "input": {"txid": PIECE["txid"], "vout": PIECE["vout"],
+                  "value": PIECE["value"]},
+        "coin": {"txid": SPARE["txid"], "vout": SPARE["vout"],
+                 "value": SPARE["value"]},
+        "payload": naming.hex(),
+        "output": {"value": paid, "script": script.hex()},
+        "fee": fee, "price": COIN, "what": "a named piece", "status": "open",
+        "created": now, "expires": now + LISTED_FOR, "spent_by": None,
+    }
+
+
+def test_a_row_cannot_drift_from_the_bytes_it_names(regtest):
+    """The three columns a named listing adds, each moved by one, each refused.
+
+    A coin listing has four numbers to keep honest and all four are arithmetic,
+    which is why `check_leg` can derive the price. A listing that names a piece
+    gains a fifth that is not arithmetic at all -- the payload -- and a second
+    outpoint that has to be the very one its signature stands on. Those are the
+    columns a page renders in words, so the drift is proven here rather than
+    assumed impossible: an UPDATE that wrote one and not the other is the whole
+    of what a listing page would then be lying about.
+    """
+    rpc = regtest.rpc
+    row = _named_row(SELLER, NAMING)
+    listings.check_leg(rpc, row)          # the honest one, so the rest mean something
+
+    with pytest.raises(listings.ListingError) as renamed:
+        listings.check_leg(rpc, {**row, "payload": _named(b"another-piece" * 3).hex()})
+    assert "are not the bytes this listing says it sells" in (
+        str(renamed.value)), str(renamed.value)
+
+    with pytest.raises(listings.ListingError) as quiet:
+        listings.check_leg(rpc, {**row, "payload": ""})
+    assert "this row says it carries none" in str(quiet.value), str(quiet.value)
+
+    with pytest.raises(listings.ListingError) as unbacked:
+        listings.check_leg(rpc, {**row, "coin": None})
+    assert "names no coin beside it" in str(unbacked.value), str(unbacked.value)
+
+    with pytest.raises(listings.ListingError) as elsewhere:
+        listings.check_leg(rpc, {**row, "coin": {"txid": "ee" * 32, "vout": 7,
+                                                 "value": row["coin"]["value"]}})
+    assert "second input is not" in str(elsewhere.value), str(elsewhere.value)
 
 
 # --- the page that says what a listing is -------------------------------------

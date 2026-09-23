@@ -3,11 +3,12 @@
 `arcade/swap.py` keeps the book of offers this wallet made with its own keys. An
 `offer` row means the node can sign, which means it holds a private key. A
 listing is the opposite state, and the row has to look different because of it:
-an account signed a one-input, one-output transaction in its own browser
-(`funding.build_leg`), handed the signature here, and closed the tab. This node
-never had the key and never will, so it cannot make that piece unsellable again,
-cannot move it, and cannot promise anybody that the seller still means it. That
-is the whole difference, and it is why this is its own table in its own file
+an account built a leg in its own browser (`funding.build_leg`), signed it there
+with a key this node was never shown, handed the signatures back, and closed the
+tab. This node never had the key and never will, so it cannot make that piece
+unsellable again, cannot move it, and cannot promise anybody that the seller
+still means it. That is the whole difference, and it is why this is its own
+table in its own file
 rather than `offer` with a column, and why finishing one is `paste_leg` and not
 `countersign` -- "the node signed it" and "the node pasted what somebody else
 signed" must not be the same word.
@@ -19,16 +20,25 @@ Two things are true of every row here and both belong on any page that shows one
   listing is cancelled by SPENDING its input, and until a block has done that
   the honest word for what happened here is "withdrawn", not "cancelled".
 * `expires` is a promise from this node and not a term of the signature. There
-  is no lock time in a leg: what the chain enforces is the payment at output 0,
-  and the expiry only says when this node stops putting the leg in front of a
-  buyer. A buyer who turns up after it with a signature it was given earlier
-  can still complete the swap, and that is a fact about pre-signed
-  transactions, not a bug in this table.
+  is no lock time in a leg: what the chain enforces is the output each of the
+  leg's signatures stands over, and the expiry only says when this node stops
+  putting the leg in front of a buyer. A buyer who turns up after it with a
+  signature it was given earlier can still complete the swap, and that is a fact
+  about pre-signed transactions, not a bug in this table.
 
-What is stored is the signed leg itself -- one transaction, one input, one
-output -- so the piece cannot be described differently to two people, and every
-number a buyer is shown is read off the bytes that were signed rather than from
-a column that could have drifted.
+What is stored is the signed leg itself -- its inputs, its outputs and the
+scriptSigs that came back with it -- so the piece cannot be described
+differently to two people, and every number a buyer is shown is read off the
+bytes that were signed rather than from a column that could have drifted.
+
+A leg that names the thing it sells has two inputs and two outputs, and the
+reason is arithmetic rather than taste: a `SINGLE` signature reaches the output
+standing at its own input's index and no other, so the payload at output 0 is
+signed by the piece at input 0 and the payment at output 1 is signed by a coin of
+the seller's at input 1. A leg that commits to nothing but a payment has one of
+each, which is honest for a coin and for nothing else. That is why `payload` is
+a column with a check behind it: a row that claims to sell a thing and carries no
+bytes saying what that thing is, is a row a page would be lying about.
 """
 
 from __future__ import annotations
@@ -43,8 +53,8 @@ from typing import Any, Iterator
 from . import fees
 from .db import add_missing_columns
 from .funding import SINGLE_ANYONECANPAY, Leg, swap_fee
-from .script import b58check_decode, hash160, iter_pushes
-from .txbuild import p2pkh_script, push, varint
+from .script import OP_RETURN, b58check_decode, hash160, iter_pushes
+from .txbuild import op_return_script, p2pkh_script, push, varint
 
 COIN = 100_000_000
 
@@ -71,12 +81,23 @@ CREATE TABLE IF NOT EXISTS listing (
     id          TEXT PRIMARY KEY,
     network     TEXT NOT NULL,
     owner       TEXT NOT NULL,
-    -- The signed leg: one input, one output, one scriptSig. Everything else in
-    -- this row is read off it, and `check_leg` says so by checking.
+    -- The signed leg: the seller's inputs, its outputs, and the scriptSigs that
+    -- came with them. Everything else in this row is read off it, and
+    -- `check_leg` says so by checking.
     leg         TEXT NOT NULL,
     in_txid     TEXT NOT NULL,
     in_vout     INTEGER NOT NULL,
     in_value    INTEGER NOT NULL,
+    -- The bytes output 0 carries: what the thing being sold actually IS, as the
+    -- signature that signed it wrote it. Empty for a leg that commits only to
+    -- its payment, which is a coin and not an asset.
+    payload     TEXT NOT NULL DEFAULT '',
+    -- The seller's OWN coin, the one behind the signature over the payment. It
+    -- is not the piece and it is not the buyer's; it comes back to the seller
+    -- inside out_value. Empty for a leg with one input.
+    coin_txid   TEXT NOT NULL DEFAULT '',
+    coin_vout   INTEGER NOT NULL DEFAULT -1,
+    coin_value  INTEGER NOT NULL DEFAULT 0,
     out_value   INTEGER NOT NULL,
     out_script  TEXT NOT NULL,
     fee         INTEGER NOT NULL,
@@ -118,24 +139,39 @@ def _serialise(inputs: list[tuple[str, int, bytes]],
     return raw.hex()
 
 
-def sign_leg(leg: Leg, signature: str, pubkey: bytes) -> str:
-    """The leg as it goes into the book: its own two bytes with one scriptSig.
+def sign_leg(leg: Leg, signatures: list[str], pubkey: bytes) -> str:
+    """The leg as it goes into the book: its own bytes with its own scriptSigs.
 
-    `signature` is DER plus the sighash byte, which is what a browser hands
-    back and what `funding.sighash` hashed -- the type is part of the signature
-    and the network reads it off the end, so it is stored, not remembered.
+    `signatures` is one per input, in signing order -- DER plus the sighash
+    byte, which is what a browser hands back and what `funding.sighash` hashed.
+    The type is part of the signature and the network reads it off the end, so
+    it is stored, not remembered.
+
+    A leg that names a thing takes two of them, and both are needed before
+    there is a listing: one signature over the payment is a promise about coins,
+    not about the piece, and the difference is the payload's digest.
     """
     if leg.sighash_type != SINGLE_ANYONECANPAY:
         raise ListingError("a leg is signed with SINGLE|ANYONECANPAY and this "
                            "one says it was signed otherwise")
-    return _serialise([(leg.input["txid"], leg.input["vout"],
-                        push(bytes.fromhex(signature)) + push(pubkey))],
-                      [leg.output])
+    if len(signatures) != len(leg.inputs):
+        raise ListingError(
+            f"this leg has {len(leg.inputs)} input"
+            f"{'s' if len(leg.inputs) != 1 else ''} to sign and "
+            f"{len(signatures)} signature{'s' if len(signatures) != 1 else ''}"
+            f" came back. An unsigned input is an unsigned output, and the "
+            f"output it leaves free is the one the seller was told it was "
+            f"signing")
+    return _serialise([(coin["txid"], coin["vout"],
+                        push(bytes.fromhex(signature)) + push(pubkey))
+                       for coin, signature in zip(leg.inputs, signatures)],
+                      leg.outputs)
 
 
 def listing_row(network: str, owner: str, raw: str, piece: dict,
                 paid: tuple[int, bytes], fee: int, price: int, what: str,
-                seconds: float) -> dict:
+                seconds: float, coin: dict | None = None,
+                payload: bytes = b"") -> dict:
     """A listing in the shape `check_leg` reads, before anybody is told it exists.
 
     One builder, because there are two ways a leg gets here -- handed a `Leg` by
@@ -149,6 +185,10 @@ def listing_row(network: str, owner: str, raw: str, piece: dict,
         "leg": raw,
         "input": {"txid": str(piece["txid"]), "vout": int(piece["vout"]),
                   "value": int(piece["value"])},
+        "coin": None if coin is None else {
+            "txid": str(coin["txid"]), "vout": int(coin["vout"]),
+            "value": int(coin["value"])},
+        "payload": bytes(payload).hex(),
         "output": {"value": int(paid[0]), "script": bytes(paid[1]).hex()},
         "fee": int(fee), "price": int(price), "what": what,
         "status": "open", "created": time.time(),
@@ -191,11 +231,16 @@ class Listings:
         with self._open() as conn:
             conn.execute(
                 "INSERT INTO listing(id, network, owner, leg, in_txid, in_vout, "
-                "in_value, out_value, out_script, fee, price, what, status, "
-                "created, expires) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "in_value, payload, coin_txid, coin_vout, coin_value, "
+                "out_value, out_script, fee, price, what, status, "
+                "created, expires) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (listing["id"], listing["network"], listing["owner"],
                  listing["leg"], listing["input"]["txid"],
                  int(listing["input"]["vout"]), int(listing["input"]["value"]),
+                 str(listing.get("payload") or ""),
+                 str((listing.get("coin") or {}).get("txid") or ""),
+                 int((listing.get("coin") or {}).get("vout", -1)),
+                 int((listing.get("coin") or {}).get("value", 0)),
                  int(listing["output"]["value"]), listing["output"]["script"],
                  int(listing["fee"]), int(listing["price"]),
                  str(listing.get("what") or ""),
@@ -203,8 +248,9 @@ class Listings:
                  float(listing["created"]), float(listing["expires"])))
         return listing
 
-    def from_leg(self, rpc: Any, leg: Leg, signature: str, pubkey: bytes,
-                 network: str, owner: str, price: int, seconds: float) -> dict:
+    def from_leg(self, rpc: Any, leg: Leg, signatures: list[str],
+                 pubkey: bytes, network: str, owner: str, price: int,
+                 seconds: float) -> dict:
         """Write down a leg a browser just signed, after checking it.
 
         The check happens on the way IN rather than only on the way out because
@@ -212,26 +258,28 @@ class Listings:
         from this table, and a row written from an unverified POST would put
         numbers on a public page that no signature backs.
         """
-        raw = sign_leg(leg, signature, pubkey)
-        listing = listing_row(network, owner, raw, leg.input, leg.output,
-                              leg.fee, price, leg.what, seconds)
+        raw = sign_leg(leg, signatures, pubkey)
+        listing = listing_row(network, owner, raw, leg.inputs[0], leg.outputs[-1],
+                              leg.fee, price, leg.what, seconds,
+                              coin=leg.inputs[1] if len(leg.inputs) > 1 else None,
+                              payload=leg.payload)
         check_leg(rpc, listing)
         return self.add(listing)
 
-    def register(self, rpc: Any, *, raw: str, signature: str, pubkey: bytes,
-                 network: str, owner: str, price: int,
+    def register(self, rpc: Any, *, raw: str, signatures: list[str],
+                 pubkey: bytes, network: str, owner: str, price: int,
                  seconds: float = LISTED_FOR, what: str = "") -> dict:
         """File a leg a browser signed, with nothing remembered from before.
 
         A listing is two requests: this node builds a leg and shows it, the tab
         signs it and posts it back. Nothing is held between them. That costs a
         binding, and the binding is bought back with arithmetic rather than with
-        state -- the piece's value comes from the chain, the payment and the
-        outpoint come from the leg's own bytes, and a leg whose numbers do not
-        close against this piece at this price is refused instead of filed. So a
-        node that restarted between the two requests files exactly the row it
-        would have filed anyway, which is more than an in-memory book of
-        pending legs would have survived.
+        state -- the two coins' values come from the chain, the payload, the
+        payment and the outpoints come from the leg's own bytes, and a leg whose
+        numbers do not close against this piece at this price is refused instead
+        of filed. So a node that restarted between the two requests files
+        exactly the row it would have filed anyway, which is more than an
+        in-memory book of pending legs would have survived.
 
         The arithmetic is not a courtesy to the seller. `price` is the one number
         a listing row states for itself -- it is not in the signature and cannot
@@ -243,21 +291,33 @@ class Listings:
         except Exception as exc:
             raise ListingError(f"that is not a transaction: {exc}") from None
         vin, vout = leg.get("vin") or [], leg.get("vout") or []
-        if len(vin) != 1 or len(vout) != 1:
+        if len(vin) not in (1, 2) or len(vout) != len(vin):
             raise ListingError(
-                "a leg is one coin in and one payment out, and this is "
+                "a leg is its seller's coins in and its seller's outputs out, "
+                "one output for every signature it takes, and this is "
                 f"{len(vin)} in and {len(vout)} out")
-        if str((vin[0].get("scriptSig") or {}).get("hex") or ""):
+        for n, spent in enumerate(vin):
+            if str((spent.get("scriptSig") or {}).get("hex") or ""):
+                raise ListingError(
+                    f"input {n} of that leg already has a scriptSig. A leg comes "
+                    f"here unsigned and the signatures come beside it, because "
+                    f"the two are checked against each other and a pre-pasted "
+                    f"one cannot be")
+        if len(signatures) != len(vin):
             raise ListingError(
-                "that leg already has a scriptSig. A leg comes here unsigned "
-                "and the signature comes beside it, because the two are checked "
-                "against each other and a pre-pasted one cannot be")
-        sig = bytes.fromhex(str(signature))
-        if not sig or sig[-1] != SINGLE_ANYONECANPAY:
-            raise ListingError(
-                "a leg is signed with SINGLE|ANYONECANPAY, and this signature "
-                f"says {sig[-1] if sig else 'nothing'} at the end, so it commits "
-                "to a different transaction from the leg it came with")
+                f"that leg has {len(vin)} input{'s' if len(vin) != 1 else ''} "
+                f"and {len(signatures)} signature{'s' if len(signatures) != 1 else ''}"
+                f" came with it. The signature that is missing is the one over "
+                f"the output standing at that index, so the leg would promise "
+                f"whatever this node puts there")
+        for n, signature in enumerate(signatures):
+            sig = bytes.fromhex(str(signature))
+            if not sig or sig[-1] != SINGLE_ANYONECANPAY:
+                raise ListingError(
+                    f"a leg is signed with SINGLE|ANYONECANPAY, and the "
+                    f"signature for input {n} says "
+                    f"{sig[-1] if sig else 'nothing'} at the end, so it commits "
+                    f"to a different transaction from the leg it came with")
 
         piece = {"txid": str(vin[0].get("txid") or ""),
                  "vout": int(vin[0].get("vout", -1))}
@@ -266,22 +326,55 @@ class Listings:
             raise ListingError(
                 f"{piece['txid'][:16]}…:{piece['vout']} is spent or unseen here, "
                 f"so it is not a piece to list -- it sold, or its owner spent it")
-        paid = vout[0]
+
+        coin = None
+        if len(vin) > 1:
+            mine = {"txid": str(vin[1].get("txid") or ""),
+                    "vout": int(vin[1].get("vout", -1))}
+            if (mine["txid"], mine["vout"]) == (piece["txid"], piece["vout"]):
+                raise ListingError(
+                    f"{piece['txid'][:16]}…:{piece['vout']} is both the piece "
+                    f"and the coin behind the second signature. Nothing spends "
+                    f"one outpoint twice, so this leg has one input wearing two "
+                    f"names and no signature over its payment")
+            prev = rpc.call("gettxout", mine["txid"], mine["vout"], True)
+            if not prev:
+                raise ListingError(
+                    f"{mine['txid'][:16]}…:{mine['vout']} is spent or unseen "
+                    f"here, and that is the coin the seller put its second "
+                    f"signature on. Without it the payment is unsigned, so this "
+                    f"is not a leg to file -- the seller needs to build a new "
+                    f"one from coins it still holds")
+            coin = {**mine, "value": int(round(float(prev.get("value", 0))
+                                               * COIN))}
+
+        paid = vout[-1]
         out_value = int(round(float(paid.get("value", 0)) * COIN))
         script = bytes.fromhex(str((paid.get("scriptPubKey") or {})
                                    .get("hex") or ""))
-        fee = swap_fee(FEE_FLOOR_PER_KB)
-        if out_value != held + int(price) - fee:
+        payload = b""
+        if len(vout) > 1:
+            payload = _payload_of(vout[0])
+        fee = swap_fee(FEE_FLOOR_PER_KB,
+                       op_return_script(payload) if payload else b"")
+        behind = coin["value"] if coin else 0
+        if out_value != held + behind + int(price) - fee:
             raise ListingError(
-                f"a piece worth {held} listed at {int(price)} pays its seller "
-                f"{held + int(price) - fee} once the {fee} it reserves for a "
-                f"block is taken out, and this leg pays {out_value}, so it was "
-                f"not built from this piece at this price")
-        signed = _serialise([(piece["txid"], piece["vout"],
-                              push(sig) + push(pubkey))], [(out_value, script)])
+                f"a piece worth {held}"
+                + (f" with a second coin worth {behind}" if coin else "")
+                + f" listed at {int(price)} pays its seller "
+                f"{held + behind + int(price) - fee} once the {fee} it reserves "
+                f"for a block is taken out, and this leg pays {out_value}, so it "
+                f"was not built from this piece at this price")
+        signed = _serialise(
+            [(spent["txid"], int(spent["vout"]),
+              push(bytes.fromhex(str(signature))) + push(pubkey))
+             for spent, signature in zip(vin, signatures)],
+            ([(0, op_return_script(payload))] if payload else [])
+            + [(out_value, script)])
         listing = listing_row(network, owner, signed, {**piece, "value": held},
                               (out_value, script), fee, int(price), what,
-                              seconds)
+                              seconds, coin=coin, payload=payload)
         check_leg(rpc, listing)
         return self.add(listing)
 
@@ -335,6 +428,31 @@ class Listings:
         return len(rows)
 
 
+def _payload_of(out: dict) -> bytes:
+    """The bytes a payload output carries, or a refusal of a thing that is not.
+
+    Shape rather than belief: nothing here decodes the bytes or says what they
+    mean. What is checked is that output 0 pays nothing and says something, in
+    one push, because this is the field a page renders in words and a completion
+    is refused for changing. A second output that pays coins is a leg whose
+    outputs are not the two its signatures were made over, and a payload spread
+    over two pushes is not the bytes any signature committed to.
+    """
+    if int(round(float(out.get("value", 0)) * COIN)) != 0:
+        raise ListingError(
+            "output 0 of that leg pays coins, and a payload output pays "
+            "nothing. A leg has two outputs and they are the bytes it sells and "
+            "the payment it accepts; there is no third thing a leg pays")
+    script = bytes.fromhex(str((out.get("scriptPubKey") or {}).get("hex") or ""))
+    pushes = iter_pushes(script)
+    if len(script) < 2 or script[0] != OP_RETURN or len(pushes) != 1:
+        raise ListingError(
+            "output 0 of that leg is not one OP_RETURN push, so there are no "
+            "bytes here to say what is being sold -- and a leg that cannot say "
+            "is a leg that should not be on a page")
+    return pushes[0]
+
+
 def row_listing(row: dict) -> dict:
     """A database row, in the shape a leg travels in."""
     return {
@@ -342,6 +460,10 @@ def row_listing(row: dict) -> dict:
         "leg": row["leg"],
         "input": {"txid": row["in_txid"], "vout": int(row["in_vout"]),
                   "value": int(row["in_value"])},
+        "coin": None if not row["coin_txid"] else {
+            "txid": row["coin_txid"], "vout": int(row["coin_vout"]),
+            "value": int(row["coin_value"])},
+        "payload": row["payload"],
         "output": {"value": int(row["out_value"]), "script": row["out_script"]},
         "fee": int(row["fee"]), "price": int(row["price"]),
         "what": row["what"], "status": row["status"],
@@ -351,10 +473,16 @@ def row_listing(row: dict) -> dict:
 
 
 def public(listing: dict) -> dict:
-    """What a buyer is shown: the terms, and none of this node's bookkeeping."""
+    """What a buyer is shown: the terms, and none of this node's bookkeeping.
+
+    `coin` is in here because the buyer has to put the seller's second input in
+    front of its own coins, and `payload` because it is what the buyer is buying.
+    Neither is a secret; the scriptSigs in `leg` are the only thing here that
+    belongs to somebody else, and a buyer needs those too.
+    """
     return {k: listing[k] for k in ("id", "network", "owner", "leg", "input",
-                                    "output", "fee", "price", "what",
-                                    "created", "expires")}
+                                    "coin", "payload", "output", "fee",
+                                    "price", "what", "created", "expires")}
 
 
 def check_leg(rpc: Any, listing: dict) -> dict:
@@ -377,17 +505,33 @@ def check_leg(rpc: Any, listing: dict) -> dict:
         raise ListingError(f"that is not a transaction: {exc}") from None
 
     vin, vout = leg.get("vin") or [], leg.get("vout") or []
-    if len(vin) != 1 or len(vout) != 1:
+    if len(vin) not in (1, 2) or len(vout) != len(vin):
         raise ListingError(
-            "a leg is one coin in and one payment out, and this is "
-            f"{len(vin)} in and {len(vout)} out. A leg with anything else in it "
-            "would commit to coins its seller has never seen")
-    first, paid = vin[0], vout[0]
-    piece = listing.get("input") or {}
+            "a leg is its seller's coins in and one output for every signature "
+            f"it takes, and this is {len(vin)} in and {len(vout)} out. Anything "
+            "else either commits to coins its seller has never seen or leaves "
+            "an output nobody signed")
+    first, paid = vin[0], vout[-1]
+    piece, coin = listing.get("input") or {}, listing.get("coin")
+    if coin is not None and len(vin) < 2:
+        raise ListingError(
+            f"this row names {coin['txid'][:16]}…:{coin['vout']} as the coin "
+            f"behind its second signature and that leg has one input, so the "
+            f"row is describing a different transaction from the one it stores")
+    if coin is None and len(vin) > 1:
+        raise ListingError(
+            "that leg has a second input and this row names no coin beside it, "
+            "so the payment at output 1 stands over an outpoint nothing here "
+            "ever looked at")
     if str(first.get("txid") or "") != str(piece.get("txid") or "") \
             or int(first.get("vout", -1)) != int(piece.get("vout", -1)):
         raise ListingError("that leg does not promise the piece this listing "
                            "says it promises")
+    if coin is not None and (str(vin[1].get("txid") or "") != coin["txid"]
+                             or int(vin[1].get("vout", -1)) != int(coin["vout"])):
+        raise ListingError(
+            f"that leg's second input is not {coin['txid'][:16]}…:{coin['vout']}"
+            ", the coin this row says its second signature stands on")
     out = listing.get("output") or {}
     value = int(round(float(paid.get("value", 0)) * COIN))
     script = str((paid.get("scriptPubKey") or {}).get("hex") or "")
@@ -398,29 +542,50 @@ def check_leg(rpc: Any, listing: dict) -> dict:
         raise ListingError(f"a leg pays its seller at {owner} and this one pays "
                            f"somewhere else, so whoever signed it was not told "
                            f"where the coins would go")
+    # The payload is the one part of a listing that is not arithmetic, so it is
+    # compared byte for byte: the row holds the bytes, output 0 holds the bytes,
+    # and a page renders what the row holds. If the two ever differed, the
+    # signature would be over a thing the page is not describing.
+    payload = str(listing.get("payload") or "")
+    if payload:
+        if len(vout) < 2 or bytes.fromhex(payload) != _payload_of(vout[0]):
+            raise ListingError(
+                "the bytes at output 0 of that leg are not the bytes this "
+                "listing says it sells, so the page and the signature are "
+                "describing two different things")
+    elif len(vout) > 1:
+        raise ListingError(
+            "that leg carries a payload and this row says it carries none, so "
+            "what is on the page is not what the seller signed")
     # The price is not in the signature and cannot be: the leg commits to the
-    # seller's output, and what the seller paid for its own coin is arithmetic
+    # seller's output, and what the seller paid for its own coins is arithmetic
     # from there. So the one number a row states for itself has to be the one
-    # number the other three force, or the page is quoting a bargain nobody
+    # number the other four force, or the page is quoting a bargain nobody
     # signed.
-    derived = value - int(piece.get("value", 0)) + int(listing.get("fee", 0))
+    derived = (value - int(piece.get("value", 0))
+               - int((coin or {}).get("value", 0))
+               + int(listing.get("fee", 0)))
     if int(listing.get("price", -1)) != derived:
         raise ListingError(
             f"this listing says {int(listing.get('price', -1)) / COIN:.8f} and "
             f"its own numbers say {derived / COIN:.8f}, so the price on it is "
             f"not the price its signature was made against")
 
-    script_sig = str((first.get("scriptSig") or {}).get("hex") or "")
-    if not script_sig:
-        raise ListingError("that leg is unsigned, so nothing is promised by it")
-    pushes = iter_pushes(bytes.fromhex(script_sig))
-    if len(pushes) != 2 or len(pushes[1]) not in (33, 65):
-        raise ListingError("a leg's scriptSig is a signature and a public key")
-    if hash160(pushes[1]) != b58check_decode(owner)[1]:
-        raise ListingError(
-            "the key that signed this leg is not the key behind the address it "
-            "is listed from, so this row would credit somebody's sale to "
-            "somebody else")
+    for n, spent in enumerate(vin):
+        script_sig = str((spent.get("scriptSig") or {}).get("hex") or "")
+        if not script_sig:
+            raise ListingError(
+                f"input {n} of that leg is unsigned, and its signature is the "
+                f"only thing that reaches output {n}. A transaction is not a "
+                f"promise until somebody's key is on it")
+        pushes = iter_pushes(bytes.fromhex(script_sig))
+        if len(pushes) != 2 or len(pushes[1]) not in (33, 65):
+            raise ListingError("a leg's scriptSig is a signature and a public key")
+        if hash160(pushes[1]) != b58check_decode(owner)[1]:
+            raise ListingError(
+                f"the key on input {n} of this leg is not the key behind the "
+                f"address it is listed from, so this row would credit somebody's "
+                f"sale to somebody else")
     return leg
 
 
@@ -480,22 +645,57 @@ def paste_leg(rpc: Any, listing: dict, unsigned: Any, signatures: list[str],
             "that piece is not the size this listing says it is, so the price "
             "on it would be arithmetic done on a number that changed")
 
-    if len(unsigned.inputs) < 2:
-        raise ListingError("a swap has the listed piece and the buyer's coins")
+    coin = listing.get("coin")
+    if coin is not None:
+        # The seller's second signature stands on this outpoint, so if it is
+        # gone the payment at output 1 is signed by nothing and this listing is
+        # finished in a way nobody agreed to. Refused here, loudly, and with the
+        # one thing the seller can actually do about it.
+        still = rpc.call("gettxout", coin["txid"], int(coin["vout"]), True)
+        if not still:
+            raise ListingError(
+                f"{coin['txid'][:16]}…:{coin['vout']} is spent or unseen here. "
+                f"That is the coin the seller's second signature stands on, so "
+                f"the payment on this listing is signed by nothing now and this "
+                f"cannot be completed -- the seller has to build a new leg out "
+                f"of coins it still holds")
+
+    signed_at = len(leg["vin"])            # the inputs the seller already signed
+    if len(unsigned.inputs) < signed_at + 1:
+        raise ListingError(
+            "a swap has the listed piece"
+            + (", the coin behind its second signature" if signed_at > 1 else "")
+            + ", and the buyer's coins")
     mine = unsigned.inputs[0]
     if mine["txid"] != piece["txid"] or int(mine["vout"]) != int(piece["vout"]):
         raise ListingError("the listed piece is not the first input, so the "
                            "seller would not be the one paying out of this "
                            "transaction")
+    if signed_at > 1 and (unsigned.inputs[1]["txid"] != coin["txid"]
+                          or int(unsigned.inputs[1]["vout"]) != int(coin["vout"])):
+        raise ListingError(
+            f"the second input is not {coin['txid'][:16]}…:{coin['vout']}, the "
+            f"coin this listing's second signature was made over, so that "
+            f"signature would be pasted onto somebody else's coin")
+
+    payload = bytes.fromhex(str(listing.get("payload") or ""))
+    at = 1 if payload else 0
+    if payload and (len(unsigned.outputs) < 2
+                    or unsigned.outputs[0] != (0, op_return_script(payload))):
+        raise ListingError(
+            "the transaction does not carry the bytes this listing sells. Output "
+            "0 is the one output the seller's FIRST signature reaches, so a "
+            "completion that changes it is a trade the seller never signed")
     want = (int(listing["output"]["value"]),
             bytes.fromhex(listing["output"]["script"]))
-    if unsigned.outputs[0] != want:
+    if len(unsigned.outputs) <= at or unsigned.outputs[at] != want:
         raise ListingError(
-            f"the transaction pays the seller {unsigned.outputs[0][0]}, not the "
-            f"{want[0]} its own signature commits to")
+            f"the transaction pays the seller something at output {at} other "
+            f"than the {want[0]} its own signature commits to")
 
-    for n, coin in enumerate(unsigned.inputs[1:], 1):
-        prev = rpc.call("gettxout", coin["txid"], int(coin["vout"]), True)
+    for n, buyer_coin in enumerate(unsigned.inputs[signed_at:], signed_at):
+        prev = rpc.call("gettxout", buyer_coin["txid"], int(buyer_coin["vout"]),
+                        True)
         if not prev:
             raise ListingError(
                 f"input {n} is spent or unknown here: either that wallet spent "
@@ -510,8 +710,9 @@ def paste_leg(rpc: Any, listing: dict, unsigned: Any, signatures: list[str],
 
     raw = _combine(leg, unsigned, signatures, pubkey)
     decoded = rpc.call("decoderawtransaction", raw)
-    total_in = int(listing["input"]["value"]) + sum(int(c["value"])
-                                                    for c in unsigned.inputs[1:])
+    total_in = (int(listing["input"]["value"])
+                + (int(coin["value"]) if coin else 0)
+                + sum(int(c["value"]) for c in unsigned.inputs[signed_at:]))
     total_out = sum(int(value) for value, _ in unsigned.outputs)
     floor = fees.fee_for(len(bytes.fromhex(raw)), fees.sigops_of(decoded),
                          FEE_FLOOR_PER_KB)
@@ -526,20 +727,24 @@ def paste_leg(rpc: Any, listing: dict, unsigned: Any, signatures: list[str],
 
 def _combine(leg: dict, unsigned: Any, signatures: list[str],
              pubkey: bytes) -> str:
-    """The finished swap: the leg's scriptSig, then the buyer's, one input each.
+    """The finished swap: the leg's scriptSigs, then the buyer's, one input each.
 
-    The leg's scriptSig is taken from the decoded leg rather than sliced out of
-    its bytes. It has already been checked by then, and there is no reason to
-    have a second, hand-counted way of reading the same four fields.
+    The leg's scriptSigs are taken from the decoded leg rather than sliced out
+    of its bytes, and put at the front in the leg's own order. They have already
+    been checked by then, and there is no reason to have a second, hand-counted
+    way of reading the same four fields -- nor a reason for the outpoints the
+    seller signed to be the ones the buyer happened to send.
     """
-    script_sig = str((leg["vin"][0].get("scriptSig") or {}).get("hex") or "")
-    if len(signatures) != len(unsigned.inputs) - 1:
+    signed_at = len(leg["vin"])
+    if len(signatures) != len(unsigned.inputs) - signed_at:
         raise ListingError(
-            f"{len(unsigned.inputs) - 1} signatures were needed and "
+            f"{len(unsigned.inputs) - signed_at} signatures were needed and "
             f"{len(signatures)} came back")
-    inputs = [(unsigned.inputs[0]["txid"], int(unsigned.inputs[0]["vout"]),
-               bytes.fromhex(script_sig))]
+    inputs = [(spent["txid"], int(spent["vout"]),
+               bytes.fromhex(str((spent.get("scriptSig") or {}).get("hex")
+                                 or "")))
+              for spent in leg["vin"]]
     inputs += [(coin["txid"], int(coin["vout"]),
                 push(bytes.fromhex(sig)) + push(pubkey))
-               for coin, sig in zip(unsigned.inputs[1:], signatures)]
+               for coin, sig in zip(unsigned.inputs[signed_at:], signatures)]
     return _serialise(inputs, unsigned.outputs)
