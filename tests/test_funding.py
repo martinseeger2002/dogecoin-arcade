@@ -75,7 +75,8 @@ def _der(r: int, s: int) -> bytes:
     return bytes([0x30, len(body)]) + body
 
 
-def _sign(secret: int, digest: bytes) -> bytes:
+def _sign(secret: int, digest: bytes,
+          sighash_type: int = funding.SIGHASH_ALL) -> bytes:
     z = int.from_bytes(digest, "big")
     k = int.from_bytes(hashlib.sha256(digest + secret.to_bytes(32, "big")
                                       ).digest(), "big") % N
@@ -87,7 +88,7 @@ def _sign(secret: int, digest: bytes) -> bytes:
             if s > N // 2:                       # low-S, as the network wants
                 s = N - s
             if s:
-                return _der(r, s) + bytes([funding.SIGHASH_ALL])
+                return _der(r, s) + bytes([sighash_type])
         k += 1
 
 

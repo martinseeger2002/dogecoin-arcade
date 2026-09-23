@@ -51,6 +51,17 @@ BYTES_PER_CHANGE = 34
 
 SIGHASH_ALL = 1
 
+#: A seller signing ONE coin of its own, before it knows who the buyer will
+#: be. `SINGLE` commits it to the single output standing at its own input's
+#: index and to no other output; `ANYONECANPAY` commits it to its own input
+#: and to no other input. Together they are the only way to hand out a
+#: signature in advance without signing a stranger's coins, which is what a
+#: listing has to do -- the piece is promised before anybody turns up to pay
+#: for it.
+SIGHASH_SINGLE = 3
+SIGHASH_ANYONECANPAY = 0x80
+SINGLE_ANYONECANPAY = SIGHASH_SINGLE | SIGHASH_ANYONECANPAY
+
 
 class FundingError(Exception):
     """Not enough coins, or nothing to spend them on. The message is shown."""
@@ -155,8 +166,8 @@ def price(inputs: int, outputs: list, rate: int, change: bool = False) -> int:
 
 def sighash(raw_inputs: list[dict], outputs: list[tuple[int, bytes]],
             index: int, script: bytes, version: int = 1,
-            locktime: int = 0) -> bytes:
-    """The 32 bytes input `index` must sign, for SIGHASH_ALL.
+            locktime: int = 0, sighash_type: int = SIGHASH_ALL) -> bytes:
+    """The 32 bytes input `index` must sign.
 
     The legacy algorithm: serialise the transaction with every scriptSig
     empty except this one, which carries the script being spent, append the
@@ -166,21 +177,54 @@ def sighash(raw_inputs: list[dict], outputs: list[tuple[int, bytes]],
     asked -- `signrawtransaction` needs the key. It is a serialisation with
     published test vectors and no secret in it, and a mistake in it makes a
     transaction the network refuses rather than a key that leaks.
+
+    `sighash_type` defaults to SIGHASH_ALL, which is every input and every
+    output, and is what everything that pays a fee from its own coins uses.
+    SINGLE|ANYONECANPAY is the other one this builds ever asks for, and it
+    narrows the serialisation instead: the preimage carries this input alone
+    and the output standing at this input's INDEX alone. That is a seller's
+    leg -- see `build_leg`, which is why that is built one-in, one-out, so
+    index 0 is the piece and the payment at once and the index rule holds by
+    construction rather than by luck.
+
+    A SINGLE type whose index runs past the end of the outputs is refused
+    rather than computed. The legacy rule substitutes the constant
+    0x0000...0001 for the output list in exactly that case, so a signature
+    over that preimage is a signature over a fixed number -- good for any
+    transaction whatever, which is the one thing a signature must never be.
+    Nothing else is offered: NONE, and SINGLE without ANYONECANPAY, have no
+    use here, and a builder that silently accepted a type it did not mean to
+    implement would be worse than one that refuses.
     """
-    raw = version.to_bytes(4, "little") + varint(len(raw_inputs))
-    for n, coin in enumerate(raw_inputs):
+    if sighash_type == SIGHASH_ALL:
+        inputs, signed_at, outs = raw_inputs, index, outputs
+    elif sighash_type == SINGLE_ANYONECANPAY:
+        if index >= len(outputs):
+            raise FundingError(
+                f"input {index} has no output {index} to commit to, and the "
+                f"preimage for that is a constant, so a signature over it "
+                f"would authorise every transaction there is")
+        inputs, signed_at, outs = (raw_inputs[index:index + 1], 0,
+                                  outputs[index:index + 1])
+    else:
+        raise FundingError(
+            f"this builds a sighash for SIGHASH_ALL and for "
+            f"SINGLE|ANYONECANPAY, not for {sighash_type:#04x}")
+
+    raw = version.to_bytes(4, "little") + varint(len(inputs))
+    for n, coin in enumerate(inputs):
         raw += bytes.fromhex(coin["txid"])[::-1]
         raw += int(coin["vout"]).to_bytes(4, "little")
-        if n == index:
+        if n == signed_at:
             raw += varint(len(script)) + script
         else:
             raw += varint(0)
         raw += b"\xff\xff\xff\xff"
-    raw += varint(len(outputs))
-    for value, script_out in outputs:
+    raw += varint(len(outs))
+    for value, script_out in outs:
         raw += value.to_bytes(8, "little") + varint(len(script_out)) + script_out
     raw += locktime.to_bytes(4, "little")
-    raw += SIGHASH_ALL.to_bytes(4, "little")
+    raw += sighash_type.to_bytes(4, "little")
     return hashlib.sha256(hashlib.sha256(raw).digest()).digest()
 
 
@@ -329,3 +373,128 @@ def assemble(unsigned: Unsigned, signatures: list[str], pubkey: bytes) -> str:
         raw += value.to_bytes(8, "little") + varint(len(script)) + script
     raw += (0).to_bytes(4, "little")
     return raw.hex()
+
+
+@dataclass
+class Leg:
+    """What a seller signs before it knows its buyer: one coin in, one out.
+
+    Not an `Unsigned`. An `Unsigned` is a transaction waiting for signatures
+    and there is exactly one of those in flight; a `Leg` is half of one that
+    does not exist yet, and the difference is the whole point -- the node is
+    going to receive a signature over this and then build the rest of the
+    transaction around it, so the type that says "this was signed first, on
+    its own" has to be a different type.
+    """
+
+    raw: str
+    input: dict[str, Any]
+    output: tuple[int, bytes]
+    sighash: str
+    fee: int
+    #: What the seller's output pays, and to whom: its own coin back plus the
+    #: price, less the fee it reserved. The buyer sees this number, and the
+    #: paste checks the finished transaction still pays it.
+    pays: str
+    paid: int
+    #: The type the browser must sign with. Not a knob to turn: it is
+    #: SINGLE|ANYONECANPAY or the leg would commit to coins the seller has
+    #: never seen.
+    sighash_type: int = SINGLE_ANYONECANPAY
+    what: str = ""
+
+    def as_json(self) -> dict:
+        return {
+            "raw": self.raw,
+            "input": {"txid": self.input["txid"], "vout": self.input["vout"],
+                      "value": self.input["value"],
+                      "address": self.input.get("address", "")},
+            "output": {"value": self.output[0],
+                       "script": self.output[1].hex()},
+            "sighash": self.sighash,
+            "sighash_type": self.sighash_type,
+            "fee": self.fee,
+            "pays": self.pays,
+            "paid": self.paid,
+            "what": self.what,
+        }
+
+
+#: What the finished swap costs the seller to reserve against: its own signed
+#: input, the buyer's input, the payment to the seller, the piece to the buyer,
+#: and the OP_RETURN carrying the two legs. The buyer's script is not known
+#: when a leg is signed, so this is an estimate of a P2PKH.
+#:
+#: An estimate, and deliberately generous rather than tight: a leg that
+#: reserves too little is a listing whose transactions will not confirm, and a
+#: leg that reserves too much costs the seller a few thousandths of a coin.
+#: What makes it safe is not the number, it is `paste_leg` refusing to
+#: complete a transaction whose real fee turns out to be below the floor.
+SWAP_INPUTS = 2
+
+#: A P2PKH script by shape, for pricing something whose owner is not known
+#: yet: OP_DUP OP_HASH160 <20> OP_EQUALVERIFY OP_CHECKSIG. Twenty-five bytes
+#: and one sigop whoever the address turns out to be, so an unknown buyer is
+#: priced exactly rather than guessed at.
+P2PKH_SHAPE = bytes([0x76, 0xa9, 0x14]) + b"\x00" * 20 + bytes([0x88, 0xac])
+
+
+def swap_fee(rate: int, payload_bytes: int = 0) -> int:
+    """What the finished swap will cost, as closely as a listing can know it."""
+    outputs = [(0, P2PKH_SHAPE), (0, P2PKH_SHAPE)]
+    if payload_bytes:
+        outputs.append((0, b"\x6a" + varint(payload_bytes) + b"\x00" * payload_bytes))
+    return price(SWAP_INPUTS, outputs, rate)
+
+
+def build_leg(params: Params, address: str, piece: dict, coins: int,
+              rate: int, what: str = "", payload_bytes: int = 0) -> Leg:
+    """The transaction a seller signs to LIST: that one coin in, that one payment out.
+
+    The other half of `build_partial`, and its mirror in one respect that
+    matters: `build_partial` is what a BUYER signs when it already knows what
+    it is buying, and this is what a SELLER signs when it cannot yet know who
+    is buying. A listing has to promise the piece before a buyer exists, so
+    the signature has to be over as little of a transaction as can possibly be
+    honest -- one input, the piece, and one output, the payment this seller
+    will accept and nothing else. That is what `SINGLE|ANYONECANPAY` buys, and
+    it only works because this transaction is one input wide: `SINGLE` commits
+    to the output at the signed input's own index, and building it any other
+    way would leave that rule to chance.
+
+    The fee is reserved here, at listing time, because the seller's output is
+    fixed the moment it signs and cannot be adjusted later: whatever the
+    finished swap costs comes out of this reservation and out of the buyer's
+    own inputs, and `paste_leg` refuses the transaction if the two do not add
+    up to what a block asks for.
+    """
+    txid = str(piece.get("txid") or "")
+    vout, value = int(piece.get("vout", -1)), int(piece.get("value", 0))
+    if len(txid) != 64 or vout < 0 or value <= 0:
+        raise FundingError("that is not something a listing can promise: a "
+                           "piece needs a 32-byte txid, an index, and an "
+                           "amount above nothing")
+    holder = str(piece.get("address") or "")
+    if holder and holder != address:
+        raise FundingError(f"{txid[:16]}…:{vout} belongs to {holder}, not to "
+                           f"{address}, so this wallet cannot sell it")
+    if coins < 0:
+        raise FundingError("a price below nothing is not a price")
+
+    fee = swap_fee(rate, payload_bytes)
+    paid = value + coins - fee
+    if paid <= 0:
+        raise FundingError(
+            f"the price ({coins} sats) does not cover what a block costs "
+            f"({fee} sats) plus keeping the coin ({value} sats), so there is "
+            f"no output this seller could sign")
+
+    script = p2pkh_script(address)
+    outputs = [(paid, script)]
+    raw = build_raw_tx([(txid, vout)], outputs)
+    digest = sighash([{"txid": txid, "vout": vout, "value": value}], outputs,
+                     0, script, sighash_type=SINGLE_ANYONECANPAY)
+    return Leg(raw=raw, input={"txid": txid, "vout": vout, "value": value,
+                               "address": address},
+               output=outputs[0], sighash=digest.hex(), fee=fee,
+               pays=address, paid=paid, what=what)
