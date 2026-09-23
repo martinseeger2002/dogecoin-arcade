@@ -87,10 +87,11 @@ ATTEMPT_WINDOW = 300
 HOUR = 3600
 DAY = 86400
 
-#: Actions counted per hour, with the default for each. `name` covers the two
-#: ways an account puts a key or a name on the chain for itself; a person does
-#: each of those once, and something doing them five times an hour is not a
-#: person.
+#: Actions counted per hour, with the default for each. `name` covers every
+#: way an account puts a statement about ITSELF on the chain: the key
+#: announcement, the name claim, and the profile published on the back of
+#: either. A person does each of those once in a while, and something doing
+#: them five times an hour is not a person.
 #: `inscribe` and `issue` are the ten. Everything else here can be spoken
 #: over -- a post is followed by another post, a send is answered by sending
 #: it back. An inscription is a piece of the chain that stays, and this node

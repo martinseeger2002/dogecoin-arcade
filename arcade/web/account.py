@@ -193,9 +193,22 @@ class Flights:
 
     def change_for(self, pubkey: str, network: str = "") -> list:
         self.sweep()
+        # A coin this node has itself broadcast away from is gone, whoever
+        # broadcast it. A listing's coins are spent by its buyer and an offer's
+        # by whoever took it up, and neither of those arrives as a flight under
+        # the seller's key -- so an outpoint sitting in anybody's `spent` on this
+        # chain has already left the chain, however freshly it was written down
+        # here as somebody's change. Offering it is a transaction the network
+        # refuses, which is the one mistake this list is not allowed to make.
+        gone: set = set()
+        for flight in self._all:
+            if network and flight.network and flight.network != network:
+                continue
+            gone.update(flight.spent)
         out: list = []
         for flight in self._mine(pubkey, network):
-            out.extend(flight.made)
+            out.extend(coin for coin in flight.made
+                       if (coin["txid"], coin["vout"]) not in gone)
         return out
 
     def note_incoming(self, pubkey: str, txid: str, vout: int,
@@ -219,5 +232,33 @@ class Flights:
                    "value": int(value), "height": 0},)))
         self.sweep()
 
+    def note_committed(self, pubkey: str, spent: tuple, made: tuple = (),
+                       network: str = "") -> None:
+        """Coins this account has signed away, with no transaction to show.
+
+        A listing is the case. The leg's inputs are spent by whoever fills it,
+        which is not this account and may be a week from now, so nothing this
+        account ever broadcasts retires them -- and until it does, the coin the
+        leg pays its fee from is still in the index, still looks spendable, and
+        is the one coin that must not be. Spending it empties the leg: the
+        payment at its output stands over nothing, and the first buyer to turn
+        up is handed a transaction the chain refuses.
+
+        So this is a flight with no broadcast. It is remembered the same way and
+        forgotten the same way -- when the index catches up, or when the wait is
+        over, whichever comes first. A coin wrongly held back here costs the
+        seller a retry; a coin wrongly spent from under their own listing costs
+        them the sale.
+        """
+        self._all.append(InFlight(
+            txid="", pubkey=(pubkey or "").lower(), network=network,
+            spent=tuple((str(out[0]), int(out[1])) for out in spent),
+            made=tuple(made)))
+        self.sweep()
+
     def forget(self, txid: str) -> None:
+        # A committed leg has no txid to forget by, and forgetting on an empty
+        # one would drop every other account's note with it.
+        if not txid:
+            return
         self._all = [f for f in self._all if f.txid != txid]

@@ -146,6 +146,11 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/address", "/account/announce", "/account/post",
                "/account/react",
                "/account/mainnet",        # own opt-in to real coins, own flag
+               # what the account says about itself: a face, a line, a link.
+               # The announcement carries the account's own key and its own
+               # tag, which the node reads off the chain rather than out of
+               # the request, and this node signs nothing of it.
+               "/account/profile",
                "/account/write",
                "/account/claim", "/account/send", "/account/inscribe",
                "/account/run/start", "/account/run", "/account/run/piece",

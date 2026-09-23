@@ -133,9 +133,19 @@
           <a class="muted" style="font-size:.86rem"
              href="/u/{{ whose.tag }}/wallet">@{{ whose.tag }}'s wallet</a>
         {% endif %}
+        {# Their link, as words. NOT an anchor, and that is a decision rather
+           than a loose end (2026-09-22): a stranger's clickable link
+           inside a wallet is the one-tap delivery path for "claim your
+           airdrop" onto a lookalike arcade, which is the attack
+           docs/multi-user.md § "The rule that does protect a user" is
+           written against. Shown in full so the domain can be READ before
+           anybody goes anywhere, and `user-select:all` so one click picks the
+           whole thing up to paste. If this is ever revisited the replacement
+           is an interstitial naming the destination — never a bare anchor. #}
         {% if whose.url %}
-          <a class="muted" style="font-size:.86rem" rel="noopener noreferrer nofollow"
-             target="_blank" href="{{ whose.url }}">{{ whose.url }}</a>
+          <span class="muted mono" style="font-size:.86rem"
+                title="their link, published by them — copy it, do not click it"
+                >{{ whose.url }}</span>
         {% endif %}
       </div>
     </div>

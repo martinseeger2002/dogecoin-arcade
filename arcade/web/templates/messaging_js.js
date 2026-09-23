@@ -576,12 +576,19 @@ export async function collect(me, {onProgress} = {}) {
   return {looked, opened, cursor: after};
 }
 
-/** Publish this account's messaging key, so anybody can write to it. */
-export async function announce(wallet, me, tag) {
+/** Publish something this account says about itself, and sign it here.
+ *
+ * `where` is `/account/announce` or `/account/profile`: both are one key
+ * announcement, both are built by the node over an address it watches and
+ * signed nowhere else, and the only difference is which fields the
+ * announcement carries. The node's offer is checked the way the chain will
+ * check it before a single byte of it is signed (`coins.verifyOffer`).
+ */
+async function publishAboutMe(wallet, me, where, body) {
   const coins = await import("/coins.js");
-  const asked = await fetch("/account/announce", {
+  const asked = await fetch(where, {
     method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({key: hex(me.publicKey), tag: tag || ""}),
+    body: JSON.stringify(body),
   });
   const offer = await asked.json();
   if (!asked.ok) throw new Error(offer.detail || "that cannot be published");
@@ -600,6 +607,32 @@ export async function announce(wallet, me, tag) {
   const said = await done.json();
   if (!done.ok) throw new Error(said.detail || "the node would not take it");
   return said;
+}
+
+/** Publish this account's messaging key, so anybody can write to it. */
+export async function announce(wallet, me, tag) {
+  return publishAboutMe(wallet, me, "/account/announce",
+                        {key: hex(me.publicKey), tag: tag || ""});
+}
+
+/** Publish this account's own profile: its face, a line, a link.
+ *
+ * The tag is not part of this. The node takes it off the chain, because
+ * changing a face is not changing a name, and a name typed into this
+ * request would be a name the account might not hold.
+ *
+ * A field you leave out is kept as it stands; a field you send empty is
+ * taken down. One announcement replaces the whole of a profile, so a form
+ * that started blank would drop a bio every time somebody changed their
+ * picture -- which is why `me.html` prefills these from `wallet.state()`.
+ */
+export async function publishProfile(wallet, me, fields) {
+  const body = {key: hex(me.publicKey)};
+  for (const field of ["pfp", "bio", "url"]) {
+    if (fields && Object.prototype.hasOwnProperty.call(fields, field))
+      body[field] = String(fields[field] || "");
+  }
+  return publishAboutMe(wallet, me, "/account/profile", body);
 }
 
 /** The keys for the chain an offer was built for.

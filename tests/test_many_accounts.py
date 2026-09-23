@@ -293,6 +293,26 @@ def _balance(state, address):
         return utxos.balance(db, address)
 
 
+def _funded(*node, who, amount: float = 5.0) -> int:
+    """Give a person spendable money, from this node's own wallet.
+
+    Two ordinary things in this file leave an account holding a lot and being
+    able to spend very little, and both are the design rather than a leak. A
+    listing keeps two of the seller's coins unspent until a buyer spends one,
+    because spending one is the only way to cancel a listing (`paste_leg`
+    refuses the leg over a coin that went away). And an announcement that
+    carries a bio and a link does not fit one OP_RETURN, so it goes out as
+    Class B dust outputs -- about 0.05 apiece. So a test that arrives after
+    both and asks for a profile is asking with money that is committed
+    elsewhere, and the honest answer from the node is the numbers, refused.
+    This file's rule is that a test makes what it needs.
+    """
+    daemon, state = node[0], node[1]
+    daemon.rpc.call("sendtoaddress", who.address, amount)
+    _settle(*node)
+    return _balance(state, who.address)
+
+
 def _tokens(person):
     said = person.client.get("/account/tokens").json()
     return {str(token["property_id"]): token
@@ -831,3 +851,184 @@ def test_an_account_cannot_buy_from_its_own_shop(node, crowd):
         "and costs the listing nothing: a stranger can still buy it"
     assert state.token_index(state.messaging).inscription(piece)["owner"] \
         == maple.address
+
+
+# --- what they say about themselves -------------------------------------------
+
+def _published(person, **fields):
+    """Say something about yourself, sign it, and let the node put it on chain.
+
+    The name is not one of the fields, on purpose: the node reads it off the
+    chain, so publishing a new face cannot publish a name the account does not
+    hold. What the request leaves out is filled from what is already published,
+    which the second test below is about.
+    """
+    return _do(person, "/account/profile", {"key": person.key.hex(), **fields})
+
+
+def _said(state, person):
+    """What the chain says this account published about itself.
+
+    Read out of the announcement rows rather than from anything the node kept
+    beside them: a profile is published or it is nothing, and the point of
+    putting it on the chain is that a node which has never spoken to this
+    account can draw it.
+    """
+    with state.store() as store:
+        row = store.key_for(person.address)
+    assert row is not None, "an account that announced has a row"
+    return {"bio": row["bio"] or "", "url": row["url"] or "",
+            "pfp": row["pfp"] or "", "tag": row["tag"] or ""}
+
+
+def test_an_account_publishes_its_own_profile(node, crowd):
+    """A face, a line and a link, published by the person who owns them.
+
+    The operator's `/profile/picture` and `/profile/about` write into this
+    installation's settings and announce from the node's own key. An account
+    has no settings on this machine and no key in this node, so its three
+    fields travel in the request and go into the same announcement the
+    operator's wallet makes -- signed in the browser, broadcast here, and kept
+    afterwards as what THEY said rather than as a fact about anybody.
+
+    One assertion below is not about the announcement at all, and matters more
+    than it looks: the link is on the page as words, not as an anchor. A
+    stranger's clickable link inside a wallet is the one-tap delivery path for
+    "claim your airdrop" onto a lookalike arcade, which is the attack
+    docs/multi-user.md is written against. Copying it costs a paste; clicking
+    it would not.
+    """
+    daemon, state = node[0], node[1]
+    maple = crowd[0]
+    _funded(*node, who=maple)
+    piece = _inscribed(*node, owner=maple.address, name="Maple face",
+                       content=b"arcade" * 40)
+
+    said = _published(maple, pfp=piece, bio="makes things out of chain",
+                      url="https://maple-of-yours.example")
+    assert said.status_code == 200, said.text
+    assert said.json()["what"] == "publish your profile", said.json()
+    _settle(*node)
+
+    assert _said(state, maple) == {
+        "bio": "makes things out of chain",
+        "url": "https://maple-of-yours.example",
+        "pfp": piece, "tag": "maple"}
+
+    page = " ".join(maple.client.get("/u/maple").text.split())
+    assert "makes things out of chain" in page, "the line they wrote, on the page"
+    assert "https://maple-of-yours.example" in page, "shown in full, to be read"
+    assert 'href="https://maple-of-yours.example' not in page, \
+        "as words. Not as a link somebody taps"
+    assert f"/content/{piece}" in page, "and their face"
+
+    # A face is not only on the profile page: it is what every post of theirs
+    # draws beside the name, which is the reason it is published at all.
+    _post(maple, "posted after the face went up")
+    _settle(*node)
+    feed = maple.client.get("/feed").text
+    assert f'src="/content/{piece}"' in feed, \
+        "somebody else's feed draws their posts without their face"
+
+
+def test_changing_a_face_publishes_the_same_name_again(node, crowd):
+    """Changing a face is not changing a name, and it is not erasing a bio.
+
+    Two things the operator's page gets for free and this one has to be
+    reminded of. The name travels inside the announcement, so it comes from the
+    chain and not from the request -- an announcement naming a name its signer
+    does not hold is a lie signed by the wrong person. And one announcement
+    replaces a whole profile instead of adding to the last one, so a field the
+    request never mentioned is filled from what stands published; otherwise a
+    new picture would quietly take a bio down with it, for a fee.
+    """
+    daemon, state = node[0], node[1]
+    maple = crowd[0]
+    face = _inscribed(*node, owner=maple.address, name="First face",
+                      content=b"arcade" * 40)
+    print(f"MAPLE-INDEX {_balance(state, maple.address) / COIN}")
+    first = _published(maple, pfp=face, bio="makes things out of chain",
+                       url="https://maple-of-yours.example")
+    assert first.status_code == 200, first.text
+    _settle(*node)
+    before = _said(state, maple)
+    assert before["pfp"] and before["bio"], \
+        "this test is about what a second announcement leaves alone"
+
+    # The same three boxes the page shows, filled the same way it fills them:
+    # from `GET /account`, which carries what is already published.
+    shown = maple.client.get("/account").json()["profile"]
+    assert shown == {"pfp": before["pfp"], "bio": before["bio"],
+                    "url": before["url"]}, \
+        f"the page would start from: {shown}, not from: {before}"
+
+    other = _inscribed(*node, owner=maple.address, name="Second face",
+                       content=b"arcade" * 36)
+    again = _published(maple, pfp=other)
+    assert again.status_code == 200, again.text
+    _settle(*node)
+
+    now = _said(state, maple)
+    assert now["pfp"] == other, "the new picture is the one published"
+    assert now["tag"] == before["tag"] == "maple", "the name did not move"
+    assert now["bio"] == before["bio"] and now["url"] == before["url"], \
+        f"a field nobody sent took itself down: {now}"
+
+
+def test_a_face_has_to_be_a_piece_you_hold(node, crowd):
+    """Pointing your name at somebody else's property is refused, not ignored.
+
+    The draw already refuses it -- `_face_for` shows a picture only while the
+    chain says the address still holds the piece -- which is exactly why the
+    build refuses too. A silent drop here would mean an account paid a fee for
+    an announcement that shows nothing anywhere, forever.
+    """
+    daemon, state = node[0], node[1]
+    maple, ferns = crowd[0], crowd[1]
+    piece = _inscribed(*node, owner=ferns.address, name="Ferns own piece",
+                       content=b"arcade" * 24)
+    before = _said(state, maple)
+
+    tried = maple.client.post("/account/profile",
+                              json={"key": maple.key.hex(), "pfp": piece})
+    assert tried.status_code == 400, tried.text
+    assert "not yours to wear" in tried.json()["detail"]
+
+    nonsense = maple.client.post("/account/profile", json={
+        "key": maple.key.hex(), "pfp": "a nice photo of myself"})
+    assert nonsense.status_code == 400, nonsense.text
+    assert "inscription" in nonsense.json()["detail"], nonsense.json()
+
+    assert daemon.rpc.call("getrawmempool") == [], "a refusal builds nothing"
+    assert _said(state, maple) == before
+
+
+def test_what_a_bio_and_a_link_may_say_is_refused_before_anything_is_built(node,
+                                                                          crowd):
+    """Refused rather than trimmed, in the node's own words, before a fee.
+
+    The same ceilings the operator's form has -- 160 characters of bio, a link
+    that starts with a scheme -- because they are the ceilings of the format,
+    not of one page. An account reaches them through a JSON body instead of a
+    form, which is the one place a browser could otherwise quietly send a
+    length the announcement refuses to carry.
+    """
+    daemon, state = node[0], node[1]
+    maple = crowd[0]
+    before = _said(state, maple)
+
+    longwinded = maple.client.post("/account/profile",
+                                   json={"key": maple.key.hex(),
+                                         "bio": "x" * 200})
+    assert longwinded.status_code == 400, longwinded.text
+    assert "a bio is at most 160 characters" in longwinded.json()["detail"]
+
+    clickable = maple.client.post("/account/profile",
+                                  json={"key": maple.key.hex(),
+                                        "url": "javascript:alert(1)"})
+    assert clickable.status_code == 400, clickable.text
+    assert clickable.json()["detail"].startswith("a link starts with https://"), \
+        clickable.json()
+
+    assert daemon.rpc.call("getrawmempool") == []
+    assert _said(state, maple) == before, "and the refusal cost nothing"

@@ -121,11 +121,21 @@ def choose(db, address: str, target: int, exclude=frozenset(),
     what it did, the first time an account claimed a name and published a
     key without waiting a block in between.
     """
-    available = [u for u in utxos.unspent(db, address)
+    listed = utxos.unspent(db, address)
+    available = [u for u in listed
                  if (u["txid"], u["vout"]) not in exclude]
+    # An `extra` coin the index also lists is the same coin twice. Once a block
+    # has read a change output it stands in both places at once -- the note this
+    # node made of it, and the row the scanner wrote -- and until the note ages
+    # out the two would be offered as two inputs, which is a transaction the
+    # chain refuses outright. Where the index agrees the coin exists, the index
+    # is what gets used.
+    outpoints = {(u["txid"], u["vout"]) for u in listed}
     for coin in (extra or []):
-        if (coin["txid"], coin["vout"]) not in exclude:
-            available.append(dict(coin))
+        out = (coin["txid"], coin["vout"])
+        if out in exclude or out in outpoints:
+            continue
+        available.append(dict(coin))
     big_enough = [u for u in available if u["value"] >= target]
     ordered = (sorted(big_enough, key=lambda u: u["value"]) if big_enough
                else sorted(available, key=lambda u: -u["value"]))

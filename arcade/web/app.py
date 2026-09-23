@@ -2157,6 +2157,12 @@ def create_app(state: AppState) -> FastAPI:
     #: How many posts a feed page holds before somebody has to ask for more.
     FEED_PAGE = 10
 
+    #: Read from the mempool, rather than told. `_profile_of` uses this as the
+    #: default for its `waiting` argument, where `None` is already taken to mean
+    #: "do not look at the pool at all" and an empty `Pending()` would be a
+    #: silent lie about what is waiting to be confirmed.
+    _POOL = object()
+
     def _pending_feed(network: str):
         """What the mempool holds for the feed right now.
 
@@ -2521,16 +2527,26 @@ def create_app(state: AppState) -> FastAPI:
                         "what": feedlib.NAMES.get(row["kind"], "comment")}
         return None
 
-    def _profile_of(address: str, waiting: Any = None) -> dict[str, Any]:
+    def _profile_of(address: str, waiting: Any = _POOL) -> dict[str, Any]:
         """What somebody has published about themselves.
 
         The pool first and the store second, so a bio written a minute ago
         is on the page now (D-144). Everything here is what THEY said: a
         wallet repeating somebody's own words is not vouching for them.
+
+        Say nothing about `waiting` and the mempool is read for you. That
+        default exists because the callers that omit it are the ones drawing a
+        page for somebody, and the case that matters is a profile broadcast
+        minutes ago -- which is in the pool and nowhere else yet. A caller that
+        genuinely means "ignore the pool" passes `None`; passing an empty pool
+        by accident is a page showing the profile from before the one this
+        account just paid to publish.
         """
         out = {"bio": "", "url": "", "pfp": "", "tag": "", "mainnet": ""}
         if not address:
             return out
+        if waiting is _POOL:
+            waiting = _pending_feed(state.messaging.network)
         if waiting is not None:
             for row in reversed(waiting.said):
                 if row["address"] == address:
@@ -2603,8 +2619,9 @@ def create_app(state: AppState) -> FastAPI:
                     f"a bio is at most {envelopelib.MAX_ANNOUNCE_BIO} "
                     f"characters; this one is {len(said.encode())}")
             if link and not link.startswith(("https://", "http://")):
-                raise ValueError("a link starts with https:// -- this ends up "
-                                 "on other people's pages as something to click")
+                raise ValueError("a link starts with https:// -- it is shown "
+                                 "on your page as words, never as somewhere to "
+                                 "click")
             if len(link.encode()) > envelopelib.MAX_ANNOUNCE_URL:
                 raise ValueError(
                     f"a link is at most {envelopelib.MAX_ANNOUNCE_URL} characters")
@@ -6613,6 +6630,11 @@ def create_app(state: AppState) -> FastAPI:
             "version": chain.params.pubkeyhash_version,
             "address": "", "balance": 0, "watching": None, "tag": "",
             "announced": False,
+            # What is already published, so the page can show a person their
+            # own words rather than an empty box they have to retype. An
+            # announcement replaces every field, so a form that starts blank
+            # would take a bio down every time somebody changed a face.
+            "profile": {"pfp": "", "bio": "", "url": ""},
         }
         mine = state.vault().by_pubkey(account.pubkey) or {}
         said["name"] = mine.get("tag", "")
@@ -6639,6 +6661,9 @@ def create_app(state: AppState) -> FastAPI:
                 said["tag"] = index.tag_of(address) or ""
                 with state.store() as store:
                     said["announced"] = store.key_for(address) is not None
+                profile = _profile_of(address)
+                said["profile"] = {field: profile[field]
+                                   for field in ("pfp", "bio", "url")}
             except Exception:
                 pass                       # a node still catching up says 0
 
@@ -7367,6 +7392,18 @@ def create_app(state: AppState) -> FastAPI:
         except (listingslib.ListingError, fundinglib.FundingError,
                 swaplib.SwapError, AmountError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
+        # Both of the coins this leg spends are gone as far as this account is
+        # concerned, from this moment and not from whenever a buyer turns up.
+        # Nothing this account broadcasts retires them -- the transaction that
+        # spends them is somebody else's, and may never be broadcast at all --
+        # so without this note the leg's own fee coin stays in the index looking
+        # spendable, and the next thing this account buys spends the coin that
+        # was already promised to pay for the sale.
+        committed = [(listing["input"]["txid"], listing["input"]["vout"])]
+        if listing.get("coin"):
+            committed.append((listing["coin"]["txid"], listing["coin"]["vout"]))
+        _flights.note_committed(account.pubkey, tuple(committed),
+                               network=chain.network)
         return JSONResponse({"listed": listing["id"],
                              "what": _listing_words(
                                  bytes.fromhex(listing["payload"]), chain),
@@ -8105,6 +8142,61 @@ def create_app(state: AppState) -> FastAPI:
         row = _feed_thing(chain.network, txid)
         return (row or {}).get("author", "") if row is not None else ""
 
+    def _announcement_offer(account, chain, address: str, said: dict, *,
+                            tag: str, what: str, pfp: str = "",
+                            bio: str = "", url: str = ""):
+        """The offer that puts this account's own announcement on the chain.
+
+        One build for the two routes that say something about a key -- the
+        key itself, and what its holder says about themselves -- because
+        they are one transaction: an announcement this node could never have
+        signed, handed to a browser that signs it and hands it back (§5).
+        What differs is only which fields the announcement carries and what
+        the offer calls itself in the browser.
+
+        The addresses are put in here rather than believed out there. The
+        identity address goes in as its hash160, so a reader files the key
+        under the address the account actually hands out rather than under
+        whichever one funded the transaction; the other chain's goes in the
+        same way, so anybody who finds this account by name can pay it on
+        either chain without asking for anything (D-032). Its version byte
+        is the OTHER chain's and is put back by whoever reads it -- what
+        travels is twenty bytes with no chain in them.
+        """
+        try:
+            key = bytes.fromhex(str(said.get("key", "")))
+            if len(key) != 32:
+                raise ValueError("a messaging key is 32 bytes")
+            _, our_hash = b58check_decode(address)
+            other = b""
+            for one in _account_chains():
+                if one.network == chain.network:
+                    continue
+                elsewhere = _account_address(account.pubkey, one)
+                if elsewhere:
+                    _, other = b58check_decode(elsewhere)
+                    break
+            body = envelopelib.build_key_announcement(
+                key, hash160=our_hash, tag=tag, other_hash160=other,
+                pfp=pfp, bio=bio, url=url)
+            index = state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address,
+                    _class_c_or_b(chain, address, body,
+                                  _coin_pubkey(account.pubkey)),
+                    rate=fees.MIN_FEE_PER_KB, what=what,
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "name", len(body))
+        except (fundinglib.FundingError, envelopelib.EnvelopeError,
+                ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned,
+                            unsigned.what)
+        return JSONResponse({"offer": offer.id, "chain": chain.network,
+                             **unsigned.as_json()})
+
     @app.post("/account/announce")
     def account_announce(request: Request, payload: Any = Body(None)):
         """Offer to publish this account's messaging key on the chain.
@@ -8121,47 +8213,97 @@ def create_app(state: AppState) -> FastAPI:
         if not address:
             return JSONResponse({"detail": "this account has no address yet"},
                                 status_code=400)
+        return _announcement_offer(
+            account, chain, address, said,
+            tag=str(said.get("tag", "")).strip().lstrip("@"),
+            what="publish your messaging key")
+
+    @app.post("/account/profile")
+    def account_profile(request: Request, payload: Any = Body(None)):
+        """Offer to publish what this account says about itself.
+
+        The operator's `/profile/picture` and `/profile/about` write into
+        this installation's settings and announce from the node's own key.
+        An account has neither, so its words travel with the request and go
+        straight into the announcement -- which is what every other wallet
+        reads, and what this node keeps as what THEY said rather than as a
+        fact about anybody (D-145). Publishing a profile publishes the key
+        with it, so an account that never announced pays one fee, not two.
+
+        Two things the operator's routes are not asked to get right:
+
+        * **The tag comes off the chain, never out of the request.** An
+          announcement naming a name the account does not hold is a lie
+          signed by the wrong person, and changing a face is not changing a
+          name (D-076).
+        * **A field left out is filled from what is already published.** An
+          announcement replaces every field rather than merging into the
+          last one, so without this a new picture would quietly take the
+          bio down with it.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        chain = _account_chain()
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse({"detail": "this account has no address yet"},
+                                status_code=400)
         try:
-            key = bytes.fromhex(str(said.get("key", "")))
-            if len(key) != 32:
-                raise ValueError("a messaging key is 32 bytes")
-            tag = str(said.get("tag", "")).strip().lstrip("@")
-            # The identity address goes in as its hash160, so a reader files
-            # the key under the address the account actually hands out
-            # rather than under whichever one funded the transaction.
-            _, our_hash = b58check_decode(address)
-            # The other chain's address goes in as its hash160, so anybody
-            # who finds this account by name can pay it on either chain
-            # without asking for anything (D-032). Its version byte is the
-            # OTHER chain's and is put back by whoever reads it -- what
-            # travels is twenty bytes with no chain in them.
-            other = b""
-            for one in _account_chains():
-                if one.network == chain.network:
-                    continue
-                elsewhere = _account_address(account.pubkey, one)
-                if elsewhere:
-                    _, other = b58check_decode(elsewhere)
-                    break
-            body = envelopelib.build_key_announcement(
-                key, hash160=our_hash, tag=tag, other_hash160=other)
             index = state.token_index(chain)
-            with contextlib.closing(index.open()) as db:
-                unsigned = fundinglib.build(
-                    db, chain.params, address,
-                    _class_c_or_b(chain, address, body,
-                                  _coin_pubkey(account.pubkey)),
-                    rate=fees.MIN_FEE_PER_KB,
-                    what="publish your messaging key",
-                    exclude=_flights.spent_by(account.pubkey, chain.network),
-                    extra=_flights.change_for(account.pubkey, chain.network))
-            _quota(account, "name", len(body))
-        except (fundinglib.FundingError, ValueError) as exc:
+            try:
+                tag = index.tag_of(address) or ""
+            except Exception:
+                tag = ""                      # a node still catching up
+            if not tag:
+                # Claimed here and not in a block yet. Reading the chain now
+                # would announce no name at all, and the two statements would
+                # disagree until somebody published again (D-076).
+                tag = (state.vault().by_pubkey(account.pubkey) or {}
+                       ).get("tag") or ""
+            now = _profile_of(address)
+            if "pfp" in said:
+                face = inscriptionlib.inscription_in(str(said["pfp"] or ""))
+                if said.get("pfp"):
+                    if not face:
+                        raise ValueError(
+                            "a profile picture is an inscription on one of "
+                            "these chains: give its id.")
+                    owned = False
+                    for one in _account_chains():
+                        where = _account_address(account.pubkey, one)
+                        try:
+                            row = state.token_index(one).inscription(face)
+                        except Exception:
+                            row = None
+                        if where and row is not None and row["owner"] == where:
+                            owned = True
+                            break
+                    if not owned:
+                        raise ValueError(
+                            "that piece is not yours to wear. A profile "
+                            "picture is a piece you hold, and it is drawn "
+                            "only while the chain says you hold it.")
+            else:
+                face = now["pfp"]
+            text = " ".join(str(said.get("bio", now["bio"]) or "").split())
+            if len(text.encode()) > envelopelib.MAX_ANNOUNCE_BIO:
+                raise ValueError(
+                    f"a bio is at most {envelopelib.MAX_ANNOUNCE_BIO} "
+                    f"characters; this one is {len(text.encode())}")
+            link = str(said.get("url", now["url"]) or "").strip()
+            if link and not link.startswith(("https://", "http://")):
+                raise ValueError("a link starts with https:// -- it is shown "
+                                 "on your profile as words, never as somewhere "
+                                 "to click")
+            if len(link.encode()) > envelopelib.MAX_ANNOUNCE_URL:
+                raise ValueError(
+                    f"a link is at most {envelopelib.MAX_ANNOUNCE_URL} "
+                    f"characters")
+        except ValueError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
-        offer = _offers.add(account.pubkey, chain.network, unsigned,
-                            unsigned.what)
-        return JSONResponse({"offer": offer.id, "chain": chain.network,
-                             **unsigned.as_json()})
+        return _announcement_offer(account, chain, address, said, tag=tag,
+                                   what="publish your profile",
+                                   pfp=face, bio=text, url=link)
 
     @app.post("/account/address")
     def account_address(request: Request, payload: Any = Body(None)):

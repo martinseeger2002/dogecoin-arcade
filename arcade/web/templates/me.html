@@ -105,6 +105,63 @@
       here can get it back for you. <a href="/me/backup">Back it up now</a>.
     </div>
   </div>
+
+  {# The operator's two profile forms, ported rather than redesigned. On
+     `/contacts` they write into this installation's settings and publish
+     from the node's own key; an account has neither, so the same three
+     fields go out in an announcement of its own, built by the node and
+     signed here. The boxes start with whatever is already published,
+     because one announcement replaces the whole of a profile &mdash; an
+     empty box is a thing taken down, not a thing left alone. #}
+  <div class="panel" id="profile-panel" hidden>
+    <h2 style="margin-top:0">Your profile</h2>
+    <p class="muted" style="margin:0 0 10px;max-width:64ch">What people see
+      when they click your name: your face, your name, a line about you, and
+      your link. It goes on the chain under your tag, so a node that has
+      never heard of you can still draw it &mdash; and every word of it is
+      what <em>you</em> said, which nobody here is vouching for.</p>
+
+    <details style="margin-top:10px">
+      <summary class="muted" style="cursor:pointer;font-size:.84rem">
+        Profile picture<span id="face-set"></span></summary>
+      <div class="row" style="margin-top:10px">
+        <div style="flex:1"><input autocomplete="off" id="pfp" class="mono"
+          spellcheck="false" placeholder="the inscription id of a piece you hold"></div>
+        <button type="button" class="small" id="publish-face">Publish this picture</button>
+      </div>
+      <div class="row" id="face-preview" hidden
+           style="margin-top:10px;align-items:center;gap:10px">
+        <img id="face-img" alt="" loading="lazy"
+             style="width:56px;height:56px;border-radius:50%;object-fit:cover">
+        <span class="muted" style="font-size:.82rem">This is your face while
+          the chain says you hold it. Empty the box to take it down.</span>
+      </div>
+      <p class="muted" style="font-size:.82rem;margin:8px 0 0;max-width:64ch">
+        Any piece this account holds, on either chain &mdash; including a
+        file it posted to the <a href="/feed">feed</a>. This publishes your
+        tag again with the new picture on it: your name does not change, and
+        everybody who draws your posts picks it up.</p>
+    </details>
+
+    <details style="margin-top:10px">
+      <summary class="muted" style="cursor:pointer;font-size:.84rem">
+        Bio and link<span id="about-set"></span></summary>
+      <div class="field" style="margin-top:10px">
+        <input autocomplete="off" id="bio" maxlength="160"
+               placeholder="a line about you, shown on your feed"></div>
+      <div class="row">
+        <div style="flex:1"><input autocomplete="off" id="url" class="mono"
+          spellcheck="false" maxlength="120"
+          placeholder="https://somewhere-of-yours"></div>
+        <button type="button" class="small" id="publish-about">Publish</button>
+      </div>
+      <p class="muted" style="font-size:.82rem;margin:8px 0 0;max-width:64ch">
+        Both go on the chain under your tag, so anybody who finds you sees
+        them without asking this node anything. A link has to start with
+        https:// &mdash; it is shown on your page as words to read and copy,
+        never as somewhere to click.</p>
+    </details>
+  </div>
 </div>
 
 {# What this node lets this account do, and how much of it is left. Said
@@ -274,6 +331,7 @@ async function draw() {
   drawWallets(said);
   $("claim-panel").hidden = !!said.tag || !keys;
   $("announce-panel").hidden = !keys;
+  drawProfile(said);
   $("myaddr").textContent = said.address || "—";
   $("not-announced").hidden = !said.address || !!said.announced;
   if (keys && said.address) {
@@ -285,6 +343,33 @@ async function draw() {
   await refreshCounts();
   return said;
 }
+
+// What is already published, in the boxes that would change it — but never
+// over something being typed. An announcement replaces a whole profile at
+// once, so a box that started empty would be a quiet way of taking a field
+// down, and this page redraws itself after every publish.
+function drawProfile(said) {
+  const profile = said.profile || {};
+  $("profile-panel").hidden = !keys;
+  const fill = (id, value) => {
+    const box = $(id);
+    if (!box.dataset.touched) box.value = value || "";
+  };
+  fill("pfp", profile.pfp);
+  fill("bio", profile.bio);
+  fill("url", profile.url);
+  $("face-set").textContent = profile.pfp ? " — set" : "";
+  $("about-set").textContent = (profile.bio || profile.url) ? " — set" : "";
+  // Only a piece id, and only ever from our own /content/ path: the value
+  // came off somebody's announcement, and a box it goes into is a box this
+  // page just filled from the same source.
+  const piece = /^[0-9a-f]{64}$/.test(profile.pfp || "");
+  $("face-preview").hidden = !piece;
+  if (piece) $("face-img").src = "/content/" + profile.pfp;
+}
+
+for (const id of ["pfp", "bio", "url"])
+  $(id).oninput = () => { $(id).dataset.touched = "yes"; };
 
 async function refreshCounts() {
   try { $("mail").textContent = (await mail.inbox()).length; } catch (e) {}
@@ -324,6 +409,26 @@ $("claim").onclick = () => withWallet(
 
 $("announce").onclick = () => withWallet(
   () => mail.announce(keys, me), () => "Your key is on its way to the chain.");
+
+// The two boxes the node's own page has, for an account: one announcement
+// built by the node over the address it watches, signed here, broadcast by
+// this node because it is the one holding the coins. The tag is not sent --
+// the node reads it off the chain, which is what makes publishing a new
+// picture leave the name alone.
+const published = (words) => () => {
+  // Now the chain has it, so let the next draw fill the boxes from there.
+  for (const id of ["pfp", "bio", "url"]) delete $(id).dataset.touched;
+  return words;
+};
+
+$("publish-face").onclick = () => withWallet(
+  () => mail.publishProfile(keys, me, {pfp: $("pfp").value.trim()}),
+  published("Your picture is on its way to the chain."));
+
+$("publish-about").onclick = () => withWallet(
+  () => mail.publishProfile(keys, me,
+        {bio: $("bio").value, url: $("url").value.trim()}),
+  published("Your profile is on its way to the chain."));
 
 $("copy-addr").onclick = () => {
   navigator.clipboard.writeText($("myaddr").textContent.trim());
