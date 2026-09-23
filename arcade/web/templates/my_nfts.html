@@ -81,6 +81,32 @@
   </div>
 </div>
 
+<div class="panel" id="listing" hidden>
+  <h3 style="margin:0 0 6px" id="listing-what">Sell it without you</h3>
+  <p class="muted" style="font-size:.86rem;margin:0 0 10px">
+    A price put on the chain says what you want for the piece. Getting paid
+    for it still needs your signature, and this node cannot supply one
+    &mdash; it has never seen your key. This is the other kind of promise:
+    this tab signs the bargain now, the piece against that price with your
+    change back to this address, and hands this node the signature. A buyer
+    then completes it without asking you, at the price the signature says,
+    and a signature sent to a server cannot be called back. Spending the
+    piece is the way out: any spend of it ends the listing, because there is
+    nothing left to give. Listing the same piece twice puts two prices up
+    beside each other and both stand until a block spends it.</p>
+  <div class="row">
+    <div style="flex:1"><input autocomplete="off" id="list-price" class="mono"
+      spellcheck="false" inputmode="decimal" placeholder="how much"></div>
+    <button type="button" id="list-it">Read it back</button>
+    <button type="button" class="ghost" id="list-cancel">Cancel</button>
+  </div>
+  <div class="confirm" id="list-confirm" hidden>
+    <p id="list-says"></p>
+    <button class="btn primary" id="list-sign">Sign it and list it</button>
+    <button class="btn" id="list-no">Not this time</button>
+  </div>
+</div>
+
 <div class="panel" id="sending" hidden>
   <h3 style="margin:0 0 6px" id="sending-what">Send it</h3>
   <p class="muted" style="font-size:.86rem;margin:0 0 10px">
@@ -116,7 +142,7 @@ const news = (t) => { $("news").textContent = t; $("news").hidden = !t; };
 const CHAIN = {network: "{{ chain.network }}",
                version: {{ chain.params.pubkeyhash_version }}};
 
-let keys = null, chosen = null;
+let keys = null, chosen = null, waiting = null;
 
 const commas = (n) => Number(n || 0).toLocaleString();
 
@@ -201,11 +227,15 @@ function card(piece, chain) {
   sell.className = "btn ghost small";
   sell.textContent = piece.sale ? "Change the price" : "Sell it";
   sell.onclick = () => pricing(piece, chain);
+  const apart = document.createElement("button");
+  apart.className = "btn ghost small";
+  apart.textContent = "Sell it without you";
+  apart.onclick = () => listing(piece, chain);
   const send = document.createElement("button");
   send.className = "btn small";
   send.textContent = "Send";
   send.onclick = () => choose(piece, chain);
-  doing.append(open, sell, send);
+  doing.append(open, sell, apart, send);
   if (piece.sale) {
     const off = document.createElement("button");
     off.className = "btn ghost small";
@@ -246,6 +276,76 @@ function pricing(piece, chain) {
   $("price").value = "";
   $("price").focus();
 }
+
+/* --- selling it without being there to complete it ----------------------
+ *
+ * Two presses, and only the second one uses the key. The first asks this
+ * node for the leg and then reads it here: `wallet.checkedListing` decodes
+ * the transaction's own bytes, works out both digests for itself and
+ * refuses anything that does not add up, so the sentence below is what this
+ * tab derived rather than what this node summarised. `leg.what` is not
+ * printed anywhere on this page for that reason -- it is a string written
+ * beside the bytes, not one taken out of them.
+ *
+ * Nothing on this path goes near `confirm` or `signOffer`. Those sign every
+ * input with SIGHASH_ALL and hand the result to `/account/sign`, which
+ * broadcasts, and a listing is precisely the thing that must not be
+ * broadcast: it is one side of a swap whose other side is a buyer that does
+ * not exist yet. `wallet.list` is the only thing that signs it, with
+ * SINGLE|ANYONECANPAY, and the only thing it sends anywhere is the
+ * signature.
+ */
+
+function listing(piece, chain) {
+  say(""); news("");
+  waiting = null;
+  chosen = {piece, chain};
+  $("listing-what").textContent =
+    `Sell #${commas(piece.number)} on ${chain.label} without you`;
+  $("list-confirm").hidden = true;
+  $("sending").hidden = true;
+  $("pricing").hidden = true;
+  $("listing").hidden = false;
+  $("list-price").value = "";
+  $("list-price").focus();
+}
+
+$("list-cancel").onclick = () => {
+  $("listing").hidden = true; chosen = null; waiting = null;
+};
+
+$("list-no").onclick = () => { $("list-confirm").hidden = true; };
+
+$("list-it").onclick = async () => {
+  say(""); news("");
+  waiting = null;
+  if (!chosen) return;
+  try {
+    if (!keys) throw new Error("your wallet is not open in this tab");
+    const leg = await wallet.offerListing(chosen.piece.txid,
+                                          $("list-price").value.trim(),
+                                          chosen.chain.network);
+    const shown = await wallet.checkedListing(leg, keys);
+    $("list-says").textContent = shown.says;
+    waiting = leg;
+    $("list-confirm").hidden = false;
+  } catch (e) { say(String(e.message || e)); }
+};
+
+$("list-sign").onclick = async () => {
+  say(""); news("");
+  if (!waiting) return;
+  try {
+    const out = await wallet.list(keys, waiting);
+    waiting = null;
+    $("list-confirm").hidden = true;
+    $("listing").hidden = true;
+    news(`Listed ${out.piece}: ${out.what}. It is on this node's `
+      + "listings page for whoever buys from it, and it stands until a block "
+      + "spends the piece. Nothing was broadcast, and nothing left this "
+      + "account's address.");
+  } catch (e) { say(String(e.message || e)); }
+};
 
 /** Ask for an offer, say what THIS BROWSER read off it, and sign it if
  *  they say yes.
@@ -348,7 +448,10 @@ async function draw() {
     $("chains").append(head, cards);
   }
   $("nothing").hidden = any > 0;
-  if (!any) { $("sending").hidden = true; $("pricing").hidden = true; }
+  if (!any) {
+    $("sending").hidden = true; $("pricing").hidden = true;
+    $("listing").hidden = true;
+  }
 }
 
 $("inscribe-it").onclick = async () => {
