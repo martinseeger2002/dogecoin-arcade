@@ -91,20 +91,25 @@ DAY = 86400
 #: ways an account puts a key or a name on the chain for itself; a person does
 #: each of those once, and something doing them five times an hour is not a
 #: person.
-#: `inscribe` is the ten. Everything else here can be spoken over -- a post
-#: is followed by another post, a send is answered by sending it back. An
-#: inscription is a piece of the chain that stays, and this node carries it
-#: forever, so it is the one action that is not the same kind of thing at
-#: thirty an hour. The bytes below still bound how much of it a day adds up
-#: to; this bounds how fast.
+#: `inscribe` and `issue` are the ten. Everything else here can be spoken
+#: over -- a post is followed by another post, a send is answered by sending
+#: it back. An inscription is a piece of the chain that stays, and this node
+#: carries it forever, so it is not the same kind of thing at thirty an hour.
+#: A token issuance is counted the same way for the same reason, and is its
+#: own dial rather than borrowing the inscription one because the two are
+#: spent by different people: a run of a hundred pieces should not cost
+#: somebody their one go at a token name, and a token should not quietly
+#: consume the allowance for the thing whose bytes this node stores. The
+#: bytes below still bound how much of it a day adds up to; this bounds how
+#: fast.
 PER_HOUR = {"post": 30, "react": 60, "message": 30, "send": 30, "list": 30,
-            "name": 5, "inscribe": 10}
+            "name": 5, "inscribe": 10, "issue": 10}
 
 #: What each is called in a sentence, so the refusal and the page cannot
 #: disagree about what ran out.
 LABELS = {"post": "posts", "react": "reactions", "message": "messages",
           "send": "sends", "list": "listings", "inscribe": "inscriptions",
-          "name": "name and key claims"}
+          "issue": "token issuances", "name": "name and key claims"}
 
 #: Bytes an account may push onto the chain in a day, whatever carried them --
 #: the ceiling on how much of the chain one person can make this node store

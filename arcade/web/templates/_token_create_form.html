@@ -1,0 +1,225 @@
+{# The fields that create a token, in one place because there are two ways to
+   submit them and a token's name cannot be changed afterwards.
+
+   An operator's submission is a second POST: the node has the key, so it
+   prepares the transaction, shows it, and broadcasts on the next yes
+   (`_token_action`). An account's submission never posts the form at all --
+   the node has no key to post to -- so the same fields are read by the script
+   under this block, turned into an offer, checked in this browser against the
+   transaction's own bytes, and signed here.
+
+   Everything else is deliberately the same markup, including the `name`
+   attributes, which are what the script reads. `{% if not public %}` appears
+   twice: the "Issued from" chooser, which is a question only a node holding
+   several wallets can answer, and how the button behaves. #}
+<form method="post" action="/tokens/create"{% if public %} id="create-form"{% endif %}>
+  {% if not public %}
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  {% endif %}
+  <div class="field"><label>Name</label>
+    <input autocomplete="off" name="name" placeholder="what the token is called" value="{{ f.name or '' }}"></div>
+  <div class="row" style="align-items:flex-start">
+    <div class="field" style="flex:1 1 180px"><label>Supply</label>
+      <select name="kind">
+        <option value="fixed" {{ 'selected' if f.kind != 'managed' }}>Fixed: all created now</option>
+        <option value="managed" {{ 'selected' if f.kind == 'managed' }}>Managed: granted later by the issuer</option>
+      </select></div>
+    <div class="field" style="flex:1 1 140px"><label>Amount (fixed supply)</label>
+      <input autocomplete="off" name="supply" placeholder="1000" inputmode="decimal" value="{{ f.supply or '' }}"></div>
+    <div class="field" style="flex:1 1 140px"><label>Units</label>
+      <select name="units">
+        <option value="divisible" {{ 'selected' if f.units != 'indivisible' }}>Divisible (8 decimals)</option>
+        <option value="indivisible" {{ 'selected' if f.units == 'indivisible' }}>Whole units only</option>
+      </select></div>
+  </div>
+  {% if not public %}
+  <div class="field"><label>Issued from</label>
+    <select name="sender">
+      {% for a in funded %}
+      <option value="{{ a.address }}" {{ 'selected' if f.sender == a.address }}>{{ a.address }} — {{ "{:,.4f}".format(a.coins) }} coins</option>
+      {% endfor %}
+    </select>
+    <div class="muted" style="font-size:.8rem;margin-top:4px">This address becomes the issuer and,
+      for a fixed supply, receives every token. It pays the fee.</div></div>
+  {% endif %}
+  <div class="field"><label>Description</label>
+    <input autocomplete="off" name="data" value="{{ f.data or '' }}"></div>
+  <div class="row">
+    <div class="field" style="flex:1"><label>Category</label><input autocomplete="off" name="category" value="{{ f.category or '' }}"></div>
+    <div class="field" style="flex:1"><label>Subcategory</label><input autocomplete="off" name="subcategory" value="{{ f.subcategory or '' }}"></div>
+  </div>
+  <div class="field"><label>Link</label><input autocomplete="off" name="url" placeholder="https://" value="{{ f.url or '' }}"></div>
+  <div class="field"><label>Icon</label>
+    <input autocomplete="off" name="icon" list="my-inscriptions"
+           placeholder="inscription id" value="{{ f.icon or '' }}">
+    <datalist id="my-inscriptions">
+      {% for row in my_pictures %}
+      <option value="{{ row.txid }}">{{ row.label }}</option>
+      {% endfor %}
+    </datalist>
+    {% if public %}<div class="muted" id="icon-face" style="font-size:.8rem;margin-top:6px"
+      >Shows what the id names as you type it, before anything is paid for.</div>{% endif %}
+    <div class="muted" style="font-size:.8rem;margin-top:4px">An inscription on
+      this chain: its id, or one of yours from the list &mdash; a
+      <code>/content/</code> link works too. Inscribe the picture from the
+      <a href="/nfts">NFTs</a> page first if it is not on the chain yet. The
+      token wears it wherever it is shown, and the picture is served by
+      whichever node is looking, not by a website that can go away.</div></div>
+  {% if public %}
+  <button type="button" class="{{ 'danger' if chain.is_mainnet }}" id="create-offer">
+    {{ 'Review creation on mainnet' if chain.is_mainnet else 'Review creation' }}</button>
+  {% else %}
+  <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">
+    {{ 'Review creation on mainnet' if chain.is_mainnet else 'Review creation' }}</button>
+  {% endif %}
+  <p class="muted" style="font-size:.84rem;margin:10px 0 0">
+    A token is created by one transaction and exists for as long as the chain
+    does. Its name cannot be changed afterwards. Long names and descriptions
+    cost more: past 76 bytes the data no longer fits one OP_RETURN and is
+    carried in extra outputs instead.</p>
+</form>
+{% if public %}
+<div class="msg err" id="create-trouble" hidden></div>
+<div class="msg ok" id="create-news" hidden></div>
+<div class="confirm" id="create-confirm" hidden>
+  <p id="create-says"></p>
+  <button class="btn primary" id="create-yes">Yes, create it</button>
+  <button class="btn" id="create-no">No</button>
+</div>
+<script type="module">
+import * as wallet from "/wallet.js";
+
+const $ = (id) => document.getElementById(id);
+const form = $("create-form");
+const field = (name) => form.elements[name];
+const CHAIN = {network: "{{ chain.network }}",
+               version: {{ chain.params.pubkeyhash_version }}};
+let keys = null;
+
+const trouble = (t) => { $("create-trouble").textContent = t;
+                         $("create-trouble").hidden = !t; };
+
+// An issuance cannot be corrected afterwards, so the icon is checked while it
+// is being chosen rather than after it is permanent. /content/ answers with
+// 200 both for a picture and for an inscription that is not one -- a chunk of
+// JSON, a video, a page -- so an <img> tag alone cannot tell the three
+// answers apart, and a 404 it cannot tell from a 200 at all. The status and
+// the type are what say it, which means a fetch rather than a tag, and the
+// picture is handed to the <img> as a blob once it is known to be a picture.
+let looked = 0;
+let faceURL = "";
+async function preview() {
+  const said = $("icon-face");
+  const raw = field("icon").value.trim();
+  const id = (raw.match(/([0-9a-fA-F]{64})/) || [])[1] || "";
+  if (!raw) {
+    said.className = "muted";
+    said.textContent = "Shows what the id names as you type it, before anything is paid for.";
+    return;
+  }
+  if (!id) {
+    said.className = "err";
+    said.textContent = "That is not an inscription id: 64 hexadecimal characters, or a /content/ link to one.";
+    return;
+  }
+  const mine = ++looked;
+  said.className = "muted";
+  said.textContent = "Looking for it…";
+  let res = null;
+  try {
+    res = await fetch(`/content/${id}`, {credentials: "omit"});
+  } catch (e) {
+    res = null;
+  }
+  if (mine !== looked) return;             // a later id was typed while waiting
+  if (res === null) {
+    said.className = "err";
+    said.textContent = "This node could not be reached for that one. Nothing has been paid for.";
+    return;
+  }
+  const type = (res.headers.get("content-type") || "").split(";")[0].trim();
+  if (res.ok && type.startsWith("image/")) {
+    const blob = await res.blob();
+    if (mine !== looked) return;
+    if (faceURL) URL.revokeObjectURL(faceURL);
+    faceURL = URL.createObjectURL(blob);
+    said.className = "muted";
+    said.innerHTML = "";
+    const img = document.createElement("img");
+    img.src = faceURL;
+    img.alt = "the token's icon";
+    img.style.cssText = "width:48px;height:48px;object-fit:cover;border-radius:50%;display:block";
+    const words = document.createElement("span");
+    words.textContent = `That is a ${type}, and the token would wear it.`;
+    words.style.marginLeft = "8px";
+    said.append(img, words);
+    return;
+  }
+  let why = "";
+  if (!res.ok) {
+    try {
+      why = (await res.json()).error || "";
+    } catch (e) { why = ""; }
+  }
+  said.className = "err";
+  said.textContent = res.ok
+    ? `That inscription is a ${type}, not a picture. The token would name it and show nothing.`
+    : (why || "There is no inscription at that id on this node.");
+}
+let waiting = 0;
+field("icon").addEventListener("input", () => {
+  clearTimeout(waiting);
+  waiting = setTimeout(preview, 400);
+});
+field("icon").addEventListener("change", preview);
+preview();
+
+async function offer() {
+  trouble("");
+  $("create-confirm").hidden = true;
+  try {
+    if (!keys) throw new Error("your wallet is not open in this tab");
+    const body = {chain: CHAIN.network};
+    for (const name of ["name", "kind", "supply", "units", "data",
+                        "category", "subcategory", "url", "icon"]) {
+      body[name] = field(name).value;
+    }
+    const asked = await fetch("/account/token/create", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body),
+    });
+    const offer = await asked.json();
+    if (!asked.ok) throw new Error(offer.detail || "that token cannot be created");
+    const shown = await wallet.checked(offer, keys);
+    $("create-says").textContent =
+      `${offer.what}? ${shown.says} Worked out in this browser from the `
+      + "transaction's own bytes, not from what this node says it does."
+      + (offer.class === "B" ? " It carries the payload in extra outputs, "
+                             + "which is what an icon costs." : "");
+    $("create-confirm").hidden = false;
+    $("create-yes").onclick = async () => {
+      $("create-confirm").hidden = true;
+      try {
+        const done = await wallet.confirm(keys, offer);
+        trouble("");
+        $("create-news").textContent =
+          `Created: ${done.txid.slice(0, 16)}… It is a token when its block `
+          + "is indexed, and it is yours until you send it.";
+        $("create-news").hidden = false;
+      } catch (e) { trouble(String(e.message || e)); }
+    };
+    $("create-no").onclick = () => { $("create-confirm").hidden = true; };
+  } catch (e) { trouble(String(e.message || e)); }
+}
+$("create-offer").onclick = offer;
+form.onsubmit = (event) => { event.preventDefault(); offer(); };
+
+keys = await wallet.opened(CHAIN);
+$("create-offer").disabled = !keys;
+if (!keys) {
+  trouble("Your wallet is not open in this tab, so nothing here can be signed. "
+          + "Open it and come back.");
+}
+document.body.dataset.tokenCreateReady = "yes";
+</script>
+{% endif %}

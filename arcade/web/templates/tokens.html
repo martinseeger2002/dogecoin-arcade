@@ -7,7 +7,7 @@
 <h1>Tokens {{ tk.chain_switch(chain, other_chains, csrf, "/tokens") }}</h1>
 <p class="sub">Every fungible token on {{ chain.label|lower }}: what exists, and how to make one.
   What <em>you</em> hold, and the form that sends it, is on the
-  <a href="/wallet/tokens">wallet's Tokens tab</a>.
+  <a href="{{ '/me/wallet/tokens' if public else '/wallet/tokens' }}">wallet's Tokens tab</a>.
   {% if other_chains %}<span class="muted">Click the {{ 'main' if chain.is_mainnet else 'test' }} tag to switch
   to {{ other_chains[0].label|lower }}.</span>{% endif %}
   <span id="live" data-generation="{{ state.generation }}"></span></p>
@@ -36,72 +36,45 @@
 
 <h2>Create a token</h2>
 <div class="panel">
-  {% if not node.online %}
-    <p class="muted">The {{ chain.label|lower }} node is not reachable.</p>
-  {% elif not node.wallet %}
-    <p>This node runs with <code>disablewallet=1</code>, so it can read tokens but
-       cannot create or send them.</p>
-  {% elif not funded %}
-    <p>No address in this wallet holds coins. Creating a token costs a transaction
-       fee, so fund a {{ chain.label|lower }} address first (Wallets page).</p>
+{# The fields live in _token_create_form.html, in one copy, because there are
+   two ways to submit them and a token's name cannot be taken back. On a
+   public instance this node has no key to post to and no business naming an
+   issuer, so the browser reads the same fields, asks for an offer, and signs
+   it there; the operator's path is the second POST it always was. #}
+{% set f = form_create or {} %}
+{% if public %}
+  {% if account_address %}
+    <p class="muted">Issued by <code class="addr">{{ account_address }}</code>
+      &mdash; this account's address on {{ chain.label|lower }}. It becomes the
+      issuer and, for a fixed supply, receives every token. It pays the fee,
+      and it is the only address this form can issue from.</p>
+    {% include "_token_create_form.html" %}
+  {% elif account_signed %}
+    {# The chain on this page is the node's switch and the account's address is
+       per chain, so the two can disagree. Saying "sign in first" to somebody
+       who did sign in is worse than saying nothing. #}
+    <p class="muted">This page is showing {{ chain.label|lower }} tokens, and
+      this account has not told this node an address there, so there is nothing
+      here for it to sign. Click the other chain's tag above, or open
+      <a href="/me">your wallet</a> &mdash; that is the page that tells this
+      node your address on every chain it runs.</p>
   {% else %}
-  {% set f = form_create or {} %}
-  <form method="post" action="/tokens/create">
-    <input type="hidden" name="csrf_token" value="{{ csrf }}">
-    <div class="field"><label>Name</label>
-      <input autocomplete="off" name="name" placeholder="what the token is called" value="{{ f.name or '' }}"></div>
-    <div class="row" style="align-items:flex-start">
-      <div class="field" style="flex:1 1 180px"><label>Supply</label>
-        <select name="kind">
-          <option value="fixed" {{ 'selected' if f.kind != 'managed' }}>Fixed: all created now</option>
-          <option value="managed" {{ 'selected' if f.kind == 'managed' }}>Managed: granted later by the issuer</option>
-        </select></div>
-      <div class="field" style="flex:1 1 140px"><label>Amount (fixed supply)</label>
-        <input autocomplete="off" name="supply" placeholder="1000" inputmode="decimal" value="{{ f.supply or '' }}"></div>
-      <div class="field" style="flex:1 1 140px"><label>Units</label>
-        <select name="units">
-          <option value="divisible" {{ 'selected' if f.units != 'indivisible' }}>Divisible (8 decimals)</option>
-          <option value="indivisible" {{ 'selected' if f.units == 'indivisible' }}>Whole units only</option>
-        </select></div>
-    </div>
-    <div class="field"><label>Issued from</label>
-      <select name="sender">
-        {% for a in funded %}
-        <option value="{{ a.address }}" {{ 'selected' if f.sender == a.address }}>{{ a.address }} — {{ "{:,.4f}".format(a.coins) }} coins</option>
-        {% endfor %}
-      </select>
-      <div class="muted" style="font-size:.8rem;margin-top:4px">This address becomes the issuer and,
-        for a fixed supply, receives every token. It pays the fee.</div></div>
-    <div class="field"><label>Description</label>
-      <input autocomplete="off" name="data" value="{{ f.data or '' }}"></div>
-    <div class="row">
-      <div class="field" style="flex:1"><label>Category</label><input autocomplete="off" name="category" value="{{ f.category or '' }}"></div>
-      <div class="field" style="flex:1"><label>Subcategory</label><input autocomplete="off" name="subcategory" value="{{ f.subcategory or '' }}"></div>
-    </div>
-    <div class="field"><label>Link</label><input autocomplete="off" name="url" placeholder="https://" value="{{ f.url or '' }}"></div>
-    <div class="field"><label>Icon</label>
-      <input autocomplete="off" name="icon" list="my-inscriptions"
-             placeholder="inscription id" value="{{ f.icon or '' }}">
-      <datalist id="my-inscriptions">
-        {% for row in my_pictures %}
-        <option value="{{ row.txid }}">{{ row.label }}</option>
-        {% endfor %}
-      </datalist>
-      <div class="muted" style="font-size:.8rem;margin-top:4px">An inscription on
-        this chain: its id, or one of yours from the list &mdash; a
-        <code>/content/</code> link works too. Inscribe the picture from the
-        <a href="/nfts">NFTs</a> page first if it is not on the chain yet. The
-        token wears it wherever it is shown, and the picture is served by
-        whichever node is looking, not by a website that can go away.</div></div>
-    <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">
-      {{ 'Review creation on mainnet' if chain.is_mainnet else 'Review creation' }}</button>
-    <p class="muted" style="font-size:.84rem;margin:10px 0 0">
-      A token is created by one transaction and exists for as long as the chain
-      does. Its name cannot be changed afterwards. Long names and descriptions
-      cost more: past 76 bytes the data no longer fits one OP_RETURN and is
-      carried in extra outputs instead.</p>
-  </form>
+    <p class="muted">A token is created by one transaction out of your own
+      wallet, which this node cannot sign on your behalf.
+      <a href="/me">Sign in and open your wallet</a>, and the form appears
+      here.</p>
   {% endif %}
+{% elif not node.online %}
+  <p class="muted">The {{ chain.label|lower }} node is not reachable.</p>
+{% elif not node.wallet %}
+  <p>This node runs with <code>disablewallet=1</code>, so it can read tokens but
+     cannot create or send them.</p>
+{% elif not funded %}
+  <p>No address in this wallet holds coins. Creating a token costs a transaction
+     fee, so fund a {{ chain.label|lower }} address first (Wallets page).</p>
+{% else %}
+  {% include "_token_create_form.html" %}
+{% endif %}
 </div>
 <h2>All tokens</h2>
 <div class="panel">

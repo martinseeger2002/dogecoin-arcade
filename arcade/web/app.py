@@ -845,7 +845,8 @@ def create_app(state: AppState) -> FastAPI:
                    post: str = Form(""), react: str = Form(""),
                    message: str = Form(""), send: str = Form(""),
                    listings: str = Form(""), claims: str = Form(""),
-                   inscribe: str = Form(""), payload: str = Form("")):
+                   inscribe: str = Form(""), issue: str = Form(""),
+                   payload: str = Form("")):
         """How much of this node one account may take.
 
         The defaults (arcade/accounts.py) are sized for a node that seats
@@ -872,8 +873,10 @@ def create_app(state: AppState) -> FastAPI:
                            accountslib.CEILING),
                   "inscribe": (inscribe, "inscriptions an hour",
                                accountslib.CEILING),
+                  "issue": (issue, "token issuances an hour",
+                            accountslib.CEILING),
                   "bytes": (payload, "bytes a day", accountslib.BYTE_CEILING)}
-        # Read all eight before writing any. A form with one bad number in it
+        # Read all nine before writing any. A form with one bad number in it
         # saving the seven it liked would leave the operator looking at a page
         # that claims the set they typed is in force, when it is not.
         numbers: dict[str, int] = {}
@@ -3253,8 +3256,17 @@ def create_app(state: AppState) -> FastAPI:
             purse["largest"] = purse["pieces"][0]
         return [by_token[k] for k in sorted(by_token)]
 
-    def _token_page_data() -> dict[str, Any]:
-        """Everything /tokens shows, with the node's absence explained, not hidden."""
+    def _token_page_data(addresses: list[str] | None = None) -> dict[str, Any]:
+        """Everything /tokens shows, with the node's absence explained, not hidden.
+
+        `addresses` says whose wallet the page is about. Left alone it is the
+        node's own, which is what an operator needs and the only thing an
+        operator should be shown by default: on a public instance the caller
+        passes the looking account's own address and this function never reads
+        the node's wallet at all. Which addresses of the node's hold coins is
+        not something an operator hands out by forgetting a branch
+        (docs/multi-user.md §7).
+        """
         chain, index = _token_chain()
         data: dict[str, Any] = {
             "chain": chain, "node": chain.status(),
@@ -3280,15 +3292,20 @@ def create_app(state: AppState) -> FastAPI:
                 if str(row["name"]).strip().lower() not in settled]
         except Exception:
             data["pending_tokens"] = []
-        try:
-            with chain.rpc() as rpc:
-                owned = _ledger_addresses(rpc)
-                data["funded"] = _funded_addresses(rpc)
-        except HTTPException:
-            raise          # a rejected form is a 400, not an error page
-        except Exception as exc:
-            data["node_error"] = str(exc)
-            owned = []
+        if addresses is None:
+            try:
+                with chain.rpc() as rpc:
+                    owned = _ledger_addresses(rpc)
+                    data["funded"] = _funded_addresses(rpc)
+            except HTTPException:
+                raise          # a rejected form is a 400, not an error page
+            except Exception as exc:
+                data["node_error"] = str(exc)
+                owned = []
+        else:
+            # Somebody else's page about somebody else's coins. The node's
+            # wallet is not read, so there is nothing here that could name it.
+            owned = [a for a in addresses if a]
         data["owned"] = set(owned)
         # Who issued a token, said the way people say it. An address is how
         # the chain names an issuer; a tag is how a person does (D-070).
@@ -3304,7 +3321,13 @@ def create_app(state: AppState) -> FastAPI:
             elif index.transaction(item["txid"]) is None:
                 still.append(item)
         state.pending_tokens = still
-        data["pending"] = [i for i in still if i["network"] == chain.network]
+        # Pruned above either way; shown only to the wallet that sent them. The
+        # sentence on the page says "your", and on somebody else's page these
+        # transactions belong to this node's own wallet -- so what they see
+        # instead is `pending_tokens` above, which is the mempool and is
+        # everybody's.
+        data["pending"] = ([] if addresses is not None else
+                           [i for i in still if i["network"] == chain.network])
         data["faces"] = _faces_for(index, data["tokens"])
         # Pictures this wallet could give a token as its icon, offered rather
         # than asked for: an inscription id is 64 characters nobody types.
@@ -5414,6 +5437,32 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/tokens", response_class=HTMLResponse)
     def tokens(request: Request):
+        """Every token on the chain, and the way to make one.
+
+        Whose way that is belongs to the door, not to the page. `/tokens` is a
+        public page, and on a public instance it used to render the operator's
+        issuance form anyway -- which asked a stranger to choose which of
+        this node's addresses should issue their token, and printed their
+        balances doing it. So a public request gets the same list computed
+        from the looking account's own address, the account's own form, and
+        not one read of the node's wallet.
+
+        An account that is not signed in gets the list and the reason there is
+        no form, rather than a form that would refuse on the next button: the
+        first thing it would say is "sign in first", and a page can say that
+        itself. An account that IS signed in but has no address on the chain
+        this page is showing gets that said instead, because the chain here is
+        the node's switch and the two can disagree -- and a page that answers
+        that with "sign in first" is a page that lies to somebody who did.
+        """
+        if _public_request(request):
+            account = signed_in(request)
+            address = (_account_address(account.pubkey, _token_chain()[0])
+                       if account else "")
+            return render(request, "tokens.html", prepared=None,
+                          account_address=address,
+                          account_signed=account is not None,
+                          **_token_page_data([address] if address else []))
         return render(request, "tokens.html", prepared=None, **_token_page_data())
 
     @app.post("/tokens/chain")
@@ -5518,7 +5567,7 @@ def create_app(state: AppState) -> FastAPI:
             raise tokenlib.TokenError(complaint)
         return address
 
-    def _name_is_taken(name: str) -> str:
+    def _name_is_taken(name: str, chain=None) -> str:
         """Why this token name cannot be used, or "" if it can.
 
         The chain refuses a second token of the same name now (D-122), and a
@@ -5526,12 +5575,23 @@ def create_app(state: AppState) -> FastAPI:
         mempool counts too: a name claimed by a transaction that has not been
         indexed yet is claimed, and a wallet that forgets what it broadcast
         two minutes ago will happily pay to lose the race with itself.
+
+        `chain` is which chain to ask, and it is a parameter because there
+        are two answers to "which chain" on this page. An operator's is a
+        switch on the node (`_token_chain`); an account's is named by the
+        request (`_chain_asked`) and can be the one the switch is NOT on.
+        Checking the free name on one chain and paying for it on the other is
+        precisely the mistake that makes somebody pay a fee for a name that
+        was taken, so the caller that knows the chain says so.
         """
         complaint = statelib.name_complaint(name)
         if complaint:
             return complaint
         wanted = statelib.name_key(name)
-        chain, index = _token_chain()
+        if chain is None:
+            chain, index = _token_chain()
+        else:
+            index = state.token_index(chain)
         try:
             taken = [p for p in index.properties()
                      if statelib.name_key(p["name"]) == wanted]
@@ -7199,6 +7259,92 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"offer": offer.id, "to": to,
                              "property_id": property_id, "name": prop["name"],
                              "chain": chain.network, **unsigned.as_json()})
+
+    @app.post("/account/token/create")
+    def account_token_create(request: Request, payload: Any = Body(None)):
+        """Offer to create a token, as this account. Nothing is broadcast here.
+
+        The same type 50 or 54 issuance the operator's own form builds, from
+        the same function -- `issuance_payload` is byte-building and does not
+        know, and must not know, who is asking. Two things differ, and both
+        are who rather than what:
+
+        * There is no sender field. The issuer is whoever owns the
+          transaction's first input, and every input here is picked from this
+          account's own address, so the token is the account's and this node
+          never had the key that makes it so. A form that let somebody name a
+          sender would be a form that lets them issue a token onto an address
+          they did not open here.
+        * It is not wrapped in `AnyData`, for the reason in `_class_c_or_b`:
+          this IS the message the token engine reads a new property out of.
+          Enveloped, it would be paid for, sit in a block, and credit nobody.
+
+        A creation has no recipient output at all -- `TokenSender` passes
+        `reference=None` for one and the engine ignores the field -- so what
+        is offered is the payload outputs plus this account's change, and
+        nothing else.
+
+        Worth stating where the money is: an issuance with an icon goes Class
+        B, because an inscription id is 64 characters and a Class C payload is
+        76 bytes for the WHOLE issuance, name included. That is the marker
+        output and a few sweepable dust outputs in the transaction the browser
+        is about to be shown, not a fee, and the confirmation names them
+        because they are outputs like any other.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        name = str(said.get("name") or "")
+        try:
+            divisible = str(said.get("units") or "divisible") != "indivisible"
+            managed = str(said.get("kind") or "fixed") == "managed"
+            amount = None if managed else parse_amount(
+                str(said.get("supply") or ""), divisible)
+            complaint = _name_is_taken(name, chain)
+            if complaint:
+                raise tokenlib.TokenError(complaint)
+            icon = str(said.get("icon") or "")
+            if icon.strip() and not tokenlib.icon_in(icon):
+                raise tokenlib.TokenError(
+                    "an icon is an inscription on this chain: paste its "
+                    "/content/ link or its id, not a picture from elsewhere.")
+            body = tokenlib.issuance_payload(
+                name=name, divisible=divisible, managed=managed, amount=amount,
+                category=str(said.get("category") or ""),
+                subcategory=str(said.get("subcategory") or ""),
+                url=str(said.get("url") or ""),
+                # The icon rides in `data` beside the description, because an
+                # issuance has five strings and no sixth (tokens.details).
+                data=tokenlib.data_with_icon(str(said.get("data") or ""), icon))
+            outputs = _class_c_or_b(chain, address, body,
+                                    _coin_pubkey(account.pubkey, chain),
+                                    wrap=False)
+            index = state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address, outputs,
+                    rate=fees.MIN_FEE_PER_KB,
+                    what=f"create the token {name.strip()}",
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "issue", len(body))
+        except (tokenlib.TokenError, fundinglib.FundingError, AmountError,
+                ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned,
+                            unsigned.what)
+        return JSONResponse({"offer": offer.id, "name": name.strip(),
+                             "managed": managed, "chain": chain.network,
+                             "class": ("B" if len(outputs) > 1 else "C"),
+                             **unsigned.as_json()})
 
     @app.get("/me/backup", response_class=HTMLResponse)
     def my_backup(request: Request):

@@ -149,7 +149,7 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/run/start", "/account/run", "/account/run/piece",
                "/account/run/stop",
                "/account/nft/send", "/account/nft/sell",
-               "/account/token/send",
+               "/account/token/send", "/account/token/create",
                "/account/sign",
                "/signup")
 
