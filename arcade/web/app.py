@@ -6316,6 +6316,27 @@ def create_app(state: AppState) -> FastAPI:
                 return chain
         raise ValueError(f"this node does not run {wanted}")
 
+    def _chain_on(network: str):
+        """The chain a stored network name means, asked from the account side.
+
+        `state.chain_named` answers from the ledger's end of the node and
+        `_account_chains` from the account's. Where the two roles sit on two
+        different chains the question has one answer either way. Where they sit
+        on ONE chain -- any node that runs both roles on the same network --
+        they are still two contexts with their own `params`, and the difference
+        is not cosmetic: a Class B payload carries the marker address of the
+        chain it was built for, and `tx.detect_class` calls a transaction a
+        message only when that output is the marker the INDEX knows. Build an
+        inscription on the wrong copy of a chain and it is paid for, goes into a
+        block, is walked straight over, and is invisible everywhere without
+        saying so once. The run book stores a network rather than a role, so the
+        run routes ask this instead of `chain_named`.
+        """
+        for chain in _account_chains():
+            if chain.network == network:
+                return chain
+        return state.chain_named(network)
+
     #: Where an account's coins live, by chain. The tag chain keeps the
     #: unqualified key it has always had, so an account made before there
     #: was a second chain is not asked to register its address again.
@@ -7009,7 +7030,7 @@ def create_app(state: AppState) -> FastAPI:
         if run["account"] != account.pubkey.lower():
             return JSONResponse({"detail": "that run belongs to somebody else"},
                                 status_code=403)
-        chain = state.chain_named(run["network"])
+        chain = _chain_on(run["network"])
         piece = _runs.next_piece(run["id"])
         if piece is None:
             return JSONResponse({"run": run["id"], "sent": run["sent"],
@@ -8543,8 +8564,7 @@ def create_app(state: AppState) -> FastAPI:
                 if pending.id != offered:
                     continue
                 try:
-                    _real_coins_gate(account, state.chain_named(
-                        pending.network))
+                    _real_coins_gate(account, _chain_on(pending.network))
                 except ValueError as exc:
                     return JSONResponse({"detail": str(exc)}, status_code=400)
                 break
@@ -8557,7 +8577,7 @@ def create_app(state: AppState) -> FastAPI:
                     ValueError) as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=400)
 
-            chain = state.chain_named(offer.network)
+            chain = _chain_on(offer.network)
             try:
                 with chain.rpc() as rpc:
                     # What the node offered is what the node checks. The

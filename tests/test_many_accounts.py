@@ -10,21 +10,21 @@ is only actually tested when the one who wrote it and the one who reads it are
 two different browsers on one machine. Every single-user page test has the node
 holding both halves, so none of them can reach it.
 
-What is here is what an account can already do, and that list has holes in it
-on purpose. `door.py` refuses every POST that would spend the NODE's wallet,
-and two things are still that shape: inscribing a collection and creating a
-token. So there is no hundred-piece collection in this file. Where one of those
-two becomes an account action, its half of the test belongs in this file rather
-than in a new one.
+What is here is what an account can already do, and the list has gone the way
+of the ones before it. `door.py` refuses every POST that would spend the NODE's
+wallet, and what is left behind that door is the open exchange, the mintpads
+and the offers -- so three sentences are still missing from this file, and they
+are missing because the routes are: nobody here places an order, buys from a
+mintpad, or answers an offer. Inscribe a piece, run a whole collection, issue a
+token and buy out of somebody else's shop all came off that list, and each
+brought its half of this file with it rather than going somewhere else to live.
 
-Buying came off that list, and it changed what this file can prove. A swap used
-to need both halves signed and only one half was ever in a browser, so no test
-of one was an account's. Now a seller signs a leg alone and what finishes the
-trade is the buyer's signature pasted onto it -- a transaction this node could
-not have made and does not sign. Which is also why a purchase needs two
-accounts: an account cannot buy from its own shop, and a test that tried would
-be asserting the refusal rather than the buy. Both halves are here, in that
-order.
+A swap needs two accounts, and that is a rule rather than a convenience. A
+seller signs a leg alone -- one input of theirs and one output paying them --
+and what finishes the trade is the buyer's signature pasted onto it, a
+transaction this node could not have made and does not sign. An account cannot
+buy from its own shop, so a file with one person in it could only assert the
+refusal. Both halves are here, in that order.
 
 Two conventions, said before they surprise anybody:
 
@@ -44,8 +44,10 @@ test would have to fake that rather than show it. Anything a test needs that is
 not already there, it makes for itself.
 """
 
+import base64
 import contextlib
 import dataclasses
+import json
 import pathlib
 import sys
 from typing import Any
@@ -64,6 +66,7 @@ from arcade import accounts as accountslib                  # noqa: E402
 from arcade import funding, inscribe, seed, utxos           # noqa: E402
 from arcade import inscriptions as pieces                   # noqa: E402
 from arcade import payload as protocol                      # noqa: E402
+from arcade import tokens as tokenlib                       # noqa: E402
 from arcade.messaging import envelope                       # noqa: E402
 from arcade.messaging import feed as feedlib                # noqa: E402
 from arcade.messaging.keys import Identity                  # noqa: E402
@@ -327,12 +330,13 @@ def _pieces(person):
 def _inscribed(*node, owner, name, content):
     """One real inscription on the chain, ending up owned by `owner`.
 
-    Two steps, and both are the honest shape of the thing. Inscribing is the
-    node's action and not an account's -- see the note at the top -- so the node
-    makes the piece with its own wallet and then hands it over with
-    `TokenSender`, which is the transfer the interface itself makes. A test that
-    inscribed straight into an account's address would be asserting that an
-    account can inscribe, which is the sentence this file refuses to write.
+    There are two ways to have a piece in this file, and the difference is what
+    the test is about. An account that means to prove it can inscribe does it
+    itself, at `/account/inscribe`, and is asked to sign its own transaction --
+    that is the last section. This helper is for the tests where the inscription
+    is scenery: it is put on chain with the node's wallet and handed over with
+    `TokenSender`, which is the transfer the interface itself makes, so nothing
+    about ownership is being smuggled in through the way the piece appeared.
     """
     daemon, state = node[0], node[1]
     keeper = daemon.rpc.call("getnewaddress")
@@ -591,13 +595,15 @@ def test_coins_move_between_two_of_them_and_the_name_resolves(node, crowd):
 
 
 def test_a_token_hands_from_one_to_another(node, crowd):
-    """The node makes the token, because making one is still its own action.
+    """A token that came from somewhere else, and then moved without help.
 
-    That is the honest shape of a first token today: whoever can pay for a
-    creation makes one, and from then on it moves between accounts with nobody's
-    help. `door.py` says why the creation is not an account's -- it would spend
-    the node's wallet -- and when it stops being one, the creation belongs in
-    this test rather than in a new file.
+    The issuance is on the operator's form here, which is a choice and not a
+    limit -- an account issues its own token, with its own money, two sections
+    from here. What this test is for is the shape a token has when it arrives
+    from outside an account and only afterwards belongs to one of them: created
+    by whoever could pay for it, handed in at an address, and from that moment
+    moving between these four with nobody's help. So the creation stays where
+    the outside is, and everything after it is theirs.
     """
     daemon, state, made = node
     app = TestClient(made)                    # the operator, on this very node
@@ -1032,3 +1038,176 @@ def test_what_a_bio_and_a_link_may_say_is_refused_before_anything_is_built(node,
 
     assert daemon.rpc.call("getrawmempool") == []
     assert _said(state, maple) == before, "and the refusal cost nothing"
+
+
+# --- what each of them makes --------------------------------------------------
+
+#: Pictures, from `tests/media`: a hundred unique pieces from a real generator
+#: run and the four faces the arcade's own tokens wear. See the README beside
+#: them for why they are files rather than something this file draws.
+MEDIA = pathlib.Path(__file__).resolve().parent / "media"
+GOOFBALL = MEDIA / "goofball"
+FACES = ("arcadecoin", "cabinet", "joypad", "shibacoin")
+
+
+def _build(person):
+    """Hand the whole collection to the node, as a chosen folder is uploaded.
+
+    The names arrive flattened, because that is what a browser sends: `1.png`
+    and `1.json` in one heap with `_metadata.json` on top of it, which
+    `collections.find_build` is written to make sense of. Nothing is inscribed
+    by this; it is a write-down, and the first transaction comes later, one
+    piece at a time.
+    """
+    files = [("files", (one.name, one.read_bytes()))
+             for one in sorted(GOOFBALL.rglob("*")) if one.is_file()]
+    return person.client.post("/account/run/start", files=files,
+                              data={"run_chain": "regtest"})
+
+
+def _land(*node, person, asked):
+    """Sign the piece that was just offered, and mine the block that lands it.
+
+    The block is not a courtesy to the assertion that follows it. The piece
+    after the first spends the previous one's change, so a run goes out at the
+    pace of blocks whether anybody is watching or not, and this is that pace.
+    What gets signed is the bytes that were just looked at, rather than a
+    second build of the same piece -- the arrangement is the one the whole file
+    signs by.
+    """
+    done = _complete(person, asked)
+    assert done.status_code == 200, done.text
+    _settle(*node)
+    return done.json()["txid"]
+
+
+def test_a_hundred_piece_collection_is_a_hundred_pieces_for_each_of_them(node,
+                                                                        crowd):
+    """Four runs of one generated collection, and nobody owing another's pieces.
+
+    The artwork is a real HashLips Art Engine run -- a hundred unique files with
+    their dna and their traits -- because the sentence worth proving here is that
+    an account ran a COLLECTION, and the build the other collection tests use is
+    one placeholder with a different byte in it a hundred times, which proves
+    the plumbing and nothing about the pieces. Each of the four uploads the same
+    folder and gets their own run out of it.
+
+    Two pieces each, out of a hundred. That is the honest size: four accounts
+    running a hundred pieces is four hundred transactions and four hundred
+    blocks, which is not a test but a suite that never finishes. So what is
+    asserted about the other ninety-eight is what the node actually knows about
+    them -- that they belong to this account's run, in this account's book, and
+    that the run is still waiting for them.
+    """
+    daemon, state = node[0], node[1]
+    index = state.token_index(state.messaging)
+    runs, landed = {}, {}
+
+    for person in crowd:
+        _funded(*node, who=person, amount=8.0)
+        started = _build(person)
+        assert started.status_code == 200, started.text
+        book = started.json()
+        assert book["items"] == 100 and book["name"] == "Goofball", book
+        assert book["next"] == "Goofball #1", book
+        runs[person.tag] = book["run"]
+        assert daemon.rpc.call("getrawmempool") == [], \
+            "writing a collection down costs nothing"
+
+    for person in crowd:
+        landed[person.tag] = []
+        for edition in (1, 2):
+            asked = _offer(person, "/account/run/piece",
+                           {"run": runs[person.tag]})
+            assert asked.json()["what"] == f"inscribe Goofball #{edition}", \
+                asked.json()
+            landed[person.tag].append(_land(*node, person=person, asked=asked))
+
+    for person in crowd:
+        for txid, edition in zip(landed[person.tag], (1, 2)):
+            row = index.inscription(txid)
+            assert row is not None, txid
+            assert row["collection"] == "Goofball" and row["edition"] == edition
+            assert row["creator"] == person.address == row["owner"], row
+            on_chain = index.inscription_content(txid)[1]
+            picture = (GOOFBALL / "images" / f"{edition}.png").read_bytes()
+            assert on_chain == picture, \
+                "what went up is the file, byte for byte"
+
+    # Two pieces of one account's run are two DIFFERENT pictures. This is the
+    # whole reason the artwork is here: an edition number in a name is not a
+    # collection, and a build that repeats one square a hundred times would
+    # pass every assertion above except this one.
+    first, second = (index.inscription(txid)["sha256"]
+                     for txid in landed[crowd[0].tag])
+    assert first != second, "a hundred pieces, one picture"
+
+    for person in crowd:
+        book = person.client.post("/account/run").json()["runs"]
+        assert len(book) == 1, book
+        mine = book[0]
+        assert mine["items"] == 100 and mine["sent"] == 2, mine
+        assert mine["next"] == "Goofball #3" and mine["status"] != "done", mine
+        # A run is a thing one account is doing. Nobody else's book has it, and
+        # nobody else holds its pieces.
+        held = {p["txid"] for p in _pieces(person)}
+        assert set(landed[person.tag]) <= held, held
+        for other in crowd:
+            if other is not person:
+                assert not set(landed[other.tag]) & held, other.tag
+
+    twice = _build(crowd[0])
+    assert twice.status_code == 400, twice.text
+    assert "still going" in twice.json()["detail"], twice.json()
+
+
+def test_each_of_them_issues_a_token_wearing_a_picture_of_its_own(node, crowd):
+    """Four tokens, four faces, every one of the eight transactions paid by the
+    account that owns the result.
+
+    The icon half matters more than it looks. An issuance has five strings and
+    no sixth, so a token's face is sixty-four characters of inscription id
+    riding inside the description -- which is too long for a Class C OP_RETURN,
+    and the transaction the browser is about to be shown is Class B instead,
+    with sweepable dust outputs in it that are not a fee. A token wearing a
+    number that names nothing is the other way this quietly fails: the chain
+    accepts it, credits it, and the token is faceless forever. So each account
+    inscribes its own icon first and spends that id, and the assertion is the
+    round trip -- bytes out, id back, same picture on both ends.
+    """
+    daemon, state = node[0], node[1]
+    index = state.token_index(state.messaging)
+
+    for person, face in zip(crowd, FACES):
+        _funded(*node, who=person, amount=6.0)
+        picture = (MEDIA / "icons" / f"{face}.png").read_bytes()
+
+        worn = _do(person, "/account/inscribe", {
+            "content": base64.b64encode(picture).decode(),
+            "content_type": "image/png", "name": f"{face} icon",
+            "json": json.dumps({"name": f"{face} icon"})})
+        assert worn.status_code == 200, worn.text
+        _settle(*node)
+        icon = worn.json()["txid"]
+        assert icon in {p["txid"] for p in _pieces(person)}, _pieces(person)
+        assert index.inscription_content(icon)[1] == picture
+
+        asked = _offer(person, "/account/token/create",
+                       {"name": f"{person.tag.title()} Coin",
+                        "supply": "1000", "icon": icon})
+        assert asked.status_code == 200, asked.text
+        assert asked.json()["class"] == "B", \
+            "an inscription id does not fit one OP_RETURN"
+        made = _complete(person, asked)
+        assert made.status_code == 200, made.text
+        _settle(*node)
+
+        created = [row for row in index.properties()
+                   if str(row["creation_txid"]) == made.json()["txid"]]
+        assert created, f"nothing was created by {made.json()['txid']}"
+        token = created[0]
+        assert token["issuer"] == person.address, \
+            "the chain credited the account, not the node"
+        assert tokenlib.details(token)["icon"] == icon, token
+        assert _tokens(person)[str(token["property_id"])]["balance"] \
+            == 1000 * COIN, _tokens(person)
