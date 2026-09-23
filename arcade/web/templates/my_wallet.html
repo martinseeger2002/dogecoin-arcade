@@ -127,8 +127,10 @@ $("send").onclick = async () => {
     const offer = await wallet.offerSend($("to").value.trim(),
                                          $("amount").value.trim(),
                                          $("which").value);
+    const shown = await wallet.checked(offer, keys);
     $("confirm-says").textContent =
-      `${offer.what}. It costs ${(offer.fee / 100000000).toFixed(8)} in fees.`;
+      `${offer.what}. ${shown.says} Worked out in this browser from the `
+      + "transaction's own bytes, not from what this node says it does.";
     $("confirm").hidden = false;
     $("confirm-yes").onclick = async () => {
       $("confirm").hidden = true;

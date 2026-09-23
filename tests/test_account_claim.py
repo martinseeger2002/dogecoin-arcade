@@ -137,6 +137,12 @@ def test_an_account_claims_a_name_with_a_key_the_node_never_saw(arcade):
     offer = offered.json()
     assert offer["what"] == "claim @robin"
     assert offer["sighashes"] and len(offer["sighashes"]) == len(offer["inputs"])
+    # And the material to check them with. A browser that recomputes these
+    # hashes rather than trusting them needs the transaction they come from
+    # and the index where this key's own coins start; an offer that stopped
+    # carrying either would quietly put the signing back in the node's hands.
+    assert len(offer["raw"]) >= 20 and offer["signed_from"] == 0
+    assert all(i["txid"] and i["value"] > 0 for i in offer["inputs"])
     assert offer["fee"] > 0 and offer["change"] > 0
     assert rpc.call("getrawmempool") == [], "and nothing has gone out"
 

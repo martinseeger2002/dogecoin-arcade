@@ -585,19 +585,33 @@ export async function announce(wallet, me, tag) {
   });
   const offer = await asked.json();
   if (!asked.ok) throw new Error(offer.detail || "that cannot be published");
+  const keys = keysFor(offer, wallet);
+  const shown = await coins.verifyOffer(offer, keys);
   const signatures = [];
-  for (const sighash of offer.sighashes) {
-    const signed = await coins.signInput(wallet.coinKey, unhex(sighash));
+  for (const sighash of shown.hashes) {
+    const signed = await coins.signInput(keys.key, unhex(sighash));
     signatures.push(hex(signed));
   }
   const done = await fetch("/account/sign", {
     method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({offer: offer.offer, signatures,
-                          pubkey: hex(wallet.coinPubkey)}),
+                          pubkey: hex(keys.pubkey)}),
   });
   const said = await done.json();
   if (!done.ok) throw new Error(said.detail || "the node would not take it");
   return said;
+}
+
+/** The keys for the chain an offer was built for.
+ *
+ * The same rule `wallet.js` follows for the same reason: the offer says
+ * which chain it is on, and signing its bytes with another chain's key
+ * makes a signature that verifies against nothing.
+ */
+function keysFor(offer, wallet) {
+  const on = (wallet.on && wallet.on[offer.chain]) || {};
+  return {key: on.key || wallet.coinKey, pubkey: on.pubkey || wallet.coinPubkey,
+          address: on.address || wallet.address};
 }
 
 /* --- writing to somebody -------------------------------------------------
@@ -642,15 +656,16 @@ export async function write(wallet, me, to, text) {
     const offer = await asked.json();
     if (!asked.ok) throw new Error(offer.detail || "that cannot be sent");
 
+    const keys = keysFor(offer, wallet);
+    const shown = await coins.verifyOffer(offer, keys);
     const signatures = [];
-    for (const sighash of offer.sighashes) {
-      signatures.push(hex(await coins.signInput(wallet.coinKey,
-                                                unhex(sighash))));
+    for (const sighash of shown.hashes) {
+      signatures.push(hex(await coins.signInput(keys.key, unhex(sighash))));
     }
     const done = await fetch("/account/sign", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({offer: offer.offer, signatures,
-                            pubkey: hex(wallet.coinPubkey)}),
+                            pubkey: hex(keys.pubkey)}),
     });
     const said = await done.json();
     if (!done.ok) throw new Error(said.detail || "the node would not take it");
@@ -671,7 +686,7 @@ export async function write(wallet, me, to, text) {
       mine: true,
       body: hex(new TextEncoder().encode(text)),
     });
-    return {...said, to: them.address, tag: them.tag, fee: offer.fee};
+    return {...said, to: them.address, tag: them.tag, fee: shown.fee};
   });
 }
 

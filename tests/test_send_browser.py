@@ -244,3 +244,70 @@ def test_more_than_there_is_cannot_be_offered(funded):
           (e) => done({error: String(e.message || e)}));""",
         node.rpc.call("getnewaddress"), "1000000")
     assert "not enough" in offer.get("error", ""), offer
+
+
+def test_the_browser_works_out_what_it_is_being_asked_to_sign(funded):
+    """What a person is shown before they sign is this tab's own reading.
+
+    `offer.fee` and `offer.what` are what the node says it built. `checked`
+    reads the transaction the offer carries and derives the outputs, the
+    change and the fee from its bytes, which is worth nothing unless the two
+    agree for an honest node -- so that is what is asserted here, alongside
+    a destination address that came out of an output script rather than out
+    of the offer's `to`. The check runs again inside `confirm`; this is the
+    same computation one request earlier, which is why the page can show it
+    before anything is signed.
+    """
+    browser, base, state, node, made = funded
+    theirs = node.rpc.call("getnewaddress")
+    shown = browser.execute_async_script("""
+        const done = arguments[2];
+        (async () => {
+          try {
+            const offer = await window.w.offerSend(arguments[0], arguments[1]);
+            const seen = await window.w.checked(offer, window.wallet);
+            done({says: seen.says, fee: seen.fee, node: offer.fee,
+                  change: seen.change, signs: seen.signs,
+                  mine: window.wallet.address,
+                  pays: seen.pays.map((p) => [p.to, !!p.mine])});
+          } catch (e) { done({error: String(e.message || e)}); }
+        })();""", theirs, "5")
+    assert "error" not in shown, shown
+    assert shown["fee"] == shown["node"], "checked against the node's, not echoed"
+    assert [theirs, False] in shown["pays"], shown["pays"]
+    assert shown["change"] > 0
+    assert [shown["mine"], True] in shown["pays"], "it knows its own change"
+    assert shown["signs"] == {"from": 0, "of": 1}
+    assert theirs in shown["says"] and "in fees" in shown["says"], shown["says"]
+    assert node.rpc.call("getrawmempool") == [], "checking signs nothing"
+
+
+def test_a_transaction_that_is_not_the_one_offered_is_refused(funded):
+    """The hole this closes, closed.
+
+    Two offers, one wallet, same coins, different destinations: the second
+    transaction swapped into the first offer is exactly what a dishonest
+    node would hand over -- real hashes of a real transaction, over a
+    transaction that pays somewhere else. Signing it is what "the node never
+    holds your key" was supposed to make impossible, and it does not happen:
+    the refusal arrives in the tab, before the key is used, and the node is
+    never asked.
+    """
+    browser, base, state, node, made = funded
+    honest = node.rpc.call("getnewaddress")
+    elsewhere = node.rpc.call("getnewaddress")
+    refused = browser.execute_async_script("""
+        const done = arguments[2];
+        (async () => {
+          try {
+            const one = await window.w.offerSend(arguments[0], "5");
+            const two = await window.w.offerSend(arguments[1], "5");
+            const hostile = Object.assign({}, one, {raw: two.raw});
+            const out = await window.w.confirm(window.wallet, hostile);
+            done({txid: out.txid});
+          } catch (e) { done({error: String(e.message || e)}); }
+        })();""", honest, elsewhere)
+    assert "txid" not in refused, f"it signed a swapped transaction: {refused}"
+    assert "Nothing was signed" in refused["error"], refused
+    assert node.rpc.call("getrawmempool") == [], "nothing left this machine"
+    assert abs(float(node.rpc.call("getreceivedbyaddress", elsewhere, 0))) < 1e-8

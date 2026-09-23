@@ -247,18 +247,25 @@ function pricing(piece, chain) {
   $("price").focus();
 }
 
-/** Ask for an offer, show what it says, and sign it if they say yes. */
+/** Ask for an offer, say what THIS BROWSER read off it, and sign it if
+ *  they say yes.
+ *
+ * The `says` callback is handed the checked offer rather than the raw one:
+ * the fee, the outputs and the change it may quote are the ones this tab
+ * derived from the transaction's bytes. `offer.fee` is the node's number,
+ * and a confirmation that repeats it proves nothing.
+ */
 async function offerAndConfirm(where, body, says, done) {
   say(""); news("");
   try {
+    if (!keys) throw new Error("your wallet is not open in this tab");
     const asked = await fetch(where, {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify(body),
     });
     const offer = await asked.json();
     if (!asked.ok) throw new Error(offer.detail || "that cannot be done");
-    if (!confirm(says(offer))) return;
-    if (!keys) throw new Error("your wallet is not open in this tab");
+    if (!confirm(says(await wallet.checked(offer, keys), offer))) return;
     const out = await wallet.confirm(keys, offer);
     news(done(out, offer));
     $("pricing").hidden = true;
@@ -271,8 +278,8 @@ $("price-it").onclick = async () => {
   await offerAndConfirm("/account/nft/sell",
     {piece: chosen.piece.txid, amount: $("price").value.trim(),
      kind: "coins", chain: chosen.chain.network},
-    (offer) => `${offer.what}? It costs `
-      + `${(offer.fee / 100000000).toFixed(8)} in fees.`,
+    shown => `${shown.what}? It costs ${shown.coinsOf(shown.fee)} in fees. `
+      + "That is what this browser worked out from the transaction itself.",
     (out) => `Priced: ${out.txid.slice(0, 16)}… It is for sale from the `
       + "block it lands in.");
 };
@@ -281,8 +288,8 @@ async function unlist(piece, chain) {
   chosen = {piece, chain};
   await offerAndConfirm("/account/nft/sell",
     {piece: piece.txid, unlist: true, chain: chain.network},
-    (offer) => `${offer.what}? It costs `
-      + `${(offer.fee / 100000000).toFixed(8)} in fees.`,
+    shown => `${shown.what}? It costs ${shown.coinsOf(shown.fee)} in fees. `
+      + "That is what this browser worked out from the transaction itself.",
     (out) => `Taken off: ${out.txid.slice(0, 16)}…`);
 }
 
@@ -297,10 +304,12 @@ $("offer").onclick = async () => {
     });
     const offer = await asked.json();
     if (!asked.ok) throw new Error(offer.detail || "that cannot be sent");
+    if (!keys) throw new Error("your wallet is not open in this tab");
+    const shown = await wallet.checked(offer, keys);
     $("confirm-says").textContent =
-      `#${commas(offer.number)} goes to ${offer.to}. `
-      + `It costs ${(offer.fee / 100000000).toFixed(8)} in fees and cannot `
-      + `be taken back.`;
+      `#${commas(offer.number)} goes to ${offer.to}, and it cannot be taken `
+      + "back. " + shown.says + " Worked out in this browser from the "
+      + "transaction's own bytes, not from what this node says it does.";
     $("confirm").hidden = false;
     $("yes").onclick = async () => {
       $("confirm").hidden = true;
@@ -361,8 +370,8 @@ $("inscribe-it").onclick = async () => {
   await offerAndConfirm("/account/inscribe",
     {content: b64, content_type: file.type || "application/octet-stream",
      name: file.name, chain: CHAIN.network},
-    (offer) => `${offer.bytes} bytes, on the chain forever, for `
-      + `${(offer.fee / 100000000).toFixed(8)} in fees. ${offer.what}?`,
+    (shown, offer) => `${offer.bytes} bytes, on the chain forever, for `
+      + `${shown.coinsOf(shown.fee)} in fees. ${shown.what}?`,
     (out) => `Inscribed: ${out.txid.slice(0, 16)}… It shows up when its block `
       + "is mined.");
 };
@@ -431,11 +440,12 @@ $("run-piece").onclick = async () => {
       await runs();
       return;
     }
+    if (!keys) throw new Error("your wallet is not open in this tab");
+    const shown = await wallet.checked(offer, keys);
     if (!confirm(`${offer.name}: ${commas(offer.bytes)} bytes on the chain `
-                 + `forever, for ${(offer.fee / 100000000).toFixed(8)} in `
+                 + `forever, for ${shown.coinsOf(shown.fee)} in `
                  + `fees. ${commas(offer.sent)} of ${commas(offer.items)} are `
                  + "already there.")) return;
-    if (!keys) throw new Error("your wallet is not open in this tab");
     const out = await wallet.confirm(keys, offer);
     news(`Inscribed: ${out.txid.slice(0, 16)}… Piece ${offer.piece} of `
       + `${commas(offer.items)}. It shows up when its block is mined.`);

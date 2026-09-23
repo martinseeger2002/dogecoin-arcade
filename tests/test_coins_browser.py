@@ -11,6 +11,7 @@ them. If the browser derives them wrongly, nothing else will notice.
 """
 
 import hashlib
+import json
 import pathlib
 import socket
 import sys
@@ -25,7 +26,20 @@ pytest.importorskip("selenium",
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import browsers                                                  # noqa: E402
 
-from arcade import seed                                          # noqa: E402
+from arcade import script, seed                                  # noqa: E402
+
+#: Satoshis in a coin, for the transactions built here to be hashed against
+#: the ones the browser builds from the same words.
+COIN = 100_000_000
+
+#: An address that belongs to nobody, for the outputs of a transaction that
+#: is only ever built to be hashed and never broadcast. Made rather than
+#: copied out of a book, because a base58 checksum has to be right.
+SOMEWHERE_ELSE = script.b58check_encode(111, bytes(range(20, 40)))
+
+#: And an address that is not the one these tests derive, for an offer that
+#: claims to spend a coin its own key does not hold.
+SOMEONE_ELSE = script.b58check_encode(111, bytes(range(40, 60)))
 
 
 def _free_port() -> int:
@@ -339,6 +353,179 @@ def test_the_der_encoding_is_read_back_the_way_a_node_reads_it(loaded):
             high += 1
     assert high > 0, ("none of the forty needed a leading zero, so the rule "
                       "that needs it was never exercised")
+
+
+def test_a_transaction_is_hashed_the_same_in_python_and_in_the_browser(loaded):
+    """The claim the whole non-custodial design rests on, checked.
+
+    `coins.js` no longer signs the hashes a node hands over: it reads the
+    transaction's own bytes and recomputes each one. That is worth nothing
+    unless what it recomputes is the same 32 bytes `arcade/funding.py`
+    computes, so one transaction is built here, hashed here, hashed again
+    in a browser from the same hex, and the two answers are compared. Same
+    shape as the BIP32 vectors above, for the same reason: two
+    implementations of one standard, neither allowed to check itself.
+    """
+    from arcade import funding, txbuild
+
+    browser, _, _ = loaded
+    here = browser.execute_async_script("""
+        const done = arguments[0];
+        (async () => {
+          try {
+            const c = window.coins;
+            const seed = c.unhex("000102030405060708090a0b0c0d0e0f");
+            const coin = await c.coinKey(seed, "regtest", 0);
+            done({pubkey: c.hex(coin.pubkey),
+                  address: await c.address(coin.pubkey, 111)});
+          } catch (e) { done({error: String(e && e.message || e)}); }
+        })();""")
+    assert "error" not in here, here
+    mine = here["address"]
+    script = txbuild.p2pkh_script(mine)
+    inputs = [{"txid": "%064x" % 7, "vout": 1, "value": 3 * COIN,
+               "address": mine},
+              {"txid": "%064x" % 9, "vout": 0, "value": 2 * COIN,
+               "address": mine}]
+    outputs = [(4 * COIN, txbuild.p2pkh_script(SOMEWHERE_ELSE)),
+               (1 * COIN - 1000, script)]
+    raw = txbuild.build_raw_tx([(c["txid"], c["vout"]) for c in inputs],
+                               outputs)
+    offered = {"raw": raw, "inputs": inputs, "what": "a test payment",
+               "fee": 1000, "change": 1 * COIN - 1000, "signed_from": 0,
+               "sighashes": [funding.sighash(inputs, outputs, n, script).hex()
+                             for n in range(len(inputs))]}
+
+    shown = browser.execute_async_script("""
+        const done = arguments[1];
+        (async () => {
+          try {
+            const c = window.coins;
+            const seed = c.unhex("000102030405060708090a0b0c0d0e0f");
+            const coin = await c.coinKey(seed, "regtest", 0);
+            const out = await c.verifyOffer(JSON.parse(arguments[0]), {
+              pubkey: coin.pubkey, address: await c.address(coin.pubkey, 111)});
+            done({hashes: out.hashes, fee: out.fee, change: out.change,
+                  pays: out.pays.map((p) => [p.to || null, Number(p.value)]),
+                  read: [out.tx.inputs.length, out.tx.outputs.length,
+                         out.tx.locktime, out.tx.version]});
+          } catch (e) { done({error: String(e && e.message || e)}); }
+        })();""", json.dumps(offered))
+    assert "error" not in shown, shown
+    assert shown["hashes"] == offered["sighashes"], (
+        "the browser's own hashes are not Python's, so it would sign a "
+        "different transaction from the one this node built")
+    assert shown["read"] == [2, 2, 0, 1], "parsed, not assumed"
+    assert shown["fee"] == 1000 and shown["change"] == 1 * COIN - 1000
+    assert shown["pays"][1] == [mine, 1 * COIN - 1000], "the change is ours"
+
+
+def test_a_transaction_that_does_not_match_its_own_hashes_is_refused(loaded):
+    """The point of recomputing them.
+
+    The two halves of an offer are the transaction and the list of hashes
+    beside it. A node that shows one and means the other is the attack this
+    whole path exists for -- so the check goes both ways, and the refusal
+    has to arrive before a key is used.
+    """
+    from arcade import funding, txbuild
+
+    browser, _, _ = loaded
+    here = browser.execute_async_script("""
+        const done = arguments[0];
+        (async () => {
+          try {
+            const c = window.coins;
+            const coin = await c.coinKey(
+              c.unhex("000102030405060708090a0b0c0d0e0f"), "regtest", 0);
+            done({pubkey: c.hex(coin.pubkey),
+                  address: await c.address(coin.pubkey, 111)});
+          } catch (e) { done({error: String(e && e.message || e)}); }
+        })();""")
+    assert "error" not in here, here
+    mine = here["address"]
+    script = txbuild.p2pkh_script(mine)
+    theirs = txbuild.p2pkh_script(SOMEWHERE_ELSE)
+    inputs = [{"txid": "%064x" % 7, "vout": 0, "value": 5 * COIN,
+               "address": mine}]
+
+    def offer_to(script_out, label):
+        outs = [(4 * COIN, script_out)]
+        return {"raw": txbuild.build_raw_tx(
+                    [(c["txid"], c["vout"]) for c in inputs], outs),
+                "inputs": inputs, "what": label, "signed_from": 0,
+                "sighashes": [funding.sighash(inputs, outs, 0, script).hex()]}
+
+    honest = offer_to(script, "pays you")
+    hostile = offer_to(theirs, "pays somebody else")
+
+    for offer in ({**honest, "raw": hostile["raw"]},
+                  {**honest, "sighashes": hostile["sighashes"]}):
+        refused = browser.execute_async_script("""
+            const done = arguments[1];
+            (async () => {
+              try {
+                const c = window.coins;
+                const coin = await c.coinKey(
+                  c.unhex("000102030405060708090a0b0c0d0e0f"), "regtest", 0);
+                const out = await c.verifyOffer(JSON.parse(arguments[0]),
+                                                {pubkey: coin.pubkey,
+                                                 address: await c.address(
+                                                   coin.pubkey, 111)});
+                done({signed: out.hashes});
+              } catch (e) { done({error: String(e && e.message || e)}); }
+            })();""", json.dumps(offer))
+        assert "error" in refused and "signed" not in refused, (
+            "that offer was accepted, which is the hole: "
+            + str(refused)[:120])
+        assert "Nothing was signed" in refused["error"], refused
+
+
+def test_an_offer_that_spends_a_coin_it_did_not_name_is_refused(loaded):
+    """The transaction and the offer have to agree about the coins, too.
+
+    The values are the node's numbers and the hash does not bind them, so
+    the outpoints are the one part of the input side that can be pinned --
+    and an offer that quietly swaps one coin for another of the same
+    wallet's would otherwise read exactly the same on the page.
+    """
+    from arcade import funding, txbuild
+
+    browser, _, _ = loaded
+    here = browser.execute_async_script("""
+        const done = arguments[0];
+        (async () => {
+          try {
+            const c = window.coins;
+            const coin = await c.coinKey(
+              c.unhex("000102030405060708090a0b0c0d0e0f"), "regtest", 0);
+            done({address: await c.address(coin.pubkey, 111)});
+          } catch (e) { done({error: String(e && e.message || e)}); }
+        })();""")
+    assert "error" not in here, here
+    script = txbuild.p2pkh_script(here["address"])
+    outs = [(4 * COIN, txbuild.p2pkh_script(SOMEWHERE_ELSE))]
+    inputs = [{"txid": "%064x" % 7, "vout": 0, "value": 5 * COIN,
+               "address": SOMEONE_ELSE}]
+    offer = {"raw": txbuild.build_raw_tx([("%064x" % 7, 0)], outs),
+             "inputs": inputs, "what": "a payment", "signed_from": 0,
+             "sighashes": [funding.sighash(inputs, outs, 0, script).hex()]}
+    refused = browser.execute_async_script("""
+        const done = arguments[1];
+        (async () => {
+          try {
+            const c = window.coins;
+            const coin = await c.coinKey(
+              c.unhex("000102030405060708090a0b0c0d0e0f"), "regtest", 0);
+            const out = await c.verifyOffer(JSON.parse(arguments[0]),
+                                            {pubkey: coin.pubkey,
+                                             address: await c.address(
+                                               coin.pubkey, 111)});
+            done({signed: out.hashes});
+          } catch (e) { done({error: String(e && e.message || e)}); }
+        })();""", json.dumps(offer))
+    assert "signed" not in refused, refused
+    assert "does not hold" in refused["error"], refused
 
 
 def test_the_same_words_make_a_different_key_on_each_chain(loaded):

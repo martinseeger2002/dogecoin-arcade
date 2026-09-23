@@ -356,7 +356,7 @@ async function _claim(wallet, tag) {
   if (!offered.ok) throw new Error(offer.detail || "that cannot be claimed");
 
   const said = await signOffer(wallet, offer);
-  return {...said, fee: offer.fee, what: offer.what};
+  return {...said, what: offer.what};
 }
 
 const coinsHex = (bytes) => [...new Uint8Array(bytes)]
@@ -412,15 +412,19 @@ export async function offerSend(to, amount, chain) {
  * key does not fail loudly: it produces a signature that verifies against
  * nothing, and the node's refusal arrives with no clue why.
  *
- * What is signed is never parsed here. The transaction is the node's; it
- * said what it was doing before anybody pressed anything, and it
- * broadcasts what it OFFERED rather than what comes back.
+ * Nothing is signed until `coins.verifyOffer` has read the transaction the
+ * offer carries and worked out its own hashes from it. The offer's
+ * `sighashes` are the node's claim about that transaction, and a claim
+ * that does not match the bytes is refused here, in the tab, before the
+ * key is used -- which is the only place the refusal can be effective. A
+ * node that can choose what you sign does not need your key.
  */
 async function signOffer(wallet, offer) {
   const keys = keysOn(wallet, offer.chain
                       || (wallet.on && Object.keys(wallet.on)[0]));
+  const shown = await coins.verifyOffer(offer, keys);
   const signatures = [];
-  for (const sighash of offer.sighashes) {
+  for (const sighash of shown.hashes) {
     signatures.push(coinsHex(await coins.signInput(keys.key, unhex(sighash))));
   }
   const done = await fetch("/account/sign", {
@@ -430,7 +434,22 @@ async function signOffer(wallet, offer) {
   });
   const said = await done.json();
   if (!done.ok) throw new Error(said.detail || "the node would not take it");
-  return said;
+  return {...said, fee: shown.fee, change: shown.change, says: shown.says};
+}
+
+/** What this browser makes of an offer, before anything is signed.
+ *
+ * Every page that asks somebody to confirm a transaction calls this and
+ * prints what it returns, rather than printing `offer.fee` and
+ * `offer.what` -- the node's own summary of what it built. The check is
+ * the same one `confirm` runs a moment later, so what a person reads is
+ * what the signature covers, and a transaction that does not match its
+ * own hashes is refused before a confirmation is even offered.
+ */
+export async function checked(offer, wallet) {
+  const keys = keysOn(wallet, offer.chain
+                      || (wallet.on && Object.keys(wallet.on)[0]));
+  return coins.verifyOffer(offer, keys);
 }
 
 export async function confirm(wallet, offer) {
@@ -461,8 +480,7 @@ export async function signAndSend(wallet, where, body) {
     });
     const offer = await asked.json();
     if (!asked.ok) throw new Error(offer.detail || "that cannot be done");
-    const said = await signOffer(wallet, offer);
-    return {...said, fee: offer.fee};
+    return await signOffer(wallet, offer);
   });
 }
 

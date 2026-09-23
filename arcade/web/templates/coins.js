@@ -13,8 +13,10 @@
  *                        coin path needs and what needs the curve
  *   addresses            hash160 of the public key, base58check, in this
  *                        chain's own version byte
- *   signing              one input at a time, over bytes the node hands us
- *                        and we check before we touch them
+ *   reading              an unsigned transaction, parsed into its inputs
+ *                        and outputs, and the hash each input has to sign
+ *   signing              one input at a time, over bytes recomputed here
+ *                        from the transaction rather than handed to us
  *
  * **The node never sees a private key and never gets asked for one.** It
  * builds a transaction, says exactly what it does, and asks for
@@ -182,17 +184,272 @@ export async function coinKey(seed, network, index = 0) {
   return {key: node.key, pubkey: publicKey(node.key)};
 }
 
+/* --- reading a transaction ----------------------------------------------
+ *
+ * A signer that cannot read signs whatever it is handed. The node has
+ * always sent the whole unsigned transaction alongside the list of hashes
+ * (`funding.Unsigned.as_json`), so the material was here and unused; this
+ * is the reading.
+ *
+ * The serialisation is the published legacy one, the same bytes
+ * `arcade/funding.py:sighash` builds -- varints, little-endian, empty
+ * scriptSigs except the input being signed, four bytes of sighash type,
+ * SHA256d. Nothing here is new cryptography: it is parsing and
+ * concatenation, and a mistake produces a signature the network refuses
+ * rather than a key that leaks. `tests/test_coins_browser.py` compares
+ * these hashes against Python's, byte for byte, for the same transaction.
+ */
+
+function readLE(bytes, at, n) {
+  let value = 0n;
+  for (let i = n - 1; i >= 0; i--) value = (value << 8n) | BigInt(bytes[at + i]);
+  return value;
+}
+
+function writeLE(value, n) {
+  const out = new Uint8Array(n);
+  let rest = BigInt(value);
+  for (let i = 0; i < n; i++) { out[i] = Number(rest & 255n); rest >>= 8n; }
+  return out;
+}
+
+function join(parts) {
+  const out = new Uint8Array(parts.reduce((n, part) => n + part.length, 0));
+  let at = 0;
+  for (const part of parts) { out.set(part, at); at += part.length; }
+  return out;
+}
+
+/** A compact size: the value itself under 253, else a flag and the bytes. */
+function sizeOf(n) {
+  const value = BigInt(n);
+  if (value < 0xfdn) return new Uint8Array([Number(value)]);
+  if (value <= 0xffffn) return new Uint8Array([0xfd, ...writeLE(value, 2)]);
+  if (value <= 0xffffffffn) return new Uint8Array([0xfe, ...writeLE(value, 4)]);
+  return new Uint8Array([0xff, ...writeLE(value, 8)]);
+}
+
+/** `[value, where-the-bytes-resume]`, or a refusal for a truncated tx. */
+export function varint(bytes, at) {
+  const flag = bytes[at];
+  if (flag === undefined) throw new Error("that transaction ends early");
+  if (flag < 0xfd) return [Number(flag), at + 1];
+  const width = {0xfd: 2, 0xfe: 4, 0xff: 8}[flag];
+  if (at + 1 + width > bytes.length) throw new Error("that transaction ends early");
+  return [Number(readLE(bytes, at + 1, width)), at + 1 + width];
+}
+
+/** The script that pays a hash160 -- the one shape this wallet spends from. */
+export function p2pkh(hash) {
+  return new Uint8Array([0x76, 0xa9, ...sizeOf(hash.length), ...hash, 0x88, 0xac]);
+}
+
+const SAME = (a, b) => a.length === b.length && a.every((b2, n) => b2 === b[n]);
+
+/** Split an unsigned transaction into what it spends and what it pays. */
+export function parseTx(raw) {
+  const bytes = unhex(String(raw || ""));
+  let at = 4;
+  if (bytes.length < at + 1) throw new Error("that is not a transaction");
+  const version = Number(readLE(bytes, 0, 4));
+  const inputs = [];
+  let [count, next] = varint(bytes, at);
+  at = next;
+  if (count === 0) {
+    // A segwit marker, and this wallet's transactions are not segwit. The
+    // hash below would be computed over the wrong bytes, so say so.
+    throw new Error("that is not a plain transaction, and this browser will "
+      + "not sign what it cannot read");
+  }
+  for (let i = 0; i < count; i++) {
+    if (at + 36 > bytes.length) throw new Error("that transaction ends early");
+    const txid = hex(bytes.slice(at, at + 32).reverse());   // display order
+    const vout = Number(readLE(bytes, at + 32, 4));
+    at += 36;
+    let length; [length, at] = varint(bytes, at);
+    if (at + length > bytes.length) throw new Error("that transaction ends early");
+    const scriptSig = bytes.slice(at, at + length);
+    at += length;
+    const sequence = Number(readLE(bytes, at, 4));
+    at += 4;
+    inputs.push({txid, vout, scriptSig, sequence});
+  }
+  [count, at] = varint(bytes, at);
+  const outputs = [];
+  for (let i = 0; i < count; i++) {
+    if (at + 8 > bytes.length) throw new Error("that transaction ends early");
+    const value = readLE(bytes, at, 8);
+    at += 8;
+    let length; [length, at] = varint(bytes, at);
+    if (at + length > bytes.length) throw new Error("that transaction ends early");
+    outputs.push({value, script: bytes.slice(at, at + length)});
+    at += length;
+  }
+  if (at + 4 > bytes.length) throw new Error("that transaction ends early");
+  const locktime = Number(readLE(bytes, at, 4));
+  at += 4;
+  if (at !== bytes.length) {
+    throw new Error("that transaction has bytes left over that this browser "
+      + "cannot account for");
+  }
+  return {version, locktime, inputs, outputs};
+}
+
+/** The 32 bytes input `index` signs under SIGHASH_ALL, from the transaction. */
+export async function sighashAll(tx, index, scriptPubKey) {
+  const parts = [writeLE(tx.version, 4), sizeOf(BigInt(tx.inputs.length))];
+  tx.inputs.forEach((input, n) => {
+    const script = n === index ? scriptPubKey : new Uint8Array(0);
+    parts.push(unhex(input.txid).reverse(), writeLE(input.vout, 4),
+               sizeOf(BigInt(script.length)), script, writeLE(0xffffffffn, 4));
+  });
+  parts.push(sizeOf(BigInt(tx.outputs.length)));
+  for (const out of tx.outputs)
+    parts.push(writeLE(out.value, 8), sizeOf(BigInt(out.script.length)), out.script);
+  parts.push(writeLE(tx.locktime, 4), writeLE(1n, 4));      // SIGHASH_ALL
+  return hash256(join(parts));
+}
+
+/** The bytes a payload output actually carries, ignoring its opcodes. */
+function payloadBytes(script) {
+  let at = 0, total = 0;
+  while (at < script.length) {
+    const op = script[at];
+    if (op > 0 && op < 0x4c && at + 1 + op <= script.length) {
+      total += op; at += 1 + op; continue;
+    }
+    if (op === 0x4c && at + 2 <= script.length) {
+      const n = script[at + 1];
+      if (at + 2 + n > script.length) break;
+      total += n; at += 2 + n; continue;
+    }
+    at += 1;
+  }
+  return total;
+}
+
+/* --- what this key may sign ---------------------------------------------
+ *
+ * One rule underneath this: a signature goes over bytes this browser
+ * worked out for itself, over a transaction whose every coin it could
+ * recognise. The node's `sighashes` are treated as a claim about the
+ * transaction and checked against it, which is the only direction that
+ * matters -- a node that can choose what you sign does not need your key,
+ * and "the node never holds your key" is worth nothing on its own.
+ *
+ * What is checked, and what is still taken on trust:
+ *
+ *   the outputs          entirely, from the bytes. Where the money goes and
+ *                        how much, the payload written to the chain, the
+ *                        change. Every one of these is inside the hash, so
+ *                        they are what the signature is really for.
+ *   the coins it spends  their outpoints, against the offer's own list.
+ *                        Their VALUES are still the node's numbers: the
+ *                        sighash does not bind an amount, so a fee is
+ *                        derived from what the index says the inputs were
+ *                        worth rather than from the coins themselves. The
+ *                        fix is the previous transactions, checked against
+ *                        their own txids -- that belongs with building in
+ *                        the browser, not here.
+ *   coins that are NOT   refused. Every input this key signs has to be
+ *     this key's         spendable by the key doing the signing, so an
+ *                        offer cannot include a coin by this address that
+ *                        the offer did not say it was spending.
+ *   a counterparty's     `signed_from`: the inputs before it belong to the
+ *     coins              other half of a trade, are left unsigned here, and
+ *                        are not this key's to check or to sign.
+ */
+export async function verifyOffer(offer, keys) {
+  if (!offer || !offer.raw) {
+    throw new Error("that offer has no transaction in it, so there is nothing "
+      + "to check against. Nothing was signed.");
+  }
+  const tx = parseTx(offer.raw);
+  const named = offer.inputs || [];
+  if (named.length !== tx.inputs.length) {
+    throw new Error(`that offer lists ${named.length} coins and its `
+      + `transaction spends ${tx.inputs.length}. Nothing was signed.`);
+  }
+  for (let i = 0; i < tx.inputs.length; i++) {
+    if (tx.inputs[i].txid !== String(named[i].txid || "").toLowerCase()
+        || tx.inputs[i].vout !== Number(named[i].vout)) {
+      throw new Error(`input ${i} of that transaction is not the coin the `
+        + "offer names. Nothing was signed.");
+    }
+  }
+
+  const from = Number(offer.signed_from || 0);
+  const asked = (offer.sighashes || []).map((h) => String(h).toLowerCase());
+  if (tx.inputs.length - from !== asked.length) {
+    throw new Error(`that transaction has ${tx.inputs.length - from} coins `
+      + `for this key to sign and asks for ${asked.length} signatures. `
+      + "Nothing was signed.");
+  }
+
+  const mine = p2pkh(await hash160(keys.pubkey));
+  const own = keys.address || await address(keys.pubkey, keys.version);
+  const hashes = [];
+  for (let n = from; n < tx.inputs.length; n++) {
+    if (String(named[n].address || "").toLowerCase() !== own.toLowerCase()) {
+      throw new Error(`that transaction spends a coin at input ${n} that this `
+        + "key does not hold. Nothing was signed.");
+    }
+    const derived = hex(await sighashAll(tx, n, mine));
+    if (derived !== asked[n - from]) {
+      throw new Error("those signatures were asked for over different bytes "
+        + `than this transaction -- what this browser worked out for input ${n} `
+        + "is not what the offer carries. Nothing was signed.");
+    }
+    hashes.push(derived);
+  }
+
+  // Everything below is what to SAY about it, and it is said from the
+  // parsed transaction. `offer.fee` is never read: a confirmation that
+  // repeats the node's numbers proves nothing.
+  const version = unbase58(own)[0];
+  let paid = 0n, change = 0n;
+  const pays = [];
+  for (const out of tx.outputs) {
+    paid += out.value;
+    const script = out.script;
+    if (SAME(script, mine)) {
+      change += out.value;
+      pays.push({to: own, value: Number(out.value), mine: true});
+    } else if (script.length === 25 && script[0] === 0x76 && script[1] === 0xa9
+               && script[23] === 0x88 && script[24] === 0xac) {
+      pays.push({to: await base58check(version, script.slice(3, 23)),
+                 value: Number(out.value), mine: false});
+    } else {
+      pays.push({bytes: payloadBytes(script), value: Number(out.value),
+                 mine: false});
+    }
+  }
+  let taken = 0n;
+  for (const coin of named) taken += BigInt(coin.value || 0);
+  if (paid > taken) {
+    throw new Error("that transaction pays out more than it takes in, which "
+      + "no chain would accept. Nothing was signed.");
+  }
+  const fee = taken - paid;
+  const coinsOf = (sats) => (Number(sats) / 100000000).toFixed(8);
+  const says = pays.map((out) => out.bytes !== undefined
+    ? `${out.bytes} bytes written to the chain`
+    : `${coinsOf(out.value)} to ${out.to}${out.mine ? " (back to you)" : ""}`
+  ).join(", ") + `; ${coinsOf(fee)} in fees`
+    + (change > 0n ? `, ${coinsOf(change)} of it coming back to you` : "");
+  return {tx, hashes, pays, fee: Number(fee), change: Number(change),
+          what: offer.what || "", signs: {from, of: tx.inputs.length},
+          coinsOf, says};
+}
+
 /* --- signing -------------------------------------------------------------
  *
- * The node builds a transaction and hands over, for each input, the exact
- * 32 bytes to sign. This signs them and nothing else: no transaction is
- * parsed here, and no amount is read here, because a signer that reads the
- * thing it signs is a signer that can be talked into reading it wrongly.
- *
- * What makes that safe is not this function -- it is that the page SHOWS
- * what the node said it was doing and the node verifies the returned
- * transaction is what it offered before broadcasting it. Both halves check;
- * neither is trusted alone.
+ * This signs the 32 bytes it is given and nothing else. What makes that
+ * safe is no longer that this file refuses to look: it is that the bytes
+ * reaching here are the ones `verifyOffer` derived from the transaction's
+ * own serialized bytes, having refused anything else. The node still
+ * decodes what comes back and compares it against what it offered. Both
+ * halves check, and neither is trusted alone.
  */
 
 /* DER, written here because noble v2 does not encode it -- it hands back
