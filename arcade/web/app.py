@@ -8492,6 +8492,83 @@ def create_app(state: AppState) -> FastAPI:
             return RedirectResponse("/join", status_code=303)
         return render(request, "my_nfts.html", chain=_account_chain())
 
+    @app.get("/me/runs", response_class=HTMLResponse)
+    def my_runs(request: Request):
+        """Every collection run this account has written down.
+
+        `/inscriptions/collection` for one account instead of for the node.
+        The ordering is the operator's -- unfinished first -- because the
+        question this page gets asked is "what did I leave half-done", and a
+        list that buries it under everything already paid for answers it
+        slowly.
+        """
+        account = signed_in(request)
+        if account is None:
+            return RedirectResponse("/join", status_code=303)
+        mine = [run for run in _runs.list(account=account.pubkey)]
+        mine.sort(key=lambda run: (run["status"] == "done", -run["created"]))
+        # The book keeps the network, which is what a run has to be to find its
+        # chain again; what a person reads is the label. Keyed rather than
+        # `_account_chain().label` because a run's chain is its own, and on a
+        # node with two of them the one on this row is not necessarily the one
+        # this page is about.
+        labels = {one.network: one.label for one in _account_chains()}
+        return render(request, "account_runs.html", chain=_account_chain(),
+                      runs=[{"run": run["id"], "name": run["name"],
+                             "items": run["items"], "sent": run["sent"],
+                             "status": run["status"],
+                             "refused": run["failed_pieces"],
+                             "next": run["next"],
+                             "chain": labels.get(run["network"], run["network"])}
+                            for run in mine])
+
+    @app.get("/me/run/{run_id}", response_class=HTMLResponse)
+    def my_run(request: Request, run_id: str, page: int = 1):
+        """One run, piece by piece -- the account's `/inscriptions/collection/{id}`.
+
+        The same reading as `/account/run`, drawn instead of answered: same
+        book, same one-piece-at-a-time buttons, nothing here that signs or
+        broadcasts. What the wallet page's little panel cannot hold is here --
+        every piece with its own status, the reason on the ones that were
+        refused, what it costs, and which inscription each landed piece became.
+
+        A run that is not this account's gets the same words as a run that does
+        not exist. The POST routes can tell those two apart -- they have to, to
+        be honest about what they refused -- but this page is on a public
+        instance, where being told that an id names somebody's run is an answer
+        about somebody else.
+        """
+        account = signed_in(request)
+        if account is None:
+            return RedirectResponse("/join", status_code=303)
+        run = _runs.get(run_id)
+        if run is None or run["account"] != account.pubkey.lower():
+            state.flash("there is no run of that id", "err")
+            return RedirectResponse("/me/runs", status_code=303)
+        per_page = 100
+        pages = max(1, -(-run["items"] // per_page))
+        page = max(1, min(page, pages))
+        pieces = _runs.pieces(run["id"], limit=per_page,
+                              offset=(page - 1) * per_page)
+        # The chain the run was written on, by name, as the operator's page
+        # does: a run belongs to a chain era, and the pieces it paid for are on
+        # that one whatever this instance runs now.
+        chain = _chain_on(run["network"])
+        numbers: dict[str, int] = {}
+        try:
+            index = state.token_index(chain)
+            for piece in pieces:
+                if piece["txid"]:
+                    row = index.inscription(piece["txid"])
+                    if row:
+                        numbers[piece["txid"]] = row["number"]
+        except Exception:
+            numbers = {}             # the page still draws; a number is a link
+        return render(request, "account_run.html",
+                      run={**run, "refused": run["failed_pieces"]},
+                      pieces=pieces, numbers=numbers, chain=chain,
+                      page=page, pages=pages)
+
     @app.get("/account/feed")
     def account_feed(request: Request, before: int | None = None):
         """The feed, as an account sees it: the same posts, its own name.

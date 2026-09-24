@@ -56,9 +56,13 @@
   <div class="row" id="run-go" hidden>
     <div style="flex:1" class="muted" id="run-says"
       style="font-size:.86rem"></div>
+    <a class="btn small ghost" id="run-page" href="#">The run</a>
     <button type="button" id="run-piece">Inscribe the next piece</button>
     <button type="button" class="ghost" id="run-stop">Stop</button>
   </div>
+  <p class="muted" style="font-size:.86rem;margin:8px 0 0">
+    <a href="/me/runs">Every run this account has written down</a> &mdash; the
+    pieces, which one stopped it, and what it cost.</p>
 </div>
 
 <div class="panel" id="pricing" hidden>
@@ -485,10 +489,12 @@ function showed(row) {
   $("run-go").hidden = !row;
   $("run-piece").dataset.run = row ? row.run : "";
   $("run-stop").dataset.run = row ? row.run : "";
+  $("run-page").href = row ? `/me/run/${row.run}` : "#";
   if (!row) return;
   $("run-says").textContent = `${row.name}: ${commas(row.sent)} of `
     + `${commas(row.items)} on the chain`
-    + (row.next ? `, next is ${row.next}` : ".");
+    + (row.next ? `, next is ${row.next}` : ".")
+    + (row.refused ? ` ${commas(row.refused)} refused.` : "");
 }
 
 /** Where this account left off. Asked on load, not when a button is pressed:

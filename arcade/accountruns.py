@@ -261,13 +261,26 @@ class Runs:
                 "ORDER BY edition DESC LIMIT 1", (run_id,)).fetchone()
             return "" if row is None else row["txid"]
 
-    def pieces(self, run_id: str, status: str | None = None) -> list[dict]:
+    def pieces(self, run_id: str, status: str | None = None,
+               limit: int | None = None, offset: int = 0) -> list[dict]:
+        """The pieces, lowest edition first, a page at a time when asked.
+
+        `limit` is here because a run of ten thousand pieces is a page that
+        would rather not build ten thousand rows to show a hundred of them. The
+        order is the edition, which makes a page boundary a stable thing: a
+        piece's edition never changes while somebody is paging, so page two
+        cannot show a piece that page one already showed.
+        """
         with self._open() as conn:
             sql, args = "SELECT * FROM piece WHERE run_id = ?", [run_id]
             if status:
                 sql += " AND status = ?"
                 args.append(status)
-            return [dict(row) for row in conn.execute(sql + " ORDER BY edition", args)]
+            sql += " ORDER BY edition"
+            if limit is not None:
+                sql += " LIMIT ? OFFSET ?"
+                args += [limit, offset]
+            return [dict(row) for row in conn.execute(sql, args)]
 
     # -- answering --
 

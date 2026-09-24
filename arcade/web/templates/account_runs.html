@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Your collection runs · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Collection runs</h1>
+<p class="sub">What this account has written down on this node, unfinished
+  first. A run is not a process and nothing here is running: the pieces go out
+  when you press the button in one of them, in this tab, with your key. Close
+  everything and the run waits here for you, at the piece it stopped on.</p>
+
+{% if runs %}
+<div class="panel">
+  <table>
+    <tr><th>Collection</th><th>Chain</th><th>Pieces</th><th>Status</th>
+        <th>Next</th><th></th></tr>
+    {% for run in runs %}
+    <tr>
+      <td>{{ run.name }}</td>
+      <td>{{ run.chain }}</td>
+      <td>{{ "{:,}".format(run.sent) }} of {{ "{:,}".format(run["items"]) }}
+        {% if run.refused %}<span class="pill bad">{{ "{:,}".format(run.refused) }}
+          refused</span>{% endif %}</td>
+      <td><span class="pill {{ 'ok' if run.status == 'done' else ('bad' if run.status == 'failed' else ('warn' if run.status == 'running' else '')) }}">{{ run.status }}</span></td>
+      <td class="muted">{{ run.next or "—" }}</td>
+      <td><a class="btn small" href="/me/run/{{ run.run }}">Open</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+{% if not runs %}
+<div class="panel empty">
+  <p>Nothing written down yet.</p>
+  <p class="muted" style="font-size:.86rem">A run starts when you upload a
+    folder on the <a href="/me/nfts">wallet</a> page &mdash; the layout the Art
+    Engine leaves, <code>json/_metadata.json</code> and the pictures. Uploading
+    inscribes nothing; it only writes the run down here.</p>
+</div>
+{% endif %}
+
+<p class="muted" style="font-size:.86rem">An account is working on one run at a
+  time on a chain, so a second upload is refused until the first is finished or
+  stopped. That is not the node being slow: two runs from one address would go
+  out in whichever order the account clicked, and a signature over piece nine
+  would not say which collection it paid for.</p>
+{% endblock %}

@@ -81,6 +81,7 @@ PUBLIC_PAGES = frozenset({
     "/me/contacts",
     "/me/backup",
     "/me/nfts",
+    "/me/runs",
     "/me/wallet",
     "/me/wallet/tokens",
     "/account",
@@ -123,6 +124,16 @@ PUBLIC_TREES = (
 #: node's wallet only when it is the operator's own copy of the page.
 PUBLIC_SHAPES = (
     re.compile(r"^/inscriptions/(?:[0-9a-fA-F]{64}|[0-9]{1,12})/view$"),
+    # An account's own collection run. A shape rather than a `/me/run/` tree
+    # for the reason the tree above gives: a prefix says everything under it is
+    # readable, and tomorrow's `/me/run/<id>/export` would arrive already
+    # public. Matched to the id `_runs.create` actually mints --
+    # `secrets.token_hex` -- and wide enough that the door cannot refuse a path
+    # the route would answer. What makes it safe at all is that route: it
+    # answers a run that is not the asker's with the same words it answers a
+    # run that does not exist, and it has no path under `/me/run/` that spends,
+    # names a folder, or reads anybody but the asker's rows.
+    re.compile(r"^/me/run/[0-9a-f]{6,32}$"),
 )
 
 #: Prefixes that look public by the rules above and are not. Checked FIRST,

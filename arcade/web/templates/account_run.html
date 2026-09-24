@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block title %}{{ run.name }} · DogecoinArcade{% endblock %}
+{% block body %}
+<style>
+.run-bar{height:12px;border-radius:6px;background:var(--line);overflow:hidden;margin:10px 0 6px}
+.run-fill{height:100%;background:var(--accent);width:0;transition:width .4s}
+.run-note{font-size:.9rem;color:var(--muted);min-height:1.3em}
+</style>
+<h1>{{ run.name }}</h1>
+<p class="sub">Every piece of this was written down the moment you uploaded
+  the folder, and goes on the chain one transaction at a time &mdash; each one
+  built by this node out of coins only you can spend, and signed here. Leave
+  the tab, close the laptop, restart the node: the run is still here, at the
+  piece it stopped on.</p>
+
+<p class="muted" id="shut" hidden style="font-size:.86rem">
+  Your wallet is not open in this tab, so nothing here can be signed.
+  <a href="/me">Open it</a> and come back.</p>
+
+<div class="msg err" id="trouble" hidden></div>
+<div class="msg ok" id="news" hidden></div>
+
+<div class="panel">
+  <div class="row" style="align-items:baseline">
+    <strong id="run-count">{{ "{:,}".format(run.sent) }} of
+      {{ "{:,}".format(run["items"]) }} pieces on the chain</strong>
+    <span class="pill {{ 'ok' if run.status == 'done' else ('bad' if run.status == 'failed' else ('warn' if run.status == 'running' else '')) }}"
+          id="run-status">{{ run.status }}</span>
+    <span class="muted" style="margin-left:auto" id="run-next">
+      {% if run.next %}next is {{ run.next }}.{% endif %}
+      {% if run.refused %}{{ "{:,}".format(run.refused) }}
+        refused.{% endif %}</span>
+  </div>
+  <div class="run-bar"><div class="run-fill" id="run-fill"
+       style="width:{{ (100 * run.sent / run["items"]) if run["items"] else 0 }}%"></div></div>
+  {% if run.note %}<div class="run-note" id="run-note">{{ run.note }}</div>{% endif %}
+  <table style="margin-top:12px">
+    <tr><td class="muted" style="width:130px">Chain</td><td>{{ chain.label }}</td></tr>
+    <tr><td class="muted">From</td>
+        <td class="mono" style="word-break:break-all">{{ run.address }}</td></tr>
+    <tr><td class="muted">Cost</td>
+        <td>about {{ "%.2f"|format(run.fee + run.dust) }} in all,
+          {{ "%.2f"|format(run.fee) }} once the dust is swept back</td></tr>
+    <tr><td class="muted">Pictures</td>
+        <td class="muted">the folder you uploaded, which this node keeps to
+          build the rest of the pieces from. Removing the run below takes them
+          off this machine with it.</td></tr>
+  </table>
+  <div class="row" style="margin-top:14px">
+    {% if run.next %}
+      <button type="button" id="run-piece">Inscribe {% if run.sent %}the next
+        piece{% else %}the first piece{% endif %}</button>
+    {% endif %}
+    {% if run.refused %}
+      <button type="button" class="ghost" id="run-retry">Retry the refused
+        ones</button>
+    {% endif %}
+    {% if run.status in ('open', 'running', 'failed') %}
+      <button type="button" class="ghost" id="run-stop">Stop</button>
+    {% endif %}
+    <button type="button" class="ghost" id="run-delete">Remove</button>
+    <a class="btn ghost" href="/me/runs" style="margin-left:auto">All runs</a>
+    <a class="btn ghost" href="/collections/{{ run.address }}/{{ run.name|urlencode }}">View the collection</a>
+  </div>
+</div>
+
+<h2>Pieces</h2>
+<div class="panel" style="overflow-x:auto">
+  <table>
+    <tr><th>Edition</th><th>Name</th><th>Status</th><th>Inscription</th></tr>
+    {% for piece in pieces %}
+    <tr>
+      <td>{{ piece.edition }}</td>
+      <td>{{ piece.name }}</td>
+      <td>{% if piece.status == 'sent' %}<span class="pill ok">sent</span>
+          {% elif piece.status == 'failed' %}<span class="pill bad">refused</span>
+            <span class="muted">{{ piece.error[:100] }}</span>
+          {% elif piece.status == 'sending' %}<span class="pill warn">out for a signature</span>
+          {% else %}<span class="pill">waiting</span>{% endif %}</td>
+      <td>{% if piece.txid in numbers %}
+            <a href="/inscriptions/{{ piece.txid }}/view">#{{ "{:,}".format(numbers[piece.txid]) }}</a>
+          {% elif piece.txid %}<span class="muted mono">{{ piece.txid[:16] }}&hellip; unconfirmed</span>
+          {% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% if pages > 1 %}
+  <nav class="pager">
+    {% if page > 1 %}<a class="btn ghost small" href="?page={{ page - 1 }}">Previous</a>{% endif %}
+    <span class="muted">page {{ page }} of {{ pages }}</span>
+    {% if page < pages %}<a class="btn ghost small" href="?page={{ page + 1 }}">Next</a>{% endif %}
+  </nav>
+  {% endif %}
+</div>
+
+<script type="module">
+import * as wallet from "/wallet.js";
+
+const $ = (id) => document.getElementById(id);
+const say = (t) => { $("trouble").textContent = t; $("trouble").hidden = !t; };
+const news = (t) => { $("news").textContent = t; $("news").hidden = !t; };
+const commas = (n) => Number(n || 0).toLocaleString();
+const RUN = "{{ run.id }}";
+const CHAIN = {network: "{{ chain.network }}",
+               version: {{ chain.params.pubkeyhash_version }}};
+
+async function post(where, body) {
+  const asked = await fetch(where, {method: "POST",
+                                    headers: {"Content-Type": "application/json"},
+                                    body: JSON.stringify({run: RUN, ...body})});
+  const out = await asked.json();
+  if (!asked.ok) throw new Error(out.detail || "that did not work");
+  return out;
+}
+
+/* One piece, offered unsigned and signed here. There is no loop over the
+ * remaining pieces on purpose: each one is a transaction out of this account's
+ * coins, and a page that signed them without stopping would be a page that
+ * spent a collection while you read the first sentence. */
+const piece = () => $("run-piece") && ($("run-piece").onclick = async () => {
+  say(""); news("");
+  try {
+    const offer = await post("/account/run/piece", {});
+    if (offer.finished) {
+      news(`That run is finished. All ${commas(offer.items)} of them are on `
+        + "the chain.");
+      setTimeout(() => location.reload(), 1500);
+      return;
+    }
+    const keys = await wallet.opened(CHAIN);
+    if (!keys) throw new Error("your wallet is not open in this tab");
+    const shown = await wallet.checked(offer, keys);
+    if (!confirm(`${offer.name}: ${commas(offer.bytes)} bytes on the chain `
+                 + `forever, for ${shown.coinsOf(shown.fee)} in fees. `
+                 + `${commas(offer.sent)} of ${commas(offer.items)} are `
+                 + "already there.")) return;
+    const out = await wallet.confirm(keys, offer);
+    $("run-count").textContent = `${commas(offer.sent + 1)} of `
+      + `${commas(offer.items)} pieces on the chain`;
+    $("run-fill").style.width =
+      `${(100 * (offer.sent + 1) / offer.items).toFixed(1)}%`;
+    news(`Inscribed: ${out.txid.slice(0, 16)}… Piece ${offer.piece} of `
+        + `${commas(offer.items)}. Its number appears when a block carries it.`);
+    setTimeout(() => location.reload(), 4000);
+  } catch (e) { say(String(e.message || e)); }
+});
+piece();
+
+const stop = () => $("run-stop") && ($("run-stop").onclick = async () => {
+  say(""); news("");
+  try {
+    const stop = await post("/account/run/stop", {});
+    news(`${stop.name} is filed as stopped at ${commas(stop.sent)} of `
+      + `${commas(stop.items)}. What is on the chain stays there, and asking `
+      + "for a piece starts it going again.");
+    setTimeout(() => location.reload(), 1500);
+  } catch (e) { say(String(e.message || e)); }
+});
+stop();
+
+/* The pieces that were refused are put back with their original ids, which is
+ * the only reason this is safe to press: a retry puts the same piece up rather
+ * than a second copy beside it. What it cannot fix is a build that is short a
+ * file, so the reasons come back and are said. */
+const retry = () => $("run-retry") && ($("run-retry").onclick = async () => {
+  say(""); news("");
+  try {
+    const back = await post("/account/run/retry", {});
+    news(back.retried
+      ? `Put back in line: ${commas(back.retried)}. The reason each was `
+        + "refused is on its row — if it says this node could not read "
+        + "the picture, re-upload the set instead. It will be written down as "
+        + "only what is still missing."
+      : "Nothing was refused, so there is nothing to retry.");
+    setTimeout(() => location.reload(), 2500);
+  } catch (e) { say(String(e.message || e)); }
+});
+retry();
+
+const remove = () => $("run-delete") && ($("run-delete").onclick = async () => {
+  if (!confirm("Forget this run? What is on the chain stays there; the "
+               + "pictures this node kept for the rest of it are deleted.")) return;
+  say(""); news("");
+  try {
+    await post("/account/run/delete", {});
+    location.href = "/me/runs";
+  } catch (e) { say(String(e.message || e)); }
+});
+remove();
+
+const keys = await wallet.opened(CHAIN);
+$("shut").hidden = !!keys;
+/* Said when this page's own script is wired up, the way the wallet's pages
+ * say it: a driver or a test that clicks one of these buttons has to know the
+ * handlers are on them, or it is clicking a page that has not arrived yet. */
+document.body.dataset.runReady = "yes";
+</script>
+{% endblock %}

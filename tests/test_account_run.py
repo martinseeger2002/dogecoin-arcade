@@ -20,7 +20,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from test_account_claim import _catch_up                            # noqa: E402
+from test_account_claim import _catch_up, _sign_in                   # noqa: E402
 from test_account_inscribe import arcade, seated                    # noqa: E402,F401
 from test_account_inscribe import _sign_and_send                    # noqa: E402
 from test_collections import hashlips                               # noqa: E402
@@ -43,6 +43,16 @@ def _start(app, build, **fields):
 def _book(state):
     """The run book, read directly, the way this suite reads the operator's."""
     return accountruns.Runs(state.home / "accountruns.sqlite")
+
+
+def _flat(page: str) -> str:
+    """A page's words, with the markup's line breaks folded away.
+
+    A sentence here is split over three lines of template because the lines
+    have to stay short, so asserting a phrase means asserting it on the words
+    rather than on the bytes between them.
+    """
+    return " ".join(page.split())
 
 
 def _next(app, pubkey, run_id):
@@ -527,3 +537,171 @@ def test_a_run_remembers_which_chain_it_belongs_to(seated, tmp_path):
                                   prefix="Doge Punks Floored")).json()["run"]
     assert _book(state).get(run_id)["floor"] == \
         state.chain_named("regtest").params.activation_height
+
+
+# --- the pages ----------------------------------------------------------------
+#
+# Everything above asks the routes; from here the questions are asked of a
+# page. `collection_job.html` has had a page for the operator's runs since the
+# beginning, and the account's side of the same book had a paragraph in the
+# wallet page and six POST routes with one caller. These are the assertions
+# that the paragraph is not all there is: which pieces are up, which one
+# stopped it and why, and what a stranger is not told.
+
+
+def test_the_run_page_is_the_account_s_own_run_page(seated, tmp_path):
+    """The account's `/inscriptions/collection/{id}`, drawn from its own book.
+
+    Mostly an assertion about what is on the page -- the run's own name, its
+    own address, one row per piece -- and about the one thing that must not
+    be: the folder on this machine where the pictures sit. The operator's page
+    prints that path because the operator owns the machine. This one is on a
+    public instance, where it is a directory on a stranger's disk, and a
+    stranger's page has no use for it.
+    """
+    app, state, rpc, pubkey, mine = seated
+    run_id = _start(app, hashlips(tmp_path, count=3,
+                                  prefix="Doge Punks Shown")).json()["run"]
+
+    page = app.get(f"/me/run/{run_id}")
+    assert page.status_code == 200, page.text
+    words = _flat(page.text)
+    assert "Doge Punks Shown" in words
+    assert "0 of 3 pieces on the chain" in words
+    assert mine in page.text, "it says where the pieces come from"
+    for edition in (1, 2, 3):
+        assert f"Doge Punks Shown #{edition}" in page.text
+    assert 'id="run-piece"' in page.text and "wallet.opened" in page.text, \
+        "it asks the tab for a signature; it has no key of its own"
+    assert "next is Doge Punks Shown #1" in words
+    assert str(state.home) not in page.text and "images/1.png" not in page.text, \
+        "the folder is not printed, only what it is for"
+
+
+def test_the_run_page_links_the_pieces_the_chain_has(seated, tmp_path):
+    """A landed piece is a number, not a hex prefix.
+
+    The wallet page's panel says `Inscribed: ab12…`; what the account wants
+    next is the piece itself, and it is only a link once this node has read
+    the block that carries it. So half of this is the wait the page has no
+    part in -- the other half is that the page cannot make the link early.
+    """
+    app, state, rpc, pubkey, mine = seated
+    run_id = _start(app, hashlips(tmp_path, count=2,
+                                  prefix="Doge Punks Landed")).json()["run"]
+    _, landed = _next(app, pubkey, run_id)
+    # The row's two states, word for word. Not the word "unconfirmed" on its
+    # own: base.html's stylesheet has a rule by that name, so it is on every
+    # page drawn or not.
+    waiting = f"{landed[:16]}&hellip; unconfirmed"
+    assert waiting in app.get(f"/me/run/{run_id}").text, \
+        "a broadcast is not yet a page"
+    assert f"/inscriptions/{landed}/view" not in app.get(
+        f"/me/run/{run_id}").text, "and no link to a page that 404s"
+
+    rpc.call("generate", 1)
+    _catch_up(state, rpc)
+    page = app.get(f"/me/run/{run_id}")
+    assert f"/inscriptions/{landed}/view" in page.text
+    assert "1 of 2 pieces on the chain" in _flat(page.text)
+    assert "next is Doge Punks Landed #2" in _flat(page.text)
+    assert waiting not in page.text
+
+
+def test_a_refused_piece_is_on_the_page_with_the_reason_for_it(seated,
+                                                               tmp_path):
+    """The reason this page exists rather than another paragraph.
+
+    A hole in a set is said at the moment it happens, in a tab that closes.
+    A run that stopped for that reason keeps its place in the account's list
+    until it is finished or thrown away, so the reason has to live on the
+    run, where it is still there when looked at again next week.
+    """
+    app, state, rpc, pubkey, mine = seated
+    run_id = _start(app, hashlips(tmp_path, count=2,
+                                  prefix="Doge Punks Holed")).json()["run"]
+    book = _book(state)
+    for edition in (1, 2):
+        book.piece_failed(run_id, edition, "that picture is not in the folder")
+
+    page = app.get(f"/me/run/{run_id}")
+    assert page.status_code == 200, page.text
+    words = _flat(page.text)
+    assert "2 refused" in words
+    assert "that picture is not in the folder" in page.text
+    assert "failed" in words, "a run with a hole in it does not read as finished"
+    assert 'id="run-retry"' in page.text, "and the way back is on the page"
+    assert 'id="run-piece"' not in page.text, "there is no next piece to offer"
+
+
+def test_a_run_that_is_not_the_askers_says_nothing_about_it(seated, tmp_path):
+    """The one place a run id is asked for by a stranger, so: one flat answer.
+
+    The POST routes tell these two apart and have to -- refusing to touch a
+    run and saying there is no such run are different sentences, and the
+    account is paying for one of them. This is a page on a public instance,
+    where the difference is an answer about somebody else's work.
+    """
+    app, state, rpc, pubkey, mine = seated
+    run_id = _start(app, hashlips(tmp_path, count=1,
+                                  prefix="Doge Punks Sealed")).json()["run"]
+    _sign_in(app)                          # a different key, the same tab
+
+    for path in (f"/me/run/{run_id}", "/me/run/0123456789ab"):
+        answer = app.get(path, follow_redirects=False)
+        assert answer.status_code == 303, path
+        assert answer.headers["location"] == "/me/runs"
+        landed = app.get("/me/runs")
+        assert "there is no run of that id" in _flat(landed.text), path
+        assert "Doge Punks Sealed" not in landed.text, \
+            "not even the name of somebody else's collection"
+
+
+def test_the_runs_page_is_the_list_of_what_was_written_down(seated, tmp_path):
+    """Everything this account started, including what it walked away from.
+
+    The wallet page's panel shows the one run it is currently on. The question
+    this page answers is the other one -- what have I got half-done on this
+    node -- which includes the stopped ones, because a stopped run still has
+    its pictures here and still holds the coins its unsent pieces were priced
+    at.
+    """
+    app, state, rpc, pubkey, mine = seated
+    empty = app.get("/me/runs")
+    assert empty.status_code == 200, empty.text
+    assert "Nothing written down yet" in _flat(empty.text)
+
+    left = _start(app, hashlips(tmp_path, count=2,
+                                prefix="Doge Punks Left")).json()["run"]
+    assert app.post("/account/run/stop",
+                    json={"run": left}).json()["status"] == "stopped"
+    going = _start(app, hashlips(tmp_path / "again", count=1,
+                                 prefix="Doge Punks Going"))
+    assert going.status_code == 200, going.text
+
+    page = app.get("/me/runs")
+    words = _flat(page.text)
+    assert "Doge Punks Left" in words and "Doge Punks Going" in words
+    assert f'href="/me/run/{left}"' in page.text
+    assert f'href="/me/run/{going.json()["run"]}"' in page.text
+    assert "stopped" in words, "and it says which one was abandoned"
+    assert "Nothing written down yet" not in page.text
+
+
+def test_the_run_pages_are_ones_a_public_node_will_reach(client):
+    """A page the menu links and the door refuses is a page that lies.
+
+    `/me/run/` had to be a shape and not a tree, and that is only safe because
+    of what stands behind the shape: the route answers a run that is not the
+    asker's with the same words it answers a run that is not there, and there
+    is nothing under that prefix that spends, names a folder, or reads
+    anybody but the asker's own rows. The last two assertions are the tree
+    that was NOT taken -- an added path under `/me/run/` arrives private.
+    """
+    from arcade.web import door
+
+    app, _ = client
+    assert door.public_path("/me/runs")
+    assert door.public_path("/me/run/0123456789ab")
+    assert not door.public_path("/me/run/0123456789ab/export")
+    assert not door.public_path("/me/run/0123456789abcdef0123456789abcdef0123")
