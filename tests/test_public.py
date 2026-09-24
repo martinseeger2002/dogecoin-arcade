@@ -190,20 +190,196 @@ def test_the_preview_is_refused_through_the_door(public, tmp_path):
     assert answer.status_code == 404
 
 
-def test_every_public_page_links_only_where_a_stranger_may_go(public):
-    """A public page pointing at a route a public instance refuses is a site
-    broken for exactly the people it is for."""
+#: Every public page, drawn as a stranger sees it and as an account sees it.
+#: The second drawing is the one that let the 2026-09-24 bug out: `/nfts`
+#: offers an account different controls than it offers a stranger, and a page
+#: checked only as a stranger is a page that was never looked at as the person
+#: the fix was for. `/u/x` and `/tokens/5` are here because a page under a
+#: public tree is a public page, whatever the tree was written for.
+PUBLIC_PAGE = ["/", "/join", "/feed", "/guide", "/docs", "/clone",
+               "/collections", "/tokens", "/tokens/5", "/nfts", "/inscriptions",
+               "/exchange", "/listings", "/u/x",
+               "/me", "/me/nfts", "/me/runs", "/me/wallet",
+               "/me/wallet/tokens", "/me/messages", "/me/contacts",
+               "/me/backup"]
+
+#: A form that names a route the door shuts because the tab answers it rather
+#: than submitting it. `feed.html` keeps the operator's form markup so the
+#: button a person presses is the one that has always been on the page, and
+#: intercepts the submission in its own script -- the last test in
+#: `test_account_feed.py` is what pins that the listening starts before a press
+#: can arrive. This is the whole allowance, and it is a named pair rather than
+#: a rule about `/feed/`: a page not listed here may not name a refused route
+#: however its script behaves.
+ANSWERED_IN_THE_TAB = {"/feed": "/feed/"}
+
+
+def _attr(name: str, tag: str) -> str:
     import re
 
+    found = re.search(name + r"""\s*=\s*["']([^"']*)["']""", tag, re.I)
+    return found.group(1) if found else ""
+
+
+def _offered(body: str, page: str) -> list[tuple[str, str]]:
+    """Every place this page sends the browser, as a browser reads it.
+
+    Links and form targets, and a form with no `action` is read as submitting
+    to the page it was served on, which is what a browser does with it. A form
+    with no `method` is a GET. Both defaults matter: a form that spends through
+    the omission of one word is a form this test would otherwise walk past.
+    """
+    import re
+
+    out = []
+    for href in re.findall(r"""href\s*=\s*["'](/[^"'#?]*)""", body):
+        out.append((href, "GET"))
+    for tag in re.findall(r"<form\b[^>]*>", body, flags=re.I | re.S):
+        action, method = _attr("action", tag), (_attr("method", tag) or "GET")
+        target = action if action.startswith("/") else page
+        out.append((target.split("?")[0], method.upper() or "GET"))
+    return out
+
+
+def _asked(body: str) -> list[tuple[str, str]]:
+    """Every path a page's own script asks for behind the scenes.
+
+    The links-and-forms census is not the whole of what a page offers. A page
+    can also go and ask something on load, and a background question the door
+    refuses fails without ever being seen: `/account/run` was asked as a GET by
+    the NFTs page for as long as it had a run to show, at a route registered as
+    a post and let through the door only as a post. The page drew no error the
+    reader could act on and simply never found the run it was in the middle of,
+    so the promise printed above the button -- that a closed tab loses a run
+    nothing -- was false on every reload.
+
+    Only a literal path counts. A `fetch` built out of a variable lives in one
+    of the shared modules served at `/wallet.js` and its friends, where it is
+    not readable from a rendered page, and those are pinned by their own tests.
+    A page's own `post(where, body)` helper counts, with a post as its default,
+    because that is what the helper does -- `account_run.html` has one.
+    """
+    import re
+
+    out = []
+    for verb, target, rest in re.findall(
+            r"""\b(fetch|post)\(\s*["'`](/[^"'`]*)["'`]([^)]*)""", body):
+        if "${" in target:
+            continue        # built out of a variable: not a path from here
+        said = re.search(r"""method\s*:\s*["'`]?([A-Za-z]+)""", rest)
+        default = "POST" if verb == "post" else "GET"
+        out.append((target.split("?")[0], (said.group(1) if said else default)
+                    .upper()))
+    return out
+
+
+@pytest.mark.parametrize("page", PUBLIC_PAGE)
+@pytest.mark.parametrize("signed_in", [False, True])
+def test_every_public_page_links_only_where_a_stranger_may_go(public, page,
+                                                              signed_in):
+    """A public page pointing at a route a public instance refuses is a site
+    broken for exactly the people it is for.
+
+    The operator met this on `/nfts` on 2026-09-24: the page carried the NODE's
+    inscribe controls, which spend the node's wallet, and every one of them
+    answered "Not here". It is the shape of the bug rather than the page -- any
+    public page can carry a control the door shuts -- so this walks every
+    public page rather than that one, in both of the ways it can be drawn.
+    """
     app, _ = public
+    if signed_in:
+        _seat(app)
+    answer = app.get(page, headers=LOCAL, follow_redirects=False)
+    who = "an account" if signed_in else "a stranger"
+    if answer.status_code != 200:
+        pytest.skip(f"{page} is not a page for {who} "
+                    f"(answered {answer.status_code})")
     bad = []
-    for page in ("/", "/join", "/feed", "/docs", "/clone", "/collections"):
-        body = app.get(page, headers=LOCAL).text
-        for href in set(re.findall(r'href="(/[^"#?]*)', body)):
-            probe = href.rstrip("/") or "/"
-            if not door.public_path(probe):
-                bad.append(f"{page} -> {href}")
+    for target, method in (_offered(answer.text, page)
+                           + _asked(answer.text)):
+        if target.startswith(ANSWERED_IN_THE_TAB.get(page, "\0")) \
+                and method != "GET":
+            continue
+        probe = target.rstrip("/") or "/"
+        if not door.public_path(probe, method):
+            bad.append(f"{page} ({who}) {method} -> {target}")
     assert bad == [], bad
+
+
+#: Somebody's address, for an inscription that has to belong to someone.
+KEEPER = "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg"
+
+
+def _an_interactive_inscription(state, txid: str) -> str:
+    """One inscription whose bytes are HTML and are kept on this node.
+
+    That is the row which makes the piece page take its third branch: `held` is
+    `content IS NOT NULL`, and `renders` is the content type starting with
+    `text/html`. Only that branch runs the sandbox, and only the sandbox has
+    anything to approve.
+    """
+    index = state.token_index(state.messaging)
+    with index.open() as db:
+        db.conn.execute(
+            "INSERT OR REPLACE INTO inscription"
+            "(txid, number, creator, owner, block_height, position, "
+            " content_type, content_len, sha256, json, chunks, content) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,1,?)",
+            (txid, 401, KEEPER, KEEPER, 100, 0, "text/html", 34, "00" * 32,
+             "{}", b"<html><body>it asks for things</body></html>"))
+        db.conn.commit()
+    return txid
+
+
+def test_an_inscription_page_asks_nothing_the_door_shuts(public):
+    """The approval poll ran on a page that can never be answered.
+
+    `inscription_view.html` asks `/approvals/waiting` every three seconds -- the
+    queue of transactions asked of THIS node's wallet, which is what lets an
+    inscribed page say "ask this wallet to send" and have the person looking at
+    it approve or refuse the transaction. The door shuts that route on a public
+    instance, so on test.dogecoinarcade.com every stranger who opened an
+    interactive inscription polled a 404 three times a minute until they closed
+    the tab, with the failure eaten by a `.catch(function(){})` at the end of
+    the chain. Nothing was spent and nothing was shown, which is why it was
+    never reported: it is the same shape as the `/account/run` mistake -- a page
+    asking a question this node will never answer, and a script that cannot tell
+    the difference between "no" and "not here".
+    """
+    app, state = public
+    txid = _an_interactive_inscription(state, "ab" * 32)
+    body = app.get(f"/inscriptions/{txid}/view", headers=LOCAL).text
+    assert "/approvals/waiting" not in body, "a public page polling the node"
+    assert "/approvals/" not in body, "and no frame of the node's approval page"
+    assert "ask this account to sign" in body, \
+        "the sentence says what this reader's page can actually do"
+    state.public = False
+    mine = app.get(f"/inscriptions/{txid}/view").text
+    assert "/approvals/waiting" in mine, "the operator's page still polls it"
+    assert 'id="ask"' in mine, "and still carries the dialog it polls for"
+
+
+def test_the_chain_tag_switches_only_where_switching_works(public):
+    """Found by walking every public page rather than one of them.
+
+    The chain tag posts to `/tokens/chain`, and that route moves the NODE's
+    view of which chain it is on: `state.switch_token_chain` writes the choice
+    into a file and every page on the machine follows it. So it is the
+    operator's, the door shuts it, and four pages -- Tokens, NFTs, Collections,
+    Exchange -- were handing a stranger a button that answered "Not here".
+
+    What a public page shows now is the tag and what it means. The honest
+    version of the button needs a chain choice that belongs to one visitor
+    rather than to everybody on this node, which is not built.
+    """
+    app, state = public
+    for page in ("/tokens", "/nfts", "/collections", "/exchange"):
+        body = app.get(page, headers=LOCAL).text
+        assert 'action="/tokens/chain"' not in body, page
+        assert "one chain at a time" in body, page
+    state.public = False
+    assert 'action="/tokens/chain"' in app.get("/nfts").text, \
+        "the operator's own pages still switch"
 
 
 # --- one machine, two things at once -------------------------------------------

@@ -119,11 +119,24 @@
 {% endmacro %}
 
 {# The chain tag. With another chain to go to it is a button that switches;
-   without one (a token's own page belongs to its chain) it is just the tag. #}
-{% macro chain_switch(chain, others, csrf, back='') %}
+   without one (a token's own page belongs to its chain) it is just the tag.
+
+   On a public instance it is only ever the tag, because switching is a thing
+   the node does for everybody -- `state.switch_token_chain` remembers the choice
+   in a file and every page on this node follows it. A stranger must not move
+   that, and a button that answers "Not here" is worse than no button. What is
+   missing is a choice that belongs to one visitor rather than to the whole
+   node; until that exists there is one chain to look at here.
+
+   `public` is an argument, not a name read from the page: an imported
+   template's macros do not see the importing page's context, so a bare
+   `{% if not public %}` here is quietly true on every page and the dead button
+   stays. Every page that carries the tag says which side of the door it is on.
+   #}
+{% macro chain_switch(chain, others, csrf, back='', public=False) %}
 {% set tag = 'mainnet' if chain.is_mainnet else 'testnet' %}
 {% set word = 'main' if chain.is_mainnet else 'test' %}
-{% if others %}
+{% if others and not public %}
 <form method="post" action="/tokens/chain" style="display:inline">
   <input type="hidden" name="csrf_token" value="{{ csrf }}">
   {# Back to the page it was pressed on. Every chain-specific page carries
@@ -134,6 +147,6 @@
           title="Switch to {{ others[0].label|lower }}">{{ word }}</button>
 </form>
 {% else %}
-<span class="tag {{ tag }}">{{ word }}</span>
+<span class="tag {{ tag }}"{% if others %} title="{{ chain.label }}. This node shows one chain at a time."{% endif %}>{{ word }}</span>
 {% endif %}
 {% endmacro %}

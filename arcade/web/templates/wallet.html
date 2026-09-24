@@ -4,7 +4,7 @@
 {% import "_token_confirm.html" as tk %}
 {% block title %}Wallet · DogecoinArcade{% endblock %}
 {% block body %}
-<h1>Wallet {{ tk.chain_switch(chain, other_chains, csrf, "/wallet") }}</h1>
+<h1>Wallet {{ tk.chain_switch(chain, other_chains, csrf, "/wallet", public) }}</h1>
 {{ wt.tabs('coins') }}
 <p class="sub">Coins, one wallet per chain. Testnet coins pay message fees;
   mainnet coins are real.</p>

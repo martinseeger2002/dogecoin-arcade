@@ -3440,8 +3440,30 @@ def create_app(state: AppState) -> FastAPI:
     @app.get("/nfts", response_class=HTMLResponse)
     def nfts_page(request: Request, page: int = 1):
         """Everything inscribed on this chain. Called NFTs because that is
-        what people call them; the payload is still an inscription (D-030)."""
-        return render(request, "inscriptions.html", **_inscription_page_data(page=page))
+        what people call them; the payload is still an inscription (D-030).
+
+        Drawn for the reader, which on a public instance is not this wallet.
+        Two things follow. The inscribe controls are the account's -- this node
+        has no key here and `/inscriptions/create` is shut, so the node's forms
+        were buttons that answered "Not here" to the one person who could have
+        made the thing (§ "Item 1 reopened"). And `owned` means whose the
+        pieces on this page are, which for a stranger is nobody and for an
+        account is the address it told this node. Left as this wallet's
+        addresses, the page tells a visitor that the node's pieces are theirs
+        and offers the node's wallet page to send them with.
+        """
+        data = _inscription_page_data(page=page)
+        if _public_request(request):
+            account = signed_in(request)
+            address = (_account_address(account.pubkey, data["chain"])
+                       if account else "")
+            data["owned"] = {address} if address else set()
+            data["mine"] = []
+            data["unfinished"] = []
+            data["funded"] = []
+            data["account_address"] = address
+            data["account_signed"] = account is not None
+        return render(request, "inscriptions.html", **data)
 
     @app.get("/inscriptions", response_class=HTMLResponse)
     def inscriptions_page(request: Request, page: int = 1):

@@ -129,6 +129,90 @@ def test_the_page_is_there_and_in_the_account_menu(public):
     assert "Run a collection" in body
 
 
+def test_the_public_nfts_page_offers_the_account_s_inscribe(public):
+    """The bug the operator met on test.dogecoinarcade.com on 2026-09-24, said as an
+    assertion. `/nfts` carried the NODE's inscribe -- a link into the collection
+    wizard and two forms that post to `/inscriptions/create` -- and the door
+    shuts all three on a public instance, so an account that pressed "Inscribe"
+    or "Inscribe a collection" was told "Not here".
+
+    What it gets now is what the account's own page has, drawn from the same
+    file: one piece and a whole collection, each offered unsigned by this node
+    and signed in the tab. Nothing here spends this node's wallet, so there is
+    nothing here for the door to refuse.
+    """
+    app, _ = public
+    _seat(app)
+    app.post("/account/address", json={"address": TEST}, headers=EDGE)
+    body = app.get("/nfts", headers=EDGE).text
+    assert 'id="inscribe-it"' in body and 'id="run-start"' in body
+    assert "/account/inscribe" in body and "/account/run/start" in body
+    for refused in ('action="/inscriptions/create"',
+                    'href="/inscriptions/collection"',
+                    'href="/wallet/nfts"'):
+        assert refused not in body, f"{refused} is a route the door shuts"
+
+
+def test_the_public_nfts_page_says_who_can_inscribe(public):
+    """The same page to somebody with no seat: no controls, and the sentence
+    that says where the controls come from -- not a form that would refuse on
+    the next press.
+    """
+    app, _ = public
+    body = app.get("/nfts", headers=EDGE).text
+    assert 'id="inscribe-it"' not in body
+    assert "/account/inscribe" not in body
+    for refused in ('action="/inscriptions/create"',
+                    'href="/inscriptions/collection"'):
+        assert refused not in body, f"{refused} is a route the door shuts"
+    assert "Sign in and open your wallet" in body
+
+
+def test_the_run_list_is_asked_the_way_the_route_is_built(client):
+    """A wrong method is a refused question that nobody hears.
+
+    `/account/run` is registered as a post and `door.py` lets only a post
+    through it. Asked as a GET -- which is what this page's `runs()` did, in
+    `my_nfts.html` and then in the file it moved into -- a public instance
+    answers with the door's "Not here" page, the JSON parse throws on the HTML,
+    and the catch files it as a line in the trouble row that nobody reads on a
+    page that worked. So the sentence printed above the button -- that a closed
+    tab loses a run nothing, and the run is there at the piece it stopped on --
+    was false on every reload: the next piece was never offered again. Nothing
+    in the suite reloaded a page with a run in progress, so nothing knew.
+    """
+    import test_public
+
+    app, _ = client
+    _seat(app)
+    app.post("/account/address", json={"address": TEST})
+    assert app.get("/account/run").status_code != 200, "this route is a post"
+    assert "runs" in app.post("/account/run").json()
+    shared = pathlib.Path("arcade/web/templates"
+                          "/_account_inscribe.html").read_text()
+    asked = [one for one in test_public._asked(shared)
+             if one[0] == "/account/run"]
+    assert asked == [("/account/run", "POST")], asked
+
+
+def test_the_inscribe_panels_are_one_file(client):
+    """Two pages offer them, so there is one copy of the code that spends.
+
+    Not a style rule: the last time this pair of controls was written twice,
+    one of the two went on answering 403 for a month.
+    """
+    where = pathlib.Path("arcade/web/templates")
+    shared = (where / "_account_inscribe.html").read_text()
+    for name in ("my_nfts.html", "inscriptions.html"):
+        page = (where / name).read_text()
+        assert '{% include "_account_inscribe.html" %}' in page, name
+        assert "/account/inscribe" not in page, \
+            f"{name} has its own copy of the inscribe offer"
+    for route in ("/account/inscribe", "/account/run/start",
+                  "/account/run/piece", "/account/run/stop"):
+        assert route in shared, route
+
+
 def test_a_stranger_is_sent_to_sign_up(client):
     app, _ = client
     answer = app.get("/me/nfts", follow_redirects=False)

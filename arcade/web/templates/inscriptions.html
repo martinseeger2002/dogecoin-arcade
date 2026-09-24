@@ -38,7 +38,8 @@
     <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view">Open</a>
     {% if row.owner in owned %}
     <span class="muted" style="font-size:.8rem">yours &mdash;
-      <a href="/wallet/nfts">send it from your wallet</a></span>
+      <a href="{{ '/me/nfts' if public else '/wallet/nfts' }}">send it from your
+        wallet</a></span>
     {% endif %}
   </div>
 </div>
@@ -81,14 +82,20 @@
 {% endif %}
 {% endmacro %}
 
-<h1>NFTs {{ tk.chain_switch(chain, other_chains, csrf, "/inscriptions") }}</h1>
+<h1>NFTs {{ tk.chain_switch(chain, other_chains, csrf, "/inscriptions", public) }}</h1>
 <p class="sub">A file written onto the chain in full, owned by an address.
   The ones <em>you</em> hold, and the way to send them, are on the
-  <a href="/wallet/nfts">wallet's NFTs tab</a>.</p>
+  <a href="{{ '/me/nfts' if public else '/wallet/nfts' }}">wallet's NFTs tab</a>.</p>
 
 <div class="row" style="margin-bottom:14px">
   <a class="btn ghost small" href="/collections">Collections</a>
+  {# The wizard spends THIS NODE's wallet and names a folder on its disk, so
+     the door shuts it on a public instance (door.py NEVER_PUBLIC) -- and a
+     button that answers "Not here" is worse than no button. What a public
+     visitor inscribes with is below, out of their own coins. #}
+  {% if not public %}
   <a class="btn ghost small" href="/inscriptions/collection">Inscribe a collection</a>
+  {% endif %}
 </div>
 
 <div class="chainbar">
@@ -99,7 +106,39 @@
 {% if error %}<div class="msg err">{{ error }}</div>{% endif %}
 {% if node_error %}<div class="msg err">{{ node_error }}</div>{% endif %}
 
-{% if plan %}
+{% if public %}
+  {# Whose inscribe this page offers belongs to the door, not to the page. On a
+     public instance this node has no key that can put a file on the chain --
+     `/inscriptions/create` spends its own wallet and the door shuts it -- so
+     what is offered here is the account's: the same two panels the account's
+     own page has, from `_account_inscribe.html`, in one copy. Which of the
+     three sentences below is true is the account's, not this node's, and the
+     middle one matters most: a page that answers "sign in first" to somebody
+     who did sign in is a page that lies. #}
+  {% if account_address %}
+    <h2>Inscribe</h2>
+    <div class="msg err" id="trouble" hidden></div>
+    <div class="msg ok" id="news" hidden></div>
+    {% include "_account_inscribe.html" %}
+  {% elif account_signed %}
+    <h2>Inscribe</h2>
+    <div class="panel">
+      <p class="muted" style="margin:0">This page is showing {{ chain.label|lower }}
+        inscriptions, and this account has not told this node an address there,
+        so there is nothing here for it to sign. Click the other chain's tag
+        above, or open <a href="/me">your wallet</a> &mdash; that is the page
+        that tells this node your address on every chain it runs.</p>
+    </div>
+  {% else %}
+    <h2>Inscribe</h2>
+    <div class="panel">
+      <p class="muted" style="margin:0">An inscription is one transaction out of
+        your own wallet, which this node cannot sign on your behalf.
+        <a href="/me">Sign in and open your wallet</a>, and the way to put a
+        file up appears here.</p>
+    </div>
+  {% endif %}
+{% elif plan %}
   <h2>Confirm before inscribing</h2>
   <div class="panel" {% if chain.is_mainnet %}style="border-color:var(--bad);border-width:2px"{% endif %}>
     {% if chain.is_mainnet %}

@@ -1,0 +1,239 @@
+{# The two ways an account puts something on the chain, in one place, because
+   there are two pages that offer them and an inscription cannot be taken back
+   from a page that got the transaction wrong.
+
+   `/me/nfts` has always had these. The public `/nfts` page needs them too, and
+   not as a link: on a public instance the node has no key to inscribe with, so
+   the controls that page carried -- the wizard link and the two forms that post
+   to `/inscriptions/create` -- were buttons that answered "Not here" to the one
+   person who could have made the thing. The operator met them on 2026-09-24.
+
+   So the markup is included and the script below belongs to it. It talks to the
+   page through three things only: the `#news` and `#trouble` rows the host page
+   already carries, the `#file`/`#build`/`#run-*` ids below, and the chain this
+   page is drawn for. Nothing here spends anything the tab has not been shown
+   and agreed to: every transaction is offered unsigned by this node, read back
+   by `wallet.checked` out of the transaction's own bytes, and signed here. #}
+<div class="panel" id="inscribing">
+  <h3 style="margin:0 0 6px">Inscribe one thing</h3>
+  <p class="muted" style="font-size:.86rem;margin:0 0 10px">
+    One piece &mdash; a little under 7,500 bytes &mdash; in one transaction,
+    paid for by this account and signed in this tab, so this node never sees
+    the key that spent it. It cannot be taken back afterwards. A bigger file
+    does not fit in one transaction, and the pieces of one file chain onto
+    each other, so it is not something this account can put up at all: split
+    it, or make it smaller.</p>
+  <div class="row">
+    <div style="flex:1"><input type="file" id="file"></div>
+    <button type="button" id="inscribe-it">Inscribe it</button>
+  </div>
+</div>
+
+<div class="panel" id="running">
+  <h3 style="margin:0 0 6px">Run a collection</h3>
+  <p class="muted" style="font-size:.86rem;margin:0 0 10px">
+    A folder laid out the way the Art Engine leaves one &mdash;
+    <code>json/_metadata.json</code> and the pictures. Each item goes up in
+    its own transaction, signed here, one at a time: this tab stays open while
+    the run is going, and if it closes the run is still there when you come
+    back, at the piece it stopped on. Your node paces it by the inscriptions it
+    will take in an hour, and it keeps the pictures you uploaded &mdash;
+    nothing throws them away yet.</p>
+  <div class="row">
+    <div style="flex:1"><input type="file" id="build" webkitdirectory
+      directory multiple></div>
+    <button type="button" id="run-start">Upload it</button>
+  </div>
+  <div class="row" id="run-go" hidden>
+    <div style="flex:1" class="muted" id="run-says"
+      style="font-size:.86rem"></div>
+    <a class="btn small ghost" id="run-page" href="#">The run</a>
+    <button type="button" id="run-piece">Inscribe the next piece</button>
+    <button type="button" class="ghost" id="run-stop">Stop</button>
+  </div>
+  <p class="muted" style="font-size:.86rem;margin:8px 0 0">
+    <a href="/me/runs">Every run this account has written down</a> &mdash; the
+    pieces, which one stopped it, and what it cost.</p>
+</div>
+
+<script type="module">
+import * as wallet from "/wallet.js";
+
+const $ = (id) => document.getElementById(id);
+const say = (t) => { $("trouble").textContent = t; $("trouble").hidden = !t; };
+const news = (t) => { $("news").textContent = t; $("news").hidden = !t; };
+const commas = (n) => Number(n || 0).toLocaleString();
+const CHAIN = {network: "{{ chain.network }}",
+               version: {{ chain.params.pubkeyhash_version }}};
+
+// Started, not waited for. The key is what makes a press mean anything, and a
+// script that awaits it before it wires the buttons has a second or two of
+// page in which a press does nothing at all and says nothing either -- which
+// is how `/feed` answered a person for a whole day. The same lesson, applied
+// here: the handlers are on before the first `await`, and the key is taken
+// when one of them needs it.
+const opening = wallet.opened(CHAIN);
+let keys = null;
+opening.then((found) => { keys = found; });
+const take = async () => keys || (keys = await opening);
+
+/** Ask this node for an offer, say what THIS BROWSER read off it, and sign it
+ *  if they say yes.
+ *
+ *  `says` is handed the checked offer, not the raw one: the fee it may quote is
+ *  the one this tab worked out of the transaction's own bytes. `offer.fee` is
+ *  this node's number, and a confirmation that repeats it proves nothing.
+ */
+async function offerAndConfirm(where, body, says, done) {
+  say(""); news("");
+  try {
+    const held = await take();
+    if (!held) throw new Error("your wallet is not open in this tab");
+    const asked = await fetch(where, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body),
+    });
+    const offer = await asked.json();
+    if (!asked.ok) throw new Error(offer.detail || "that cannot be done");
+    if (!confirm(says(await wallet.checked(offer, held), offer))) return;
+    const out = await wallet.confirm(held, offer);
+    news(done(out, offer));
+  } catch (e) { say(String(e.message || e)); }
+}
+
+$("inscribe-it").onclick = async () => {
+  const file = $("file").files[0];
+  if (!file) { say("choose a file first"); return; }
+  say("");
+  // Read here rather than uploaded: the bytes the browser pays to put on the
+  // chain are the bytes it chose, and this node never holds a copy of a file
+  // it is being asked to make permanent.
+  let b64 = "";
+  try {
+    b64 = await new Promise((ready, failed) => {
+      const reader = new FileReader();
+      reader.onload = () => ready(String(reader.result).split(",")[1]);
+      reader.onerror = () => failed(new Error("that file could not be read"));
+      reader.readAsDataURL(file);
+    });
+  } catch (e) { say(String(e.message || e)); return; }
+  await offerAndConfirm("/account/inscribe",
+    {content: b64, content_type: file.type || "application/octet-stream",
+     name: file.name, chain: CHAIN.network},
+    (shown, offer) => `${offer.bytes} bytes, on the chain forever, for `
+      + `${shown.coinsOf(shown.fee)} in fees. ${shown.what}?`,
+    (out) => `Inscribed: ${out.txid.slice(0, 16)}… It shows up when its block `
+      + "is mined.");
+};
+
+/* -- a run of them, one transaction at a time -- */
+
+function showed(row) {
+  $("run-go").hidden = !row;
+  $("run-piece").dataset.run = row ? row.run : "";
+  $("run-stop").dataset.run = row ? row.run : "";
+  $("run-page").href = row ? `/me/run/${row.run}` : "#";
+  if (!row) return;
+  $("run-says").textContent = `${row.name}: ${commas(row.sent)} of `
+    + `${commas(row.items)} on the chain`
+    + (row.next ? `, next is ${row.next}` : ".")
+    + (row.refused ? ` ${commas(row.refused)} refused.` : "");
+}
+
+/** Where this account left off. Asked on load, not when a button is pressed:
+ *  the sentence above promises that a closed tab loses a run nothing, and a
+ *  promise the page never checks is a hope rather than a statement.
+ *
+ *  POST, because that is the route: `/account/run` is registered as a post and
+ *  `door.py` lets only a post through it (door.py PUBLIC_POST). Asked as a GET
+ *  -- which is what this line did, and what it did in `my_nfts.html` before it
+ *  moved here -- a public instance answers with the door's "Not here" page,
+ *  `.json()` throws on the HTML, and the catch below filed the whole thing as
+ *  a sentence in the trouble row. So the promise above was quietly false: a
+ *  reloaded page never found the run it was in the middle of, and the button
+ *  for the next piece never came back. Nothing pressed it twice, so nobody
+ *  knew.
+ */
+async function runs() {
+  try {
+    const said = await (await fetch("/account/run", {method: "POST"})).json();
+    showed((said.runs || []).find((row) => row.status !== "done"
+                                      && row.status !== "stopped") || null);
+  } catch (e) { say(String(e.message || e)); }
+}
+
+$("run-start").onclick = async () => {
+  const files = $("build").files;
+  if (!files.length) { say("choose the folder the Art Engine left"); return; }
+  say(""); news("");
+  // The bytes go up because the node has to read them again for every one of
+  // the forty-odd transactions a run is, and it cannot ask a tab that will be
+  // closed by the third one. Nothing is inscribed by this request.
+  const form = new FormData();
+  for (const file of files) form.append("files", file);
+  form.append("run_chain", CHAIN.network);
+  try {
+    const asked = await fetch("/account/run/start",
+                              {method: "POST", body: form});
+    const start = await asked.json();
+    if (!asked.ok) throw new Error(start.detail || "that is not a build");
+    news(`Written down: ${start.name}, ${commas(start.items)} items, one `
+      + `transaction each, about ${(start.fee / 100000000).toFixed(8)} in `
+      + "fees. Nothing is on the chain yet.");
+    showed({run: start.run, name: start.name, items: start.items, sent: 0,
+            next: start.next});
+  } catch (e) { say(String(e.message || e)); }
+};
+
+$("run-piece").onclick = async () => {
+  const where = $("run-piece").dataset.run;
+  if (!where) return;
+  say(""); news("");
+  try {
+    const held = await take();
+    const asked = await fetch("/account/run/piece", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({run: where}),
+    });
+    const offer = await asked.json();
+    if (!asked.ok) throw new Error(offer.detail || "that piece cannot go out");
+    if (offer.finished) {
+      news(`That run is finished. All ${commas(offer.items)} of them are on `
+        + "the chain.");
+      await runs();
+      return;
+    }
+    if (!held) throw new Error("your wallet is not open in this tab");
+    const shown = await wallet.checked(offer, held);
+    if (!confirm(`${offer.name}: ${commas(offer.bytes)} bytes on the chain `
+                 + `forever, for ${shown.coinsOf(shown.fee)} in `
+                 + `fees. ${commas(offer.sent)} of ${commas(offer.items)} are `
+                 + "already there.")) return;
+    const out = await wallet.confirm(held, offer);
+    news(`Inscribed: ${out.txid.slice(0, 16)}… Piece ${offer.piece} of `
+      + `${commas(offer.items)}. It shows up when its block is mined.`);
+    await runs();
+  } catch (e) { say(String(e.message || e)); }
+};
+
+$("run-stop").onclick = async () => {
+  const where = $("run-stop").dataset.run;
+  if (!where) return;
+  say(""); news("");
+  try {
+    const asked = await fetch("/account/run/stop", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({run: where}),
+    });
+    const stop = await asked.json();
+    if (!asked.ok) throw new Error(stop.detail || "that cannot be stopped");
+    news(`${stop.name} is filed as stopped at ${commas(stop.sent)} of `
+      + `${commas(stop.items)}. What is already on the chain stays there, `
+      + "and asking for a piece starts it going again.");
+    await runs();
+  } catch (e) { say(String(e.message || e)); }
+};
+
+runs();
+document.body.dataset.inscribeReady = "yes";
+</script>

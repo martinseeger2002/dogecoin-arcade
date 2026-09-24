@@ -4,7 +4,7 @@
 {% import "_wallettabs.html" as wt %}
 {% block title %}Your tokens · DogecoinArcade{% endblock %}
 {% block body %}
-<h1>Wallet {{ tk.chain_switch(chain, other_chains, csrf, "/wallet/tokens") }}</h1>
+<h1>Wallet {{ tk.chain_switch(chain, other_chains, csrf, "/wallet/tokens", public) }}</h1>
 {{ wt.tabs('tokens') }}
 <p class="sub">What this wallet holds in tokens, and the way to send it.
   {% if other_chains %}<span class="muted">Click the {{ 'main' if chain.is_mainnet else 'test' }} tag to switch

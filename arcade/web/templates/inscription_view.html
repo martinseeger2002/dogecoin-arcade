@@ -27,9 +27,25 @@
   </div>
   <p class="muted" style="margin-top:8px">
     Running in a sandbox: it has no cookies, cannot reach this page, and cannot
-    load anything from outside this machine. It can ask this wallet to send
-    something; if it does, the request opens here in front of it, and nothing
-    goes out until you approve it.</p>
+    load anything from outside this machine.
+    {# What it can ask belongs to the reader. On a public instance there is no
+       node wallet behind this page at all, so "it can ask this wallet to send,
+       and you approve it below" is a promise this page cannot keep -- and the
+       thing it does keep is the account's own signature, asked and shown a
+       different way. § "An account buys from a shop in the browser". #}
+    {% if public %}It can ask this account to sign something; what it asks is
+    shown to you before anything is signed, and it cannot reach this node's
+    wallet, its files, or its other pages.{% else %}It can ask this wallet to
+    send something; if it does, the request opens here in front of it, and
+    nothing goes out until you approve it.{% endif %}</p>
+  {# The approval machinery belongs on the operator's side of the door. It
+     polls `/approvals/waiting`, which is the queue of things asked of THIS
+     node's wallet, and the door shuts that route on a public instance -- so a
+     stranger looking at an interactive inscription polled a 404 every three
+     seconds for as long as the tab was open, with the failure eaten by the
+     `.catch(function(){})` at the end of the chain. Nothing appeared, nothing
+     spent, so nothing said anything. It just never stopped. #}
+  {% if not public %}
   <div class="msg info" id="asked" hidden></div>
   {# The pop-up is a frame of this wallet's own approval page, held by THIS
      page -- outside the sandbox, where the inscription cannot reach it, see
@@ -42,7 +58,9 @@
       <button type="button" class="ghost small" id="ask-close">Close</button>
     </div>
   </dialog>
+  {% endif %}
   <script>
+  {% if not public %}
   // The page in the frame can file a request at any moment; the person looking
   // at it should see that without reloading. Polled while this page is open:
   // a new request opens the pop-up, and the pop-up closes itself once it is
@@ -102,6 +120,7 @@
     }
     look(); setInterval(look, 3000);
   })();
+  {% endif %}
 
   // What the wallet remembers for this page, and what it says to other
   // nodes for it. The sandbox has neither storage nor a way off this

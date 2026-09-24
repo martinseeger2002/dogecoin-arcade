@@ -44,7 +44,7 @@
 </div>
 {% endmacro %}
 
-<h1>Exchange {{ tk.chain_switch(chain, other_chains, csrf, "/exchange") }}</h1>
+<h1>Exchange {{ tk.chain_switch(chain, other_chains, csrf, "/exchange", public) }}</h1>
 {{ tabs(tab) }}
 
 {% if node_error %}<div class="msg err">{{ node_error }}</div>{% endif %}
