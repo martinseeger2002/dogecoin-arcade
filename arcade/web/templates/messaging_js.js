@@ -149,6 +149,7 @@ export const MAGIC = [0x61, 0x72, 0x63, 0x6d];     // "arcm"
 export const VERSION = 1;
 export const TYPE_SINGLE = 1;
 export const TYPE_CHUNK = 2;
+export const TYPE_API = 6;      // one program talking to another, below
 
 //: Chunk framing, as `envelope.py` defines it. The countdown is deliberately
 //: NOT authenticated: a chunked message is sealed once, as a whole, so there
@@ -732,6 +733,130 @@ async function workingOn(what) {
   } finally {
     delete document.body.dataset.working;
   }
+}
+
+/* --- what a program says, and what it answers ----------------------------
+ *
+ * Type 6. The same sealed box as a letter, addressed to a program rather
+ * than to a person -- which is why `readHeader` above refuses it on
+ * purpose: machine traffic that turns up in somebody's chat is worse than
+ * no machine traffic at all. Everything in this section is the other door,
+ * and none of it goes near the messenger's inbox or its cursor.
+ *
+ * A shop is what this is for. An order, an offer, and a signature are
+ * commands a node answers on the spot, and the answer comes back sealed to
+ * the key that asked -- which, for an account, is a key no node has. So the
+ * sealing is here, with the rest of the keys.
+ *
+ * **The stamp goes inside.** `apilib.stamp()` is eight bytes ("DA", the
+ * protocol, four bytes over the API surface) and `api.seal` puts it in the
+ * plaintext, where the box authenticates it: a stamp on the outside is a
+ * stamp any relay could edit. The node hands it over rather than letting
+ * this file invent one, because the fingerprint is over *its* API and only
+ * it knows what it speaks -- and `stampLooksRight` is what the page checks
+ * before trusting what it was handed. A node that answered with somebody
+ * else's stamp would be answered with somebody else's command bytes.
+ */
+
+const PROGRAM_HEADER = new Uint8Array([0x61, 0x72, 0x63, 0x6d, 0x01, TYPE_API]);
+const PROGRAM_STAMP_LEN = 8;            // magic2 protocol1 fingerprint4 reserved1
+
+/** Does the stamp this node offered look like a stamp at all?
+ *
+ * Only this much can be known here: the magic and the protocol. The four
+ * bytes after them are the node's own API and this browser has no way to
+ * recompute them -- which is exactly why they are checked for shape here
+ * and for agreement by whoever compares one answer against the offer that
+ * asked for it.
+ */
+export function stampLooksRight(stampHex) {
+  const stamp = unhex(stampHex || "");
+  return stamp.length === PROGRAM_STAMP_LEN && stamp[0] === 0x44
+    && stamp[1] === 0x41 && stamp[2] === 1;
+}
+
+/** The ciphertext half of a program message: JSON in, hex out.
+ *
+ * Ciphertext only, as with a private letter. `api.seal` returns a finished
+ * payload with its header on the front and the node writes the header of
+ * the transaction it is putting bytes into, so handing that over twice
+ * prefixes two headers and the node's trial decrypt fails with "not
+ * addressed to us, or corrupt" -- silently, because a candidate it cannot
+ * open is a candidate it says nothing about.
+ */
+export function sealForProgram(me, keyHex, stampHex, body) {
+  const key = unhex(keyHex);
+  if (key.length !== 32) throw new Error("a program is addressed by a key");
+  if (!stampLooksRight(stampHex)) {
+    throw new Error("that is not an API stamp, so nothing here is sealed to it");
+  }
+  const plain = concat([PROGRAM_HEADER, unhex(stampHex),
+                        new TextEncoder().encode(JSON.stringify(body))]);
+  return hex(sealEnvelope(plain, me, key));
+}
+
+/** Open what a program sent, or null. Never throws: this is tried against
+ *  every row the node hands over, and almost all of them belong to others.
+ */
+export function openProgram(payload, me) {
+  const blob = typeof payload === "string" ? unhex(payload) : payload;
+  if (blob.length < 8) return null;
+  for (let i = 0; i < 4; i++) if (blob[i] !== MAGIC[i]) return null;
+  if (blob[4] !== VERSION || blob[5] !== TYPE_API) return null;
+  const clen = (blob[6] << 8) | blob[7];
+  let cipher = blob.subarray(8);
+  if (clen) {
+    if (clen > cipher.length) return null;
+    cipher = cipher.subarray(0, clen);     // discard Class B padding
+  }
+  const out = openWith(cipher, me, PROGRAM_HEADER);
+  if (out === null) return null;
+  const stamp = out.plain.subarray(0, PROGRAM_STAMP_LEN);
+  let json = null;
+  try {
+    json = JSON.parse(new TextDecoder().decode(out.plain.subarray(PROGRAM_STAMP_LEN)));
+  } catch (e) {
+    return null;            // opened, and is not a command: not this page's
+  }
+  return {sender: hex(out.sender), stamp: hex(stamp), json,
+          protocol: stamp.length === PROGRAM_STAMP_LEN ? stamp[2] : 0};
+}
+
+/** What the programs answered, since `after`, opened with this key.
+ *
+ * Read with an explicit cursor and never with the one the messenger keeps:
+ * a page polling for a shop's answer must not mark somebody's letters read,
+ * and an answer re-read twice costs a decrypt and no coins. With nothing to
+ * start from it begins where the account was made, for the reason `collect`
+ * gives -- nothing could have answered a key that did not exist yet.
+ *
+ * What will not open is passed over, including this account's own orders:
+ * those are sealed to the shop, so a reader that opened every row here were
+ * a reader that opens strangers' trades.
+ */
+export async function programAnswers(me, after) {
+  let cursor = Number(after || 0);
+  if (!cursor) {
+    try {
+      cursor = (await (await fetch("/account")).json()).mail_from || 0;
+    } catch (e) { cursor = 0; }
+  }
+  const start = cursor, answers = [];
+  for (;;) {
+    const answer = await fetch(`/account/messages?after=${cursor}&limit=200`);
+    if (!answer.ok) throw new Error("the node would not say what it was asked");
+    const said = await answer.json();
+    for (const row of said.candidates) {
+      const opened = openProgram(row.payload, me);
+      if (opened !== null) {
+        answers.push({json: opened.json, sender: opened.sender, stamp: opened.stamp,
+                      txid: row.txid, when: row.when, height: row.height});
+      }
+    }
+    cursor = said.cursor;
+    if (!said.more) break;
+  }
+  return {answers, cursor: Math.max(start, cursor)};
 }
 
 /* --- the address book ----------------------------------------------------

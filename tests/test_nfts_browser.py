@@ -258,10 +258,12 @@ def _refused(browser, seconds=60.0):
 def _shown(browser, piece):
     """Ask this tab for the same leg again, and for its own reading of it.
 
-    Nothing is signed by this. `offerListing` spends nothing to build a leg and
-    `checkedListing` is arithmetic on the bytes that came back -- and the leg
-    comes back the same because the same two coins are unspent, which is why
-    `raw` is compared against the filed row below.
+    Nothing is signed by this, and it has to be asked before the leg is filed:
+    `offerListing` spends nothing to build a leg, `checkedListing` is arithmetic
+    on the bytes that came back, and the leg comes back the same because the
+    same two coins are unspent and uncommitted -- which stops being true the
+    moment `/account/list/sign` notes them as committed to the row. `raw` is
+    what gets compared against the filed row below.
     """
     return browser.execute_async_script("""
         const done = arguments[2];
@@ -342,15 +344,23 @@ def _inscribe(browser, state, node, where, content):
 
 @pytest.fixture(scope="module")
 def seller(browser, served):
-    """An account holding one piece it inscribed itself, and two coins.
+    """An account holding one piece it inscribed itself, and coins to spare.
 
-    Two coins is not a preference. A leg that names what it sells signs twice
-    -- one input stands over the bytes naming the piece, the other over the
-    price -- so the address needs two of them, and an inscription leaves its
-    holder with exactly one: a Class C inscribe spends the coin it was funded
-    with and pays the change back to the same address. Hence the second
-    `sendtoaddress` below, which is the same advice the page gives when it
-    refuses: send yourself a little change and list it again.
+    Two coins is the floor, not the amount. A leg that names what it sells
+    signs twice -- one input stands over the bytes naming the piece, the other
+    over the price -- so the address needs two of them, and an inscription
+    leaves its holder with exactly one: a Class C inscribe spends the coin it
+    was funded with and pays the change back to the same address.
+
+    Funded with more than the floor because this is one account and five tests,
+    and the one test that FILES a listing retires the two coins that leg stands
+    over for the rest of the module (`Flights.note_committed` -- nothing this
+    account broadcasts ever spends them, the buyer's transaction does, maybe in
+    a week). An account with exactly two coins can answer the first test that
+    opens the panel and refuses every one after it, which is a fact about the
+    coin book rather than about the page. The payments come from the node's own
+    wallet, not from the account's, because the account's is the one the
+    inscribe above swallowed.
     """
     base, state, node = served
     # The 120 blocks in `served` are still to be indexed, and each one the
@@ -386,11 +396,17 @@ def seller(browser, served):
     node.rpc.call("generate", 1)
     _catch_up(state)
 
-    # The second coin, so there are two to sign with. From the node's own
-    # wallet rather than from the account's, because the account's is the one
-    # the inscribe above just swallowed.
-    node.rpc.call("sendtoaddress", made["address"], 1.0)
-    node.rpc.call("generate", 1)
+    # Coins enough that more than one test can ask for a leg. Two is what a
+    # leg needs; a filed listing spends this account's claim on the pair it
+    # stood over for as long as it stands, so the piles below are what the rest
+    # of the module has to work with. Each is larger than PRICE plus a fee --
+    # the largest free coin is the one that pays the price -- and each smaller
+    # than the inscribe's change, so the first leg any test asks for is built
+    # out of the change and the first of these, the way it was before there
+    # were extra piles.
+    for _ in range(3):
+        node.rpc.call("sendtoaddress", made["address"], 2.0)
+        node.rpc.call("generate", 1)
     _catch_up(state)
 
     held = state.token_index(state.messaging).inscriptions(
@@ -472,14 +488,33 @@ def test_the_button_signs_over_the_digests_the_page_showed(browser, seller):
     over the output at its own index, so two digests and two signatures are
     what it has to have -- and both are checked, because the one over the
     payment alone promises coins and not the piece.
+
+    The leg is read again BEFORE the button is pressed, not afterwards. Filing
+    a listing retires the two coins it stands over as far as this account is
+    concerned -- `Flights.note_committed`, because the transaction that spends
+    them is a stranger's and may never be broadcast at all -- so a derivation
+    asked for once the row exists is a request for a second listing out of
+    coins already promised to the first, and the node answers it with a refusal
+    that is correct. Asked for here, before the key is used, the same leg comes
+    back for the same reason it did when the page asked: nothing in between
+    spends anything.
     """
     browser, base, state, node, made, piece = seller
     _panel(browser)
     _type(browser, "list-price", PRICE)
     _click(browser, "list-it")
     _wait(browser, lambda d: d.execute_script(CONFIRM) is False)
+    shown = _shown(browser, piece)
+    assert "error" not in shown, shown
     _click(browser, "list-sign")
     _wait(browser, lambda d: len(_rows(state)) == 1)
+    # Wait for the sentence, do not read it once. The row is in the node's book
+    # a moment before this tab's fetch comes back and writes what it did, so a
+    # single read lands between the two and comes back empty -- which is what
+    # this assertion printed for a while. `_wait` watches #trouble on the way,
+    # so a signing that threw arrives as the page's own words rather than as a
+    # blank.
+    _wait(browser, lambda d: "Listed" in _show(d, "news"))
 
     news = _show(browser, "news")
     assert "Listed" in news and "Nothing was broadcast" in news, news
@@ -491,8 +526,6 @@ def test_the_button_signs_over_the_digests_the_page_showed(browser, seller):
     assert row["status"] == "open"
     assert piece in row["payload"], "the row does not name this piece"
 
-    shown = _shown(browser, piece)
-    assert "error" not in shown, shown
     assert shown["price"] == PRICE_SATS
     assert shown["signs"] == {"from": 0, "of": 2}, "a named leg signs twice"
     assert shown["hashes"] == shown["node"], \

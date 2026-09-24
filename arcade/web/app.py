@@ -5410,32 +5410,48 @@ def create_app(state: AppState) -> FastAPI:
         # person's machine -- the frame is served from here, which is the
         # same isolation minus the extra origin.
         pages = state.pages_origin
+        # Who answers what the page in the frame asks for. The frame is the
+        # same in all three cases; the door behind it is not: the operator's
+        # copy has this node's wallet behind it, a public copy has the reading
+        # account's own key, and a stranger on a public copy has neither. The
+        # route says it because the page cannot tell -- one template, one set
+        # of buttons, either way.
+        public = _public_request(request)
+        viewer = "wallet"
+        if public:
+            viewer = "account" if signed_in(request) is not None else "nobody"
         mine, held, coins = False, [], 0.0
-        try:
-            with chain.rpc() as rpc:
-                own = _ledger_addresses(rpc)
-                mine = row["owner"] in own
-                # Only what this wallet HOLDS can be offered: an offer for a
-                # token you do not have is a fee spent to be refused, and the
-                # refusal would come from the other side (D-040).
-                held = _purses(index.balances(own))
-                coins = float(rpc.call("getbalance") or 0)
-        except HTTPException:
-            raise
-        except Exception:
-            mine, held, coins = mine, [], 0.0
         # Said by the wallet, around the frame, because an inscribed page
         # cannot be changed to say it (D-051).
         advice = ""
-        try:
-            with chain.rpc() as rpc:
-                if not mine and (row["json"] or "").find('"shop"') >= 0:
-                    advice = _too_few_outputs(
-                        rpc, funded_address(rpc, prefer=state.derived_address))
-        except HTTPException:
-            raise
-        except Exception:
-            advice = ""
+        if not public:
+            # Nothing below is read on the public path, and it must stay that
+            # way: these are the node's own addresses, its own balances, and an
+            # address it would like this visitor to send coins to. On a public
+            # instance the wallet that buys is the one in the browser, and this
+            # page has no reason to know anything about the machine serving it.
+            try:
+                with chain.rpc() as rpc:
+                    own = _ledger_addresses(rpc)
+                    mine = row["owner"] in own
+                    # Only what this wallet HOLDS can be offered: an offer for a
+                    # token you do not have is a fee spent to be refused, and the
+                    # refusal would come from the other side (D-040).
+                    held = _purses(index.balances(own))
+                    coins = float(rpc.call("getbalance") or 0)
+            except HTTPException:
+                raise
+            except Exception:
+                mine, held, coins = mine, [], 0.0
+            try:
+                with chain.rpc() as rpc:
+                    if not mine and (row["json"] or "").find('"shop"') >= 0:
+                        advice = _too_few_outputs(
+                            rpc, funded_address(rpc, prefer=state.derived_address))
+            except HTTPException:
+                raise
+            except Exception:
+                advice = ""
         # Both names in one lookup, which also covers the common case of a
         # piece still held by the wallet that made it -- most of a collection,
         # most of the time (D-074).
@@ -5449,7 +5465,7 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "inscription_view.html", row=row, chain=chain,
                       tag=named.get(row["owner"]), sale=sale,
                       creator_tag=named.get(row["creator"]),
-                      pages=pages, mine=mine,
+                      pages=pages, mine=mine, viewer=viewer,
                       tokens=held, coins=coins, advice=advice,
                       renders=row["content_type"].startswith(contentlib.RENDERABLE))
 
@@ -7925,6 +7941,7 @@ def create_app(state: AppState) -> FastAPI:
         by the very message that carries them, which would pay for the swap by
         spending it.
         """
+        from ..messaging import api as apilib
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         try:
@@ -7979,7 +7996,8 @@ def create_app(state: AppState) -> FastAPI:
                          "sats": cut, "to": cut_to} if cut else {}),
                 "order": {"swap": "sign", "swapv": swaplib.PROTOCOL,
                           "offer": offer["id"], "hex": hex_},
-                "seal_to": node.hex(), "to": row["owner"]})
+                "seal_to": node.hex(), "to": row["owner"],
+                "stamp": apilib.stamp().hex()})
         except (swaplib.SwapError, fundinglib.FundingError,
                 accountslib.AccountError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)

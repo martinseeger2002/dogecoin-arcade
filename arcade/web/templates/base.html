@@ -881,6 +881,14 @@ function arcadeFileCost(bytes){
     // document. Nothing was lost that time because nothing had been
     // broadcast; the next one would have been broadcast and unfinished.
     if (document.body.dataset.working) return true;
+    // A trade a page is mid-way through, held by the page that is relaying
+    // it (templates/inscription_view.html). The one above covers the wallet's
+    // own calls; this covers the waiting between them, which is most of a
+    // buy: the storefront in the frame is what watches for the shop's answer,
+    // and a reload takes that watch -- and the rest of the buy -- with it.
+    // Nothing is lost by reloading in the sense of money moving wrongly, but
+    // the trade stalls half-done and reads as a broken shop.
+    if (document.body.dataset.trading) return true;
     var active = document.activeElement;
     if (active && /^(TEXTAREA|INPUT)$/.test(active.tagName)) return true;
     var drafts = document.querySelectorAll('textarea, input[type=text]');

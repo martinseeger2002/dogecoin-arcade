@@ -40,6 +40,8 @@ refusal is about the ROUTE and not about the visitor.
 
 from __future__ import annotations
 
+import re
+
 #: Pages and files a stranger may read. Exact paths, matched whole.
 PUBLIC_PAGES = frozenset({
     "/",                      # the splash: seats, and how to join
@@ -106,6 +108,21 @@ PUBLIC_TREES = (
     "/tokens/",               # a token's own page
     "/exchange/collection/",
     "/exchange/pair/",
+)
+
+#: Whole paths with something variable in the middle of them, where a tree
+#: would be too wide. This one is the piece page, and it is the only route
+#: under `/inscriptions/` that a stranger is sent to rather than sends
+#: themselves: it is where a shop lives, and `/exchange/collection/...`
+#: already links "Buy it" straight at it. The rest of that prefix is the
+#: wizard, the collection build and the send form, and every one of them
+#: either spends or names a folder on this machine. The id is matched the way
+#: `content._key` reads one -- a 64-character txid or an inscription number --
+#: so the door cannot refuse a path the route would happily serve.
+#: Nothing is disclosed on the page itself: `inscription_view` reads this
+#: node's wallet only when it is the operator's own copy of the page.
+PUBLIC_SHAPES = (
+    re.compile(r"^/inscriptions/(?:[0-9a-fA-F]{64}|[0-9]{1,12})/view$"),
 )
 
 #: Prefixes that look public by the rules above and are not. Checked FIRST,
@@ -195,6 +212,8 @@ def public_path(path: str, method: str = "GET") -> bool:
     if method.upper() not in ("GET", "HEAD"):
         return path in PUBLIC_POST
     if path in PUBLIC_PAGES:
+        return True
+    if any(shape.match(path) for shape in PUBLIC_SHAPES):
         return True
     return any(path.startswith(tree) for tree in PUBLIC_TREES)
 

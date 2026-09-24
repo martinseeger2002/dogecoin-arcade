@@ -526,6 +526,137 @@ async function _list(wallet, leg) {
   return {...said, says: shown.says, reserved: shown.reserved};
 }
 
+/* --- buying from a shop, with this account's own key --------------------
+ *
+ * `/swap/{txid}` is where the operator's wallet buys, and every step of it
+ * that costs anything is that wallet's: it seals the order, it carries the
+ * message, it asks its owner to approve the trade. An account has a key
+ * instead of a wallet, so the same four questions a shop page asks get
+ * answered here instead, over `/account/shop` -- and the answer to each is
+ * built by this node, checked by this tab, and signed nowhere else.
+ *
+ * **This is the only flow here that signs three things in a row**, and the
+ * reason is not decoration:
+ *
+ *   the order      a message like any other -- verify, sign, broadcast;
+ *   the buyer's    a transaction, checked with `coins.verifyOffer` before a
+ *     half         digest is read, and NOT broadcast: the shop is the only
+ *                  machine that can spend the piece it is selling;
+ *   the signature  a second message, carrying the finished half's bytes onto
+ *                  a trade this node will never be able to complete itself.
+ *
+ * Two transactions where the wallet spends one, and one approval that does
+ * not exist. That is the price of a node that cannot act for the key it was
+ * never given, which is the arrangement everything else in this file is
+ * built on: a node that could seal an order and countersign a trade would be
+ * holding the whole thing up by its own end, and the shop on the far side
+ * would have no reason to care whether it was talking to a person at all.
+ */
+
+/** What the shop says, asked as this account rather than as this wallet. */
+async function askShop(shop, body) {
+  const asked = await fetch("/account/shop", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({shop, ...body}),
+  });
+  const said = await asked.json();
+  if (!asked.ok) throw new Error(said.detail || "the node would not speak of this shop");
+  return said;
+}
+
+/** The messaging key behind these words -- what a shop seals its answer to. */
+async function messenger(wallet) {
+  const mail = await import("/messaging.js");
+  return {mail, me: await mail.identity(wallet.phrase)};
+}
+
+//: How far through the node's machine messages each key in this tab has
+//: read, and everything opened since. Answers are kept rather than re-derived
+//: because a page asks for them twice and a shop answers out of order: an
+//: answer that is read once and then forgotten is an answer that never
+//: arrives. Reading costs a decrypt and no coins, so it is done once.
+const shopInbox = new Map();
+
+export async function shopDoor(wallet, shop, ask) {
+  return working(async () => {
+    const op = String(ask.op || "");
+    if (op === "shop") {
+      const said = await askShop(shop, {op: "shop"});
+      // `account` is the page's notice that the thing answering is a key and
+      // not a wallet: no approval window is coming, because there is no
+      // wallet to ask. `mine` is the refusal, from the chain rather than from
+      // this node's keypool -- a shop's own account is not one of its
+      // customers, and a self-sale would print a price on a public page as
+      // though a stranger had paid it.
+      return {...said, account: true};
+    }
+    if (op === "offer") {
+      const asked = await askShop(shop, {op: "offer", listing: Number(ask.listing)});
+      const {mail, me} = await messenger(wallet);
+      const out = await signOffer(wallet, await askShop(shop, {
+        op: "send", sealed: mail.sealForProgram(me, asked.seal_to, asked.stamp,
+                                                asked.order)}));
+      return {txid: out.txid, buyer: asked.order.buyer, to: asked.to,
+              listing: Number(ask.listing)};
+    }
+    if (op === "replies") {
+      const {mail, me} = await messenger(wallet);
+      const who = mail.hex(me.publicKey);
+      const kept = shopInbox.get(who) || {cursor: 0, answers: []};
+      const found = await mail.programAnswers(me, kept.cursor);
+      kept.answers = kept.answers.concat(found.answers).slice(-200);
+      kept.cursor = Math.max(kept.cursor, found.cursor);
+      shopInbox.set(who, kept);
+      return {replies: kept.answers.map((a) => ({json: a.json, txid: a.txid,
+                                                 when: a.when}))};
+    }
+    if (op === "accept") {
+      return await shopSign(wallet, shop, ask.offer);
+    }
+    throw new Error(`a shop page asked for ${op || "nothing"}`);
+  });
+}
+
+/** Sign the buyer's half and hand it to the shop, in two more transactions.
+ *
+ * The half is verified before a single digest of it is signed, which is what
+ * makes the second signature safe: `signed_from` says which input belongs to
+ * the shop and `coins.verifyOffer` refuses to sign one that is not this
+ * key's, so a node cannot hide a coin of its own in the trade and have an
+ * account pay for it. Then `/account/shop/sign` rebuilds the same bytes and
+ * compares them -- if a block landed in between, these signatures stand over
+ * a different transaction and the shop would be right to refuse them, which
+ * is said here rather than three blocks later.
+ */
+async function shopSign(wallet, shop, offer) {
+  const half = await askShop(shop, {op: "accept", offer});
+  const coins = await import("/coins.js");
+  const keys = keysOn(wallet, half.chain || (wallet.on && Object.keys(wallet.on)[0]));
+  const shown = await coins.verifyOffer(half, keys);
+  const signatures = [];
+  for (const sighash of shown.hashes) {
+    signatures.push(coinsHex(await coins.signInput(keys.key, unhex(sighash))));
+  }
+  const finished = await fetch("/account/shop/sign", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({shop, offer, raw: half.raw, signatures,
+                          pubkey: coinsHex(keys.pubkey)}),
+  });
+  const signed = await finished.json();
+  if (!finished.ok) {
+    throw new Error(signed.detail || "the node would not finish this trade");
+  }
+  const {mail, me} = await messenger(wallet);
+  const out = await signOffer(wallet, await askShop(shop, {
+    op: "send", sealed: mail.sealForProgram(me, signed.seal_to, signed.stamp,
+                                            signed.order)}));
+  // `request: null` and `account: true` together are what `swap.js` reads as
+  // "there is nothing to wait for": the decision already happened, in this
+  // tab, with this key.
+  return {txid: out.txid, fee: out.fee, says: shown.says, what: signed.what,
+          cut: signed.cut || {}, request: null, account: true};
+}
+
 /* --- the feed, tips and reactions ----------------------------------------
  *
  * Nothing here is encrypted and nothing ever was: every row of the feed

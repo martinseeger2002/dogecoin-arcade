@@ -20,6 +20,8 @@
 //   why the shop cannot give it right now. `mine` says this page is being
 //   looked at by the wallet that keeps it; `open` that its creator still
 //   holds it; `ready` that this chain reads swaps at its current height.
+//   `account` says the thing answering is an account's own key rather than
+//   a node's wallet -- see `accept` below.
 // `offer(n)`: asks the shop's node for an offer on listing n. Resolves to
 //   {txid, buyer} -- the message it went in, and the address that will pay
 //   and receive. The answer comes back on the chain: see `awaitOffer`.
@@ -28,6 +30,10 @@
 //   to 30 minutes by default (opts.timeout, ms).
 // `accept(offer)`: puts the offer in front of the buyer -- the approvals
 //   pop-up, with the transaction as built. Resolves to a request id.
+//   For an account there is nothing to put in front of anybody: the buyer's
+//   half is signed in this tab and carried to the shop, and the answer says
+//   {account: true, request: null}. `awaitDecision` reads that and resolves
+//   at once rather than waiting for an approval that was never filed.
 // `status(request)`: the request, as /r/send/<id> describes one.
 // `awaitDecision(request, opts)`: resolves once approved, rejects when
 //   refused, expired, or failed.
@@ -39,9 +45,11 @@
 // Timing: every step but the buyer's own yes travels as a node-to-node
 // message, and a message is in a block or it is nowhere. On testnet that
 // is a minute or several, twice, and then the swap itself. A storefront
-// should say so rather than spin.
+// should say so rather than spin. An account's buy costs three of those
+// transactions rather than two, because the signature has to be carried
+// onto a trade the buyer's own node cannot finish.
 (function () {
-  var seq = 0, waiting = {};
+  var seq = 0, waiting = {}, decided = null, byAccount = false;
 
   function ask(message) {
     return new Promise(function (resolve, reject) {
@@ -98,9 +106,25 @@
   }
 
   var swap = {
-    shop: function () { return ask({op: 'shop'}); },
+    shop: function () {
+      return ask({op: 'shop'}).then(function (s) {
+        byAccount = !!s.account;
+        return s;
+      });
+    },
     offer: function (n) { return ask({op: 'offer', listing: n}); },
-    accept: function (offer) { return ask({op: 'accept', offer: offer}); },
+    accept: function (offer) {
+      return ask({op: 'accept', offer: offer}).then(function (r) {
+        // An account's key answers this instead of a wallet's owner: there is
+        // nothing to approve, because the signature IS the decision and it was
+        // given in the tab a moment ago. Remembered so `awaitDecision` can say
+        // so out loud rather than poll a request nobody filed -- and remembered
+        // here rather than in `buy`, because a storefront that writes these two
+        // steps itself (a mintpad's button) needs the same answer.
+        decided = r.account ? {status: 'sent', txid: r.txid} : null;
+        return r;
+      });
+    },
     status: function (request) {
       return ask({op: 'status', request: request}).then(function (r) { return r.request; });
     },
@@ -113,6 +137,11 @@
         });
     },
     awaitDecision: function (request, opts) {
+      if (decided && !request) {
+        var given = decided;
+        decided = null;
+        return Promise.resolve(given);
+      }
       return until(function () {
         return swap.status(request).then(function (r) {
           return r.status === 'pending' ? null : r;
@@ -142,6 +171,16 @@
         var listing = s.listings[n];
         if (!listing) throw new Error('no listing ' + n);
         if (listing.available) throw new Error(listing.available);
+        // Said before the order costs anything (D-051). An account's coins are
+        // what pay for all three of its transactions, and the trade holds the
+        // ones it spends as committed until the shop lands them -- so an
+        // address with one output left cannot pay for the message that carries
+        // the signature, and would find that out after paying for the rest.
+        if (s.account && s.can_buy === false) {
+          throw new Error('this address has one output left, which cannot both pay for '
+                          + 'the trade and pay for carrying your signature to the shop. '
+                          + 'Send a little to yourself first: one transaction and one block.');
+        }
         step('asking the shop for an offer');
         return swap.offer(n);
       }).then(function (sent) {
@@ -149,7 +188,8 @@
         return swap.awaitOffer(sent.txid, opts);
       }).then(function (o) {
         offer = o;
-        step('offered ' + describe(o.give) + ' for ' + describe(o.take) + '; look at the approval');
+        step('offered ' + describe(o.give) + ' for ' + describe(o.take) +
+             (byAccount ? '; signing it with your own key' : '; look at the approval'));
         return swap.accept(o);
       }).then(function (r) {
         return swap.awaitDecision(r.request, opts);
