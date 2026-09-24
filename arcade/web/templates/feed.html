@@ -5,6 +5,11 @@
    reply is a post as far as this page is concerned, which is what the format
    says too (D-138). #}
 {% macro card(p, depth=0) %}
+{# `acts` is the reader being an account on this instance. It does not change
+   what the card looks like — the same buttons in the same places — only who
+   pays when one is pressed: the node, through the form's own route, or this
+   tab, through /account/react. See the script at the bottom of the page. #}
+{% set acts = public and mine.tag %}
 <div class="panel feedpost{{ ' reply' if p.is_reply }}"
      style="margin:0 0 12px;{{ 'margin-left:%dpx' % (depth * 22) if depth }}">
   {% set who = bylines.get(p.author, {}) %}
@@ -28,7 +33,11 @@
         {% if p.edited %}&middot; edited{% endif %}
       </div>
     </div>
-    {% if p.mine %}
+    {# Two ways a post is yours. `p.mine` is the node's own book — this machine
+       sent it — which is the right test on the operator's page and no test at
+       all for an account, whose posts are on the chain under an address the
+       node never held. So the second half asks the chain. #}
+    {% if (p.mine and not public) or (acts and p.author == mine.address) %}
     <form method="post" action="/feed/{{ p.txid }}/delete" style="margin-left:auto"
           onsubmit="return confirm('Delete this? The words stay on the chain for ever — no arcade will show them.')">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
@@ -40,11 +49,17 @@
   {% if p.muted %}
     <p class="muted" style="margin:10px 0 0;font-size:.86rem">Hidden — you muted
       this person.
+      {% if not public %}
+      {# Mute is a row in this node's own table, so it says something about
+         the machine rather than about the person pressing it, and an account
+         has no table here to write in. Not offered publicly, and the posts it
+         would uncover are still counted — just hidden by whoever runs this. #}
       <form method="post" action="/feed/{{ p.txid }}/unmute" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{ csrf }}">
         <input type="hidden" name="text" value="{{ p.author }}">
         <input type="hidden" name="back" value="{{ here }}">
-        <button class="ghost small" type="submit">Unmute</button></form></p>
+        <button class="ghost small" type="submit">Unmute</button></form>
+      {% endif %}</p>
   {% else %}
     {# Text, with any /content/<id> in it drawn rather than printed: a picture
        is shown, a page goes in the sandbox the viewer already uses, and
@@ -53,6 +68,7 @@
       >{{ render_post(p.text, drawable) }}</div>
   {% endif %}
 
+  {% if not public or acts %}
   <div class="row" style="margin-top:10px;gap:6px;align-items:center">
     <form method="post" action="/feed/{{ p.txid }}/{{ 'unlike' if p.liked_by_me else 'like' }}"
           style="margin:0">
@@ -71,10 +87,30 @@
       <button class="ghost small" type="submit"
               title="Put this on your own feed">Share {{ p.shares or '' }}</button></form>
 
+    {% if acts %}
+    {# The one of these that costs something gets the amount box the
+       operator's own tip page has. The form is unchanged on purpose —
+       `/feed/<txid>/tip` is the route, it is simply not one the door opens
+       for anybody but whoever runs the node, so the script at the bottom of
+       this page answers it here instead, with this key. #}
+    <button class="ghost small" type="button" onclick="toggle('tip-{{ p.txid }}')"
+            title="Coins to the author, in the same transaction that says which post">Tip {{ p.tips or '' }}</button>
+    <form method="post" action="/feed/{{ p.txid }}/tip" id="tip-{{ p.txid }}"
+          hidden style="margin:6px 0 0;width:100%">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="back" value="{{ here }}">
+      <div class="row">
+        <div style="flex:1"><input autocomplete="off" name="amount"
+          inputmode="decimal" placeholder="How much" maxlength="18"></div>
+        <button class="small" type="submit">Send the tip</button>
+      </div>
+    </form>
+    {% else %}
     <a class="ghost btn small" href="/feed/{{ p.txid }}/tip"
        title="Send coins, a token or a piece — on either chain">Tip {{ p.tips or '' }}</a>
+    {% endif %}
 
-    {% if not p.mine %}
+    {% if not p.mine and not public %}
     <form method="post" action="/feed/{{ p.txid }}/mute" style="margin-left:auto">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="text" value="{{ p.author }}">
@@ -83,6 +119,21 @@
               title="Hidden here and nowhere else. They are not told.">Mute</button></form>
     {% endif %}
   </div>
+  {% else %}
+  {# Nothing here is a button, because every one of them would be refused:
+     these routes spend the node's wallet and a public instance does not let
+     anybody reach that. The numbers stay — they are the post's, not the
+     reader's — and what is not offered is the doing of them (the operator,
+     § "A public instance should not offer what it will refuse"). #}
+  <div class="row" style="margin-top:10px;gap:10px;align-items:center">
+    <span class="muted" style="font-size:.82rem"
+          title="Every like, tip and share is a transaction, so everybody counts the same number">
+      &#9825; {{ p.likes }} like{{ '' if p.likes == 1 else 's' }}
+      {% if p.tips %}&middot; {{ p.tips }} tip{{ '' if p.tips == 1 else 's' }}{% endif %}
+      {% if p.shares %}&middot; {{ p.shares }} share{{ '' if p.shares == 1 else 's' }}{% endif %}</span>
+    <a class="muted" style="font-size:.82rem" href="/join">Make an account</a>
+  </div>
+  {% endif %}
 
   {# Comments are folded behind their own count: a post with forty replies
      is one post, and a feed that draws all forty is a feed nobody can
@@ -97,6 +148,7 @@
     {{ count }} comment{{ '' if count == 1 else 's' }}</button>
   {% endif %}
 
+  {% if not public or acts %}
   <form method="post" action="/feed/{{ p.txid }}/reply" id="reply-{{ p.txid }}"
         hidden style="margin-top:10px">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
@@ -107,6 +159,7 @@
       <button type="submit" class="small">Reply</button>
     </div>
   </form>
+  {% endif %}
 </div>
 {% if p.replies %}
 <div id="thread-{{ p.txid }}" hidden>
@@ -285,6 +338,99 @@
   {% endif %}
   {% endif %}
 </div>
+{% endif %}
+
+{% if public and mine.tag %}
+{# Every button on the cards above is the operator's form, unchanged. On this
+   instance those routes spend the node's wallet and the door shuts them, so
+   the same form is answered here instead: the same bytes /account/post puts on
+   the chain, built out of this account's own coins, and nothing is signed that
+   this tab has not read for itself first. It is NOT inside the composer's
+   script above — that block is drawn on /feed only, and a profile page is the
+   page you are most likely to be standing on when you decide to answer
+   somebody. #}
+<div id="acts-unlock" hidden style="margin:0 0 14px">
+  <p class="muted small" style="margin:0 0 6px">Your wallet is locked in this
+    tab. Your password opens it here and nowhere else.</p>
+  <div style="display:flex;gap:8px;align-items:flex-end">
+    <div style="flex:1"><input type="password" id="acts-pw"
+      autocomplete="current-password" placeholder="password"></div>
+    <button type="button" id="acts-open">Unlock</button>
+  </div>
+</div>
+<div class="muted small" id="acts-said" style="margin:0 0 14px"></div>
+<script type="module">
+  import * as wallet from "/wallet.js";
+
+  // Which byte each of these words means, straight out of
+  // arcade/messaging/feed.py. Typed out here it would be a copy that can
+  // drift, and a wrong byte is a wrong transaction on the chain — not a page
+  // that looks slightly wrong.
+  const KINDS = {{ kinds|tojson }};
+  const CHAIN = {network: "{{ chain.network }}",
+                 version: {{ chain.params.pubkeyhash_version }}};
+  const $ = (id) => document.getElementById(id);
+  const DONE = {like: "Liked", unlike: "Like taken back", reply: "Replied",
+                share: "Shared", edit: "Edited", delete: "Deleted",
+                tip: "Tipped"};
+  const say = (text, bad) => {
+    $("acts-said").textContent = text;
+    $("acts-said").style.color = bad ? "var(--bad)" : "var(--muted)";
+  };
+  let keys = await wallet.opened(CHAIN);
+
+  $("acts-open").onclick = async () => {
+    say("");
+    try {
+      keys = (await wallet.unlockHere("{{ mine.tag }}", $("acts-pw").value,
+                                      CHAIN)).wallet;
+      $("acts-unlock").hidden = true;
+      $("acts-pw").value = "";
+      say("Unlocked for this tab.");
+    } catch (e) { say(String(e.message || e), true); }
+  };
+
+  document.addEventListener("submit", async (event) => {
+    const form = event.target;
+    const one = (form.getAttribute("action") || "").match(
+      /^\/feed\/([0-9a-f]{64})\/(like|unlike|reply|share|edit|delete|tip)$/);
+    if (!one) return;               // the composer, or a page with no door
+    event.preventDefault();
+    say("");
+    if (!keys) {
+      $("acts-unlock").hidden = false;
+      say("Unlock your wallet first.", true);
+      return;
+    }
+    const [, txid, doing] = one;
+    const button = form.querySelector("button[type=submit]");
+    if (button) button.disabled = true;
+    try {
+      let out;
+      if (doing === "tip") {
+        // A tip is the one of these that moves coins, so it goes the way every
+        // send goes: ask for the offer, let this browser read it, then sign.
+        const offer = await wallet.offerReact(
+          txid, KINDS.tip, (form.elements.amount || {}).value || "");
+        await wallet.checked(offer, keys);
+        out = await wallet.confirm(keys, offer);
+        form.reset();
+        form.hidden = true;
+      } else {
+        out = await wallet.react(keys, txid, KINDS[doing],
+                                 (form.elements.text || {}).value || "");
+        if (form.elements.text) {
+          form.elements.text.value = "";
+          form.hidden = true;
+        }
+      }
+      say(`${DONE[doing]}. It counts here when its block lands `
+          + `(${out.txid.slice(0, 12)}…).`);
+    } catch (e) {
+      say(String(e.message || e), true);
+    } finally { if (button) button.disabled = false; }
+  });
+</script>
 {% endif %}
 
 {% if posts %}

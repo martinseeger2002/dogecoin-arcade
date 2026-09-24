@@ -67,6 +67,12 @@ KINDS = (LIKE, UNLIKE, REPLY, SHARE, EDIT, DELETE, TIP)
 NAMES = {LIKE: "like", UNLIKE: "unlike", REPLY: "reply", SHARE: "share",
          EDIT: "edit", DELETE: "delete", TIP: "tip"}
 
+#: The same map the other way, for a page that has the word and needs the
+#: byte. It lives here rather than in the page because a browser that sends a
+#: number it typed out itself is a browser that will still send it the day a
+#: kind is renamed -- and a wrong byte here is a transaction on the chain.
+BY_NAME = {name: kind for kind, name in NAMES.items()}
+
 #: How much a comment may say. Longer than a post is short of, and short
 #: enough that a reply still fits one transaction with room for the framing.
 MAX_TEXT = 2000

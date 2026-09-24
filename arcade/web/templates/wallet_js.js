@@ -672,6 +672,27 @@ export async function react(wallet, txid, kind, text) {
   return signAndSend(wallet, "/account/react", {txid, kind, text: text || ""});
 }
 
+/** The offer behind a reaction, handed over unsigned — which is what a tip needs.
+ *
+ * A like is the same size whoever presses it, so `react` can ask for it and
+ * sign it in one go. A tip moves somebody's coins, and the transaction that
+ * does it says who and how much; `checked` reads that off the bytes and
+ * `confirm` is what spends, which is the handshake every send in this file
+ * uses. It is deliberately not `signAndSend`: a page that spends coins on the
+ * way to being able to say what they cost has already spent them.
+ */
+export async function offerReact(txid, kind, amount) {
+  return working(async () => {
+    const asked = await fetch("/account/react", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({txid, kind, amount: String(amount || "")}),
+    });
+    const offer = await asked.json();
+    if (!asked.ok) throw new Error(offer.detail || "that cannot be done");
+    return offer;
+  });
+}
+
 /** The shape every one of these has: ask for an offer, sign it, send it. */
 export async function signAndSend(wallet, where, body) {
   return working(async () => {

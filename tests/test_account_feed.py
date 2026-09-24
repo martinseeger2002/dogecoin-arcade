@@ -240,3 +240,181 @@ def test_a_tip_to_somebody_with_no_address_is_refused(account):
         "txid": "cd" * 32, "kind": feedlib.TIP, "amount": "1"})
     assert refused.status_code == 400
     assert "nowhere to send it" in refused.json()["detail"]
+
+
+def _read(state):
+    """Every index caught up, AND the feed rows filed.
+
+    `_catch_up` walks the token index, which is where balances and names come
+    from. Posts and the things done to them are filed by the messaging scanner
+    into `group_post` and `feed_act`, and those two tables are what a feed page
+    reads -- so a page drawn after `_catch_up` alone is a page saying "nothing
+    here yet" about a post that is three blocks old and perfectly good. The
+    loop is the one `test_an_account_posts_with_its_own_coins` uses: a pass is
+    2000 blocks and a node that has been up all day has more than that.
+    """
+    _catch_up(state)
+    from arcade.messaging.scanner import Scanner
+    with state.messaging.rpc() as node:
+        with state.store() as store:
+            for _ in range(50):
+                if Scanner(node, state.messaging.params, store,
+                           identity=None).scan().blocks == 0:
+                    break
+
+
+def _mined(state, rpc):
+    """One block, and everything this node can say about it said."""
+    rpc.call("generate", 1)
+    _read(state)
+
+
+def _named(app, state, rpc, secret, pubkey, tag):
+    """A name, in a block, read. The buttons need it; the chain does not."""
+    claimed = _do(app, "/account/claim", {"tag": tag}, secret, pubkey)
+    assert claimed.status_code == 200, claimed.text
+    _mined(state, rpc)
+
+
+def _posted(app, state, rpc, secret, pubkey, text):
+    said = _do(app, "/account/post", {"text": text}, secret, pubkey)
+    assert said.status_code == 200, said.text
+    _mined(state, rpc)
+    return said.json()["txid"]
+
+
+def _reacted(app, state, rpc, secret, pubkey, txid, kind, amount=None):
+    body = {"txid": txid, "kind": kind}
+    if amount is not None:
+        body["amount"] = amount
+    said = _do(app, "/account/react", body, secret, pubkey)
+    assert said.status_code == 200, said.text
+    _mined(state, rpc)
+    return said.json()["txid"]
+
+
+def test_both_feed_pages_are_ones_an_account_can_act_on(account):
+    """The buttons were always there; the key to press them was not.
+
+    `/feed` had a script that could sign and `/u/<tag>` had none, which is
+    backwards -- a profile page is the page you are standing on when you decide
+    to answer somebody. And `/feed/<txid>/like` is not a route a public
+    instance opens, so a card that only submitted its form was a card that
+    looked like buttons and answered 403.
+    """
+    app, state, rpc, pubkey, mine = account
+    _named(app, state, rpc, SECRET, pubkey, "bothpages")
+    target = _posted(app, state, rpc, SECRET, pubkey, "answer this somewhere")
+
+    state.public = True
+    try:
+        pages = {"feed": app.get("/feed"), "profile": app.get("/u/bothpages")}
+    finally:
+        state.public = False
+
+    for where, page in pages.items():
+        assert page.status_code == 200, page.text
+        assert target in page.text, f"the post is not on {where}"
+        # The form is the operator's, untouched, and the script under it is
+        # what turns it into this account's transaction.
+        assert f'action="/feed/{target}/like"' in page.text, where
+        assert f'id="tip-{target}"' in page.text, where
+        assert "/wallet.js" in page.text, where
+        assert 'id="acts-said"' in page.text, where
+        # The words come out of feed.py rather than being typed into a script,
+        # because a word that has drifted from its byte is a wrong transaction.
+        for name in feedlib.NAMES.values():
+            assert f'"{name}"' in page.text, f"{name} is not in {where}'s map"
+
+
+def test_a_public_reader_is_shown_the_numbers_and_not_the_doing(account):
+    """Four buttons that each answered 403 is not a feed, it is a trap.
+
+    What a stranger gets is the count -- which is the post's, and was on the
+    chain before this page existed -- and one sentence saying who can do the
+    rest.
+    """
+    app, state, rpc, pubkey, mine = account
+    _named(app, state, rpc, SECRET, pubkey, "shownumbers")
+    target = _posted(app, state, rpc, SECRET, pubkey, "read but not answered")
+    _reacted(app, state, rpc, SECRET, pubkey, target, feedlib.LIKE)
+
+    app.cookies.clear()                  # the reader is nobody in particular
+    state.public = True
+    try:
+        page = app.get("/feed")
+    finally:
+        state.public = False
+    assert page.status_code == 200, page.text
+    assert "read but not answered" in page.text, "the post is still there to read"
+    assert "Make an account" in page.text
+    # The numbers are the post's, taken from rows everybody counts the same
+    # way, so a stranger reads them too. What is gone is the doing of them: no
+    # card on a public page offers a route the door will shut, and a card with
+    # a heart on it that answers 403 is not a button, it is a trap.
+    assert "1 like" in page.text
+    assert 'action="/feed/' not in page.text
+    assert 'href="/feed/' not in page.text
+    assert 'id="acts-said"' not in page.text
+
+
+def test_an_account_sees_its_own_likes_not_the_nodes(account):
+    """A like that reads back as ♡ is a like somebody presses a second time.
+
+    The page asked the node who was looking. Publicly that is a stranger's
+    page answering with the machine's address, so every account saw the
+    operator's likes and none of its own -- and liking twice costs twice.
+    """
+    app, state, rpc, pubkey, mine = account
+    _named(app, state, rpc, SECRET, pubkey, "ownlikes")
+    target = _posted(app, state, rpc, SECRET, pubkey, "liked by its own author")
+    _reacted(app, state, rpc, SECRET, pubkey, target, feedlib.LIKE)
+
+    state.public = True
+    try:
+        own = app.get("/feed")
+        # And it is theirs to delete, which `p.mine` never meant: that column
+        # is this machine's book of what IT sent, and the node never held a
+        # transaction it did not have the key for.
+        assert f'action="/feed/{target}/unlike"' in own.text
+        assert f'action="/feed/{target}/delete"' in own.text
+        app.cookies.clear()
+        stranger = app.get("/feed")
+    finally:
+        state.public = False
+    # What a stranger is shown is the number -- which is the chain's, and not
+    # the node's either -- and no control at all. The like above belongs to
+    # this account, and a card that offered it to them would be a card that
+    # spends somebody's coins for a name that is not theirs.
+    assert "1 like" in stranger.text
+    assert 'action="/feed/' not in stranger.text
+    assert f'action="/feed/{target}/unlike"' not in stranger.text
+    assert f'action="/feed/{target}/delete"' not in stranger.text
+
+
+def test_the_operator_keeps_the_forms_the_routes_expect(arcade):
+    """Every branch added for a public page has to leave the LAN page alone.
+
+    The routes, the csrf token and the redirect back are still the operator's
+    way of doing this, and on a machine that is not behind a door they are the
+    only way. Rows are put in the store rather than mined: this test is about
+    what a page draws for the person who runs it.
+    """
+    app, state, rpc = arcade
+    theirs = "nThemAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    theirs_id, posted = "ab" * 32, "cd" * 32
+    with state.store() as store:
+        store.add_group_post(state.messaging.network, "", theirs_id, 100,
+                             1000, theirs, "", "somebody else wrote this")
+        store.add_group_post(state.messaging.network, "", posted, 101, 1010,
+                             theirs, "", "this node posted", mine=True)
+
+    page = app.get("/feed")
+    assert page.status_code == 200, page.text
+    assert "somebody else wrote this" in page.text
+    assert "acts-said" not in page.text, "no wallet on an operator's page"
+    for doing in ("like", "reply", "share", "mute"):
+        assert f'action="/feed/{theirs_id}/{doing}"' in page.text, doing
+    assert f'href="/feed/{theirs_id}/tip"' in page.text, "tip is still a page"
+    assert f'action="/feed/{posted}/delete"' in page.text
+    assert f'action="/feed/{theirs_id}/delete"' not in page.text

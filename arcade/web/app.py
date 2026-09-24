@@ -2205,12 +2205,20 @@ def create_app(state: AppState) -> FastAPI:
             rows = fresh + list(rows)
         return rows, cursor, waiting
 
-    def _shown(rows: list[Any], network: str, waiting: Any = None) -> list[Any]:
+    def _shown(rows: list[Any], network: str, waiting: Any = None,
+               me: str | None = None) -> list[Any]:
         """Posts with everything done to them applied, ready to draw.
 
         `waiting` is the mempool's contribution: reactions that have not
         confirmed are counted and drawn like any other, because the person
         who pressed the button has already paid for them (D-141).
+
+        `me` is whose page this is being drawn for. It decides which posts are
+        "mine" and which ones I have already liked, so on a public instance it
+        has to be the reader's address and not the node's -- left as the node's,
+        an account sees its own posts with a Delete it did not earn and its own
+        likes as ♡, and pressing one a second time is a second transaction.
+        Nobody but the operator gets the node's address here.
         """
         if not rows:
             return []
@@ -2227,8 +2235,9 @@ def create_app(state: AppState) -> FastAPI:
             known = {a["txid"] for a in acts}
             acts += [mempoollib.Row(act) for act in waiting.acts
                      if act["txid"] not in known]
-        return feedview.assemble(rows, acts, me=state.derived_address or "",
-                                 muted=muted)
+        return feedview.assemble(rows, acts,
+                                 me=state.derived_address if me is None
+                                 else me, muted=muted)
 
     def _drawable_in(shown: list[Any]) -> dict[str, str]:
         """The content type of every inscription these posts name.
@@ -2324,8 +2333,9 @@ def create_app(state: AppState) -> FastAPI:
     def feed_page(request: Request, before: int | None = None):
         """Everybody's posts, newest first."""
         chain = state.messaging
+        mine = _tag_of_whoever_is_asking(request)
         rows, cursor, waiting = _feed_page(chain.network, before=before)
-        shown = _shown(rows, chain.network, waiting)
+        shown = _shown(rows, chain.network, waiting, me=mine["address"])
         # Looking at it is reading it. Marked BEFORE the page is rendered, so
         # the count beside Feed is gone by the time it is drawn rather than
         # one refresh later (D-108, and the badge the operator watched stay).
@@ -2337,19 +2347,19 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "feed.html", chain=chain, posts=shown,
                       bylines=_bylines(shown, waiting),
                       drawable=_drawable_in(shown), cursor=cursor, whose=None,
-                      here="/feed", mine=_tag_of_whoever_is_asking(request),
-                      when=_when,
-                      node=chain.status())
+                      here="/feed", mine=mine, kinds=feedlib.BY_NAME,
+                      when=_when, node=chain.status())
 
     @app.get("/u/{tag}", response_class=HTMLResponse)
     def profile_page(request: Request, tag: str, before: int | None = None):
         """One person's feed. Every @tag on every page links here."""
         chain = state.messaging
+        mine = _tag_of_whoever_is_asking(request)
         wanted = (tag or "").strip().lstrip("@").lower()
         address, claiming = _address_of_tag(wanted)
         rows, cursor, waiting = ([], None, None) if not address else _feed_page(
             chain.network, author=address, before=before)
-        shown = _shown(rows, chain.network, waiting)
+        shown = _shown(rows, chain.network, waiting, me=mine["address"])
         return render(request, "feed.html", chain=chain, posts=shown,
                       bylines=_bylines(shown, waiting),
                       drawable=_drawable_in(shown), cursor=cursor,
@@ -2359,7 +2369,7 @@ def create_app(state: AppState) -> FastAPI:
                              **{k: v for k, v in _profile_of(address, waiting).items()
                                 if k in ("bio", "url")}},
                       here=f"/u/{wanted}",
-                      mine=_tag_of_whoever_is_asking(request), when=_when,
+                      mine=mine, kinds=feedlib.BY_NAME, when=_when,
                       node=chain.status())
 
     #: How many transactions a picture posted to the feed may take. A post
