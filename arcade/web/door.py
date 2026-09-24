@@ -172,6 +172,13 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/claim", "/account/send", "/account/inscribe",
                "/account/run/start", "/account/run", "/account/run/piece",
                "/account/run/stop",
+               # the two ends of a run that stopped by itself: the refused
+               # pieces put back in line, and a run this node has been keeping
+               # pictures for forgotten for good. Neither broadcasts, and both
+               # refuse a run that is not the asker's -- which is why the
+               # pictures can be deleted: the account that uploaded them is the
+               # only one whose word removes them.
+               "/account/run/retry", "/account/run/delete",
                "/account/nft/send", "/account/nft/sell",
                # the pair that lists a piece: the first shows a leg, the
                # second files the leg it is sent back with. Neither one

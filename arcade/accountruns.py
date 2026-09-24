@@ -102,6 +102,9 @@ CREATE INDEX IF NOT EXISTS run_account_idx ON run(account, status);
 #: `open` is written but nothing is on its way; `running` is at least one piece
 #: broadcast and the rest still owed. There is no `pausing`: a run with no thread
 #: cannot be mid-piece in the way that word means for the operator's Runner.
+#: `failed` is derived, not asked for: it is what a run whose remaining pieces
+#: are all refusals reads as, so that a collection with a hole in it does not
+#: read as finished. `due` counts it unfinished, which is what it is.
 STATUSES = ("open", "running", "done", "failed", "stopped")
 
 #: What a piece is doing. `pending` has never been offered, `sending` has an
@@ -218,11 +221,17 @@ class Runs:
         one run's four from four single inscriptions. Newest first, because an
         account that started a second run before this code existed gets asked
         about the one it touched last.
+
+        `failed` is one of the unfinished statuses. A run stopped by a piece it
+        cannot build still owes the rest of them, and letting a second run start
+        beside it is how two collections come out of one address in whichever
+        order the account clicked.
         """
         with self._open() as conn:
             row = conn.execute(
                 "SELECT * FROM run WHERE account = ? AND network = ? "
-                "AND status IN ('open', 'running') ORDER BY created DESC LIMIT 1",
+                "AND status IN ('open', 'running', 'failed') "
+                "ORDER BY created DESC LIMIT 1",
                 (account, network)).fetchone()
             if row is None:
                 return None
@@ -279,18 +288,37 @@ class Runs:
             self._moved(conn, run_id)
 
     def piece_failed(self, run_id: str, edition: int, error: str) -> None:
+        """This node could not build this piece, with the reason it gave.
+
+        Not a refused broadcast: a broadcast that came back refused leaves the
+        piece `sending`, which `next_piece` puts first again, and the same
+        piece is rebuilt from the coins the account holds now. This is the
+        other thing -- no transaction was ever offered, because there was
+        nothing to offer. The reason goes on the piece so the page can say
+        which piece and why instead of a count of nothing.
+        """
         with self._open() as conn:
             conn.execute("UPDATE piece SET status = 'failed', error = ? "
                          "WHERE run_id = ? AND edition = ?", (error, run_id, edition))
+            self._moved(conn, run_id)
 
     def retry_failed(self, run_id: str) -> int:
         """Failed pieces back to pending for a resume. Their inscription id is
         already written down, so a retry inscribes the same piece, not a new
-        one -- which is the only reason a retry is allowed at all."""
+        one -- which is the only reason a retry is allowed at all.
+
+        Whether a retry can do anything depends on the reason on the piece,
+        which is why the route that calls this hands the reason back rather
+        than a bare count: a piece refused because this node could not read
+        its picture is not going to arrive because a button was pressed,
+        while one refused for a reason on this node's side might.
+        """
         with self._open() as conn:
-            return conn.execute(
+            left = conn.execute(
                 "UPDATE piece SET status = 'pending', error = '' WHERE run_id = ? "
                 "AND status = 'failed'", (run_id,)).rowcount
+            self._moved(conn, run_id)
+            return left
 
     def set_status(self, run_id: str, status: str, note: str | None = None,
                    error: str | None = None,
@@ -336,16 +364,33 @@ class Runs:
         event that can make a run finished, and a run whose status is set by
         hand can disagree with its own pieces, which is how a run looks
         finished while owing thirty pieces.
+
+        A refused piece counts as owed. It is not going out by itself and it
+        is not coming back on its own either, so a run whose remaining pieces
+        are all refusals has not finished -- it has stopped, which is what
+        `failed` says. Reading that as `done` is how a forty-piece collection
+        with one hole in it becomes a page that says all forty are up.
         """
         left = conn.execute(
             "SELECT COUNT(*) AS n FROM piece WHERE run_id = ? "
             "AND status IN ('pending', 'sending')", (run_id,)).fetchone()["n"]
-        if not left:
+        refused = conn.execute(
+            "SELECT COUNT(*) AS n FROM piece WHERE run_id = ? "
+            "AND status = 'failed'", (run_id,)).fetchone()["n"]
+        if not left and not refused:
             conn.execute("UPDATE run SET status = 'done' WHERE id = ? "
                          "AND status != 'done'", (run_id,))
+        elif not left:
+            conn.execute("UPDATE run SET status = 'failed' WHERE id = ? "
+                         "AND status != 'failed'", (run_id,))
         else:
+            # `failed` is here because a retried piece is a piece going again,
+            # and a run going again is `running` whatever it was called.
+            # `stopped` is not, because that is a person's filing and a
+            # request is not allowed to walk it back from the inside -- the
+            # route that means to resume says so itself.
             conn.execute("UPDATE run SET status = 'running' WHERE id = ? "
-                         "AND status = 'open'", (run_id,))
+                         "AND status IN ('open', 'failed')", (run_id,))
 
 
 def _progress(conn: sqlite3.Connection, run_id: str) -> dict:

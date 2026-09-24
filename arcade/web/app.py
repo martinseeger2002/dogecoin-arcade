@@ -20,6 +20,7 @@ import threading
 import time
 import html
 import secrets
+import shutil
 import sys
 import os
 from pathlib import Path
@@ -6914,6 +6915,83 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"offer": offer.id, "bytes": plan.content_len,
                              "chain": chain.network, **unsigned.as_json()})
 
+    def _what_the_account_has(account, chain, address: str, build,
+                              label: str = "") -> dict[str, Any]:
+        """What of this build this account has already put on the chain.
+
+        `_what_is_already_there` asked the way an account has to be asked:
+        about an address rather than about a wallet this node holds, and about
+        `accountruns` rather than the job book the node's Runner resumes. The
+        answers are the same three because the money at stake is the same --
+        an inscription pays once, cannot be recalled, and a second copy of an
+        edition joins nothing (D-120).
+
+        The reading of the run book is narrower than the operator's, and
+        deliberately so. `running` means something different here: for the
+        node it is a thread going now, and for an account it is a browser that
+        stopped asking, so a run of this name that is `running` says nothing
+        about whether its pieces reached the chain -- `collection_editions`
+        below is what says that. What the book does know on its own is a run
+        that finished at this floor, whose pieces are broadcast and not yet in
+        a block. That is the minutes between the last piece and its block, the
+        index is honestly empty, and a second run would pay for the set twice.
+        """
+        out: dict[str, Any] = {"blocked": "", "note": "", "skip": set()}
+        collection = build.collection
+        if not address or not collection:
+            return out
+        floor = chain.params.activation_height
+        named = {collection, label.strip()[:60]} - {""}
+        mine = [run for run in _runs.list(account=account.pubkey,
+                                          network=chain.network)
+                if run["name"] in named]
+        try:
+            done = state.token_index(chain).collection_editions(
+                address, collection)
+        except Exception:
+            # Same reading as the operator's: an index that will not answer
+            # makes this say less, not nothing, and the finished-at-this-floor
+            # scan below is what speaks on the empty answer.
+            done = set()
+        out["skip"] = {item.edition for item in build.items if item.edition in done}
+        if out["skip"] and len(out["skip"]) == len(build.items):
+            out["blocked"] = (
+                f"{collection} is already on this chain from this address, "
+                f"all {len(out['skip']):,} pieces of it. Inscribing it again "
+                "would pay for a second copy of every item, and no node would "
+                "file the copies into the set. Nothing has been paid for.")
+            return out
+
+        if not out["skip"]:
+            finished = [run for run in mine
+                        if run.get("floor") == floor and run["status"] == "done"]
+            if finished:
+                run = finished[-1]
+                when = dt.datetime.fromtimestamp(
+                    float(run.get("created") or 0)).strftime("%d %b %H:%M")
+                out["blocked"] = (
+                    f"this account already inscribed {collection} on this "
+                    f"chain -- run {run['id']}, started {when}, "
+                    f"{run['items']:,} pieces. None of it is indexed yet, "
+                    "which is the minutes between the last piece being sent "
+                    "and its block. Wait for it rather than pay for the set "
+                    "twice. Nothing has been paid for.")
+                return out
+            stale = [run for run in mine if run.get("floor") != floor]
+            if stale:
+                out["note"] = (
+                    f"a run of {collection} from before this chain started at "
+                    f"{floor:,} is being ignored: the pieces it sent are below "
+                    "the floor, so no node reads them.")
+            return out
+
+        left = len(build.items) - len(out["skip"])
+        out["note"] = (
+            f"{len(out['skip']):,} of these are already on this chain from "
+            f"this address, so this run is written down as the other "
+            f"{left:,}. A second copy joins nothing and costs again.")
+        return out
+
     @app.post("/account/run/start")
     def account_run_start(request: Request, files: list[UploadFile] = File([]),
                           name: str = Form(""), run_chain: str = Form("")):
@@ -6924,6 +7002,15 @@ def create_app(state: AppState) -> FastAPI:
         use: the node cannot sign for it, and a browser that closes its tab
         cannot finish anything. The run outlives both, which is the entire
         point of writing it here rather than doing it inside the request.
+
+        What is already on the chain is asked here, before the run is written,
+        which is where the operator's wizard asks it. It used to not be asked
+        at all, and the hole was the expensive kind: an account that uploaded
+        the same folder twice -- because a run is not obviously finished, and
+        a finished run leaves no mark the upload form shows -- was handed a
+        second run and paid a second time for pieces no node files into the
+        set. The wizard's review step is not the point of the operator's
+        version; the refusal is, and the refusal costs an index read.
 
         The uploaded build stays on this node, and nothing ages it out or
         deletes it yet -- stated rather than left implicit, because it means
@@ -6955,17 +7042,37 @@ def create_app(state: AppState) -> FastAPI:
         try:
             build = collectionlib.read_build(
                 collectionlib.find_build(_save_upload(files)))
+        except (collectionlib.CollectionError, ValueError, OSError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        # Asked between the two writes and not inside either: the refusal is
+        # about the chain and the run book, and `create` is about the build.
+        already = _what_the_account_has(account, chain, address, build, name)
+        if already["blocked"]:
+            return JSONResponse({"detail": already["blocked"]}, status_code=400)
+        if already["skip"]:
+            # Only the pieces still owed are written down, so the fee on the
+            # page is the fee the run will charge (D-120) and the pieces that
+            # are up are not in the table to be re-offered.
+            build = _without(build, already["skip"])
+        try:
             run_id = _runs.create(account.pubkey, address, build,
                                   chain.network,
-                                  name=name.strip()[:60] or build.collection)
+                                  name=name.strip()[:60] or build.collection,
+                                  floor=chain.params.activation_height)
         except (collectionlib.CollectionError, accountrunslib.TooBig,
                 ValueError, OSError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         run = _runs.get(run_id)
+        if already["note"]:
+            # On the run, not just in this answer: the sentence outlives the
+            # tab that heard it, and the page that follows the run is the one
+            # that has to still be able to say why it is short of the folder.
+            _runs.note(run_id, already["note"])
+            run = _runs.get(run_id)
         return JSONResponse({"run": run_id, "name": run["name"],
                              "items": run["items"], "fee": run["fee"],
                              "dust": run["dust"], "chain": chain.network,
-                             "next": run["next"]})
+                             "note": run["note"], "next": run["next"]})
 
     @app.post("/account/run")
     def account_runs(request: Request):
@@ -6985,6 +7092,9 @@ def create_app(state: AppState) -> FastAPI:
                                        "items": run["items"],
                                        "sent": run["sent"],
                                        "status": run["status"],
+                                       "sending": run["sending"],
+                                       "refused": run["failed_pieces"],
+                                       "note": run["note"],
                                        "next": run["next"],
                                        "chain": run["network"]}
                                       for run in mine]})
@@ -7013,12 +7123,122 @@ def create_app(state: AppState) -> FastAPI:
                                 status_code=403)
         # `only_from` because a finished run has nothing to stop, and saying
         # `stopped` over `done` would make a collection that is entirely on the
-        # chain read as one that was abandoned.
-        _runs.set_status(run["id"], "stopped", only_from=("open", "running"))
+        # chain read as one that was abandoned. `failed` is in the list because
+        # it holds this account's one place in the same way `running` does, and
+        # a run nobody can finish and nobody told how to stop would block every
+        # collection after it.
+        _runs.set_status(run["id"], "stopped",
+                         only_from=("open", "running", "failed"))
         run = _runs.get(run["id"])
         return JSONResponse({"run": run["id"], "name": run["name"],
                              "sent": run["sent"], "items": run["items"],
                              "status": run["status"]})
+
+    @app.post("/account/run/retry")
+    def account_run_retry(request: Request, payload: Any = Body(None)):
+        """Put the refused pieces of a run back in line.
+
+        The operator's page calls this "Retry the rest", and the account's
+        version means the same thing with one difference that has to be said
+        out loud: the pieces keep the inscription ids written down when the run
+        was, so a retry puts the same piece up rather than a second copy beside
+        it -- which is the only reason pressing it is safe at all.
+
+        Whether it can do any good depends on the reason on the piece, which is
+        why the reasons come back with the count. A piece refused for something
+        true of this node at this minute is worth pressing; one refused because
+        its picture is not in the folder this node kept is not, and the honest
+        move there is a new upload, which now costs only the pieces that are
+        still missing.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        run = _runs.get(str(said.get("run", "")))
+        if run is None:
+            return JSONResponse({"detail": "there is no run of that id"},
+                                status_code=404)
+        if run["account"] != account.pubkey.lower():
+            return JSONResponse({"detail": "that run belongs to somebody else"},
+                                status_code=403)
+        if not run["failed_pieces"]:
+            return JSONResponse({"run": run["id"], "retried": 0,
+                                 "status": run["status"], "refused": []})
+        reasons = [f"{piece['name']}: {piece['error']}"
+                   for piece in _runs.pieces(run["id"], status="failed")]
+        left = _runs.retry_failed(run["id"])
+        run = _runs.get(run["id"])
+        return JSONResponse({"run": run["id"], "retried": left,
+                             "sent": run["sent"], "items": run["items"],
+                             "status": run["status"], "refused": reasons})
+
+    @app.post("/account/run/delete")
+    def account_run_delete(request: Request, payload: Any = Body(None)):
+        """Forget a run, and take its pictures off this node with it.
+
+        What is on the chain stays there whatever this says -- there is no
+        un-inscribing -- so what is being deleted is the node's memory of a set
+        and the folder it kept to build the rest of it from.
+
+        Refused while a piece is out for signature, which is the account's
+        reading of the operator's "pause the run before removing it". There is
+        no thread to stop here; what there is is a signature that could still
+        arrive, and the broadcast it completes would come looking for rows that
+        are gone. So the offer has to be spent, expired, or given up on -- and
+        `stopped` is what "given up on" is called here, which is why a stopped
+        run is deletable with a piece still marked `sending` while a running one
+        is not. What that costs, stated: a signature that arrives after such a
+        deletion still pays and still lands -- the chain does not know about
+        this book -- it simply arrives as a piece of a set this node no longer
+        keeps. Nothing is lost but the row.
+
+        The folder goes too, and only a folder that is inside this node's
+        upload directory: `Runs.delete` takes rows only, on the reason in that
+        module that a directory with no rule written for it is not a directory
+        to remove from a book. This is the rule, so the account's pictures stop
+        sitting on somebody else's disk after the account has walked away from
+        them -- which is the thing the retention note has been saying an
+        operator should know about since the day it was written.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        run = _runs.get(str(said.get("run", "")))
+        if run is None:
+            return JSONResponse({"detail": "there is no run of that id"},
+                                status_code=404)
+        if run["account"] != account.pubkey.lower():
+            return JSONResponse({"detail": "that run belongs to somebody else"},
+                                status_code=403)
+        # `stopped` is in this condition as the account's own "I am not doing
+        # this run any more". A piece left `sending` by an offer nobody signed
+        # is the ordinary state of a run whose tab closed, and a rule that
+        # refused deletion forever on the strength of it would leave every
+        # abandoned run's pictures on this disk past the point where anybody
+        # wanted them -- which is the exact thing the retention note tells an
+        # operator about.
+        if run["sending"] and run["status"] != "stopped":
+            return JSONResponse(
+                {"detail": "one of its pieces is out for a signature. Sign it, "
+                           "let it expire, or stop the run first -- a run "
+                           "deleted under a signature that later arrives "
+                           "leaves that inscription unrecorded. Nothing has "
+                           "been paid for."}, status_code=400)
+        folder = Path(run["folder"])
+        _runs.delete(run["id"])
+        uploads = _collection_upload_dir().resolve()
+        if run["folder"] and folder.exists():
+            try:
+                inside = folder.resolve().is_relative_to(uploads)
+            except OSError:
+                inside = False
+            if inside:
+                shutil.rmtree(folder, ignore_errors=True)
+            else:
+                # A build this node did not save is somebody else's directory.
+                state.flash(f"{run['name']} is forgotten. Its pictures are not "
+                            "in this node's upload folder, so they were left "
+                            "where they are.", "err")
+        return JSONResponse({"run": run["id"], "name": run["name"],
+                             "forgotten": True})
 
     @app.post("/account/run/piece")
     def account_run_piece(request: Request, payload: Any = Body(None)):
@@ -7049,6 +7269,18 @@ def create_app(state: AppState) -> FastAPI:
         chain = _chain_on(run["network"])
         piece = _runs.next_piece(run["id"])
         if piece is None:
+            if run["failed_pieces"]:
+                # Not finished. It is the run that stopped, not the work, and
+                # `finished: True` here would be the page saying all forty are
+                # up while one of them was never even offered.
+                return JSONResponse(
+                    {"detail": f"{run['failed_pieces']:,} of {run['name']} "
+                               "refused and will not go out as this run is "
+                               "written. Nothing has been paid for. Retry them "
+                               "if the reason was on this node's side; if the "
+                               "build itself is short, upload the set again "
+                               "and it will be written down as only what is "
+                               "still missing."}, status_code=400)
             return JSONResponse({"run": run["id"], "sent": run["sent"],
                                  "items": run["items"], "finished": True})
         try:
@@ -7057,6 +7289,18 @@ def create_app(state: AppState) -> FastAPI:
                                     piece["json"],
                                     inscription_id=bytes.fromhex(
                                         piece["inscription_id"]))
+        except (OSError, ValueError) as exc:
+            # This node cannot make this piece at all, so saying no again on
+            # the next press would be the same refusal forever and the run
+            # would sit `running` over a hole nobody is told about. Filed as
+            # refused, with the reason on it, the rest of the set still goes.
+            _runs.piece_failed(run["id"], piece["edition"], str(exc))
+            return JSONResponse(
+                {"detail": f"{piece['name']} cannot be built from the build "
+                           f"this node kept: {exc}. Nothing has been paid for, "
+                           "and the pieces after it are still here to ask "
+                           "for."}, status_code=400)
+        try:
             outputs = _class_c_or_b(chain, run["address"], plan.payloads[0],
                                     _coin_pubkey(account.pubkey, chain))
             index = state.token_index(chain)
@@ -7069,6 +7313,10 @@ def create_app(state: AppState) -> FastAPI:
                     extra=_flights.change_for(account.pubkey, chain.network))
             _quota(account, "inscribe", len(content))
         except (fundinglib.FundingError, ValueError) as exc:
+            # Not a failure of the piece: no coins and a closed dial are both
+            # true of this minute and not of the piece, so it stays pending
+            # and the next press builds it. A piece filed `failed` here would
+            # need a button press to come back for a reason that fixes itself.
             return JSONResponse({"detail": str(exc)}, status_code=400)
         if run["status"] == "stopped":
             # Asking for the next piece is how an account takes back its own
