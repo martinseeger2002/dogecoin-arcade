@@ -295,8 +295,17 @@
       $("account-said").textContent = text;
       $("account-said").style.color = bad ? "var(--bad)" : "var(--muted)";
     };
-    let keys = await wallet.opened(CHAIN);
-    $("account-unlock").hidden = !!keys;
+    {# The key this tab already holds, STARTED here and taken up by whoever
+       presses something — not awaited at the top. Awaiting it here put the two
+       lines that attach the handlers a second or two behind the page appearing
+       on screen, and a press in that gap is answered by nothing at all: the
+       button is not wired yet, so it is a click on a word. No error, no
+       transaction, no word — the person presses again and it works, which is
+       how it stayed unfound for as long as it did. #}
+    const opening = wallet.opened(CHAIN);
+    let keys = null;
+    opening.then((found) => { keys = found; $("account-unlock").hidden = !!keys; });
+    const take = async () => keys || (keys = await opening);
 
     $("account-open").onclick = async () => {
       say("");
@@ -312,13 +321,14 @@
 
     $("account-post").onclick = async () => {
       say("");
-      if (!keys) { $("account-unlock").hidden = false;
+      const held = await take();
+      if (!held) { $("account-unlock").hidden = false;
                    say("Unlock your wallet first.", true); return; }
       const text = $("account-say").value.trim();
       if (!text) return;
       $("account-post").disabled = true;
       try {
-        const out = await wallet.post(keys, text);
+        const out = await wallet.post(held, text);
         $("account-say").value = "";
         say(`Posted. It appears here when its block lands (${out.txid.slice(0, 12)}…).`);
       } catch (e) {
@@ -377,7 +387,15 @@
     $("acts-said").textContent = text;
     $("acts-said").style.color = bad ? "var(--bad)" : "var(--muted)";
   };
-  let keys = await wallet.opened(CHAIN);
+  // Same reason as the composer's: started, not awaited. Here the cost of
+  // awaiting was worse than a swallowed press — the listener below is what
+  // keeps these forms from submitting, so a card pressed before it was
+  // attached went to the server as a form, and on this instance the door
+  // answered it. The handler is attached on this tick and takes the key when
+  // it needs it, which is the only moment it ever needed it.
+  const opening = wallet.opened(CHAIN);
+  let keys = null;
+  const take = async () => keys || (keys = await opening);
 
   $("acts-open").onclick = async () => {
     say("");
@@ -397,7 +415,8 @@
     if (!one) return;               // the composer, or a page with no door
     event.preventDefault();
     say("");
-    if (!keys) {
+    const held = await take();
+    if (!held) {
       $("acts-unlock").hidden = false;
       say("Unlock your wallet first.", true);
       return;
@@ -412,12 +431,12 @@
         // send goes: ask for the offer, let this browser read it, then sign.
         const offer = await wallet.offerReact(
           txid, KINDS.tip, (form.elements.amount || {}).value || "");
-        await wallet.checked(offer, keys);
-        out = await wallet.confirm(keys, offer);
+        await wallet.checked(offer, held);
+        out = await wallet.confirm(held, offer);
         form.reset();
         form.hidden = true;
       } else {
-        out = await wallet.react(keys, txid, KINDS[doing],
+        out = await wallet.react(held, txid, KINDS[doing],
                                  (form.elements.text || {}).value || "");
         if (form.elements.text) {
           form.elements.text.value = "";

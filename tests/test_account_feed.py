@@ -418,3 +418,40 @@ def test_the_operator_keeps_the_forms_the_routes_expect(arcade):
     assert f'href="/feed/{theirs_id}/tip"' in page.text, "tip is still a page"
     assert f'action="/feed/{posted}/delete"' in page.text
     assert f'action="/feed/{theirs_id}/delete"' not in page.text
+
+
+def test_the_page_is_listening_before_a_press_arrives():
+    """A button that is not wired yet is a word somebody clicks.
+
+    Both scripts in `feed.html` used to wait for the key this tab holds before
+    they attached anything, and looking that key up is a second or two of work
+    done after the page is already on screen. A press inside that gap answered
+    with nothing at all -- no error, no word, no transaction -- and it is
+    invisible from outside the tab, because the page arrives, works a moment
+    later, and looks the same either way. The live run found it by pressing as
+    soon as the button existed; a person finds it by pressing twice.
+
+    On the cards it was worse than silence. The listener that stops
+    `/feed/<txid>/like` from being SUBMITTED was itself the thing being waited
+    for, so an early press went to the server as an ordinary form and a public
+    instance's door answered it -- the exact 403 this feature was built to
+    remove, surviving in the first second after the page loads.
+
+    Asserted on the source rather than in a browser because the gap is a few
+    hundred milliseconds wide, and a test that races it passes either way.
+    """
+    source = pathlib.Path("arcade/web/templates/feed.html").read_text()
+    assert "await wallet.opened(" not in source, \
+        "the key must be started and taken up by the press, not waited for"
+    assert "wallet.opened(CHAIN)" in source, "the tab's key is still picked up"
+    for wiring in ('$("account-post").onclick', "$(\"account-open\").onclick",
+                   "$(\"acts-open\").onclick",
+                   'document.addEventListener("submit"'):
+        assert wiring in source, f"{wiring} is gone, so nothing answers a press"
+    # The refusal to submit comes before anything is awaited, so a press that
+    # arrives while the key is still being found is queued, not sent. Read from
+    # the listener on, because there is another preventDefault further down the
+    # page and the one that matters is inside this handler.
+    listener = source[source.index('document.addEventListener("submit"'):]
+    assert (listener.index("event.preventDefault()")
+            < listener.index("const held = await take()"))
