@@ -27,6 +27,8 @@
     <div style="flex:1"><input type="file" id="file"></div>
     <button type="button" id="inscribe-it">Inscribe it</button>
   </div>
+  <p class="muted picked" id="picked-file" hidden><span id="picked-text"></span>
+    <span id="picked-sizes" class="sizes" hidden></span></p>
 </div>
 
 <div class="panel" id="running">
@@ -44,6 +46,9 @@
       directory multiple></div>
     <button type="button" id="run-start">Upload it</button>
   </div>
+  <p class="muted picked" id="picked-build" hidden>
+    <span id="picked-build-text"></span>
+    <span id="build-sizes" class="sizes" hidden></span></p>
   <div class="row" id="run-go" hidden>
     <div style="flex:1" class="muted" id="run-says"
       style="font-size:.86rem"></div>
@@ -99,6 +104,36 @@ async function offerAndConfirm(where, body, says, done) {
     const out = await wallet.confirm(held, offer);
     news(done(out, offer));
   } catch (e) { say(String(e.message || e)); }
+}
+
+$("file").onchange = () => arcadePick($("file"), quotePicked);
+
+/** What the file in the box will cost, said before anything is paid.
+ *
+ *  The picking, the measuring and the swapping are all shared with messages
+ *  (`arcadePick` in base.html) -- the same three settings, the same Medium by
+ *  default, the same rule that a setting which comes out bigger than the
+ *  original is not offered. What this page adds is the sentence: here the
+ *  bytes go on the chain for ever, so the number that matters is the pieces
+ *  as much as the coins.
+ */
+function quotePicked(file, choice) {
+  const note = $("picked-file"), text = $("picked-text");
+  if (!file) { note.hidden = true; text.innerHTML = ""; return; }
+  const cost = arcadeFileCost(file.size);
+  const one = cost.chunks === 1;
+  note.hidden = false;
+  note.className = "muted picked" + (cost.chunks > 40 ? " costly" : "");
+  text.innerHTML = `<strong>${file.name}</strong> &mdash; ${arcadeSize(file.size)}`
+    + `, ${commas(cost.chunks)} piece${one ? "" : "s"}, about <strong>`
+    + arcadeCoins(cost.coins) + "</strong> in dust and fees"
+    + (choice && choice.key !== "large"
+        ? ` &mdash; re-encoded here at ${choice.label}.` : ".")
+    + (one ? ""
+        : ` That is ${commas(cost.chunks)} transactions' worth, and this box `
+          + "offers one. A smaller setting, or the run below &mdash; which "
+          + "takes a whole folder, one transaction per file &mdash; is what "
+          + "fits.");
 }
 
 $("inscribe-it").onclick = async () => {
@@ -162,6 +197,144 @@ async function runs() {
   } catch (e) { say(String(e.message || e)); }
 }
 
+/* -- a folder of them, measured first and converted on the way up -- */
+
+const SAMPLE_PICTURES = 100;      // re-encoded for the quote, not for the upload
+const SAMPLE_BYTES = 20000000;    // …and never more than this much of them
+let buildSize = "large";
+let buildMeasured = "";
+
+$("build").onchange = () => measureBuild();
+
+/** What the chosen folder would cost at each size, as far as this browser can
+ *  tell without uploading it three times.
+ *
+ *  A folder cannot go through `arcadePick`: that swaps one File back into one
+ *  input, and rebuilding a `webkitdirectory`'s list out of DataTransfer loses
+ *  what the node keys the build on. So the sizes are measured here and the
+ *  bytes are converted later, at upload (`buildFile`), and the price of that
+ *  is measuring a sample rather than everything. Up to SAMPLE_PICTURES the
+ *  sample IS everything and the number is exact; past it it is scaled by what
+ *  the sample was of the folder, and the sentence says so. A folder with no
+ *  pictures in it, or a browser that cannot re-encode one, is offered no
+ *  buttons at all.
+ */
+async function measureBuild() {
+  const picked = $("build").files;
+  const files = [...picked];
+  const note = $("picked-build"), text = $("picked-build-text");
+  const sizes = $("build-sizes");
+  sizes.innerHTML = ""; sizes.hidden = true;
+  buildSize = "large"; buildMeasured = "";
+  if (!files.length) { note.hidden = true; text.innerHTML = ""; return; }
+  note.hidden = false;
+  const pictures = files.filter(arcadeIsImage);
+  const bytes = pictures.reduce((n, file) => n + file.size, 0);
+  if (!pictures.length) {
+    text.textContent = `${commas(files.length)} files, and not one of them a `
+      + "picture, so there is nothing here to re-encode.";
+    return;
+  }
+  text.innerHTML = '<span class="muted">measuring sizes&hellip;</span>';
+  // Both bounds are there because encoding a picture takes a phone a third of
+  // a second, and a page that is quiet for two minutes looks broken. The count
+  // covers an ordinary Art Engine folder (hundreds of small files, all of them
+  // measured, so the number is exact); the bytes cover one of huge photographs,
+  // where twenty megabytes says what a megabyte of noise does.
+  const sample = [];
+  let sampleBytes = 0;
+  for (const file of pictures) {
+    if (sample.length >= SAMPLE_PICTURES || sampleBytes >= SAMPLE_BYTES) break;
+    sample.push(file);
+    sampleBytes += file.size;
+  }
+  // A run is one transaction per item and an item cannot be more than one
+  // piece, so the number that decides whether a folder can go up at all is not
+  // the total but how many of its pictures are still over a piece at the size
+  // in question. Counted on the sample, scaled like the bytes.
+  const moreThanOne = (n) => arcadeFileCost(n).chunks > 1;
+  const results = [{key: "large", label: "Large", hint: "as they are",
+                    bytes: bytes,
+                    over: pictures.filter((f) => moreThanOne(f.size)).length}];
+  for (const spec of ARCADE_SIZES.slice(1)) {
+    let shrunk = 0;
+    let over = 0;
+    for (const file of sample) {
+      const one = await arcadeShrink(file, spec.max, spec.quality);
+      if (!one) { shrunk = -1; break; }     // this browser cannot re-encode
+      shrunk += one.blob.size;
+      if (moreThanOne(one.blob.size)) over += 1;
+    }
+    if (shrunk < 0) continue;
+    if (sample.length < pictures.length) {
+      shrunk = Math.round(shrunk * bytes / sampleBytes);
+      over = Math.round(over * pictures.length / sample.length);
+    }
+    if (shrunk >= bytes) continue;         // smaller setting, bigger folder
+    results.push({key: spec.key, label: spec.label, hint: spec.hint,
+                  bytes: shrunk, over: over});
+  }
+  if (sample.length < pictures.length) {
+    buildMeasured = `measured from ${commas(sample.length)} of `
+      + `${commas(pictures.length)} pictures`;
+  }
+  if ($("build").files !== picked) return;   // superseded by a newer folder
+  const medium = results.filter((r) => r.key === "medium")[0];
+  buildSize = medium ? "medium" : results[results.length - 1].key;
+  drawBuildSizes(results);
+}
+
+function drawBuildSizes(results) {
+  const text = $("picked-build-text"), sizes = $("build-sizes");
+  const chosen = results.filter((r) => r.key === buildSize)[0] || results[0];
+  buildSize = chosen.key;
+  text.innerHTML = `<strong>${arcadeSize(chosen.bytes)}</strong> of pictures`
+    + `, about <strong>${arcadeCoins(arcadeFileCost(chosen.bytes).coins)}</strong>`
+    + " in dust and fees" + (buildMeasured ? ` (${buildMeasured})` : "") + "."
+    + (chosen.over ? ` ${commas(chosen.over)} of them are still more than a `
+        + "piece at this size, and one item cannot be more than a piece: a run "
+        + "is one transaction per item, so the node refuses those. Smaller "
+        + "art is what a run carries." : "");
+  sizes.innerHTML = "";
+  if (results.length < 2) { sizes.hidden = true; return; }   // nothing to choose
+  sizes.hidden = false;
+  for (const r of results) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ghost small size" + (r.key === buildSize ? " on" : "");
+    const cost = arcadeFileCost(r.bytes);
+    button.innerHTML = `<strong>${r.label}</strong> ${arcadeSize(r.bytes)}`
+      + ` &middot; ${arcadeCoins(cost.coins)}`
+      + (cost.chunks > 1 ? ` &middot; ${commas(cost.chunks)} pieces` : "");
+    button.title = r.hint;
+    button.addEventListener("click",
+                            () => { buildSize = r.key; drawBuildSizes(results); });
+    sizes.appendChild(button);
+  }
+}
+
+/** The bytes this upload will carry for one file of the chosen folder.
+ *
+ *  Converted on the way up rather than swapped into the input, and the name
+ *  goes with them: `arcadeJpegName` keeps the stem, and the stem is what a
+ *  build's metadata is matched to (`collections.read_build` keys its pictures
+ *  by stem, `app._save_upload` routes them by name), so `1.png` becoming
+ *  `1.jpg` still reads as the same item. The suffix changes with the bytes
+ *  because it is the name the node guesses a content type from afterwards.
+ *
+ *  Per file the rule is the same one `arcadeOfferSizes` applies to one file:
+ *  whichever of the two is smaller. A picture that re-encodes bigger than it
+ *  already is goes up as it was.
+ */
+async function buildFile(file) {
+  const spec = ARCADE_SIZES.filter((s) => s.key === buildSize)[0];
+  if (!spec || !spec.max || !arcadeIsImage(file)) return file;
+  const shrunk = await arcadeShrink(file, spec.max, spec.quality);
+  if (!shrunk || shrunk.blob.size >= file.size) return file;
+  return new File([shrunk.blob], arcadeJpegName(file.name),
+                  {type: "image/jpeg"});
+}
+
 $("run-start").onclick = async () => {
   const files = $("build").files;
   if (!files.length) { say("choose the folder the Art Engine left"); return; }
@@ -170,7 +343,10 @@ $("run-start").onclick = async () => {
   // the forty-odd transactions a run is, and it cannot ask a tab that will be
   // closed by the third one. Nothing is inscribed by this request.
   const form = new FormData();
-  for (const file of files) form.append("files", file);
+  // At the chosen size, and encoded again on the way: the measurement above
+  // was a sample, and holding every converted picture in memory until a person
+  // presses the button would cost more than re-encoding it a second time.
+  for (const file of files) form.append("files", await buildFile(file));
   form.append("run_chain", CHAIN.network);
   try {
     const asked = await fetch("/account/run/start",

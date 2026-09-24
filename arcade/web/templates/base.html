@@ -841,9 +841,14 @@ function arcadeChoose(input, key, drawText){
     var button = document.createElement('button');
     button.type = 'button';
     button.className = 'ghost small size' + (r.key === key ? ' on' : '');
+    var cost = arcadeFileCost(r.bytes);
+    // The piece count beside the bytes and the coins. Kilobytes are not what a
+    // person is deciding between: what one size saves is transactions, each
+    // one with a fee and a block in front of it, and 74 KB says nothing of it.
     button.innerHTML = '<strong>' + r.label + '</strong> ' +
       (r.width ? r.width + '&times;' + r.height + ' · ' : '') +
-      arcadeSize(r.bytes) + ' · ' + arcadeCoins(arcadeFileCost(r.bytes).coins);
+      arcadeSize(r.bytes) + ' · ' + arcadeCoins(cost.coins) +
+      (cost.chunks > 1 ? ' · ' + cost.chunks.toLocaleString() + ' pieces' : '');
     button.title = r.hint;
     button.addEventListener('click', function(){
       arcadeChoose(input, r.key, drawText);

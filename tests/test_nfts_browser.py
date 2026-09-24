@@ -586,3 +586,266 @@ def test_no_price_is_refused_on_the_page_not_by_a_dead_button(browser, seller):
         "a refusal that still offers the signing button is a trap"
     assert len(_rows(state)) == before
     assert node.rpc.call("getrawmempool") == []
+
+
+# --- the three sizes, on the box that makes the bytes permanent ----------------
+# Messages were given Large / Medium / Small on 2026-09-13 (`arcadePick` in
+# `base.html`). Inscribe never was, and that is the whole reason a phone photo
+# met "that is 41 pieces in one item" on test.dogecoinarcade.com on 2026-09-24:
+# this panel offers ONE transaction, and the only thing that lets a picture fit
+# inside one is re-encoding it here, in the tab, before anything is uploaded.
+#
+# What these tests check is the seam the copy depends on -- that the bytes the
+# tab goes on to pay for are the smaller bytes it measured, and not the file as
+# it came off the disk. A page that prints "0.9 pieces, 0.1 coins" while
+# uploading the original would pass every server-side test there is.
+
+MAKE_A_PHOTO = """
+const done = arguments[0];
+const c = document.createElement('canvas');
+c.width = 2400; c.height = 1600;
+const g = c.getContext('2d');
+// Noise, not flat colour: a flat image compresses to nothing and every size
+// would fit in one piece.
+const img = g.createImageData(c.width, c.height);
+for (let i = 0; i < img.data.length; i += 4) {
+  img.data[i] = (i * 7) % 255; img.data[i+1] = (i * 13) % 255;
+  img.data[i+2] = (i * 29) % 255; img.data[i+3] = 255;
+}
+g.putImageData(img, 0, 0);
+c.toBlob(function (blob) {
+  const input = document.getElementById('file');
+  const dt = new DataTransfer();
+  dt.items.add(new File([blob], 'photo.png', {type: 'image/png'}));
+  input.files = dt.files;
+  input.dispatchEvent(new Event('change'));
+  done(blob.size);
+}, 'image/png');
+"""
+
+READ_THE_BOX = """
+const buttons = [...document.querySelectorAll('#picked-sizes button')];
+const input = document.getElementById('file');
+return {
+  labels: buttons.map(b => b.textContent.replace(/\\s+/g, ' ').trim()),
+  chosen: buttons.filter(b => b.classList.contains('on'))
+                 .map(b => b.querySelector('strong').textContent),
+  says: document.getElementById('picked-text').textContent,
+  name: input.files[0] ? input.files[0].name : null,
+  type: input.files[0] ? input.files[0].type : null,
+  bytes: input.files[0] ? input.files[0].size : null,
+};
+"""
+
+
+def _sizes(browser, script, want=3, seconds=60.0):
+    """Wait for the three buttons, since measuring them takes a moment."""
+    stop = time.time() + seconds
+    while time.time() < stop:
+        state_ = browser.execute_script(script)
+        if len(state_["labels"]) == want:
+            return state_
+        time.sleep(0.5)
+    raise AssertionError(f"the page offered {state_['labels']!r}, not {want}")
+
+
+def test_the_inscribe_box_offers_the_three_sizes(browser, seller):
+    browser, base, state, node, made, piece = seller
+    browser.set_script_timeout(60)
+    original = browser.execute_async_script(MAKE_A_PHOTO)
+    assert original > 200_000, "the test photo has to be worth shrinking"
+
+    box = _sizes(browser, READ_THE_BOX)
+    assert [label.split()[0] for label in box["labels"]] == \
+        ["Large", "Medium", "Small"], box["labels"]
+    assert box["chosen"] == ["Medium"], "Medium is the sensible default"
+
+    # The form carries the measured one, which is the only claim above it that
+    # a person cannot check for themselves.
+    assert box["bytes"] < original / 2, (box["bytes"], original)
+    assert box["name"] == "photo.jpg" and box["type"] == "image/jpeg"
+
+    # Each button says what that choice costs, and how many transactions it
+    # costs it in -- the pieces being the part a kilobyte figure hides.
+    for label in box["labels"]:
+        assert "·" in label, f"no size and cost on {label!r}"
+    assert "pieces" in box["labels"][1], \
+        "a many-piece choice that does not say so is the 41-pieces surprise"
+    assert "re-encoded here at Medium" in box["says"], box["says"]
+
+
+def test_choosing_a_size_for_an_inscription_can_be_undone(browser, seller):
+    """Large has to mean the file as it was, or it is not offered."""
+    browser, base, state, node, made, piece = seller
+    browser.set_script_timeout(60)
+    original = browser.execute_async_script(MAKE_A_PHOTO)
+    _sizes(browser, READ_THE_BOX)
+
+    browser.execute_script("""
+        [...document.querySelectorAll('#picked-sizes button')]
+          .filter(b => b.textContent.indexOf('Large') === 0)[0].click();""")
+    time.sleep(0.4)
+    large = browser.execute_script(READ_THE_BOX)
+    assert large["chosen"] == ["Large"]
+    assert large["bytes"] == original, "Large is the file as it was"
+    assert large["name"] == "photo.png"
+    assert "re-encoded" not in large["says"], large["says"]
+
+    browser.execute_script("""
+        [...document.querySelectorAll('#picked-sizes button')]
+          .filter(b => b.textContent.indexOf('Small') === 0)[0].click();""")
+    time.sleep(0.4)
+    small = browser.execute_script(READ_THE_BOX)
+    assert small["chosen"] == ["Small"]
+    assert small["bytes"] < large["bytes"] / 4
+
+
+MAKE_A_FOLDER = """
+const done = arguments[0];
+const input = document.getElementById('build');
+// Firefox will not take a directory from a script, and the node rebuilds the
+// layout from the NAMES alone (`app._save_upload` keeps `Path(name).name` and
+// routes on the suffix), so a flat list of correctly-named files is the same
+// build to it. Stripping the folder attribute is how the live acceptance
+// driver sends one, too.
+input.removeAttribute('webkitdirectory');
+input.removeAttribute('directory');
+input.multiple = true;
+const dt = new DataTransfer();
+const meta = JSON.stringify([1, 2, 3].map(n => ({name: 'Pic ' + n,
+                                                image: 'images/' + n + '.png',
+                                                edition: n})));
+dt.items.add(new File([meta], '_metadata.json', {type: 'application/json'}));
+const sizes = {};
+let left = 3;
+function picture(n) {
+  const c = document.createElement('canvas');
+  // 64x64 of REAL noise, which is the only picture that satisfies the two
+  // things this test needs at once. A run puts one item in one transaction and
+  // an item cannot be more than one piece (7,628 bytes), so the folder has to
+  // be over that as it stands and under it once re-encoded -- and a JPEG of
+  // random pixels is a few kilobytes while its PNG is some fifteen, because
+  // PNG has nothing to say about randomness. (A periodic pattern, which is what
+  // `(i * 7) % 255` is, PNGs to almost nothing: a 48x48 tile of it is 1.3 KB
+  // and there would be no choice left to test.) A phone photograph is over a
+  // piece at every size this page offers, which is the other step's problem.
+  c.width = 64; c.height = 64;
+  const g = c.getContext('2d');
+  const img = g.createImageData(c.width, c.height);
+  for (let i = 0; i < img.data.length; i += 4) {
+    img.data[i] = Math.floor(Math.random() * 256);
+    img.data[i+1] = Math.floor(Math.random() * 256);
+    img.data[i+2] = Math.floor(Math.random() * 256);
+    img.data[i+3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  c.toBlob(function (blob) {
+    sizes[n] = blob.size;
+    dt.items.add(new File([blob], String(n) + '.png', {type: 'image/png'}));
+    if (--left) return;
+    input.files = dt.files;
+    input.dispatchEvent(new Event('change'));
+    done(sizes);
+  }, 'image/png');
+}
+for (let n = 1; n <= 3; n++) picture(n);
+"""
+
+READ_THE_FOLDER = """
+const buttons = [...document.querySelectorAll('#build-sizes button')];
+return {
+  labels: buttons.map(b => b.textContent.replace(/\\s+/g, ' ').trim()),
+  chosen: buttons.filter(b => b.classList.contains('on'))
+                 .map(b => b.querySelector('strong').textContent),
+  says: document.getElementById('picked-build-text').textContent,
+};
+"""
+
+
+def _uploads(state):
+    """The build folders this node has been sent, as they stand right now."""
+    return {one.parent for one in (state.home / "collections").glob("*/images")}
+
+
+def test_a_folder_goes_up_at_the_size_chosen(browser, seller):
+    """The collection box converts on the way up, and the build still reads.
+
+    Two halves, and the second is the one that could break quietly: the sizes
+    are measured here rather than swapped into the input, so a converted
+    picture arrives with a new suffix. A build is keyed by the STEM of its
+    pictures (`collections.read_build`), so `1.jpg` is still item 1 -- and if
+    that ever stopped being true, this upload would come back as "no image for
+    edition 1" rather than inscribe forty small pictures.
+    """
+    browser, base, state, node, made, piece = seller
+    browser.set_script_timeout(180)
+    originals = browser.execute_async_script(MAKE_A_FOLDER)
+    assert all(one > 7628 for one in originals.values()), \
+        f"this art would go up as it stands, so the choice decides nothing: {originals}"
+    before = _uploads(state)
+
+    folder = _sizes(browser, READ_THE_FOLDER)
+    assert [label.split()[0] for label in folder["labels"]] == \
+        ["Large", "Medium", "Small"], folder["labels"]
+    assert folder["chosen"] == ["Medium"], folder["labels"]
+    for label in folder["labels"]:
+        assert "·" in label, label
+    assert "pieces" in folder["labels"][0], folder["labels"]
+    assert "in dust and fees" in folder["says"], folder["says"]
+
+    # Large is not the same number under a different label. At that size these
+    # items are each more than a piece, and a run cannot carry an item that is
+    # more than a piece -- so the page says it here, rather than letting the
+    # node say it one upload later.
+    browser.execute_script("""
+        [...document.querySelectorAll('#build-sizes button')]
+          .filter(b => b.textContent.indexOf('Large') === 0)[0].click();""")
+    time.sleep(0.4)
+    large = browser.execute_script(READ_THE_FOLDER)
+    assert "more than a piece" in large["says"], large["says"]
+
+    browser.execute_script("""
+        [...document.querySelectorAll('#build-sizes button')]
+          .filter(b => b.textContent.indexOf('Small') === 0)[0].click();""")
+    time.sleep(0.4)
+
+    _click(browser, "run-start")
+    _wait(browser, lambda d: "Written down" in _show(d, "news"))
+    news = _show(browser, "news")
+    assert "3 items" in news, news
+
+    (saved,) = _uploads(state) - before
+    names = sorted(p.name for p in (saved / "images").iterdir())
+    assert names == ["1.jpg", "2.jpg", "3.jpg"], names
+    assert (saved / "json" / "_metadata.json").is_file()
+    small = sum(p.stat().st_size for p in (saved / "images").iterdir())
+    assert small < sum(originals.values()) / 2, \
+        f"the folder went up at {small} against {sum(originals.values())}"
+
+
+def test_a_folder_of_nothing_to_re_encode_is_offered_no_sizes(browser, seller):
+    """Three buttons that all did the same thing would be a lie about it."""
+    browser, base, state, node, made, piece = seller
+    browser.set_script_timeout(60)
+    browser.execute_async_script("""
+        const done = arguments[0];
+        const input = document.getElementById('build');
+        input.removeAttribute('webkitdirectory');
+        input.multiple = true;
+        const dt = new DataTransfer();
+        dt.items.add(new File(['[]'], '_metadata.json',
+                              {type: 'application/json'}));
+        dt.items.add(new File(['not a picture'], 'notes.txt',
+                              {type: 'text/plain'}));
+        input.files = dt.files;
+        input.dispatchEvent(new Event('change'));
+        done(true);""")
+    # The trouble row still holds the refusal the listing tests asked for, and
+    # `_wait` reads any line in it as this test going wrong. Nothing here spends
+    # anything to clear it, so it is emptied the way the page's own handlers do.
+    browser.execute_script("const t = document.getElementById('trouble');"
+                           "t.textContent = ''; t.hidden = true;")
+    _wait(browser, lambda d: _show(d, "picked-build", "hidden") is False)
+    said = _show(browser, "picked-build-text")
+    assert "nothing here to re-encode" in said, said
+    assert _show(browser, "build-sizes", "hidden") is True, "buttons for nothing"
