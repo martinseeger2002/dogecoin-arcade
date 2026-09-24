@@ -685,6 +685,10 @@ def test_the_runs_page_is_the_list_of_what_was_written_down(seated, tmp_path):
     assert f'href="/me/run/{left}"' in page.text
     assert f'href="/me/run/{going.json()["run"]}"' in page.text
     assert "stopped" in words, "and it says which one was abandoned"
+    # The book keeps the network because that is what finds the chain again;
+    # the column is for reading, and "regtest" is not what anyone calls it.
+    assert state.messaging.label in words
+    assert ">regtest<" not in page.text, "the chain column prints the id, not the name"
     assert "Nothing written down yet" not in page.text
 
 
