@@ -2,6 +2,7 @@
 {% import "_chains.html" as chains %}
 {% import "_token_confirm.html" as tk %}
 {% block title %}NFTs · DogecoinArcade{% endblock %}
+{% import "_not_ordinals.html" as notord %}
 {% block body %}
 {# Macros first: Jinja does not hoist them, and one
    defined below its first use is undefined there. #}
@@ -86,6 +87,7 @@
 <p class="sub">A file written onto the chain in full, owned by an address.
   The ones <em>you</em> hold, and the way to send them, are on the
   <a href="{{ '/me/nfts' if public else '/wallet/nfts' }}">wallet's NFTs tab</a>.</p>
+{{ notord.pieces() }}
 
 <div class="row" style="margin-bottom:14px">
   <a class="btn ghost small" href="/collections">Collections</a>
