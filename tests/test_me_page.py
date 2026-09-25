@@ -207,6 +207,26 @@ def test_a_new_tab_says_why_it_is_asking(client):
     assert "Signing in opens it" in body
 
 
+def test_the_key_button_goes_when_the_key_is_already_going(client):
+    """Found on the first walk-through of a new account: publishing a profile
+    carries the messaging key with it -- one build in app.py serves both the
+    announce route and the publish -- so an account that had set a picture was
+    still offered "Publish my key", and pressing it bought a second transaction
+    saying the same thirty-eight bytes as the first. The button goes when the
+    chain has the key and while one is on its way there."""
+    for page in ("me.html", "my_contacts.html"):
+        text = pathlib.Path(f"arcade/web/templates/{page}").read_text()
+        line = [s.strip() for s in text.splitlines()
+                if s.strip().startswith('$("announce").hidden')]
+        assert len(line) == 1, page
+        assert "said.announced" in line[0], f"{page} ignores a published key"
+        assert "said.announcing" in line[0], f"{page} ignores one in flight"
+    # And the page says which of the two it is, rather than going quiet.
+    me = pathlib.Path("arcade/web/templates/me.html").read_text()
+    assert 'id="announce-coming"' in me
+    assert '$("announce-coming").hidden = !!said.announced' in me
+
+
 # --- the messages page --------------------------------------------------------
 
 def test_messages_needs_an_account(client):

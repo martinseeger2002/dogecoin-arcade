@@ -528,10 +528,15 @@ form.composer button[type=submit]{background:var(--sent);border-color:var(--sent
   /* One scrolling row rather than three wrapped ones. Nine sections wrapped to
      184px of an 844px screen before any page began, and every feature still to
      come makes that worse -- a strip that scrolls costs the same at nine as at
-     twenty. The edge of the next item is what says there is more. */
+     twenty. The edge of the next item is what says there is more.
+
+     It stops at the page's own edge instead of bleeding to the screen's. The
+     negative right margin that bought the bleed measured the whole page 14px
+     wider than a 390px phone, and a page wider than the phone scrolls sideways
+     whatever else is on it -- which is the thing this whole block is here to
+     stop. */
   nav{margin-left:0;width:100%;gap:2px;flex-wrap:nowrap;overflow-x:auto;
-    scrollbar-width:none;-webkit-overflow-scrolling:touch;
-    margin-right:-14px;padding-right:14px}
+    scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-right:14px}
   nav::-webkit-scrollbar{display:none}
   nav a{padding:9px 11px;font-size:.83rem;min-height:40px;display:flex;
     align-items:center;white-space:nowrap;flex:none}

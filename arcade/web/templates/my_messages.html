@@ -136,6 +136,26 @@ let keys = null, me = null, here = null;   // `here` is the peer key in hex
 // the first message is the one that has to be sent without one.
 const REACHED = {};
 
+/* An address with no name against it. Assembling the conversations in here
+   rather than on the node is what keeps the graph of who writes to whom off
+   a shared machine (D-155), but a byline that is thirty-four characters is
+   not a person (D-138), and "whose address is this?" is a question this node
+   already answers for any page at all -- asking it about the handful of
+   addresses this page is about to print anyway keeps nothing secret that the
+   chain does not already say out loud. Once per address, kept for the tab. */
+const NAMED = {};
+
+async function tagOf(address) {
+  if (!(address in NAMED)) {
+    try {
+      NAMED[address] = (await mail.lookUp(address)).tag || "";
+    } catch (e) {
+      NAMED[address] = "";             // a node with nothing to say says nothing
+    }
+  }
+  return NAMED[address];
+}
+
 /* The same shape the rest of the application prints: a time, not a guess
    at how long ago it was. */
 function when(seconds) {
@@ -213,6 +233,11 @@ function fileBox(file) {
 
 async function drawThreads() {
   const all = await mail.threads();
+  // Names before rows: a list that grows a name under a finger already
+  // reaching for a thread is worse than one that arrives a moment late.
+  await Promise.all(all.map(async (t) => {
+    if (!t.tag && t.address) t.tag = await tagOf(t.address);
+  }));
   $("threads").innerHTML = "";
   $("no-threads").hidden = all.length > 0;
   for (const thread of all) {
@@ -315,6 +340,19 @@ async function peerOf(peer) {
   return thread || null;
 }
 
+/* The header says what is known the moment it is drawn, which for a stranger
+   is an address, and the name goes over it when the node answers. Holding the
+   whole header back for a question that answers nothing about where the words
+   go would leave a page that already has everything it needs to say "them"
+   showing a blank where a person's name will appear a moment later. */
+function paintName(thread) {
+  $("convo-name").textContent = nameOf(thread);
+  if (thread.tag || !thread.address) return;
+  tagOf(thread.address).then((found) => {
+    if (found && here === thread.peer) $("convo-name").textContent = "@" + found;
+  });
+}
+
 async function drawConversation() {
   if (!here) {
     $("talking").hidden = true;
@@ -328,7 +366,7 @@ async function drawConversation() {
 
   const letters = await mail.conversation(here);
   const thread = (await peerOf(here)) || {peer: here, tag: "", address: ""};
-  $("convo-name").textContent = nameOf(thread);
+  paintName(thread);
   $("convo-sub").textContent = thread.address || "";
   $("to-book").textContent = thread.inBook ? "Address book"
                                            : "Add to address book";

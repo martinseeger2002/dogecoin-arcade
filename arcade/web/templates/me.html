@@ -61,6 +61,10 @@
       is what makes you reachable. Nobody can write to somebody who has
       not published one.</p>
     <button class="btn" id="announce">Publish my key</button>
+    <p class="muted" id="announce-coming" hidden style="margin:0">It went out
+      with something else you published, and it is waiting on a block. There is
+      nothing to press &mdash; a second announcement would be a second
+      transaction saying the same thing.</p>
   </div>
 
   {# Overview's "Your messaging address" panel, the same shape: an address
@@ -330,7 +334,16 @@ async function draw() {
     : said.claiming ? "on its way" : "not claimed yet";
   drawWallets(said);
   $("claim-panel").hidden = !!said.tag || !keys;
-  $("announce-panel").hidden = !keys;
+  // This button is not the only way a key gets published. Every profile
+  // publish carries the key with it -- one build in app.py serves both -- so
+  // an account that has set a picture has announced its key without anybody
+  // pressing anything here. A second announcement is a second transaction
+  // saying the same thirty-eight bytes, so out is out: the panel goes when
+  // the chain has the key, the button goes while this node's own broadcast is
+  // still waiting for its block, and the page says which of the two it is.
+  $("announce-panel").hidden = !keys || !!said.announced;
+  $("announce").hidden = !keys || !!said.announced || !!said.announcing;
+  $("announce-coming").hidden = !!said.announced || !said.announcing;
   drawProfile(said);
   $("myaddr").textContent = said.address || "—";
   // "Not published" and "broadcast, waiting on a block" are different

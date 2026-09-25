@@ -133,7 +133,9 @@ async function drawMe() {
                   : said.claiming ? "on its way" : "not published";
   out.className = said.tag ? "pill ok" : "pill warn";
   $("claim").hidden = !!said.tag || !keys;
-  $("announce").hidden = !keys;
+  // Same on this page as on your arcade: a key that is on the chain, or on
+  // its way there inside a profile publish, does not need this button again.
+  $("announce").hidden = !keys || !!said.announced || !!said.announcing;
   // Said rather than left blank: a row of missing buttons explains nothing.
   $("shut").hidden = !!keys;
   return said;

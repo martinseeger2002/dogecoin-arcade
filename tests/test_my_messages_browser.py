@@ -660,3 +660,51 @@ def test_the_first_message_to_a_stranger_reaches_the_chain(browser, served,
     assert browser.find_element(By.ID, "convo-name").text == address
     said = _press_send_and_wait(browser, "first contact")
     assert DEAD_END not in said, said
+
+
+def test_a_stranger_who_claimed_a_name_is_shown_by_it(browser, served,
+                                                     signed_in):
+    """The page had the sender's address and never asked what it meant, so a
+    conversation with somebody who had claimed a name -- the thing that makes
+    them findable -- was headed by thirty-four characters of base58, which is
+    not a person (D-138). It asks now, once per address for the tab, and keeps
+    the address under the name as the thing it checked.
+
+    A node that answers nothing leaves the address standing: this is a
+    convenience reading the public chain, not another way to find somebody.
+    """
+    from arcade.db import Database
+    from arcade.state import install_schema
+
+    base, state = served
+    _page(browser, base)
+    _wipe(browser)
+    address = b58check_encode(111, bytes.fromhex("cd" * 20))
+    db = Database(state.home / f"{state.messaging.network}-ledger.sqlite")
+    install_schema(db)
+    db.conn.execute(
+        "INSERT INTO tag(tag,address,claimed_txid,block_height,position) "
+        "VALUES('soandso',?,?,100,0)", (address, "d" * 64))
+    db.conn.commit()
+    db.close()
+    with state.store() as store:
+        store.add_key_announcement("e" * 64, address, bytes.fromhex(THEM),
+                                   "eeee", 7, int(time.time()), stated=True)
+    assert _seed_store(browser, [
+        {"txid": "9" * 64, "cursor": 40, "when": int(time.time()) - 60,
+         "height": 7, "from_address": address, "sender": THEM, "peer": THEM,
+         "mine": False, "body": _hexed("do you know who I am")},
+    ]) == "ok"
+    _page(browser, base)
+    rows = browser.find_elements(By.CSS_SELECTOR, "a.thread")
+    assert len(rows) == 1
+    assert "@soandso" in rows[0].text, rows[0].text
+
+    browser.find_element(By.CSS_SELECTOR, "a.thread").click()
+    for _ in range(40):
+        if browser.find_element(By.ID, "convo-name").text == "@soandso":
+            break
+        time.sleep(0.25)
+    assert browser.find_element(By.ID, "convo-name").text == "@soandso"
+    assert browser.find_element(By.ID, "convo-sub").text == address, \
+        "and what that name was checked against is still on the page"
