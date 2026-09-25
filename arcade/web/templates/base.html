@@ -444,8 +444,15 @@ a.thread.on{background:var(--code);box-shadow:inset 3px 0 0 var(--accent)}
 .lightbox{display:none;position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.86);
   align-items:center;justify-content:center;flex-direction:column;gap:10px;padding:14px}
 .lightbox.on{display:flex}
+.lightbox-stage{flex:1 1 auto;min-height:0;width:100%;display:flex;align-items:center;
+  justify-content:center;overflow:hidden;touch-action:none}
 .lightbox img{max-width:100%;max-height:calc(100vh - 90px);object-fit:contain;
-  border-radius:8px;background:#fff}
+  border-radius:8px;background:#fff;transform-origin:0 0;will-change:transform;
+  touch-action:none;user-select:none;-webkit-user-select:none;-webkit-user-drag:none;cursor:zoom-in}
+.lightbox.zoomed img{cursor:grab}
+.lightbox-zoom{display:flex;gap:6px}
+.lightbox-zoom button{background:transparent;border:1px solid rgba(255,255,255,.4);color:#fff;
+  border-radius:7px;min-width:40px;min-height:40px;padding:0 10px;font-size:1.05rem;line-height:1}
 .lightbox-bar{display:flex;align-items:center;gap:12px;color:#fff;font-size:.85rem;
   max-width:100%}
 .lightbox-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.85}
@@ -691,9 +698,13 @@ function arcadeOpenImage(src, name, saveHref){
     box.id = 'lightbox';
     box.className = 'lightbox';
     box.innerHTML =
-      '<img alt="">' +
+      '<div class="lightbox-stage"><img alt="" draggable="false"></div>' +
       '<div class="lightbox-bar">' +
         '<span class="lightbox-name"></span>' +
+        '<span class="lightbox-zoom">' +
+          '<button type="button" class="lightbox-out" title="Zoom out">&minus;</button>' +
+          '<button type="button" class="lightbox-in" title="Zoom in">+</button>' +
+        '</span>' +
         '<a class="lightbox-save" download>Save</a>' +
         '<button type="button" class="lightbox-close" title="Close">Close</button>' +
       '</div>';
@@ -701,10 +712,13 @@ function arcadeOpenImage(src, name, saveHref){
     // Anywhere but the picture itself closes it, which is what every phone
     // does and what a finger expects.
     box.addEventListener('click', function (event) {
-      if (event.target === box || event.target.className === 'lightbox-close')
+      if (event.target === box || event.target.className === 'lightbox-stage' ||
+          event.target.className === 'lightbox-close')
         arcadeCloseImage();
     });
+    arcadeZoomable(box);
   }
+  box._zoom.reset();
   box.querySelector('img').src = src;
   box.querySelector('.lightbox-name').textContent = name || '';
   var save = box.querySelector('.lightbox-save');
@@ -719,6 +733,7 @@ function arcadeCloseImage(){
   var box = document.getElementById('lightbox');
   if (!box) return;
   box.classList.remove('on');
+  if (box._zoom) box._zoom.reset();
   box.querySelector('img').src = '';        // stop it holding the bytes
   document.body.style.overflow = '';
   document.removeEventListener('keydown', arcadeLightboxKey);
@@ -726,6 +741,123 @@ function arcadeCloseImage(){
 
 function arcadeLightboxKey(event){
   if (event.key === 'Escape') arcadeCloseImage();
+  var box = document.getElementById('lightbox');
+  if (!box || !box._zoom) return;
+  if (event.key === '+' || event.key === '=') box._zoom.by(1.5);
+  if (event.key === '-') box._zoom.by(1 / 1.5);
+  if (event.key === '0') box._zoom.reset();
+}
+
+// The viewer's own zoom. A picture opened here used to be a page of its own, and
+// the phone's pinch zoomed it; inside the viewer a pinch zoomed the page behind
+// instead (2026-09-25). So the viewer zooms itself: pinch or wheel around
+// the point under the fingers, drag to look around, double-tap to go in and out,
+// and + / - for anybody with neither a trackpad nor two fingers free.
+function arcadeZoomable(box){
+  var stage = box.querySelector('.lightbox-stage');
+  var img = box.querySelector('img');
+  var MAX = 8;
+  var z = {s: 1, x: 0, y: 0};
+  var points = {};            // pointerId -> {x, y}
+  var pinch = null, drag = null, lastTap = 0, moved = false;
+
+  function clamp() {
+    if (z.s <= 1) { z.s = 1; z.x = 0; z.y = 0; return; }
+    // Keep some of the picture on screen: never pan it wholly out of view.
+    var w = img.offsetWidth * z.s, h = img.offsetHeight * z.s;
+    var sw = stage.clientWidth, sh = stage.clientHeight;
+    var bx = img.offsetLeft, by = img.offsetTop;
+    var minX = Math.min(0, sw - bx - w), maxX = Math.max(0, -bx);
+    var minY = Math.min(0, sh - by - h), maxY = Math.max(0, -by);
+    z.x = Math.min(maxX, Math.max(minX, z.x));
+    z.y = Math.min(maxY, Math.max(minY, z.y));
+  }
+  function draw() {
+    clamp();
+    img.style.transform = 'translate(' + z.x + 'px,' + z.y + 'px) scale(' + z.s + ')';
+    box.classList.toggle('zoomed', z.s > 1);
+  }
+  // Zoom to `s`, keeping the point (cx, cy) -- in page pixels -- where it is.
+  function zoomAt(s, cx, cy) {
+    s = Math.min(MAX, Math.max(1, s));
+    var r = img.getBoundingClientRect();
+    var px = (cx - r.left) / z.s, py = (cy - r.top) / z.s;   // point in the picture
+    z.x += (cx - r.left) - px * s;
+    z.y += (cy - r.top) - py * s;
+    z.s = s;
+    draw();
+  }
+  function centre() {
+    var r = stage.getBoundingClientRect();
+    return [r.left + r.width / 2, r.top + r.height / 2];
+  }
+  box._zoom = {
+    reset: function () { z = {s: 1, x: 0, y: 0}; points = {}; pinch = drag = null; draw(); },
+    by: function (f) { var c = centre(); zoomAt(z.s * f, c[0], c[1]); }
+  };
+  box.querySelector('.lightbox-in').onclick = function () { box._zoom.by(1.5); };
+  box.querySelector('.lightbox-out').onclick = function () { box._zoom.by(1 / 1.5); };
+
+  stage.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    zoomAt(z.s * Math.exp(-e.deltaY * 0.002), e.clientX, e.clientY);
+  }, {passive: false});
+
+  img.addEventListener('pointerdown', function (e) {
+    e.preventDefault();
+    img.setPointerCapture(e.pointerId);
+    points[e.pointerId] = {x: e.clientX, y: e.clientY};
+    var ids = Object.keys(points);
+    moved = false;
+    if (ids.length === 2) {
+      var a = points[ids[0]], b = points[ids[1]];
+      pinch = {d: Math.hypot(a.x - b.x, a.y - b.y) || 1, s: z.s};
+      drag = null;
+    } else if (ids.length === 1) {
+      drag = {x: e.clientX, y: e.clientY, zx: z.x, zy: z.y};
+    }
+  });
+  img.addEventListener('pointermove', function (e) {
+    if (!points[e.pointerId]) return;
+    points[e.pointerId] = {x: e.clientX, y: e.clientY};
+    var ids = Object.keys(points);
+    if (pinch && ids.length >= 2) {
+      var a = points[ids[0]], b = points[ids[1]];
+      zoomAt(pinch.s * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d,
+             (a.x + b.x) / 2, (a.y + b.y) / 2);
+      moved = true;
+    } else if (drag && z.s > 1) {
+      if (Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) > 4) moved = true;
+      z.x = drag.zx + e.clientX - drag.x;
+      z.y = drag.zy + e.clientY - drag.y;
+      draw();
+    }
+  });
+  function up(e) {
+    if (!points[e.pointerId]) return;
+    delete points[e.pointerId];
+    var left = Object.keys(points);
+    if (left.length < 2) pinch = null;
+    if (left.length === 1) {            // one finger lifted from a pinch: pan with the other
+      var p = points[left[0]];
+      drag = {x: p.x, y: p.y, zx: z.x, zy: z.y};
+      return;
+    }
+    drag = null;
+    if (left.length || moved || e.type === 'pointercancel') return;
+    // A tap: two in quick succession go in (to where they landed) or back out.
+    var now = Date.now();
+    if (now - lastTap < 320) {
+      lastTap = 0;
+      if (z.s > 1) box._zoom.reset(); else zoomAt(2.5, e.clientX, e.clientY);
+    } else {
+      lastTap = now;
+    }
+  }
+  img.addEventListener('pointerup', up);
+  img.addEventListener('pointercancel', up);
+  // A mouse has no second finger: a double-click does what a double-tap does.
+  img.addEventListener('dblclick', function (e) { e.preventDefault(); });
 }
 
 // The page you are on, brought into view: a strip that scrolls is only honest
