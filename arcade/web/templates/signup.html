@@ -8,12 +8,12 @@
 
 <div class="panel seats">
   {% if free > 0 %}
-    <p class="count"><strong>{{ free }}</strong> of {{ seats }} seats free</p>
+    <p class="count"><strong>{{ free }}</strong> of {{ seats }} seats open</p>
     <p class="muted" style="margin:6px 0 0">Or
       <a href="/clone">run your own arcade</a> &mdash; the program and a
       copy of this node's index are both served from here.</p>
   {% else %}
-    <p class="count"><strong>No seats free.</strong></p>
+    <p class="count"><strong>No open seats.</strong></p>
     <p class="muted">All {{ seats }} are taken. <a href="/clone">Run your
       own</a> &mdash; your name, coins and posts live on the chain, so they
       come with you.</p>

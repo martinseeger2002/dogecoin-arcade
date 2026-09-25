@@ -37,7 +37,7 @@ def test_the_splash_says_how_many_seats_are_left(client):
     app, state = client
     body = app.get("/join", headers=LOCAL).text
     assert f"{accounts.SEATS}" in body
-    assert "seats free" in body
+    assert "seats open" in body
 
 
 def test_the_splash_points_at_running_your_own(client):
@@ -59,7 +59,7 @@ def test_a_full_node_says_so_and_still_explains_the_way_out(client):
     register.seats = 1
     _sign_in(app, SigningKey.generate())
     body = app.get("/join", headers=LOCAL).text
-    assert "No seats free" in body
+    assert "No open seats" in body
     assert 'href="/clone"' in body, "and where else to go, on the same page"
 
 
@@ -68,7 +68,7 @@ def test_the_number_on_the_page_is_counted_not_typed(client):
     state.accounts().seats = 4
     _sign_in(app, SigningKey.generate())
     body = app.get("/join", headers=LOCAL).text
-    assert "<strong>3</strong> of 4 seats free" in body
+    assert "<strong>3</strong> of 4 seats open" in body
 
 
 def test_over_plain_http_on_the_network_the_page_says_why_not(client):
@@ -263,7 +263,7 @@ def test_the_browser_half_is_served_and_derives_the_same_path(client):
 def test_the_overview_shows_the_seat_count_and_links_to_the_splash(client):
     app, _ = client
     body = app.get("/").text
-    assert "seats free" in body and 'href="/join"' in body
+    assert "seats open" in body and 'href="/join"' in body
 
 
 def test_the_splash_renders_with_no_node(client):
@@ -282,5 +282,5 @@ def test_an_operator_can_close_signups(client, tmp_path):
     state.set_setting("seats", 0)
     state._accounts = None
     body = app.get("/join", headers=LOCAL).text
-    assert "No seats free" in body
+    assert "No open seats" in body
     assert _sign_in(app, SigningKey.generate()).status_code == 409
