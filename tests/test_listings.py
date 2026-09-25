@@ -16,7 +16,9 @@ unvalidated POST would otherwise skip straight into a public page. Where a
 transaction has to be judged it is judged by a real pepecoind, and both the
 seller's and the buyer's signatures are made in this file by a throwaway secp:
 the node is never given either key, which is the difference between this book
-and `swap.Offers`.
+and `swap.Offers` -- except in the one test that makes the buyer this node's own
+wallet, because that is what a node does when a leg is answered to it rather than
+offered to it, and it says so where it happens.
 """
 
 import inspect
@@ -26,7 +28,12 @@ from types import SimpleNamespace
 import pytest
 
 from arcade import fees, funding, listings, utxos
+from arcade import inscriptions as I, swap as S
+from arcade.db import Database
+from arcade.encoding import encode_class_c
+from arcade.payload import AnyData
 from arcade.script import b58check_encode, hash160
+from arcade.shopkeeper import Shopkeeper
 from arcade.txbuild import build_raw_tx, op_return_script, p2pkh_script, push
 
 from test_funding import COIN, PARAMS, _pubkey, _sign, db
@@ -162,6 +169,63 @@ def _offered(rpc, db, secret=SELLER, price=COIN, rate=RATE, amount=5.0,
                         funding.SINGLE_ANYONECANPAY).hex()
                   for digest in leg.sighashes]
     return leg, signatures, pubkey, address
+
+
+def _answered(rpc, db, secret=SELLER, price=COIN, rate=RATE,
+              amount=5.0) -> tuple[funding.Leg, list[str], bytes, str]:
+    """`_offered` with the payload naming a real trade instead of shaped bytes.
+
+    A node finishing an answer has to know which piece the leg sells, because it
+    is checking the answer against its own note of what it offered -- and `NAMING`
+    is bytes that merely look like a payload, which is all a signature needs and
+    nothing a reader can use. So the swap here is a real one, written out here
+    rather than imported from the seller's side: a check that reads the answer
+    with the same code that wrote it proves nothing.
+    """
+    pubkey, address = _key(rpc, db, secret, amount)
+    piece, spare = _two_coins(rpc, db, address)[:2]
+    naming = encode_class_c(AnyData(data=I.Swap(
+        give=I.Leg(I.LEG_INSCRIPTION, txid=bytes.fromhex(piece["txid"])),
+        take=I.Leg(I.LEG_COINS, amount=price)).encode()).encode())
+    leg = funding.build_leg(PARAMS, address, piece, coins=price, rate=rate,
+                            payload=naming, coin=spare)
+    signatures = [_sign(secret, bytes.fromhex(digest),
+                        funding.SINGLE_ANYONECANPAY).hex()
+                  for digest in leg.sighashes]
+    return leg, signatures, pubkey, address
+
+
+def _keeper(book, tmp_path) -> tuple[Shopkeeper, S.Offers, SimpleNamespace]:
+    """This node, as the one who asked: its listing book, its offers, its chain.
+
+    A Shopkeeper needs three things to answer a bid, and none of them is a person
+    at a keyboard -- which is the point of a completion that happens while both
+    parties sleep.
+    """
+    offers = S.Offers(tmp_path / "swaps.sqlite")
+    state = SimpleNamespace(listings=book, offers=offers,
+                            bump_generation=lambda: None)
+    return (Shopkeeper(state), offers,
+            SimpleNamespace(network=NETWORK, params=PARAMS, label="Testnet"))
+
+
+def _bid_note(offers, piece: str, buyer: str, owner: str, price: int,
+              bid_id: str = "b1") -> str:
+    """This wallet offered `price` coins for `piece`, and left the usual note.
+
+    The note is the whole of what an answer can be checked against, and it is the
+    same note the operator's route leaves when it makes an offer on the chain
+    (D-049): the piece, who holds it, what this wallet said it would pay, and the
+    address it means to pay it from.
+    """
+    now = time.time()
+    offers.add_bid({"id": bid_id, "network": NETWORK, "direction": "out",
+                    "inscription": piece, "number": 7, "owner": owner,
+                    "buyer": buyer, "peer_pubkey": "",
+                    "take": {"kind": "coins", "amount": f"{price / COIN:.8f}",
+                             "sats": price},
+                    "created": now, "expires": now + 900})
+    return bid_id
 
 
 def _bid(rpc, db, secret, address, listing, rate=RATE) -> funding.Unsigned:
@@ -584,6 +648,113 @@ def test_an_answer_at_a_price_the_buyer_never_offered_is_refused(regtest, db,
         str(refused.value)
     assert book.open_listings(NETWORK) == [], \
         "a refusal still left something on the market"
+
+
+def test_a_leg_answered_to_this_wallet_is_finished_by_its_own_coins(regtest, db,
+                                                                   book,
+                                                                   tmp_path):
+    """What `/account/fill` does with a tab's signatures, done with the node's own.
+
+    The same trade as the test above -- a leg its holder signed and sent to one
+    buyer, checked end to end and never filed -- with the buyer being this node's
+    wallet instead of an account. Three things change and all three are asserted
+    here: the coins come out of `listunspent`, because this node watches its
+    accounts and its @names and not itself; the signing is `signrawtransaction`
+    over bytes whose seller's half is still blank, so what the wallet signs is the
+    preimage a tab would have been shown; and the trade is closed by `paste_leg`,
+    out of a signature this node was handed rather than one it made.
+
+    Hardest is the note. The money moves inside the answer, before any reply is
+    sent, so the bid has to be closed THERE and with the txid: a book left saying
+    "open" over a piece this wallet has already bought is the same lie as one
+    saying "signed" over a message that never went out, and it is why this branch
+    hands the tick nothing to close.
+    """
+    rpc = regtest.rpc
+    leg, signatures, seller_key, seller = _answered(rpc, db, price=COIN)
+    buyer = rpc.call("getnewaddress")
+    rpc.call("sendtoaddress", buyer, 5.0)
+    rpc.call("generate", 1)
+
+    keeper, offers, chain = _keeper(book, tmp_path)
+    _bid_note(offers, leg.inputs[0]["txid"], buyer, seller, COIN)
+    index = SimpleNamespace(open=lambda: Database(tmp_path / "index.sqlite"))
+    question = {"swap": "bid", "swapv": S.PROTOCOL, "id": "b1", "ok": True,
+                "leg": {"raw": leg.raw, "signatures": signatures,
+                        "pubkey": seller_key.hex(), "seller": seller,
+                        "amount": "1"}}
+    # To the answering half directly. This file has no message store, and what
+    # is on trial is what an answer is measured against and what it costs -- how
+    # a sealed row reaches a shopkeeper is `test_shop_web`'s business.
+    answer = keeper._bid(rpc, index, offers, chain, {"txid": "ee" * 32}, question)
+
+    assert answer["ok"] is True and answer["swap"] == "sign", answer
+    assert "bid" not in answer, "the tick must not close what the money closed"
+    filled = answer["txid"]
+    assert filled in rpc.call("getrawmempool"), "the answer was agreed, not sent"
+    assert book.open_listings(NETWORK) == [], \
+        "finishing an answer is not what puts a piece on a page"
+
+    bid = offers.get_bid("b1")
+    assert bid["status"] == "signed" and bid["txid"] == filled, bid
+    assert bid["error"] == "", bid
+
+    rpc.call("generate", 1)
+    landed = _landed(rpc, filled)
+    assert (0, leg.outputs[0][1].hex()) in landed, \
+        "the block does not say what this wallet bought"
+    assert (int(leg.outputs[1][0]), leg.outputs[1][1].hex()) in landed, \
+        "the seller was paid other than what its own signature committed to"
+    assert (leg.fee, p2pkh_script(seller).hex()) in landed, \
+        "the fee the leg reserved was kept back instead of handed over"
+    left = sum(float(u["amount"]) for u in
+               rpc.call("listunspent", 1, 9_999_999, [buyer]))
+    assert 3.9 < left < 4.0, \
+        f"this wallet paid {5.0 - left:.8f} for a piece priced at 1: the price and " \
+        f"the whole fee, and nothing else"
+
+
+def test_a_leg_that_answers_another_offer_is_not_finished(regtest, db, book,
+                                                          tmp_path):
+    """The note of what this wallet offered is what an answer is measured against.
+
+    A leg arriving in a message says what it says: `check_leg` derives its price
+    from its own numbers and its own bytes name the piece it sells. Neither of
+    those is what this node asked for, and neither is refuted by anything but the
+    bid note -- which is the check an account's `/account/fill` has to hand to the
+    tab that holds its own memory. Both refusals below have to land before a coin
+    of this wallet's is put into a transaction, because what comes after is a
+    broadcast, and a node cannot un-broadcast the price it was talked into.
+    """
+    rpc = regtest.rpc
+    leg, signatures, seller_key, seller = _answered(rpc, db, price=COIN)
+    buyer = rpc.call("getnewaddress")
+    rpc.call("sendtoaddress", buyer, 5.0)
+    rpc.call("generate", 1)
+    keeper, offers, chain = _keeper(book, tmp_path)
+    index = SimpleNamespace(open=lambda: Database(tmp_path / "index.sqlite"))
+    piece = leg.inputs[0]["txid"]
+
+    def answer(bid_id: str) -> dict | None:
+        return keeper._bid(rpc, index, offers, chain, {"txid": "ee" * 32}, {
+            "swap": "bid", "swapv": S.PROTOCOL, "id": bid_id, "ok": True,
+            "leg": {"raw": leg.raw, "signatures": signatures,
+                    "pubkey": seller_key.hex(), "seller": seller,
+                    "amount": "1"}})
+
+    _bid_note(offers, piece, buyer, seller, 2 * COIN, bid_id="b1")
+    assert answer("b1") is None
+    refused = offers.get_bid("b1")
+    assert refused["status"] == "failed" and "price" in refused["error"], refused
+
+    _bid_note(offers, "ab" * 32, buyer, seller, COIN, bid_id="b2")
+    assert answer("b2") is None
+    refused = offers.get_bid("b2")
+    assert refused["status"] == "failed", refused
+    assert "not the item that was offered for" in refused["error"], refused
+
+    assert rpc.call("getrawmempool") == [], "a refusal spent this wallet anyway"
+    assert book.open_listings(NETWORK) == []
 
 
 def test_a_listing_whose_second_coin_is_spent_is_refused(regtest, db, book):

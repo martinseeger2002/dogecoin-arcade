@@ -23,6 +23,7 @@ be asked to complete.
 """
 
 import base64
+import contextlib
 import pathlib
 import sys
 
@@ -34,7 +35,7 @@ from test_funding import _pubkey, _sign                              # noqa: E40
 from test_web import app_state, client                               # noqa: F401,E402
 
 from arcade import encoding, fees, funding, inscriptions as I        # noqa: E402
-from arcade import payload as P                                      # noqa: E402
+from arcade import payload as P, utxos                               # noqa: E402
 from arcade.script import b58check_encode, hash160                   # noqa: E402
 
 COIN = 100_000_000
@@ -310,3 +311,85 @@ def test_showing_a_leg_costs_nothing_and_filing_one_is_counted(shop):
     assert "not taking listings" in refused.json()["detail"]
     assert state.listings.for_piece(
         said["inputs"][0]["txid"], int(said["inputs"][0]["vout"])) == []
+
+
+def _balance(state, address: str) -> int:
+    """What an address can spend, out of the index rather than the wallet.
+
+    The node's `listunspent` answers about its own wallet, and these addresses
+    are precisely the ones it holds no key for. The watched-coin index is the
+    honest place to ask, and it is how the node builds a transaction for them.
+    """
+    index = state.token_index(state.messaging)
+    with contextlib.closing(index.open()) as db:
+        return utxos.balance(db, address)
+
+
+def test_a_leg_answered_to_one_account_completes_without_a_listing(shop):
+    """A leg sent to one buyer is a trade, not a listing -- and it still fills.
+
+    The seller builds the leg exactly as it would for a shelf, signs the two
+    SINGLE|ANYONECANPAY signatures, and hands the bytes and those signatures to
+    one buyer instead of handing them to `Listings.register`. Filed, that leg
+    would put one buyer's price on a public page for every stranger to take, so
+    `record=False` runs every check and writes nothing at all, and the buyer's
+    half is finished with `paste_leg` out of a row that exists for one request.
+
+    Asserted hardest is that this is the SAME trade `/account/buy` finishes. The
+    piece moves, and -- the part that was silently broken once before, when a
+    completion kept back the fee a leg reserves and the engine read the seller as
+    paid below its own price -- the index calls the swap VALID. Asserted just as
+    hard is the difference: the listing book stays empty, before and after.
+    """
+    app, state, rpc = shop
+    seller, seller_key, seller_addr = _seated(app, state, rpc, 11)
+    piece = _inscribed(app, state, rpc, seller, seller_key,
+                       "answered, not listed")
+    asked = app.post("/account/list",
+                     json={"piece": piece, "amount": "1"}).json()
+    signing = {"raw": asked["raw"],
+               "signatures": [_sign(seller, bytes.fromhex(d),
+                                    funding.SINGLE_ANYONECANPAY).hex()
+                              for d in asked["sighashes"]],
+               "pubkey": seller_key.hex(), "seller": seller_addr,
+               "amount": "1"}
+
+    buyer, buyer_key, buyer_addr = _seated(app, state, rpc, 12)
+    held, owed = _balance(state, seller_addr), _balance(state, buyer_addr)
+
+    answered = app.post("/account/fill", json={"leg": signing})
+    assert answered.status_code == 200, answered.text
+    said = answered.json()
+    assert said["answered"] is True and said["price"] == COIN
+    assert said["seller"] == seller_addr, "whose piece this is, from the leg"
+    assert said["signed_from"] == 2, \
+        "the piece and the coin under its second signature are the seller's"
+    assert {coin["address"] for coin in said["inputs"][2:]} == {buyer_addr}
+    assert state.listings.open_listings("regtest") == [], "nothing advertised"
+    assert rpc.call("getrawmempool") == [], "and nothing spent"
+
+    done = app.post("/account/fill/sign", json={
+        "leg": signing, "raw": said["raw"], "pubkey": buyer_key.hex(),
+        "signatures": [_sign(buyer, bytes.fromhex(d)).hex()
+                       for d in said["sighashes"]]})
+    assert done.status_code == 200, done.text
+    assert done.json()["txid"] in rpc.call("getrawmempool")
+    assert done.json()["price"] == COIN
+    assert state.listings.open_listings("regtest") == [], \
+        "finishing a trade is not what turns it into a listing"
+
+    rpc.call("generate", 1)
+    _catch_up(state, rpc)
+    index = state.token_index(state.messaging)
+    with contextlib.closing(index.open()) as db:
+        verdict = db.conn.execute(
+            "SELECT valid, invalid_reason FROM arcade_tx WHERE txid = ?",
+            (done.json()["txid"],)).fetchone()
+        owner = db.conn.execute(
+            "SELECT owner FROM inscription WHERE txid = ?", (piece,)).fetchone()
+    assert verdict["valid"] == 1, verdict["invalid_reason"]
+    assert owner["owner"] == buyer_addr, "the piece moved"
+    assert _balance(state, seller_addr) == held + COIN, \
+        "the seller nets the price to the satoshi, reservation handed back"
+    assert owed - COIN - COIN // 10 < _balance(state, buyer_addr) < owed - COIN, \
+        "the buyer pays the price and the whole fee, §1d"

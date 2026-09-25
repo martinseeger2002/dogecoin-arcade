@@ -210,6 +210,7 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # this path, and an account that made the listing is refused at
                # both halves.
                "/account/buy", "/account/buy/sign",
+               "/account/fill", "/account/fill/sign",
                # a shop, bought by an account rather than by this wallet. The
                # door offers three transactions and broadcasts the two messages
                # out of them; the trade itself is not broadcast here at all,

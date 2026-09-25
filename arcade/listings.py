@@ -52,7 +52,7 @@ from typing import Any, Iterator
 
 from . import fees
 from .db import add_missing_columns
-from .funding import SINGLE_ANYONECANPAY, Leg, swap_fee
+from .funding import SINGLE_ANYONECANPAY, Leg, build_partial, swap_fee
 from .script import OP_RETURN, b58check_decode, hash160, iter_pushes
 from .txbuild import op_return_script, p2pkh_script, push, varint
 
@@ -63,6 +63,21 @@ COIN = 100_000_000
 #: how long this node keeps advertising it. A seller who wants a deadline sells
 #: by spending the piece.
 LISTED_FOR = 24 * 60 * 60
+
+#: How long a leg that was ANSWERED rather than advertised stays completable.
+#: `LISTED_FOR` would be the wrong number to hand it, because it measures a thing
+#: that never happens to an answered leg: this node putting the piece in front of
+#: strangers and then stopping. Nobody was shown an answered leg, and
+#: `expire_due` never sees one, because it was never written down. The leg's real
+#: deadline is the piece being spent -- which `paste_leg` asks the chain about,
+#: every time, and which is the only way either side can cancel -- so this is
+#: only the backstop for a completion that arrives a year after the answer, by
+#: which time the fee floor and the dust rules have moved and the arithmetic
+#: below is being done against numbers from another release. A completion that
+#: reaches this says "expired" about a listing that never existed, which is a
+#: sentence nobody should have to read; if it ever is read, the answer is that
+#: the trade is old, not that anybody unsold the piece.
+ANSWERED_FOR = 365 * 24 * 60 * 60
 
 #: What a listing is worth completing at, per virtual kB. A leg reserves its
 #: own fee when it is signed, so this is the floor the finished swap has to
@@ -735,6 +750,118 @@ def paste_leg(rpc: Any, listing: dict, unsigned: Any, signatures: list[str],
             f"that makes the finished transaction bigger than the listing "
             f"expected has to pay the difference out of its own change")
     return raw
+
+
+def leg_terms(listing: dict) -> tuple[list, list]:
+    """What a leg's own signatures demand of the transaction that finishes it.
+
+    Its outputs, first and in their own order, and the outpoints that carry them.
+    `funding.build_partial` puts the buyer's coins behind those and its change
+    after, and `paste_leg` refuses the result if either of the two moved by a
+    satoshi -- so this is the one place that has to be right about what a
+    completion looks like, and it has to be the SAME place for the two buyers
+    there are: one signing in a browser tab over coins this node holds no key
+    for, one paying out of this node's own wallet. Two readings of it, drifting by
+    one output, is a trade one of them agreed to and the other did not.
+
+    The fee the leg reserved comes back as a payment to the seller, which is the
+    one term easy to get wrong and impossible to fudge. A leg fixes its seller's
+    output the moment it signs and takes a fee out of that output in case nobody
+    ever pays one; whoever completes the trade knows what a block actually costs
+    and pays all of it. The engine measures a coin leg by what the receiving side
+    NETS (`tx.paid_to` is outputs minus inputs at that address), so a completion
+    that kept the reservation would leave the seller a little under its own price
+    and the index would call the whole swap invalid.
+    """
+    naming = bytes.fromhex(str(listing.get("payload") or ""))
+    outputs = ([(0, op_return_script(naming))] if naming else []) + [
+        (int(listing["output"]["value"]),
+         bytes.fromhex(listing["output"]["script"]))]
+    reserved = int(listing.get("fee") or 0)
+    if reserved:
+        outputs.append((reserved, p2pkh_script(listing["owner"])))
+    foreign = [listing["input"]]
+    if listing.get("coin"):
+        foreign.append(listing["coin"])
+    return foreign, outputs
+
+
+def named_swap(payload: bytes) -> Any:
+    """The trade a listing's own bytes promise, or None when they promise none.
+
+    Read from the payload and never from the row's `input`, because that input is
+    a COIN -- the seller's own, whose signature is what stands over the bytes --
+    while the piece that changes hands is the inscription those bytes name. For a
+    piece that arrived by transfer those are two different transactions, and a
+    reader that asked the coin would describe the seller's change instead of the
+    sale.
+    """
+    from . import inscriptions as inscriptionlib, payload as P
+    from .encoding import decode_class_c
+
+    body = decode_class_c(bytes(payload))
+    if body is None:
+        return None
+    try:
+        found = inscriptionlib.parse(P.decode(body).data)
+    except (P.PayloadError, inscriptionlib.InscriptionError):
+        return None
+    return found if isinstance(found, inscriptionlib.Swap) else None
+
+
+def wallet_completes(rpc: Any, db: Any, params: Any, listing: dict,
+                     address: str, rate: int) -> str:
+    """Finish a leg with a wallet this node DOES hold the keys to, and send it.
+
+    The same trade `/account/buy` offers an account, with the signing step done
+    here instead of in a tab: the buyer's half is built by
+    `funding.build_partial` -- which is what that function was written for, a
+    transaction whose first inputs belong to somebody else -- signed by this
+    node's wallet, and finished by `paste_leg`, which is what says the difference
+    between a node that signs a transaction and a node that completes one. The
+    wallet is asked to sign bytes whose seller's scriptSigs are still blank, so
+    what it signs is the same preimage a tab would have been shown, and its
+    signatures are read back out of the result rather than trusted from the
+    `complete` flag: `complete` is false here whatever happens, because the
+    seller's half was never this wallet's to sign.
+
+    The coins come from `listunspent` and not from the index. This node watches
+    the accounts on itself and the @names it can see, and not its own wallet, so
+    the index has nothing to say about `address` -- and the wallet's own answer is
+    the better one anyway, because it leaves out what the pool has already spent,
+    which is the same reason `swap.build` asks the wallet and not the index.
+    """
+    foreign, outputs = leg_terms(listing)
+    coins = [{"txid": str(u["txid"]), "vout": int(u["vout"]),
+              "value": int(round(float(u["amount"]) * COIN)),
+              "address": str(u.get("address") or address)}
+             for u in (rpc.call("listunspent", 1, 9_999_999, [address]) or [])
+             if u.get("spendable", True)]
+    unsigned = build_partial(db, params, address, foreign, outputs, rate=rate,
+                             extra=coins)
+    signed = rpc.call("signrawtransaction", unsigned.raw)
+    decoded = rpc.call("decoderawtransaction", signed["hex"])
+    signatures: list[str] = []
+    pubkey = b""
+    for n, spent in enumerate((decoded.get("vin") or [])[unsigned.signed_from:]):
+        pushes = iter_pushes(bytes.fromhex(str((spent.get("scriptSig") or {})
+                                               .get("hex") or "")))
+        if len(pushes) != 2:
+            raise ListingError(
+                f"this wallet put nothing on input {unsigned.signed_from + n}, so "
+                f"it holds no key for {address} and cannot pay for this piece")
+        if not signatures:
+            pubkey = pushes[1]
+        elif pushes[1] != pubkey:
+            raise ListingError(
+                f"this wallet signed its own inputs with two different keys, and "
+                f"a transaction that cannot say which key paid is not one to send")
+        signatures.append(pushes[0].hex())
+    if hash160(pubkey) != b58check_decode(address)[1]:
+        raise ListingError(
+            f"the key this wallet signed with is not the key behind {address}")
+    raw = paste_leg(rpc, listing, unsigned, signatures, pubkey)
+    return str(rpc.call("sendrawtransaction", raw))
 
 
 def _combine(leg: dict, unsigned: Any, signatures: list[str],

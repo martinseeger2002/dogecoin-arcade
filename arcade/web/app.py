@@ -8079,17 +8079,13 @@ def create_app(state: AppState) -> FastAPI:
         is the inscription the payload names. For a piece that arrived by
         transfer those are two different transactions, and a reader that asked
         the coin would be describing the seller's change.
-        """
-        from ..encoding import decode_class_c
 
-        body = decode_class_c(bytes(naming))
-        if body is None:
-            return None
-        try:
-            swap = inscriptionlib.parse(P.decode(body).data)
-        except (P.PayloadError, inscriptionlib.InscriptionError):
-            return None
-        return swap if isinstance(swap, inscriptionlib.Swap) else None
+        The reading itself is `listings.named_swap`, which the node's own
+        completion of a leg reads the same way: which piece a leg sells is one
+        fact, and the page and the wallet cannot be allowed to answer it
+        separately.
+        """
+        return listingslib.named_swap(naming)
 
     def _listing_words(naming: bytes, chain) -> str:
         """What a filed listing's own bytes say it sells, in words.
@@ -8264,7 +8260,21 @@ def create_app(state: AppState) -> FastAPI:
                                       f":{listing['input']['vout']}"})
 
     def _listing_to_fill(account, chain, address: str, listing_id: str) -> tuple:
-        """A listing, and the transaction this account's signature completes.
+        """A listing this node filed, and the transaction that completes it.
+
+        The row out of the book, and then the whole of `_fill_terms`, which is
+        where the trade is decided -- and which an answered leg that was never
+        filed reaches the same way.
+        """
+        listing = state.listings.get(str(listing_id))
+        if listing is None or listing["network"] != chain.network:
+            raise ValueError(
+                "no such listing on this chain -- it may have expired, been "
+                "filled, or been made over on the other one")
+        return _fill_terms(account, chain, address, listing)
+
+    def _fill_terms(account, chain, address: str, listing: dict) -> tuple:
+        """A leg's trade, and the transaction this account's signature completes.
 
         Both halves of a buy come through here, which is why it is written
         once: the request that shows a buyer the trade and the request that
@@ -8281,43 +8291,28 @@ def create_app(state: AppState) -> FastAPI:
         (`swap.py:877`), and it would fail by itself anyway: `paste_leg` will
         not take a buyer input that pays to the seller, and in a self-fill
         every buyer input does.
+
+        The row comes from one of two places, which is why this is a function of
+        a row and not of an id. Most listings are advertised: filed in the book,
+        shown on a page, taken by whoever reads it. A leg can also be answered to
+        one buyer and handed over in a message, and then `Listings.register`
+        checks every term of it and writes nothing down, because filing it would
+        put one buyer's arrangement on a public page for every stranger to take.
+        What the trade is does not depend on which of those happened, so neither
+        does any of the arithmetic below.
         """
-        listing = state.listings.get(str(listing_id))
-        if listing is None or listing["network"] != chain.network:
-            raise ValueError(
-                "no such listing on this chain -- it may have expired, been "
-                "filled, or been made over on the other one")
         if listing["owner"] == address:
             raise swaplib.SwapError("a wallet cannot fill its own order")
 
         index = state.token_index(chain)
         naming = bytes.fromhex(str(listing["payload"] or ""))
-        paid = (int(listing["output"]["value"]),
-                bytes.fromhex(listing["output"]["script"]))
-        # The seller's outputs go in first and untouched, because that is what
-        # its two signatures stand over: the bytes it sells, and the payment it
-        # named. `build_partial` puts the buyer's change behind them and never
-        # touches either, and `paste_leg` refuses the transaction if the two
-        # have moved by a satoshi.
-        outputs = ([(0, txbuild.op_return_script(naming))]
-                   if naming else []) + [paid]
-        # The reservation comes back. A leg fixes its seller's output the moment
-        # it signs, so it takes a fee out of that output in case nobody else
-        # ever pays one; whoever completes the listing knows the block's real
-        # price and pays all of it, out of the buyer's change. That is what the
-        # engine measures it by: a coin leg is checked against what the receiving
-        # side NETS (`tx.paid_to` is outputs minus inputs at that address), so a
-        # swap that kept the reservation would leave the seller a little under
-        # its own price and the index would call the whole trade invalid -- which
-        # is exactly how `swap.build` arrives at the same shape for a swap the
-        # node signs: the seller's input back plus what it is owed, the buyer
-        # paying the fee because the buyer is the one asking (§1d).
-        reserved = int(listing["fee"])
-        if reserved:
-            outputs.append((reserved, txbuild.p2pkh_script(listing["owner"])))
-        foreign = [listing["input"]]
-        if listing.get("coin"):
-            foreign.append(listing["coin"])
+        # What the seller's two signatures stand over -- its bytes at output 0,
+        # its payment at the next, its own coins in front, and the fee it
+        # reserved paid back -- is `listings.leg_terms`, and it is that precisely
+        # because a node finishing a leg out of its own wallet has to arrive at
+        # the identical transaction. Two readings of one trade, one per buyer, is
+        # how two buyers end up with two trades.
+        foreign, outputs = listingslib.leg_terms(listing)
         # What changes hands is named by those bytes, never by input 0: a
         # listing's input is the coin the seller spent to sign them, and for a
         # piece that arrived by transfer that coin comes from a different
@@ -8475,6 +8470,181 @@ def create_app(state: AppState) -> FastAPI:
             # row left `open` would be offered to the next buyer as though it
             # were still for sale.
             state.listings.close(listing["id"], "filled", spent_by=txid)
+            _flights.add(account.pubkey, txid, unsigned, address,
+                         network=chain.network)
+            state.bump_generation()
+            return JSONResponse({"txid": txid, "what": what,
+                                 "chain": chain.network,
+                                 "seller": listing["owner"],
+                                 "price": int(listing["price"])})
+        finally:
+            state.end_send(lane)
+
+    def _leg_answered(said: dict, chain) -> dict:
+        """A leg that arrived by message: checked end to end, left unwritten.
+
+        The seller's address, its public key and its price all come in through
+        this request, and none of them is taken on faith. `Listings.register`
+        refuses a leg whose key does not hash to the address it is listed from,
+        refuses one that pays somewhere other than that address, and derives the
+        price from the piece, the coin behind the second signature and the fee
+        the leg's own numbers imply -- then refuses the row again if the two
+        prices ever disagree.
+
+        The one thing it cannot check is whether this was the price THIS buyer
+        asked for. The tab that sent the offer is the only place that knows, so
+        the price comes back on the response to be compared there, before
+        anything is signed. The operator's version of this completion does have
+        a note to compare against, and `shopkeeper._bid` says "that is not the
+        price that was offered" when the two disagree.
+
+        `seconds` is `ANSWERED_FOR`, whose own comment gives the reason: an
+        answered leg is never advertised and never swept by `expire_due`, so the
+        deadline that means anything is the piece being spent -- which
+        `paste_leg` asks the chain about, every single time.
+
+        The leg travels as one object for the same reason it travels at all: it
+        is one thing somebody signed. It also keeps the request around it the
+        same shape as `/account/buy/sign`'s, down to the field names -- and those
+        two cannot share a `signatures` field anyway, because one list is the
+        seller's, over the leg's outputs, and the other is this account's, over
+        its own coins. Mixing them up would be a silent mixup, which is the one
+        kind worth designing out.
+        """
+        leg = said.get("leg")
+        leg = leg if isinstance(leg, dict) else {}
+        with chain.rpc() as rpc:
+            return state.listings.register(
+                rpc, raw=str(leg.get("raw") or ""),
+                signatures=[str(s) for s in (leg.get("signatures") or [])],
+                pubkey=bytes.fromhex(str(leg.get("pubkey") or "")),
+                network=chain.network, owner=str(leg.get("seller") or ""),
+                price=parse_amount(str(leg.get("amount", "")), True),
+                seconds=listingslib.ANSWERED_FOR, record=False)
+
+    @app.post("/account/fill")
+    def account_fill(request: Request, payload: Any = Body(None)):
+        """Show an account the transaction that completes a leg sent to it.
+
+        The other half of a listing is `/account/buy`, and this is that same
+        trade arrived at from the other side: not a row this node is advertising,
+        but a leg some particular seller answered to this particular buyer and
+        handed over in a message, its signatures beside it rather than inside it.
+        It is deliberately not filed -- a filed row puts the price of a private
+        arrangement on a public page for any stranger to take -- so every check
+        `Listings.register` has ever run still runs, and nothing is written.
+
+        Nothing is spent here, and nothing is kept. The leg stays in the tab that
+        holds the message it came in, which is the same rule `/account/buy`
+        follows with a row it did write: the second request decides the trade
+        again from the leg's bytes and the chain, so a tab that reloaded still
+        finishes the same transaction, and a node that restarted in between has
+        lost nothing that mattered.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        try:
+            listing, unsigned, _ = _fill_terms(
+                account, chain, address, _leg_answered(said, chain))
+        except (fundinglib.FundingError, listingslib.ListingError,
+                swaplib.SwapError, AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        # No `listing` in the answer, on purpose. This row has an id, and it
+        # means nothing outside this one request: posted to `/account/buy` it
+        # would come back as "no such listing on this chain", which is true and
+        # useless. `answered` says what it is instead, and the seller's own
+        # address is what a page has to hold onto.
+        return JSONResponse({"chain": chain.network, "answered": True,
+                             "seller": listing["owner"],
+                             "price": int(listing["price"]),
+                             **unsigned.as_json()})
+
+    @app.post("/account/fill/sign")
+    def account_fill_sign(request: Request, payload: Any = Body(None)):
+        """Paste this account's signatures onto a leg it was handed, and send it.
+
+        The guards are `/account/buy/sign`'s, word for word, and they have to
+        stay that way: a buyer told one sentence about a listing and a different
+        one about an answer is being told two things about one transaction. The
+        byte comparison is the one that matters most here, because the leg came
+        through a message rather than off a page this node drew -- the transaction
+        this node would build now is compared against the bytes that were signed,
+        and a mismatch says so instead of carrying signatures that do not fit to
+        the network and taking back a rejection code nobody reading it can act on.
+
+        What differs is the end. There is no row to mark `filled`, because there
+        was no row: the transaction is the record, and the leg stops working the
+        moment the piece is spent, which was the only cancellation either side
+        ever had -- advertised or answered.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        lane = f"account {account.pubkey}"
+        if not state.begin_send(lane):
+            return JSONResponse(
+                {"detail": "one of your transactions is still going. Wait for "
+                           "it to be broadcast and try again -- signing two at "
+                           "once from one wallet spends the same coin twice."},
+                status_code=409)
+        try:
+            try:
+                listing, unsigned, what = _fill_terms(
+                    account, chain, address, _leg_answered(said, chain))
+            except (fundinglib.FundingError, listingslib.ListingError,
+                    swaplib.SwapError, AmountError, ValueError) as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=400)
+            try:
+                _real_coins_gate(account, chain)
+                if str(said.get("raw") or "") != unsigned.raw:
+                    return JSONResponse(
+                        {"detail": "this node would build you a different "
+                                   "transaction now than the one you signed -- "
+                                   "a block landed, or one of your other "
+                                   "transactions went out. Ask for another one "
+                                   "and sign that; a signature over the old "
+                                   "bytes would buy something you never "
+                                   "agreed to."}, status_code=409)
+                signatures = [str(x) for x in (said.get("signatures") or [])]
+                pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
+                if not pubkey:
+                    raise ValueError("this request names no public key, and a "
+                                     "transaction nobody can trace to a key is "
+                                     "not a transaction this node will finish")
+                if hash160(pubkey) != b58check_decode(address)[1]:
+                    raise ValueError(
+                        "that public key is not the key behind this account's "
+                        f"{chain.label.lower()} address, so pasting it would "
+                        "write a sale one wallet paid and another is named on")
+                with chain.rpc() as rpc:
+                    raw = listingslib.paste_leg(rpc, listing, unsigned,
+                                                signatures, pubkey)
+                _quota(account, "send", nbytes=len(bytes.fromhex(raw)))
+                with chain.rpc() as rpc:
+                    txid = rpc.call("sendrawtransaction", raw)
+            except (listingslib.ListingError, fundinglib.FundingError,
+                    swaplib.SwapError, AmountError, ValueError) as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=400)
+            except Exception as exc:
+                return JSONResponse({"detail": f"the node refused it: {exc}"},
+                                    status_code=502)
             _flights.add(account.pubkey, txid, unsigned, address,
                          network=chain.network)
             state.bump_generation()

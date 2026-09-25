@@ -22,7 +22,9 @@ Runs from the block watcher's thread (web/watcher.py), a few seconds apart:
      its own cursor (swap.Offers.cursor);
   3. answers each `{"swap": "offer"}` with an offer or a refusal, and each
      `{"swap": "sign"}` by countersigning and broadcasting, or refusing;
-  4. moves the cursor past what it read.
+  4. answers an ANSWER to this wallet's own offer that arrives as a signed leg
+     by finishing that trade out of its own coins (`_fill_a_leg`), or refuses it;
+  5. moves the cursor past what it read.
 
 Every answer is a node-to-node message sealed to the key the question came
 from, carrying `re` (the txid of the question) and the offer id, so the
@@ -34,11 +36,15 @@ Testnet only: node-to-node messages are (D-010), and so, therefore, is this.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import time
 from typing import Any
 
+from . import fees
+from . import funding as fundinglib
+from . import listings as listingslib
 from . import swap as swaplib
 from .messaging import api as apilib
 from .messaging.keys import fingerprint_of
@@ -600,6 +606,11 @@ class Shopkeeper:
                              error=str(question.get("error") or "refused"))
             state.bump_generation()
             return None
+        if isinstance(question.get("leg"), dict):
+            # Answered with the holder's half already signed, rather than with an
+            # offer this node would countersign. Different work, and the
+            # difference is worth a method of its own.
+            return self._fill_a_leg(rpc, index, offers, chain, row, question, mine)
         reply = {"swap": "sign", "swapv": swaplib.PROTOCOL}
         try:
             offer = swaplib.check_offer(
@@ -624,6 +635,83 @@ class Shopkeeper:
         # bid is closed by the caller once it has.
         reply.update(offer=offer["id"], hex=built.hex, bid=bid_id)
         return reply
+
+    def _fill_a_leg(self, rpc: Any, index: Any, offers: Any, chain: Any,
+                    row: Any, question: dict, mine: dict) -> dict | None:
+        """Finish a trade whose other half was handed over instead of offered.
+
+        The usual answer to an offer this wallet made is an OFFER: the holder
+        signs nothing, and this node countersigns its own half, which it can
+        because it holds the one key that half needs -- its own. A holder can also
+        answer with a LEG: it signed the two SINGLE|ANYONECANPAY signatures
+        itself and sent them, needing nothing from this wallet but its coins, and
+        what finishes the trade is a signature this node was GIVEN and pastes in
+        (`listings.wallet_completes`). That difference is the argument the whole
+        multi-user design rests on, so it is a method of its own and not one more
+        arm of the one above.
+
+        Everything `_bid` checks of an offer it checks of this, from the same
+        note: that the answer came from the wallet that holds the piece, that it
+        is the piece that was asked about, and that it is the price that was
+        offered. The price is the check an account's `/account/fill` cannot run --
+        a node has a note of what it offered, where a tab has to remember for
+        itself -- and it matters most here, because this branch finishes the trade
+        and broadcasts it in one move with no person looking at anything in
+        between. What it refuses on is what the note says, and nothing else.
+
+        So the bid is closed HERE, with the txid, and the reply carries no `bid`
+        for the caller to close afterwards. The money moves inside this method: a
+        note left open over a piece that is already bought is the same lie as one
+        reading "signed" over a reply that never went out, only backwards.
+        """
+        from .ledger import AmountError, parse_amount
+
+        state = self.state
+        bid_id = str(question.get("id") or "")
+        said = question["leg"]
+        try:
+            owed = mine.get("take") or {}
+            if str(owed.get("kind") or "coins") != "coins":
+                raise swaplib.SwapError(
+                    f"this wallet offered {owed.get('kind')} for it, and a leg pays "
+                    f"in coins. Answer with an offer and this wallet will sign one")
+            price = parse_amount(str(said.get("amount", "")), True)
+            if not _same_price({"kind": "coins", "sats": price}, owed):
+                raise swaplib.SwapError("that is not the price that was offered")
+            listing = state.listings.register(
+                rpc, raw=str(said.get("raw") or ""),
+                signatures=[str(s) for s in (said.get("signatures") or [])],
+                pubkey=bytes.fromhex(str(said.get("pubkey") or "")),
+                network=chain.network, owner=str(said.get("seller") or ""),
+                price=price, seconds=listingslib.ANSWERED_FOR, record=False)
+            if listing["owner"] != mine["owner"]:
+                raise swaplib.SwapError("that answer is not from the wallet that "
+                                        "holds it")
+            named = listingslib.named_swap(
+                bytes.fromhex(str(listing.get("payload") or "")))
+            if named is None or named.give.txid.hex() != mine["inscription"]:
+                raise swaplib.SwapError("that is not the item that was offered for")
+            with contextlib.closing(index.open()) as db:
+                txid = listingslib.wallet_completes(
+                    rpc, db, chain.params, listing, str(mine.get("buyer") or ""),
+                    fees.MIN_FEE_PER_KB)
+        except (listingslib.ListingError, fundinglib.FundingError, AmountError,
+                swaplib.SwapError, ValueError) as exc:
+            offers.close_bid(bid_id, "failed", error=str(exc))
+            state.bump_generation()
+            return None
+        except Exception as exc:
+            # The answer was on the terms and this wallet still could not pay:
+            # its own coins, a locked output, a node that refused the broadcast.
+            log.warning("could not finish an answered leg: %s", exc, exc_info=True)
+            offers.close_bid(bid_id, "failed",
+                             error=f"this wallet could not pay for it: {exc}")
+            state.bump_generation()
+            return None
+        offers.close_bid(bid_id, "signed", txid=txid)
+        state.bump_generation()
+        return {"swap": "sign", "swapv": swaplib.PROTOCOL, "re": row["txid"],
+                "ok": True, "txid": txid}
 
     def _fill(self, rpc: Any, index: Any, offers: Any, chain: Any, row: Any,
               question: dict) -> dict | None:
