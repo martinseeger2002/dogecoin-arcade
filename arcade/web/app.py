@@ -561,6 +561,12 @@ def create_app(state: AppState) -> FastAPI:
         needs it once shutdown has begun. Written without `await` so the guard
         that keeps the routes synchronous still reads cleanly.
         """
+        try:                                  # mail for phones already subscribed
+            push = state.push()
+            if push is not None and push.subscribed():
+                _watch_for_mail()
+        except Exception as exc:              # noqa: BLE001 -- never block startup
+            log.info("push not started: %s", exc)
         yield
         if not state.begin_shutdown():
             print("arcade-web: a send was still running at shutdown. What is "
@@ -6320,6 +6326,10 @@ def create_app(state: AppState) -> FastAPI:
 
     ICONS = {"/icon-32.png": "icon-32.png",
              "/icon-180.png": "icon-180.png",
+             # The installable app's (manifest.webmanifest): the same artwork
+             # as the homepage's, at the two sizes every platform asks for.
+             "/icon-192.png": "icon-192.png",
+             "/icon-512.png": "icon-512.png",
              # Browsers ask for this by name when a page carries no link tag
              # -- an error page, or a route that answers without a template.
              # It is a PNG under an .ico name, which every browser in use
@@ -6328,6 +6338,8 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/icon-32.png")
     @app.get("/icon-180.png")
+    @app.get("/icon-192.png")
+    @app.get("/icon-512.png")
     @app.get("/favicon.ico")
     def icon(request: Request):
         name = ICONS.get(request.url.path)
@@ -6338,6 +6350,134 @@ def create_app(state: AppState) -> FastAPI:
             # A year. The picture is the application's identity; when it
             # changes, its name changes with it.
             headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+    # --- the installable app, and push for the Messenger (2026-09-25) ---
+    #
+    # A PWA so a phone can put the arcade on its home screen, and -- because an
+    # installed app is what iOS needs before it allows web push -- notifications
+    # when a message arrives (arcade/push.py). The service worker caches ONE
+    # thing, the offline page: pages, balances, keys and messages always come
+    # live, so an update can never be hidden behind a stale copy.
+
+    @app.get("/manifest.webmanifest")
+    def web_manifest():
+        return JSONResponse({
+            "name": "DogecoinArcade", "short_name": "Arcade",
+            "description": "Messages, a feed, tokens and art on Pepecoin.",
+            "id": "/", "start_url": "/", "scope": "/", "display": "standalone",
+            "background_color": "#faf8f4", "theme_color": "#1b1a17",
+            "icons": [
+                {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png",
+                 "purpose": "any"},
+                {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png",
+                 "purpose": "any"},
+            ],
+        }, media_type="application/manifest+json",
+            headers={"Cache-Control": "public, max-age=3600"})
+
+    @app.get("/sw.js")
+    def service_worker():
+        body = TEMPLATES.get_template("sw.js").render(
+            revision=state.running_version or "dev")
+        return Response(body, media_type="text/javascript", headers={
+            # Never cached: a new worker has to be seen the moment the site changes.
+            "Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
+
+    @app.get("/offline", response_class=HTMLResponse)
+    def offline_page():
+        return HTMLResponse(TEMPLATES.get_template("offline.html").render(),
+                            headers={"Cache-Control": "no-cache"})
+
+    @app.get("/push/key")
+    def push_key():
+        push = state.push()
+        if push is None:
+            return JSONResponse({"enabled": False})
+        return JSONResponse({"enabled": True, "key": push.public_key()})
+
+    @app.post("/account/push/subscribe")
+    def push_subscribe(request: Request, payload: Any = Body(None)):
+        account = _signed_in_account(request)
+        push = state.push()
+        if push is None:
+            return JSONResponse({"detail": "this arcade does not send notifications"},
+                                status_code=400)
+        said = payload if isinstance(payload, dict) else {}
+        keys = said.get("keys") if isinstance(said.get("keys"), dict) else {}
+        try:
+            push.subscribe(account.pubkey, str(said.get("endpoint", "")),
+                           str(keys.get("p256dh", "")), str(keys.get("auth", "")))
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        _watch_for_mail()
+        return JSONResponse({"ok": True})
+
+    @app.post("/account/push/unsubscribe")
+    def push_unsubscribe(request: Request, payload: Any = Body(None)):
+        account = _signed_in_account(request)
+        push = state.push()
+        said = payload if isinstance(payload, dict) else {}
+        if push is not None:
+            push.unsubscribe(account.pubkey, str(said.get("endpoint", "")))
+        return JSONResponse({"ok": True})
+
+    @app.get("/account/push/news")
+    def push_news(request: Request):
+        """What woke this account's phone: who wrote, and when. Never what."""
+        account = _signed_in_account(request)
+        push = state.push()
+        rows = push.news(account.pubkey) if push is not None else []
+        out = []
+        for row in rows:
+            name = ""
+            try:
+                name = state.token_index(_account_chain()).tag_of(row["sender"]) or ""
+            except Exception:                           # noqa: BLE001
+                pass
+            out.append({"from": f"@{name}" if name else row["sender"][:10] + "\u2026",
+                        "txid": row["txid"], "at": row["at"]})
+        return JSONResponse({"news": out}, headers={"Cache-Control": "no-store"})
+
+    def _owners() -> dict[str, str]:
+        """Every account address on this node -> the account. Read per pass, so a
+        new account is covered without a restart."""
+        owners: dict[str, str] = {}
+        for key, value in state.settings().items():
+            if key.startswith("address:") and isinstance(value, str) and value:
+                owners[value] = key.rsplit(":", 1)[1]
+        return owners
+
+    def _paid(txid: str) -> list[str]:
+        with state.messaging.rpc() as rpc:
+            tx = rpc.call("getrawtransaction", txid, 1)
+        out = []
+        for vout in tx.get("vout", []):
+            spk = vout.get("scriptPubKey", {})
+            out.extend(spk.get("addresses") or ([spk["address"]] if spk.get("address") else []))
+        return out
+
+    _watcher: dict[str, Any] = {}
+
+    def _watch_for_mail() -> None:
+        """Start the one thread that notices mail for subscribed accounts."""
+        push = state.push()
+        if push is None or _watcher.get("thread") is not None:
+            return
+
+        def loop():
+            while not getattr(state, "shutting_down", False):
+                try:
+                    owners = _owners()
+                    with state.store() as store:
+                        push.watch(lambda after: store.candidates_for_others(after, 200),
+                                   store.newest_candidate, _paid, owners.get)
+                except Exception as exc:                # noqa: BLE001 -- keep watching
+                    log.info("push watch: %s", exc)
+                time.sleep(4)
+
+        _watcher["thread"] = threading.Thread(target=loop, name="arcade-push",
+                                              daemon=True)
+        _watcher["thread"].start()
 
     # --- seats, and signing in ------------------------------------------------
     #

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Offline · DogecoinArcade</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
+<style>
+:root{--bg:#faf8f4;--fg:#1b1a17;--muted:#6b665c;--accent:#b8860b}
+@media (prefers-color-scheme:dark){:root{--bg:#141310;--fg:#ece8e0;--muted:#9b948a}}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+  background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,sans-serif;
+  padding:24px;box-sizing:border-box;text-align:center}
+img{width:96px;height:96px}
+h1{font-size:1.3rem;margin:12px 0 6px}
+p{color:var(--muted);max-width:340px;margin:0 auto 18px}
+button{font:inherit;font-weight:600;padding:10px 20px;border-radius:999px;border:0;
+  background:var(--accent);color:#fff;cursor:pointer}
+</style>
+</head>
+<body>
+<div>
+  <img src="/icon-192.png" alt="">
+  <h1>The arcade can't be reached</h1>
+  <p>Your phone is offline, or the arcade's node is. Nothing is lost: your messages and
+    coins live on the chain, not on this phone.</p>
+  <button type="button" onclick="location.reload()">Try again</button>
+</div>
+</body>
+</html>
