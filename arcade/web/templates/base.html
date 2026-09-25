@@ -913,105 +913,204 @@ function arcadeFileCost(bytes){
           coins: outputs * dustEach + chunks * feePerChunk};
 }
 
-// Refresh a conversation when a new block brings something to show.
+// Show what a new block brought, IN PLACE. The page is never reloaded by itself.
 //
-// Polls a counter the block watcher maintains, rather than reloading on a timer:
-// a block with nothing in it for you must not interrupt you. Anything half
-// typed, and any open confirmation, suppresses the reload -- losing a draft to
-// an automatic refresh would be a worse bug than the staleness it fixes.
+// History: this used to be location.reload() on every block (~once a minute), which shut
+// open sections, jumped the scroll, blinked the page and ate what was about to be typed
+// (2026-09-25: "the page shouldn't be auto reloading; the page components
+// should"). A first in-place version (branch live-updates, 2026-09-23, never merged)
+// merged the fresh page straight into the open one -- which also overwrote whatever the
+// page had drawn for itself in the browser: balances, "on its way", a reply box the
+// reader opened, the older posts they had scrolled into.
+//
+// So this one is THREE-WAY. It keeps the server's previous copy of the page (`base`) and,
+// on a change, applies to the open document only what the SERVER changed between that copy
+// and the new one. Anything the server did not change -- including every part the page
+// drew itself and every section a person opened -- is left exactly as it is. The page's
+// own components hear `arcade:changed` and redraw their browser-side parts themselves.
 (function () {
-  var el = document.getElementById('live');       // where a notice can go
+  var el = document.getElementById('live');       // where a short notice can go
   var known = parseInt(
     (document.body && document.body.dataset.generation) ||
     (el && el.dataset.generation) || '0', 10);
+  var base = null;          // the server's copy of this page as of `known`
+  var fetching = false;
 
-  function busy() {
-    // A wallet operation in flight. Set by the browser's own half while it
-    // is deriving, signing or waiting for the node (templates/wallet_js.js)
-    // -- and NOT covered by the draft checks below, which is how a page
-    // came to reload in the middle of signing a transaction: the claim
-    // bumped the generation, the poller saw it, and the keys went with the
-    // document. Nothing was lost that time because nothing had been
-    // broadcast; the next one would have been broadcast and unfinished.
-    if (document.body.dataset.working) return true;
-    // A trade a page is mid-way through, held by the page that is relaying
-    // it (templates/inscription_view.html). The one above covers the wallet's
-    // own calls; this covers the waiting between them, which is most of a
-    // buy: the storefront in the frame is what watches for the shop's answer,
-    // and a reload takes that watch -- and the rest of the buy -- with it.
-    // Nothing is lost by reloading in the sense of money moving wrongly, but
-    // the trade stalls half-done and reads as a broken shop.
-    if (document.body.dataset.trading) return true;
-    // A file going up as several transactions, held by the inscribe panel
-    // (templates/_account_inscribe.html) for the whole of the job. Same shape
-    // again, but the hazard is sharper here: the pieces wait for the SPLIT's
-    // block, and that block is the generation bump this poller is watching --
-    // so the reload arrives at the one moment the loop cannot survive it. On
-    // the live instance that cost a split's fee and inscribed nothing.
-    if (document.body.dataset.inscribing) return true;
-    // Reading further down a feed than its first page (templates/feed.html):
-    // a reload shows the first page again, and the posts being read vanish.
-    if (document.body.dataset.reading) return true;
-    var active = document.activeElement;
-    if (active && /^(TEXTAREA|INPUT)$/.test(active.tagName)) return true;
-    var drafts = document.querySelectorAll('textarea, input[type=text]');
-    for (var i = 0; i < drafts.length; i++) {
-      if (drafts[i].value && drafts[i].value.trim()) return true;
+  function frozen() {
+    // Moments when nothing on the page may move at all. The wallet signing
+    // (templates/wallet_js.js), a trade being relayed (inscription_view.html), a file
+    // going up in pieces (_account_inscribe.html), an open confirmation: each of these
+    // once lost work to the old reload. Typing is NOT here: fields are protected one by
+    // one in dirty()/keep(), so a message can arrive while somebody writes one.
+    var d = document.body.dataset;
+    return !!(d.working || d.trading || d.inscribing || document.querySelector('.confirm'));
+  }
+
+  function dirty(node) {
+    if (!node || node.nodeType !== 1) return false;
+    if (!/^(TEXTAREA|INPUT|SELECT)$/.test(node.nodeName)) return false;
+    if (node === document.activeElement) return true;
+    if (node.type === 'checkbox' || node.type === 'radio') return node.checked !== node.defaultChecked;
+    if (node.type === 'hidden') return false;
+    return !!(node.value && node.value.trim());
+  }
+
+  function keep(node) {
+    // Never demolish a branch holding the caret, a half-written field or work in flight.
+    if (!node || node.nodeType !== 1) return false;
+    var a = document.activeElement;
+    if (a && a !== document.body && node.contains(a)) return true;
+    if (node.hasAttribute('data-working') || (node.classList && node.classList.contains('confirm'))) return true;
+    if (dirty(node)) return true;
+    var f = node.querySelectorAll('textarea, input, select');
+    for (var i = 0; i < f.length; i++) if (dirty(f[i])) return true;
+    return false;
+  }
+
+  function key(n) {
+    // What a child is, for lining two lists up: an id if it has one, else the first id
+    // inside it (a feed card carries reply-<txid>), else its tag. Text is keyed by text.
+    if (n.nodeType === 3) return '#t' + n.nodeValue.trim();
+    if (n.nodeType !== 1) return '#' + n.nodeType;
+    if (n.id) return n.nodeName + '#' + n.id;
+    if (n.getAttribute('data-key')) return n.nodeName + '@' + n.getAttribute('data-key');
+    var inner = n.querySelector && n.querySelector('[id]');
+    return n.nodeName + '>' + (inner ? inner.id : '');
+  }
+
+  function attrs(live, was, now) {
+    var i, at, n;
+    for (i = 0; i < now.attributes.length; i++) {
+      at = now.attributes[i]; n = at.name;
+      if (was.getAttribute(n) !== at.value && live.getAttribute(n) === was.getAttribute(n)) live.setAttribute(n, at.value);
     }
-    return !!document.querySelector('.confirm');
+    for (i = 0; i < was.attributes.length; i++) {
+      n = was.attributes[i].name;
+      if (!now.hasAttribute(n) && live.getAttribute(n) === was.getAttribute(n)) live.removeAttribute(n);
+    }
+  }
+
+  function apply(live, was, now) {
+    if (!live || !was || !now) return;
+    if (was.nodeType === 3 || was.nodeType === 8) {
+      // Text the server changed, where the page has not drawn over it.
+      if (was.nodeValue !== now.nodeValue && live.nodeType === was.nodeType &&
+          live.nodeValue === was.nodeValue) live.nodeValue = now.nodeValue;
+      return;
+    }
+    if (was.nodeType !== 1 || was.isEqualNode(now)) return;   // the server changed nothing here
+    if (live.nodeType !== 1 || live.nodeName !== was.nodeName) return;   // reshaped by the page
+    if (live.hasAttribute('data-client')) return;   // drawn in the browser; it redraws itself
+    if (live.nodeName === 'SCRIPT' || live.nodeName === 'STYLE') return;
+    if (was.nodeName !== now.nodeName || (was.id || '') !== (now.id || '')) {
+      if (!keep(live)) live.parentNode.replaceChild(document.importNode(now, true), live);
+      return;
+    }
+    if (dirty(live)) return;
+    attrs(live, was, now);
+    var W = Array.prototype.slice.call(was.childNodes),
+        N = Array.prototype.slice.call(now.childNodes),
+        L = Array.prototype.slice.call(live.childNodes), i, j = 0, M = [];
+    // Line the open page's children up with the server's old ones by what they are, not
+    // where they are: the page adds its own (a floating note, the picture viewer) and those
+    // are simply stepped over. A server child the page has removed maps to nothing.
+    for (i = 0; i < W.length; i++) {
+      var k = key(W[i]), found = -1;
+      for (var t = j; t < L.length; t++) if (key(L[t]) === k) { found = t; break; }
+      if (found >= 0) { M[i] = L[found]; j = found + 1; } else M[i] = null;
+    }
+    if (W.length === N.length) {
+      var same = true;
+      for (i = 0; i < W.length; i++) if (key(W[i]) !== key(N[i])) { same = false; break; }
+      if (same) { for (i = 0; i < W.length; i++) if (M[i]) apply(M[i], W[i], N[i]); return; }
+    }
+    // The server added or removed children: keep the common head and tail, swap the middle.
+    var p = 0, s = 0;
+    while (p < W.length && p < N.length && key(W[p]) === key(N[p])) p++;
+    while (s < W.length - p && s < N.length - p &&
+           key(W[W.length - 1 - s]) === key(N[N.length - 1 - s])) s++;
+    for (i = p; i < W.length - s; i++) if (M[i] && keep(M[i])) return;   // a draft sits in what would go
+    for (i = 0; i < p; i++) if (M[i]) apply(M[i], W[i], N[i]);
+    for (i = 0; i < s; i++) {
+      var w = W.length - 1 - i;
+      if (M[w]) apply(M[w], W[w], N[N.length - 1 - i]);
+    }
+    // Where the new middle goes: before the first surviving tail child, else after the
+    // last head child, else at the end.
+    var after = null;
+    for (i = W.length - s; i < W.length; i++) if (M[i]) { after = M[i]; break; }
+    if (!after) { for (i = p - 1; i >= 0; i--) if (M[i]) { after = M[i].nextSibling; break; } }
+    for (i = p; i < W.length - s; i++) if (M[i] && M[i].parentNode === live) live.removeChild(M[i]);
+    for (i = p; i < N.length - s; i++) live.insertBefore(document.importNode(N[i], true), after);
+  }
+
+  function version(doc) {
+    var f = doc.querySelector('footer.version');
+    return f ? f.textContent.replace(/\s+/g, ' ').trim() : '';
+  }
+
+  function offer(text) {
+    // The one case the page cannot take in place: the site's own code changed. Offer it.
+    if (document.getElementById('newposts')) return;
+    var u = document.createElement('a');
+    u.id = 'newposts'; u.href = location.pathname + location.search; u.textContent = text;
+    u.style.cssText = 'position:fixed;left:16px;right:16px;margin:0 auto;width:fit-content;' +
+      'bottom:18px;z-index:5;padding:10px 18px;border-radius:999px;' +
+      'background:var(--accent);color:var(--accent-fg);font-weight:600;' +
+      'box-shadow:0 4px 16px rgba(0,0,0,.22);text-decoration:none';
+    document.body.appendChild(u);
+  }
+
+  function page() {
+    return fetch(location.href, {cache: 'no-store', credentials: 'same-origin',
+                                 headers: {'X-Arcade-Live': '1'}})
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); })
+      .then(function (h) { return new DOMParser().parseFromString(h, 'text/html'); });
   }
 
   function poll() {
+    if (fetching) return;
     fetch('/events', {cache: 'no-store'})
       .then(function (r) { return r.json(); })
       .then(function (data) {
-        if (data.generation === known) return;
-        if (busy()) {
-          // Never interrupt somebody mid-sentence: losing a draft to an
-          // automatic refresh is a worse bug than the staleness it fixes.
-          if (document.body.dataset.reading) {
-            // The reader is far down the page, where a notice at the top is
-            // never seen: float one at the bottom. Pressing it is the reload.
-            if (!document.getElementById('newposts')) {
-              var n = document.createElement('a');
-              n.id = 'newposts'; n.href = location.pathname + location.search;
-              n.textContent = 'New posts are in \u2014 show them';
-              n.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);' +
-                'bottom:18px;z-index:5;padding:10px 18px;border-radius:999px;' +
-                'background:var(--accent);color:var(--accent-fg);font-weight:600;' +
-                'box-shadow:0 4px 16px rgba(0,0,0,.22);text-decoration:none';
-              document.body.appendChild(n);
-            }
-          } else if (el) {
-            el.textContent = 'something new — finish typing to see it';
+        if (data.generation === known) {
+          if (!base) {           // take the baseline while nothing is happening
+            fetching = true;
+            return page().then(function (doc) {
+              if (parseInt(doc.body.dataset.generation || '0', 10) === known) base = doc;
+            }).finally(function () { fetching = false; });
           }
           return;
         }
-        // No more whole-page reloads (2026-09-25: "the page shouldn't be auto
-        // reloading; the page components should"). A reload every block (~1 a minute)
-        // shut open sections, jumped the scroll and ate what was about to be typed.
-        // Instead: tell the page's own components (they redraw themselves on
-        // `arcade:changed`, see docs/multi-user.md Order item "components refresh in
-        // place"), and offer the reload as a button for whatever has not learned to yet.
-        known = data.generation;
-        try {
-          document.dispatchEvent(new CustomEvent('arcade:changed',
-            {detail: {generation: data.generation}}));
-        } catch (e) {}
-        if (!document.body.dataset.selfRefreshing && !document.getElementById('newposts')) {
-          var u = document.createElement('a');
-          u.id = 'newposts'; u.href = location.pathname + location.search;
-          u.textContent = 'Updated \u2014 tap to refresh';
-          u.style.cssText = 'position:fixed;left:16px;right:16px;margin:0 auto;width:fit-content;' +
-            'bottom:18px;z-index:5;padding:10px 18px;border-radius:999px;' +
-            'background:var(--accent);color:var(--accent-fg);font-weight:600;' +
-            'box-shadow:0 4px 16px rgba(0,0,0,.22);text-decoration:none';
-          document.body.appendChild(u);
+        if (frozen()) { if (el) el.textContent = 'something new — it shows when this finishes'; return; }
+        if (document.body.dataset.reading) {
+          // Far down the feed: the posts above are the server's first page, the rest were
+          // added by scrolling. Say what is new rather than move the ground.
+          offer('New posts are in — show them'); known = data.generation; return;
         }
+        fetching = true;
+        return page().then(function (doc) {
+          if (base && version(doc) !== version(base)) {
+            offer('The site was updated — tap to refresh');
+          } else if (base) {
+            if (document.title !== doc.title) document.title = doc.title;
+            apply(document.body, base.body, doc.body);
+          } else {
+            offer('Updated — tap to refresh');
+          }
+          base = doc;
+          known = parseInt(doc.body.dataset.generation || data.generation, 10) || data.generation;
+          if (el) el.textContent = '';
+          try { document.dispatchEvent(new CustomEvent('arcade:changed', {detail: {generation: known}})); } catch (e) {}
+        }).catch(function () { /* the node was away; the next poll tries again */ })
+          .finally(function () { fetching = false; });
       })
       .catch(function () { /* node or server momentarily away; try again */ });
   }
   setInterval(poll, 5000);
+  setTimeout(poll, 300);   // the baseline, as soon as the page is up
+  // For a page that used to reload itself to show new state: ask for the same update.
+  window.arcadeLiveUpdate = function () { known = -1; poll(); };
 })();
 </script>
 {% if not embed %}
