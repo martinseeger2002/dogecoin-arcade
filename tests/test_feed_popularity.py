@@ -298,7 +298,10 @@ def test_a_tip_landing_mid_scroll_repeats_no_page_and_loops_forever(store):
     """
     made = [_post(store, f"{i:02d}" + "ab" * 30, height=100 + i,
                    text=f"post {i}") for i in range(25)]
-    first = store.feed_posts_popular(NET, limit=10)
+    # The order is a rank at a moment (feed.hot, 2026-09-25): a scroll is ranked
+    # at the moment its first page was made, and every page after carries it.
+    asof = 10_000
+    first = store.feed_posts_popular(NET, limit=10, asof=asof)
     assert [r["txid"] for r in first] == list(reversed(made[15:25]))
 
     _act(store, "ff" * 32, feed.TIP, made[15], author=OTHER, amount=COIN,
@@ -307,14 +310,14 @@ def test_a_tip_landing_mid_scroll_repeats_no_page_and_loops_forever(store):
          paid_on=NET)                                  # and one far below it
 
     seen, cursor = [r["txid"] for r in first], first[-1]["id"]
-    anchor = first[-1]["score"]
+    anchor = first[-1]["rank"]
     for _ in range(5):
-        page = store.feed_posts_popular(NET, cursor=cursor, anchor=anchor,
+        page = store.feed_posts_popular(NET, cursor=cursor, anchor=anchor, asof=asof,
                                         limit=10)
         if not page:
             break
         seen.extend(r["txid"] for r in page)
-        cursor, anchor = page[-1]["id"], page[-1]["score"]
+        cursor, anchor = page[-1]["id"], page[-1]["rank"]
     assert len(seen) == len(set(seen)) == 24, seen
     assert made[3] not in seen, "it rose past the reader, so this scroll misses it"
     assert _order(store)[:2] == [made[15], made[3]], "and here it is, on reload"
@@ -340,7 +343,9 @@ def test_the_cursor_token_carries_both_halves_and_survives_losing_one():
     assert _cursor("412@not-a-score") == (412, None)
     # Truncated, never rounded: rounded UP, the cursor would sit above where
     # the reader stopped and would hand back a post they have already read.
-    assert _next_cursor([{"id": 1, "score": 2.9999999}], "popular") == "1@2.999999"
+    # (Nine places since 2026-09-25: the order is a time-adjusted rank, and ranks
+    # are small numbers -- 0.35, 0.08 -- where six places would lose the order.)
+    assert _next_cursor([{"id": 1, "score": 2.99999999999}], "popular") == "1@2.999999999"
 
 
 def test_a_link_with_only_an_id_in_it_still_pages(store):

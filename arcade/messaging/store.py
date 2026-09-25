@@ -337,6 +337,9 @@ class MessageStore:
         # implementations agreeing to.
         self.conn.create_function("tip_value", 2, feed.tip_value,
                                   deterministic=True)
+        # Deterministic for the same three arguments: the clock is one of them
+        # (`asof`), passed in, never read inside.
+        self.conn.create_function("hot", 3, feed.hot, deterministic=True)
         self.conn.executescript(SCHEMA)
         add_missing_columns(self.conn, SCHEMA)
         self._migrate()
@@ -1232,8 +1235,15 @@ class MessageStore:
             AND al.kind = {like}
             AND NOT EXISTS (SELECT 1 FROM feed_act au
               WHERE au.target = al.target AND au.network = al.network
-                AND au.author = al.author AND au.kind = {unlike}
+                AND au.author = al.author AND au.kind IN ({unlike}, {dislike})
                 AND (au.height, au.txid) > (al.height, al.txid)))
+        - (SELECT COUNT(*) * {dislike_value} FROM feed_act ad
+          WHERE ad.target = {a}.txid AND ad.network = {a}.network
+            AND ad.kind = {dislike}
+            AND NOT EXISTS (SELECT 1 FROM feed_act ax
+              WHERE ax.target = ad.target AND ax.network = ad.network
+                AND ax.author = ad.author AND ax.kind IN ({undislike}, {like})
+                AND (ax.height, ax.txid) > (ad.height, ad.txid)))
         + (SELECT COUNT(*) FROM feed_act ash
             WHERE ash.target = {a}.txid AND ash.network = {a}.network
               AND ash.kind = {share})
@@ -1248,11 +1258,14 @@ class MessageStore:
     def _score(cls, alias: str) -> str:
         return cls._SCORE_SQL.format(
             a=alias, like=feed.LIKE, unlike=feed.UNLIKE,
-            share=feed.SHARE, tip=feed.TIP, like_value=feed.LIKE_VALUE)
+            dislike=feed.DISLIKE, undislike=feed.UNDISLIKE,
+            share=feed.SHARE, tip=feed.TIP, like_value=feed.LIKE_VALUE,
+            dislike_value=feed.DISLIKE_VALUE)
 
     def feed_posts_popular(self, network: str, cursor: int | None = None,
                            limit: int = 10, author: str = "",
-                           anchor: float | None = None) -> list[sqlite3.Row]:
+                           anchor: float | None = None,
+                           asof: int | None = None) -> list[sqlite3.Row]:
         """A page of the feed, most-endorsed first, and the cursor for the next.
 
         The same page contract as `feed_posts` -- newest first is the feed's
@@ -1279,7 +1292,18 @@ class MessageStore:
 
         Ties break by id, newest first, the same tie-break the counts use
         (D-122's lesson: never "whichever came back first").
+
+        Since 2026-09-25 the order is `rank` -- feed.hot(score, block_time,
+        asof) -- not the bare score: popularity wears off and a new post has a
+        head start (the operator). The rank moves with the clock, so every page of
+        one scroll is ranked at the SAME moment, `asof`, which the cursor
+        carries beside the anchor; without it the next page would be cut along
+        a line that had slid since the first. `score` is still returned for the
+        card's numbers.
         """
+        if asof is None:
+            import time as _time
+            asof = int(_time.time())
         where = "g.network = ?"
         params: list = [network]
         if author:
@@ -1297,20 +1321,23 @@ class MessageStore:
             params_anchor = anchor
             if params_anchor is None:
                 row = self.conn.execute(
-                    f"SELECT {self._score('a')} AS s, id FROM group_post a"
-                    f" WHERE a.id = ? AND a.network = ?",
-                    (int(cursor), network)).fetchone()
+                    f"SELECT hot({self._score('a')}, a.block_time, ?) AS s, id"
+                    f" FROM group_post a WHERE a.id = ? AND a.network = ?",
+                    (int(asof), int(cursor), network)).fetchone()
                 if row is None:
                     return []
                 params_anchor = row["s"]
-            clause = "WHERE (r.score, r.id) < (?, ?)"
+            clause = "WHERE (r.rank, r.id) < (?, ?)"
             params.extend([float(params_anchor), int(cursor)])
+        # Three layers so each is computed once: the post and its score, then
+        # its rank at `asof`, then the keyset and the order over that rank.
         return self.conn.execute(
-            f"SELECT * FROM (SELECT g.*, {self._score('g')} AS score"
-            f"  FROM group_post g WHERE {where}) AS r "
+            f"SELECT * FROM (SELECT s.*, hot(s.score, s.block_time, ?) AS rank"
+            f"  FROM (SELECT g.*, {self._score('g')} AS score"
+            f"        FROM group_post g WHERE {where}) AS s) AS r "
             f"{clause} "
-            f"ORDER BY r.score DESC, r.id DESC LIMIT ?",
-            (*params, max(1, min(limit, 100)))).fetchall()
+            f"ORDER BY r.rank DESC, r.id DESC LIMIT ?",
+            (int(asof), *params, max(1, min(limit, 100)))).fetchall()
 
     def feed_acts_by(self, network: str, author: str, kind: int | None = None,
                      limit: int = 200) -> list[sqlite3.Row]:
