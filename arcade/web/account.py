@@ -123,8 +123,13 @@ class Offers:
 # So an account's own transactions are remembered here until the index
 # catches up: what they spent, so it is not offered again, and what they
 # paid back, so it can be spent. Nothing here is authoritative -- the index
-# is -- and everything is forgotten once the index agrees or the wait is
-# over.
+# is. Saying when an entry goes away is worth being exact about, because
+# `forget` is written for the index to call and nothing calls it: today an
+# entry outlives its block until the age sweep takes it, thirty minutes on.
+# So anything reading this book with the index in front of it has to drop
+# what the index already lists, or it shows one output twice -- which is what
+# the account page did until `app.py`'s `_on_its_way` started asking the index
+# instead of remembering to be told.
 
 
 #: Long enough for a block on a slow chain, short enough that a

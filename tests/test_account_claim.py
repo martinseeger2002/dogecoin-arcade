@@ -306,3 +306,68 @@ def test_a_key_in_the_mempool_is_not_yet_a_key_on_the_chain(arcade):
                                    stated=True)
 
     assert app.get("/account").json()["announced"] is True
+
+
+def test_a_payment_the_index_has_read_is_not_also_on_its_way(arcade):
+    """A coin the block has filed is not twice a coin.
+
+    Everything this node broadcasts for an account is also remembered in a
+    second, in-memory book, so that between the broadcast and the block the
+    change is spendable and the coin that went away is not offered again. The
+    book is meant to be emptied when the index agrees -- `Flights.forget` was
+    written for that and nothing calls it -- so the only thing that ever
+    retires an entry is its thirty-minute age. For that long the same output
+    is a row the scanner wrote and a note this node made, and the account's
+    page reads both of them: `balance` from the index, `incoming` from the
+    note, printed underneath as "on its way". A first-time walk-through of the
+    live site read one wallet as two because of exactly this.
+
+    The builder already has the rule. `funding.choose` drops an `extra` coin
+    the index also lists -- "where the index agrees the coin exists, the index
+    is what gets used" -- because two inputs naming one outpoint is a
+    transaction the chain refuses. This is the same rule on the way out to a
+    page, where it is only a number: nobody is refused, somebody is just
+    shown twice what they hold.
+    """
+    app, state, rpc = arcade
+    _sign_in(app)
+    mine = b58check_encode(state.messaging.params.pubkeyhash_version,
+                           hash160(_pubkey(SECRET + 7)))
+    theirs = b58check_encode(state.messaging.params.pubkeyhash_version,
+                             hash160(_pubkey(SECRET + 8)))
+    rpc.call("generate", 101)
+    _catch_up(state, rpc)
+    app.post("/account/address", json={"address": mine})
+    rpc.call("sendtoaddress", mine, 4.0)
+    rpc.call("generate", 1)
+    _catch_up(state, rpc)
+    said = app.get("/account").json()
+    assert said["balance"] == 4 * COIN
+    assert said["incoming"] == 0, "nothing is on its way before anything goes"
+
+    offered = app.post("/account/send", json={"to": theirs, "amount": "1"})
+    assert offered.status_code == 200, offered.text
+    offer = offered.json()
+    assert offer["change"] > 0
+    signatures = [_sign(SECRET + 7, bytes.fromhex(h)).hex()
+                  for h in offer["sighashes"]]
+    done = app.post("/account/sign", json={
+        "offer": offer["offer"], "signatures": signatures,
+        "pubkey": _pubkey(SECRET + 7).hex()})
+    assert done.status_code == 200, done.text
+    assert done.json()["txid"] in rpc.call("getrawmempool")
+
+    # In the pool: the index still lists the coin that just went away, and the
+    # note is the only place the change is. This is the window the book exists
+    # for, and the page is right to say something is coming.
+    away = app.get("/account").json()
+    assert away["incoming"] == offer["change"], \
+        "the change is real and no block has it yet"
+
+    rpc.call("generate", 1)
+    _catch_up(state, rpc)
+    back = app.get("/account").json()
+    assert back["balance"] == offer["change"], "the block has filed it"
+    assert back["incoming"] == 0, \
+        "and it is not ALSO on its way. One output, counted once: the index " \
+        "has read it, so the index is what the page says."

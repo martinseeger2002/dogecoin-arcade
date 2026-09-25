@@ -6627,6 +6627,30 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             pass                 # it will be spendable when its block lands
 
+    def _on_its_way(pubkey: str, network: str, db, address: str) -> int:
+        """Satoshis this node paid an account that no block has filed yet.
+
+        The flight book remembers what came back from a broadcast so the coin
+        can be spent before its block lands. Nothing retires an entry but its
+        thirty-minute age -- `Flights.forget` has no caller -- so for that long
+        a mined change output stands in both books: the row the scanner wrote,
+        which is what `balance` adds up, and this node's note of it, which is
+        what a page reads here. Printed under the balance as "on its way", one
+        output looks like two wallets -- which is how a wallet of a hundred
+        coins read as close to two hundred on 2026-09-25.
+
+        `funding.choose` has the rule the other way round: an `extra` coin the
+        index also lists is the same coin twice, and where the index agrees the
+        coin exists, the index is what gets used. This is that rule on the way
+        out to a page, where it is only a number. Nobody is refused anything;
+        somebody is just shown what they hold once.
+        """
+        listed = {(coin["txid"], coin["vout"])
+                  for coin in utxoslib.unspent(db, address)}
+        return sum(coin["value"] for coin
+                   in _flights.change_for(pubkey, network)
+                   if (coin["txid"], coin["vout"]) not in listed)
+
     def _watch(address: str, why: str, chain=None) -> None:
         """Start following an address's coins, so it can be funded at all."""
         index = state.token_index(chain or _account_chain())
@@ -6860,12 +6884,13 @@ def create_app(state: AppState) -> FastAPI:
                 with contextlib.closing(index.open()) as db:
                     said["balance"] = utxoslib.balance(db, address)
                     said["watching"] = utxoslib.since(db, address)
-                # What this node has broadcast to them and not yet read
-                # back out of a block. Spendable, and shown separately so
-                # the page can say "on its way" rather than "nothing".
-                said["incoming"] = sum(
-                    coin["value"] for coin in
-                    _flights.change_for(account.pubkey, chain.network))
+                    # What this node has broadcast to them and no block has
+                    # filed yet. Spendable, and shown separately so the page
+                    # can say "on its way" rather than "nothing" -- and read
+                    # from the same open index, so what it has already written
+                    # down is not also on its way.
+                    said["incoming"] = _on_its_way(account.pubkey,
+                                                   chain.network, db, address)
                 said["tag"] = index.tag_of(address) or ""
                 with state.store() as store:
                     # Two questions, and the page has to be able to answer them
@@ -6911,9 +6936,8 @@ def create_app(state: AppState) -> FastAPI:
                     with contextlib.closing(index.open()) as db:
                         row["balance"] = utxoslib.balance(db, here)
                         row["watching"] = utxoslib.since(db, here)
-                    row["incoming"] = sum(
-                        coin["value"] for coin in
-                        _flights.change_for(account.pubkey, one.network))
+                        row["incoming"] = _on_its_way(account.pubkey,
+                                                      one.network, db, here)
                 except Exception:
                     pass                   # a node still catching up says 0
             said["chains"].append(row)
