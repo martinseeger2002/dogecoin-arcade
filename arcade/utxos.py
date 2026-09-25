@@ -106,12 +106,20 @@ def since(db, address: str) -> int | None:
 
 def on_block(state, height: int, block: dict[str, Any], params,
              addresses: set[str]) -> dict[str, int]:
-    """Take what this block spends and add what it pays, for watched addresses.
+    """Add what this block pays, then take what it spends, for watched addresses.
 
-    Spends FIRST, then payments. A transaction that spends a watched output
-    and pays the same address back -- which is what change is, and what
-    every send in this application does -- would otherwise have its new
-    output deleted by its own spend if a txid ever repeated.
+    Payments FIRST, then spends. A coin this block both made and ate has to be
+    in the table before the pass that removes it can look for it -- and that is
+    the ordinary case here, not a corner of it: the node mines a block to
+    confirm a faucet gift, and whatever the account spends that gift on can
+    land in the same block. Applying spends first left those rows in the index
+    for good, since no later block ever names that outpoint again, so every
+    balance and every coin selection built from this table kept counting coins
+    the chain had already eaten.
+
+    A transaction's own change cannot be caught by this, which is what the old
+    order was guarding: a spend names the *previous* transaction's id, and no
+    two transactions share one.
 
     Everything goes through `state`, which journals it, so a disconnected
     block gives the coins back.
@@ -120,18 +128,6 @@ def on_block(state, height: int, block: dict[str, Any], params,
         return {"added": 0, "spent": 0}
     added = spent = 0
     txs = block.get("tx") or []
-
-    for tx in txs:
-        for vin in tx.get("vin", []):
-            previous, index = vin.get("txid"), vin.get("vout")
-            if previous is None or index is None:
-                continue                      # a coinbase spends nothing
-            row = state.db.conn.execute(
-                "SELECT 1 FROM utxo WHERE txid = ? AND vout = ?",
-                (previous, int(index))).fetchone()
-            if row is not None:
-                state.delete("utxo", {"txid": previous, "vout": int(index)})
-                spent += 1
 
     for tx in txs:
         for out in tx.get("vout", []):
@@ -155,4 +151,16 @@ def on_block(state, height: int, block: dict[str, Any], params,
                 "txid": tx["txid"], "vout": int(out.get("n", 0)),
                 "address": parsed.address, "value": value, "height": height})
             added += 1
+
+    for tx in txs:
+        for vin in tx.get("vin", []):
+            previous, index = vin.get("txid"), vin.get("vout")
+            if previous is None or index is None:
+                continue                      # a coinbase spends nothing
+            row = state.db.conn.execute(
+                "SELECT 1 FROM utxo WHERE txid = ? AND vout = ?",
+                (previous, int(index))).fetchone()
+            if row is not None:
+                state.delete("utxo", {"txid": previous, "vout": int(index)})
+                spent += 1
     return {"added": added, "spent": spent}

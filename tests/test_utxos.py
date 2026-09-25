@@ -113,14 +113,33 @@ def test_what_is_paid_in_and_what_is_spent_out(db):
 
 def test_change_back_to_the_same_address_survives_its_own_spend(db):
     """Every send in this application pays change back to the sender, so
-    the spend and the payment are in one transaction. Spends are applied
-    before payments for exactly this."""
+    the spend and the payment are in one transaction. A spend names the
+    previous transaction's id, so recording payments first cannot eat it."""
     utxos.watch(db, MINE, 0)
     connect(db, 100, paying("aa" * 32, (MINE, 1000)))
     connect(db, 101, paying("bb" * 32, (THEIRS, 200), (MINE, 800),
                             spending=[("aa" * 32, 0)]))
     assert utxos.balance(db, MINE) == 800
     assert utxos.unspent(db, MINE)[0]["txid"] == "bb" * 32
+
+
+def test_a_coin_made_and_spent_inside_one_block_leaves_nothing_behind(db):
+    """The node mines a block to confirm a faucet gift, and whatever the
+    account spends that gift on can be mined in the same block. The spend
+    names a coin this block only just made, so it has to be looked for after
+    the payments are recorded -- and a row that outlives its coin stays for
+    ever, because no later block ever mentions that outpoint again. On the
+    live node that was 34 rows and 1814 coins of balance nobody could spend."""
+    utxos.watch(db, MINE, 0)
+    moved = connect(db, 100, paying("aa" * 32, (MINE, 1000)),
+                    paying("bb" * 32, (THEIRS, 200), (MINE, 799),
+                           spending=[("aa" * 32, 0)]))
+    assert moved == {"added": 2, "spent": 1}
+    assert utxos.balance(db, MINE) == 799
+    assert [u["txid"] for u in utxos.unspent(db, MINE)] == ["bb" * 32]
+
+    rollback(db, 100)
+    assert utxos.balance(db, MINE) == 0, "and a reorg takes both halves of it back"
 
 
 def test_a_payload_output_is_not_a_coin(db):
