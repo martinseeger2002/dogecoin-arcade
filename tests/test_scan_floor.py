@@ -270,3 +270,51 @@ def test_an_index_below_a_raised_floor_moves_itself_aside(tmp_path, regtest):
     fresh.params = dataclasses.replace(regtest.params, activation_height=floor)
     fresh.sync()
     assert (tmp_path / f"test-ledger.sqlite.before-{floor}.2").exists()
+
+
+# --- a block that holds something unreadable is talked about ------------------
+
+
+#: A bare pay-to-pubkey output -- what mining pays the wallet -- as a node
+#: describes it. `tx.determine_sender` refuses one before it looks at a payload
+#: (rules.cpp:416-430), so a marked transaction funded from it is unreadable by
+#: definition, and the scanner has to decide what to do with that.
+P2PK = "21" + "02" + "22" * 32 + "ac"
+
+
+def test_a_transaction_that_looks_ours_is_named_in_the_log(caplog, store, params):
+    """Marked as ours, unreadable, and no longer dropped without a word (D-171).
+
+    Discarding it is right -- there is nothing to store, and a row for something
+    this node cannot read would be a lie of a different shape. The fault was the
+    silence beside it: a machine that funds itself by mining watched its own
+    messages arrive nowhere, with nothing in the log distinguishing "the chain
+    never got it" from "the chain has it and every node is refusing it". The
+    sender is the one that can still avoid this, and it now refuses to send that
+    way; this is the half that says so out loud when the transaction came from
+    somewhere else.
+    """
+    import logging
+
+    from arcade.encoding import encode_class_c
+    from arcade.payload import AnyData
+    from arcade.txbuild import op_return_script
+
+    mined = {"txid": "mined", "vin": [],
+             "vout": [{"value": 50.0, "n": 0, "scriptPubKey": {"hex": P2PK}}]}
+    marked = {"txid": "marked", "vin": [{"txid": "mined", "vout": 0}],
+              "vout": [{"value": 0.0, "n": 0,
+                        "scriptPubKey": {"hex": op_return_script(
+                            encode_class_c(AnyData(data=b"hello").encode())).hex()}}]}
+
+    class OneBlock(FakeRpc):
+        def get_block(self, block_hash, verbosity=2):
+            self.scanned.append(int(block_hash.split("-")[1]))
+            return {"tx": [mined, marked], "time": 0}
+
+    rpc = OneBlock()
+    with caplog.at_level(logging.WARNING, logger="arcade.messaging.scanner"):
+        result = Scanner(rpc, params, store).scan(max_blocks=5000)
+
+    assert "marked" in caplog.text, caplog.text
+    assert result.candidates == 0, "and it still keeps nothing it cannot read"

@@ -258,8 +258,18 @@ class Scanner:
         for position, tx in enumerate(block.get("tx", [])):
             try:
                 atx = extract(tx, height, position, self.params, self.prevouts.lookup)
-            except TxError:
-                continue                      # marked but unreadable; not ours to fix
+            except TxError as why:
+                # Marked as ours and unreadable, so there is nothing to store --
+                # but it is not silent any more. This is the one case where the
+                # chain holds something that looks like a message and this node
+                # will never show it to anybody, and the only person who can do
+                # anything about it is the operator of the node that sent it.
+                # Silence here is how a node that funds itself by mining ended
+                # up certain its messages had gone out fine (D-171).
+                log.warning("block %s: %s carries an Arcade marker but cannot be "
+                            "read: %s", height or "mempool",
+                            tx.get("txid", "?"), why)
+                continue
             if atx is None:
                 continue
 

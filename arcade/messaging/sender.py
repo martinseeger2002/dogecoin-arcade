@@ -23,6 +23,7 @@ from ..config import Params, require_messaging_network
 from ..encoding import MAX_CLASS_B_PAYLOAD, encode_class_b, encode_class_c, max_class_c_payload
 from ..payload import AnyData
 from ..rpc import RpcClient
+from ..script import ALLOWED_INPUT_TYPES, output_type
 from ..txbuild import build_raw_tx, multisig_script, op_return_script, p2pkh_script
 
 log = logging.getLogger(__name__)
@@ -220,6 +221,28 @@ def _plan_chunked(sender: Identity, recipient_public: bytes,
         est_dust_sats=(outs_each + 1) * OUTPUT_VALUE * total,
         chunk_payloads=payloads,
     )
+
+
+def fundable_output(utxo: dict, params: Params) -> bool:
+    """Can a readable message be funded from this `listunspent` row?
+
+    A reader finds a message's sender from its inputs, and can only do that from
+    a pay-to-pubkey-hash or pay-to-script-hash input
+    (`script.ALLOWED_INPUT_TYPES`, rules.cpp:416-430). Mining pays itself a bare
+    pay-to-pubkey output, which the wallet counts as spendable and will happily
+    sign, and `tx.determine_sender` refuses outright -- so a message funded from
+    a coinbase is broadcast, confirmed, logged as sent, and thrown away unread
+    by every scanner on the chain, including the one on the machine that mined
+    the coin and sent the message. Nothing downstream can repair it: the payload
+    is unrecoverable without the sender address.
+
+    So the answer is used where inputs are CHOSEN, which is the last moment the
+    message can still be steered. Silence is allowed in -- see
+    `script.output_type` -- and only an output this reader can name and does not
+    allow is refused.
+    """
+    kind = output_type(utxo.get("scriptPubKey"), params)
+    return kind is None or kind in ALLOWED_INPUT_TYPES
 
 
 class MessageSender:
@@ -423,13 +446,22 @@ class MessageSender:
         message is **permanently unreadable by anyone**. So we choose the inputs.
         """
         unspent = self.rpc.call("listunspent", minconf, 9_999_999, [address])
+        # An output a reader cannot attribute is not a cheaper coin, it is a
+        # message nobody will ever read. Mining pays itself bare pay-to-pubkey,
+        # the wallet offers those outputs like any other and signs for them, and
+        # the decoder refuses them -- so they are set aside here, before anything
+        # is counted, rather than discovered by the scanner afterwards.
+        usable: list[dict] = []
+        mined: list[dict] = []
+        for row in unspent:
+            (usable if fundable_output(row, self.params) else mined).append(row)
         chosen: list[tuple[str, int]] = []
         total = 0
         # Smallest sufficient first, so a wallet that has been split does not
         # break a large output to pay for a small message and collapse back to
         # having one output. Excluded outpoints are ones another transaction in
         # this same send has already claimed.
-        candidates = [u for u in unspent
+        candidates = [u for u in usable
                       if (u["txid"], int(u["vout"])) not in exclude]
         big_enough = [u for u in candidates
                       if int(round(float(u["amount"]) * COIN)) >= target]
@@ -449,6 +481,25 @@ class MessageSender:
         # sendtoaddress) is how the coins usually left it: the node's own coin
         # selection spends the address's output and parks the change on a fresh
         # address of its own. listunspent already has what is needed to say so.
+        parked = sum(int(round(float(u["amount"]) * COIN)) for u in mined
+                     if (u["txid"], int(u["vout"])) not in exclude)
+        if parked:
+            # First, the case where the coins ARE here and are the wrong shape.
+            # A wallet that has only ever mined is not short and not scattered,
+            # and both of the sentences below would send the operator somewhere
+            # else looking. What converts mined coins into fundable ones is an
+            # ordinary send, whose change is pay-to-pubkey-hash.
+            raise SendError(
+                f"{address} holds {parked / COIN:.8f} that a message cannot be "
+                f"funded from. Mined coins pay themselves bare pay-to-pubkey, and "
+                f"a reader cannot work a sender out of one (rules.cpp:416-430), so "
+                f"a message paid for with them would land on the chain unreadable "
+                f"to every node on it -- including this one. Send "
+                f"{target / COIN:.8f} to {address} from the Wallet page and try "
+                f"again once it confirms; that leaves change of the kind a message "
+                f"can be funded from. {address} holds {total / COIN:.8f} of what "
+                f"this transaction needs."
+            )
         alternative = self._largest_funded_address(target, excluding=address)
         if alternative:
             name, held = alternative
@@ -633,11 +684,27 @@ class MessageSender:
                 continue
             prev = self.rpc.call("getrawtransaction", vin["txid"], True)
             out = prev["vout"][int(vin["vout"])]
-            addresses = out.get("scriptPubKey", {}).get("addresses") or []
-            if not addresses:
+            script = out.get("scriptPubKey")
+            # The same rule the reader will apply, asked before broadcasting
+            # rather than after. An address that agrees proves the payload was
+            # seeded for the right sender; it does not prove the sender can be
+            # WORKED OUT, which is the half a mined input fails, and a message
+            # that fails it sits on the chain forever unreadable.
+            kind = output_type(script, self.params)
+            if kind is not None and kind not in ALLOWED_INPUT_TYPES:
+                raise SendError(
+                    f"the funded transaction spends a {kind.value} output "
+                    f"({str(vin['txid'])[:16]}…:{vin['vout']}), which no reader "
+                    f"can attribute to a sender (rules.cpp:416-430). Broadcasting "
+                    f"it would put a message on the chain that nobody can ever "
+                    f"read. Fund {expected} with an ordinary send and retry."
+                )
+            listed = script.get("addresses") if isinstance(script, dict) else None
+            address = (listed or [None])[0]
+            if address is None:
                 continue
             value = int(round(float(out["value"]) * COIN))
-            sums[addresses[0]] = sums.get(addresses[0], 0) + value
+            sums[address] = sums.get(address, 0) + value
 
         best, best_value = "", 0
         for address in sorted(sums):          # matches std::map iteration order
@@ -723,6 +790,11 @@ class MessageSender:
             raise SendError(f"signing failed: {signed.get('errors')}")
 
         decoded = self.rpc.call("decoderawtransaction", signed["hex"])
+        # Class B needs the whole input set: its sender is the largest input by
+        # sum, so an input `fundrawtransaction` adds can move it, and the decoder
+        # checks the TYPE of every one of its inputs. Class C's reader looks at
+        # the first input alone, and the first is always one this sender chose
+        # -- the ones fund adds come after (D-171).
         if not class_c:
             self._verify_sender(decoded, sender_address)
         return PreparedTx(

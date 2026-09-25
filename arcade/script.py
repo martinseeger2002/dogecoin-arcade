@@ -239,3 +239,29 @@ def parse_output(script_hex: str, value_sats: int, params: Params) -> ParsedOutp
 # Input types Omni accepts. Anything else invalidates the transaction
 # (omnicore/src/omnicore/rules.cpp:416-430 -- only TX_PUBKEYHASH and TX_SCRIPTHASH).
 ALLOWED_INPUT_TYPES = frozenset({OutputType.PUBKEYHASH, OutputType.SCRIPTHASH})
+
+
+def output_type(script, params: Params) -> "OutputType | None":
+    """What kind of output a node's answer describes, or None if it says nothing.
+
+    The same script arrives in whichever shape the daemon's version uses: an
+    object with the hex inside it, which is what a `vout` row carries, or the
+    hex on its own, which is what an older node's `listunspent` rows carry. A
+    caller deciding whether an output may be SPENT has to ask in both, and the
+    callers that must are the ones choosing transaction inputs -- after a
+    transaction is built, the rule below has already been applied by the reader,
+    and by then the transaction is on the chain (D-171).
+
+    None means the node described nothing, not that the output is odd. Callers
+    read that as allowed: refusing coins because their node was silent would
+    report a funded wallet as empty, which is the wrong direction to be wrong in.
+    """
+    hex_text = (script.get("hex", "") if isinstance(script, dict)
+                else script if isinstance(script, str) else "")
+    if not hex_text:
+        return None
+    try:
+        return classify_script(bytes.fromhex(hex_text), params)[0]
+    except ValueError:          # not hex at all: the node said something odd
+        return None
+

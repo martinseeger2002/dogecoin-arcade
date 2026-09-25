@@ -742,6 +742,105 @@ def test_selection_prefers_the_smallest_output_that_covers_it():
     assert sender._select_inputs("nAddr", 100_000_000) == [("small", 0)]
 
 
+# What a node's answer says an output IS. A pay-to-pubkey-hash output is what an
+# ordinary send leaves behind and what a reader can work a sender out of; a bare
+# pay-to-pubkey one is what mining pays itself, and `tx.determine_sender` raises
+# on it before the payload is looked at (rules.cpp:416-430). One of each shape a
+# daemon hands back -- the hex on its own, which is what an older node's
+# `listunspent` rows carry, and the object with the hex inside.
+P2PKH = "76a914" + "11" * 20 + "88ac"
+P2PK = "21" + "02" + "22" * 32 + "ac"
+
+
+def test_a_mined_output_never_funds_a_message():
+    """Coinbase is spendable, the wallet offers it, and every reader refuses it.
+
+    `generate` pays the wallet a bare pay-to-pubkey output, `listunspent` calls
+    it spendable and `signrawtransaction` signs for it, so choosing inputs is the
+    last moment a message can still be steered away from one. Pick it anyway and
+    the node mines a block, answers an order out of it, logs a successful
+    broadcast, and puts a transaction on the chain that every scanner on earth --
+    the one on the machine that sent it included -- throws away unread. Nothing
+    downstream can repair it: the payload cannot be recovered without the sender,
+    and the sender is what a pubkey input cannot say.
+    """
+    from arcade.config import NETWORKS
+    from arcade.messaging.sender import MessageSender
+
+    class FakeRpc:
+        def call(self, method, *args):
+            return [{"txid": "mined", "vout": 0, "amount": 9000.0,
+                     "scriptPubKey": P2PK},
+                    {"txid": "sent", "vout": 1, "amount": 10.0,
+                     "scriptPubKey": {"hex": P2PKH}}]
+
+    sender = MessageSender.__new__(MessageSender)
+    sender.rpc = FakeRpc()
+    sender.params = NETWORKS["regtest"]
+
+    # The 9,000-coin output loses to the 10-coin one even though the selection
+    # order on its own would have taken it: it is bigger, and the smallest that
+    # covers the target is only preferred among outputs that can be used at all.
+    assert sender._select_inputs("nAddr", 100_000_000) == [("sent", 1)]
+
+
+def test_a_wallet_of_only_mined_coins_is_told_why_it_cannot_send():
+    """Not "your coins are on another address", which is the wrong diagnosis.
+
+    A node that has only ever mined is neither short nor scattered, and both of
+    the sentences this used to reach for point it somewhere else: one sends it
+    hunting through the wallet, one tells it to consolidate what it already has
+    on one address. The coins are here and are the wrong shape, and the one
+    remedy is an ordinary send, whose change a reader can attribute.
+    """
+    from arcade.config import NETWORKS
+    from arcade.messaging.sender import MessageSender, SendError
+
+    class FakeRpc:
+        def call(self, method, *args):
+            return [{"txid": f"mined{i}", "vout": 0, "amount": 500.0,
+                     "scriptPubKey": P2PK} for i in range(2)]
+
+    sender = MessageSender.__new__(MessageSender)
+    sender.rpc = FakeRpc()
+    sender.params = NETWORKS["regtest"]
+
+    with pytest.raises(SendError) as caught:
+        sender._select_inputs("nAddr", 100_000_000)
+    said = str(caught.value)
+    assert "pay-to-pubkey" in said, said
+    assert "1000.00000000" in said, said        # what is parked there, unwrong
+    assert "Wallet page" in said, said          # and the one thing that works
+
+
+def test_the_last_check_before_broadcast_refuses_a_pubkey_input():
+    """`fundrawtransaction` adds inputs the input chooser never saw.
+
+    `_verify_sender` exists to stop a message nobody can ever read from being
+    broadcast, and it checked half of that: that the inputs agree on the sender
+    the payload was seeded for. A mined input agreed -- the node prints an
+    address for a pubkey output, so the sums came out right -- while the decoder
+    would refuse it outright.
+    """
+    from arcade.config import NETWORKS
+    from arcade.messaging.sender import MessageSender, SendError
+
+    class FakeRpc:
+        def call(self, method, *args):
+            assert method == "getrawtransaction"
+            return {"vout": [{"value": 50.0,
+                              "scriptPubKey": {"hex": P2PK,
+                                              "addresses": ["nMined"]}}]}
+
+    sender = MessageSender.__new__(MessageSender)
+    sender.rpc = FakeRpc()
+    sender.params = NETWORKS["regtest"]
+
+    with pytest.raises(SendError) as caught:
+        sender._verify_sender({"vin": [{"txid": "ab" * 32, "vout": 0}]}, "nAddr")
+    assert "pubkey" in str(caught.value)
+
+
 def test_a_large_message_can_be_planned_at_all(alice, bob):
     """Sealing before deciding was a hard limit at about 64 KB.
 
