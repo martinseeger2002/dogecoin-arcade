@@ -50,6 +50,8 @@ class Shown:
     deleted: bool = False
     likes: int = 0
     liked_by_me: bool = False
+    dislikes: int = 0
+    disliked_by_me: bool = False
     shares: int = 0
     tips: int = 0
     tipped: dict[str, int] = field(default_factory=dict)   # per chain, sats
@@ -127,13 +129,16 @@ def _one(txid: str, author: str, text: str, row: Any,
     edit = _latest_by(acts, feed.EDIT, author)
     said = edit["text"] if edit is not None else text
 
+    # One opinion per person, the latest of like/unlike/dislike/undislike: a
+    # like after a dislike is a change of mind, not both (2026-09-25).
     likers: dict[str, Any] = {}
     for act in acts:
-        if act["kind"] in (feed.LIKE, feed.UNLIKE):
+        if act["kind"] in feed.OPINIONS:
             best = likers.get(act["author"])
             if best is None or (act["height"] or 0, act["txid"]) > (best["height"] or 0, best["txid"]):
                 likers[act["author"]] = act
     liked = {who for who, act in likers.items() if act["kind"] == feed.LIKE}
+    disliked = {who for who, act in likers.items() if act["kind"] == feed.DISLIKE}
 
     # A tip from the post's own author is not applause: counted flat it was
     # merely pointless, and counted by amount it is the cheapest road to the
@@ -165,6 +170,8 @@ def _one(txid: str, author: str, text: str, row: Any,
         edited=edit is not None,
         likes=len(liked),
         liked_by_me=bool(me) and me in liked,
+        dislikes=len(disliked),
+        disliked_by_me=bool(me) and me in disliked,
         shares=sum(1 for a in acts if a["kind"] == feed.SHARE),
         tips=len(tips),
         tipped=tipped,

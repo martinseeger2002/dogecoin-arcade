@@ -170,32 +170,42 @@ TEMPLATES.env.filters["coins"] = _coins
 
 
 def _cursor(before: Any) -> tuple[int | None, float | None]:
-    """The two halves of a feed cursor, out of the one token a link carries.
+    """The (id, anchor) halves of a feed cursor; `_cursor3` also gives the moment."""
+    ident, anchor, _asof = _cursor3(before)
+    return ident, anchor
 
-    `412@7.4` means "post 412, and that is the score it had when the page
-    that linked here was made". A popularity order is cut along a number that
-    moves, so a cursor has to remember where the cut WAS; and one query
-    parameter rather than two, because a link that needs its two halves to
-    agree is a link that breaks when somebody copies one of them. An id on
-    its own -- a bookmark, an old link, a profile page -- is still understood,
-    and store.py measures that post's score itself.
+
+def _cursor3(before: Any) -> tuple[int | None, float | None, int | None]:
+    """A feed cursor out of the one token a link carries: `id@anchor@asof`.
+
+    `412@0.35@1790350000` means "post 412, the rank it had, and the moment it
+    was ranked at". A popularity order is cut along a number that moves, so a
+    cursor remembers where the cut WAS -- and since 2026-09-25 the rank also
+    moves with the clock (feed.hot), so every page of one scroll is ranked at
+    the moment its first page was made. One query parameter rather than three,
+    because a link whose parts must agree breaks when somebody copies one. An
+    older `id@anchor`, or a bare id (a bookmark, a profile page), still parses:
+    its page is ranked now, and store.py measures the anchor itself if absent.
     """
     if before is None:
-        return None, None
-    ident, _, score = str(before).partition("@")
+        return None, None, None
+    ident, _, rest = str(before).partition("@")
+    score, _, asof = rest.partition("@")
     try:
         number = int(ident)
     except ValueError:
-        return None, None
-    if not score:
-        return number, None
+        return None, None, None
     try:
-        return number, float(score)
+        when = int(asof) if asof else None
     except ValueError:
-        return number, None
+        when = None
+    try:
+        return number, (float(score) if score else None), when
+    except ValueError:
+        return number, None, when
 
 
-def _next_cursor(rows: list[Any], sort: str) -> Any:
+def _next_cursor(rows: list[Any], sort: str, asof: int | None = None) -> Any:
     """What the next page's link carries, which depends on the order.
 
     Newest-first needs the id and nothing else: an id does not move. The
@@ -211,7 +221,11 @@ def _next_cursor(rows: list[Any], sort: str) -> Any:
     last = rows[-1]
     if sort != "popular":
         return last["id"]
-    return f"{last['id']}@{int(float(last['score']) * 1_000_000) / 1_000_000}"
+    # The RANK now (feed.hot), truncated as the score was, and the moment it was
+    # ranked at, so the next page is ranked at that same moment.
+    value = last["rank"] if "rank" in last.keys() else last["score"]
+    token = f"{last['id']}@{int(float(value) * 1_000_000_000) / 1_000_000_000}"
+    return f"{token}@{int(asof)}" if asof else token
 
 
 # A global rather than a filter: it takes what the page already looked up,
@@ -2267,18 +2281,20 @@ def create_app(state: AppState) -> FastAPI:
         page by, and a post that has not confirmed cannot be older -- or
         less endorsed -- than one that has.
         """
-        ident, anchor = _cursor(before)
+        ident, anchor, asof = _cursor3(before)
+        if sort == "popular" and asof is None:
+            asof = int(time.time())
         with state.store() as store:
             if sort == "popular":
                 rows = store.feed_posts_popular(network, cursor=ident,
                                                 anchor=anchor, limit=limit + 1,
-                                                author=author)
+                                                author=author, asof=asof)
             else:
                 rows = store.feed_posts(network, author=author, before=ident,
                                         limit=limit + 1)
         more = rows[limit:]
         rows = rows[:limit]
-        cursor = _next_cursor(rows, sort) if rows and more else None
+        cursor = _next_cursor(rows, sort, asof) if rows and more else None
         waiting = _pending_feed(network)
         if before is None:
             known = {row["txid"] for row in rows}
@@ -2420,7 +2436,7 @@ def create_app(state: AppState) -> FastAPI:
             return ""
 
     @app.get("/feed", response_class=HTMLResponse)
-    def feed_page(request: Request, before: str | None = None):
+    def feed_page(request: Request, before: str | None = None, sort: str = "popular"):
         """Everybody's posts, the endorsed first: likes, shares, and tips
         weighted by what they gave (2026-09-23; feed.py says the
         arithmetic and store.py runs it as the query's own ORDER BY).
@@ -2431,8 +2447,10 @@ def create_app(state: AppState) -> FastAPI:
         """
         chain = state.messaging
         mine = _tag_of_whoever_is_asking(request)
+        # Popular, the default, or New: newest first (2026-09-25).
+        sort = "new" if sort == "new" else "popular"
         rows, cursor, waiting = _feed_page(chain.network, before=before,
-                                          sort="popular")
+                                          sort=sort)
         shown = _shown(rows, chain.network, waiting, me=mine["address"])
         # Looking at it is reading it. Marked BEFORE the page is rendered, so
         # the count beside Feed is gone by the time it is drawn rather than
@@ -2445,7 +2463,8 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "feed.html", chain=chain, posts=shown,
                       bylines=_bylines(shown, waiting),
                       drawable=_drawable_in(shown), cursor=cursor, whose=None,
-                      here="/feed", mine=mine, kinds=feedlib.BY_NAME,
+                      here="/feed" if sort == "popular" else "/feed?sort=new",
+                      sort=sort, mine=mine, kinds=feedlib.BY_NAME,
                       when=_when, node=chain.status())
 
     @app.get("/u/{tag}", response_class=HTMLResponse)
@@ -2812,6 +2831,7 @@ def create_app(state: AppState) -> FastAPI:
         byte, and a route per kind would be six copies of this (D-138).
         """
         kinds = {"like": feedlib.LIKE, "unlike": feedlib.UNLIKE,
+                 "dislike": feedlib.DISLIKE, "undislike": feedlib.UNDISLIKE,
                  "reply": feedlib.REPLY, "share": feedlib.SHARE,
                  "edit": feedlib.EDIT, "delete": feedlib.DELETE}
         try:
