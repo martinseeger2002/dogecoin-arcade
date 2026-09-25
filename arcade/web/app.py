@@ -10167,6 +10167,50 @@ def create_app(state: AppState) -> FastAPI:
         return bootstraplib.current(state.home, network, index,
                                     context.params.activation_height, tip)
 
+    # --- identity by key: who runs which arcade (arcade/instance.py) -------------
+
+    @app.get("/.well-known/dogecoinarcade.json")
+    def instance_claim():
+        """This arcade's own claim, for a directory visitor's browser to check
+        against the chain: the fee address that announces it, and its revision.
+        Open to any origin on purpose -- it is the one file another site's page
+        must be able to read -- and it says nothing that is not public."""
+        with state.store() as store:
+            mine = [dict(r) for r in store.instances(state.messaging.network)
+                    if r["address"] == state.derived_address]
+        return JSONResponse(
+            {"fee_address": state.derived_address or "",
+             "revision": state.running_version or "",
+             "domains": list(state.public_hosts),
+             "announced": [{"domain": r["domain"], "txid": r["txid"],
+                            "height": r["height"]} for r in mine]},
+            headers={"Access-Control-Allow-Origin": "*",
+                     "Cache-Control": "no-store"})
+
+    @app.get("/instances", response_class=HTMLResponse)
+    def instances_page(request: Request):
+        """Every arcade that has said on the chain who runs it."""
+        with state.store() as store:
+            rows = [dict(r) for r in store.instances(state.messaging.network)]
+        return render(request, "instances.html", rows=rows,
+                      fee_address=state.derived_address or "",
+                      revision=state.running_version or "",
+                      hosts=list(state.public_hosts), when=_when)
+
+    @app.post("/instances/announce")
+    def instances_announce(request: Request, domain: str = Form(""),
+                           csrf_token: str = Form("")):
+        """The operator says, on the chain, that this arcade is theirs."""
+        try:
+            check_csrf(csrf_token)
+            said = state.announce_instance(domain)
+            state.flash(f"Announced {said['domain']} at revision {said['revision']} "
+                        f"from {said['fee_address']} ({said['txid'][:16]}...). It shows "
+                        "in the directory once its block lands.", "ok")
+        except Exception as exc:                       # noqa: BLE001 -- said to the operator
+            state.flash(f"Not announced: {exc}", "err")
+        return RedirectResponse("/instances", status_code=303)
+
     @app.get("/clone", response_class=HTMLResponse)
     def clone_page(request: Request):
         copies = []

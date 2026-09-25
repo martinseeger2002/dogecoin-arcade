@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Arcades · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Arcades</h1>
+<p class="sub">Every arcade that has said on the chain who runs it. Anybody can run a copy;
+  this is how you tell them apart &mdash; by who runs them, not by what their name looks like.</p>
+
+<div class="note">
+  <strong>How to read this.</strong> Each arcade announced its web address from its own
+  <b>fee address</b>, in a transaction only that address's key could sign, so the chain
+  proves who made each announcement. But anybody can <em>announce</em> any address, so your
+  browser also asks each site which fee address it uses. <b>Verified</b> means the site and
+  the chain agree. Anything else, be careful: a look-alike can copy a page, not a key.
+</div>
+
+{% if not public %}
+<div class="panel">
+  <h2 style="margin-top:0">Announce this arcade</h2>
+  <p class="muted" style="font-size:.9rem">Your fee address <code class="mono">{{ fee_address or "—" }}</code>
+    pays for one small message saying your domain and revision
+    <code class="mono">{{ revision or "unknown" }}</code>. It has to pay itself &mdash; that is the
+    proof &mdash; so give it a coin first if it has none. Announce again after an update so the
+    revision people see is current.</p>
+  <form method="post" action="/instances/announce" class="row" style="gap:8px">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <div style="flex:1;min-width:220px"><input name="domain" autocomplete="off" spellcheck="false"
+      value="{{ hosts[0] if hosts else '' }}" placeholder="arcade.example.com"></div>
+    <button type="submit">Announce it</button>
+  </form>
+</div>
+{% endif %}
+
+<h2>On the chain</h2>
+{% if rows %}
+<div class="instlist">
+  {% for r in rows %}
+  <div class="panel inst" data-domain="{{ r.domain }}" data-address="{{ r.address }}">
+    <div class="row" style="align-items:baseline;gap:10px">
+      <a class="dom" href="https://{{ r.domain }}" rel="noopener nofollow">{{ r.domain }}</a>
+      <span class="pill verdict">checking&hellip;</span>
+      {% if r.address == fee_address %}<span class="pill ok">this arcade</span>{% endif %}
+    </div>
+    <div class="kv"><span class="k">Fee address</span><span class="v mono">{{ r.address }}</span></div>
+    <div class="kv"><span class="k">Revision</span><span class="v mono">{{ r.revision }}</span></div>
+    <div class="kv"><span class="k">Announced</span><span class="v">{{ when(r.block_time) }} &middot; block {{ "{:,}".format(r.height) }}</span></div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="panel empty"><p class="muted">No arcade has announced itself yet.</p></div>
+{% endif %}
+
+<style>
+.instlist{display:grid;gap:12px}
+.inst .dom{font-weight:650;font-size:1.05rem}
+.inst .kv .v{word-break:break-all;text-align:right;max-width:70%}
+</style>
+<script>
+// The check happens HERE, in the visitor's browser, never on this node: the node
+// does not fetch web addresses that strangers wrote onto the chain.
+document.querySelectorAll('.inst').forEach(function (card) {
+  var pill = card.querySelector('.verdict');
+  var say = function (text, kind) { pill.textContent = text; pill.className = 'pill verdict ' + kind; };
+  var ctl = new AbortController(); setTimeout(function () { ctl.abort(); }, 8000);
+  fetch('https://' + card.dataset.domain + '/.well-known/dogecoinarcade.json',
+        {cache: 'no-store', signal: ctl.signal})
+    .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(function (said) {
+      if (said.fee_address === card.dataset.address) say('✓ verified', 'ok');
+      else say('✗ the site names another fee address', 'bad');
+    })
+    .catch(function () { say('could not reach it', 'warn'); });
+});
+</script>
+{% endblock %}
