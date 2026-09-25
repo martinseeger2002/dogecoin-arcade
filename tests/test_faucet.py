@@ -175,3 +175,15 @@ def test_an_operator_can_turn_it_off(register):
     faucet = Faucet(register, gift=GIFT, ceiling=0)
     with pytest.raises(DryToday):
         faucetlib.pour(FakeChain(), faucet, KEY, "nAddr")
+
+
+def test_by_default_there_is_no_daily_ceiling(register):
+    """A launch day's crowd must not find it dry (2026-09-25): twenty-five
+    new accounts in one day, and every one of them is paid."""
+    from arcade.faucet import Faucet, GIFT
+    faucet = Faucet(register, gift=GIFT)
+    chain = FakeChain()
+    now = int(time.time())
+    for i in range(25):
+        faucetlib.pour(chain, faucet, f"{i:02x}" * 32, f"nAddr{i}", ip="1.2.3.4", now=now + i)
+    assert len(chain.sent) == 25

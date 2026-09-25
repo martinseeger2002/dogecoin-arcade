@@ -19,19 +19,14 @@ its own much lower ceiling (`MAINNET_MOST`). What would have to be true
 first is written down in docs/multi-user.md §1b -- a faucet that has run
 in the open on testnet without being farmed.
 
-**Bounded on two axes**, because an open faucet and open signup together are
-a farm:
-
-    once an account     the record is the account's own public key
-    a daily ceiling     the worst case is "the faucet is empty until
-                        tomorrow", never "the operator's wallet is empty"
-
-The second is the one that matters: nobody can work around it. (Seats bound
-it too: a node seats a fixed number of accounts.) There was a third, once a
-connection a day, and the operator took it out on 2026-09-25: it turned away the
-second person in a house, an office or a phone network, and anybody set on
-farming had a phone anyway. The connection is still RECORDED with each gift,
-so a pattern can be seen after the fact.
+**Bounded by the account and the seat**: one gift per account, and a node
+seats a fixed number of accounts, so a node seating a hundred gives at most a
+hundred gifts, ever. The operator took out the other two limits on 2026-09-25: once
+a connection a day turned away the second person in a house, an office or a
+phone network (and anybody farming had a phone anyway), and a daily ceiling of
+twenty would have left a launch day's crowd with an empty faucet. The ceiling
+is still there for an operator who wants one (`faucet_daily`); the connection
+is still RECORDED with each gift, so a pattern can be seen after the fact.
 
 **What is NOT done here**: judging whether somebody deserves it. There is
 no captcha, no email, no wait. A faucet that is hard to use is a faucet
@@ -48,9 +43,12 @@ from dataclasses import dataclass
 #: thing rather than working out how to get coins.
 GIFT = 100_00000000
 
-#: The ceiling, per day, across everybody. Twenty accounts' worth: a day's
-#: worth of real arrivals, and an afternoon's worth of a script.
-DAILY_CEILING = 20 * GIFT
+#: The ceiling, per day, across everybody. None: there is none by default
+#: (2026-09-25) -- a launch day's crowd must not find the faucet dry
+#: at breakfast. What bounds a node's faucet is one gift per account and the
+#: seats: a node that seats a hundred can give at most a hundred gifts, ever.
+#: An operator who wants a daily cap sets `faucet_daily` in settings.json.
+DAILY_CEILING = None
 
 #: The most a faucet may give on a chain where the coins are real, if one
 #: is ever turned on. A tenth of the testnet gift, because the question a
@@ -93,10 +91,11 @@ class Faucet:
     """The record of what has been given, and the rules about giving more."""
 
     def __init__(self, accounts, gift: int = GIFT,
-                 ceiling: int = DAILY_CEILING, real_coins: bool = False):
+                 ceiling: int | None = DAILY_CEILING, real_coins: bool = False):
         self.conn = accounts.conn
         self.gift = int(gift)
-        self.ceiling = int(ceiling)
+        #: None is "no daily ceiling", which is the default (see DAILY_CEILING).
+        self.ceiling = None if ceiling is None else int(ceiling)
         #: Whether this faucet may pay on a chain where the coins are real.
         #: Off unless an operator says otherwise, and capped much lower
         #: when it is on.
@@ -119,6 +118,8 @@ class Faucet:
         return int(row[0] or 0)
 
     def left_today(self, now: int | None = None) -> int:
+        if self.ceiling is None:
+            return 10 ** 18                   # no daily ceiling: never the reason
         return max(0, self.ceiling - self.today(now))
 
     def may(self, pubkey: str, ip: str = "", now: int | None = None) -> None:
