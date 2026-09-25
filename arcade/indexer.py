@@ -90,11 +90,15 @@ class ArcadeHandler:
         self.stats = {"blocks": 0, "candidates": 0, "valid": 0, "invalid": 0, "unreadable": 0}
 
     def on_connect(self, state: StateDB, height: int, block: dict[str, Any]) -> None:
-        if height < self.params.activation_height:
+        # Below the floor, a block is read for its @names alone -- if names start
+        # earlier than the floor (config.Params.names_from) -- and otherwise not at
+        # all. Coins are followed there too: a floor never touches coins.
+        names_only = self.params.names_only(height)
+        if height < self.params.activation_height and not names_only:
             return
 
         self.prevouts.add_block(block)
-        engine = Engine(state, self.params)
+        engine = Engine(state, self.params, names_only=names_only)
         self.stats["blocks"] += 1
 
         # Coins first, and for every transaction in the block rather than

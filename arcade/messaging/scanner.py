@@ -138,6 +138,19 @@ class Scanner:
         # same history -- previously each began at whatever height its own
         # identity happened to be created, and neither could tell why the other
         # had seen a post they had not.
+        content = self.content_floor()
+        # Keys are read from where names begin, which a floor move leaves behind
+        # (config.Params.names_from): an @name that survives the move has to stay
+        # reachable, on a node installed after it too. Below the content floor
+        # nothing else is read (_scan_block).
+        names = self.params.names_from
+        if names is not None and names < content:
+            return names
+        return content
+
+    def content_floor(self) -> int:
+        """Where everything but key announcements is read from: the shared floor,
+        raised to this identity's creation when that is known."""
         floor = max(self.params.messaging_start_height,
                     self.params.activation_height or 0)
 
@@ -197,6 +210,12 @@ class Scanner:
              ) -> ScanResult:
         result = ScanResult()
         tip = self.rpc.get_block_count()
+        # A floor move reaches this store too: what is below the shared floor goes,
+        # key announcements (the @names) stay. Once per floor.
+        shared = max(self.params.messaging_start_height, self.params.activation_height or 0)
+        cleared = self.store.clear_below_floor(self.params.name, shared)
+        if cleared:
+            log.info("floor %s: cleared %s", shared, cleared)
         start = self._resolve_fork(result)
         if start > tip:
             return result
@@ -254,6 +273,7 @@ class Scanner:
     def _scan_block(self, height: int, block: dict[str, Any], result: ScanResult) -> None:
         self.prevouts.add_block(block)
         block_time = int(block.get("time", 0))
+        keys_only = bool(height) and height < self.content_floor()
 
         for position, tx in enumerate(block.get("tx", [])):
             try:
@@ -282,6 +302,12 @@ class Scanner:
 
             body = message.data
             if not is_message_payload(body):
+                continue
+
+            # Below the content floor only key announcements are read: they carry
+            # the @names that survive a floor move (Params.names_from). Posts,
+            # reactions, messages and everything else there stay unread.
+            if keys_only and not (len(body) > 5 and body[5] == TYPE_KEY_ANNOUNCE):
                 continue
 
             # Public posts are read here and now. There is nothing to decrypt and

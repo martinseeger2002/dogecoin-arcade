@@ -144,7 +144,7 @@ class ChainFollower:
             return None
 
         height = tip["height"]
-        start = self.params.activation_height
+        start = self.params.index_start
         bottom = self.db.conn.execute(
             "SELECT MIN(height) AS low FROM block").fetchone()
         low = bottom["low"] if bottom and bottom["low"] is not None else height
@@ -162,6 +162,21 @@ class ChainFollower:
                    f"nothing would ever go back for")
                 + ". Nothing is wrong with the chain. The index is being set "
                   f"aside and rebuilt from {start:,}.")
+        # The index begins where names do (Params.index_start), which a floor move
+        # leaves behind -- so a MOVE shows only in the content floor it was built
+        # for, recorded beside it. An index from before this record existed was
+        # built for the floor it finds, and adopts it rather than rebuilding.
+        content = self.params.activation_height
+        built_for = self.db.get_meta("content_floor")
+        if built_for is None:
+            self.db.set_meta("content_floor", str(content))
+            self.db.conn.commit()
+        elif int(built_for) != content and height >= start:
+            raise IndexFromAnotherFloor(
+                f"this index was built for a floor of {int(built_for):,} and the "
+                f"floor is now {content:,}. Nothing is wrong with the chain. The "
+                f"index is being set aside and rebuilt: @names are read from "
+                f"{start:,}, everything else from {content:,}.")
         if height < start:
             # The floor was raised above everything this index holds. No hash
             # is compared, and none should be: every block in here is below
@@ -228,7 +243,7 @@ class ChainFollower:
             fork = self.find_fork_height()
             result.fork_height = fork
             if fork is None or fork < tip["height"]:
-                target = fork if fork is not None else self.params.activation_height - 1
+                target = fork if fork is not None else self.params.index_start - 1
                 doomed = [
                     row["height"]
                     for row in self.db.conn.execute(
@@ -245,7 +260,7 @@ class ChainFollower:
                     result.disconnected.append(height)
 
         tip = self.db.tip()
-        next_height = self.params.activation_height if tip is None else tip["height"] + 1
+        next_height = self.params.index_start if tip is None else tip["height"] + 1
 
         for height in range(next_height, min(result.node_tip, next_height + max_blocks - 1) + 1):
             block_hash = self.rpc.get_block_hash(height)
