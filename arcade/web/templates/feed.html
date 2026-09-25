@@ -94,20 +94,20 @@
        for anybody but whoever runs the node, so the script at the bottom of
        this page answers it here instead, with this key. #}
     <button class="ghost small" type="button" onclick="toggle('tip-{{ p.txid }}')"
-            title="Coins to the author, in the same transaction that says which post">Tip {{ p.tips or '' }}</button>
+            title="Coins to the author, in the same transaction that says which post{{ ' — tipped %d time%s so far' % (p.tips, '' if p.tips == 1 else 's') if p.tips }}">Tip</button>
     <form method="post" action="/feed/{{ p.txid }}/tip" id="tip-{{ p.txid }}"
           hidden style="margin:6px 0 0;width:100%">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="back" value="{{ here }}">
       <div class="row">
         <div style="flex:1"><input autocomplete="off" name="amount"
-          inputmode="decimal" placeholder="How much" maxlength="18"></div>
+          inputmode="decimal" placeholder="How many {{ chain.label|lower }} coins?" maxlength="18"></div>
         <button class="small" type="submit">Send the tip</button>
       </div>
     </form>
     {% else %}
     <a class="ghost btn small" href="/feed/{{ p.txid }}/tip"
-       title="Send coins, a token or a piece — on either chain">Tip {{ p.tips or '' }}</a>
+       title="Send coins, a token or a piece — on either chain{{ ' — tipped %d time%s so far' % (p.tips, '' if p.tips == 1 else 's') if p.tips }}">Tip</a>
     {% endif %}
 
     {% if p.tipped %}
@@ -180,6 +180,15 @@
 {% endmacro %}
 
 {% block body %}
+<style>
+    /* A picture in a post fits the card; tapping it opens the full-size viewer. Nothing
+       sized .postmedia before, so a big inscription was drawn at its own width and ran
+       off a phone screen (2026-09-25). */
+    .posttext img.postmedia{display:block;max-width:100%;height:auto;max-height:70vh;
+      object-fit:contain;border-radius:10px;margin:8px 0;cursor:zoom-in}
+    .posttext iframe.postmedia{display:block;width:100%;max-width:100%;border:0;
+      border-radius:10px;margin:8px 0}
+</style>
 {% if whose %}
   <div class="row" style="align-items:center;gap:12px">
     {% if whose.face %}
@@ -237,8 +246,8 @@
   <style>
     .feedcomposer{display:flex;align-items:flex-end;gap:8px}
     .feedcomposer .saybox{flex:1 1 auto;min-width:0}
-    .feedcomposer textarea{display:block;box-sizing:border-box;height:42px;
-      min-height:42px;max-height:220px;padding:10px 12px;margin:0;
+    .feedcomposer textarea{display:block;box-sizing:border-box;height:auto;min-height:48px;
+      max-height:220px;padding:10px 12px;margin:0;
       font:inherit;font-size:.95rem;line-height:1.35;
       font-family:inherit;resize:none;overflow:hidden}
     .feedcomposer .attach{display:inline-flex;align-items:center;
@@ -252,7 +261,7 @@
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
     <div class="feedcomposer">
       <div class="saybox">
-        <textarea autocomplete="off" name="text" id="say" rows="1"
+        <textarea autocomplete="off" name="text" id="say" rows="2"
           placeholder="Say something as @{{ mine.tag }}"></textarea></div>
       <label class="ghost btn attach"
              title="Attach a file — it becomes an inscription you own">📎
@@ -270,7 +279,7 @@
      differs is that nothing is sent until it is signed here. #}
   <div class="feedcomposer" id="account-composer">
     <div class="saybox">
-      <textarea autocomplete="off" id="account-say" rows="1"
+      <textarea autocomplete="off" id="account-say" rows="2"
         placeholder="Say something as @{{ mine.tag }}"></textarea></div>
     <button type="button" id="account-post">Post</button>
   </div>
@@ -398,6 +407,12 @@
   const say = (text, bad) => {
     $("acts-said").textContent = text;
     $("acts-said").style.color = bad ? "var(--bad)" : "var(--muted)";
+    // #acts-said sits at the top of the page, out of sight of the card that was
+    // pressed, and the page reloads the moment the node sees the transaction, so a
+    // like or a tip seemed to do nothing at all (walk-through, 2026-09-25). Say it
+    // where the reader is looking, and carry it across that reload.
+    feedToast(text, bad);
+    try { sessionStorage.setItem("feedToast", JSON.stringify({text, bad, at: Date.now()})); } catch (e) {}
   };
   // Same reason as the composer's: started, not awaited. Here the cost of
   // awaiting was worse than a swallowed press — the listener below is what
@@ -524,19 +539,93 @@ function foldComments(button, id){
   }
 })();
 
+// A short note floated at the bottom of the screen: what just happened to the post
+// that was pressed. Survives the live reload that follows every action (see say()).
+function feedToast(text, bad) {
+  var t = document.getElementById('feedtoast');
+  if (!t) {
+    t = document.createElement('div'); t.id = 'feedtoast'; t.setAttribute('role', 'status');
+    t.style.cssText = 'position:fixed;left:16px;right:16px;margin:0 auto;width:fit-content;' +
+      'bottom:18px;z-index:6;max-width:520px;padding:10px 16px;border-radius:12px;font-size:.9rem;' +
+      'background:var(--fg);color:var(--bg);box-shadow:0 4px 16px rgba(0,0,0,.25)';
+    document.body.appendChild(t);
+  }
+  t.textContent = text; t.style.background = bad ? 'var(--bad)' : 'var(--fg)';
+  t.hidden = false; clearTimeout(t._h);
+  t._h = setTimeout(function () { t.hidden = true; }, 7000);
+}
+(function () {
+  try {
+    var held = JSON.parse(sessionStorage.getItem('feedToast') || 'null');
+    sessionStorage.removeItem('feedToast');
+    if (held && Date.now() - held.at < 15000) {
+      document.addEventListener('DOMContentLoaded', function () { feedToast(held.text, held.bad); });
+      if (document.readyState !== 'loading') feedToast(held.text, held.bad);
+    }
+  } catch (e) {}
+})();
+
+// Tap a picture in a post to see it whole (the same viewer as everywhere else).
+// Delegated, so the posts added by scrolling get it too.
+document.addEventListener('click', function (event) {
+  var img = event.target.closest && event.target.closest('.posttext img.postmedia');
+  if (!img || typeof arcadeOpenImage !== 'function') return;
+  event.preventDefault();
+  arcadeOpenImage(img.src, '', img.src);
+});
+
 // Ten at a time, and the next ten when somebody reaches the bottom (D-138).
 // A link is there whether or not this runs: scrolling is a convenience, not
 // the only way to see an older post.
+//
+// The next ten are fetched and ADDED under the ones already showing. This used
+// to navigate to the link instead, which replaced the page with the older ten
+// only: 300px from the bottom of a ten-post page is a few seconds of reading on
+// a tall screen, so the feed seemed to refresh by itself and the posts being
+// read vanished (2026-09-25). Once more than the first page is showing,
+// body[data-reading] holds the live reload in base.html, which would otherwise
+// put the reader back on the first ten at the next block.
 (function(){
   var more = document.getElementById('more');
-  if (!more || !window.IntersectionObserver) return;
+  if (!more || !window.IntersectionObserver || !window.fetch) return;
   var asking = false;
-  new IntersectionObserver(function(entries){
+  var seen = new Set();
+  document.querySelectorAll('.feedpost').forEach(function (c) { seen.add(c.outerHTML); });
+  var watch = new IntersectionObserver(function(entries){
     if (!entries[0].isIntersecting || asking) return;
-    asking = true;
     var link = more.querySelector('a');
-    if (link) window.location = link.href;
-  }, {rootMargin: '300px'}).observe(more);
+    if (!link) return;
+    asking = true;
+    link.textContent = 'Loading older posts…';
+    fetch(link.href, {credentials: 'same-origin'})
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); })
+      .then(function (html) {
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        var next = doc.getElementById('more');
+        var from = next ? next.parentNode : doc.querySelector('main');
+        var cards = from ? from.querySelectorAll(':scope > .feedpost') : [];
+        cards.forEach(function (c) {
+          if (seen.has(c.outerHTML)) return;       // the order moved under us: shown already
+          seen.add(c.outerHTML);
+          more.parentNode.insertBefore(document.importNode(c, true), more);
+        });
+        document.body.dataset.reading = '1';
+        if (next && next.querySelector('a')) {
+          link.href = next.querySelector('a').href;
+          link.textContent = 'Older posts';
+          asking = false;
+        } else {
+          watch.disconnect();
+          more.remove();
+        }
+      })
+      .catch(function () {
+        // Leave the plain link: pressing it still works, the old way.
+        link.textContent = 'Older posts';
+        watch.disconnect();
+      });
+  }, {rootMargin: '300px'});
+  watch.observe(more);
 })();
 </script>
 {% endblock %}

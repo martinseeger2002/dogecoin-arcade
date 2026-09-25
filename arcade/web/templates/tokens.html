@@ -20,8 +20,11 @@
 {% endif %}
 
 <div class="chainbar">
+  {# hide_wallet for visitors and accounts: the Balance here is the NODE's wallet, and a
+     newcomer read 191,692 as their own (walk-through, 2026-09-25). #}
   {{ chains.card(chain, node, "Tokens live here.",
-                 "Wallet disabled on this node." if not node.wallet else None) }}
+                 "Wallet disabled on this node." if not node.wallet and not public else None,
+                 hide_wallet=public) }}
 </div>
 {{ tk.index_status(index, chain) }}
 
