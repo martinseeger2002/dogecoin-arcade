@@ -987,7 +987,27 @@ function arcadeFileCost(bytes){
           }
           return;
         }
-        location.reload();
+        // No more whole-page reloads (2026-09-25: "the page shouldn't be auto
+        // reloading; the page components should"). A reload every block (~1 a minute)
+        // shut open sections, jumped the scroll and ate what was about to be typed.
+        // Instead: tell the page's own components (they redraw themselves on
+        // `arcade:changed`, see docs/multi-user.md Order item "components refresh in
+        // place"), and offer the reload as a button for whatever has not learned to yet.
+        known = data.generation;
+        try {
+          document.dispatchEvent(new CustomEvent('arcade:changed',
+            {detail: {generation: data.generation}}));
+        } catch (e) {}
+        if (!document.body.dataset.selfRefreshing && !document.getElementById('newposts')) {
+          var u = document.createElement('a');
+          u.id = 'newposts'; u.href = location.pathname + location.search;
+          u.textContent = 'Updated \u2014 tap to refresh';
+          u.style.cssText = 'position:fixed;left:16px;right:16px;margin:0 auto;width:fit-content;' +
+            'bottom:18px;z-index:5;padding:10px 18px;border-radius:999px;' +
+            'background:var(--accent);color:var(--accent-fg);font-weight:600;' +
+            'box-shadow:0 4px 16px rgba(0,0,0,.22);text-decoration:none';
+          document.body.appendChild(u);
+        }
       })
       .catch(function () { /* node or server momentarily away; try again */ });
   }
