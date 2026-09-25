@@ -206,3 +206,22 @@ def test_a_public_instance_serves_all_of_it(client):
             assert app.get(path).status_code == 200, path
     finally:
         state.public = False
+
+
+def test_the_page_says_what_the_checksum_cannot_prove(client):
+    """A checksum people believe in is worse than none (docs/multi-user.md, "What the
+    checksum can and cannot do"): the page must say both halves, not just print it."""
+    app, _state = client
+    page = app.get("/clone").text
+    assert "What this number proves, and what it does not" in page
+    assert "cannot</b> prove that this site is honest" in page
+    assert "typed in yourself rather than followed from a link" in page
+
+
+def test_an_operator_is_told_what_to_do_and_what_not_to(client):
+    """Their own domain, never a numbered look-alike; public_hosts; the twelve-words rule."""
+    app, _state = client
+    page = app.get("/clone").text
+    assert "domain of your own" in page and "numbered" in page
+    assert "public_hosts" in page
+    assert "typed once" in page and "is stealing them" in page
