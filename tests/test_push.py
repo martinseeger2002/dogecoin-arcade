@@ -171,3 +171,12 @@ def test_news_is_for_the_signed_in_account_only(client):
     news = app.get("/account/push/news", headers=LOCAL).json()["news"]
     assert [n["txid"] for n in news] == ["22" * 32], "only this account's"
     assert "text" not in news[0] and "body" not in news[0]
+
+
+def test_the_worker_is_registered_by_a_script_not_printed_on_the_page(client):
+    """Merging two blocks into base.html once left this code outside its <script>
+    tag, where every page would have shown it as text."""
+    app, state = client
+    page = app.get("/join", headers=LOCAL).text
+    at = page.index("serviceWorker.register")
+    assert page.rfind("<script", 0, at) > page.rfind("</script>", 0, at)
