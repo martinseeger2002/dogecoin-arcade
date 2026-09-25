@@ -668,6 +668,44 @@ class MessageStore:
 
     # --- key announcements ----------------------------------------------------
 
+    #: What a floor move clears: everything read off the chain below the new
+    #: floor except key announcements, which carry the @names that survive it
+    #: (config.Params.names_from). The address book, mutes and read marks were
+    #: typed or chosen by a person, not scanned, and are never touched.
+    FLOOR_CLEARS = ("candidate", "message", "sent", "api_message", "group_post",
+                    "feed_act", "group_chunk")
+
+    def clear_below_floor(self, network: str, floor: int) -> dict[str, int]:
+        """Apply a floor move to this store, once per floor. Returns what went.
+
+        Until now a floor move reached the ledger index (which rebuilds) and never
+        this store, so posts and messages from before a reset stayed on every
+        node that had seen them. Pool rows (height 0) are kept: they are not below
+        anything yet.
+        """
+        key = f"floor_cleared:{network}"
+        done = self.get_meta(key)
+        if done is None:
+            # The first time this code runs on a store it only takes note of the
+            # floor it finds: clearing what earlier floors left behind is a choice
+            # for a person, not something a merge should do on its own. From here
+            # on, each floor MOVE is applied once.
+            self.set_meta(key, str(int(floor)))
+            self.conn.commit()
+            return {}
+        if int(done) >= int(floor):
+            return {}
+        gone: dict[str, int] = {}
+        gone["attachment"] = self.conn.execute(
+            "DELETE FROM attachment WHERE message_id IN "
+            "(SELECT id FROM message WHERE height > 0 AND height < ?)", (int(floor),)).rowcount
+        for table in self.FLOOR_CLEARS:
+            gone[table] = self.conn.execute(
+                f"DELETE FROM {table} WHERE height > 0 AND height < ?", (int(floor),)).rowcount
+        self.set_meta(key, str(int(floor)))
+        self.conn.commit()
+        return {t: n for t, n in gone.items() if n}
+
     def add_key_announcement(
         self, txid: str, address: str, pubkey: bytes, fingerprint: str,
         height: int, block_time: int, stated: bool = False, name: str = "",

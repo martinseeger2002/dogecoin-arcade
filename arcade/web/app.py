@@ -10226,7 +10226,7 @@ def create_app(state: AppState) -> FastAPI:
         index = state.ledger_index_path(context)
         tip = state.ledger_tips.get(network) or state.tips.get(network)
         return bootstraplib.current(state.home, network, index,
-                                    context.params.activation_height, tip)
+                                    context.params.index_start, tip)
 
     # --- identity by key: who runs which arcade (arcade/instance.py) -------------
 

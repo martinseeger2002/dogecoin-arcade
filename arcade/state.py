@@ -495,9 +495,14 @@ class Engine:
     """Applies Arcade messages to protocol state."""
 
     def __init__(self, state: StateDB, params: Params,
-                 keep_content: Callable[[str], bool] | None = None):
+                 keep_content: Callable[[str], bool] | None = None,
+                 names_only: bool = False):
         self.state = state
         self.params = params
+        #: A block below the floor, read for its @names and nothing else
+        #: (config.Params.names_from): a tag claim or transfer is applied as
+        #: anywhere, every other transaction is passed over unrecorded.
+        self.names_only = names_only
         # Whether an inscription's bytes are worth keeping, asked of its
         # creator's address. A node keeps its own in full and describes
         # everybody else's -- the hash and the length are always stored, so a
@@ -592,6 +597,10 @@ class Engine:
         result = Result(
             valid=True, message_type=message.TYPE, message_version=message.version
         )
+        if self.names_only and not self._is_name(message):
+            result.valid = False
+            result.reason = "below the floor: only @names are read here"
+            return result
         try:
             self._apply(rtx, message)
         except InvalidTransaction as exc:
@@ -615,6 +624,13 @@ class Engine:
             },
         )
         return result
+
+    @staticmethod
+    def _is_name(message: P.Message) -> bool:
+        """A tag claim or transfer: the one thing read below the floor."""
+        data = getattr(message, "data", b"") if isinstance(message, P.AnyData) else b""
+        return (I.is_inscription(data) and len(data) > 5
+                and data[5] in (T.KIND_CLAIM, T.KIND_TRANSFER))
 
     def _apply(self, rtx: ArcadeTransaction, message: P.Message) -> None:
         handler = {
