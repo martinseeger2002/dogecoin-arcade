@@ -776,13 +776,17 @@ class AppState:
             prepared = sender.prepare(address, payload, change_address=address,
                                       pay=((int(sats), to_address),))
             txid = sender.broadcast(prepared)
-        # Recorded against the MESSAGING chain's store, because that is where
-        # the post lives and where the page will look for it. The payment is
-        # on whichever chain it was made on, and says so.
+        # Recorded against the chain the transaction itself lives on, which is
+        # the key the scan will confirm it under: the row used to be filed
+        # under the messaging chain's name wherever the coins had moved, and
+        # then the scan filed the same transaction AGAIN under its own chain,
+        # and the first row sat there unconfirmed for ever. A tip is gathered
+        # across chains by the feed page, and held per chain (feed.py).
         with self.store() as store:
-            store.add_feed_act(self.messaging.network, txid, feed.TIP,
-                               post_txid, address, f"{network}:{int(sats)}",
-                               0, int(time.time()), mine=True)
+            store.add_feed_act(chain.network, txid, feed.TIP,
+                               post_txid, address, f"{chain.network}:{int(sats)}",
+                               0, int(time.time()), mine=True,
+                               amount=int(sats), paid_on=chain.network)
         self.bump_generation()
         return txid
 

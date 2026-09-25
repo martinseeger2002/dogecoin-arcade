@@ -32,8 +32,10 @@ which is why tips work on mainnet and the rest of the feed does not.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
+from ..config import NETWORKS
 from .envelope import MAGIC, VERSION, EnvelopeError, Header, TYPE_FEED_ACT
 
 #: A thumbs-up. No text, and the only thing it can say.
@@ -76,6 +78,48 @@ BY_NAME = {name: kind for kind, name in NAMES.items()}
 #: How much a comment may say. Longer than a post is short of, and short
 #: enough that a reply still fits one transaction with room for the framing.
 MAX_TEXT = 2000
+
+# --- what a post is worth on the feed page ------------------------------------
+#
+# Decided by 2026-09-23: a tip is worth more than a like; a tip's
+# weight rises with the LOGARITHM of its amount, so a hundred times the money
+# is worth a little over twice as much rather than a hundred times; and the
+# money is normalised per chain by a CONSTANT, never by a price -- a sort
+# that consults an oracle is a sort that stops working when the oracle does.
+# The same function is a SQL function inside the store (store.py registers
+# it), because the ordering has to BE the query, and a card's numbers and
+# the page's order must not be two arithmetic that can drift apart.
+
+#: A like, a share, and anything else that is one person saying one thing.
+LIKE_VALUE = 1.0
+
+#: Every confirmed tip is worth at least this much -- more than a like, which
+#: is the rule as stated, and the reason the log alone cannot carry it.
+TIP_FLOOR = 2.0
+
+#: Sats of each chain that count as one unit, which is what the logarithm
+#: measures multiples OF. One coin everywhere it runs today: what these hold
+#: is the place to raise a chain whose coin makes a one-coin tip a shrug,
+#: and the only alternative to a per-chain constant is a live price.
+#:
+#: Keyed by `Params.name`, which is the same string every feed row is
+#: partitioned by and the string a tip's row writes into `paid_on` -- so the
+#: chain the money came from is what selects the constant, and a chain added
+#: to config is measured here the day it is measured anywhere.
+TIP_UNIT_DEFAULT = 100_000_000
+TIP_UNITS = {name: TIP_UNIT_DEFAULT for name in NETWORKS}
+
+
+def tip_value(sats: int, network: str) -> float:
+    """What one confirmed tip is worth in the feed's arithmetic.
+
+    `network` is the chain the tip's transaction lives on -- not the chain of
+    the post it paid for and not the chain the tipper happened to sign on;
+    totals are held per chain because the units differ and adding them across
+    chains would be a lie.
+    """
+    unit = TIP_UNITS.get(network, TIP_UNIT_DEFAULT)
+    return TIP_FLOOR + math.log10(1.0 + max(0, int(sats)) / unit)
 
 
 class FeedError(Exception):

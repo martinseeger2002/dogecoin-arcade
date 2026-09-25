@@ -156,6 +156,64 @@ def _ask_price(amount: Any, kind: Any) -> str:
 
 
 TEMPLATES.env.filters["ask_price"] = _ask_price
+
+
+def _coins(sats: Any) -> str:
+    """A template filter: satoshis as coins, for the totals a feed card keeps."""
+    try:
+        return format_amount(int(sats or 0), True)
+    except (TypeError, ValueError):
+        return "?"
+
+
+TEMPLATES.env.filters["coins"] = _coins
+
+
+def _cursor(before: Any) -> tuple[int | None, float | None]:
+    """The two halves of a feed cursor, out of the one token a link carries.
+
+    `412@7.4` means "post 412, and that is the score it had when the page
+    that linked here was made". A popularity order is cut along a number that
+    moves, so a cursor has to remember where the cut WAS; and one query
+    parameter rather than two, because a link that needs its two halves to
+    agree is a link that breaks when somebody copies one of them. An id on
+    its own -- a bookmark, an old link, a profile page -- is still understood,
+    and store.py measures that post's score itself.
+    """
+    if before is None:
+        return None, None
+    ident, _, score = str(before).partition("@")
+    try:
+        number = int(ident)
+    except ValueError:
+        return None, None
+    if not score:
+        return number, None
+    try:
+        return number, float(score)
+    except ValueError:
+        return number, None
+
+
+def _next_cursor(rows: list[Any], sort: str) -> Any:
+    """What the next page's link carries, which depends on the order.
+
+    Newest-first needs the id and nothing else: an id does not move. The
+    endorsed order needs the pair, or the page after this one is cut along a
+    line that has already shifted.
+
+    The score is written SHORT, and short in one direction: truncated, not
+    rounded. Scores only rise, so a cursor rounded down can only miss a post
+    that moved past the reader, while one rounded up can hand back a post they
+    have already read -- which is the whole failure this cursor exists to
+    avoid, coming back through six decimal places of a number nobody reads.
+    """
+    last = rows[-1]
+    if sort != "popular":
+        return last["id"]
+    return f"{last['id']}@{int(float(last['score']) * 1_000_000) / 1_000_000}"
+
+
 # A global rather than a filter: it takes what the page already looked up,
 # and a filter taking a second argument reads worse in the template.
 TEMPLATES.env.globals["render_post"] = lambda text, drawable=None: Markup(
@@ -2187,21 +2245,38 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             return mempoollib.Pending()
 
-    def _feed_page(network: str, author: str = "", before: int | None = None,
-                   limit: int = FEED_PAGE) -> tuple[list[Any], int | None, Any]:
-        """A page of posts, newest first, the cursor for the next, and what
-        the mempool is holding.
+    def _feed_page(network: str, author: str = "", before: Any = None,
+                   limit: int = FEED_PAGE, sort: str = "new") -> tuple[list[Any], Any, Any]:
+        """A page of posts, the cursor for the next, and what the mempool is
+        holding.
+
+        `sort` is the order, and it is the database's to answer: "new" is the
+        newest first, which is what a person's own page keeps, and "popular"
+        is the feed's -- the endorsed first, weighted, with muted authors
+        already gone (2026-09-23; store.feed_posts_popular).
+
+        A popularity order cannot be paged by an id alone, because the thing
+        the pages are cut along moves. So the cursor for that order carries
+        the ANCHOR PAIR -- the last post shown and the score it had when this
+        page was made -- in one token, and store.py compares against it.
+        Nothing else in the contract changes: one token in, one page out.
 
         Pending posts go on top of the FIRST page only: they have no id to
-        page by, and a post that has not confirmed cannot be older than one
-        that has.
+        page by, and a post that has not confirmed cannot be older -- or
+        less endorsed -- than one that has.
         """
+        ident, anchor = _cursor(before)
         with state.store() as store:
-            rows = store.feed_posts(network, author=author, before=before,
-                                    limit=limit + 1)
+            if sort == "popular":
+                rows = store.feed_posts_popular(network, cursor=ident,
+                                                anchor=anchor, limit=limit + 1,
+                                                author=author)
+            else:
+                rows = store.feed_posts(network, author=author, before=ident,
+                                        limit=limit + 1)
         more = rows[limit:]
         rows = rows[:limit]
-        cursor = rows[-1]["id"] if rows and more else None
+        cursor = _next_cursor(rows, sort) if rows and more else None
         waiting = _pending_feed(network)
         if before is None:
             known = {row["txid"] for row in rows}
@@ -2236,6 +2311,13 @@ def create_app(state: AppState) -> FastAPI:
             replies = [a["txid"] for a in acts if a["kind"] == feedlib.REPLY]
             if replies:
                 acts += list(store.feed_acts_on(network, replies))
+            # A tip is a payment, and payments may be made on either chain,
+            # so a post's running total gathers them from every chain and
+            # keeps them apart by chain (feed.py, 2026-09-23). The
+            # rows the partitioned query already found are not counted twice.
+            seen = {a["txid"] for a in acts}
+            acts += [t for t in store.feed_tips_on(targets + replies)
+                     if t["txid"] not in seen]
             muted = store.muted()
         if waiting is not None and waiting.acts:
             known = {a["txid"] for a in acts}
@@ -2336,11 +2418,19 @@ def create_app(state: AppState) -> FastAPI:
             return ""
 
     @app.get("/feed", response_class=HTMLResponse)
-    def feed_page(request: Request, before: int | None = None):
-        """Everybody's posts, newest first."""
+    def feed_page(request: Request, before: str | None = None):
+        """Everybody's posts, the endorsed first: likes, shares, and tips
+        weighted by what they gave (2026-09-23; feed.py says the
+        arithmetic and store.py runs it as the query's own ORDER BY).
+
+        `before` is a string because the endorsed order's cursor is a pair
+        that has to survive the round trip -- an int is what the profile
+        page's own order needs, and this takes either.
+        """
         chain = state.messaging
         mine = _tag_of_whoever_is_asking(request)
-        rows, cursor, waiting = _feed_page(chain.network, before=before)
+        rows, cursor, waiting = _feed_page(chain.network, before=before,
+                                          sort="popular")
         shown = _shown(rows, chain.network, waiting, me=mine["address"])
         # Looking at it is reading it. Marked BEFORE the page is rendered, so
         # the count beside Feed is gone by the time it is drawn rather than
@@ -8962,7 +9052,7 @@ def create_app(state: AppState) -> FastAPI:
                       page=page, pages=pages)
 
     @app.get("/account/feed")
-    def account_feed(request: Request, before: int | None = None):
+    def account_feed(request: Request, before: str | None = None):
         """The feed, as an account sees it: the same posts, its own name.
 
         Read from the same store the wallet's own feed reads. Nothing here
@@ -8971,7 +9061,8 @@ def create_app(state: AppState) -> FastAPI:
         """
         account = signed_in(request)
         chain = _account_chain()
-        rows, cursor, waiting = _feed_page(chain.network, before=before)
+        rows, cursor, waiting = _feed_page(chain.network, before=before,
+                                          sort="popular")
         shown = _shown(rows, chain.network, waiting)
         mine = ""
         if account is not None:
@@ -8988,6 +9079,9 @@ def create_app(state: AppState) -> FastAPI:
                 "likes": item.likes,
                 "replies": len(item.replies),
                 "tips": item.tips,
+                # The running total, per chain, in sats -- held apart because
+                # the units differ and adding them would be a lie.
+                "tipped": item.tipped,
             } for item in shown],
         })
 

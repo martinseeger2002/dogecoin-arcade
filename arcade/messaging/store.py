@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import feed
+
 SCHEMA_VERSION = 1
 
 #: The address book, defined once: `SCHEMA` includes it and the migration that
@@ -210,10 +212,20 @@ CREATE TABLE IF NOT EXISTS feed_act (
     height     INTEGER NOT NULL,
     block_time INTEGER NOT NULL,
     mine       INTEGER NOT NULL DEFAULT 0,
+    -- What a tip tipped, in sats, and which chain carried it -- both read off
+    -- the transaction (feed.py, 2026-09-23), because the payload only
+    -- says WHICH post and the caller's word is not evidence. Zero on every
+    -- row that is not a tip. `paid_on` says nothing on a scanned row that the
+    -- `network` column does not already say; it exists for the rows a node
+    -- used to record about a tip paid on another chain under this feed's own
+    -- name, whose text carried the truth in the old "chain:sats" encoding.
+    amount     INTEGER NOT NULL DEFAULT 0,
+    paid_on    TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (network, txid)
 );
 CREATE INDEX IF NOT EXISTS feed_act_target ON feed_act(network, target, kind);
 CREATE INDEX IF NOT EXISTS feed_act_author ON feed_act(network, author, height DESC);
+CREATE INDEX IF NOT EXISTS feed_act_tips ON feed_act(target, kind, height);
 
 -- People this machine will not draw. Local by design: it costs nothing, tells
 -- them nothing, and every node decides for itself what it shows (D-138).
@@ -318,6 +330,13 @@ class MessageStore:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
+        # The feed's arithmetic, in SQL, because the feed's ordering is a
+        # query rather than a Python sort (feed.py): a page cannot put posts
+        # in an order it has not assembled them from, and the query and the
+        # cards have to agree by being the same function, not by two
+        # implementations agreeing to.
+        self.conn.create_function("tip_value", 2, feed.tip_value,
+                                  deterministic=True)
         self.conn.executescript(SCHEMA)
         add_missing_columns(self.conn, SCHEMA)
         self._migrate()
@@ -370,6 +389,9 @@ class MessageStore:
         ("pending_send", "channel", "TEXT NOT NULL DEFAULT ''"),
         ("pending_send", "network", "TEXT NOT NULL DEFAULT ''"),
         ("pending_send", "nickname", "TEXT NOT NULL DEFAULT ''"),
+        # The feed's memory of what tips tipped (feed.py, 2026-09-23).
+        ("feed_act", "amount", "INTEGER NOT NULL DEFAULT 0"),
+        ("feed_act", "paid_on", "TEXT NOT NULL DEFAULT ''"),
     )
 
     #: Backfills run after the columns exist. A column added with a default is
@@ -383,6 +405,17 @@ class MessageStore:
         ("contact", "name_source",
          "UPDATE contact SET name_source='announce' "
          "WHERE name != '' AND name_source = ''"),
+        # The old tip rows said their amount and chain in the TEXT column, in
+        # the "chain:sats" shape send_tip wrote. A rescan of the transaction
+        # fixes every row this backfill cannot read, so the only rows that
+        # stay at zero are ones whose transaction this node has never seen.
+        ("feed_act", "amount",
+         f"UPDATE feed_act SET "
+         "  paid_on = substr(text, 1, instr(text, ':') - 1), "
+         "  amount = CAST(substr(text, instr(text, ':') + 1) AS INTEGER) "
+         f"WHERE kind = {feed.TIP} AND amount = 0 AND instr(text, ':') > 1 "
+         "  AND substr(text, 1, instr(text, ':') - 1) NOT GLOB '*[^a-z0-9]*' "
+         "  AND substr(text, instr(text, ':') + 1) GLOB '[0-9]*'"),
     )
 
     def _migrate(self) -> None:
@@ -1062,18 +1095,22 @@ class MessageStore:
 
     def add_feed_act(self, network: str, txid: str, kind: int, target: str,
                      author: str, text: str = "", height: int = 0,
-                     block_time: int = 0, mine: bool = False) -> None:
+                     block_time: int = 0, mine: bool = False,
+                     amount: int = 0, paid_on: str = "") -> None:
         """Record one like, reply, share, edit, delete or tip.
 
         Upserts on confirmation the way a post does: an action of this
         machine's is written at broadcast with height 0 so the page moves at
         once, and the scan then sees the same txid on the chain. `mine` is
-        never unset by a rescan -- the chain cannot tell us that.
+        never unset by a rescan -- the chain cannot tell us that. A confirmed
+        row's `amount` and `paid_on` are the transaction's own, and win: the
+        scan is the only reader that has actually seen the transaction.
         """
         self.conn.execute(
             "INSERT INTO feed_act"
-            "(network,txid,kind,target,author,text,height,block_time,mine) "
-            "VALUES(?,?,?,?,?,?,?,?,?) "
+            "(network,txid,kind,target,author,text,height,block_time,mine,"
+            " amount,paid_on) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(network,txid) DO UPDATE SET "
             "  height=CASE WHEN excluded.height > 0 THEN excluded.height "
             "              ELSE feed_act.height END, "
@@ -1081,9 +1118,14 @@ class MessageStore:
             "              ELSE feed_act.block_time END, "
             "  author=CASE WHEN excluded.author != '' THEN excluded.author "
             "              ELSE feed_act.author END, "
+            "  amount=CASE WHEN excluded.height > 0 THEN excluded.amount "
+            "              ELSE feed_act.amount END, "
+            "  paid_on=CASE WHEN excluded.height > 0 THEN excluded.paid_on "
+            "              ELSE feed_act.paid_on END, "
             "  mine=MAX(feed_act.mine, excluded.mine)",
             (network, txid, int(kind), target, author, text or "",
-             int(height), int(block_time), 1 if mine else 0))
+             int(height), int(block_time), 1 if mine else 0,
+             int(amount), paid_on or ""))
 
     def feed_posts(self, network: str, author: str = "", before: int | None = None,
                    limit: int = 10) -> list[sqlite3.Row]:
@@ -1155,6 +1197,120 @@ class MessageStore:
         return self.conn.execute(
             f"SELECT * FROM feed_act WHERE network = ? AND target IN ({marks}) "
             f"ORDER BY height, block_time", (network, *targets)).fetchall()
+
+    def feed_tips_on(self, targets: list[str]) -> list[sqlite3.Row]:
+        """Every tip against any of these posts, on whichever chain each was paid.
+
+        Tips are the one feed action deliberately not partitioned with the
+        feed: a tip is a payment, and payments may be made on either chain
+        (feed.py says why), so a post's running total has to gather them from
+        every chain this store has read -- and keep them apart by chain,
+        because the units differ and adding them would be a lie (the operator,
+        2026-09-23).
+        """
+        if not targets:
+            return []
+        marks = ",".join("?" * len(targets))
+        return self.conn.execute(
+            f"SELECT * FROM feed_act WHERE kind = {feed.TIP} "
+            f"AND target IN ({marks}) ORDER BY height, block_time",
+            tuple(targets)).fetchall()
+
+    #: The feed's arithmetic, as SQL, for a post at table alias `alias`:
+    #: likes that stand (a later unlike by the same person cancels a like,
+    #: D-138's newest-wins rule in a WHERE clause), shares, and the tips --
+    #: counted with the same `tip_value` the cards compute in Python
+    #: (feed.py), confirmed only, and no self-tips: an author paying themself
+    #: is not applause, and with amount-weighting it would otherwise be the
+    #: cheapest road to the top of the feed (2026-09-23). This is the
+    #: ORDER BY of `feed_posts_popular` and nothing else's: a page cannot
+    #: sort a feed it assembled ten posts at a time, and an id cursor cannot
+    #: page an order the database does not hold.
+    _SCORE_SQL = """(
+        (SELECT COUNT(*) * {like_value} FROM feed_act al
+          WHERE al.target = {a}.txid AND al.network = {a}.network
+            AND al.kind = {like}
+            AND NOT EXISTS (SELECT 1 FROM feed_act au
+              WHERE au.target = al.target AND au.network = al.network
+                AND au.author = al.author AND au.kind = {unlike}
+                AND (au.height, au.txid) > (al.height, al.txid)))
+        + (SELECT COUNT(*) FROM feed_act ash
+            WHERE ash.target = {a}.txid AND ash.network = {a}.network
+              AND ash.kind = {share})
+        + COALESCE((SELECT SUM(tip_value(at.amount,
+                COALESCE(NULLIF(at.paid_on, ''), at.network)))
+            FROM feed_act at
+            WHERE at.target = {a}.txid AND at.kind = {tip}
+              AND at.height > 0 AND at.author != {a}.sender), 0.0)
+    )"""
+
+    @classmethod
+    def _score(cls, alias: str) -> str:
+        return cls._SCORE_SQL.format(
+            a=alias, like=feed.LIKE, unlike=feed.UNLIKE,
+            share=feed.SHARE, tip=feed.TIP, like_value=feed.LIKE_VALUE)
+
+    def feed_posts_popular(self, network: str, cursor: int | None = None,
+                           limit: int = 10, author: str = "",
+                           anchor: float | None = None) -> list[sqlite3.Row]:
+        """A page of the feed, most-endorsed first, and the cursor for the next.
+
+        The same page contract as `feed_posts` -- newest first is the feed's
+        other order, and a profile page keeps it -- so scrolling needs no
+        more than a different first page. The cursor is a post's id and
+        `anchor` is the score that post had WHEN THE LINK WAS MADE, which is
+        the part that makes a paged order honest at all: the keyset is
+        `(score, id) < (anchor, cursor)`, and a keyset only means "everything
+        after where I stopped" if the pair came from the moment the reader
+        stopped. Recomputing it instead -- which is what this did first, and
+        what the test below now refuses -- repeats a whole page the instant
+        the anchor post itself is tipped, because everything that used to
+        score lower now scores under it and comes round again.
+
+        Carried, the failure the other way is bounded and one-sided: scores
+        rise, so a carried score is never higher than the truth, so a page can
+        miss a post that rose past where the reader stood -- and that post is
+        at the top of the feed the next time anybody loads the first page.
+        Missing something that moved is a feed. Showing the same post twice
+        and offering a "more" link that loops is a broken page. A link with an
+        id and no score in it -- bookmarked, typed, or made by something that
+        has not seen this -- falls back to recomputing, which is exact on the
+        first fetch and merely imprecise after one.
+
+        Ties break by id, newest first, the same tie-break the counts use
+        (D-122's lesson: never "whichever came back first").
+        """
+        where = "g.network = ?"
+        params: list = [network]
+        if author:
+            where += " AND g.sender = ?"
+            params.append(author)
+        # Nothing here mentions the mute table, which is the decision rather
+        # than an oversight. Muting hides an author's words, it is not a
+        # ranking, and the row stays where its own score puts it so the page
+        # can stand a gap and an Unmute button on it (D-138). Dropping muted
+        # rows would let one reader's mute list change the ORDER BY, which is
+        # the one number this feed promises is everybody's. The page marks the
+        # row (`feedview.shown(muted=...)`), which is where a mute belongs.
+        clause = ""
+        if cursor:
+            params_anchor = anchor
+            if params_anchor is None:
+                row = self.conn.execute(
+                    f"SELECT {self._score('a')} AS s, id FROM group_post a"
+                    f" WHERE a.id = ? AND a.network = ?",
+                    (int(cursor), network)).fetchone()
+                if row is None:
+                    return []
+                params_anchor = row["s"]
+            clause = "WHERE (r.score, r.id) < (?, ?)"
+            params.extend([float(params_anchor), int(cursor)])
+        return self.conn.execute(
+            f"SELECT * FROM (SELECT g.*, {self._score('g')} AS score"
+            f"  FROM group_post g WHERE {where}) AS r "
+            f"{clause} "
+            f"ORDER BY r.score DESC, r.id DESC LIMIT ?",
+            (*params, max(1, min(limit, 100)))).fetchall()
 
     def feed_acts_by(self, network: str, author: str, kind: int | None = None,
                      limit: int = 200) -> list[sqlite3.Row]:

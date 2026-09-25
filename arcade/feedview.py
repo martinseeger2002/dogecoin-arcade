@@ -21,6 +21,11 @@ The rules, and why each one:
 * **A like and an unlike cancel, newest wins.** Per person, by height: the
   question "does this person like this" has one answer, and it is the last
   thing they said about it.
+* **A tip is kept per chain, and not from the author.** The running total a
+  card shows is a sum per chain, because the units differ and adding across
+  chains would be a lie; an author's tip to their own post is not counted as
+  applause; and an unconfirmed one is not counted as given (the operator,
+  2026-09-23, and the same rules the ORDER BY uses -- store.py).
 """
 
 from __future__ import annotations
@@ -47,6 +52,7 @@ class Shown:
     liked_by_me: bool = False
     shares: int = 0
     tips: int = 0
+    tipped: dict[str, int] = field(default_factory=dict)   # per chain, sats
     replies: list["Shown"] = field(default_factory=list)
     shared_from: str = ""            # the post this one is a share of
     is_reply: bool = False
@@ -129,6 +135,23 @@ def _one(txid: str, author: str, text: str, row: Any,
                 likers[act["author"]] = act
     liked = {who for who, act in likers.items() if act["kind"] == feed.LIKE}
 
+    # A tip from the post's own author is not applause: counted flat it was
+    # merely pointless, and counted by amount it is the cheapest road to the
+    # top of the feed. The order's query drops the same rows (store.py), so
+    # the number on the card and the place in the page cannot disagree
+    # (2026-09-23).
+    tips = [a for a in acts if a["kind"] == feed.TIP and a["author"] != author]
+    tipped: dict[str, int] = {}
+    for act in tips:
+        # An unconfirmed tip may show as pending; it is not counted as given.
+        if not (act["height"] or 0) > 0 or "amount" not in act.keys():
+            continue
+        if not act["amount"]:
+            continue
+        paid = ((act["paid_on"] if "paid_on" in act.keys() else "")
+                or (act["network"] if "network" in act.keys() else ""))
+        tipped[paid] = tipped.get(paid, 0) + int(act["amount"])
+
     return Shown(
         txid=txid,
         author=author,
@@ -143,7 +166,8 @@ def _one(txid: str, author: str, text: str, row: Any,
         likes=len(liked),
         liked_by_me=bool(me) and me in liked,
         shares=sum(1 for a in acts if a["kind"] == feed.SHARE),
-        tips=sum(1 for a in acts if a["kind"] == feed.TIP),
+        tips=len(tips),
+        tipped=tipped,
         is_reply=is_reply,
         muted=author in muted,
     )

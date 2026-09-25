@@ -101,6 +101,11 @@ def read(rpc: Any, params: Any, network: str, mine: str = "",
                 "target": act.target_hex, "author": atx.sender,
                 "text": act.text, "height": 0, "block_time": 0,
                 "mine": 1 if mine and atx.sender == mine else 0,
+                # A tip still in the pool is not counted as given, and an
+                # unconfirmed thing has no chain to have been paid on yet --
+                # the keys are here so the row answers `keys()` the way a
+                # stored one does, and arithmetic never asks which it holds.
+                "amount": 0, "paid_on": "",
                 "pending": 1,
             })
             continue

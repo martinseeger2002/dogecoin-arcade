@@ -110,6 +110,16 @@
        title="Send coins, a token or a piece — on either chain">Tip {{ p.tips or '' }}</a>
     {% endif %}
 
+    {% if p.tipped %}
+    {# The running total this post has pulled in. Per chain, because the
+       units differ and adding across chains would be a lie; confirmed only,
+       and never the author's own — the same three rules that place this
+       post in the page (store.py, 2026-09-23). #}
+    <span class="muted small"
+          title="Tipped on this post — per chain, once confirmed, not counting the author's own"
+          >{% for net, sats in p.tipped|dictsort %}&#9921; {{ sats|coins }} {{ net }}{% if not loop.last %} &middot;{% endif %}{% endfor %}</span>
+    {% endif %}
+
     {% if not p.mine and not public %}
     <form method="post" action="/feed/{{ p.txid }}/mute" style="margin-left:auto">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
@@ -130,7 +140,8 @@
           title="Every like, tip and share is a transaction, so everybody counts the same number">
       &#9825; {{ p.likes }} like{{ '' if p.likes == 1 else 's' }}
       {% if p.tips %}&middot; {{ p.tips }} tip{{ '' if p.tips == 1 else 's' }}{% endif %}
-      {% if p.shares %}&middot; {{ p.shares }} share{{ '' if p.shares == 1 else 's' }}{% endif %}</span>
+      {% if p.shares %}&middot; {{ p.shares }} share{{ '' if p.shares == 1 else 's' }}{% endif %}
+      {% if p.tipped %}&middot; {% for net, sats in p.tipped|dictsort %}&#9921; {{ sats|coins }} {{ net }} tipped{% if not loop.last %} &middot;{% endif %}{% endfor %}{% endif %}</span>
     <a class="muted" style="font-size:.82rem" href="/join">Make an account</a>
   </div>
   {% endif %}
@@ -211,8 +222,9 @@
   {% endif %}
 {% else %}
   <h1>Feed</h1>
-  <p class="sub">Everything anybody has posted, newest first. Every like, reply
-    and share is on the chain, so everybody sees the same numbers.</p>
+  <p class="sub">Everything anybody has posted, what people endorsed first.
+    Every like, tip and share is on the chain, so everybody sees the same
+    numbers &mdash; and the same order.</p>
 {% endif %}
 
 {% if not whose %}

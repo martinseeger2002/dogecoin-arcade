@@ -319,11 +319,22 @@ class Scanner:
                     act = feed.parse(body)
                 except EnvelopeError:
                     continue              # a kind this version does not know
+                # A tip's payload says WHICH post and not HOW MUCH, and the
+                # amount is the whole reason the feed can weigh one tip over
+                # another (2026-09-23). The transaction is the only
+                # honest source: what it gave to addresses other than the
+                # sender's own is what it tipped -- the sender's change is the
+                # sender's, and an OP_RETURN pays nobody.
+                amount = 0
+                if act.kind == feed.TIP:
+                    amount = sum(v for where, v in atx.outputs
+                                 if where and where != atx.sender)
                 self.store.add_feed_act(
                     self.params.name, atx.txid, act.kind, act.target_hex,
                     atx.sender, act.text, height, block_time,
                     mine=(atx.sender == self.store.get_meta(
-                        f"identity_address:{self.params.name}")))
+                        f"identity_address:{self.params.name}")),
+                    amount=amount, paid_on=self.params.name)
                 result.feed_acts += 1
                 continue
 
