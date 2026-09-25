@@ -37,6 +37,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -293,6 +294,50 @@ def login_message(origin: str, nonce: str) -> bytes:
     return f"DogecoinArcade login\n{origin}\n{nonce}".encode("utf-8")
 
 
+class _Rows:
+    """A statement's answer, read in full while the lock was held."""
+
+    def __init__(self, rows: list):
+        self._rows = rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self) -> list:
+        return list(self._rows)
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _Serialised:
+    """One connection, one statement at a time.
+
+    The register's connection is shared by every request thread (and by the
+    credentials, the vault and the faucet, which borrow it). sqlite3 does not
+    serialise a shared connection for us: two threads stepping statements on it
+    at once is what the live node logged as "bad parameter or other API misuse",
+    and as a COUNT(*) that came back None -- a 500 on the account page
+    (2026-09-25). Each statement now runs and is read to the end under a lock.
+    """
+
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+        self._lock = threading.RLock()
+
+    def execute(self, sql: str, params=()) -> _Rows:
+        with self._lock:
+            return _Rows(self._conn.execute(sql, params).fetchall())
+
+    def executescript(self, script: str) -> None:
+        with self._lock:
+            self._conn.executescript(script)
+
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()
+
+
 class Accounts:
     """The seat register. One file, opened per process like the other stores."""
 
@@ -304,9 +349,10 @@ class Accounts:
         parent = Path(self.path).parent
         if str(parent) not in ("", "."):
             parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.path, isolation_level=None,
-                                    check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
+        raw = sqlite3.connect(self.path, isolation_level=None,
+                              check_same_thread=False)
+        raw.row_factory = sqlite3.Row
+        self.conn = _Serialised(raw)
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.executescript(SCHEMA)
