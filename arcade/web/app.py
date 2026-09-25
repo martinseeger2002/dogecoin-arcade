@@ -6449,7 +6449,36 @@ def create_app(state: AppState) -> FastAPI:
     _parts = accountpartslib.Parts(state.home / "accountparts.sqlite")
     #: What an account has broadcast and the index has not read
     #: yet, so a second transaction does not pick the same coin.
-    _flights = accountlib.Flights()
+    _pool_seen: dict[str, tuple] = {}          # txid -> the outpoints it spends
+    _pool_cache: dict[str, tuple[float, frozenset]] = {}
+
+    def _pool_spent(network: str) -> frozenset:
+        """Every outpoint a transaction in that chain's mempool spends. Cached
+        for a few seconds, and each transaction is read once: they do not change."""
+        now = time.time()
+        held = _pool_cache.get(network)
+        if held and now - held[0] < 10:
+            return held[1]
+        ctx = next((c for c in (state.messaging, state.ledger)
+                    if c.network == network), None)
+        if ctx is None:
+            return frozenset()
+        out: set = set()
+        with ctx.rpc() as rpc:
+            pool = list(rpc.call("getrawmempool"))
+            for txid in pool:
+                if txid not in _pool_seen:
+                    tx = rpc.call("getrawtransaction", txid, 1)
+                    _pool_seen[txid] = tuple((v["txid"], v["vout"])
+                                             for v in tx.get("vin", []) if "txid" in v)
+                out.update(_pool_seen[txid])
+        for gone in set(_pool_seen) - set(pool):
+            _pool_seen.pop(gone, None)
+        spent = frozenset(out)
+        _pool_cache[network] = (now, spent)
+        return spent
+
+    _flights = accountlib.Flights(pool=_pool_spent)
 
     def _account_chain():
         """The chain a tag lives on. Testnet, as tags always have been."""
@@ -8463,7 +8492,7 @@ def create_app(state: AppState) -> FastAPI:
                 return JSONResponse({"detail": str(exc)}, status_code=400)
             except Exception as exc:
                 return JSONResponse({"detail": f"the node refused it: {exc}"},
-                                    status_code=502)
+                                    status_code=409)
             # The row says filled, with the transaction that spent the piece
             # beside it. This is the only place a listing reaches that word:
             # nothing in this book could have known the sale happened, and a
@@ -8644,7 +8673,7 @@ def create_app(state: AppState) -> FastAPI:
                 return JSONResponse({"detail": str(exc)}, status_code=400)
             except Exception as exc:
                 return JSONResponse({"detail": f"the node refused it: {exc}"},
-                                    status_code=502)
+                                    status_code=409)
             _flights.add(account.pubkey, txid, unsigned, address,
                          network=chain.network)
             state.bump_generation()
@@ -8900,7 +8929,7 @@ def create_app(state: AppState) -> FastAPI:
             raise
         except Exception as exc:
             return JSONResponse({"detail": f"the node could not do it: {exc}"},
-                                status_code=502)
+                                status_code=409)
 
     @app.post("/account/shop/sign")
     def account_shop_sign(request: Request, payload: Any = Body(None)):
@@ -8989,7 +9018,7 @@ def create_app(state: AppState) -> FastAPI:
             raise
         except Exception as exc:
             return JSONResponse({"detail": f"the node could not do it: {exc}"},
-                                status_code=502)
+                                status_code=409)
 
     @app.post("/account/talk")
     def account_talk(request: Request, payload: Any = Body(None)):
@@ -9081,7 +9110,7 @@ def create_app(state: AppState) -> FastAPI:
             raise
         except Exception as exc:
             return JSONResponse({"detail": f"the node could not do it: {exc}"},
-                                status_code=502)
+                                status_code=409)
 
     @app.get("/account/tokens")
     def account_tokens(request: Request):
@@ -10100,7 +10129,7 @@ def create_app(state: AppState) -> FastAPI:
                 return JSONResponse({"detail": str(exc)}, status_code=400)
             except Exception as exc:
                 return JSONResponse({"detail": f"the node refused it: {exc}"},
-                                    status_code=502)
+                                    status_code=409)
             # Remembered until the index reads it, so the next transaction
             # this account builds does not offer the coin this one just spent
             # or miss the change it just made.
