@@ -692,7 +692,7 @@ class MessageStore:
         """
         stated = self.conn.execute(
             "SELECT address FROM key_announcement WHERE pubkey=? AND stated=1 "
-            "ORDER BY height DESC LIMIT 1", (pubkey,)).fetchone()
+            "ORDER BY height DESC, rowid DESC LIMIT 1", (pubkey,)).fetchone()
         if stated is None:
             return []
         return [row["address"] for row in self.conn.execute(
@@ -719,6 +719,12 @@ class MessageStore:
             "UPDATE contact SET address=?, testnet_address=?, updated=? WHERE id=?",
             (address, address, now, row["id"]))
 
+    # Two announcements in ONE block (a picture, then a bio a minute later, both
+    # waiting for the same block) tie on height, and SQLite then returns either:
+    # the live profile showed the picture and lost the bio (2026-09-25). The row
+    # stored later is the one seen later -- the pool keeps arrival order, and a
+    # block's transactions are read in the order they are in it -- so `rowid`
+    # breaks the tie the way the person meant.
     def key_for(self, address: str) -> sqlite3.Row | None:
         """The announced key for an address, preferring what a key stated.
 
@@ -729,7 +735,7 @@ class MessageStore:
         """
         return self.conn.execute(
             "SELECT * FROM key_announcement WHERE address=? "
-            "ORDER BY stated DESC, height DESC LIMIT 1", (address,),
+            "ORDER BY stated DESC, height DESC, rowid DESC LIMIT 1", (address,),
         ).fetchone()
 
     def confirmed_key_for(self, address: str) -> sqlite3.Row | None:
@@ -745,7 +751,7 @@ class MessageStore:
         """
         return self.conn.execute(
             "SELECT * FROM key_announcement WHERE address=? AND height > 0 "
-            "ORDER BY stated DESC, height DESC LIMIT 1", (address,),
+            "ORDER BY stated DESC, height DESC, rowid DESC LIMIT 1", (address,),
         ).fetchone()
 
     def live_keys(self) -> list[sqlite3.Row]:
@@ -766,7 +772,7 @@ class MessageStore:
 
     def key_history(self, address: str) -> list[sqlite3.Row]:
         return list(self.conn.execute(
-            "SELECT * FROM key_announcement WHERE address=? ORDER BY height", (address,)
+            "SELECT * FROM key_announcement WHERE address=? ORDER BY height, rowid", (address,)
         ))
 
     def all_keys(self) -> list[sqlite3.Row]:
