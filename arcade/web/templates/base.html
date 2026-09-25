@@ -844,7 +844,8 @@ function arcadeChoose(input, key, drawText){
     var cost = arcadeFileCost(r.bytes);
     // The piece count beside the bytes and the coins. Kilobytes are not what a
     // person is deciding between: what one size saves is transactions, each
-    // one with a fee and a block in front of it, and 74 KB says nothing of it.
+    // one with a fee in front of it and one block in front of the whole file,
+    // and 74 KB says nothing of it.
     button.innerHTML = '<strong>' + r.label + '</strong> ' +
       (r.width ? r.width + '&times;' + r.height + ' · ' : '') +
       arcadeSize(r.bytes) + ' · ' + arcadeCoins(cost.coins) +

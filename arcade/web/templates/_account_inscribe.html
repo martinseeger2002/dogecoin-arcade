@@ -17,12 +17,15 @@
 <div class="panel" id="inscribing">
   <h3 style="margin:0 0 6px">Inscribe one thing</h3>
   <p class="muted" style="font-size:.86rem;margin:0 0 10px">
-    One piece &mdash; a little under 7,500 bytes &mdash; in one transaction,
-    paid for by this account and signed in this tab, so this node never sees
-    the key that spent it. It cannot be taken back afterwards. A bigger file
-    does not fit in one transaction, and the pieces of one file chain onto
-    each other, so it is not something this account can put up at all: split
-    it, or make it smaller.</p>
+    A little under 7,500 bytes go on in one transaction; anything bigger goes
+    on in several, one signature each, and both are paid for by this account
+    and signed in this tab, so this node never sees the key that spent it. The
+    first transaction splits this account's coins into one output per piece and
+    each piece spends its own, so a file costs one block &mdash; the split's
+    &mdash; and then every piece goes at once, rather than one piece per block.
+    It cannot be taken back afterwards, and this node keeps no copy of the
+    file: if this tab closes, choose the same file again and it carries on
+    where it stopped.</p>
   <div class="row">
     <div style="flex:1"><input type="file" id="file"></div>
     <button type="button" id="inscribe-it">Inscribe it</button>
@@ -130,36 +133,142 @@ function quotePicked(file, choice) {
     + (choice && choice.key !== "large"
         ? ` &mdash; re-encoded here at ${choice.label}.` : ".")
     + (one ? ""
-        : ` That is ${commas(cost.chunks)} transactions' worth, and this box `
-          + "offers one. A smaller setting, or the run below &mdash; which "
-          + "takes a whole folder, one transaction per file &mdash; is what "
-          + "fits.");
+        : ` That is ${commas(cost.chunks)} transactions, one signature each. `
+          + "The first one splits the coins; one block for it, then the rest "
+          + "go together &mdash; none of them waits for another. A smaller "
+          + "setting costs fewer.");
 }
 
-$("inscribe-it").onclick = async () => {
+$("inscribe-it").onclick = () => inscribeTheFile();
+
+/** One thing asked of this node, and its answer, throwing what it said. */
+async function ask(where, body) {
+  const said = await fetch(where, {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body),
+  });
+  const answer = await said.json();
+  if (!said.ok) throw new Error(answer.detail || "that cannot be done");
+  return answer;
+}
+
+function b64(bytes) {
+  let out = "";
+  for (let at = 0; at < bytes.length; at += 8192) {
+    out += String.fromCharCode.apply(null, bytes.subarray(at, at + 8192));
+  }
+  return btoa(out);
+}
+
+/** The content of piece n, from the two numbers the node planned it with.
+ *
+ *  The stream the inscription is cut from is `manifest ++ content`, in pieces
+ *  all of one length but the last. So this piece's slice begins n * chunkLen
+ *  into that stream, and the manifest is not something to ask for again: the
+ *  node wrote that down at the start, and what arrives from here is checked
+ *  against the digest of it.
+ */
+function pieceOf(bytes, n, chunkLen, manifestLen) {
+  const from = Math.max(0, n * chunkLen - manifestLen);
+  const to = Math.min(bytes.length, (n + 1) * chunkLen - manifestLen);
+  return bytes.subarray(from, Math.max(from, to));
+}
+
+/** The offer for piece n, waiting out the split's block if it has to.
+ *
+ *  These pieces spend the outputs the split made, and the chain counts the
+ *  whole package sitting under an unconfirmed parent: about a hundred
+ *  kilobytes, which is two of these transactions, and the third comes back
+ *  `too-long-mempool-chain`. So nothing goes out until the split is in a
+ *  block -- and then all of them do, one after another, with nothing left to
+ *  wait for. One minute for the file rather than one minute per piece, which
+ *  is the same trade the node makes for its own wallet
+ *  (`sender.ensure_outputs`: "one block plus two seconds" against four
+ *  minutes chained). Asking forever is not on the table: fifteen minutes is
+ *  how long that sender will wait for a split at all, and past that the
+ *  honest answer is to ask again later with the same file.
+ */
+async function pieceOffer(bytes, start, n, until) {
+  for (;;) {
+    const answer = await ask("/account/inscribe", {
+      part: start.part, chunk: n, chain: CHAIN.network,
+      content: b64(pieceOf(bytes, n, Number(start.chunk_len || 0),
+                           Number(start.manifest_len || 0)))});
+    if (!answer.waiting) return answer;
+    if (Date.now() > until) throw new Error(
+      "the split has not been mined in fifteen minutes, so nothing further is "
+      + "offered and nothing has been paid for. Ask again with the same file "
+      + "and this carries on where it stopped.");
+    news(answer.waiting);
+    await new Promise((later) => setTimeout(later, 5000));
+  }
+}
+
+/** One inscription, however many transactions it turns out to be.
+ *
+ *  The file is read here rather than uploaded: the bytes this browser pays to
+ *  put on the chain are the bytes it chose, and this node keeps no copy of a
+ *  file it is being asked to make permanent.
+ *
+ *  Confirmed ONCE, before any of it is signed, and then signed one transaction
+ *  at a time. A confirmation for each of twenty-seven would not be consent, it
+ *  would be a person clicking yes until it stopped; what is true of the whole
+ *  -- how many, and what for -- can only be said about the whole.
+ */
+async function inscribeTheFile() {
   const file = $("file").files[0];
   if (!file) { say("choose a file first"); return; }
-  say("");
-  // Read here rather than uploaded: the bytes the browser pays to put on the
-  // chain are the bytes it chose, and this node never holds a copy of a file
-  // it is being asked to make permanent.
-  let b64 = "";
+  say(""); news("");
+  let bytes;
+  try { bytes = new Uint8Array(await file.arrayBuffer()); }
+  catch (e) { say(String(e.message || e)); return; }
+  const held = await take();
+  if (!held) { say("your wallet is not open in this tab"); return; }
   try {
-    b64 = await new Promise((ready, failed) => {
-      const reader = new FileReader();
-      reader.onload = () => ready(String(reader.result).split(",")[1]);
-      reader.onerror = () => failed(new Error("that file could not be read"));
-      reader.readAsDataURL(file);
-    });
-  } catch (e) { say(String(e.message || e)); return; }
-  await offerAndConfirm("/account/inscribe",
-    {content: b64, content_type: file.type || "application/octet-stream",
-     name: file.name, chain: CHAIN.network},
-    (shown, offer) => `${offer.bytes} bytes, on the chain forever, for `
-      + `${shown.coinsOf(shown.fee)} in fees. ${shown.what}?`,
-    (out) => `Inscribed: ${out.txid.slice(0, 16)}… It shows up when its block `
-      + "is mined.");
-};
+    const start = await ask("/account/inscribe", {
+      content: b64(bytes),
+      content_type: file.type || "application/octet-stream",
+      name: file.name, chain: CHAIN.network});
+    // What this browser reads off the transaction's own bytes, not what this
+    // node says it costs: a confirmation that repeats the node's number proves
+    // nothing. For a file already half up, the split is not offered again, and
+    // then there is nothing new to price -- only pieces left to sign.
+    const shown = start.offer ? await wallet.checked(start, held) : null;
+    const pieces = Math.max(1, Number(start.chunks || 1));
+    const already = Number(start.sent || 0);
+    if (pieces === 1) {
+      if (!confirm(`${commas(start.bytes)} bytes, on the chain forever, for `
+                   + `${shown.coinsOf(shown.fee)} in fees. ${shown.what}?`))
+        return;
+      const out = await wallet.confirm(held, start);
+      news(`Inscribed: ${out.txid.slice(0, 16)}… It shows up when its block `
+           + "is mined.");
+      return;
+    }
+    if (!confirm(`${commas(start.bytes)} bytes, on the chain forever, as `
+                 + `${commas(pieces)} transactions`
+                 + (already ? ` -- ${commas(already)} already there, so `
+                             + `${commas(pieces - already)} from this tab`
+                   : ", every one signed from this tab")
+                 + (start.offer ? ", beginning with the split that funds them"
+                   : "")
+                 + ". One block for the split, then all the rest at once."
+                 + ` ${shown ? shown.what : start.name || ""}?`))
+      return;
+    let sent = already;
+    if (start.offer) await wallet.confirm(held, start);
+    const giveUp = Date.now() + 15 * 60 * 1000;
+    for (let n = Number(start.next ?? 0); n < pieces; n++) {
+      news(`Piece ${commas(n + 1)} of ${commas(pieces)}…`);
+      const piece = await pieceOffer(bytes, start, n, giveUp);
+      await wallet.confirm(held, piece);
+      sent = Math.max(sent + 1, Number(piece.sent || 0));
+      news(`${commas(sent)} of ${commas(pieces)} on the chain.`);
+    }
+    news(`Inscribed: ${commas(pieces)} transactions, one file, on the chain `
+        + "for ever. It appears when its last block is mined.");
+  } catch (e) { say(String(e.message || e)); }
+}
 
 /* -- a run of them, one transaction at a time -- */
 

@@ -134,22 +134,254 @@ def test_an_account_inscribes_one_piece_with_a_key_the_node_never_saw(seated):
     assert held() - before == {txid}
 
 
-def test_more_than_one_piece_is_refused_before_anything_is_paid(seated):
-    """Half an inscription is the failure to avoid, so it is refused first.
+def _parts(state):
+    """The same book the routes write in, opened the long way round.
 
-    A second piece spends the first one's output, so it cannot even be built
-    until that one is in a block. A route that started anyway would take the
-    fee for piece one and leave a file that assembles into nothing.
+    What the page is shown and what this reads have to be one file, so this
+    reads `state.home` rather than a path of its own.
+    """
+    from arcade import accountparts
+
+    return accountparts.Parts(state.home / "accountparts.sqlite")
+
+
+def _piece_of(data: bytes, n: int, chunk_len: int, manifest_len: int) -> bytes:
+    """The bytes of piece n, cut the way the browser cuts them.
+
+    The stream is the manifest and then the file, so piece n holds stream
+    bytes `n * chunk_len` to `(n + 1) * chunk_len` -- and the first piece's
+    slice of the FILE starts before zero, which is the manifest, so it clamps.
+    If this and `pieceOf` in the template disagree, the test passes and the
+    page writes a file nobody chose.
+    """
+    return data[max(0, n * chunk_len - manifest_len):
+                min(len(data), (n + 1) * chunk_len - manifest_len)]
+
+
+def _rich(state, rpc, address: str, coins: float = 14.0):
+    """Give the address enough to split.
+
+    `seated` puts four coins on it, which is a piece of change for a one
+    transaction inscription and not enough for a split: three outputs of about
+    two coins each plus the fee is seven, and a split that cannot be funded
+    fails here rather than in front of somebody's photograph.
+    """
+    rpc.call("sendtoaddress", address, coins)
+    rpc.call("generate", 1)
+    _catch_up(state, rpc)
+
+
+def _piece(app, job: dict, n: int, blob: bytes, **extra):
+    return app.post("/account/inscribe", json={
+        "part": job["part"], "chunk": n,
+        "content": base64.b64encode(_piece_of(
+            blob, n, int(job["chunk_len"]),
+            int(job["manifest_len"]))).decode(), **extra})
+
+
+def _pool(rpc):
+    """What the node is holding, in the units its own limits are counted in.
+
+    A refused broadcast says only `too-long-mempool-chain`, which names four
+    different numbers. The mempool's verbose listing names all of them.
+    """
+    return {"info": rpc.call("getmempoolinfo"),
+            "txs": {t: {k: v for k, v in row.items()
+                        if k in ("bytes", "ancestorcount", "ancestorbytes",
+                                "descendantcount", "descendantsize",
+                                "depends", "spentby")}
+                    for t, row in rpc.call("getrawmempool", True).items()}}
+
+
+# A 20 KB file: three transactions at about 6.7 KB each, which is what a
+# phone photograph arrives as once the page has resized it.
+BIG = bytes(range(256)) * 78 + b"!" * 40
+
+
+def test_a_big_file_goes_out_as_a_split_and_then_one_transaction_per_piece(seated):
+    """The stall this removes: a piece used to wait for the one before it.
+
+    What has to be proved is not that the file assembles -- the index says
+    that -- but how many blocks it costs. One, the split's, and then every
+    piece is in the mempool at the same moment. That is what the node's own
+    wallet has always arranged for itself, in `sender.ensure_outputs`, and
+    what an account could not ask for until there was a book to keep the
+    score. The old test here refused the whole idea, on the belief that a
+    piece spends the piece before it; `inscriptions.py` says the opposite and
+    the carriage is built the other way. What it does wait for is the split,
+    and that is the second half of this test.
     """
     app, state, rpc, pubkey, mine = seated
-    answer = _ask(app, b"x" * 20_000, kind="image/png", name="a big one")
+    _rich(state, rpc, mine)
+    held = lambda: {piece["txid"]
+                    for piece in app.get("/account/nfts").json()["chains"][0]["pieces"]}
+    before = held()
+
+    started = _ask(app, BIG, kind="image/png", name="a photograph")
+    assert started.status_code == 200, started.text
+    go = started.json()
+    pieces = int(go["chunks"])
+    assert pieces > 1, "20 KB is several transactions, not one"
+    assert go["split"] == "offered"
+    assert "split into" in go["what"], go["what"]
+    assert rpc.call("getrawmempool") == [], "nothing has gone out yet"
+
+    out = _sign_and_send(app, pubkey, go)
+    assert out.status_code == 200, out.text
+    split_txid = out.json()["txid"]
+    book = _parts(state)
+    assert book.get(go["part"])["split_txid"] == split_txid, \
+        "the split is written down the moment it is out"
+
+    # That split is the ONLY block any of this waits for -- and it does wait,
+    # which is the half of the story the old refusal in this file got wrong in
+    # the other direction. A piece spends an output of the split, so while the
+    # split is only in the mempool every piece is its grandchild, and the
+    # chain counts the package under an unconfirmed parent at about a hundred
+    # kilobytes: two of these transactions, and the third came back
+    # `too-long-mempool-chain`, measured. So the answer here is where things
+    # stand, not a transaction the network would throw away.
+    waiting = _piece(app, go, 0, BIG)
+    assert waiting.status_code == 200, waiting.text
+    assert waiting.json()["waiting"], waiting.json()
+    assert "offer" not in waiting.json()
+    assert set(rpc.call("getrawmempool")) == {split_txid}, \
+        "waiting puts nothing out and costs nothing"
+
+    rpc.call("generate", 1)
+    _catch_up(state, rpc)
+
+    txids = []
+    for n in range(pieces):
+        asked = _piece(app, go, n, BIG)
+        assert asked.status_code == 200, asked.text
+        assert "waiting" not in asked.json(), \
+            "the split is in a block; there is nothing left to wait for"
+        assert asked.json()["chunk"] == n
+        sent = _sign_and_send(app, pubkey, asked.json())
+        assert sent.status_code == 200, \
+            f"piece {n + 1} of {pieces}: {sent.text} {_pool(rpc)}"
+        txids.append(sent.json()["txid"])
+
+    pool = set(rpc.call("getrawmempool"))
+    assert set(txids) <= pool, \
+        "all of them unconfirmed together: one block for the file, not one " \
+        "block per piece"
+    for n, txid in enumerate(txids):
+        raw = rpc.call("decoderawtransaction",
+                       rpc.call("getrawtransaction", txid))
+        assert [(v["txid"], v["vout"]) for v in raw["vin"]] == [(split_txid, n)], \
+            "piece %d spends the output the split made for it, and nothing else" % n
+
+    rpc.call("generate", 1)
+    index = _catch_up(state, rpc)
+    row = index.inscription(txids[0])
+    assert row is not None, "the manifest piece is where it is filed"
+    assert row["content_len"] == len(BIG)
+    assert int(row["chunks"]) == pieces
+    assert row["creator"] == mine and row["owner"] == mine
+    assert index.inscription_content(txids[0]) == ("image/png", BIG), \
+        "the file is the file, piece by piece and back again"
+    assert held() - before == {txids[0]}, \
+        "the account gained one inscription, not three"
+
+    done = book.get(go["part"])
+    assert done["status"] == "done" and done["sent"] == pieces
+    assert done["next"] is None
+    assert all(c["status"] == "sent" for c in book.chunks(go["part"]))
+
+
+def test_a_piece_that_is_not_the_file_that_started_it_is_refused(seated):
+    """A piece is permanent, so the bytes have to be the promised ones.
+
+    The tab that resumes is not the tab that started, and the file it read off
+    the disk may be a different one -- same name, resized differently, or a
+    second photograph that happens to be the same length. Pieces of two files
+    assemble into a third file that nobody chose and everybody paid for, and
+    there is no taking it back.
+    """
+    app, state, rpc, pubkey, mine = seated
+    _rich(state, rpc, mine)
+    started = _ask(app, BIG, kind="image/png", name="a photograph")
+    go = started.json()
+    out = _sign_and_send(app, pubkey, go)
+    assert out.status_code == 200, out.text
+
+    answer = _piece(app, go, 1, bytes(len(BIG)))
     assert answer.status_code == 400
     said = answer.json()["detail"]
-    assert "3 pieces" in said, said
-    assert "wait for a block" in said, said
-    assert rpc.call("getrawmempool") == []
-    assert app.get("/account").json()["balance"] == int(4.0 * COIN), \
-        "a refusal costs nothing"
+    assert "not the bytes" in said, said
+    assert "Nothing has been paid for" in said, said
+    book = _parts(state)
+    assert book.chunks(go["part"])[1]["status"] == "pending", \
+        "the piece is still owed, unchanged"
+    assert set(rpc.call("getrawmempool")) == {out.json()["txid"]}
+
+
+def test_the_same_file_asked_again_continues_it_rather_than_starting_again(seated):
+    """A tab that closed in the middle comes back to the same inscription.
+
+    Asked again with the whole file and no id at all -- which is all a browser
+    that restarted has -- the node recognises the file by its hash, says where
+    it stopped, and offers nothing, because the split is already on its way. A
+    second split would be the same inscription paid for twice.
+    """
+    app, state, rpc, pubkey, mine = seated
+    _rich(state, rpc, mine)
+    go = _ask(app, BIG, kind="image/png", name="a photograph").json()
+    assert _sign_and_send(app, pubkey, go).status_code == 200
+    rpc.call("generate", 1)
+    _catch_up(state, rpc)
+    first = _piece(app, go, 0, BIG)
+    assert _sign_and_send(app, pubkey, first.json()).status_code == 200
+
+    back = _ask(app, BIG, kind="image/png", name="a photograph")
+    assert back.status_code == 200, back.text
+    again = back.json()
+    assert again["part"] == go["part"], "the same job, not a second one"
+    assert again["resumed"] is True
+    assert "offer" not in again, "the split is out; there is nothing to offer"
+    assert again["sent"] == 1 and again["next"] == 1
+    assert again["chunks"] == go["chunks"]
+    assert again["chunk_len"] == go["chunk_len"]
+    assert len(_parts(state).list()) == 1, "no second row for the same file"
+
+    for n in range(again["next"], int(again["chunks"])):
+        asked = _piece(app, again, n, BIG)
+        assert asked.status_code == 200, asked.text
+        assert "offer" in asked.json(), asked.json()
+        assert _sign_and_send(app, pubkey, asked.json()).status_code == 200
+    assert _parts(state).get(go["part"])["status"] == "done"
+
+
+def test_a_hundred_signatures_are_one_inscription_not_a_hundred(seated):
+    """The allowance is a count of gestures, and this was one gesture.
+
+    `PER_HOUR["inscribe"]` is ten because an inscription is a thing that stays.
+    Reading it as a count of SIGNATURES would turn a photograph into a job that
+    runs four hours and gets refused halfway, which is the stall this whole
+    step exists to remove -- so the split is charged and the pieces are not.
+    What still bounds them is the day's bytes, and the pile of offers.
+    """
+    app, state, rpc, pubkey, mine = seated
+    _rich(state, rpc, mine)
+    state.set_setting("quota:inscribe", 1)
+
+    go = _ask(app, BIG, kind="image/png", name="a photograph").json()
+    assert _sign_and_send(app, pubkey, go).status_code == 200
+    rpc.call("generate", 1)
+    _catch_up(state, rpc)
+    for n in range(int(go["chunks"])):
+        asked = _piece(app, go, n, BIG)
+        assert asked.status_code == 200, \
+            f"piece {n + 1} refused: {asked.json()}"
+        assert "offer" in asked.json(), asked.json()
+        assert _sign_and_send(app, pubkey, asked.json()).status_code == 200
+
+    answer = _ask(app, b"a different file entirely", name="a note")
+    assert answer.status_code == 400, \
+        "the allowance was spent once, and it is spent"
+    assert "in an hour" in answer.json()["detail"]
 
 
 def test_an_operator_who_closed_inscriptions_says_which_it_is(seated):

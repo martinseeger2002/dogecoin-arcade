@@ -87,6 +87,7 @@ from ..messaging.sender import (
 from . import content as contentlib
 from . import account as accountlib
 from .. import accountruns as accountrunslib
+from .. import accountparts as accountpartslib
 from . import door as doorlib
 from .. import bootstrap as bootstraplib
 from . import watcher as watcherlib
@@ -6326,6 +6327,11 @@ def create_app(state: AppState) -> FastAPI:
     #: it finds with the node's own wallet as the signer, and an account's run
     #: must never be signed by this node at all.
     _runs = accountrunslib.Runs(state.home / "accountruns.sqlite")
+    #: Inscriptions too big for one transaction, and which of their transactions
+    #: are still owed. Its own book again, for the same reason as the runs: the
+    #: node's Runner resumes what the node's own wallet should finish, and this
+    #: node must never be the one that signs an account's piece.
+    _parts = accountpartslib.Parts(state.home / "accountparts.sqlite")
     #: What an account has broadcast and the index has not read
     #: yet, so a second transaction does not pick the same coin.
     _flights = accountlib.Flights()
@@ -6432,7 +6438,7 @@ def create_app(state: AppState) -> FastAPI:
             return f"coinkey:{pubkey}"
         return f"coinkey:{chain.network}:{pubkey}"
 
-    def _quota(account, kind: str, nbytes: int = 0) -> None:
+    def _quota(account, kind: str, nbytes: int = 0, count: bool = True) -> None:
         """What this node lets one account do, checked where the work is done.
 
         Two things, in the order they cost the machine something:
@@ -6453,6 +6459,14 @@ def create_app(state: AppState) -> FastAPI:
         The numbers are the operator's to move and the page's to show; what
         is not movable is that there are numbers (§6: enforced and said, not
         enforced silently).
+
+        `count=False` checks the pile and charges nothing. It exists for the
+        pieces of one inscription, which are the tail of a gesture that was
+        charged for when its split was offered: `PER_HOUR["inscribe"]` is a
+        count of gestures, and counting the signatures would be counting the
+        same photograph twenty-seven times. The pile is still checked, because
+        twenty-seven outstanding offers is still twenty-seven transactions
+        naming coins.
         """
         if len(_offers.waiting(account.pubkey)) >= accountslib.OFFERS_WAITING:
             raise ValueError(
@@ -6461,8 +6475,9 @@ def create_app(state: AppState) -> FastAPI:
                 "-- each one names specific coins, and two of them spending "
                 "the same coin is a transaction the network refuses.")
         try:
-            state.accounts().charge(account.pubkey, kind, nbytes,
-                                    caps=accountslib.limits(state.settings()))
+            if count:
+                state.accounts().charge(account.pubkey, kind, nbytes,
+                                        caps=accountslib.limits(state.settings()))
         except accountslib.AccountError as exc:
             raise ValueError(str(exc))
 
@@ -6876,7 +6891,7 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/account/inscribe")
     def account_inscribe(request: Request, payload: Any = Body(None)):
-        """Offer to put one piece of something on the chain, as this account.
+        """Offer the next transaction of an inscription, as this account.
 
         The same inscription the node's own wallet writes at
         `/inscriptions/create`, built the way an account has to have it
@@ -6885,15 +6900,40 @@ def create_app(state: AppState) -> FastAPI:
         comes back is checked against what was offered, and what is
         broadcast is the offer, not whatever arrives.
 
-        One piece, which is as much as one transaction carries -- one
-        OP_RETURN where the content is short, the Class B packet outputs
-        when it is not. A file bigger than that is not refused for being
-        big: it is several pieces, and the piece after the first spends the
-        first one's output, so it cannot be built until that one is in a
-        block. That is a job which outlives a request, and jobs are not
-        built for accounts yet (§9). It is worth saying here because the
-        alternative is a page that starts an inscription, pays for half of
-        it, and leaves the rest unpaid.
+        Two shapes, because one inscription can be several transactions.
+
+        * `{content: ...}` asks for the **start**. A file that fits in one
+          transaction is answered exactly as it always was -- one OP_RETURN
+          where the content is short, Class B packet outputs when it is not.
+          A bigger one starts with a SPLIT: one output per piece, paid out of
+          this account's own coins, and then one transaction per piece, each
+          spending its own output. That costs exactly ONE block -- the
+          split's -- and then every piece goes at once, which is what the
+          node's own wallet has always done: `sender.ensure_outputs` splits,
+          waits one confirmation, and "then all the chunks go at once. Six
+          transactions measured at about four minutes chained, against one
+          block plus two seconds this way." The account cannot make that
+          wallet call, so its tab makes the requests one signature at a time
+          and `accountparts` keeps the score. It is the pieces that must not
+          be broadcast while the split is still only in the mempool: the
+          chain counts the whole package sitting under an unconfirmed parent
+          and refuses at about a hundred kilobytes, which is two of these
+          transactions (`_inscribe_piece`). One wait for the file, never one
+          wait between pieces.
+        * `{part, chunk, content}` asks for **piece n**, funded by the split
+          output that was made for it. Its bytes are checked against the
+          digest written down at the start, because an inscription cannot be
+          corrected and pieces of two different files would assemble into a
+          third file that nobody chose and everybody paid for.
+
+        Asking again with the whole file continues the inscription that is
+        waiting for it rather than starting a second copy of it
+        (`accountparts.find`), and the allowance is charged ONCE, at the
+        split. The pieces are one gesture with a great many signatures, not a
+        great many gestures: `PER_HOUR["inscribe"]` counting them would turn a
+        photograph into a four-hour job, which is the stall this exists to
+        remove. What bounds the size is the day's bytes (§6), which is the
+        operator's number and is shown before anything is spent.
         """
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
@@ -6916,35 +6956,245 @@ def create_app(state: AppState) -> FastAPI:
                                  "does") from None
             if not content:
                 raise ValueError("there is nothing to inscribe")
+            if str(said.get("part") or ""):
+                return _inscribe_piece(account, chain, address, said, content)
             kind = str(said.get("content_type") or "application/octet-stream")
-            plan = inscribelib.plan(content, kind, str(said.get("json", "")))
-            if plan.chunks > 1:
-                raise ValueError(
-                    f"that is {plan.chunks} pieces in one item, and a piece is "
-                    f"as much as one transaction carries. A collection goes "
-                    f"out as a run, one transaction per item "
-                    f"(`/account/run/start`), but the pieces of a single item "
-                    f"chain onto each other and have to wait for a block "
-                    f"between them, which is a wait no request can sit "
-                    f"through. A smaller file, or the same picture split, is "
-                    f"what fits. Nothing has been paid for.")
-            label = (str(said.get("name") or "").strip()[:60]
-                     or kind.split(";")[0])
-            outputs = _class_c_or_b(chain, address, plan.payloads[0],
-                                    _coin_pubkey(account.pubkey, chain))
-            index = state.token_index(chain)
-            with contextlib.closing(index.open()) as db:
-                unsigned = fundinglib.build(
-                    db, chain.params, address, outputs,
-                    rate=fees.MIN_FEE_PER_KB, what=f"inscribe {label}",
-                    exclude=_flights.spent_by(account.pubkey, chain.network),
-                    extra=_flights.change_for(account.pubkey, chain.network))
-            _quota(account, "inscribe", len(content))
+            return _inscribe_start(account, chain, address, said, content, kind)
         except (fundinglib.FundingError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    def _spend_now(account, chain, address: str, outputs: list,
+                   what: str) -> Any:
+        """A transaction out of the coins this account holds right now.
+
+        The two lines of bookkeeping are the whole reason this is a function
+        rather than a call to `fundinglib.build`: between a broadcast and its
+        block the index still shows the coin that was just spent and does not
+        show the change that came back, and an inscription that needs several
+        transactions in a row is exactly where that bites.
+        """
+        index = state.token_index(chain)
+        with contextlib.closing(index.open()) as db:
+            return fundinglib.build(
+                db, chain.params, address, outputs,
+                rate=fees.MIN_FEE_PER_KB, what=what,
+                exclude=_flights.spent_by(account.pubkey, chain.network),
+                extra=_flights.change_for(account.pubkey, chain.network))
+
+    def _how_it_is_split(plan) -> tuple:
+        """(the manifest's bytes, its length, the chunk's length, the content of
+        every chunk).
+
+        Read back out of the payloads rather than recomputed, because the
+        framing belongs to `inscriptions.py` and a second arithmetic of it here
+        is how the two drift apart. Chunk 0's body is the manifest and then
+        content; every other body is content alone, and every body is the same
+        length but the last -- that is what "split evenly" means, and it is what
+        lets a browser slice a file from two numbers.
+        """
+        bodies = [p[inscriptionlib.CHUNK_HEADER_LEN:] for p in plan.payloads]
+        _manifest, after = inscriptionlib.Manifest.decode(bodies[0])
+        at = len(bodies[0]) - len(after)
+        return (bodies[0][:at], at, len(bodies[0]),
+                [b[at:] if n == 0 else b for n, b in enumerate(bodies)])
+
+    def _inscribe_start(account, chain, address: str, said: dict,
+                        content: bytes, kind: str):
+        """The first transaction of an inscription: the piece, or the split.
+        """
+        label = (str(said.get("name") or "").strip()[:60]
+                 or kind.split(";")[0])
+        digest = hashlib.sha256(content).hexdigest()
+        waiting = _parts.find(account.pubkey, chain.network, digest)
+        if waiting is not None:
+            return _inscribe_again(account, chain, address, waiting)
+
+        tag = secrets.token_bytes(8)
+        plan = inscribelib.plan(content, kind, str(said.get("json", "")),
+                                inscription_id=tag)
+        if plan.chunks == 1:
+            unsigned = _spend_now(
+                account, chain, address,
+                _class_c_or_b(chain, address, plan.payloads[0],
+                              _coin_pubkey(account.pubkey, chain)),
+                f"inscribe {label}")
+            _quota(account, "inscribe", len(content))
+            offer = _offers.add(account.pubkey, chain.network, unsigned,
+                                unsigned.what)
+            return JSONResponse({"offer": offer.id, "bytes": plan.content_len,
+                                 "chunks": 1, "chain": chain.network,
+                                 **unsigned.as_json()})
+
+        manifest, at, chunk_len, contents = _how_it_is_split(plan)
+        piece = inscribelib.piece_size(plan)
+        unsigned = _spend_now(
+            account, chain, address,
+            [(piece, txbuild.p2pkh_script(address))] * plan.chunks,
+            f"split into {plan.chunks:,} outputs, to inscribe {label} "
+            f"in {plan.chunks:,} transactions")
+        _quota(account, "inscribe", len(content))
+        job = _parts.create(
+            account=account.pubkey, address=address, network=chain.network,
+            name=label, content_type=plan.content_type, json_text=plan.json,
+            size=len(content), sha256=digest, inscription_id=tag.hex(),
+            contents=contents, piece=piece, chunk_len=chunk_len,
+            manifest=manifest, fee=plan.estimate.fee,
+            dust=plan.estimate.dust, floor=chain.params.activation_height)
         offer = _offers.add(account.pubkey, chain.network, unsigned,
-                            unsigned.what)
-        return JSONResponse({"offer": offer.id, "bytes": plan.content_len,
+                            unsigned.what,
+                            done=lambda txid, job=job: _parts.note_split(job,
+                                                                         txid))
+        return JSONResponse({"offer": offer.id, "part": job,
+                             "split": "offered", "bytes": plan.content_len,
+                             "chunks": plan.chunks,
+                             "chunk_len": chunk_len,
+                             "manifest_len": at, "sent": 0, "next": 0,
+                             "chain": chain.network, **unsigned.as_json()})
+
+    def _inscribe_again(account, chain, address: str, row: dict):
+        """The same file, asked again while its inscription is unfinished.
+
+        Nothing is charged and nothing is inscribed twice. If the split never
+        went out it is rebuilt -- same outputs, from whatever coins are here
+        now -- because an offer is not a promise the chain has heard. If it did
+        go out there is nothing at all to offer from this shape of the request:
+        the answer is where it stopped, and the tab goes back to asking for
+        pieces. The framing comes from the row, never from this request, so a
+        resume cannot quietly re-describe a file that is already half on the
+        chain.
+        """
+        said = {"part": row["id"], "chunks": int(row["chunks"]),
+                "chunk_len": int(row["chunk_len"]),
+                "manifest_len": len(bytes.fromhex(row["manifest"])),
+                "bytes": int(row["size"]), "name": row["name"],
+                "sent": row["sent"], "next": row["next"],
+                "chain": row["network"], "resumed": True}
+        if row["split_txid"]:
+            return JSONResponse(said)
+        unsigned = _spend_now(
+            account, chain, address,
+            [(int(row["piece"]), txbuild.p2pkh_script(address))]
+            * int(row["chunks"]),
+            f"split into {int(row['chunks']):,} outputs, to inscribe "
+            f"{row['name']} in {int(row['chunks']):,} transactions")
+        offer = _offers.add(
+            account.pubkey, chain.network, unsigned, unsigned.what,
+            done=lambda txid, job=row["id"]: _parts.note_split(job, txid))
+        return JSONResponse({**said, "offer": offer.id, "split": "offered",
+                             **unsigned.as_json()})
+
+    def _inscribe_piece(account, chain, address: str, said: dict,
+                        content: bytes):
+        """One piece of an inscription already started, funded by its own
+        output of the split.
+
+        Not built by searching for coins: `fundinglib.build_one` is told which
+        outpoint to spend, which is the only way a piece is still buildable a
+        week from now, and the only way the output the split made for it is the
+        thing that pays for it.
+        """
+        job = str(said.get("part"))
+        row = _parts.get(job)
+        if (not row or row["account"] != account.pubkey
+                or row["network"] != chain.network):
+            raise ValueError("that inscription is not one this node is "
+                             "finishing for this account. Start it again from "
+                             "the file.")
+        if row["status"] in ("done", "stopped"):
+            raise ValueError(f"that inscription is {row['status']}, so there "
+                             "is no piece of it left to offer.")
+        try:
+            n = int(said.get("chunk"))
+        except (TypeError, ValueError):
+            raise ValueError("which piece was not said") from None
+        if not 0 <= n < int(row["chunks"]):
+            raise ValueError(f"that inscription has {int(row['chunks']):,} "
+                             f"pieces, numbered 0 to "
+                             f"{int(row['chunks']) - 1}.")
+        mine = [c for c in _parts.chunks(job) if int(c["n"]) == n]
+        if not mine:
+            raise ValueError("that piece was never written down")
+        chunk = mine[0]
+        if chunk["status"] == "sent":
+            raise ValueError(f"piece {n + 1} is already on the chain "
+                             f"({chunk['txid']}). Nothing has been paid for "
+                             "twice.")
+        if hashlib.sha256(content).digest() != bytes(chunk["digest"]):
+            raise ValueError(
+                f"those are not the bytes piece {n + 1} of that inscription "
+                f"was promised to. A piece is permanent and paid for, and "
+                f"pieces of two different files make a third file nobody "
+                f"chose -- so the file has to be the one that started this. "
+                f"Nothing has been paid for.")
+        if not row["split_txid"]:
+            raise ValueError("the split has not gone out yet, so there is "
+                             "nothing here to pay for this piece. Ask for the "
+                             "file again and sign the split first.")
+        # The piece spends an output of the split, and the chain will not take
+        # a third generation: what it counts is the whole package sitting under
+        # an unconfirmed parent, and that ceiling is about a hundred kilobytes.
+        # Two of these transactions are already 90 KB of it -- measured, the
+        # third came back `too-long-mempool-chain`. So this waits for the
+        # split's BLOCK and then they all go, which is what the node's own
+        # wallet has always done (`sender.ensure_outputs` splits, waits one
+        # confirmation, sends every chunk at once: "one block plus two seconds"
+        # against four minutes chained). One wait for the whole file, never one
+        # wait between pieces.
+        how = _tx_status(chain, row["split_txid"])
+        if how is None:
+            raise ValueError("this node cannot tell whether that split is in a "
+                             "block, so it will not offer a piece that spends "
+                             "an output it cannot see. Look at the Overview -- "
+                             "a node without txindex cannot carry a split.")
+        if how["conflicted"]:
+            _parts.set_status(job, "stopped",
+                              note="the split was replaced by another "
+                                   "transaction")
+            raise ValueError("the transaction that was to fund this "
+                             "inscription is not coming -- something spending "
+                             "the same coins reached a block first. Nothing "
+                             "further has been paid for. Ask again with the "
+                             "file and it starts again.")
+        if not how["confirmed"]:
+            now = _parts.get(job) or {}
+            return JSONResponse({"part": job, "chunk": n,
+                                 "chunks": int(row["chunks"]),
+                                 "sent": now.get("sent", 0),
+                                 "next": now.get("next"),
+                                 "chunk_len": int(row["chunk_len"]),
+                                 "manifest_len": len(bytes.fromhex(
+                                     row["manifest"])),
+                                 "waiting": "the split is in the mempool, and "
+                                            "these pieces spend its outputs, "
+                                            "so they go out together once it "
+                                            "is in a block -- about a minute, "
+                                            "and no minute in between them."})
+        body = (bytes.fromhex(row["manifest"]) + content if n == 0
+                else content)
+        payload = inscriptionlib.Chunk(
+            inscription_id=bytes.fromhex(row["inscription_id"]),
+            countdown=int(row["chunks"]) - 1 - n, body=body).encode()
+        unsigned = fundinglib.build_one(
+            chain.params, address,
+            {"txid": row["split_txid"], "vout": n,
+             "value": int(row["piece"]), "address": address},
+            _class_c_or_b(chain, address, payload,
+                          _coin_pubkey(account.pubkey, chain)),
+            rate=fees.MIN_FEE_PER_KB,
+            what=f"piece {n + 1:,} of {int(row['chunks']):,} of "
+                 f"{row['name']}, on the chain forever")
+        # The pile is checked, the allowance is not: this is the same gesture
+        # that was charged for when the split was offered.
+        _quota(account, "inscribe", count=False)
+        _parts.offer_chunk(job, n)
+        offer = _offers.add(
+            account.pubkey, chain.network, unsigned, unsigned.what,
+            done=lambda txid, job=job, n=n: _parts.record_chunk(job, n, txid))
+        now = _parts.get(job) or {}
+        return JSONResponse({"offer": offer.id, "part": job, "chunk": n,
+                             "sent": now.get("sent", 0),
+                             "next": now.get("next"),
+                             "chunks": int(row["chunks"]),
                              "chain": chain.network, **unsigned.as_json()})
 
     def _what_the_account_has(account, chain, address: str, build,

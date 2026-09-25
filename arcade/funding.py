@@ -297,6 +297,60 @@ def build(db, params: Params, address: str, payload_outputs: list,
                     fee=fee, change=change, what=what)
 
 
+def build_one(params: Params, address: str, coin: dict,
+              payload_outputs: list, rate: int, what: str = "",
+              dust: int = 0) -> Unsigned:
+    """One named coin paying these outputs, with no coin hunting at all.
+
+    `build` searches the index for coins worth enough; here the funding is
+    already decided -- the output of a split this node itself just built, which
+    is what pays for one piece of a multi-transaction inscription
+    (arcade/accountparts.py). Searching instead would be wrong twice over. The
+    split's output is usually unconfirmed, so it is not in the index yet and
+    `extra` would have to carry it; and if the index DID happen to hold some
+    other coin worth enough, `choose` would take the smallest sufficient one and
+    the piece would be paid for out of the wallet while its own output sat there
+    unspent -- the same inscription, paid for twice, one of those payments
+    stranded.
+
+    A named coin is also what makes a piece buildable a week later: its input is
+    an outpoint, not a coin picked out of wherever the balance happens to be
+    today, so the transaction comes out identical after a restart.
+    """
+    txid, vout = str(coin.get("txid") or ""), int(coin.get("vout", -1))
+    value = int(coin.get("value", 0))
+    if len(txid) != 64 or vout < 0 or value <= 0:
+        raise FundingError(
+            "that is not a coin this node can spend: a coin needs a 32-byte "
+            "txid, an index, and an amount above nothing")
+    given = {"txid": txid, "vout": vout, "value": value,
+             "address": str(coin.get("address") or address)}
+
+    spend = sum(value for value, _ in payload_outputs)
+    fee = price(1, payload_outputs, rate, change=True)
+    if value < spend + fee:
+        raise FundingError(
+            f"that piece costs {spend + fee} and the output meant to pay for it "
+            f"holds {value}. Nothing has been paid for.")
+
+    change = value - spend - fee
+    outputs = list(payload_outputs)
+    if change > dust:
+        # Back to the sender, as always: a Class B payload's obfuscation is
+        # seeded with the largest input, and a piece whose change wandered off
+        # would be read as somebody else's and never indexed.
+        outputs.append((change, p2pkh_script(address)))
+    else:
+        fee += max(0, change)
+        change = 0
+
+    raw = build_raw_tx([(txid, vout)], outputs)
+    script = p2pkh_script(address)
+    return Unsigned(raw=raw, inputs=[given], outputs=outputs,
+                    sighashes=[sighash([given], outputs, 0, script).hex()],
+                    fee=fee, change=change, what=what)
+
+
 def build_partial(db, params: Params, address: str, foreign: list,
                   payload_outputs: list, rate: int, what: str = "",
                   dust: int = 0, exclude=frozenset(),

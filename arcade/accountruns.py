@@ -25,11 +25,16 @@ and the same piece rebuilt identically when the offer it was offered has expired
 One piece per item
 ------------------
 `create` refuses a build with an item that needs more than one chunk rather than
-accepting it and failing forty pieces in. An item that needs two chunks needs two
-transactions that chain onto each other, so it needs a block between them, and
-that is the operator Runner's `_fund`/`_wait_for_block` machinery. A collection
-that half-inscribes is worse than one that has not started, so the refusal
-happens at the review, before anything is paid for, naming the items.
+accepting it and failing forty pieces in. The reason is not that several
+transactions cannot go out in one pass -- they can, one block after a split that
+funds them, and `accountparts.py` now does exactly that for one big file. It is
+that a run is one transaction per item, which is the sentence the page gives and
+the shape the folder is laid out in, and
+an item spread over three transactions needs a countdown PER ITEM that this book
+does not have: a `piece` row holds one txid and one status, which is enough for
+an item and not enough for an item's third transaction. A collection that
+half-inscribes is worse than one that has not started, so the refusal happens at
+the review, before anything is paid for, naming the items.
 
 Retention
 ---------
