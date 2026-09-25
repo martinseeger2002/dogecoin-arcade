@@ -1250,6 +1250,72 @@ function arcadeFileCost(bytes){
   window.arcadeLiveUpdate = function () { known = -1; poll(); };
 })();
 </script>
+<script>
+// Content screening's covers on pictures (arcade/moderation.py). The /content
+// route already serves a sensitive picture blurred and an unchecked one as
+// "checking"; this labels them and lets the viewer lift a cover. Nothing here
+// runs unless this arcade screens.
+(function () {
+  function ids() {
+    var out = {};
+    document.querySelectorAll('img[src*="/content/"]').forEach(function (img) {
+      var m = img.getAttribute('src').match(/\/content\/([0-9a-f]{64})(?![^?]*reveal)/);
+      if (m && !img.dataset.screened) (out[m[1]] = out[m[1]] || []).push(img);
+    });
+    return out;
+  }
+  function label(img, text, onclick) {
+    var tag = document.createElement('button');
+    tag.type = 'button'; tag.className = 'screenlabel'; tag.textContent = text;
+    tag.onclick = function (e) { e.preventDefault(); e.stopPropagation(); onclick(tag); };
+    var box = img.parentNode;
+    if (getComputedStyle(box).position === 'static') box.style.position = 'relative';
+    box.appendChild(tag);
+    return tag;
+  }
+  function look() {
+    var found = ids(), keys = Object.keys(found);
+    if (!keys.length) return;
+    fetch('/moderation/verdicts?ids=' + keys.join(','), {cache: 'no-store'})
+      .then(function (r) { return r.json(); })
+      .then(function (said) {
+        if (!said.enabled) return;
+        var again = false;
+        keys.forEach(function (key) {
+          var verdict = said.verdicts[key];
+          found[key].forEach(function (img) {
+            if (verdict === 'sensitive') {
+              img.dataset.screened = '1';
+              label(img, 'Sensitive \u2014 tap to show', function (tag) {
+                img.src = '/content/' + key + '?reveal=1'; tag.remove();
+              });
+            } else if (verdict === null || verdict === undefined) {
+              again = true;               // still checking: ask the picture again soon
+              setTimeout(function () {
+                img.src = '/content/' + key + '?t=' + Date.now();
+              }, 4000);
+            } else {
+              img.dataset.screened = '1'; // ok, or removed: the picture says so itself
+            }
+          });
+        });
+        if (again) setTimeout(look, 5000);
+      })
+      .catch(function () {});
+  }
+  document.addEventListener('DOMContentLoaded', look);
+  if (document.readyState !== 'loading') look();
+  document.addEventListener('arcade:changed', look);
+})();
+</script>
+<style>
+.screenlabel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2;
+  padding:7px 12px;border-radius:999px;border:0;background:rgba(0,0,0,.72);color:#fff;
+  font:600 .8rem/1.2 inherit;cursor:pointer;box-shadow:none;white-space:nowrap}
+details.covered>summary{cursor:pointer;color:var(--muted);font-size:.9rem;padding:8px 12px;
+  border:1px dashed var(--line);border-radius:10px;list-style:none}
+details.covered[open]>summary{margin-bottom:6px}
+</style>
 {% if not embed %}
 <footer class="version">
   {% if state.running_version %}running {{ state.running_version }}{% endif %}

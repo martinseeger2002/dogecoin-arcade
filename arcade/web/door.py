@@ -50,6 +50,7 @@ PUBLIC_PAGES = frozenset({
     "/clone",
     "/instances",             # who runs which arcade, as the chain says
     "/.well-known/dogecoinarcade.json",   # this arcade's own claim, to check it
+    "/moderation/verdicts",   # what this arcade covers, so a page can label it
     "/source.tar.gz",
     "/source.tar.gz.sha256",
     "/source.rev",

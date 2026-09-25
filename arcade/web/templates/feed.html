@@ -64,8 +64,23 @@
     {# Text, with any /content/<id> in it drawn rather than printed: a picture
        is shown, a page goes in the sandbox the viewer already uses, and
        anything else stays a link (D-138). #}
+    {# Screened first when this arcade screens (arcade/moderation.py): removed if
+       illegal, behind a cover the reader can lift if sensitive, and covered
+       while it is still being checked (2026-09-25). #}
+    {% set seen = screen_text(p.text) %}
+    {% if seen == 'illegal' %}
+    <p class="muted posttext" style="margin:10px 0 0">Removed by this arcade.</p>
+    {% elif seen == 'sensitive' %}
+    <details class="covered" style="margin:10px 0 0">
+      <summary>Sensitive post &mdash; tap to show</summary>
+      <div class="posttext" style="margin:8px 0 0;white-space:pre-wrap"
+        >{{ render_post(p.text, drawable) }}</div></details>
+    {% elif seen is none %}
+    <p class="muted posttext" style="margin:10px 0 0">Checking this post&hellip;</p>
+    {% else %}
     <div class="posttext" style="margin:10px 0 0;white-space:pre-wrap"
       >{{ render_post(p.text, drawable) }}</div>
+    {% endif %}
   {% endif %}
 
   {% if not public or acts %}
