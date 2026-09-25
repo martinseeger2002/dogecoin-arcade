@@ -501,6 +501,11 @@ async function ready(w) {
   // and promotes them in place when the block lands.
   await check(true);
   setInterval(() => check(false), 20000);
+  // A block that brought something: look at once rather than at the next
+  // twenty-second tick, and do not offer a reload -- this page draws its own
+  // conversations from this tab's keys (base.html's `arcade:changed`).
+  document.body.dataset.selfRefreshing = "yes";
+  document.addEventListener("arcade:changed", () => { check(false); });
 }
 
 $("open").onclick = async () => {

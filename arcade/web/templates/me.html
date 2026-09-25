@@ -446,6 +446,12 @@ $("copy-contact").onclick = () => {
 // `meReady` should see a page that has actually finished drawing, not one
 // that merely started to.
 try { await draw(); } catch (e) {}
+
+// The wallet cards, the counts and the profile are drawn here from this tab's
+// keys; they redraw when a block brings something (base.html's `arcade:changed`),
+// and boxes somebody is typing in are left alone (drawProfile's `touched`).
+document.body.dataset.selfRefreshing = "yes";
+document.addEventListener("arcade:changed", () => { draw().catch(() => {}); });
 document.body.dataset.meReady = "yes";
 </script>
 {% endblock %}
