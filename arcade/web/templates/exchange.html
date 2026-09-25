@@ -90,6 +90,9 @@
           {% elif b.held_for %}
             <span class="muted">that piece is reserved for another buyer
               until {{ b.until }}</span>
+          {% elif viewer == 'account' %}
+            <span class="muted">your own key signs this one, and answering an
+              offer from a tab is not built yet</span>
           {% else %}
           <form method="post" action="/exchange/offers/{{ b.txid }}" class="row"
                 style="gap:6px;justify-content:flex-end;margin:0">
@@ -340,6 +343,9 @@
           {%- if l.pending %}<div class="muted" style="font-size:.74rem">in the mempool</div>{% endif %}</td>
         <td style="text-align:right;width:130px">
           {% if l.seller not in owned %}
+          {% if viewer == 'account' %}
+            <a class="btn ghost small" href="/inscriptions/{{ l.txid }}/view">Make offer</a>
+          {% else %}
           <form method="post" action="/exchange/offer" style="margin:0">
             <input type="hidden" name="csrf_token" value="{{ csrf }}">
             <input type="hidden" name="inscription" value="{{ l.txid }}">
@@ -351,6 +357,9 @@
             {% endif %}
             <button type="submit" class="small">Buy it</button>
           </form>
+          {% endif %}
+          {% elif viewer == 'account' %}
+            <a class="btn ghost small" href="/me/nfts">Yours &mdash; price it</a>
           {% else %}
             <a class="btn ghost small" href="/exchange/sell/{{ l.txid }}">Yours &mdash; change it</a>
           {% endif %}</td>

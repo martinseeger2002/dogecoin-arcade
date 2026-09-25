@@ -218,8 +218,8 @@ def test_the_pile_of_unsigned_offers_is_bounded(client):
 # --- the operator's page -----------------------------------------------------
 
 FIELDS = {"post": "30", "react": "60", "message": "30", "send": "30",
-          "listings": "30", "claims": "5", "inscribe": "10", "issue": "10",
-          "payload": "1000"}
+          "listings": "30", "trade": "30", "claims": "5", "inscribe": "10",
+          "issue": "10", "payload": "1000"}
 
 
 def test_the_operators_page_moves_the_next_action(client):

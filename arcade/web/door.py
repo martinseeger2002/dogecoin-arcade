@@ -191,6 +191,13 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # only one whose word removes them.
                "/account/run/retry", "/account/run/delete",
                "/account/nft/send", "/account/nft/sell",
+               # an offer on somebody else's piece: one OP_RETURN saying what
+               # this account would pay, funded from its own address and
+               # signed in its own tab. This node broadcasts it and reserves
+               # nothing -- not the piece, which is not this node's to reserve,
+               # and not the account's coins, which are the account's to spend
+               # on the day somebody says yes.
+               "/account/offer",
                # the pair that lists a piece: the first shows a leg, the
                # second files the leg it is sent back with. Neither one
                # broadcasts -- a listing is a signature the node holds, not

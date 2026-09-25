@@ -103,14 +103,22 @@ DAY = 86400
 #: consume the allowance for the thing whose bytes this node stores. The
 #: bytes below still bound how much of it a day adds up to; this bounds how
 #: fast.
+#: `trade` is the asking-a-trade dial, and it is one dial rather than one per
+#: surface, because the surfaces are one gesture seen from different pages: an
+#: offer made on somebody's piece is the same transaction as an order put on
+#: the book, and both say "I would trade on these terms" in one OP_RETURN. An
+#: account that offered thirty times and then ordered ten times an hour would
+#: not be trading, it would be spraying, and two dials would have let it call
+#: that sixty.
 PER_HOUR = {"post": 30, "react": 60, "message": 30, "send": 30, "list": 30,
-            "name": 5, "inscribe": 10, "issue": 10}
+            "trade": 30, "name": 5, "inscribe": 10, "issue": 10}
 
 #: What each is called in a sentence, so the refusal and the page cannot
 #: disagree about what ran out.
 LABELS = {"post": "posts", "react": "reactions", "message": "messages",
-          "send": "sends", "list": "listings", "inscribe": "inscriptions",
-          "issue": "token issuances", "name": "name and key claims"}
+          "send": "sends", "list": "listings", "trade": "trades",
+          "inscribe": "inscriptions", "issue": "token issuances",
+          "name": "name and key claims"}
 
 #: Bytes an account may push onto the chain in a day, whatever carried them --
 #: the ceiling on how much of the chain one person can make this node store

@@ -266,6 +266,17 @@ def _asked(body: str) -> list[tuple[str, str]]:
             r"""\b(fetch|post)\(\s*["'`](/[^"'`]*)["'`]([^)]*)""", body):
         if "${" in target:
             continue        # built out of a variable: not a path from here
+        if target.endswith("/") and rest.lstrip().startswith("+"):
+            # The other spelling of the same thing: `fetch("/content/" + root)`
+            # is built out of a variable as surely as the backtick form, and
+            # what is literal in it is a whole tree rather than a page. So ask
+            # the door about a child of that tree, which is the promise the
+            # prefix actually makes -- `/content` is not a page and
+            # `/content/<id>` is. A page that went asking for `/wallet/` plus
+            # anything is still caught here, which is the point: dropping the
+            # concatenation form the way the backtick form is dropped would let
+            # a refused route out of this census by spelling its path in two.
+            target = target + "-"
         said = re.search(r"""method\s*:\s*["'`]?([A-Za-z]+)""", rest)
         default = "POST" if verb == "post" else "GET"
         out.append((target.split("?")[0], (said.group(1) if said else default)

@@ -328,10 +328,130 @@
 <div class="panel">
   {% if offer_error %}<div class="msg err">{{ offer_error }}</div>{% endif %}
   {% if viewer == 'account' %}
-    <p class="muted" style="margin:0">An offer is a message on the chain, paid
-      for by the key that signs it. Offering from an account is not built yet
-      &mdash; what is below would ask this node to sign something only your key
-      can sign, and it would be right to refuse.</p>
+    <p class="muted" style="margin:0 0 10px">Offer for it whether or not it is
+      for sale. The offer is one transaction, paid for out of this
+      account&rsquo;s own coins and signed in this tab &mdash; this node never
+      holds the key that spends it. It reserves nothing: the piece stays where
+      it is until whoever holds it says yes from their own node, and if nobody
+      does, all that was spent is the fee.</p>
+    <p class="msg err" id="offer-trouble" hidden></p>
+    <p class="msg ok" id="offer-news" hidden></p>
+    <div class="row" style="gap:8px">
+      <div style="flex:0 0 120px">
+        <input autocomplete="off" id="offer-amount" inputmode="decimal"
+               placeholder="amount"></div>
+      <div style="flex:0 0 150px">
+        <select autocomplete="off" id="offer-kind">
+          <option value="coins">{{ chain.label }} coins &mdash;
+            {{ "%.4f"|format(coins) }}</option>
+          {% if tokens %}
+          <option value="token">a token</option>
+          {% endif %}
+        </select></div>
+      {% if tokens %}
+      <div style="flex:1 1 180px" id="offer-token-wrap" hidden>
+        <select autocomplete="off" id="offer-token">
+          {% for t in tokens %}
+          <option value="{{ t.property_id }}">{{ t.name }} &mdash; {{ t.display }}</option>
+          {% endfor %}
+        </select></div>
+      {% endif %}
+      <button type="button" id="offer-it"
+        {{ 'disabled' if not tokens and not coins }}>Make offer</button>
+    </div>
+    <p class="muted" style="font-size:.82rem;margin:8px 0 0">
+      {%- if tokens or coins %}Only what this account holds can be offered
+        &mdash; {{ "%.4f"|format(coins) }} {{ chain.label|lower }} coins
+      {%- if tokens %} and {{ tokens|length }}
+        token{{ '' if tokens|length == 1 else 's' }}{% endif %}.
+    {%- else %}This account holds nothing on {{ chain.label|lower }} to offer
+      with.{% endif %}</p>
+    <script type="module">
+    /* An offer, from the account's side of it.
+
+       Nothing is spent until `wallet.checked` has read this node's
+       transaction and worked the fee out of its own bytes: `offer.fee` is
+       this node's number, and a confirmation that repeats it proves nothing.
+
+       The sentence outlives the tab for a while, kept in sessionStorage
+       rather than only in the news row: `/account/sign` bumps the generation
+       as the offer is broadcast, so base.html's poller reloads this page over
+       it within a poll of it going out. The same hold the inscribe boxes
+       describe. An hour, because nothing here can tell the tab the offer
+       landed, and a receipt that haunts a piece page for ever is worse than
+       one that goes quiet while its block is still on its way.
+    */
+    import * as wallet from "/wallet.js";
+
+    const $ = (id) => document.getElementById(id);
+    const say = (t) => { $("offer-trouble").textContent = t;
+                         $("offer-trouble").hidden = !t;
+                         if (t) $("offer-news").hidden = true; };
+    const news = (t) => { $("offer-news").textContent = t;
+                          $("offer-news").hidden = !t;
+                          if (t) $("offer-trouble").hidden = true; };
+    const CHAIN = {network: "{{ chain.network }}",
+                   version: {{ chain.params.pubkeyhash_version }}};
+    const PIECE = "{{ row.txid }}";
+    const RECEIPT = "arcade.offered." + CHAIN.network + "." + PIECE;
+
+    // Started, not waited for: a handler that awaits the key before it is
+    // wired has a second or two in which a press does nothing and says
+    // nothing at all.
+    const opening = wallet.opened(CHAIN);
+    let keys = null;
+    opening.then((found) => { keys = found; });
+    const take = async () => keys || (keys = await opening);
+
+    try {
+      const kept = JSON.parse(sessionStorage.getItem(RECEIPT) || "null");
+      if (kept && kept.says && Date.now() - Number(kept.at || 0) < 3600e3)
+        news(kept.says);
+      else if (kept) sessionStorage.removeItem(RECEIPT);
+    } catch (e) { /* a receipt this tab cannot read is no receipt */ }
+
+    $("offer-kind").onchange = (event) => {
+      const wrap = $("offer-token-wrap");
+      if (wrap) wrap.hidden = event.target.value !== "token";
+    };
+
+    $("offer-it").onclick = async () => {
+      say(""); news("");
+      $("offer-it").disabled = true;
+      try {
+        const held = await take();
+        if (!held) throw new Error("your wallet is not open in this tab");
+        const asked = await fetch("/account/offer", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            piece: PIECE, amount: $("offer-amount").value.trim(),
+            kind: $("offer-kind").value,
+            property_id: $("offer-token") ? $("offer-token").value : "",
+            chain: CHAIN.network}),
+        });
+        const offer = await asked.json();
+        if (!asked.ok) throw new Error(offer.detail || "that cannot be offered");
+        const shown = await wallet.checked(offer, held);
+        if (!confirm(`${shown.what}? It costs ${shown.coinsOf(shown.fee)} in `
+          + "fees and reserves nothing. " + shown.says)) {
+          $("offer-it").disabled = false;
+          return;
+        }
+        const out = await wallet.confirm(held, offer);
+        const says = `Offered in ${out.txid.slice(0, 16)}… It stands from the `
+          + "block it lands in, and whoever holds this piece sees it in their "
+          + "own Exchange.";
+        news(says);
+        try { sessionStorage.setItem(RECEIPT, JSON.stringify({says,
+                                                              at: Date.now()})); }
+        catch (e) { /* the sentence is in the row for this load at least */ }
+      } catch (e) {
+        say(String(e.message || e));
+      } finally {
+        $("offer-it").disabled = false;
+      }
+    };
+    </script>
   {% elif viewer == 'nobody' %}
     <p class="muted" style="margin:0">Sign in to offer for it. An offer travels
       to whoever holds the piece as a message on the chain, and it is paid for

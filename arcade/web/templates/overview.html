@@ -76,6 +76,9 @@
       <div><label for="q-list">Listings an hour</label>
         <input id="q-list" autocomplete="off" type="number" min="0" step="1"
                name="listings" value="{{ quota.hour.list }}"></div>
+      <div><label for="q-trade">Trades an hour</label>
+        <input id="q-trade" autocomplete="off" type="number" min="0" step="1"
+               name="trade" value="{{ quota.hour.trade }}"></div>
       <div><label for="q-name">Name and key claims an hour</label>
         <input id="q-name" autocomplete="off" type="number" min="0" step="1"
                name="claims" value="{{ quota.hour.name }}"></div>
@@ -100,7 +103,10 @@
       issuance is counted apart from inscriptions rather than with them,
       because a name on the chain cannot be taken back either, and a run of
       pictures should not cost somebody their go at one. The bytes are what
-      one person may make this node store and carry forever.</p>
+      one person may make this node store and carry forever. A trade &mdash;
+      an offer on somebody&rsquo;s piece, or an order on the exchange &mdash;
+      spends a fee and reserves nothing, so it is counted with the other
+      things that are answered rather than with the ones that stay.</p>
   </form>
 </div>
 

@@ -906,9 +906,9 @@ def create_app(state: AppState) -> FastAPI:
     def set_quotas(request: Request, csrf_token: str = Form(""),
                    post: str = Form(""), react: str = Form(""),
                    message: str = Form(""), send: str = Form(""),
-                   listings: str = Form(""), claims: str = Form(""),
-                   inscribe: str = Form(""), issue: str = Form(""),
-                   payload: str = Form("")):
+                   listings: str = Form(""), trade: str = Form(""),
+                   claims: str = Form(""), inscribe: str = Form(""),
+                   issue: str = Form(""), payload: str = Form("")):
         """How much of this node one account may take.
 
         The defaults (arcade/accounts.py) are sized for a node that seats
@@ -931,6 +931,7 @@ def create_app(state: AppState) -> FastAPI:
                               accountslib.CEILING),
                   "send": (send, "sends an hour", accountslib.CEILING),
                   "list": (listings, "listings an hour", accountslib.CEILING),
+                  "trade": (trade, "trades an hour", accountslib.CEILING),
                   "name": (claims, "name and key claims an hour",
                            accountslib.CEILING),
                   "inscribe": (inscribe, "inscriptions an hour",
@@ -938,9 +939,10 @@ def create_app(state: AppState) -> FastAPI:
                   "issue": (issue, "token issuances an hour",
                             accountslib.CEILING),
                   "bytes": (payload, "bytes a day", accountslib.BYTE_CEILING)}
-        # Read all nine before writing any. A form with one bad number in it
-        # saving the seven it liked would leave the operator looking at a page
-        # that claims the set they typed is in force, when it is not.
+        # Read every one of them before writing any. A form with one bad
+        # number in it saving the seven it liked would leave the operator
+        # looking at a page that claims the set they typed is in force, when
+        # it is not.
         numbers: dict[str, int] = {}
         for kind, (said, label, ceiling) in wanted.items():
             try:
@@ -5550,6 +5552,24 @@ def create_app(state: AppState) -> FastAPI:
         if public:
             viewer = "account" if signed_in(request) is not None else "nobody"
         mine, held, coins = False, [], 0.0
+        if viewer == "account":
+            # One read on the public path, and it is of the looking account's
+            # own holdings, not of this node's wallet: an offer can only be
+            # made in something the offerer holds (D-040), so a form that
+            # cannot say what those are is a form that spends somebody's fee
+            # to be refused by the other side. Both numbers come off the
+            # index -- the ledger's book for a token, this node's own watch of
+            # the address for the coins -- and nothing here asks the wallet
+            # what it holds, because on this path it holds nobody's key.
+            looking = signed_in(request)
+            try:
+                here = _account_address(looking.pubkey, chain)
+                if here:
+                    held = _purses(index.balances([here]))
+                    with contextlib.closing(index.open()) as db:
+                        coins = utxoslib.balance(db, here) / 100_000_000
+            except Exception:
+                held, coins = [], 0.0
         # Said by the wallet, around the frame, because an inscribed page
         # cannot be changed to say it (D-051).
         advice = ""
@@ -7857,6 +7877,121 @@ def create_app(state: AppState) -> FastAPI:
         except Exception as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         offer = _offers.add(account.pubkey, chain.network, unsigned, what)
+        return JSONResponse({"offer": offer.id, "what": what,
+                             "number": row["number"], "chain": chain.network,
+                             **unsigned.as_json()})
+
+    @app.post("/account/offer")
+    def account_offer(request: Request, payload: Any = Body(None)):
+        """Say on the chain what this account would pay for somebody's piece.
+
+        The same bytes the operator's `/exchange/offer` writes -- an `Offer`
+        in an `AnyData` in one OP_RETURN -- funded from the account's address
+        and signed in its own tab, so this node pays nothing and holds
+        nothing of it. An offer is a message and not an escrow: the piece
+        stays where it is, none of this account's coins are reserved, and what
+        it spends is a fee. Whoever holds it finds it from their own node, and
+        nothing here waits for them (D-038).
+
+        One thing the operator's route does that this one cannot: it puts the
+        piece out of its own wallet's reach while the offer stands, with
+        `lockunspent`. A node holding nobody's key cannot lock anything, and
+        the account's equivalent is not in this request -- it is the signed leg
+        `/account/list` files, which is the seller committing the piece and
+        belongs on the seller's own screens, not on a page somebody uses to ask.
+
+        What is refused here is what the other side would refuse later, moved
+        forward to before the fee (D-040): a price in a token this account
+        does not hold, a price in more coins than its address holds, an offer
+        on a piece that is already this account's, and -- the one that costs
+        the whole offer -- an account with no published key, which nobody can
+        answer.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        try:
+            index = state.token_index(chain)
+            row = index.inscription(contentlib._key(str(said.get("piece", ""))))
+            if row is None:
+                raise ValueError("no such inscription on this node")
+            if row["owner"] == address:
+                raise ValueError("that one is already yours")
+            take = swaplib.leg_of(
+                mintpadlib.take_of(
+                    str(said.get("kind", "coins")),
+                    str(said.get("amount", "")),
+                    int(said["property_id"]) if said.get("property_id")
+                    else None),
+                index)
+            price = swaplib.describe_leg(swaplib.leg_json(take, index))
+            with state.store() as store:
+                if store.key_for(address) is None:
+                    raise ValueError(
+                        "publish your key first, from your own page, or "
+                        "whoever holds this cannot answer you. It costs a "
+                        "small fee and is done once.")
+            if take.kind == inscriptionlib.LEG_TOKEN and \
+                    index.balance(address, take.property_id) < take.amount:
+                raise ValueError(f"this account does not hold {price}. An "
+                                 f"offer is not a promise a node can keep -- "
+                                 f"it is the terms of a trade, and offering "
+                                 f"in a token you do not have spends your fee "
+                                 f"to be told no by whoever holds the piece.")
+            with contextlib.closing(index.open()) as db:
+                if take.kind == inscriptionlib.LEG_COINS:
+                    enough = utxoslib.balance(db, address)
+                    if enough < take.amount:
+                        raise ValueError(
+                            f"this account holds {format_amount(enough, True)} "
+                            f"on {chain.label.lower()}, which is less than the "
+                            f"{price} offered. Anything on its way back to it "
+                            f"is counted once its block lands.")
+                body = inscriptionlib.Offer(txid=bytes.fromhex(row["txid"]),
+                                            take=take).encode()
+                outputs = _class_c_or_b(chain, address, body,
+                                        _coin_pubkey(account.pubkey, chain))
+                what = f"offer {price} for inscription #{row['number']}"
+                unsigned = fundinglib.build(
+                    db, chain.params, address, outputs,
+                    rate=fees.MIN_FEE_PER_KB, what=what,
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+            terms = swaplib.leg_json(take, index)
+            _quota(account, "trade")
+        except (tokenlib.TokenError, fundinglib.FundingError, AmountError,
+                swaplib.SwapError, mintpadlib.MintpadError,
+                inscriptionlib.InscriptionError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+
+        def note(txid: str) -> None:
+            """This node's own memory of what it asked for, keyed by the offer.
+
+            The chain is what an answer is checked against, and every page
+            that shows an offer reads the index (D-049). This row is only so
+            that a reply landing before its own block still finds its terms --
+            the same note the operator's route leaves, in the same book.
+            """
+            now = time.time()
+            state.offers.add_bid({
+                "id": txid, "network": chain.network, "direction": "out",
+                "inscription": row["txid"], "number": row["number"],
+                "owner": row["owner"], "buyer": address, "peer_pubkey": "",
+                "take": terms, "created": now,
+                "expires": now + swaplib.OFFER_TTL * 24})
+
+        offer = _offers.add(account.pubkey, chain.network, unsigned, what,
+                            done=note)
         return JSONResponse({"offer": offer.id, "what": what,
                              "number": row["number"], "chain": chain.network,
                              **unsigned.as_json()})
@@ -11282,13 +11417,26 @@ def create_app(state: AppState) -> FastAPI:
             data["shops"] = _shop_listings(index, chain)
         except Exception as exc:
             data["node_error"] = f"the index could not be read: {exc}"
-        try:
-            with chain.rpc() as rpc:
-                data["owned"] = set(_ledger_addresses(rpc))
-        except HTTPException:
-            raise
-        except Exception as exc:
-            data["node_error"] = data["node_error"] or str(exc)
+        # Whose pieces this page is about, which is the one question a
+        # marketplace cannot answer twice. Every table below that says "yours"
+        # is cut out of this set, so on a public copy it has to be the address
+        # of whoever is looking: the node's wallet is a stranger's wallet here,
+        # and showing an account the offers standing on it -- with a button to
+        # answer them -- is showing them another person's post (D-172).
+        data["viewer"] = "wallet"
+        if _public_request(request):
+            data["viewer"] = "account"
+            looking = signed_in(request)
+            here = _account_address(looking.pubkey, chain) if looking else ""
+            data["owned"] = {here} if here else set()
+        else:
+            try:
+                with chain.rpc() as rpc:
+                    data["owned"] = set(_ledger_addresses(rpc))
+            except HTTPException:
+                raise
+            except Exception as exc:
+                data["node_error"] = data["node_error"] or str(exc)
         for shop in data["shops"]:
             shop["mine"] = shop["seller"] in data["owned"]
         data["tags"] = _tags_for([s["seller"] for s in data["shops"]])
