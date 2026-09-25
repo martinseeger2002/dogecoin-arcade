@@ -8,7 +8,8 @@
   a name like <code>Doge Punks #12</code> and an <code>edition</code>.</p>
 
 <div class="chainbar">
-  {{ chains.card(chain, node, "Collections live here.") }}
+  {# hide_wallet for visitors and accounts: the Balance here is the NODE's wallet (2026-09-25). #}
+  {{ chains.card(chain, node, "Collections live here.", hide_wallet=public) }}
 </div>
 {% if node_error %}<div class="msg err">{{ node_error }}</div>{% endif %}
 

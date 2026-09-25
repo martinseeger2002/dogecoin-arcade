@@ -949,6 +949,9 @@ function arcadeFileCost(bytes){
     // so the reload arrives at the one moment the loop cannot survive it. On
     // the live instance that cost a split's fee and inscribed nothing.
     if (document.body.dataset.inscribing) return true;
+    // Reading further down a feed than its first page (templates/feed.html):
+    // a reload shows the first page again, and the posts being read vanish.
+    if (document.body.dataset.reading) return true;
     var active = document.activeElement;
     if (active && /^(TEXTAREA|INPUT)$/.test(active.tagName)) return true;
     var drafts = document.querySelectorAll('textarea, input[type=text]');
@@ -966,7 +969,22 @@ function arcadeFileCost(bytes){
         if (busy()) {
           // Never interrupt somebody mid-sentence: losing a draft to an
           // automatic refresh is a worse bug than the staleness it fixes.
-          if (el) el.textContent = 'something new — finish typing to see it';
+          if (document.body.dataset.reading) {
+            // The reader is far down the page, where a notice at the top is
+            // never seen: float one at the bottom. Pressing it is the reload.
+            if (!document.getElementById('newposts')) {
+              var n = document.createElement('a');
+              n.id = 'newposts'; n.href = location.pathname + location.search;
+              n.textContent = 'New posts are in \u2014 show them';
+              n.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);' +
+                'bottom:18px;z-index:5;padding:10px 18px;border-radius:999px;' +
+                'background:var(--accent);color:var(--accent-fg);font-weight:600;' +
+                'box-shadow:0 4px 16px rgba(0,0,0,.22);text-decoration:none';
+              document.body.appendChild(n);
+            }
+          } else if (el) {
+            el.textContent = 'something new — finish typing to see it';
+          }
           return;
         }
         location.reload();
