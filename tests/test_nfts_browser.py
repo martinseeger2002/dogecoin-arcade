@@ -16,6 +16,7 @@ page until the piece is spent somewhere else.
 """
 
 import base64
+import json
 import pathlib
 import socket
 import sys
@@ -29,6 +30,9 @@ pytest.importorskip("selenium",
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from selenium.common.exceptions import WebDriverException        # noqa: E402
+from selenium.webdriver.common.by import By                      # noqa: E402
+from selenium.webdriver.support import expected_conditions as ec  # noqa: E402
+from selenium.webdriver.support.ui import WebDriverWait          # noqa: E402
 import browsers                                                  # noqa: E402
 
 from arcade import funding                                       # noqa: E402
@@ -849,3 +853,110 @@ def test_a_folder_of_nothing_to_re_encode_is_offered_no_sizes(browser, seller):
     said = _show(browser, "picked-build-text")
     assert "nothing here to re-encode" in said, said
     assert _show(browser, "build-sizes", "hidden") is True, "buttons for nothing"
+
+
+MAKE_A_NOTE = """
+const input = document.getElementById('file');
+const body = new Uint8Array(200);
+for (let i = 0; i < body.length; i++) body[i] = (i * 7 + 11) % 251;
+const dt = new DataTransfer();
+dt.items.add(new File([body], 'a note.txt', {type: 'text/plain'}));
+input.files = dt.files;
+input.dispatchEvent(new Event('change'));
+return true;
+"""
+
+
+def _receipt(browser):
+    return browser.execute_script(
+        "try { return sessionStorage.getItem('arcade.inscribed.regtest');"
+        "} catch (e) { return null; }")
+
+
+def _loaded(browser):
+    _wait(browser, lambda d: d.execute_script(
+        "return document.body.dataset.inscribeReady") == "yes")
+
+
+def test_a_finished_inscribe_is_still_reported_when_the_page_comes_back(
+        browser, seller):
+    """The live failure of 2026-09-25, caught in a regtest page.
+
+    There the file went on chain complete and the tab came back silent: the
+    broadcast bumps the generation (`/account/sign`), the poller reloads the
+    page over the news row, and the row only ever held the sentence for the
+    seconds between them. What holds it now is a receipt in sessionStorage,
+    which every load prints and no load drops until `/content` answers with
+    the file's whole bytes -- which is the last piece's block seen from the
+    page, and the exact moment the sentence stops being news.
+
+    The test does not chase the poller's own reloads. Whenever the page
+    happens to come back, the sentence is either already printed or this
+    test's next refresh prints it; what is asserted is the three states,
+    each in its turn: printed and kept while unmined, printed and dropped
+    once mined, and finally quiet.
+    """
+    browser, base, state, node, made, piece = seller
+    _quiet(state)
+    browser.execute_script("const t = document.getElementById('trouble');"
+                           "t.textContent = ''; t.hidden = true;")
+    browser.execute_script(MAKE_A_NOTE)
+    browser.find_element(By.ID, "inscribe-it").click()
+    alert = WebDriverWait(browser, 60, poll_frequency=0.3).until(
+        ec.alert_is_present())
+    assert "a note.txt" in alert.text, alert.text
+    alert.accept()
+    _wait(browser, lambda d: bool(_show(d, "news").strip()))
+    said = _show(browser, "news")
+    assert said.startswith("Inscribed: a note.txt"), said
+
+    kept = json.loads(_receipt(browser))
+    assert kept["says"] == said, (kept, said)
+    assert kept["chain"] == "regtest" and kept["bytes"] == 200, kept
+    assert len(kept["root"]) == 64, kept
+
+    # Nothing has been mined, so this load prints the sentence and keeps
+    # the receipt: `/content` has no row to answer from yet.
+    browser.refresh()
+    _loaded(browser)
+    assert _show(browser, "news") == said, "the page came back and forgot"
+    assert _receipt(browser), "it is still on its way, so the receipt stays"
+
+    node.rpc.call("generate", 1)
+    _catch_up(state)
+    _quiet(state)
+    # Indexing that block bumps the generation, so the page may have
+    # reloaded on its own already -- and that load would have printed the
+    # sentence and dropped the receipt, `/content` answering whole by now.
+    # But nothing mines by itself here, so this test must not assume the
+    # poller's reload came: it waits a little for that arrival, and if the
+    # page never came back on its own, it comes back because the test says
+    # so. Either load is the one the live page gets from its watcher.
+    stop = time.time() + 20
+    landed = False
+    while time.time() < stop:
+        try:
+            if ("Inscribed" in _show(browser, "news")
+                    and _receipt(browser) is None):
+                landed = True
+                break
+        except WebDriverException:
+            pass        # reloading underneath the read
+        time.sleep(0.5)
+    if not landed:
+        browser.refresh()
+        _loaded(browser)
+        assert "Inscribed" in _show(browser, "news"), \
+            "after its block the page would not say it: " \
+            + repr(_show(browser, "news"))
+
+    # That load asked `/content` and found the file whole, so the receipt is
+    # spent -- and a page that comes back after this says nothing, because
+    # the item itself is on the page.
+    stop = time.time() + 20
+    while time.time() < stop and _receipt(browser) is not None:
+        time.sleep(0.5)
+    assert _receipt(browser) is None, "it outlived the file it was for"
+    browser.refresh()
+    _loaded(browser)
+    assert _show(browser, "news") == "", "told twice for one file"

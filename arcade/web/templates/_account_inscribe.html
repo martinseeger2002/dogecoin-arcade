@@ -74,6 +74,48 @@ const commas = (n) => Number(n || 0).toLocaleString();
 const CHAIN = {network: "{{ chain.network }}",
                version: {{ chain.params.pubkeyhash_version }}};
 
+// What this tab last sent up, kept here rather than only in the news row.
+// The row cannot hold a sentence across this job: `/account/sign` bumps the
+// generation as the last transaction is broadcast (app.py), so base.html's
+// poller reloads the page over the sentence within a poll of it finishing,
+// and the block that lands the file is a second reload on top of that. So
+// the sentence lives here, and every page that comes back prints it again
+// until the file is found to have arrived.
+const RECEIPT = "arcade.inscribed." + CHAIN.network;
+const remember = (row) => {
+  try { sessionStorage.setItem(RECEIPT, JSON.stringify(row)); } catch (e) {}
+};
+const forget = () => {
+  try { sessionStorage.removeItem(RECEIPT); } catch (e) {}
+};
+const recalled = () => {
+  try { return JSON.parse(sessionStorage.getItem(RECEIPT) || "null"); }
+  catch (e) { return null; }
+};
+
+/** Say it again, on the way back in: the sentence re-printed on every load
+ *  while the file is still on its way, and dropped on the first load that
+ *  finds it has arrived. `/content/<root>` is how a load can know that,
+ *  because it is what the file itself is read from, and it answers short of
+ *  the whole bytes until the last piece's block -- which is exactly the
+ *  difference between "on its way" and news. A job whose root this tab
+ *  never saw (a file resumed where an earlier tab stopped) cannot be asked,
+ *  and an hour outlives any block, so both are dropped by age rather than
+ *  haunting the tab for ever.
+ */
+async function tellItAgain() {
+  const row = recalled();
+  if (!row || !row.says) return;
+  news(row.says);
+  if (Date.now() - Number(row.at || 0) > 60 * 60 * 1000) { forget(); return; }
+  if (!row.root || row.chain !== CHAIN.network) return;
+  try {
+    const got = await fetch("/content/" + row.root, {cache: "no-store"});
+    if (got.ok && (await got.arrayBuffer()).byteLength === Number(row.bytes))
+      forget();
+  } catch (e) { /* the next load asks again */ }
+}
+
 // Started, not waited for. The key is what makes a press mean anything, and a
 // script that awaits it before it wires the buttons has a second or two of
 // page in which a press does nothing at all and says nothing either -- which
@@ -241,8 +283,11 @@ async function inscribeTheFile() {
                    + `${shown.coinsOf(shown.fee)} in fees. ${shown.what}?`))
         return;
       const out = await wallet.confirm(held, start);
-      news(`Inscribed: ${out.txid.slice(0, 16)}… It shows up when its block `
-           + "is mined.");
+      const says = `Inscribed: ${file.name}, ${out.txid.slice(0, 16)}… It `
+          + "shows up when its block is mined.";
+      remember({says, root: out.txid, bytes: bytes.length,
+                chain: CHAIN.network, at: Date.now()});
+      news(says);
       return;
     }
     if (!confirm(`${commas(start.bytes)} bytes, on the chain forever, as `
@@ -256,6 +301,10 @@ async function inscribeTheFile() {
                  + ` ${shown ? shown.what : start.name || ""}?`))
       return;
     let sent = already;
+    // The transaction the file is read back from: piece 0 carries the
+    // manifest, and it is the key `/content` answers on. Blank when an
+    // earlier tab sent it, which is what the age limit is for.
+    let root = "";
     // Held for the whole file rather than for one signature, and it cannot
     // borrow the wallet's own flag: that one is deleted the moment a signature
     // ends, and what has to be covered is the waiting BETWEEN them. This is
@@ -272,18 +321,24 @@ async function inscribeTheFile() {
       for (let n = Number(start.next ?? 0); n < pieces; n++) {
         news(`Piece ${commas(n + 1)} of ${commas(pieces)}…`);
         const piece = await pieceOffer(bytes, start, n, giveUp);
-        await wallet.confirm(held, piece);
+        const out = await wallet.confirm(held, piece);
+        if (n === 0) root = out.txid;
         sent = Math.max(sent + 1, Number(piece.sent || 0));
         news(`${commas(sent)} of ${commas(pieces)} on the chain.`);
       }
-      // Inside the hold, not after it: the block that takes the last piece is a
-      // generation bump, and the poller reloads the moment nothing is held -- so
-      // a sentence written after the delete lands in a page that is on its way
-      // out. Seen live on 2026-09-25: the file went on chain complete, the tab
-      // came back with an empty news row, and nobody was ever told the six
-      // transactions had finished.
-      news(`Inscribed: ${commas(pieces)} transactions, one file, on the chain `
-          + "for ever. It appears when its last block is mined.");
+      // Inside the hold, not after it: a sentence written after the delete
+      // lands in a page the generation bump is already on its way to
+      // reloading. Seen live on 2026-09-25: the file went on chain complete,
+      // the tab came back with an empty news row, and nobody was ever told
+      // the six transactions had finished. The hold only covers the job,
+      // though -- this sentence has to outlive the reloads, so it goes to the
+      // receipt too, and `tellItAgain` says it again on every page after.
+      const says = `Inscribed: ${file.name}, ${commas(pieces)} transactions, `
+          + "one file, on the chain for ever. It appears when its last block "
+          + "is mined.";
+      remember({says, root, bytes: bytes.length, chain: CHAIN.network,
+                at: Date.now()});
+      news(says);
     } finally {
       delete document.body.dataset.inscribing;
     }
@@ -539,6 +594,7 @@ $("run-stop").onclick = async () => {
   } catch (e) { say(String(e.message || e)); }
 };
 
+tellItAgain();
 runs();
 document.body.dataset.inscribeReady = "yes";
 </script>

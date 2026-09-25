@@ -122,10 +122,11 @@ def test_the_page_is_there_and_in_the_account_menu(public):
     assert 'href="/me/nfts"' in body, "and is reachable from the menu"
     assert 'href="/me/wallet"' in body and 'href="/me/wallet/tokens"' in body
     # It says what an account cannot do rather than leaving a missing
-    # button to be discovered. One piece is no longer that sentence, and
-    # neither is a whole collection -- so the page names the thing that is
-    # left, which is an item too big for one transaction.
-    assert "does not fit in one transaction" in body
+    # button to be discovered. One piece is no longer that sentence -- a
+    # split carries what does not fit -- and neither is a whole collection.
+    # What is left is a run's own rule, which the folder panel says out
+    # loud: one transaction per item, and an item cannot be a piece more.
+    assert "one transaction per item, so the node refuses" in body
     assert "Run a collection" in body
 
 
