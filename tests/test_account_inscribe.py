@@ -384,6 +384,75 @@ def test_a_hundred_signatures_are_one_inscription_not_a_hundred(seated):
     assert "in an hour" in answer.json()["detail"]
 
 
+def _spent(app, kind: str = "inscribe") -> int:
+    """What the account's own page says it has spent.
+
+    Read through the page rather than off the register, because the number the
+    person is shown and the number a refusal is counting have to be one
+    number -- which is what §6 is about.
+    """
+    return next(one for one in app.get("/account").json()["quota"]["actions"]
+                if one["kind"] == kind)["used"]
+
+
+def test_a_confirmation_that_was_never_signed_costs_the_hour_once(seated):
+    """Asking again about the same file is one gesture said twice.
+
+    The node built the offer, the page showed the fee, and the person said no
+    -- or the phone locked, or the tab was closed. Nothing went out and nobody
+    paid for anything, and the walk-through found the hour had been charged
+    anyway: ten changes of mind and an account is out of ten inscriptions with
+    an empty chain to show for it. A split already had the answer in its job
+    book -- `_inscribe_again`, "nothing is charged and nothing is inscribed
+    twice" -- and a one-piece file had nothing that remembered it had been
+    asked for, so the offer pile remembers it instead.
+
+    One gesture, one charge, so the echo is not gated on the allowance either:
+    the middle of this test has the hour full and a repeat still hands over an
+    offer, because refusing there would strand an inscription whose allowance
+    was already spent. That is not free attempts for sale -- an offer is only
+    in the pile at all because an earlier ask paid for it, and the last line is
+    still a refusal.
+    """
+    app, state, rpc, pubkey, mine = seated
+    state.set_setting("quota:inscribe", 2)
+    wavering = b"the photograph I am not sure about"
+
+    first = _ask(app, wavering, name="a")
+    assert first.status_code == 200, first.text
+    assert _spent(app) == 1
+
+    again = _ask(app, wavering, name="a")
+    assert again.status_code == 200, again.text
+    assert "offer" in again.json(), \
+        "the second ask still has to hand something over to sign"
+    assert _spent(app) == 1, "the same file asked twice is one gesture"
+    assert rpc.call("getrawmempool") == [], \
+        "and nothing went out while they were deciding"
+
+    other = _ask(app, b"a different file, a different gesture", name="b")
+    assert other.status_code == 200, other.text
+    assert _spent(app) == 2, "a different file is a different gesture"
+
+    # The hour is full, and the echo of a file already in the pile still comes
+    # back with an offer.
+    echo = _ask(app, b"a different file, a different gesture", name="b")
+    assert echo.status_code == 200, echo.text
+    assert "offer" in echo.json(), echo.json()
+    assert _spent(app) == 2, "an echo counts nothing, cap or no cap"
+
+    # Empty the pile the honest way rather than waiting five minutes for the
+    # offers to go stale: sign one, which is the gesture those asks were about.
+    assert _sign_and_send(app, pubkey, again.json()).status_code == 200
+    assert _spent(app) == 2, "signing is not a second charge for one gesture"
+
+    refused = _ask(app, b"the next file, three minutes from now", name="c")
+    assert refused.status_code == 400, \
+        "the hour is spent, and a new file cannot ride in on an old offer"
+    assert "in an hour" in refused.json()["detail"], refused.json()
+    assert _spent(app) == 2, "a refusal counts nothing"
+
+
 def test_an_operator_who_closed_inscriptions_says_which_it_is(seated):
     """The dial on the Overview is the one an operator most wants: an
     inscription is the one thing here that cannot be taken back."""

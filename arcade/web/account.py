@@ -52,6 +52,11 @@ class Offer:
     #: that. A route with somewhere to record passes a closure over its own
     #: book; a route with nowhere to record leaves it None.
     done: Any = None
+    #: sha256 of the file this offer would put on the chain, for the one
+    #: builder that can be asked twice for the same file. Empty anywhere else.
+    #: In memory with the rest of it -- a fact about WHICH file, kept no
+    #: longer than the offer that is about it.
+    digest: str = ""
 
     @property
     def stale(self) -> bool:
@@ -70,10 +75,11 @@ class Offers:
         self._by_id: dict[str, Offer] = {}
 
     def add(self, pubkey: str, network: str, unsigned, what: str,
-            done: Any = None) -> Offer:
+            done: Any = None, digest: str = "") -> Offer:
         self.sweep()
         offer = Offer(id=secrets.token_urlsafe(18), pubkey=pubkey.lower(),
-                      network=network, unsigned=unsigned, what=what, done=done)
+                      network=network, unsigned=unsigned, what=what, done=done,
+                      digest=digest)
         self._by_id[offer.id] = offer
         return offer
 

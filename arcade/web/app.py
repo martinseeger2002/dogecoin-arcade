@@ -6582,6 +6582,14 @@ def create_app(state: AppState) -> FastAPI:
         same photograph twenty-seven times. The pile is still checked, because
         twenty-seven outstanding offers is still twenty-seven transactions
         naming coins.
+
+        The same word covers the echo of a gesture: a file this node has an
+        unsigned offer out for, asked again because the confirmation was
+        dismissed, was charged when that offer was built and is not a second
+        gesture either. Gating it again would be worse than the thing it fixes
+        -- it would strand an inscription whose allowance has already been
+        spent -- and it buys no protection, because an offer only exists in the
+        pile at all if some earlier ask paid for it.
         """
         if len(_offers.waiting(account.pubkey)) >= accountslib.OFFERS_WAITING:
             raise ValueError(
@@ -7146,9 +7154,18 @@ def create_app(state: AppState) -> FastAPI:
                 _class_c_or_b(chain, address, plan.payloads[0],
                               _coin_pubkey(account.pubkey, chain)),
                 f"inscribe {label}")
-            _quota(account, "inscribe", len(content))
+            # A file this node already has an unsigned offer for is one
+            # gesture asked twice -- the confirmation dismissed, the tab
+            # reloaded -- and it would cost an allowance the chain never heard
+            # about. `_inscribe_again` has said so of a split since splits were
+            # built; this is that rule where there is no job book to remember
+            # it in, so the offer pile remembers it.
+            again = any(o.digest == digest
+                        for o in _offers.waiting(account.pubkey)
+                        if o.network == chain.network)
+            _quota(account, "inscribe", len(content), count=not again)
             offer = _offers.add(account.pubkey, chain.network, unsigned,
-                                unsigned.what)
+                                unsigned.what, digest=digest)
             return JSONResponse({"offer": offer.id, "bytes": plan.content_len,
                                  "chunks": 1, "chain": chain.network,
                                  **unsigned.as_json()})
