@@ -507,6 +507,7 @@ export async function collect(me, {onProgress} = {}) {
 
   const highest = after;
   after = await rewindTo(after);
+  let held = await groups();
   let opened = 0, looked = 0;
   for (;;) {
     const answer = await fetch(`/account/messages?after=${after}&limit=200`);
@@ -538,7 +539,7 @@ export async function collect(me, {onProgress} = {}) {
       }
       const out = openMessage(bytes, me);
       if (out !== null) {
-        await keep({
+        const letter = {
           txid: candidate.txid,
           cursor: candidate.cursor,
           when: candidate.when,
@@ -548,8 +549,30 @@ export async function collect(me, {onProgress} = {}) {
           peer: hex(out.sender),
           mine: false,
           body: hex(out.plain),
+        };
+        await keep(letter);
+        const group = inviteIn(letter);
+        if (group) {
+          if (letter.sender === hex(me.publicKey)) { letter.hidden = true; letter.mine = true; await keep(letter); }
+          await takeInvite(group, letter); held = await groups();
+        }
+        opened += 1;
+        continue;
+      }
+      // Not sealed to us: perhaps to a group we are in. Credited to the address
+      // that paid for it (see "group chats" above), never to the inner box.
+      for (const group of held) {
+        const said = openMessage(bytes, groupIdentity(group));
+        if (said === null) continue;
+        await keep({
+          txid: candidate.txid, cursor: candidate.cursor, when: candidate.when,
+          height: candidate.height, from_address: candidate.from_address,
+          sender: hex(said.sender), peer: `group:${rootOf(group)}`, group: group.id,
+          // Our own line read back on another device: ours, not a stranger's.
+          mine: hex(said.sender) === hex(me.publicKey), body: hex(said.plain),
         });
         opened += 1;
+        break;
       }
     }
     // The pieces of this page join the pieces kept from every earlier one,
@@ -672,7 +695,7 @@ function boundHeader() {
   return new Uint8Array([0x61, 0x72, 0x63, 0x6d, 0x01, 0x01]);
 }
 
-export async function write(wallet, me, to, text) {
+export async function write(wallet, me, to, text, {hidden = false} = {}) {
   return workingOn(async () => {
     const them = await lookUp(to);
     if (!them.key) throw new Error(them.detail || "they have no key published");
@@ -681,28 +704,7 @@ export async function write(wallet, me, to, text) {
     const plain = new Uint8Array([...boundHeader(),
                                   ...new TextEncoder().encode(text)]);
     const sealed = sealEnvelope(plain, me, theirKey);
-
-    const coins = await import("/coins.js");
-    const asked = await fetch("/account/write", {
-      method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({to: them.address, sealed: hex(sealed)}),
-    });
-    const offer = await asked.json();
-    if (!asked.ok) throw new Error(offer.detail || "that cannot be sent");
-
-    const keys = keysFor(offer, wallet);
-    const shown = await coins.verifyOffer(offer, keys);
-    const signatures = [];
-    for (const sighash of shown.hashes) {
-      signatures.push(hex(await coins.signInput(keys.key, unhex(sighash))));
-    }
-    const done = await fetch("/account/sign", {
-      method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({offer: offer.offer, signatures,
-                            pubkey: hex(keys.pubkey)}),
-    });
-    const said = await done.json();
-    if (!done.ok) throw new Error(said.detail || "the node would not take it");
+    const {said, shown} = await sendSealed(wallet, them.address, sealed);
 
     // Our own copy, kept here and nowhere else. What went on the chain is
     // sealed to THEM: it cannot be read back, not by this browser either,
@@ -718,10 +720,221 @@ export async function write(wallet, me, to, text) {
       peer: them.key,
       tag: them.tag || String(to).replace(/^@/, ""),
       mine: true,
+      hidden,
       body: hex(new TextEncoder().encode(text)),
     });
     return {...said, to: them.address, tag: them.tag, fee: shown.fee};
   });
+}
+
+/** Hand the node sealed bytes and an address to pay, check the offer here,
+ *  sign it here. Shared by a message to one person and a message to a group. */
+async function sendSealed(wallet, toAddress, sealed) {
+  const coins = await import("/coins.js");
+  const asked = await fetch("/account/write", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({to: toAddress, sealed: hex(sealed)}),
+  });
+  const offer = await asked.json();
+  if (!asked.ok) throw new Error(offer.detail || "that cannot be sent");
+  const keys = keysFor(offer, wallet);
+  const shown = await coins.verifyOffer(offer, keys);
+  const signatures = [];
+  for (const sighash of shown.hashes) {
+    signatures.push(hex(await coins.signInput(keys.key, unhex(sighash))));
+  }
+  const done = await fetch("/account/sign", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({offer: offer.offer, signatures,
+                          pubkey: hex(keys.pubkey)}),
+  });
+  const said = await done.json();
+  if (!done.ok) throw new Error(said.detail || "the node would not take it");
+  return {said, shown};
+}
+
+/* --- group chats (2026-09-25) --------------------------------------
+ *
+ * "Encrypted group messaging where only the people in the group can see the
+ * messages, with one shared key pair, in Messages like any other conversation."
+ *
+ * Nothing new goes on the chain and nothing new is asked of the node:
+ *
+ *  * A group is a NaCl box key pair made HERE. Its secret reaches each member
+ *    inside an ordinary one-to-one message sealed to that member (an INVITE:
+ *    a body that begins with GROUP_MARK and carries the group as JSON), so it
+ *    is never in the clear outside a member's browser.
+ *  * A group message is sealed to the GROUP's public key with the same
+ *    envelope as every other message. The node already hands every browser
+ *    every candidate (/account/messages); a member's browser simply tries its
+ *    group keys on what its own key could not open. To everybody else it is
+ *    noise, like all messages are.
+ *  * Who said it: with a shared key, the inner box's sender could be forged by
+ *    any member (X25519 is symmetric). So a line is credited to the address
+ *    that FUNDED its transaction -- `from_address`, signed by that person's
+ *    own coin key, which no member can forge -- and shown under that name.
+ *  * Its dust goes back to the sender's own address: a group has no one
+ *    address to pay, and nobody needs paying to be told (see above).
+ *  * Removing somebody cannot take back a key they hold, so it is a NEW key
+ *    pair, sent to everybody who stays; the old one keeps what was said
+ *    before (`rotated_from`), and nothing new is sealed to it.
+ */
+export const GROUP_MARK = "\u0000arcade-group/1\n";
+
+async function groupShelf(mode) {
+  const tx = await shelf(mode);
+  return tx.objectStore("marks");
+}
+
+/** Every group this browser holds a key for, current and retired. */
+export async function groups() {
+  const store = await groupShelf("readonly");
+  const keys = await awaited(store.getAllKeys());
+  const out = [];
+  for (const key of keys) {
+    if (typeof key === "string" && key.startsWith("group:")) {
+      out.push(await awaited(store.get(key)));
+    }
+  }
+  return out.filter(Boolean);
+}
+
+async function saveGroup(group) {
+  const store = await groupShelf("readwrite");
+  await awaited(store.put(group, `group:${group.id}`));
+}
+
+export async function groupById(id) {
+  const store = await groupShelf("readonly");
+  return (await awaited(store.get(`group:${id}`))) || null;
+}
+
+function groupIdentity(group) {
+  return {secret: unhex(group.secret), publicKey: unhex(group.public)};
+}
+
+async function groupId(publicKey) {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", publicKey));
+  return hex(digest.slice(0, 8));
+}
+
+/** A group's lasting identity: the id of the FIRST key it had. Removing somebody
+ *  gives the group a new key (and a new id); the conversation stays one
+ *  conversation, filed under the root. */
+export const rootOf = (group) => group.root || group.id;
+
+/** The key a group is written to now: the current one of that lineage. */
+export async function currentGroup(root) {
+  const line = (await groups()).filter((g) => rootOf(g) === root);
+  return line.find((g) => g.current) ||
+         line.sort((a, b) => (b.created || 0) - (a.created || 0))[0] || null;
+}
+
+/** The group a conversation is, when it is one. */
+export const groupOfPeer = (peer) =>
+  (typeof peer === "string" && peer.startsWith("group:")) ? peer.slice(6) : null;
+
+/** What an invite letter carries, or null when the letter is not one. */
+export function inviteIn(letter) {
+  // The RAW words, not text(): text() describes an invite instead of showing it
+  // (it carries a secret key), so it never starts with the mark.
+  const said = bodyOf(letter).text || "";
+  if (!said.startsWith(GROUP_MARK)) return null;
+  try {
+    const group = JSON.parse(said.slice(GROUP_MARK.length));
+    if (!group || !group.id || !group.secret || !group.public) return null;
+    return group;
+  } catch (e) { return null; }
+}
+
+async function invite(wallet, me, group, members) {
+  const body = GROUP_MARK + JSON.stringify({
+    id: group.id, root: rootOf(group), name: group.name, secret: group.secret,
+    public: group.public, members: group.members, creator: group.creator,
+    rotated_from: group.rotated_from || null, created: group.created,
+  });
+  const sent = [];
+  for (const m of members) {
+    if (m.key === hex(me.publicKey)) continue;
+    sent.push(await write(wallet, me, m.tag ? "@" + m.tag : m.address, body));
+  }
+  // And one to ourselves, sealed to our own key: without it the group lived only
+  // in the browser that made it, and the creator lost it on any other device
+  // (found in the live test, 2026-09-25). Kept hidden: it is not a conversation.
+  sent.push(await write(wallet, me, wallet.address, body, {hidden: true}));
+  return sent;
+}
+
+/** Make a group and send its key to everybody named. */
+export async function createGroup(wallet, me, name, names, myTag = "") {
+  const title = String(name || "").trim().slice(0, 60);
+  if (!title) throw new Error("a group needs a name");
+  const members = [{tag: myTag, key: hex(me.publicKey), address: wallet.address}];
+  for (const who of names) {
+    const them = await lookUp(who);
+    if (!them.key) throw new Error(`${who} has no messaging key published yet`);
+    if (!members.some((m) => m.key === them.key)) {
+      members.push({tag: them.tag || "", key: them.key, address: them.address});
+    }
+  }
+  if (members.length < 2) throw new Error("name at least one other person");
+  const pair = nacl.box.keyPair();
+  const newId = await groupId(pair.publicKey);
+  const group = {id: newId, root: newId, name: title,
+                 secret: hex(pair.secretKey), public: hex(pair.publicKey),
+                 members, creator: hex(me.publicKey), current: true,
+                 created: Math.floor(Date.now() / 1000), rotated_from: null};
+  await saveGroup(group);
+  await invite(wallet, me, group, members);
+  return group;
+}
+
+/** Say something to a group. One transaction, whatever the group's size. */
+export async function writeGroup(wallet, me, group, words) {
+  return workingOn(async () => {
+    if (!group.current) throw new Error("this group moved to a new key; write in that one");
+    const plain = new Uint8Array([...boundHeader(),
+                                  ...new TextEncoder().encode(words)]);
+    const sealed = sealEnvelope(plain, me, unhex(group.public));
+    const {said, shown} = await sendSealed(wallet, wallet.address, sealed);
+    await keep({
+      txid: said.txid,
+      from_cursor: await cursorFor(hex(me.publicKey)),
+      when: Math.floor(Date.now() / 1000),
+      height: 0, to_address: wallet.address, from_address: wallet.address,
+      sender: hex(me.publicKey), peer: `group:${rootOf(group)}`, group: group.id,
+      mine: true, body: hex(new TextEncoder().encode(words)),
+    });
+    return {...said, fee: shown.fee};
+  });
+}
+
+/** Take somebody out: a new key for everybody who stays. */
+export async function removeFromGroup(wallet, me, group, key) {
+  const staying = group.members.filter((m) => m.key !== key);
+  if (staying.length === group.members.length) throw new Error("they are not in this group");
+  const pair = nacl.box.keyPair();
+  const next = {id: await groupId(pair.publicKey), root: rootOf(group), name: group.name,
+                secret: hex(pair.secretKey), public: hex(pair.publicKey),
+                members: staying, creator: hex(me.publicKey), current: true,
+                created: Math.floor(Date.now() / 1000), rotated_from: group.id};
+  await saveGroup(next);
+  await saveGroup({...group, current: false, moved_to: next.id});
+  await invite(wallet, me, next, staying);
+  return next;
+}
+
+/** An invite that arrived: keep the group, and retire the one it replaces. */
+async function takeInvite(group, letter) {
+  const had = await groupById(group.id);
+  if (!had) {
+    await saveGroup({...group, current: true, via: letter.txid,
+                     invited_by: letter.from_address || ""});
+  }
+  if (group.rotated_from) {
+    const old = await groupById(group.rotated_from);
+    if (old && old.current) await saveGroup({...old, current: false, moved_to: group.id});
+  }
 }
 
 /* The page must not reload under a send, for the same reason it must not
@@ -953,6 +1166,7 @@ export async function threads() {
                         .map((e) => [e.key, e]));
   const conversations = new Map();
   for (const letter of letters) {
+    if (letter.hidden) continue;           // a group key sent to ourselves
     const peer = peerOf(letter);
     if (!peer) continue;
     let thread = conversations.get(peer);
@@ -974,10 +1188,33 @@ export async function threads() {
     }
   }
   const out = [...conversations.values()];
+  // A group conversation is named by its group, not by whoever spoke last.
+  const known_groups = new Map();
+  for (const g of await groups()) {
+    const r = rootOf(g), had = known_groups.get(r);
+    if (!had || (g.current && !had.current) || (g.created || 0) > (had.created || 0) && !had.current) {
+      known_groups.set(r, g);
+    }
+  }
+  for (const thread of out) {
+    const gid = groupOfPeer(thread.peer);
+    if (gid) {
+      const g = known_groups.get(gid);
+      thread.group = g || {id: gid, name: "A group", members: []};
+      thread.tag = ""; thread.address = ""; thread.inBook = false;
+    }
+  }
+  // A group you were added to shows up even before anybody has said anything.
+  for (const [root, g] of known_groups) {
+    if (!g.current || out.some((t) => t.peer === `group:${root}`)) continue;
+    out.push({peer: `group:${root}`, group: g, tag: "", address: "", inBook: false,
+              last: g.created || 0, unread: 0, count: 0,
+              preview: "No messages yet", outgoing: false});
+  }
   for (const thread of out) {
     const seen = await readMark(thread.peer);
     thread.unread = letters.filter(
-      (l) => peerOf(l) === thread.peer && !l.mine && (l.when || 0) > seen).length;
+      (l) => !l.hidden && peerOf(l) === thread.peer && !l.mine && (l.when || 0) > seen).length;
   }
   return out.sort((a, b) => b.last - a.last);
 }
@@ -985,7 +1222,7 @@ export async function threads() {
 /** One conversation, oldest first, which is the order it was said in. */
 export async function conversation(peer) {
   const letters = await inbox();
-  return letters.filter((l) => peerOf(l) === peer)
+  return letters.filter((l) => !l.hidden && peerOf(l) === peer)
                 .sort((a, b) => (a.when || 0) - (b.when || 0));
 }
 
@@ -1156,6 +1393,13 @@ function bodyOf(letter) {
  *  handed round as markup. */
 export function text(letter) {
   const body = bodyOf(letter);
+  // An invite carries a group's secret key: never shown, only described.
+  if (body.text && body.text.startsWith(GROUP_MARK)) {
+    let name = "a group";
+    try { name = JSON.parse(body.text.slice(GROUP_MARK.length)).name || name; } catch (e) {}
+    return letter.mine ? `\u{1F465} You added them to \u201c${name}\u201d`
+                       : `\u{1F465} Added you to the group \u201c${name}\u201d`;
+  }
   if (body.file === null) return body.text;
   return body.text || `[sent ${body.file.name}]`;
 }
