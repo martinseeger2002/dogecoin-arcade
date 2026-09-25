@@ -48,6 +48,7 @@ PUBLIC_PAGES = frozenset({
     "/join",
     "/join/keys",
     "/clone",
+    "/moderation/verdicts",   # what this arcade covers, so a page can label it
     "/source.tar.gz",
     "/source.tar.gz.sha256",
     "/source.rev",

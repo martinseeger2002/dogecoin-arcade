@@ -216,6 +216,16 @@ def _next_cursor(rows: list[Any], sort: str) -> Any:
 
 # A global rather than a filter: it takes what the page already looked up,
 # and a filter taking a second argument reads worse in the template.
+def _screen_text(text: str):
+    """A post's verdict for the feed card, from whichever state serves the page."""
+    screen = getattr(TEMPLATES, "_screen_of", None)
+    if screen is None:
+        return "ok"
+    s = screen()
+    return s.check_text(text) if s.enabled else "ok"
+
+
+TEMPLATES.env.globals["screen_text"] = _screen_text
 TEMPLATES.env.globals["render_post"] = lambda text, drawable=None: Markup(
     post_html(text, drawable))
 
@@ -503,6 +513,7 @@ def the_door(state: AppState):
 
 
 def create_app(state: AppState) -> FastAPI:
+    TEMPLATES._screen_of = state.screen          # the feed card's screen_text()
     @contextlib.asynccontextmanager
     async def _lifespan(_app: FastAPI):
         """Hold the shutdown while a send is in flight.
@@ -4495,8 +4506,65 @@ def create_app(state: AppState) -> FastAPI:
         return index
 
     @app.get("/content/{key}")
-    def inscription_content(key: str, download: int = 0):
+    def inscription_content(key: str, download: int = 0, reveal: int = 0):
+        """An inscription's bytes -- screened first when this arcade screens
+        (arcade/moderation.py): a sensitive picture comes back blurred unless the
+        viewer asked to see it (`reveal=1`), an illegal one as a notice, and one not
+        yet judged is judged now (about a second) or, if the model is away, shown
+        as "checking". Everything else about the response is unchanged."""
+        screen = state.screen()
+        if screen.enabled:
+            index = _content_index()
+            found = index.inscription_content(contentlib._key(key))
+            if found is not None:
+                answer = _screened(screen, *found, reveal=bool(reveal))
+                if answer is not None:
+                    return answer
         return contentlib.content(_content_index(), key, download=bool(download))
+
+    def _screened(screen, content_type: str, body: bytes, reveal: bool):
+        """The response a screened piece gets instead of its bytes, or None to serve
+        them as usual."""
+        from .. import moderation as mod
+        if content_type.startswith("image/"):
+            verdict = screen.check_image(content_type, body)
+        elif content_type.startswith("text/"):
+            verdict = screen.check_text(body.decode("utf-8", "replace")[:20000], now=True)
+        else:
+            return None                                # sound, video: not screened yet
+        fresh = {**contentlib.CONTENT_HEADERS, "Cache-Control": "no-store"}
+        if verdict == mod.OK:
+            return None
+        if verdict == mod.ILLEGAL:
+            return Response(mod.notice_image("Removed by this arcade"), status_code=451,
+                            media_type="image/png", headers=fresh)
+        if verdict is None:
+            return Response(mod.notice_image("Checking this picture\u2026"), status_code=503,
+                            media_type="image/png", headers={**fresh, "Retry-After": "5"})
+        if reveal:                                     # sensitive, and asked for
+            return Response(body, media_type=content_type, headers=fresh)
+        if content_type.startswith("image/"):
+            cover = mod.blurred(body) or mod.notice_image("Sensitive picture")
+            return Response(cover, media_type="image/png", headers=fresh)
+        return Response("Sensitive content. Open it with ?reveal=1 if you want to see it.",
+                        media_type="text/plain", headers=fresh)
+
+    @app.get("/moderation/verdicts")
+    def moderation_verdicts(ids: str = ""):
+        """What this arcade decided about some pieces, for the page to label its
+        covers: ok, sensitive, illegal, or null while checking. Known verdicts only:
+        asking is the /content route's job."""
+        screen = state.screen()
+        if not screen.enabled:
+            return JSONResponse({"enabled": False, "verdicts": {}})
+        from .. import moderation as mod
+        index = _content_index()
+        out: dict[str, Any] = {}
+        for key in [k for k in ids.split(",") if k][:200]:
+            found = index.inscription_content(contentlib._key(key))
+            out[key] = screen.known(mod.digest_of(found[1])) if found else None
+        return JSONResponse({"enabled": True, "verdicts": out},
+                            headers={"Cache-Control": "no-store"})
 
     @app.get("/r/inscription/{key}")
     def r_inscription(key: str):

@@ -532,6 +532,18 @@ class AppState:
         from ..accounts import Vault
         return Vault(self.accounts())
 
+    def screen(self):
+        """Content screening (arcade/moderation.py): the `moderation` setting names a
+        model to ask. Off when unset. Rebuilt only when the setting changes."""
+        from ..moderation import Screen
+        import json as _json
+        config = self.setting("moderation")
+        said = _json.dumps(config, sort_keys=True)
+        held = getattr(self, "_screen", None)
+        if held is None or held[0] != said:
+            self._screen = (said, Screen(self.home, config))
+        return self._screen[1]
+
     def faucet(self):
         """The record of what the faucet has given, and its limits.
 
