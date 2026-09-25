@@ -8,8 +8,8 @@ was measured rather than estimated.
 
 ## The shape of it
 
-DogecoinArcade is a **sidecar**: it runs beside Pepecoin Core (or Dogecoin
-Core) on your own machine and reads the chain the node already has. It never
+DogecoinArcade is a **sidecar**: it runs beside Pepecoin Core on your own
+machine and reads the chain the node already has. It never
 holds your keys — the node's wallet does — and it never asks for a passphrase.
 Everything it knows, it learned by replaying blocks, which means two
 installations reading the same chain agree without talking to each other.
@@ -17,7 +17,7 @@ installations reading the same chain agree without talking to each other.
 | | |
 |---|---|
 | Interface | `http://127.0.0.1:8420`, bound to loopback because it can spend |
-| Chains | Pepecoin and Dogecoin, mainnet and testnet |
+| Chains | Pepecoin, mainnet and testnet — the two this arcade moves coins on, and the only two |
 | Messaging | **testnet only**, by design (D-010) |
 | Tokens, inscriptions, @tags | mainnet and testnet |
 | Storage | your node's datadir for the chain; `~/.dogecoinarcade` for what the app remembers |

@@ -725,7 +725,8 @@ def create_app(state: AppState) -> FastAPI:
             # the failure otherwise lands on the other person.
             if state.store_path.exists() and state.derived_address:
                 with state.store() as store:
-                    announced = store.key_for(state.derived_address) is not None
+                    announced = (store.confirmed_key_for(state.derived_address)
+                                 is not None)
         # A wallet with no name yet is a wallet somebody has just installed.
         # Asked here, once, at the top of the first page they see: a @tag is
         # how anybody addresses them -- in the address book, on a shop, on
@@ -1622,7 +1623,11 @@ def create_app(state: AppState) -> FastAPI:
         announced = False
         if state.unlocked and state.store_path.exists() and state.derived_address:
             with state.store() as store:
-                announced = store.key_for(state.derived_address) is not None
+                # On the chain, not merely seen here: the card says whoever has
+                # your tag can write to you, and that is true only once other
+                # people's nodes can read the key off a block.
+                announced = (store.confirmed_key_for(state.derived_address)
+                             is not None)
         return render(request, "contacts.html", people=people, editing=editing,
                       published=published, when=_when, mine=_my_tag(), tags=found,
                       known_tags=known_tags, announced=announced,
@@ -6714,7 +6719,7 @@ def create_app(state: AppState) -> FastAPI:
             "pubkey": account.pubkey, "network": chain.network,
             "version": chain.params.pubkeyhash_version,
             "address": "", "balance": 0, "watching": None, "tag": "",
-            "announced": False,
+            "announced": False, "announcing": False,
             # What is already published, so the page can show a person their
             # own words rather than an empty box they have to retype. An
             # announcement replaces every field, so a form that starts blank
@@ -6745,7 +6750,20 @@ def create_app(state: AppState) -> FastAPI:
                     _flights.change_for(account.pubkey, chain.network))
                 said["tag"] = index.tag_of(address) or ""
                 with state.store() as store:
-                    said["announced"] = store.key_for(address) is not None
+                    # Two questions, and the page has to be able to answer them
+                    # differently. A key that is out in the pool is not a key a
+                    # stranger's node can read yet, and a signup page that says
+                    # "confirmed" a minute early has taught a person that this
+                    # site's word about the chain is worth nothing -- which is
+                    # exactly what the row for a new account did on 2026-09-25,
+                    # at height 0.
+                    said["announced"] = (
+                        store.confirmed_key_for(address) is not None)
+                    # Not the same question and not the same answer: the key is
+                    # out, the block has not come. Nothing spends on it and no
+                    # page calls it published; it is here so a page that wants
+                    # to say "on its way" can say that instead of "not yet".
+                    said["announcing"] = store.key_for(address) is not None
                 profile = _profile_of(address)
                 said["profile"] = {field: profile[field]
                                    for field in ("pfp", "bio", "url")}
@@ -11372,8 +11390,7 @@ def _is_arcade_account(name: str | None) -> bool:
 #: for, so the rule below needs no extra call and no caller has to remember
 #: to pass a flag -- which is the kind of thing that gets forgotten exactly
 #: once, on mainnet.
-_MAINNET_VERSIONS = frozenset(
-    p.pubkeyhash_version for p in NETWORKS.values() if p.name in ("main", "doge-main"))
+_MAINNET_VERSIONS = frozenset({NETWORKS["main"].pubkeyhash_version})
 
 
 def _on_a_real_chain(address: str) -> bool:
@@ -11485,8 +11502,18 @@ def _check_address(address: str, *, mainnet: bool) -> str | None:
     An address carries its chain in the version byte, so a mainnet address pasted
     into the testnet field is detectable -- and worth detecting, because the two
     look similar enough to confuse and the consequences differ enormously.
+
+    What counts as detectable moved on 2026-09-25, and the direction matters.
+    The question used to be "is this a mainnet-shaped address", answered from
+    every params object in the file -- which on the day it was written meant a
+    Dogecoin `D…` address passed the check on a Pepecoin mainnet send, and the
+    coins would have gone somewhere this chain cannot even see. A version byte
+    identifies a *family*, not a chain: Dogecoin testnet and Pepecoin testnet
+    share 113, and this regtest shares 111 with Litecoin testnet. So the check is
+    now "is this an address on one of the two chains this arcade moves coins
+    on", which is the only question a send can act on.
     """
-    wanted = [p for p in NETWORKS.values() if p.name.endswith("main") == mainnet]
+    wanted = (NETWORKS["main"],) if mainnet else (NETWORKS["test"], NETWORKS["regtest"])
     try:
         version, payload = b58check_decode(address)
     except HTTPException:
@@ -11502,7 +11529,9 @@ def _check_address(address: str, *, mainnet: bool) -> str | None:
     if other:
         return (f"that is a {other[0]} address, not a "
                 f"{'mainnet' if mainnet else 'testnet'} one.")
-    return f"unrecognised address version {version}."
+    return ("that address is not one this arcade can pay -- it belongs to a "
+            "chain this node does not run, and coins sent there cannot come "
+            "back.")
 
 
 #: Deliberately self-contained rather than a template: it has to render when

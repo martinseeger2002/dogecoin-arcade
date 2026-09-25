@@ -32,6 +32,7 @@ from selenium.webdriver.common.keys import Keys                  # noqa: E402
 
 from arcade import seed                                          # noqa: E402
 from arcade.messaging.keys import Identity                        # noqa: E402
+from arcade.script import b58check_encode                         # noqa: E402
 
 
 def _free_port() -> int:
@@ -584,3 +585,78 @@ def test_starting_one_from_the_address_book(browser, served, signed_in):
         time.sleep(0.25)
     assert browser.find_element(By.ID, "convo-name").text == "@robin"
     assert "No messages yet" in browser.find_element(By.ID, "bubbles").text
+
+
+DEAD_END = "no name or address for this conversation"
+
+
+def _press_send_and_wait(browser, words):
+    """Write the first message and wait for the page to answer.
+
+    There is no chain behind this node, so the answer is an error. What the
+    test is about is WHICH error: a page that cannot work out who it is
+    talking to stops at its own dead end, and a page that can gets all the
+    way to the chain and reports what the chain said.
+    """
+    box = browser.find_element(By.ID, "body")
+    box.send_keys(words)
+    box.send_keys(Keys.ENTER)
+    for _ in range(40):
+        if browser.find_element(By.ID, "trouble").is_displayed():
+            break
+        time.sleep(0.25)
+    else:
+        raise AssertionError("the page never answered the first message")
+    return browser.find_element(By.ID, "trouble").text
+
+
+def test_the_first_message_to_somebody_in_the_book_reaches_the_chain(
+        browser, served, signed_in):
+    """A conversation that has never said anything has no messages to read
+    the peer out of -- and the send used to look only at the messages, so the
+    first message to anybody new was refused before it was tried. That is the
+    exact thing a signup does: find somebody and write."""
+    base, _ = served
+    _page(browser, base)
+    _wipe(browser)
+    assert _seed_store(browser, [], [
+        {"tag": "newcomer", "address": "nTheirAddress", "key": THEM,
+         "added": int(time.time())}]) == "ok"
+    _page(browser, base)
+    browser.find_element(By.ID, "new").click()
+    browser.find_element(By.ID, "who-new").send_keys("@newcomer")
+    browser.find_element(By.ID, "start").click()
+    for _ in range(40):
+        if browser.find_element(By.ID, "talking").is_displayed():
+            break
+        time.sleep(0.25)
+    said = _press_send_and_wait(browser, "the first message")
+    assert DEAD_END not in said, said
+
+
+def test_the_first_message_to_a_stranger_reaches_the_chain(browser, served,
+                                                          signed_in):
+    """The same, with nobody in the address book: the page looked the address
+    up on the way in and then threw the answer away, so the conversation
+    opened as "Unknown sender" and the first message died at the page."""
+    base, state = served
+    _page(browser, base)
+    _wipe(browser)
+    address = b58check_encode(111, bytes.fromhex("ab" * 20))
+    with state.store() as store:
+        store.add_key_announcement("f" * 64, address, bytes.fromhex(THEM),
+                                   "ffff", 7, int(time.time()), stated=True)
+    _page(browser, base)
+    browser.find_element(By.ID, "new").click()
+    browser.find_element(By.ID, "who-new").send_keys(address)
+    browser.find_element(By.ID, "start").click()
+    for _ in range(40):
+        if browser.find_element(By.ID, "talking").is_displayed():
+            break
+        time.sleep(0.25)
+    else:
+        raise AssertionError("nobody new could be opened: "
+                             + browser.find_element(By.ID, "new-trouble").text)
+    assert browser.find_element(By.ID, "convo-name").text == address
+    said = _press_send_and_wait(browser, "first contact")
+    assert DEAD_END not in said, said

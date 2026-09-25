@@ -47,7 +47,8 @@ from typing import Any
 
 from .. import release as releaselib
 from .. import update
-from ..messaging.scanner import Scanner, repair_announcement_names
+from ..messaging.scanner import (Scanner, repair_announcement_heights,
+                                 repair_announcement_names)
 
 log = logging.getLogger(__name__)
 
@@ -509,7 +510,7 @@ class BlockWatcher:
     _repaired = False
 
     def _repair_once(self) -> None:
-        """Correct stored names an older parser cut, once, on the first tick.
+        """Correct what an older reader stored, once, on the first tick.
 
         Here rather than at startup because it needs the node, and a node that
         is not up yet must not delay the interface -- the next tick tries again.
@@ -520,11 +521,13 @@ class BlockWatcher:
             with self.state.messaging.rpc() as rpc, self.state.store() as store:
                 fixed = repair_announcement_names(
                     rpc, self.state.messaging.params, store)
+                fixed += repair_announcement_heights(
+                    rpc, self.state.messaging.params, store)
         except Exception:
             return                      # node not ready; try on the next tick
         self._repaired = True
         if fixed:
-            log.info("repaired %d stored announcement name(s)", fixed)
+            log.info("repaired %d stored announcement row(s)", fixed)
             self.state.bump_generation()
 
     def _confirm_sent(self) -> None:

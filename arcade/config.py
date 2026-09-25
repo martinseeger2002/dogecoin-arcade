@@ -254,78 +254,31 @@ REGTEST = Params(
     scripthash_version=196,
 )
 
-# --- Dogecoin -----------------------------------------------------------------
+# --- Pepecoin only ------------------------------------------------------------
 #
-# Pepecoin is a Dogecoin fork, and every constant that matters to this protocol
-# is IDENTICAL between them -- same values, same source line numbers:
+# Dogecoin used to be in here as three more Params objects and no code changes,
+# because Pepecoin is a Dogecoin fork and every constant this protocol leans on
+# is identical between them (MAX_OP_RETURN_RELAY 83, x-of-3 bare multisig, the
+# DUST/10 floor, the 1650-byte scriptSig limit, 60-second blocks -- the table in
+# docs/DECISIONS.md that compares the two trees). The operator's call of 2026-09-24:
+# what this arcade runs against is Pepecoin testnet and Pepecoin mainnet, and a
+# chain with no node behind it is not a feature but an option that breaks
+# whoever picks it. So the objects are gone rather than hidden: a page cannot
+# offer what the program cannot resolve, and `network_from_env` below answers
+# whoever names a chain that is no longer in here.
 #
-#   MAX_OP_RETURN_RELAY = 83            script/standard.h:30   (both)
-#   DEFAULT_PERMIT_BAREMULTISIG = true  validation.h:143       (both)
-#   x-of-3 bare multisig standard       policy/policy.cpp:41   (both)
-#   RECOMMENDED_MIN_TX_FEE = COIN/100   policy/policy.h:23     (both)
-#   hard dust limit = DUST/10           policy/policy.h:81     (both)
-#   scriptSig limit 1650                policy/policy.cpp:86   (both)
-#   block spacing 60s                   chainparams.cpp        (both)
-#
-# So supporting Dogecoin costs exactly these three objects and no code changes.
-# Verified in source at /home/you/reference/dogecoin (1.14.99).
+# What is worth keeping is the reason removal is not a licence to get careless
+# about a strange address. Dogecoin's testnet shares Pepecoin testnet's
+# PUBKEY_ADDRESS version 113 and SCRIPT_ADDRESS 196, and Litecoin's testnet uses
+# 111 like this regtest. So a string of base58 never says which chain it belongs
+# to: the chain is recorded beside an address, and an address that is merely
+# VALID SOMEWHERE ELSE has to be refused rather than accepted as close enough.
 
-DOGE_MAINNET = Params(
-    name="doge-main",
-    rpc_port=22555,          # chainparamsbase.cpp:35
-    p2p_port=22556,          # chainparams.cpp
-    activation_height=None,  # chosen at launch, as with Pepecoin
-    datadir_subdir="",
-    pubkeyhash_version=30,   # addresses start with "D"
-    scripthash_version=22,
-    other_pubkeyhash_version=113,   # its own testnet
-    marker_address=None,
-)
-
-DOGE_TESTNET = Params(
-    name="doge-test",
-    rpc_port=44555,          # chainparamsbase.cpp:48
-    p2p_port=44556,
-    activation_height=0,
-    swaps_from=0,
-    asks_from=0,
-    bid_fills_from=0,
-    fills_from=0,
-    named_fills_from=0,
-    datadir_subdir="testnet3",
-    pubkeyhash_version=113,
-    scripthash_version=196,
-    other_pubkeyhash_version=30,    # Dogecoin mainnet
-)
-
-DOGE_REGTEST = Params(
-    name="doge-regtest",
-    rpc_port=18332,
-    p2p_port=18444,
-    activation_height=0,
-    swaps_from=0,
-    asks_from=0,
-    bid_fills_from=0,
-    fills_from=0,
-    named_fills_from=0,
-    datadir_subdir="regtest",
-    pubkeyhash_version=111,
-    scripthash_version=196,
-)
-
-# WARNING: Dogecoin testnet and Pepecoin testnet share PUBKEY_ADDRESS version
-# 113 and SCRIPT_ADDRESS version 196, so a testnet address is indistinguishable
-# between the two chains. Never infer the chain from an address -- record it
-# explicitly alongside any key announcement or message.
-
-NETWORKS = {
-    p.name: p
-    for p in (MAINNET, TESTNET, REGTEST, DOGE_MAINNET, DOGE_TESTNET, DOGE_REGTEST)
-}
+NETWORKS = {p.name: p for p in (MAINNET, TESTNET, REGTEST)}
 
 #: Networks on which the Messenger may operate. Testnet only, permanently
 #: (docs/DECISIONS.md D-010). Enforced in code, not configuration.
-MESSAGING_NETWORKS = frozenset({TESTNET.name, REGTEST.name, DOGE_TESTNET.name, DOGE_REGTEST.name})
+MESSAGING_NETWORKS = frozenset({TESTNET.name, REGTEST.name})
 
 
 class MainnetRefused(Exception):
@@ -449,9 +402,10 @@ def load_rpc_credentials(
 
 
 #: What each network calls itself in getblockchaininfo's "chain" field.
+#: A Dogecoin node answers with these same three words, which is one more
+#: reason this arcade names its chain rather than trusting what it connects to.
 CHAIN_NAMES = {
     "main": "main", "test": "test", "regtest": "regtest",
-    "doge-main": "main", "doge-test": "test", "doge-regtest": "regtest",
 }
 
 

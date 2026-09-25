@@ -38,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     # Tokens are also indexed on the messaging chain, and the Tokens page can
     # switch to it (D-016); the ledger itself is mainnet, always.
     parser.add_argument("--ledger-network", default="main",
-                        choices=["main", "doge-main"],
+                        choices=["main"],
                         help="chain for tokens, NFTs and PEP")
     parser.add_argument("--ledger-datadir", help="mainnet datadir, to read its .cookie")
     parser.add_argument("--ledger-conf", help="mainnet config with rpcuser/rpcpassword")

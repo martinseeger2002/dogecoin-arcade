@@ -614,6 +614,21 @@ class MessageStore:
             "  name=CASE WHEN LENGTH(excluded.name) > LENGTH(key_announcement.name) "
             "            THEN excluded.name ELSE key_announcement.name END, "
             "  stated=MAX(key_announcement.stated, excluded.stated), "
+            # Height 0 means "seen in the mempool" (D-050), and the block is
+            # supposed to promote the row in place -- which `add_candidate`
+            # does and this statement did not. Nothing here looked at the
+            # height, so an announcement read out of the pool and mined a
+            # minute later went on reading as unmined for ever, and every page
+            # that asks the difference between those two states inherited it.
+            # The other fields are filled in by a newer reader whatever the
+            # height, so this is a CASE rather than the WHERE guard the
+            # candidate table gets away with.
+            "  height=CASE WHEN key_announcement.height = 0 "
+            "                THEN excluded.height "
+            "                ELSE key_announcement.height END, "
+            "  block_time=CASE WHEN key_announcement.height = 0 "
+            "                   THEN excluded.block_time "
+            "                   ELSE key_announcement.block_time END, "
             # A tag and the other chain's address are read by a parser that
             # understands them or not at all, so a rescan by a newer reader
             # fills them in where an older one saw nothing.
@@ -681,6 +696,22 @@ class MessageStore:
         """
         return self.conn.execute(
             "SELECT * FROM key_announcement WHERE address=? "
+            "ORDER BY stated DESC, height DESC LIMIT 1", (address,),
+        ).fetchone()
+
+    def confirmed_key_for(self, address: str) -> sqlite3.Row | None:
+        """The key for an address, but only once a block carries the announcement.
+
+        `key_for` answers for anything this node has seen, an announcement in
+        the mempool included. That is the right answer to "where do I seal this
+        message" -- the transaction will land, and the key is already known --
+        and the wrong answer to "is this key on the chain", which is a sentence
+        said to a person about somebody else's ability to write to them. A
+        stranger's node cannot read a transaction this node's pool has seen, so
+        until the block arrives the honest answer is no.
+        """
+        return self.conn.execute(
+            "SELECT * FROM key_announcement WHERE address=? AND height > 0 "
             "ORDER BY stated DESC, height DESC LIMIT 1", (address,),
         ).fetchone()
 

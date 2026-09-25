@@ -1188,7 +1188,11 @@ export async function reach(name) {
   const them = await lookUp(wanted);
   if (!them.key) throw new Error(
     "they have not published a key, so there is nowhere to send it");
-  return {tag: them.tag || wanted, address: them.address, key: them.key,
+  // The tag is the chain's answer, never what was typed: an address typed
+  // here is not a name, and the page prints this field with an @ in front
+  // of it. `lookUp` echoes the name it resolved, and nothing when the
+  // question was an address nobody holds a name for.
+  return {tag: them.tag || "", address: them.address || wanted, key: them.key,
           fingerprint: them.fingerprint || ""};
 }
 

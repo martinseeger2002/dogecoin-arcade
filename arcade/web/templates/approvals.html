@@ -23,13 +23,13 @@
 {% else %}
   <div class="cards">
   {% for r in pending %}
-    <div class="card" {% if r.network in ('main', 'doge-main') %}style="border-color:var(--bad)"{% endif %}>
+    <div class="card" {% if r.network == 'main' %}style="border-color:var(--bad)"{% endif %}>
       <div class="row" style="align-items:baseline">
         <strong>{{ r.summary }}</strong>
         <span class="muted" style="margin-left:auto">{{ age(now - r.created) }}</span>
       </div>
       <p class="muted" style="margin:6px 0">Asked by {{ who(r) }}
-        on {{ 'mainnet' if r.network in ('main', 'doge-main') else 'testnet' }}.</p>
+        on {{ 'mainnet' if r.network == 'main' else 'testnet' }}.</p>
       {% if r.note %}<p style="margin:6px 0"><q>{{ r.note }}</q></p>{% endif %}
       <div class="row" style="margin-top:8px">
         <a class="btn small" href="/approvals/{{ r.id }}">Look at it</a>

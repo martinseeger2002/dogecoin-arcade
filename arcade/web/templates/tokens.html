@@ -8,7 +8,7 @@
 <p class="sub">Every fungible token on {{ chain.label|lower }}: what exists, and how to make one.
   What <em>you</em> hold, and the form that sends it, is on the
   <a href="{{ '/me/wallet/tokens' if public else '/wallet/tokens' }}">wallet's Tokens tab</a>.
-  {% if other_chains %}<span class="muted">Click the {{ 'main' if chain.is_mainnet else 'test' }} tag to switch
+  {% if other_chains and not public %}<span class="muted">Click the {{ 'main' if chain.is_mainnet else 'test' }} tag to switch
   to {{ other_chains[0].label|lower }}.</span>{% endif %}
   <span id="live" data-generation="{{ state.generation }}"></span></p>
 

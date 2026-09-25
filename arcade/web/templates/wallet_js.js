@@ -724,14 +724,19 @@ export async function signAndSend(wallet, where, body) {
  * again".
  */
 
-export async function setUp(wallet, identity, tag, {onStep} = {}) {
+export async function setUp(wallet, identity, tag, {onStep, faucetRefusal} = {}) {
   const step = (what, how) => { if (onStep) onStep({what, how}); };
   const out = {claimed: "", announced: "", trouble: []};
 
   step("coins", "waiting");
   const said = await waitForCoins(180);
   if (!((said.balance || 0) + (said.incoming || 0))) {
-    out.trouble.push("no coins arrived, so your name is not claimed yet");
+    // Said plainly, in the faucet's own words if it gave any. The alternative
+    // is a page that waits three minutes on coins that were never going to
+    // come and then says nothing about why -- which is how a dry faucet gets
+    // read as a broken signup, by the one person it was honest with.
+    out.trouble.push(faucetRefusal
+      || "no coins arrived, so your name is not claimed yet");
     step("coins", "none");
     return out;
   }
@@ -757,7 +762,53 @@ export async function setUp(wallet, identity, tag, {onStep} = {}) {
     out.trouble.push(`your key was not published: ${e.message || e}`);
     step("key", "failed");
   }
+
+  // "On its way" is where this stopped for a year, and it is not what the
+  // person wants to know. A broadcast a node relayed is not a name other
+  // people can find: the claim has to be in a block and read by the index,
+  // and the same for the key. So wait for the node to say it has seen them,
+  // which is the only answer that means "confirmed" anywhere on this site --
+  // `state()` answers from the same index every other page is drawn from,
+  // not from a memory of relaying something. Quietly: nothing here is
+  // blocked on it, and a tab that is closed early costs nothing, because
+  // both transactions are already out.
+  if (out.claimed || out.announced) {
+    const seen = await settle(!!out.claimed, !!out.announced, tag, step);
+    if (out.claimed && !seen.name) {
+      out.trouble.push("your name is broadcast but this node has not indexed "
+        + "it yet, so people cannot find you by it this minute");
+    }
+    if (out.announced && !seen.key) {
+      out.trouble.push("your key is broadcast but this node has not indexed "
+        + "it yet, so nobody can write to you this minute");
+    }
+  }
   return out;
+}
+
+/** Until the node's own index reports the claim and the key.
+ *
+ * Five minutes of asking every few seconds, because a block on this chain
+ * takes about a minute and the index reads one behind. Coming back to the
+ * page later shows the truth either way -- this only decides what the
+ * signup page is allowed to say before it is looked at again.
+ */
+async function settle(wantName, wantKey, tag, step, seconds = 300) {
+  const until = Date.now() + seconds * 1000;
+  let name = false, key = false;
+  for (;;) {
+    let said = null;
+    try { said = await state(); } catch (e) { said = null; }
+    if (said) {
+      name = String(said.tag || "").toLowerCase() === String(tag).toLowerCase();
+      key = !!said.announced;
+    }
+    if (wantName) step("name", name ? "confirmed" : "confirming");
+    if (wantKey) step("key", key ? "confirmed" : "confirming");
+    if ((!wantName || name) && (!wantKey || key)) return {name, key};
+    if (Date.now() > until) return {name, key};
+    await new Promise((r) => setTimeout(r, 7000));
+  }
 }
 
 /* --- keeping a wallet open while somebody moves around ------------------

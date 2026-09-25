@@ -125,42 +125,56 @@ def test_signing_up_claims_the_name_and_publishes_the_key(browser, served):
         time.sleep(0.25)
     assert len(browser.find_elements(By.CSS_SELECTOR, "#words li")) == 12
 
-    # The faucet's coins need a block before anything can be spent.
+    # The faucet's coins need a block before anything can be spent, and the
+    # two that follow need one each before the page is entitled to say they
+    # are confirmed. On regtest nothing happens by itself at all: this file
+    # is the block generator, the indexer and the scanner, and the page is
+    # allowed to say what those three have actually seen.
     for _ in range(40):
         if node.rpc.call("getrawmempool"):
             break
         time.sleep(0.5)
-    node.rpc.call("generate", 1)
-    _catch_up(state)
 
     note = browser.find_element(By.ID, "setup-note")
-    for _ in range(160):
-        if "on their way" in note.text or "could not" in note.text \
-                or "not published" in note.text or "no coins" in note.text:
+    for _ in range(60):
+        node.rpc.call("generate", 1)
+        index = _catch_up(state)
+        _scan(state, node)
+        if "on the chain" in note.text or "could not" in note.text \
+                or "not published" in note.text or "no coins" in note.text \
+                or "has not indexed" in note.text:
             break
-        time.sleep(0.5)
-    assert "on their way" in note.text, note.text
+        time.sleep(1.0)
+    assert "on the chain" in note.text, note.text
 
-    # Both transactions are real, and the chain agrees a block later.
-    node.rpc.call("generate", 1)
-    index = _catch_up(state)
+    # And the two rows the person reads, not just the sentence under them:
+    # "on its way" is what a node says about something it merely relayed, and
+    # a name other people can search for is a claim the INDEX has read.
+    for row in ("step-name", "step-key"):
+        said = browser.find_element(By.ID, row).find_element(By.TAG_NAME, "span")
+        assert said.text == "confirmed", f"{row}: {said.text}"
+
     assert index.address_of("byitself"), "the name is on the chain"
+    from arcade.messaging.scanner import Scanner
+    with state.store() as store:
+        said = store.key_for(index.address_of("byitself"))
+    assert said is not None, "and the key is published where people look"
 
+
+def _scan(state, node):
+    """Read the messaging scan as far as it goes, however many passes that is.
+
+    One `scan()` walks 2000 blocks, and the block carrying an announcement sits
+    at the end of a walk a full run's shared node leaves several passes long.
+    """
     from arcade.messaging.scanner import Scanner
     with state.messaging.rpc() as rpc:
-        with state.store() as store:
-            # Until a pass reads nothing: one scan() is 2000 blocks, and the
-            # block with the announcement in it is at the end of a walk that a
-            # full run's shared node leaves several passes long.
-            for _ in range(50):
+        for _ in range(60):
+            with state.store() as store:
                 if Scanner(rpc, state.messaging.params, store,
                            identity=None).scan().blocks == 0:
-                    break
-            else:
-                raise AssertionError("the scanner never reached the tip")
-        with state.store() as store:
-            said = store.key_for(index.address_of("byitself"))
-    assert said is not None, "and the key is published where people look"
+                    return
+    raise AssertionError("the scanner never reached the tip")
 
 
 def test_the_steps_are_shown_rather_than_hidden(browser, served):

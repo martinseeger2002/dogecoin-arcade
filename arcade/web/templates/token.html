@@ -4,7 +4,7 @@
 {% block body %}
 {% set tag = 'mainnet' if chain.is_mainnet else 'testnet' %}
 <p class="muted" style="margin:0 0 6px;font-size:.86rem"><a href="/tokens">&larr; Tokens</a></p>
-<h1>{{ prop.name }} {{ tk.chain_switch(chain, [], csrf) }}
+<h1>{{ prop.name }} {{ tk.chain_switch(chain, [], csrf, public=public) }}
   {% if prop.test_ecosystem %}<span class="tag testnet">test ecosystem</span>{% endif %}</h1>
 <p class="sub">Token #{{ prop.property_id }} &middot;
   {{ 'managed supply' if prop.managed else 'fixed supply' }} &middot;

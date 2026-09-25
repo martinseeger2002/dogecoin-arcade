@@ -24,14 +24,20 @@ class FakeRpc:
 
 
 def test_encrypted_messaging_is_still_refused_on_mainnet():
-    """D-010 is unchanged. This is the test that says so."""
-    for network in ("main", "doge-main"):
+    """D-010 is unchanged. This is the test that says so.
+
+    It used to loop over `("main", "doge-main")`, which was really a check that
+    the rule did not depend on which of two look-alike chains it was pointed at.
+    There is one mainnet now -- Dogecoin left with the params objects on
+    2026-09-25 -- so what is left to pin is the rule itself.
+    """
+    for network in ("main",):
         with pytest.raises(MainnetRefused):
             MessageSender(FakeRpc(), NETWORKS[network])
 
 
 def test_a_public_sender_is_allowed_on_mainnet():
-    for network in ("main", "doge-main"):
+    for network in ("main",):
         sender = MessageSender(FakeRpc(), NETWORKS[network], public_only=True)
         assert sender.public_only
 

@@ -272,3 +272,37 @@ def test_an_address_for_the_wrong_chain_is_refused(arcade):
     mainnet = b58check_encode(NETWORKS["main"].pubkeyhash_version, b"\x11" * 20)
     refused = app.post("/account/address", json={"address": mainnet})
     assert refused.status_code == 400
+
+
+def test_a_key_in_the_mempool_is_not_yet_a_key_on_the_chain(arcade):
+    """What `announced` reports is the chain, not this node's mempool.
+
+    A stranger's node cannot read a transaction this node's pool has seen, so
+    telling a person their key is confirmed while it sits there is a promise
+    about somebody else's ability to write to them that nothing has agreed to.
+    On 2026-09-25 the row for a brand-new account said height 0 with the page
+    saying confirmed, because one question -- where do I seal this -- had been
+    answering the other -- is this published.
+    """
+    app, state, rpc = arcade
+    login = _sign_in(app)
+    mine = b58check_encode(state.messaging.params.pubkeyhash_version,
+                           hash160(_pubkey(SECRET + 6)))
+    rpc.call("generate", 101)
+    _catch_up(state, rpc)
+    app.post("/account/address", json={"address": mine})
+    assert app.get("/account").json()["address"] == mine
+
+    key = bytes.fromhex(login)          # shape only; nothing is encrypted here
+    with state.store() as store:
+        store.add_key_announcement("pooltx", mine, key, "ff", 0, 0, stated=True)
+
+    said = app.get("/account").json()
+    assert said["announcing"] is True, "it went out; the block has not come"
+    assert said["announced"] is False, "and no block carries it yet"
+
+    with state.store() as store:
+        store.add_key_announcement("pooltx", mine, key, "ff", 4321, 43,
+                                   stated=True)
+
+    assert app.get("/account").json()["announced"] is True

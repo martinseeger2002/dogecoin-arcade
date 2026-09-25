@@ -704,6 +704,58 @@ def repair_announcement_names(rpc, params, store) -> int:
     return repaired
 
 
+#: Separate from the name repair: this one is about a row's height, not about
+#: how its payload was parsed, and it must run on a store whose names are
+#: already right.
+HEIGHT_REPAIR_GENERATION = "1"
+
+
+def repair_announcement_heights(rpc, params, store) -> int:
+    """Move stored mempool announcements into the block that mined them.
+
+    The same failure as the truncated names, one field over. The promotion into
+    a block went into the insert statement, so it reaches announcements read
+    after that fix and not the ones read before it: a row written from the
+    mempool keeps its height 0 for ever, because the scan cursor is long past
+    its block and nothing else takes it back. Every page that asks "is this key
+    on the chain" then answers no about a key the chain has carried for months
+    -- which is what a reader ends up being told about somebody they can in
+    fact write to.
+
+    The txid is stored, `getrawtransaction` serves any transaction with txindex,
+    and a transaction that is in a block says which one. A row still genuinely
+    sitting in the pool has no blockhash and is left at 0, which is the honest
+    answer for it.
+
+    Runs once per repair generation and reports how many rows it corrected.
+    """
+    if store.get_meta("announcement_height_repair") == HEIGHT_REPAIR_GENERATION:
+        return 0
+
+    rows = list(store.conn.execute(
+        "SELECT txid FROM key_announcement WHERE height = 0"))
+    repaired = 0
+    for row in rows:
+        try:
+            raw = rpc.call("getrawtransaction", row["txid"], True)
+            if not raw.get("blockhash"):
+                continue                    # genuinely still in the pool
+            block = rpc.call("getblock", raw["blockhash"])
+            height = int(block["height"])
+        except Exception:
+            continue                        # no txindex, or a dead transaction
+        if height <= 0:
+            continue
+        store.conn.execute(
+            "UPDATE key_announcement SET height=?, block_time=? WHERE txid=?",
+            (height, int(block.get("time") or 0), row["txid"]))
+        repaired += 1
+        log.info("found announcement %s in block %d", row["txid"][:12], height)
+
+    store.set_meta("announcement_height_repair", HEIGHT_REPAIR_GENERATION)
+    return repaired
+
+
 def find_own_announcements(rpc, params, pubkey: bytes, limit: int = 400):
     """Look on the CHAIN for an announcement of `pubkey` we already published.
 

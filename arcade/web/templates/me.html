@@ -333,7 +333,12 @@ async function draw() {
   $("announce-panel").hidden = !keys;
   drawProfile(said);
   $("myaddr").textContent = said.address || "—";
-  $("not-announced").hidden = !said.address || !!said.announced;
+  // "Not published" and "broadcast, waiting on a block" are different
+  // sentences. The box below is advice to hand out a contact code instead,
+  // which is wrong for a key that went out a minute ago and needs only the
+  // block it is sitting in.
+  $("not-announced").hidden = !said.address
+    || !!said.announced || !!said.announcing;
   if (keys && said.address) {
     const code = await mail.contactCode(CHAIN.network, me.publicKey);
     $("contact").textContent = code;

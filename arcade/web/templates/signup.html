@@ -230,6 +230,11 @@ function wire() {
         const row = shown[what];
         if (row) row.querySelector("span").textContent = how;
       },
+      // The faucet's own reason, if it refused. Repeating it here is the
+      // difference between "nothing arrived" and a sentence a person can
+      // act on, and the wait below would otherwise spend three minutes
+      // looking for coins that were declined on purpose.
+      faucetRefusal: made.no_coins,
     });
     if (out.trouble.length) {
       $("setup-note").textContent = out.trouble.join("; ")
@@ -237,7 +242,8 @@ function wire() {
       $("setup-note").style.color = "var(--warn)";
     } else {
       $("setup-note").textContent =
-        "Done. Your name and your key are on their way to the chain.";
+        "Done. Your name and your key are on the chain: people can find you "
+        + `by @${made.tag} and write to you.`;
       $("setup-note").style.color = "var(--ok)";
     }
   }

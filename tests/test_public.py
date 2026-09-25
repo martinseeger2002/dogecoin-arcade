@@ -359,24 +359,31 @@ def test_an_inscription_page_asks_nothing_the_door_shuts(public):
     assert 'id="ask"' in mine, "and still carries the dialog it polls for"
 
 
-def test_the_chain_tag_switches_only_where_switching_works(public):
+def test_no_public_page_offers_a_chain(public):
     """Found by walking every public page rather than one of them.
 
-    The chain tag posts to `/tokens/chain`, and that route moves the NODE's
-    view of which chain it is on: `state.switch_token_chain` writes the choice
-    into a file and every page on the machine follows it. So it is the
-    operator's, the door shuts it, and four pages -- Tokens, NFTs, Collections,
-    Exchange -- were handing a stranger a button that answered "Not here".
+    The chain tag used to sit in these headings. On a public instance it could
+    not be pressed -- `/tokens/chain` moves the NODE's view of which chain it is
+    on (`state.switch_token_chain` writes the choice into a file and every page
+    on the machine follows it), so the door shuts it -- and an inert button was
+    then replaced by an inert tag whose tooltip said this node shows one chain
+    at a time. That is still a choice being pointed at, which is what the operator's
+    call of 2026-09-24 rules out: a visitor and an account have one chain, the
+    one their name and posts live on, and a page says the chain in a sentence
+    when the sentence needs it rather than in a chip that hints at another.
 
-    What a public page shows now is the tag and what it means. The honest
-    version of the button needs a chain choice that belongs to one visitor
-    rather than to everybody on this node, which is not built.
+    The operator's own pages keep the switch, because on those it is not a
+    choice being dangled but the setting of a machine somebody runs.
     """
     app, state = public
     for page in ("/tokens", "/nfts", "/collections", "/exchange"):
         body = app.get(page, headers=LOCAL).text
         assert 'action="/tokens/chain"' not in body, page
-        assert "one chain at a time" in body, page
+        assert "to switch" not in body, page
+        assert "one chain at a time" not in body, page
+        assert "<h1" in body, page
+        heading = body.split("<h1", 2)[1].split("</h1>", 1)[0]
+        assert 'class="tag ' not in heading, f"{page}: {heading}"
     state.public = False
     assert 'action="/tokens/chain"' in app.get("/nfts").text, \
         "the operator's own pages still switch"

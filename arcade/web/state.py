@@ -147,7 +147,7 @@ class ChainContext:
 
     @property
     def is_mainnet(self) -> bool:
-        return self.network in ("main", "doge-main")
+        return self.network == "main"
 
     def credentials(self):
         """Explicit configuration if given, otherwise go and find the node.

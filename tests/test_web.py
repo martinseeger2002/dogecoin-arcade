@@ -258,6 +258,40 @@ def test_a_testnet_address_is_refused_in_the_mainnet_field(client):
     assert "not a mainnet one" in (state.notice or "")
 
 
+def test_an_address_from_a_chain_this_arcade_does_not_run_is_refused(client):
+    """A version byte says which FAMILY an address is shaped for, no more.
+
+    The check used to ask "is this mainnet-shaped", answered by walking every
+    params object in `config.py`. Dogecoin's params were in that walk, and a
+    Dogecoin mainnet address -- version 30, the `D...` strings -- therefore
+    answered the question to a Pepecoin mainnet send. Nothing would have
+    complained: the transaction would have gone, carried to a chain this node
+    cannot see, and the coins with it.
+
+    So the question is now the one a send can act on: is this an address on a
+    chain this arcade moves coins on. It is answered from the two chains this
+    program can even build a transaction for, so a chain cannot be added to the
+    answering list without also existing.
+
+    What this CANNOT do, and the reason the address book stores the network
+    beside every address: a Dogecoin TESTNET address and a Pepecoin testnet one
+    are the same version byte (113), so no string of base58 can tell them
+    apart. Nothing here claims otherwise.
+    """
+    from arcade.script import b58check_encode
+    app, state = client
+    doge_main = b58check_encode(30, bytes([7]) * 20)      # "D...", Dogecoin mainnet
+    assert doge_main.startswith("D")
+
+    _save(app, state, name="Off this chain", mainnet_address=doge_main)
+    assert "chain this node does not run" in (state.notice or "")
+    with state.store() as store:
+        assert store.contacts() == []
+
+    _save(app, state, name="Off this chain", testnet_address=doge_main)
+    assert "chain this node does not run" in (state.notice or "")
+
+
 def test_a_mistyped_address_is_refused(client):
     app, state = client
     _save(app, state, name="Typo", mainnet_address="PoNOTAREALADDRESS")

@@ -118,15 +118,24 @@
 {% endif %}
 {% endmacro %}
 
-{# The chain tag. With another chain to go to it is a button that switches;
-   without one (a token's own page belongs to its chain) it is just the tag.
+{# The chain, said or not said.
 
-   On a public instance it is only ever the tag, because switching is a thing
-   the node does for everybody -- `state.switch_token_chain` remembers the choice
-   in a file and every page on this node follows it. A stranger must not move
-   that, and a button that answers "Not here" is worse than no button. What is
-   missing is a choice that belongs to one visitor rather than to the whole
-   node; until that exists there is one chain to look at here.
+   On the operator's own pages this is a button that switches chains, because
+   switching is a thing the node does for everybody: `state.switch_token_chain`
+   remembers the choice in a file and every page on this machine follows it.
+
+   On a public instance there is nothing to render, and that is the whole point.
+   A stranger must not move a setting that belongs to the whole node, and a
+   button that answers "Not here" is worse than no button -- so what these pages
+   carried for a while was an inert tag, and what it still carried with it was
+   the invitation: a chip that says "test", and a tooltip saying this node shows
+   one chain at a time, tells a person there is another one to be had. The operator's
+   call of 2026-09-24 is that there isn't, for anybody who is not running the
+   machine. Pepecoin testnet is where an account lives, so it is where everything
+   an account looks at is, and a page does not announce a chain it has never
+   asked about. Where the chain genuinely belongs in the sentence -- a token's
+   own page, a pair, a confirmation that spends real coins -- the page says it in
+   words rather than in a chip.
 
    `public` is an argument, not a name read from the page: an imported
    template's macros do not see the importing page's context, so a bare
@@ -136,7 +145,8 @@
 {% macro chain_switch(chain, others, csrf, back='', public=False) %}
 {% set tag = 'mainnet' if chain.is_mainnet else 'testnet' %}
 {% set word = 'main' if chain.is_mainnet else 'test' %}
-{% if others and not public %}
+{% if public %}
+{% elif others %}
 <form method="post" action="/tokens/chain" style="display:inline">
   <input type="hidden" name="csrf_token" value="{{ csrf }}">
   {# Back to the page it was pressed on. Every chain-specific page carries
@@ -147,6 +157,6 @@
           title="Switch to {{ others[0].label|lower }}">{{ word }}</button>
 </form>
 {% else %}
-<span class="tag {{ tag }}"{% if others %} title="{{ chain.label }}. This node shows one chain at a time."{% endif %}>{{ word }}</span>
+<span class="tag {{ tag }}">{{ word }}</span>
 {% endif %}
 {% endmacro %}

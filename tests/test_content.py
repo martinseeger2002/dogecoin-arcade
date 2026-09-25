@@ -435,6 +435,34 @@ def test_a_rescan_does_not_replace_a_name_with_a_shorter_one(tmp_path):
     assert row["name"] == "Big Chief Energy"
 
 
+def test_the_block_that_mines_an_announcement_confirms_it(tmp_path):
+    """Height 0 means "read out of the mempool" (D-050); it is not a verdict.
+
+    `add_candidate` promoted a mined transaction out of its pool row and
+    `add_key_announcement` did not, so a key seen in the pool went on reading
+    as unmined after its own block. On 2026-09-25 a new account's row sat at
+    height 0 with ten confirmations while the signup page called the key
+    confirmed: the page's word about the chain was worth nothing, and the row
+    was the thing that knew better.
+    """
+    store = _legacy_store(tmp_path)
+    key = b"\x01\x02"
+    store.add_key_announcement("tx", "nA", key, "ff", 0, 0, stated=True)
+
+    assert store.key_for("nA") is not None, "the key is known; seal to it"
+    assert store.confirmed_key_for("nA") is None, "no block carries it yet"
+
+    store.add_key_announcement("tx", "nA", key, "ff", 1234, 99, stated=True)
+    row = store.confirmed_key_for("nA")
+    assert row is not None and (row["height"], row["block_time"]) == (1234, 99)
+
+    # A later pass over the pool must not talk a mined key back out of its
+    # block, which is what an unconditional assignment would do.
+    store.add_key_announcement("tx", "nA", key, "ff", 0, 0, stated=True)
+    (row,) = store.conn.execute("SELECT height FROM key_announcement").fetchall()
+    assert row["height"] == 1234
+
+
 def test_the_same_source_may_correct_itself(tmp_path):
     """An announcement re-read with a fixed parser says more than it did.
 
@@ -527,3 +555,46 @@ def test_the_repair_corrects_only_what_the_chain_supports(tmp_path):
     assert names["tx-short"] == "Big Chief En", (
         "a genuinely short announcement must not be invented into a longer one"
     )
+
+
+def test_a_row_left_in_the_mempool_is_found_in_the_block_that_mined_it(tmp_path):
+    """The insert got the promotion; the rows written before it did not.
+
+    A reader whose cursor is past an announcement's block never goes back to it,
+    so a height-0 row read out of the pool sits there for ever and every page
+    that asks "is this key on the chain" answers no about a key the chain has
+    carried for months. The txid is stored, and a transaction in a block says
+    which block -- the same read `find_own_announcements` already does.
+    """
+    from arcade.config import NETWORKS
+    from arcade.messaging.scanner import repair_announcement_heights
+
+    store = _legacy_store(tmp_path)
+    key = bytes(range(32))
+    store.add_key_announcement("mined", "nA", key, "ff", 0, 0, stated=True)
+    store.add_key_announcement("pool", "nB", key, "ff", 0, 0, stated=True)
+
+    asked = []
+
+    class Chain:
+        def call(self, method, arg, *rest):
+            asked.append(method)
+            if method == "getrawtransaction":
+                return {"txid": arg, "blockhash": "b" * 64 if arg == "mined" else None}
+            assert method == "getblock", method
+            return {"height": 1508329, "time": 1770000000}
+
+    assert repair_announcement_heights(Chain(), NETWORKS["regtest"], store) == 1
+
+    row = store.confirmed_key_for("nA")
+    assert row is not None
+    assert (row["height"], row["block_time"]) == (1508329, 1770000000)
+    assert store.confirmed_key_for("nB") is None, "still in the pool, still 0"
+    assert "getblock" in asked, "the height comes off the block, not a guess"
+
+    class Forbidden:
+        def call(self, *args, **kwargs):
+            raise AssertionError("must not touch the node when already repaired")
+
+    assert repair_announcement_heights(
+        Forbidden(), NETWORKS["regtest"], store) == 0
