@@ -268,7 +268,8 @@ class Listings:
 
     def register(self, rpc: Any, *, raw: str, signatures: list[str],
                  pubkey: bytes, network: str, owner: str, price: int,
-                 seconds: float = LISTED_FOR, what: str = "") -> dict:
+                 seconds: float = LISTED_FOR, what: str = "",
+                 record: bool = True) -> dict:
         """File a leg a browser signed, with nothing remembered from before.
 
         A listing is two requests: this node builds a leg and shows it, the tab
@@ -285,6 +286,15 @@ class Listings:
         a listing row states for itself -- it is not in the signature and cannot
         be -- so it is derived here from the piece, the payment and the fee, and
         `check_leg` then refuses the row again if the two ever disagree.
+
+        `record=False` runs every check above and writes nothing down. That is
+        what a BUYER needs when a leg arrives addressed to it instead of being
+        advertised: the row is the shape `paste_leg` reads its terms out of, and
+        the checks are the reason it can be believed, but a leg sent to one
+        buyer in a sealed message is not a listing -- filed, it would put a
+        price on a public page that every stranger could then take. The row that
+        comes back is complete and lives only as long as the trade it is
+        finishing.
         """
         try:
             leg = rpc.call("decoderawtransaction", str(raw))
@@ -376,6 +386,8 @@ class Listings:
                               (out_value, script), fee, int(price), what,
                               seconds, coin=coin, payload=payload)
         check_leg(rpc, listing)
+        if not record:
+            return listing
         return self.add(listing)
 
     def get(self, listing_id: str) -> dict | None:

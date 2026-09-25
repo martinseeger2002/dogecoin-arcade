@@ -145,6 +145,25 @@ def _named_listing(rpc, db, book, secret=SELLER, price=COIN, rate=RATE,
     return listing, pubkey, address
 
 
+def _offered(rpc, db, secret=SELLER, price=COIN, rate=RATE, amount=5.0,
+             naming: bytes = NAMING) -> tuple[funding.Leg, list[str], bytes, str]:
+    """`_named_listing` with the filing left out: a leg answered, not advertised.
+
+    This is what an accept carries to one buyer -- the same two coins, the same
+    two signatures, the same bytes -- and the difference is only that nobody
+    else is told. So the same trade has to close here that closes from a row,
+    which is the claim the tests that use this are about.
+    """
+    pubkey, address = _key(rpc, db, secret, amount)
+    piece, spare = _two_coins(rpc, db, address)[:2]
+    leg = funding.build_leg(PARAMS, address, piece, coins=price, rate=rate,
+                            payload=naming, coin=spare)
+    signatures = [_sign(secret, bytes.fromhex(digest),
+                        funding.SINGLE_ANYONECANPAY).hex()
+                  for digest in leg.sighashes]
+    return leg, signatures, pubkey, address
+
+
 def _bid(rpc, db, secret, address, listing, rate=RATE) -> funding.Unsigned:
     """The buyer's half of a listing that names its piece.
 
@@ -499,6 +518,72 @@ def test_a_completion_that_rewrites_the_bytes_is_refused(regtest, db, book):
                            _signatures(BUYER, rewritten), buyer_key)
     assert "does not carry the bytes this listing sells" in str(refused.value), \
         str(refused.value)
+
+
+def test_a_leg_answered_to_one_buyer_completes_without_being_filed(regtest, db,
+                                                                   book):
+    """An answer is a leg, checked and never advertised.
+
+    A wallet that holds a key instead of a node cannot countersign later, so the
+    whole of its yes is one signed leg, handed to the one buyer whose offer it
+    answers. That is `register` with the writing left out -- every check above
+    still runs, because an answer arrives from a stranger and its numbers are
+    the trade -- and a row would put the piece under every stranger's nose at
+    the price one buyer happened to name.
+
+    So this is the same closing as `test_a_listing_that_names_its_piece_fills_unchanged`
+    from the other side of the message, with the book kept empty on purpose: the
+    swap that lands must pay the seller what its own signature committed to, and
+    nothing here may be for sale to anybody else.
+    """
+    rpc = regtest.rpc
+    leg, signatures, seller_key, seller = _offered(rpc, db, price=COIN)
+    buyer_key, buyer = _key(rpc, db, BUYER, 8.0)
+
+    listing = book.register(rpc, raw=leg.raw, signatures=signatures,
+                            pubkey=seller_key, network=NETWORK, owner=seller,
+                            price=COIN, seconds=LISTED_FOR, record=False)
+    assert listing["payload"] == NAMING.hex() and listing["coin"], \
+        "an answer carries the same terms a row would have held"
+
+    half = _bid(rpc, db, BUYER, buyer, listing)
+    raw = listings.paste_leg(rpc, listing, half, _signatures(BUYER, half),
+                             buyer_key)
+    filled = rpc.call("sendrawtransaction", raw)
+    rpc.call("generate", 1)
+
+    landed = _landed(rpc, filled)
+    assert (int(listing["output"]["value"]),
+            listing["output"]["script"]) in landed, \
+        "the answer paid the seller something other than what it signed"
+    assert (0, op_return_script(NAMING).hex()) in landed, \
+        "the block does not say what the answer sold"
+    assert book.open_listings(NETWORK) == [], \
+        "an answer to one buyer was put up for everybody"
+
+
+def test_an_answer_at_a_price_the_buyer_never_offered_is_refused(regtest, db,
+                                                                 book):
+    """The one check that stops an answer trading a buyer's coins on terms it did not name.
+
+    A price is never in a signature -- `check_leg` says why, and derives it --
+    so the number a buyer hands `register` IS the assertion it is making about
+    the answer it received. Here the seller's leg is sound and prices the piece
+    at a coin, and the buyer read its own note as half that. The refusal has to
+    come before any of it is combined, because what the buyer would otherwise
+    sign for is a payment it never offered.
+    """
+    rpc = regtest.rpc
+    leg, signatures, _seller_key, seller = _offered(rpc, db, price=COIN)
+
+    with pytest.raises(listings.ListingError) as refused:
+        book.register(rpc, raw=leg.raw, signatures=signatures,
+                      pubkey=_seller_key, network=NETWORK, owner=seller,
+                      price=COIN // 2, seconds=LISTED_FOR, record=False)
+    assert "not built from this piece at this price" in str(refused.value), \
+        str(refused.value)
+    assert book.open_listings(NETWORK) == [], \
+        "a refusal still left something on the market"
 
 
 def test_a_listing_whose_second_coin_is_spent_is_refused(regtest, db, book):
