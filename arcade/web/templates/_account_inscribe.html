@@ -256,17 +256,37 @@ async function inscribeTheFile() {
                  + ` ${shown ? shown.what : start.name || ""}?`))
       return;
     let sent = already;
-    if (start.offer) await wallet.confirm(held, start);
-    const giveUp = Date.now() + 15 * 60 * 1000;
-    for (let n = Number(start.next ?? 0); n < pieces; n++) {
-      news(`Piece ${commas(n + 1)} of ${commas(pieces)}…`);
-      const piece = await pieceOffer(bytes, start, n, giveUp);
-      await wallet.confirm(held, piece);
-      sent = Math.max(sent + 1, Number(piece.sent || 0));
-      news(`${commas(sent)} of ${commas(pieces)} on the chain.`);
+    // Held for the whole file rather than for one signature, and it cannot
+    // borrow the wallet's own flag: that one is deleted the moment a signature
+    // ends, and what has to be covered is the waiting BETWEEN them. This is
+    // base.html's `trading` case in other clothes -- these pieces wait for the
+    // split's block, and that block is exactly the generation bump that
+    // reloads a page. Measured on the live instance: the split confirmed, the
+    // tab reloaded out from under this loop, and no piece was ever offered.
+    // The split costs a fee either way, so what was left was a file somebody
+    // paid for and did not get, with only re-choosing it to finish it.
+    document.body.dataset.inscribing = String(pieces);
+    try {
+      if (start.offer) await wallet.confirm(held, start);
+      const giveUp = Date.now() + 15 * 60 * 1000;
+      for (let n = Number(start.next ?? 0); n < pieces; n++) {
+        news(`Piece ${commas(n + 1)} of ${commas(pieces)}…`);
+        const piece = await pieceOffer(bytes, start, n, giveUp);
+        await wallet.confirm(held, piece);
+        sent = Math.max(sent + 1, Number(piece.sent || 0));
+        news(`${commas(sent)} of ${commas(pieces)} on the chain.`);
+      }
+      // Inside the hold, not after it: the block that takes the last piece is a
+      // generation bump, and the poller reloads the moment nothing is held -- so
+      // a sentence written after the delete lands in a page that is on its way
+      // out. Seen live on 2026-09-25: the file went on chain complete, the tab
+      // came back with an empty news row, and nobody was ever told the six
+      // transactions had finished.
+      news(`Inscribed: ${commas(pieces)} transactions, one file, on the chain `
+          + "for ever. It appears when its last block is mined.");
+    } finally {
+      delete document.body.dataset.inscribing;
     }
-    news(`Inscribed: ${commas(pieces)} transactions, one file, on the chain `
-        + "for ever. It appears when its last block is mined.");
   } catch (e) { say(String(e.message || e)); }
 }
 

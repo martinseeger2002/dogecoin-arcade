@@ -6,6 +6,8 @@ is looking straight at the conversation, and nothing is there because the
 interface is not looking.
 """
 
+import pathlib
+import re
 import time
 
 import pytest
@@ -178,6 +180,62 @@ def test_finding_something_bumps_the_generation(monkeypatch):
     BlockWatcher(state)._tick()
 
     assert state.generation > 0
+
+
+#: The templates, read as text. What this asks is about a page's own
+#: JavaScript, so it is asked where that is written rather than through a
+#: running application.
+TEMPLATES = pathlib.Path(__file__).resolve().parent.parent / "arcade" / "web" / "templates"
+
+
+#: The flags a page raises while it is mid-way through something, named one by
+#: one because the list is the claim. `working` is the wallet's own, set around
+#: each signature; `trading` is a buy being relayed across a frame, which spends
+#: most of its time between calls; `inscribing` is one file going up as several
+#: transactions. A `...Ready` flag is not a hold and is not listed: it only says
+#: a page's script is wired up, which is what the browser tests wait for.
+HOLDS = {
+    "working": ("wallet_js.js", "messaging_js.js"),
+    "trading": ("inscription_view.html",),
+    "inscribing": ("_account_inscribe.html",),
+}
+
+
+def test_a_page_holding_a_job_is_protected_from_the_reload():
+    """A page in the middle of a job has to survive the block that job causes.
+
+    base.html polls `/events` and reloads when the generation moves, unless the
+    page says it is busy, and a page says so by raising a flag on the body. That
+    works only if the guard knows the flag's name, and the name lives in two
+    files, so it drifts -- and it cost a real inscription on the live instance
+    on 2026-09-24. A big file's split confirmed, the generation moved, the tab
+    reloaded out from under the loop that was offering the pieces, and the rest
+    of the file was never broadcast. The split's fee was spent either way, so
+    what was left was a file somebody paid for and did not get.
+
+    So this reads the pages and the guard and asks that they agree: every hold
+    is one this test names, is raised where it says it is raised, and is refused
+    by `busy()`. Which is also the shape of the bug -- the panel simply stopped
+    holding it, and nothing else anywhere noticed.
+    """
+    held = {}
+    for page in sorted(TEMPLATES.glob("*.html")) + sorted(TEMPLATES.glob("*.js")):
+        for name in re.findall(r"document\.body\.dataset\.(\w+)\s*=[^=]",
+                               page.read_text()):
+            if not name.endswith("Ready"):
+                held.setdefault(name, set()).add(page.name)
+    assert set(held) == set(HOLDS), \
+        f"the pages raise {sorted(held)} and this names {sorted(HOLDS)}; a new " \
+        "hold is a new thing a block can interrupt, so it belongs here and in " \
+        "busy(), not only in the page that wants it"
+    guard = (TEMPLATES / "base.html").read_text()
+    for name, where in HOLDS.items():
+        assert held.get(name, set()) & set(where), \
+            f"{name} is no longer raised by {where}, so {name} no longer means " \
+            "anything to busy()"
+        assert f"if (document.body.dataset.{name}) return true;" in guard, \
+            f"busy() in base.html never looks at {name}, so a block reloads " \
+            "over the top of it"
 
 
 def test_a_scan_that_raises_does_not_kill_the_watcher(monkeypatch):

@@ -895,6 +895,13 @@ function arcadeFileCost(bytes){
     // Nothing is lost by reloading in the sense of money moving wrongly, but
     // the trade stalls half-done and reads as a broken shop.
     if (document.body.dataset.trading) return true;
+    // A file going up as several transactions, held by the inscribe panel
+    // (templates/_account_inscribe.html) for the whole of the job. Same shape
+    // again, but the hazard is sharper here: the pieces wait for the SPLIT's
+    // block, and that block is the generation bump this poller is watching --
+    // so the reload arrives at the one moment the loop cannot survive it. On
+    // the live instance that cost a split's fee and inscribed nothing.
+    if (document.body.dataset.inscribing) return true;
     var active = document.activeElement;
     if (active && /^(TEXTAREA|INPUT)$/.test(active.tagName)) return true;
     var drafts = document.querySelectorAll('textarea, input[type=text]');
