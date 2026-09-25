@@ -39,6 +39,14 @@ COIN = 100_000_000
 #: pays per raw kB when it prices a transaction itself (-fallbackfee).
 MIN_FEE_PER_KB = COIN // 100
 
+#: The soft dust limit (policy.h:70 DEFAULT_DUST_LIMIT = RECOMMENDED_MIN_TX_FEE).
+#: Every output below it must pay this much again in fee (pepecoin-fees.cpp:80,
+#: GetPepecoinDustFee) or peers will not relay the transaction. Our own node takes
+#: it anyway -- sendrawtransaction skips that check -- so it sits in our mempool
+#: "waiting for its block" and never reaches a miner. Seen live 2026-09-25: a 0.01
+#: coin paying a 0.00235 fee left 0.00765 of change, and seven posts stuck.
+DUST_LIMIT = COIN // 100
+
 #: -bytespersigop (policy.h:58): what one sigop weighs against the bytes.
 BYTES_PER_SIGOP = 20
 
