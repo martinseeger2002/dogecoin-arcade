@@ -124,8 +124,13 @@
      signed here. The boxes start with whatever is already published,
      because one announcement replaces the whole of a profile &mdash; an
      empty box is a thing taken down, not a thing left alone. #}
-  <div class="panel" id="profile-panel" hidden>
-    <h2 style="margin-top:0">Your profile</h2>
+  {# Shown whether or not the wallet is open in this tab: it was hidden until then,
+     and a signed-in person with a locked tab could not find it at all (the operator,
+     2026-09-25). Locked, it shows what is published and says how to change it. #}
+  <div class="panel" id="profile-panel">
+    <h2 style="margin-top:0">Your profile: picture, bio and link</h2>
+    <p class="msg info" id="profile-locked" hidden style="margin:0 0 12px">
+      To change these, unlock your wallet with your password (at the top of this page).</p>
     <p class="muted" style="margin:0 0 10px;max-width:64ch">What people see
       when they click your name: your face, your name, a line about you, and
       your link. It goes on the chain under your tag, so a node that has
@@ -381,7 +386,9 @@ async function draw() {
 // down, and this page redraws itself after every publish.
 function drawProfile(said) {
   const profile = said.profile || {};
-  $("profile-panel").hidden = !keys;
+  $("profile-locked").hidden = !!keys;
+  $("publish-face").disabled = !keys;
+  $("publish-about").disabled = !keys;
   const fill = (id, value) => {
     const box = $(id);
     if (!box.dataset.touched) box.value = value || "";
