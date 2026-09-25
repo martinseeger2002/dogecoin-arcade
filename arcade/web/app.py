@@ -8555,6 +8555,98 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": f"the node could not do it: {exc}"},
                                 status_code=502)
 
+    @app.post("/account/talk")
+    def account_talk(request: Request, payload: Any = Body(None)):
+        """A page speaks to another node, as this account's own key.
+
+        The account half of the `/node` door, and it exists for the reason
+        the shop door exists: an inscribed page asked for a conversation and
+        the wallet that would hold it has a key instead of a node. So the
+        sealing happens in the browser -- messaging.js, `sealForProgram`, to
+        a key the browser checked -- and what arrives here is ciphertext and
+        a destination: this node builds the one transaction that carries it,
+        never learns what is inside, and offers it for the account's
+        signature. Replies are read back by the browser too, from
+        `/account/messages`; this route keeps no conversation, because a
+        node that remembers a page's chats remembers the wrong thing.
+
+        `identity` says what this node's API speaks -- the stamp the sealing
+        must carry and the one-message size -- and `ask` turns the page's
+        `to` into the key to seal to. Testnet only, as every node-to-node
+        message is (D-010), and metered on the account's message dial: the
+        page's hourly count IS the account's, since a count kept in a tab
+        resets with the tab and could only ever be theatre.
+        """
+        from .. import nodetalk
+        from ..messaging import api as apilib
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        op = str(said.get("op") or "")
+        chain = _account_chain()
+        try:
+            if chain.is_mainnet:
+                raise nodetalk.TalkError("node-to-node messages are testnet "
+                                         "only, and this account lives on "
+                                         "mainnet")
+            if op == "identity":
+                return JSONResponse({
+                    "ok": True, "network": chain.network,
+                    "stamp": apilib.stamp().hex(),
+                    "maxbytes": apilib.MAX_API_PAYLOAD})
+            to = nodetalk.parse_pubkey(said.get("to"))
+            if op == "ask":
+                return JSONResponse({"ok": True, "seal_to": to.hex(),
+                                     "stamp": apilib.stamp().hex()})
+            if op != "send":
+                raise nodetalk.TalkError("op must be identity, ask or send")
+            address = _account_address(account.pubkey, chain)
+            if not address:
+                raise ValueError("this account has no address on this chain yet")
+            sealed = bytes.fromhex(str(said.get("sealed") or ""))
+            if not sealed:
+                raise ValueError("there is nothing to send")
+            # Say it here rather than let the envelope header say it: a
+            # ciphertext past a uint16 does not reach the class check, and
+            # a page told "the node could not do it" learns nothing it can
+            # act on. Nothing is built yet, so the refusal costs nothing.
+            from ..encoding import MAX_CLASS_B_PAYLOAD
+            if len(sealed) + 16 > MAX_CLASS_B_PAYLOAD:
+                raise nodetalk.TalkError(
+                    "a page's message is one transaction, and that is more "
+                    f"than the {MAX_CLASS_B_PAYLOAD:,} bytes one can carry. "
+                    "Send a reference to an inscription instead of the "
+                    "thing itself.")
+            # Type 6 rather than type 1, the header written HERE: the same
+            # rule the shop's `send` and `/account/write` follow, so the
+            # length of what fits is said once by the function that builds
+            # it and a relayed page never prefixes its envelope twice.
+            header = envelopelib.Header(type=envelopelib.TYPE_API,
+                                        clen=len(sealed))
+            outputs = _class_c_or_b(chain, address, header.encode() + sealed,
+                                    _coin_pubkey(account.pubkey))
+            with contextlib.closing(state.token_index(chain).open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address, outputs,
+                    rate=fees.MIN_FEE_PER_KB,
+                    what="a page's message to another node",
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "message", len(sealed))
+            offered = _offers.add(account.pubkey, chain.network, unsigned,
+                                  unsigned.what)
+            return JSONResponse({"ok": True, "offer": offered.id,
+                                 "bytes": len(sealed), "to": to.hex(),
+                                 "chain": chain.network,
+                                 **unsigned.as_json()})
+        except (nodetalk.TalkError, fundinglib.FundingError,
+                accountslib.AccountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            return JSONResponse({"detail": f"the node could not do it: {exc}"},
+                                status_code=502)
+
     @app.get("/account/tokens")
     def account_tokens(request: Request):
         """What this account holds in tokens, on every chain it has an

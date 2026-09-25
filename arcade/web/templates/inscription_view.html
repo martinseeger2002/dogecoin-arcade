@@ -132,6 +132,7 @@
     var sandbox = document.querySelector('.inscription-frame');
     var here = {{ row.txid|tojson }}, csrf = {{ csrf|tojson }};
     var viewer = {{ viewer|tojson }};
+    var holder = {{ row.owner|tojson }}, maker = {{ row.creator|tojson }};
     var CHAIN = {network: "{{chain.network}}",
                  version: {{chain.params.pubkeyhash_version}}};
     var doors = {storage: '/storage/', node: '/node/', swap: '/swap/', owner: '/owner/'};
@@ -181,6 +182,22 @@
         body.arcade = m.arcade; body.seq = m.seq;
         e.source.postMessage(body, '*');   // an opaque origin cannot be named
       }
+      // One import of the account kit, with the key opened only for the
+      // doors that cannot answer without it.
+      function byKey(doIt, needKey){
+        import('/wallet.js').then(function(w){
+          if (!needKey) return doIt(w, null);
+          return w.opened(CHAIN).then(function(wallet){
+            if (!wallet) throw new Error('this account is signed in, but its '
+              + 'key is not open in this tab. Unlock the wallet once and the '
+              + 'door will answer here.');
+            return doIt(w, wallet);
+          });
+        }).then(function(r){ answer(Object.assign({ok: true}, r)); })
+          .catch(function(err){
+            answer({ok: false, error: String((err && err.message) || err || 'refused')});
+          });
+      }
       if (m.arcade === 'swap') {
         trading();
         if (viewer !== 'wallet') {
@@ -194,6 +211,52 @@
             // and the fetch below would answer with a login page instead.
             answer({ok: false, error: 'sign in first — a shop takes a signature, '
                                      + 'and this page is not holding one'});
+          }
+          return;
+        }
+      }
+      // The other doors, asked of an account or a stranger rather than of a
+      // wallet (D-169): a page REMEMBERS in the browser showing it, it
+      // SPEAKS to other nodes under the account's own key when one is signed
+      // in, and it never SPENDS unattended. The fetch below stays what the
+      // operator's own viewer does; on a public instance those routes are
+      // behind the door anyway, and answering them here is what replaces
+      // "the wallet did not answer" with something a page can act on.
+      if (viewer !== 'wallet' && m.arcade !== 'swap') {
+        if (m.arcade === 'storage') {
+          byKey(function(w){ return w.storageDoor(here, m); }, false);
+          return;
+        }
+        if (m.arcade === 'node') {
+          if (viewer !== 'account') {
+            answer({ok: false, error: 'sign in first — a message to another '
+                + 'node is sealed as somebody, and this page is not holding '
+                + 'a key to seal with'});
+            return;
+          }
+          byKey(function(w, wallet){ return w.talkDoor(wallet, here, m); }, true);
+          return;
+        }
+        if (m.arcade === 'owner') {
+          var q = {ok: true, owner: false, creator: maker, holder: holder,
+                   network: CHAIN.network};
+          if ((m.op || '') === 'identity') {
+            // Even a refused door tells the truth: the page can find out it
+            // is running in its owner's tab, and say the right thing about
+            // its own buttons.
+            fetch('/account', {cache: 'no-store'}).then(function(r){
+              return r.ok ? r.json() : {};
+            }).then(function(said){
+              q.owner = !!said.address && !!maker && maker === holder
+                     && maker === said.address;
+              answer(q);
+            }).catch(function(){ answer(q); });
+          } else {
+            answer({ok: false, error: 'a page may not spend an account’s '
+                + 'coins unattended: the owner door opens for a wallet on its '
+                + 'own machine, not for a key in somebody else’s browser. A '
+                + 'page that sells is a shop, and a shop answers through '
+                + 'arcade.swap.'});
           }
           return;
         }

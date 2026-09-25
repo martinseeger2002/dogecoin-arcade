@@ -372,6 +372,14 @@ no wallet is listening, which is what happens when somebody opens
 `/content/<id>` in a tab of its own; a page should still work then, with
 nothing remembered.
 
+**When no wallet is behind the page.** On a public instance there is no
+wallet at all, and the door still answers: the memory is this browser's own
+`localStorage`, under your inscription's id and the account looking at it —
+an unsigned visitor shares one anonymous shelf. Same shape, same limits, the
+same refusals word for word. It does not sync to the account's other devices
+and a cleared browser forgets it; what a page must *prove* belongs on the
+chain, which is where storage was never going to help it.
+
 ### Talking to another node
 
 Your page cannot fetch anything off the machine it runs on (§2). What it can
@@ -415,6 +423,15 @@ payment, which is a request until the person says yes. What stops a page in
 a loop from spending the wallet's testnet coins is a cap: **thirty messages
 an hour per page**, after which `send` rejects until the hour turns.
 
+When an **account** is looking at the page on a public instance the door
+answers too: the message goes out under the account's own messaging key —
+the key that signs its feed posts — sealed in the page's browser before the
+node ever sees it, paid by the account, and metered by the account's
+message dial (thirty an hour) rather than the per-page cap. The node reads
+nothing of it; it is handed ciphertext and a destination and offers the
+carrier for the account's signature. A mainnet account is refused there:
+sealed messages are testnet's, only and always.
+
 **You read only your own conversations.** The wallet's inbox also carries
 what other pages and the bots on the bot RPC are told; `replies` shows you
 what came from nodes *you* wrote to, from the moment you first wrote to
@@ -424,6 +441,12 @@ answers; put something of your own in the message if you need to tell them
 apart. Like storage, all of this is keyed by the frame the viewer put you
 in: a page opened in a tab of its own has no wallet listening and `send`
 rejects after a minute.
+
+For an account's page the same rule holds with a shorter memory: the node
+keeps no conversation for anybody, so answers are read in the tab, off the
+chain, from the moment the page first wrote — and only from the nodes that
+page wrote to. Reload and the cursor starts again; the replies are still
+where the chain left them.
 
 ### A shop, and buying from one
 
@@ -534,6 +557,15 @@ arcade.owner.identity().then(function (me) {
   other wallet, on mainnet, or when the send cannot be built.
 
 Testnet only: nothing leaves mainnet without a person looking at it.
+
+On a public instance, where accounts sign for themselves, this door opens
+for nobody: `send` rejects, saying that a page may not spend an account's
+coins unattended — the operator's door opens because the wallet holding the
+key is the machine that made the page, and a node holding nobody's keys has
+no such standing. A page that sells from this browser is a shop, and
+answers through `arcade.swap` instead. `identity()` stays honest either
+way: `owner` is true in an account's tab exactly when the signed-in account
+created the page and still holds it.
 
 ### Somebody by name
 
@@ -755,15 +787,21 @@ never moves it; sending it is always something you did on purpose.
   pop-up the page cannot reach. The two exceptions are the person's own
   words: a page this wallet created and holds (`arcade.owner`, §3), and a
   shop's listings, which its owner wrote down when inscribing them
-  (`arcade.swap`, §3). Both are testnet only.
+  (`arcade.swap`, §3). Both are testnet only. Where accounts sign for
+  themselves, the shop door still answers — the account signs the trade and
+  sees what it signs — and the owner door never sends: an unattended spend
+  needs a key somebody handed to that machine, and a public node was handed
+  none.
 * **No `localStorage`.** An opaque origin has none. `arcade.storage` (§3) is
-  the wallet remembering for the page instead, per inscription, and it works
-  on every device the wallet is opened from.
+  the machine showing the page remembering for it instead — the wallet's
+  pagestore when a wallet is looking, this browser's own storage when an
+  account or a signed-out stranger is — always per inscription.
 * **No external anything.** Not a CDN, not an analytics beacon, not a font.
   See §2.
 * **No sockets, no servers.** A page reaches another machine one way: a
-  node-to-node message through the wallet it runs in (`arcade.node`, §3),
-  on testnet, sealed, and answered the same way.
+  node-to-node message (`arcade.node`, §3), on testnet, sealed, and answered
+  the same way — carried by the wallet it runs in, or by the account's own
+  messaging key where accounts sign for themselves.
 * **No `/r/children`, `/r/parents`, `/r/sat`.** The first two describe a
   relationship this chain does not record, and the third is about satoshi
   ordinals, which this is not.

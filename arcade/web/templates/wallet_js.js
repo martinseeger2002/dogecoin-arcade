@@ -657,6 +657,158 @@ async function shopSign(wallet, shop, offer) {
           cut: signed.cut || {}, request: null, account: true};
 }
 
+/* --- a page speaking to another node, with this account's own key ---------
+ *
+ * `/node/{txid}` is where the operator's wallet speaks for a page: it seals
+ * with its identity, broadcasts from a funded address, and keeps the page's
+ * letters so the answer can find the page that started it. An account has a
+ * key instead of a wallet, so the questions `node.js` asks get answered
+ * here instead, over `/account/talk` -- and as with a shop, the answer to
+ * each is built by this node, sealed in this tab, and signed nowhere else.
+ *
+ * The conversation lives in this tab and not on the node, which is a
+ * decision (D-169) rather than an oversight: a node that remembers its
+ * pages' chats is holding the one thing this whole arrangement exists not
+ * to hold, and an answer is sealed to the account's key, which only this
+ * browser has anyway. One log per tab, sorted out per page: a page reads
+ * replies from the nodes IT wrote to, exactly as the wallet's door
+ * promises, and a page's floor at its first send keeps one page's answers
+ * out of another page's inbox.
+ */
+const talkInbox = new Map();      // messaging key -> {cursor, seq, log, pages}
+
+async function talkAsk(body) {
+  const asked = await fetch("/account/talk", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body),
+  });
+  const said = await asked.json();
+  if (!asked.ok) throw new Error(said.detail || "the node would not carry this");
+  return said;
+}
+
+/** Open the machine messages since this tab last read, and file what opens. */
+async function talkRead(me, box) {
+  const mail = await import("/messaging.js");
+  const found = await mail.programAnswers(me, box.cursor);
+  for (const row of found.answers) {
+    box.log.push({seq: ++box.seq, sender: row.sender, txid: row.txid,
+                  when: row.when, block: row.height, json: row.json});
+  }
+  if (box.log.length > 500) box.log.splice(0, box.log.length - 500);
+  box.cursor = Math.max(box.cursor, found.cursor);
+}
+
+export async function talkDoor(wallet, page, ask) {
+  return working(async () => {
+    const op = String(ask.op || "");
+    const {mail, me} = await messenger(wallet);
+    const who = mail.hex(me.publicKey);
+    let box = talkInbox.get(who);
+    if (!box) {
+      box = {cursor: 0, seq: 0, log: [], pages: new Map()};
+      talkInbox.set(who, box);
+    }
+    let log = box.pages.get(page);
+    if (!log) {
+      log = {sent: [], keys: [], floor: box.seq};
+      box.pages.set(page, log);
+    }
+    if (op === "identity") {
+      const said = await talkAsk({op: "identity"});
+      return {pubkey: who, network: said.network, maxbytes: said.maxbytes,
+              contactcode: await mail.contactCode(said.network, me.publicKey)};
+    }
+    if (op === "sent") return {sent: log.sent.slice(0, 50)};
+    if (op === "replies") {
+      await talkRead(me, box);
+      const after = Math.max(Number(ask.after || 0), log.floor);
+      return {replies: box.log.filter(
+        (a) => a.seq > after && log.keys.includes(a.sender)).slice(
+        0, Math.max(1, Math.min(Number(ask.limit || 100), 200))).map(
+        (a) => ({id: a.seq, txid: a.txid, when: a.when, block: a.block,
+                 frompubkey: a.sender, json: a.json,
+                 body: a.json === null ? "" : JSON.stringify(a.json)}))};
+    }
+    if (op === "send") {
+      const asked = await talkAsk({op: "ask", to: String(ask.to || "")});
+      const out = await signOffer(wallet, await talkAsk({
+        op: "send", to: String(ask.to || ""),
+        sealed: mail.sealForProgram(me, asked.seal_to, asked.stamp,
+                                    ask.body === undefined ? {} : ask.body)}));
+      log.floor = Math.max(log.floor, box.seq);   // nothing before this is an
+      if (!log.keys.includes(asked.to)) log.keys.push(asked.to);   // answer to it
+      log.sent.unshift({to: asked.to, txid: out.txid,
+                        when: Math.floor(Date.now() / 1000)});
+      return {txid: out.txid, fee: out.fee, to: asked.to};
+    }
+    throw new Error(`a page asked the node door for ${op || "nothing"}`);
+  });
+}
+
+/* --- what a page remembers, in the browser that shows it -------------------
+ *
+ * The wallet's `/storage` door keeps a page's things in the node's own
+ * database: one shelf per page, which everyone who uses that wallet shares,
+ * because on that machine they are the same person. A public node cannot be
+ * anybody's memory bank -- its pagestore IS one shelf for every reader --
+ * so for an accounts' viewer the decision (D-169) is that a page's memory
+ * lives in the browser that shows it, on a shelf keyed to that account and
+ * that page alone. The same shape the page already codes against, the same
+ * caps pagestore.py stands by, and nothing of it ever reaches the server.
+ */
+const SHELF_KEYS = 1000;
+const SHELF_VALUE = 65536;            // pagestore's MAX_VALUE, as characters
+const SHELF_TOTAL = 1048576;          // and its MAX_TOTAL
+
+async function shelfName(page) {
+  let who = "anon";
+  try {
+    const asked = await fetch("/account", {cache: "no-store"});
+    if (asked.ok) who = (await asked.json()).address || "anon";
+  } catch (e) { /* a stranger's browser is its own shelf */ }
+  return "arcade.pagestore." + who + "." + page;
+}
+
+export async function storageDoor(page, ask) {
+  const op = String(ask.op || "");
+  const name = await shelfName(page);
+  let items = {};
+  try { items = JSON.parse(localStorage.getItem(name) || "{}"); }
+  catch (e) { items = {}; }
+  if (op === "load") return {items: items};
+  if (op === "set") {
+    const key = String(ask.key === undefined ? "" : ask.key);
+    const value = String(ask.value === undefined ? "" : ask.value);
+    if (!key || key.length > 256) throw new Error("a key is 1 to 256 characters");
+    if (value.length > SHELF_VALUE)
+      throw new Error("a value is at most 65,536 characters");
+    const had = Object.prototype.hasOwnProperty.call(items, key);
+    const total = Object.keys(items).reduce(
+      (n, k) => n + k.length + items[k].length, 0);
+    if (!had && Object.keys(items).length >= SHELF_KEYS)
+      throw new Error("a page may keep at most 1000 keys");
+    if (total - (had ? key.length + items[key].length : 0)
+        + key.length + value.length > SHELF_TOTAL)
+      throw new Error("a page may keep at most 1,048,576 characters in all");
+    items[key] = value;
+  } else if (op === "remove") {
+    delete items[String(ask.key)];
+  } else if (op === "clear") {
+    items = {};
+  } else {
+    throw new Error("op must be set, remove or clear");
+  }
+  try {
+    if (Object.keys(items).length) localStorage.setItem(name, JSON.stringify(items));
+    else localStorage.removeItem(name);
+  } catch (e) {
+    throw new Error("this browser would not hold that for the page: "
+                    + ((e && e.name) || e));
+  }
+  return {};
+}
+
 /* --- the feed, tips and reactions ----------------------------------------
  *
  * Nothing here is encrypted and nothing ever was: every row of the feed

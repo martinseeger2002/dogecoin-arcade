@@ -210,6 +210,13 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # is the buyer's, and an account buying from its own shop is
                # refused at every half.
                "/account/shop", "/account/shop/sign",
+               # a page talking to another node with an account's key instead
+               # of this machine's wallet. What arrives is ciphertext and a
+               # destination; the node builds the carrier, never reads it, and
+               # offers it for the account's signature -- and the account that
+               # lives on mainnet is refused, because sealed messages are
+               # testnet's (D-010).
+               "/account/talk",
                "/account/token/send", "/account/token/create",
                "/account/sign",
                "/signup")
