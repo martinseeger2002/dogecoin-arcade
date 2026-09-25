@@ -242,6 +242,16 @@ def test_a_tip_to_somebody_with_no_address_is_refused(account):
     assert "nowhere to send it" in refused.json()["detail"]
 
 
+def test_a_tip_too_small_to_relay_is_refused(account):
+    """Under 0.01 the tip is itself dust: peers would refuse the transaction and it
+    would wait for its block for good. Said before anything is built."""
+    app, state, rpc, pubkey, mine = account
+    refused = app.post("/account/react", json={
+        "txid": "cd" * 32, "kind": feedlib.TIP, "amount": "0.005"})
+    assert refused.status_code == 400
+    assert "smallest tip" in refused.json()["detail"]
+
+
 def _read(state):
     """Every index caught up, AND the feed rows filed.
 
