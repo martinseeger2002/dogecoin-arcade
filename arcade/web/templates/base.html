@@ -573,6 +573,49 @@ form.composer button[type=submit]{background:var(--sent);border-color:var(--sent
   .composer-foot{gap:8px}
   button.small,.btn.small{min-height:40px;padding:8px 13px}
 }
+/* ── The look, 2026-09-25 (the operator): the same feel as the dogecoinarcade.com homepage.
+   Only presentation lives here, after everything above, so it can be read or removed as
+   one piece. The pixel face is Press Start 2P (SIL OFL 1.1), subset to the letters of the
+   brand and the network tags and embedded, so no page asks a font server for anything. */
+@font-face{font-family:"Arcade Pixel";font-display:swap;
+  src:url(data:font/woff2;base64,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) format("woff2")}
+:root{--shadow:0 1px 2px rgba(40,30,10,.05),0 4px 14px rgba(40,30,10,.06);--radius:14px}
+@media (prefers-color-scheme:dark){:root{--shadow:0 1px 2px rgba(0,0,0,.3),0 4px 14px rgba(0,0,0,.22)}}
+body{font-size:16px;-webkit-font-smoothing:antialiased}
+header{background:var(--bg)}
+.brand{font-family:"Arcade Pixel",monospace;font-size:12px;font-weight:400;letter-spacing:.02em}
+.brand::before{content:"\25B6";color:var(--accent);margin-right:8px;font-size:10px;vertical-align:1px}
+nav a{border-radius:999px;padding:6px 13px}
+nav a.on{box-shadow:var(--shadow)}
+h1{font-size:1.75rem;letter-spacing:-.025em;font-weight:720}
+.panel,.stat,.chaincard,.tile,.card{border-radius:var(--radius);box-shadow:var(--shadow)}
+.panel{padding:20px}
+.tile{transition:transform .12s ease,box-shadow .12s ease}
+.tile:hover{transform:translateY(-2px);box-shadow:0 2px 4px rgba(40,30,10,.06),0 10px 24px rgba(40,30,10,.1)}
+button,.btn{border-radius:11px;padding:10px 18px;font-weight:620;box-shadow:var(--shadow);
+  transition:filter .12s ease,transform .06s ease}
+button:active,.btn:active{transform:translateY(1px)}
+button.ghost{box-shadow:none}
+button.tag,button.tag.switch{box-shadow:none;padding:1px 5px;border-radius:4px;font-weight:600}
+input,textarea,select{border-radius:10px;padding:10px 12px}
+input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
+.msg{border-radius:12px}
+.note{border-radius:0 12px 12px 0}
+.pill{padding:3px 10px}
+pre{border-radius:12px}
+.resetnote{max-width:1000px;margin:12px auto 0;padding:9px 16px;font-size:.86rem;border-radius:12px;
+  border:1px solid color-mix(in srgb,var(--accent) 55%,var(--line));
+  background:color-mix(in srgb,var(--accent) 9%,var(--bg));color:var(--fg)}
+@media(max-width:1040px){.resetnote{margin:12px 20px 0}}
+.btn.small,button.small{border-radius:999px;padding:6px 14px;box-shadow:none}
+.btn.small.on{box-shadow:var(--shadow)}
+/* Phone fixes from a first-time walk-through (2026-09-25): the recovery words ran into each
+   other in three columns ("tomorrow7. garage"), and the menu strip gave no sign it scrolls. */
+ol.words{column-gap:1.4em}
+@media(max-width:480px){ol.words{columns:2}}
+@media(max-width:640px){header nav{-webkit-mask-image:linear-gradient(90deg,#000 82%,transparent);
+  mask-image:linear-gradient(90deg,#000 82%,transparent)}}
 </style>
 </head>
 {# Every page is live. The counter lives on the body rather than in an
@@ -595,6 +638,10 @@ form.composer button[type=submit]{background:var(--sent);border-color:var(--sent
   {%- endfor %}
   </nav>
 </div></header>
+{# Until the launch floor move (docs/multi-user.md Order item 6): say plainly what it keeps.
+   Remove this line with the move itself. 2026-09-25. #}
+<div class="resetnote"><b>Practice round.</b> At launch everything here resets except your
+  @name and your coins. <a href="https://dogecoinarcade.com/#try">What that means</a></div>
 {% endif %}
 <main>
 {% if state.is_stale %}
