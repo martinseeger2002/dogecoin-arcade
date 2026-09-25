@@ -54,6 +54,10 @@
       <button type="button" class="ghost small" id="check">Check for new</button>
       <span class="muted" id="checking"></span>
     </div>
+    <div class="threads-foot notifyrow" id="notifyrow" hidden>
+      <button type="button" class="ghost small" id="notify">&#128276; Notify me</button>
+      <span class="muted" id="notify-said" style="font-size:.78rem"></span>
+    </div>
   </aside>
 
   <section class="convo">
@@ -558,5 +562,76 @@ const already = await wallet.opened(CHAIN);
 if (already) await ready(already);
 else $("locked").hidden = false;
 document.body.dataset.messagesReady = "yes";
+</script>
+<script>
+// Notifications for new messages on this device (arcade/push.py). Offered only
+// where the browser can do it and this arcade sends them. On an iPhone that
+// means the arcade has been added to the Home Screen and opened from there --
+// Safari in a tab cannot receive web push, so it says how instead.
+(function () {
+  var row = document.getElementById('notifyrow');
+  var button = document.getElementById('notify');
+  var said = document.getElementById('notify-said');
+  if (!row || !('serviceWorker' in navigator)) return;
+  var standalone = window.matchMedia('(display-mode: standalone)').matches ||
+                   window.navigator.standalone === true;
+  var ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  function b64(s) {
+    var pad = '='.repeat((4 - s.length % 4) % 4);
+    var raw = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  function show(on, text) {
+    row.hidden = false;
+    button.textContent = on ? '\uD83D\uDD14 Notifications on' : '\uD83D\uDD14 Notify me';
+    button.dataset.on = on ? '1' : '';
+    said.textContent = text || '';
+  }
+  fetch('/push/key', {cache: 'no-store'}).then(function (r) { return r.json(); })
+    .then(function (info) {
+      if (!info.enabled) return;                       // this arcade does not push
+      if (!('PushManager' in window) || !('Notification' in window)) {
+        if (ios && !standalone) {
+          row.hidden = false; button.hidden = true;
+          said.textContent = 'For notifications: Share \u2192 Add to Home Screen, then open the arcade from there.';
+        }
+        return;
+      }
+      navigator.serviceWorker.ready.then(function (reg) {
+        return reg.pushManager.getSubscription().then(function (sub) {
+          show(!!sub && Notification.permission === 'granted',
+               Notification.permission === 'denied' ? 'Blocked in this browser\u2019s settings.' : '');
+          button.onclick = function () {
+            if (button.dataset.on) {
+              return reg.pushManager.getSubscription().then(function (s) {
+                if (!s) return show(false);
+                var endpoint = s.endpoint;
+                return s.unsubscribe().then(function () {
+                  return fetch('/account/push/unsubscribe', {method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({endpoint: endpoint})});
+                }).then(function () { show(false, 'Off on this device.'); });
+              });
+            }
+            return Notification.requestPermission().then(function (answer) {
+              if (answer !== 'granted') return show(false, 'Not allowed \u2014 nothing was turned on.');
+              return reg.pushManager.subscribe({userVisibleOnly: true,
+                                                applicationServerKey: b64(info.key)})
+                .then(function (s) {
+                  return fetch('/account/push/subscribe', {method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(s.toJSON())});
+                }).then(function (r) {
+                  if (!r.ok) throw new Error('refused');
+                  show(true, 'You\u2019ll be told who wrote \u2014 never what they wrote.');
+                }).catch(function () { show(false, 'Could not turn it on here.'); });
+            });
+          };
+        });
+      });
+    }).catch(function () {});
+})();
 </script>
 {% endblock %}

@@ -532,6 +532,16 @@ class AppState:
         from ..accounts import Vault
         return Vault(self.accounts())
 
+    def push(self):
+        """Push notifications for the Messenger (arcade/push.py), or None when this
+        node cannot sign a push (`cryptography` not installed)."""
+        from .. import push as pushlib
+        if not pushlib.available():
+            return None
+        if getattr(self, "_push", None) is None:
+            self._push = pushlib.Push(self.home)
+        return self._push
+
     def faucet(self):
         """The record of what the faucet has given, and its limits.
 

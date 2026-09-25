@@ -6,6 +6,13 @@
 <title>{% block title %}DogecoinArcade{% endblock %}</title>
 <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
 <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#faf8f4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141310" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Arcade">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <style>
 :root{
   --bg:#faf8f4; --panel:#fffdf9; --fg:#1b1a17; --muted:#6b665c; --line:#e2ddd3;
@@ -998,6 +1005,19 @@ function arcadeFileCost(bytes){
   }
   setInterval(poll, 5000);
 })();
+</script>
+<script>
+// The installable app (2026-09-25): register the service worker that keeps
+// an offline page and shows Messenger notifications. It caches no pages
+// (sw.js), so the live, in-place refresh above is untouched. Not in an embed:
+// a framed document is not an app.
+{% if not embed %}
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('/sw.js', {scope: '/'}).catch(function () {});
+  });
+}
+{% endif %}
 </script>
 {% if not embed %}
 <footer class="version">
