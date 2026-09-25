@@ -316,3 +316,34 @@ def test_an_account_signs_half_a_trade(regtest, db):
                 for value, script in trade.outputs}, (
         "two signers, one transaction, and it paid what was offered")
 
+
+
+# --- dust: change nobody would relay (2026-09-25) --------------------------------------
+
+
+def _one_coin(address, value):
+    return [{"txid": "ab" * 32, "vout": 4, "value": value, "address": address}]
+
+
+def test_change_under_the_dust_limit_goes_to_the_fee(db):
+    """Live: a 0.01 coin paying a 0.00235 fee kept 0.00765 as change. Pepecoin asks
+    0.01 more for an output that small; peers refused it and seven posts waited for
+    a block that never came. The change goes to the miner instead."""
+    ours = b58check_encode(PARAMS.pubkeyhash_version, hash160(_pubkey(7)))
+    utxos.watch(db, ours, 0)
+    unsigned = funding.build(db, PARAMS, ours, [(0, b"\x6a\x04post")],
+                             rate=fees.MIN_FEE_PER_KB,
+                             extra=_one_coin(ours, fees.DUST_LIMIT))
+    assert unsigned.change == 0
+    assert len(unsigned.outputs) == 1, "no output under the dust limit"
+    assert unsigned.fee == fees.DUST_LIMIT
+
+
+def test_change_at_the_dust_limit_is_kept(db):
+    ours = b58check_encode(PARAMS.pubkeyhash_version, hash160(_pubkey(7)))
+    utxos.watch(db, ours, 0)
+    unsigned = funding.build(db, PARAMS, ours, [(0, b"\x6a\x04post")],
+                             rate=fees.MIN_FEE_PER_KB,
+                             extra=_one_coin(ours, 5 * fees.DUST_LIMIT))
+    assert unsigned.change >= fees.DUST_LIMIT
+    assert all(v >= fees.DUST_LIMIT for v, s in unsigned.outputs if not s.startswith(b"\x6a"))

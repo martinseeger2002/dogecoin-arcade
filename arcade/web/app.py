@@ -502,6 +502,16 @@ def the_door(state: AppState):
     return guard
 
 
+def _above_dust(sats: int, what: str) -> None:
+    """Refuse an amount the network will not carry. An output under the dust limit
+    must pay 0.01 more in fee or no peer relays the transaction, so it would sit
+    "waiting for its block" for good (fees.DUST_LIMIT)."""
+    if sats < fees.DUST_LIMIT:
+        raise ValueError(f"the smallest {what} the network will carry is "
+                         f"{fees.DUST_LIMIT / 100_000_000:g} -- anything less is dust, "
+                         f"and nobody would relay it")
+
+
 def create_app(state: AppState) -> FastAPI:
     @contextlib.asynccontextmanager
     async def _lifespan(_app: FastAPI):
@@ -8154,6 +8164,7 @@ def create_app(state: AppState) -> FastAPI:
             price = parse_amount(str(said.get("amount", "")), True)
             if price <= 0:
                 raise ValueError("a listing names a price, and that is nothing")
+            _above_dust(price, "price")
             index = state.token_index(chain)
             row = index.inscription(contentlib._key(str(said.get("piece", ""))))
             if row is None:
@@ -9472,6 +9483,7 @@ def create_app(state: AppState) -> FastAPI:
                 amount = parse_amount(str(said.get("amount", "")), True)
                 if amount <= 0:
                     raise ValueError("a tip of nothing is not a tip")
+                _above_dust(amount, "tip")
                 where = _feed_author_address(chain, target)
                 if not where:
                     raise ValueError(
@@ -9811,6 +9823,7 @@ def create_app(state: AppState) -> FastAPI:
             amount = parse_amount(str(said.get("amount", "")), True)
             if amount <= 0:
                 raise ValueError("a payment of nothing is not a payment")
+            _above_dust(amount, "payment")
             index = state.token_index(chain)
             with contextlib.closing(index.open()) as db:
                 unsigned = fundinglib.build(
