@@ -53,6 +53,21 @@ CREATE TABLE IF NOT EXISTS key_announcement (
     url         TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS key_announcement_addr ON key_announcement(address, height);
+-- Arcade instances announcing who runs them (arcade/instance.py): a domain and
+-- a revision, published by the FEE ADDRESS that paid for the transaction. Every
+-- announcement is kept; the directory shows the latest per (address, domain).
+CREATE TABLE IF NOT EXISTS instance_announcement (
+    txid        TEXT PRIMARY KEY,
+    network     TEXT NOT NULL,
+    address     TEXT NOT NULL,
+    domain      TEXT NOT NULL,
+    revision    TEXT NOT NULL,
+    height      INTEGER NOT NULL,
+    block_time  INTEGER NOT NULL,
+    seen_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS instance_announcement_domain
+    ON instance_announcement(network, domain, height);
 -- The inscription somebody uses as their picture, as announced. Honoured only
 -- while the chain says they still hold it (D-138), so this is what they SAID,
 -- never what is drawn.
@@ -519,6 +534,35 @@ class MessageStore:
     def get_meta(self, key: str) -> str | None:
         row = self.conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
         return row["value"] if row else None
+
+    def add_instance_announcement(self, txid: str, network: str, address: str,
+                                  domain: str, revision: str, height: int,
+                                  block_time: int) -> None:
+        """An arcade announcing its domain and revision (arcade/instance.py).
+        A pool row (height 0) is promoted in place when its block arrives."""
+        import time as _time
+        self.conn.execute(
+            "INSERT INTO instance_announcement (txid, network, address, domain,"
+            " revision, height, block_time, seen_at) VALUES (?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(txid) DO UPDATE SET"
+            "  height = CASE WHEN excluded.height > 0 THEN excluded.height"
+            "                ELSE instance_announcement.height END,"
+            "  block_time = CASE WHEN excluded.height > 0 THEN excluded.block_time"
+            "                ELSE instance_announcement.block_time END",
+            (txid, network, address, domain, revision, int(height),
+             int(block_time), int(_time.time())))
+        self.conn.commit()
+
+    def instances(self, network: str) -> list[sqlite3.Row]:
+        """The latest announcement for each (fee address, domain), newest first.
+        Confirmed ones only: a directory entry should be something a block says."""
+        return self.conn.execute(
+            "SELECT * FROM instance_announcement a WHERE a.network = ? AND a.height > 0"
+            " AND NOT EXISTS (SELECT 1 FROM instance_announcement b"
+            "   WHERE b.network = a.network AND b.address = a.address"
+            "     AND b.domain = a.domain AND b.height > 0"
+            "     AND (b.height, b.txid) > (a.height, a.txid))"
+            " ORDER BY a.height DESC, a.txid DESC", (network,)).fetchall()
 
     def set_meta(self, key: str, value: str) -> None:
         self.conn.execute(

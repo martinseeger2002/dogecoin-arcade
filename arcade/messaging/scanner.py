@@ -25,6 +25,7 @@ from ..indexer import PrevOutCache
 from ..rpc import RpcClient
 from ..tx import TxError, extract
 from .. import release as releaselib
+from .. import instance as instancelib
 from . import content, feed, group
 from ..script import b58check_encode
 from .envelope import (
@@ -35,6 +36,7 @@ from .envelope import (
     TYPE_CHUNK,
     TYPE_KEY_ANNOUNCE,
     TYPE_RELEASE,
+    TYPE_INSTANCE,
     TYPE_SINGLE,
     is_message_payload,
     open_message,
@@ -308,6 +310,19 @@ class Scanner:
                     self.store.set_meta("release_notice", json.dumps(
                         {"revision": said, "from": atx.sender,
                          "height": height, "at": int(time.time())}))
+                    result.announcements += 1
+                continue
+
+            # An arcade saying who runs it: its domain and revision, paid for
+            # by its fee address -- which is what `atx.sender` is, and why no
+            # other signature is needed (arcade/instance.py). Public; every
+            # node indexes every one, so the directory needs no registry.
+            if len(body) >= 6 and body[5] == TYPE_INSTANCE:
+                said = instancelib.parse(body)
+                if said and atx.sender:
+                    self.store.add_instance_announcement(
+                        atx.txid, self.params.name, atx.sender, said["domain"],
+                        said["revision"], height, block_time)
                     result.announcements += 1
                 continue
 
