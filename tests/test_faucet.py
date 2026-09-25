@@ -63,19 +63,17 @@ def test_an_account_is_paid_once(faucet):
     assert len(chain.sent) == 1, "and nothing was sent the second time"
 
 
-def test_one_connection_gets_one_wallet_a_day(faucet):
-    """Not one ever: families, offices and phones on one network are real,
-    and refusing the second person in a house refuses the wrong person."""
+def test_a_second_person_on_the_same_connection_is_paid_too(faucet):
+    """No per-connection rule (2026-09-25): the second person in a house,
+    an office or a phone network gets their coins the same minute. The daily
+    ceiling and one-gift-per-account are what bound the faucet now."""
     chain = FakeChain()
     now = int(time.time())
     faucetlib.pour(chain, faucet, KEY, "nOne", ip="1.2.3.4", now=now)
-    with pytest.raises(FaucetError) as soon:
-        faucetlib.pour(chain, faucet, OTHER, "nTwo", ip="1.2.3.4", now=now + 60)
-    assert "one wallet a day" in str(soon.value)
-
-    faucetlib.pour(chain, faucet, OTHER, "nTwo", ip="1.2.3.4",
-                   now=now + 86401)
-    assert len(chain.sent) == 2, "tomorrow, yes"
+    faucetlib.pour(chain, faucet, OTHER, "nTwo", ip="1.2.3.4", now=now + 60)
+    assert len(chain.sent) == 2
+    with pytest.raises(FaucetError):                 # but never twice to one account
+        faucetlib.pour(chain, faucet, OTHER, "nTwo", ip="9.9.9.9", now=now + 120)
 
 
 def test_the_daily_ceiling_is_the_one_that_matters(register):
