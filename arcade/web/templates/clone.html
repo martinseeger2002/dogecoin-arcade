@@ -24,6 +24,25 @@ python3 installer/install.py</pre>
     <tr><th>Size</th><td>{{ "{:,}".format(source.bytes) }} bytes</td></tr>
     <tr><th>SHA-256</th><td class="mono" style="word-break:break-all">{{ source.sha256 }}</td></tr>
   </table>
+  {# What the number can and cannot prove (docs/multi-user.md, "What the checksum can
+     and cannot do"). A checksum people believe in is worse than none: it manufactures
+     confidence exactly where there is none. So the page says both halves. #}
+  <div class="note" style="margin:14px 0 0">
+    <strong>What this number proves, and what it does not.</strong>
+    <p style="margin:6px 0">It is worked out by this instance, over the code this instance
+      has checked out. So it <b>does</b> catch honest mistakes: a download that came through
+      damaged, a copy that is out of date, an operator who changed the code and did not
+      hide it &mdash; all of those give a different number.</p>
+    <p style="margin:6px 0">It <b>cannot</b> prove that this site is honest, or that it runs
+      the code it hands you. A dishonest copy controls every byte it sends, this number
+      included: it can serve the genuine program and the genuine number while running
+      something else. Asking a site to vouch for itself is not checking it.</p>
+    <p style="margin:6px 0 0">What you <b>can</b> do: compare the revision and the number
+      above with the ones on <a href="https://dogecoinarcade.com">dogecoinarcade.com</a>,
+      typed in yourself rather than followed from a link. If they differ, this copy is not
+      running the published code. If they match, you know the download is the published
+      one &mdash; and still nothing about what this server does with it.</p>
+  </div>
   {% else %}
   <p class="muted">This instance cannot pack its own source, so install from
     wherever you found it.</p>
@@ -83,6 +102,30 @@ python3 installer/install.py</pre>
 </div>
 
 <div class="panel">
+  <h2 style="margin-top:0">Running it for other people</h2>
+  <ol class="steps-plain">
+    <li><b>Put it on a domain of your own</b>, one that says who you are. Not a look-alike
+      of this one, and not a numbered one like dogecoinarcade2 or 7: nobody can own that
+      pattern, so the first thing that happens is somebody registers the next number and
+      borrows the trust. People should know your arcade by who runs it, not by its shape.</li>
+    <li><b>Tell the node its public name.</b> Put your domain in <code>public_hosts</code>
+      in <code>~/.dogecoinarcade/settings.json</code>, so visitors get the public side and
+      never your own wallet.</li>
+    <li><b>Set your cut</b> on your Overview page. It is paid to your node's own wallet, on
+      the trades your node builds.</li>
+    <li><b>Publish your revision</b> (the table above) where your users can see it, and keep
+      it current: it is how they can tell your copy is the published code.</li>
+    <li><b>Tell your people the one rule that protects them</b>: their twelve words are
+      typed once, when the wallet is made. After that the site unlocks with their password.
+      Any site that asks for the twelve words, for any reason, is stealing them &mdash; and
+      they should only ever sign in on a domain they typed themselves.</li>
+  </ol>
+  <p class="muted" style="font-size:.86rem">Coming: an instance will be able to sign its
+    domain with the key behind its fee address and announce it on the chain, so anybody
+    can check who runs a copy without trusting a list (docs/multi-user.md, "Identity by key").</p>
+</div>
+
+<div class="panel">
   <h2 style="margin-top:0">Then it is yours</h2>
   <p class="muted">
     You set the fee, you keep the node runner's cut on what is built through
@@ -95,6 +138,8 @@ python3 installer/install.py</pre>
 
 <style>
 .clone{background:var(--code);border-radius:8px;padding:12px 14px;overflow-x:auto}
+.steps-plain{margin:0 0 12px;padding-left:20px}
+.steps-plain li{margin:0 0 10px}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem}
 </style>
 {% endblock %}
