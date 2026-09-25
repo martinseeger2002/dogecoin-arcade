@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "_account_wallettabs.html" as wt %}
+{% import "_not_ordinals.html" as notord %}
 {% block title %}Your NFTs · DogecoinArcade{% endblock %}
 {% block body %}
 <h1>Wallet</h1>
@@ -7,6 +8,7 @@
 <p class="sub">The inscriptions held by this account's addresses, read off
   the chain. Everything inscribed here, yours or not, is on the
   <a href="/nfts">NFTs</a> page.</p>
+{{ notord.pieces() }}
 
 <p class="muted" id="shut" hidden style="font-size:.86rem">
   Your wallet is not open in this tab, so nothing here can be signed.

@@ -2,6 +2,7 @@
 {% import "_chains.html" as chains %}
 {% import "_token_confirm.html" as tk %}
 {% block title %}Tokens · DogecoinArcade{% endblock %}
+{% import "_not_ordinals.html" as notord %}
 {% block body %}
 {% set tag = 'mainnet' if chain.is_mainnet else 'testnet' %}
 <h1>Tokens {{ tk.chain_switch(chain, other_chains, csrf, "/tokens", public) }}</h1>
@@ -19,6 +20,7 @@
   {{ tk.confirm(prepared, confirm_action, confirm_fields, confirm_what, back, chain, csrf) }}
 {% endif %}
 
+{{ notord.pieces() }}
 <div class="chainbar">
   {# hide_wallet for visitors and accounts: the Balance here is the NODE's wallet, and a
      newcomer read 191,692 as their own (walk-through, 2026-09-25). #}
