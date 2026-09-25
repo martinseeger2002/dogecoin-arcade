@@ -2,6 +2,13 @@
 {% import "_chains.html" as chains %}
 {% block title %}Your arcade · DogecoinArcade{% endblock %}
 {% block body %}
+<style>
+.facepick{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}
+.faceopt{padding:0;width:56px;height:56px;border-radius:50%;overflow:hidden;border:2px solid var(--line);
+  background:var(--panel);box-shadow:none;cursor:pointer}
+.faceopt img{width:100%;height:100%;object-fit:cover;display:block}
+.faceopt.on{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 30%,transparent)}
+</style>
 <h1 id="hello">Your arcade</h1>
 <p class="sub" id="whoami">Your keys are in this browser. This node holds
   none of them &mdash; it builds what you ask for, you sign it, and it
@@ -133,6 +140,12 @@
           spellcheck="false" placeholder="the inscription id of a piece you hold"></div>
         <button type="button" class="small" id="publish-face">Publish this picture</button>
       </div>
+      {# Pasting a 64-character id is not how a person picks a face: their own
+         pictures, to tap. The box above still takes an id (2026-09-25). #}
+      <div id="face-pick" class="facepick" hidden></div>
+      <p class="muted" id="face-none" hidden style="font-size:.82rem;margin:8px 0 0">
+        You hold no pictures yet. Put one on the chain from <a href="/nfts">NFTs</a>
+        and it shows up here.</p>
       <div class="row" id="face-preview" hidden
            style="margin-top:10px;align-items:center;gap:10px">
         <img id="face-img" alt="" loading="lazy"
@@ -388,6 +401,54 @@ function drawProfile(said) {
 
 for (const id of ["pfp", "bio", "url"])
   $(id).oninput = () => { $(id).dataset.touched = "yes"; };
+
+/* The face as it will look, as soon as it is chosen or typed. */
+function previewFace() {
+  const id = $("pfp").value.trim();
+  const piece = /^[0-9a-f]{64}$/.test(id);
+  $("face-preview").hidden = !piece;
+  if (piece) $("face-img").src = "/content/" + id;
+}
+$("pfp").addEventListener("input", previewFace);
+
+/* The pictures this account holds, to tap rather than paste. Asked once, the
+   first time the section is opened. */
+let pickedOnce = false;
+async function loadFacePicker() {
+  if (pickedOnce) return;
+  pickedOnce = true;
+  try {
+    const said = await (await fetch("/account/nfts")).json();
+    const pieces = [];
+    for (const chain of said.chains || []) {
+      for (const piece of chain.pieces || []) {
+        if (String(piece.content_type || "").startsWith("image/")) pieces.push(piece);
+      }
+    }
+    $("face-none").hidden = pieces.length > 0;
+    $("face-pick").hidden = !pieces.length;
+    $("face-pick").replaceChildren();
+    for (const piece of pieces) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "faceopt";
+      b.title = "#" + piece.number;
+      b.setAttribute("aria-label", "Use picture #" + piece.number);
+      const img = document.createElement("img");
+      img.src = "/content/" + piece.txid; img.alt = ""; img.loading = "lazy";
+      b.appendChild(img);
+      b.onclick = () => {
+        $("pfp").value = piece.txid; $("pfp").dataset.touched = "yes";
+        document.querySelectorAll(".faceopt").forEach((o) => o.classList.remove("on"));
+        b.classList.add("on");
+        previewFace();
+      };
+      $("face-pick").appendChild(b);
+    }
+  } catch (e) { pickedOnce = false; }
+}
+$("face-pick").closest("details").addEventListener("toggle", (e) => {
+  if (e.target.open) loadFacePicker();
+});
 
 async function refreshCounts() {
   try { $("mail").textContent = (await mail.inbox()).length; } catch (e) {}
