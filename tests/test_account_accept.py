@@ -766,3 +766,19 @@ def test_the_buyer_is_given_the_way_to_finish_an_answered_offer(node):
     assert "Your offer" in page and f'data-answer-for="{offer}"' in page
     holder = pair["holder"][0].get(f"/inscriptions/{pair['piece']}/view").text
     assert "Your offer" not in holder, "the holder answers; it has nothing to finish"
+
+
+def test_an_account_s_answer_holds_the_piece_for_a_day(node):
+    """Fifteen minutes was gone before most buyers saw the answer (filming,
+    2026-09-26); an account's buyer finishes from their own tab whenever they
+    next open it. The hold is a receipt, not a lock -- the leg stays good -- but
+    the seller's page should not offer the piece to somebody else that soon."""
+    import time as _time
+    app, state, rpc = node
+    state.public = True
+    pair = _pair(node, 84, 85)
+    offer = _offered(pair)
+    signed = _signed_answer(pair, offer, _leg(pair, offer))
+    assert signed.status_code == 200, signed.text
+    left = signed.json()["held_until"] - _time.time()
+    assert 23 * 3600 < left <= 24 * 3600, left
