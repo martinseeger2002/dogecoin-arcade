@@ -8143,7 +8143,40 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             taken, cover = set(), None
         cap = None
+        repeat_note = ""
         if taken:
+            # Which of these pictures are already in the set, by their bytes:
+            # a HashLips batch numbers itself from 1 every time, so an edition
+            # number cannot tell a new batch from the same folder uploaded
+            # again. The same picture is left out (it is up already); only what
+            # is new is written down, after the last one on the chain.
+            try:
+                have = set()
+                for offset in range(0, 10000, 500):
+                    page = index.collection_items(address, build.collection,
+                                                  limit=500, offset=offset)
+                    have |= {row["sha256"] for row in page if row["sha256"]}
+                    if len(page) < 500:
+                        break
+            except Exception:
+                have = set()
+            fresh = [item for item in build.items
+                     if hashlib.sha256((build.folder / item.image).read_bytes()
+                                       ).hexdigest() not in have]
+            if not fresh:
+                return JSONResponse({"detail": (
+                    f"{build.collection} is already on this chain from this "
+                    f"address, all {len(build.items):,} pieces of it. Inscribing "
+                    "it again would pay for a second copy of every item, and no "
+                    "node would file the copies into the set. Nothing has been "
+                    "paid for.")}, status_code=400)
+            if len(fresh) < len(build.items):
+                repeat_note = (
+                    f"{len(build.items) - len(fresh):,} of these are already on "
+                    f"this chain from this address, so this run is written down "
+                    f"as the other {len(fresh):,}. A second copy joins nothing "
+                    "and costs again.")
+                build = dataclasses.replace(build, items=fresh)
             cap = inscriptionlib.collection_details((cover or {}).get("json") or "").get("supply")
             if numbering != "keep":
                 build = collectionlib.renumbered(build, max(taken) + 1)
@@ -8175,7 +8208,11 @@ def create_app(state: AppState) -> FastAPI:
             cap = supply or None
         # Asked between the two writes and not inside either: the refusal is
         # about the chain and the run book, and `create` is about the build.
-        already = _what_the_account_has(account, chain, address, build, name)
+        # A continuation was checked against the set above, picture by picture;
+        # the book's "finished and not indexed yet" guard is for a FIRST run,
+        # whose set the index cannot see yet.
+        already = ({"blocked": "", "note": repeat_note, "skip": set()} if taken
+                   else _what_the_account_has(account, chain, address, build, name))
         if already["blocked"]:
             return JSONResponse({"detail": already["blocked"]}, status_code=400)
         if already["skip"]:
