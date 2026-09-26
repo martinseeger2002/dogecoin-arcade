@@ -3551,7 +3551,7 @@ def create_app(state: AppState) -> FastAPI:
                 {"txid": row["txid"],
                  "label": (_fromjson(row["json"]) or {}).get("name")
                           or f"#{row['number']:,}"}
-                for row in index.inscriptions(owners=sorted(owned), limit=60)
+                for row in index.inscriptions(owners=sorted(owned), limit=200)
                 if row["held"] and str(row["content_type"] or "").startswith("image/")]
         except Exception:
             data["my_pictures"] = []
@@ -4474,6 +4474,18 @@ def create_app(state: AppState) -> FastAPI:
             if tag == wanted:
                 return address, True
         return "", False
+
+    def _about_of(data: Any) -> str:
+        """A token's description as a person wrote it. An issuance that carries an
+        icon stores `{"about": ..., "icon": ...}`; plain text is itself."""
+        text = str(data or "")
+        try:
+            said = json.loads(text)
+        except ValueError:
+            return text
+        if isinstance(said, dict):
+            return str(said.get("about") or "")
+        return text
 
     def _tags_for(addresses) -> dict[str, str]:
         """Which of these addresses hold a tag. Empty when nothing is indexed.
@@ -6180,15 +6192,21 @@ def create_app(state: AppState) -> FastAPI:
             raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             node_error = str(exc)
+        holders = index.holders(property_id)
         return {
             "chain": chain, "node": chain.status(),
             "prop": prop,
-            "holders": index.holders(property_id),
+            "holders": holders,
             "history": index.history(property_id=property_id),
             "index": index.status(node_tip=state.ledger_tips.get(chain.network)),
             "owned": owned,
             "is_issuer": prop["issuer"] in owned,
             "face": _faces_for(index, [prop])[property_id],
+            # Who, by @name where they have one, as every list shows them; and the
+            # description as its words, not the issuance JSON that carries the icon
+            # beside them (filming the token tutorial, 2026-09-25).
+            "tags": _tags_for([prop["issuer"]] + [h["address"] for h in holders]),
+            "about": _about_of(prop.get("data")),
             "pad": _pad_on(index, chain, property_id),
             "node_error": node_error,
         }
@@ -6592,8 +6610,22 @@ def create_app(state: AppState) -> FastAPI:
         seen = notify.seen_now(events, _notif_seen(account.pubkey))
         seen["message_tab"] = max(int(seen.get("message_tab", 0)), int(seen.get("message", 0)))
         state.set_setting(f"notif_seen:{account.pubkey}", seen)
-        return render(request, "notifications.html", events=events, names=names,
-                      when=_when, chain=chain)
+        rows = notify.grouped(events)
+        faces: dict[str, str] = {}
+        for row in rows:
+            for who in row.actors[:1]:
+                if who and who not in faces:
+                    try:
+                        faces[who] = str(_profile_of(who).get("pfp") or "")
+                    except Exception:                     # noqa: BLE001
+                        faces[who] = ""
+        # A colour per person for those without a picture: every address starts
+        # with the same letter, so an initial alone made everybody the same "N".
+        hues = {who: int(hashlib.sha256(who.encode()).hexdigest()[:4], 16) % 360
+                for row in rows for who in row.actors[:1] if who}
+        return render(request, "notifications.html", rows=rows, names=names,
+                      faces=faces, hues=hues, ago=notify.ago, now=int(time.time()),
+                      chain=chain)
 
     # --- seats, and signing in ------------------------------------------------
     #

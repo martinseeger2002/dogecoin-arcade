@@ -52,6 +52,7 @@
   <p class="muted picked" id="picked-build" hidden>
     <strong id="build-folder" style="display:block"></strong>
     <span id="picked-build-text"></span>
+    <span id="build-pace" style="display:block;margin-top:4px"></span>
     <span id="build-sizes" class="sizes" hidden></span></p>
   <div class="row" id="run-go" hidden>
     <div style="flex:1" class="muted" id="run-says"
@@ -432,6 +433,13 @@ function runNote(text, kind = "err") {
   note.hidden = !text;
 }
 
+function capNote(ms) {
+  runNote(`This node takes a set number of inscriptions an hour per account, and `
+          + `this hour's are used. The next piece goes by itself in about `
+          + `${Math.max(1, Math.round(ms / 60000))} min \u2014 keep this tab open, or come `
+          + "back and it carries on.", "info");
+}
+
 function runButtons(run) {
   const state = run ? autoOf(run) : null;
   const go = $("run-piece");
@@ -446,6 +454,16 @@ async function autoRun(run) {
   if (running) return;
   const state = autoOf(run);
   if (!state || state.paused) return;
+  // Waiting for the hour: say so and come back then. The panel's own refresh
+  // called this again at once and asked the node again, which cleared and
+  // redrew the note in a loop (filming, 2026-09-25) -- so the wait is kept.
+  const left = Number(state.resumeAt || 0) - Date.now();
+  if (left > 0) {
+    capNote(left);
+    clearTimeout(resumeTimer);
+    resumeTimer = setTimeout(() => autoRun(run), left + 1000);
+    return;
+  }
   const held = await take();
   if (!held) {
     runNote("Your wallet is not open in this tab, so the run is waiting. Open it and it "
@@ -465,13 +483,11 @@ async function autoRun(run) {
       } catch (e) {
         const wait = /again in (\d+) minute/.exec(String(e.message || e));
         if (!wait) throw e;
-        const minutes = Number(wait[1]);
-        runNote(`This node takes a set number of inscriptions an hour per account, and `
-                + `this hour's are used. The next piece goes by itself in about `
-                + `${minutes} min \u2014 keep this tab open, or come back and it carries on.`,
-                "info");
+        const ms = Number(wait[1]) * 60 * 1000 + 15000;
+        autoSet(run, {...autoOf(run), resumeAt: Date.now() + ms});
+        capNote(ms);
         clearTimeout(resumeTimer);
-        resumeTimer = setTimeout(() => autoRun(run), minutes * 60 * 1000 + 15000);
+        resumeTimer = setTimeout(() => autoRun(run), ms);
         return;
       }
       if (offer.finished) {
@@ -563,10 +579,23 @@ async function measureBuild() {
   note.hidden = false;
   // The folder, by name, and what is in it: the browser's own box only says
   // "25 files selected" (filming the collection tutorial, 2026-09-25).
-  const folder = ((files[0].webkitRelativePath || "").split("/")[0]) || "the folder";
+  const folder = ((files[0].webkitRelativePath || "").split("/")[0])
+    || `${commas(files.length)} files`;
   const jsons = files.filter((f) => /\.json$/i.test(f.name));
   const meta = jsons.some((f) => f.name === "_metadata.json");
   const pics = files.filter(arcadeIsImage).length;
+  // The pace, said when the folder is chosen rather than after it is uploaded
+  // (filming, 2026-09-25: the line came later and Start cleared it).
+  $("build-pace").textContent = "";
+  allowance().then((room) => {
+    if (!room || !(room.limit > 0) || !pics) return;
+    $("build-pace").textContent = pics > room.limit
+      ? `This node takes ${commas(room.limit)} inscriptions an hour per account, so `
+        + `${commas(pics)} take about ${Math.ceil(pics / room.limit)} hours: the run `
+        + "waits out each hour by itself."
+      : `This node takes ${commas(room.limit)} inscriptions an hour per account, so all `
+        + `${commas(pics)} can go in one go.`;
+  });
   $("build-folder").textContent = `${folder}: ${commas(pics)} picture${pics === 1 ? "" : "s"}, `
     + `${commas(jsons.length - (meta ? 1 : 0))} JSON file${jsons.length - (meta ? 1 : 0) === 1 ? "" : "s"}`
     + (meta ? ", and _metadata.json" : ", and no _metadata.json (the Art Engine writes one)");
@@ -716,7 +745,7 @@ $("run-piece").onclick = async () => {
   say(""); news("");
   const state = autoOf(run);
   if (state) {
-    autoSet(run, {...state, paused: !state.paused});
+    autoSet(run, {...state, paused: !state.paused, resumeAt: 0});
     clearTimeout(resumeTimer);
     runButtons(run);
     if (state.paused) autoRun(run);

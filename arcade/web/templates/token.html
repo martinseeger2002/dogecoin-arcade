@@ -107,13 +107,13 @@
 <div class="panel">
   <table>
     <tr><td class="muted" style="width:130px">Issuer</td>
-        <td><code class="addr" onclick="copyAddr(this)" title="Click to copy">{{ prop.issuer }}</code>
+        <td>{% if tags and tags.get(prop.issuer) %}<a href="/u/{{ tags[prop.issuer] }}">@{{ tags[prop.issuer] }}</a> {% endif %}<code class="addr" onclick="copyAddr(this)" title="Click to copy">{{ prop.issuer }}</code>
           {% if is_issuer %}<span class="pill ok">you</span>{% endif %}</td></tr>
     {% if prop.category or prop.subcategory %}
     <tr><td class="muted">Category</td><td>{{ prop.category }}{% if prop.subcategory %} / {{ prop.subcategory }}{% endif %}</td></tr>
     {% endif %}
     {% if prop.url %}<tr><td class="muted">Link</td><td class="mono" style="word-break:break-all">{{ prop.url }}</td></tr>{% endif %}
-    {% if prop.data %}<tr><td class="muted">Description</td><td>{{ prop.data }}</td></tr>{% endif %}
+    {% if about %}<tr><td class="muted">Description</td><td>{{ about }}</td></tr>{% endif %}
     <tr><td class="muted">Created by</td>
         <td class="mono" style="font-size:.78rem;word-break:break-all">{{ prop.creation_txid }}</td></tr>
   </table>
@@ -162,7 +162,7 @@
 {% if holders %}
   <table class="wallets">
   {% for h in holders %}
-    <tr><td><code class="addr" onclick="copyAddr(this)" title="Click to copy">{{ h.address }}</code>
+    <tr><td>{% if tags and tags.get(h.address) %}<a href="/u/{{ tags[h.address] }}">@{{ tags[h.address] }}</a> {% endif %}<code class="addr" onclick="copyAddr(this)" title="Click to copy">{{ h.address }}</code>
           {% if h.address in owned %}<span class="pill ok">you</span>{% endif %}</td>
         <td style="text-align:right;font-variant-numeric:tabular-nums">{{ h.display }}</td></tr>
   {% endfor %}

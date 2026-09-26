@@ -46,11 +46,11 @@ def test_an_account_gets_its_own_page(client):
     body = app.get("/me").text
     assert "Your arcade" in body
     assert "Your keys are in this browser" in body
-    # It now mirrors the parts of Overview that genuinely apply to an
-    # account -- its own name, contacts and chain status -- but not the
-    # settings that configure automation running on the NODE's own key,
-    # which an account has no equivalent of and is not offered.
-    assert "Known contacts" in body
+    # Since 2026-09-25 (the operator: "it should have your name, bio, URL ... and your
+    # usage"): the profile and the usage, not the wallet or the counts -- and
+    # still none of the settings that configure the NODE's own automation.
+    assert 'id="me-bio"' in body and "Your usage" in body
+    assert "Known contacts" not in body
     assert "Accept offers that meet my asking price" not in body
     assert "Install updates automatically" not in body
     assert 'id="scan"' not in body
