@@ -67,7 +67,23 @@ CREATE TABLE IF NOT EXISTS faucet (
 );
 CREATE INDEX IF NOT EXISTS faucet_when ON faucet(at);
 CREATE INDEX IF NOT EXISTS faucet_ip ON faucet(ip, at);
+-- The daily top-off (2026-09-25): once a day an account is brought back
+-- up to the gift. One row per account per day, written after the payment, so a
+-- restart cannot pay twice and a day that failed is simply tried again.
+CREATE TABLE IF NOT EXISTS topoff (
+    pubkey  TEXT NOT NULL,
+    day     TEXT NOT NULL,
+    address TEXT NOT NULL,
+    amount  INTEGER NOT NULL,
+    txid    TEXT NOT NULL DEFAULT '',
+    at      INTEGER NOT NULL,
+    PRIMARY KEY (pubkey, day)
+);
+CREATE INDEX IF NOT EXISTS topoff_when ON topoff(at);
 """
+
+#: Below this a top-off is not worth an output (the soft dust limit, fees.py).
+TOPOFF_LEAST = 1_000_000
 
 
 class FaucetError(Exception):
@@ -111,11 +127,19 @@ class Faucet:
                      row["txid"], row["at"])
 
     def today(self, now: int | None = None) -> int:
+        """Everything paid in the last day: first gifts and top-offs alike, so an
+        operator's daily ceiling covers both."""
         now = int(now if now is not None else time.time())
         row = self.conn.execute(
-            "SELECT COALESCE(SUM(amount), 0) FROM faucet WHERE at > ?",
-            (now - 86400,)).fetchone()
+            "SELECT (SELECT COALESCE(SUM(amount), 0) FROM faucet WHERE at > ?)"
+            " + (SELECT COALESCE(SUM(amount), 0) FROM topoff WHERE at > ?)",
+            (now - 86400, now - 86400)).fetchone()
         return int(row[0] or 0)
+
+    def topped_today(self, pubkey: str, now: int | None = None) -> bool:
+        day = time.strftime("%Y-%m-%d", time.gmtime(now if now is not None else time.time()))
+        return self.conn.execute("SELECT 1 FROM topoff WHERE pubkey = ? AND day = ?",
+                                 ((pubkey or "").lower(), day)).fetchone() is not None
 
     def left_today(self, now: int | None = None) -> int:
         if self.ceiling is None:
@@ -172,3 +196,29 @@ def pour(chain, faucet: Faucet, pubkey: str, address: str, ip: str = "",
     with chain.rpc() as rpc:
         txid = rpc.call("sendtoaddress", address, faucet.gift / 100_000_000)
     return faucet.record(pubkey, address, txid, ip=ip, now=now)
+
+
+def top_off(chain, faucet: Faucet, pubkey: str, address: str, spendable: int,
+            now: int | None = None) -> int:
+    """Bring one account back up to the gift, once a day. Testnet only.
+
+    Sends only the shortfall: nothing to an account at or above the gift, nothing
+    below the dust limit, nothing twice in one (UTC) day, nothing past the daily
+    ceiling, and nothing when the faucet is off (a gift of 0). Returns the sats
+    sent, 0 for "not today"."""
+    now = int(now if now is not None else time.time())
+    if chain.is_mainnet or faucet.gift <= 0 or not address:
+        return 0
+    short = faucet.gift - int(spendable)
+    if short < TOPOFF_LEAST or faucet.topped_today(pubkey, now):
+        return 0
+    if faucet.left_today(now) < short:
+        return 0
+    with chain.rpc() as rpc:
+        txid = rpc.call("sendtoaddress", address, short / 100_000_000)
+    day = time.strftime("%Y-%m-%d", time.gmtime(now))
+    faucet.conn.execute(
+        "INSERT OR IGNORE INTO topoff (pubkey, day, address, amount, txid, at)"
+        " VALUES (?,?,?,?,?,?)", ((pubkey or "").lower(), day, address, short, txid, now))
+    return short
+

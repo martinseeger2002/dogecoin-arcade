@@ -65,6 +65,10 @@
     <label class="muted" for="faucetdaily">At most, per day, in all</label>
     <input autocomplete="off" id="faucetdaily" style="width:160px" placeholder="no limit"> <span class="muted">(empty = no limit)</span>
   </div>
+  <label class="switch"><input type="checkbox" id="faucet_topoff"> Every day, top each
+    account back up to that amount (testnet only; only the shortfall is sent)</label>
+  <label class="switch"><input type="checkbox" id="faucet_mine"> Mine testnet blocks to the node's
+    wallet by itself when it runs low (under 20 gifts, counting coins still maturing)</label>
   <button type="button" class="small" id="savefaucet" style="margin-top:10px">Save faucet</button>
 </section>
 
@@ -275,6 +279,8 @@ section.panel h2{margin-top:0}
     // faucet + switches
     $('faucetgift').value = coins(d.faucet.gift);
     $('faucetdaily').value = d.faucet.daily ? coins(d.faucet.daily) : '';
+    $('faucet_topoff').checked = d.faucet.topoff !== false;
+    $('faucet_mine').checked = d.faucet.mine !== false;
     ['auto_update', 'auto_sell', 'auto_fill'].forEach(function (k) { $(k).checked = !!d.selling[k]; });
     $('modurl').value = (d.moderation && d.moderation.url) || '';
     $('modmodel').value = (d.moderation && d.moderation.model) || '';
@@ -307,7 +313,9 @@ section.panel h2{margin-top:0}
       .then(function () { say('Limits saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
   };
   $('savefaucet').onclick = function () {
-    call('/admin/api/settings', {faucet_gift: $('faucetgift').value, faucet_daily: $('faucetdaily').value})
+    call('/admin/api/settings', {faucet_gift: $('faucetgift').value, faucet_daily: $('faucetdaily').value,
+                                 faucet_topoff: $('faucet_topoff').checked,
+                                 faucet_mine: $('faucet_mine').checked})
       .then(function () { say('Faucet saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
   };
   $('saveswitches').onclick = function () {
