@@ -2,11 +2,18 @@
 {% block title %}{{ summary.collection }} · DogecoinArcade{% endblock %}
 {% block body %}
 <h1>{{ summary.collection }}</h1>
-<p class="sub">{{ "{:,}".format(summary.count) }} inscription{{ '' if summary.count == 1 else 's' }}
+{% set d = summary.details or {} %}
+{% if d.description %}<p style="max-width:70ch;margin:0 0 6px">{{ d.description }}</p>{% endif %}
+<p class="sub"><strong>{{ "{:,}".format(summary.count) }} of {{ "{:,}".format(summary.supply) if summary.supply else "∞" }}</strong>
   on {{ chain.label }} by
    {{ summary.creator|who }},
   editions {{ summary.first_edition }} to {{ summary.last_edition }},
   numbers #{{ "{:,}".format(summary.first_number) }} to #{{ "{:,}".format(summary.last_number) }}.</p>
+{% if d.artist or d.url %}
+<p class="muted" style="margin:-6px 0 12px;font-size:.9rem">
+  {% if d.artist %}Art by {{ d.artist }}{% endif %}{% if d.artist and d.url %} &middot; {% endif %}
+  {% if d.url %}<span class="mono" style="user-select:all" title="their link — copy it, do not click it">{{ d.url }}</span>{% endif %}</p>
+{% endif %}
 
 <div class="row" style="margin-bottom:14px">
   <a class="btn ghost small" href="/collections">All collections</a>

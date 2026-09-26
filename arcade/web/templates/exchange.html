@@ -83,8 +83,10 @@
           {% if b.settled %}
             <span class="pill ok">sold</span>
             <div class="mono muted" style="font-size:.76rem">{{ b.swap_txid[:12] }}…</div>
+          {% elif b.busy %}
+            <span class="muted">a trade of this piece is waiting for its block</span>
           {% elif b.accepted %}
-            <span class="muted">accepted &mdash; waiting for
+            <span class="muted">you answered &mdash; waiting for
                {{ b.buyer|who }}
               to sign</span>
             <div class="muted" style="font-size:.76rem">held until {{ b.until }}</div>
@@ -208,6 +210,7 @@
             {%- if b.pending %}in the mempool{% else %}block {{ "{:,}".format(b.block_height) }}{% endif %}</td>
           {% if viewer == 'account' %}
           <td style="text-align:right;white-space:nowrap" data-answer-for="{{ b.txid }}"
+              {% if b.busy %}data-busy="1"{% endif %}
               data-piece="{{ b.inscription }}" data-price="{{ b.price }}"
               data-number="{{ b.number if b.number is not none else '' }}"></td>
           {% endif %}</tr>

@@ -14,11 +14,12 @@
 
 {% macro row(r) %}
 {% set link = ('/me/messages' if r.source == 'message'
-               else ('/feed?post=' ~ r.target if r.source == 'feed' else '/me/nfts')) %}
+               else ('/feed?post=' ~ r.target if r.source == 'feed'
+               else ('/inscriptions/' ~ r.target ~ '/view' if r.source == 'swap' else '/me/nfts'))) %}
 {% set who = r.actors[0] if r.actors else '' %}
 {% set badge = {'liked': ('♥', 'like'), 'disliked': ('↓', 'dislike'), 'replied to': ('↩', 'reply'),
                 'shared': ('⇄', 'share'), 'tipped': ('◆', 'tip'), 'message': ('✉', 'mail'),
-                'sold': ('✓', 'sale')}.get(r.kind, ('•', 'reply')) %}
+                'sold': ('✓', 'sale'), 'bought': ('✓', 'sale')}.get(r.kind, ('•', 'reply')) %}
 <a class="nrow{{ ' new' if r.unread }}" href="{{ link }}">
   <span class="nface">
     {%- if faces.get(who) -%}<img src="/content/{{ faces[who] }}" alt="" loading="lazy">
@@ -30,6 +31,10 @@
     <span class="nline">
       {% if r.source == 'sale' %}
         <b>You sold {{ r.text }}</b>{% if r.amount %} for <span class="namt">{{ '%g' % (r.amount / 100000000) }}</span>{% endif %}
+      {% elif r.source == 'swap' %}
+        <b>You {{ 'sold' if r.kind == 'sold' else 'bought' }} {{ r.text }}</b>
+        {{ 'to' if r.kind == 'sold' else 'from' }} {{ name(who) }}{% if r.amount %} for
+        <span class="namt">{{ '%g' % (r.amount / 100000000) }}</span>{% endif %}
       {% elif r.source == 'message' %}
         <b>{{ name(who) }}</b> sent you {{ 'a message' if r.count == 1 else r.count ~ ' messages' }}
       {% else %}

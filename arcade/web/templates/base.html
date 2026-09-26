@@ -23,6 +23,11 @@
      block, and the amber accent is too close to the page ground to do that. */
   --sent:#2f7cf6; --sent-fg:#fff;
 }
+/* Scrollbars in the theme's own colours, not the browser's white track: color-scheme
+   alone left a white strip under the piece page's JSON in dark mode (2026-09-26). */
+*{scrollbar-color:var(--line) transparent}
+::-webkit-scrollbar{width:10px;height:10px;background:transparent}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:6px}
 :root{color-scheme:light dark}   /* native scrollbars and form parts follow the theme:
    a white overflow strip under a table in dark mode (filming, 2026-09-25) */
 @media (prefers-color-scheme:dark){

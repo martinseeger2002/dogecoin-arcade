@@ -5968,8 +5968,14 @@ def create_app(state: AppState) -> FastAPI:
                         o["price"] = swaplib.describe_leg(_take_json(o, index))
             except Exception:
                 my_offers = []
+        # A swap of this piece already in the mempool: its offers are not
+        # answerable or finishable meanwhile (a stuck one sits for days).
+        try:
+            swap_waiting = index.pending_swaps().get(row["txid"], "") if public else ""
+        except Exception:
+            swap_waiting = ""
         return render(request, "inscription_view.html", row=row, chain=chain,
-                      my_offers=my_offers,
+                      my_offers=my_offers, swap_waiting=swap_waiting,
                       listed=listed,
                       tag=named.get(row["owner"]), sale=sale,
                       creator_tag=named.get(row["creator"]),
@@ -6858,6 +6864,25 @@ def create_app(state: AppState) -> FastAPI:
                 events += notify.sale_events(conn, owners)
         except Exception as exc:                          # noqa: BLE001
             log.info("notifications: sales: %s", exc)
+        try:
+            tchain, index = _token_chain()
+            mine_there = {a for a in (_account_address(account.pubkey, tchain),) if a}
+            rows = index.swaps_of(sorted(mine_there | owners))
+            paid = {}
+            if rows:
+                wanted = {r["txid"] for r in rows}
+                for trade in index.trades():
+                    if trade["txid"] in wanted:
+                        coins = next((l for l in (trade["give"], trade["take"])
+                                      if l.kind == inscriptionlib.LEG_COINS), None)
+                        if coins is not None:
+                            paid[trade["txid"]] = int(coins.amount or 0)
+            # A listing sale is already told by sale_events; do not say it twice.
+            listed = {e.extra.get("txid") for e in events if e.source == "sale"}
+            events += [e for e in notify.swap_events(rows, mine_there | owners, paid)
+                       if e.extra.get("txid") not in listed]
+        except Exception as exc:                          # noqa: BLE001
+            log.info("notifications: swaps: %s", exc)
         return notify.merge(events, _notif_seen(account.pubkey))
 
     def _account_counts(request: Request) -> dict:
@@ -13503,7 +13528,12 @@ def create_app(state: AppState) -> FastAPI:
             data["offers_out"] = _merge_offers(
                 [o for o in pending if o["buyer"] in own],
                 index.offers_by(sorted(data["owned"])))
+            try:
+                swapping = index.pending_swaps()
+            except Exception:
+                swapping = {}
             for entry in data["offers_in"] + data["offers_out"]:
+                entry["busy"] = entry["inscription"] in swapping
                 entry["price"] = swaplib.describe_leg(_take_json(entry, index))
                 # The other half of the sentence an answer is confirmed with: not
                 # only what the offer pays, but what answering hands over.

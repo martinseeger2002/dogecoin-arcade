@@ -24,6 +24,12 @@ const spots = [...document.querySelectorAll("[data-answer-for]")];
   for (const spot of spots) {
     const answer = answers[spot.dataset.answerFor];
     if (!answer) continue;
+    if (spot.dataset.busy) {
+      // Its coins are already in a swap that has not reached a block; a second
+      // one would spend them twice (a stuck soft-dust swap sat for days).
+      spot.innerHTML = '<span class="muted">a trade of this piece is waiting for its block</span>';
+      continue;
+    }
     if (!answer.ok || !answer.leg) {
       spot.innerHTML = '<span class="muted">refused</span>';
       continue;
