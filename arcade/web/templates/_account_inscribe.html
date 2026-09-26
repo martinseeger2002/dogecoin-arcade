@@ -134,6 +134,39 @@ const take = async () => keys || (keys = await opening);
  *  the one this tab worked out of the transaction's own bytes. `offer.fee` is
  *  this node's number, and a confirmation that repeats it proves nothing.
  */
+/** A yes/no card on the page instead of the browser's own dialog (found filming
+ *  the tutorial, 2026-09-25: window.confirm looked foreign, and its one run-on
+ *  sentence read badly). Resolves true for the first button, false otherwise. */
+function askYes(title, detail, yes = "Inscribe") {
+  return new Promise((answer) => {
+    const back = document.createElement("div");
+    back.className = "askcard-back";
+    const card = document.createElement("div");
+    card.className = "panel askcard";
+    card.setAttribute("role", "dialog");
+    const h = document.createElement("h3");
+    h.textContent = title;
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = detail;
+    const row = document.createElement("div");
+    row.className = "row";
+    const ok = document.createElement("button");
+    ok.type = "button"; ok.textContent = yes;
+    const no = document.createElement("button");
+    no.type = "button"; no.className = "ghost"; no.textContent = "Cancel";
+    row.append(ok, no);
+    card.append(h, p, row);
+    back.append(card);
+    document.body.append(back);
+    const done = (v) => { back.remove(); answer(v); };
+    ok.onclick = () => done(true);
+    no.onclick = () => done(false);
+    back.onclick = (e) => { if (e.target === back) done(false); };
+    ok.focus();
+  });
+}
+
 async function offerAndConfirm(where, body, says, done) {
   say(""); news("");
   try {
@@ -145,7 +178,8 @@ async function offerAndConfirm(where, body, says, done) {
     });
     const offer = await asked.json();
     if (!asked.ok) throw new Error(offer.detail || "that cannot be done");
-    if (!confirm(says(await wallet.checked(offer, held), offer))) return;
+    if (!(await askYes("Go ahead?", says(await wallet.checked(offer, held), offer), "Yes")))
+      return;
     const out = await wallet.confirm(held, offer);
     news(done(out, offer));
   } catch (e) { say(String(e.message || e)); }
@@ -181,7 +215,15 @@ function quotePicked(file, choice) {
           + "setting costs fewer.");
 }
 
-$("inscribe-it").onclick = () => inscribeTheFile();
+// Pressed once means working until it is done: the button says so and cannot be
+// pressed again (filming, 2026-09-25: ~2 minutes of an unchanged panel).
+$("inscribe-it").onclick = async () => {
+  const button = $("inscribe-it"), was = button.textContent;
+  button.disabled = true;
+  button.textContent = "Inscribing\u2026";
+  try { await inscribeTheFile(); }
+  finally { button.disabled = false; button.textContent = was; }
+};
 
 /** One thing asked of this node, and its answer, throwing what it said. */
 async function ask(where, body) {
@@ -279,8 +321,9 @@ async function inscribeTheFile() {
     const pieces = Math.max(1, Number(start.chunks || 1));
     const already = Number(start.sent || 0);
     if (pieces === 1) {
-      if (!confirm(`${commas(start.bytes)} bytes, on the chain forever, for `
-                   + `${shown.coinsOf(shown.fee)} in fees. ${shown.what}?`))
+      if (!(await askYes(`Inscribe ${file.name}?`,
+          `${commas(start.bytes)} bytes go on the chain for ever, in one `
+          + `transaction, for ${shown.coinsOf(shown.fee)} in fees.`)))
         return;
       const out = await wallet.confirm(held, start);
       const says = `Inscribed: ${file.name}, ${out.txid.slice(0, 16)}… It `
@@ -290,15 +333,17 @@ async function inscribeTheFile() {
       news(says);
       return;
     }
-    if (!confirm(`${commas(start.bytes)} bytes, on the chain forever, as `
-                 + `${commas(pieces)} transactions`
-                 + (already ? ` -- ${commas(already)} already there, so `
-                             + `${commas(pieces - already)} from this tab`
-                   : ", every one signed from this tab")
-                 + (start.offer ? ", beginning with the split that funds them"
-                   : "")
-                 + ". One block for the split, then all the rest at once."
-                 + ` ${shown ? shown.what : start.name || ""}?`))
+    const total = arcadeCoins(arcadeFileCost(bytes.length).coins);
+    if (!(await askYes(`Inscribe ${file.name}?`,
+        `${commas(start.bytes)} bytes go on the chain for ever, as `
+        + `${commas(pieces)} transactions, for about ${total} in dust and fees. `
+        + (already ? `${commas(already)} are already there, so `
+                     + `${commas(pieces - already)} go from this tab. `
+           : "")
+        + (start.offer ? "First one transaction splits your coins into the pieces; "
+                         + "after its block (about a minute) the rest go out together. "
+           : "")
+        + "You sign them all here, without being asked again.")))
       return;
     let sent = already;
     // The transaction the file is read back from: piece 0 carries the
@@ -316,7 +361,11 @@ async function inscribeTheFile() {
     // paid for and did not get, with only re-choosing it to finish it.
     document.body.dataset.inscribing = String(pieces);
     try {
-      if (start.offer) await wallet.confirm(held, start);
+      if (start.offer) {
+        await wallet.confirm(held, start);
+        news("The split is on its way. Waiting for its block (about a minute), "
+             + "then the pieces go out together\u2026");
+      }
       const giveUp = Date.now() + 15 * 60 * 1000;
       for (let n = Number(start.next ?? 0); n < pieces; n++) {
         news(`Piece ${commas(n + 1)} of ${commas(pieces)}…`);
@@ -598,3 +647,11 @@ tellItAgain();
 runs();
 document.body.dataset.inscribeReady = "yes";
 </script>
+
+<style>
+.askcard-back{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.45);
+  display:flex;align-items:center;justify-content:center;padding:16px}
+.askcard{max-width:440px;width:100%;margin:0}
+.askcard h3{margin-top:0}
+.askcard .row{gap:8px;justify-content:flex-end}
+</style>

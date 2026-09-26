@@ -887,8 +887,10 @@ export async function setUp(wallet, identity, tag, {onStep, faucetRefusal} = {})
     // is a page that waits three minutes on coins that were never going to
     // come and then says nothing about why -- which is how a dry faucet gets
     // read as a broken signup, by the one person it was honest with.
-    out.trouble.push(faucetRefusal
-      || "no coins arrived, so your name is not claimed yet");
+    out.trouble.push((faucetRefusal
+      || "no coins arrived, so your name is not claimed yet")
+      + ". That finishes by itself: once coins are in your wallet, opening "
+      + "Your arcade claims the name and publishes your key");
     step("coins", "none");
     return out;
   }
