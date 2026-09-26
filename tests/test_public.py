@@ -614,3 +614,28 @@ def test_the_operator_still_sees_their_own_composer(named):
     body = app.get("/feed", headers=LOCAL).text
     assert "Say something as @bigchiefenergy" in body
     assert 'action="/feed/post"' in body
+
+
+def test_the_pages_host_never_speaks_for_the_operator_from_outside(client):
+    """pages.<domain>/r/wallet handed every stranger the operator's addresses,
+    tag and balances, and a page opened by any account greeted it as the
+    operator (a tester, 2026-09-26). From outside, the page API says the
+    wallet is off; the operator's own local pages still see their wallet."""
+    app, state = client
+    state.set_setting("pages_host", "pages.example")
+    try:
+        edge = {"host": "pages.example", "cf-ray": "abc"}
+        answer = app.get("/r/wallet", headers=edge)
+        assert answer.status_code == 403
+        assert answer.json()["wallet"] == "off"
+        assert "addresses" not in answer.json()
+        assert answer.headers.get("access-control-allow-origin") == "*"
+        assert app.post("/r/send", json={"to": "x"}, headers=edge).status_code == 403
+        assert app.get("/r/send/abc", headers=edge).status_code == 403
+        # The rest of the page API is still there for pages.
+        assert app.get("/r/blockheight", headers=edge).status_code != 403
+        # Here, on the operator's own machine, it is still their wallet.
+        local = app.get("/r/wallet", headers={"host": "pages.example"})
+        assert local.status_code != 403 or "wallet" not in local.json()
+    finally:
+        state.set_setting("pages_host", "")

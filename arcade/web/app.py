@@ -485,6 +485,19 @@ def the_door(state: AppState):
 
         pages_host = state.pages_hostname
         if pages_host and host == pages_host:
+            # From outside, the page API never speaks for the operator: a page
+            # there is being looked at by a stranger or an account, and the
+            # frame (opaque origin, no cookie) cannot say which. It is told the
+            # wallet is off -- the answer a page already handles -- rather than
+            # whose it is (a tester, 2026-09-26).
+            if doorlib.speaks_for_the_operator(path) and request.method != "OPTIONS" and (
+                    state.public or doorlib.from_outside(
+                        request.headers, request.headers.get("host", ""),
+                        state.public_hosts)):
+                return contentlib._json(
+                    {"wallet": "off",
+                     "error": "this wallet does not tell inscriptions who is looking"},
+                    status=403)
             if doorlib.pages_path(path):
                 return await call_next(request)
             return locked("Not here", "Nothing is served at this address but "

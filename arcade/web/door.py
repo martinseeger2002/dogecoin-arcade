@@ -277,6 +277,19 @@ def public_path(path: str, method: str = "GET") -> bool:
     return any(path.startswith(tree) for tree in PUBLIC_TREES)
 
 
+def speaks_for_the_operator(path: str) -> bool:
+    """A route that answers as, or asks, the operator's own wallet.
+
+    The inscribed-pages hostname serves all of /r/, and it is reached from the
+    internet: without this, pages.<domain>/r/wallet handed every stranger the
+    operator's addresses, tag and balances, and any page opened by anybody
+    greeted them as the operator (a tester, 2026-09-26).
+    """
+    path = (path or "/").rstrip("/") or "/"
+    return any(path == deny or path.startswith(deny + "/")
+               for deny in NEVER_PUBLIC)
+
+
 def pages_path(path: str) -> bool:
     """May the inscribed-pages hostname serve this?"""
     return (path or "").startswith(PAGES_DOOR)
