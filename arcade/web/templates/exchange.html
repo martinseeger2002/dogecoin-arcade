@@ -91,8 +91,14 @@
             <span class="muted">that piece is reserved for another buyer
               until {{ b.until }}</span>
           {% elif viewer == 'account' %}
-            <span class="muted">your own key signs this one, and answering an
-              offer from a tab is not built yet</span>
+            <button type="button" class="small" data-accept
+                    data-offer="{{ b.txid }}" data-piece="{{ b.inscription }}"
+                    data-price="{{ b.price }}"
+                    data-buyer="{% if tags.get(b.buyer) %}@{{ tags[b.buyer] }}{% else %}{{ b.buyer }}{% endif %}">Accept</button>
+            <button type="button" class="ghost small" data-refuse
+                    data-offer="{{ b.txid }}" data-piece="{{ b.inscription }}"
+                    data-price="{{ b.price }}"
+                    data-buyer="{% if tags.get(b.buyer) %}@{{ tags[b.buyer] }}{% else %}{{ b.buyer }}{% endif %}">Refuse</button>
           {% else %}
           <form method="post" action="/exchange/offers/{{ b.txid }}" class="row"
                 style="gap:6px;justify-content:flex-end;margin:0">
@@ -103,6 +109,71 @@
       </tr>
       {% endfor %}
     </table>
+    {% if viewer == 'account' %}
+    <p class="msg" id="answer-news" hidden></p>
+    <p class="muted" style="font-size:.82rem;margin:8px 0 0">Accepting signs the
+      piece at the price in the offer &mdash; two signatures over the bytes
+      naming it and over the payment, in this tab, and nothing of yours is
+      spent to make them. The answer then goes to whoever offered as one
+      message, which costs a fee, and their wallet signs its half against the
+      price it offered. Nothing moves unless both halves do, and the piece is
+      held out of any other answer while theirs is outstanding.</p>
+    <script type="module">
+    /* Answering an offer from the tab that holds the key, which is all this
+       row ever lacked. `wallet.answerOffer` runs the three signatures &mdash;
+       two over the leg, never broadcast, and one over the letter that carries
+       it &mdash; and the node refuses any answer whose bytes do not say the
+       offer that was made, so the price below is the price signed.
+    */
+    import * as wallet from "/wallet.js";
+
+    const news = document.getElementById("answer-news");
+    const CHAIN = {network: "{{ chain.network }}",
+                   version: {{ chain.params.pubkeyhash_version }}};
+    const opening = wallet.opened(CHAIN);
+    const say = (text, ok) => {
+      news.textContent = text;
+      news.hidden = !text;
+      news.className = "msg " + (ok ? "ok" : "err");
+    };
+
+    for (const button of document.querySelectorAll("[data-offer]")) {
+      button.onclick = async () => {
+        const refuse = button.hasAttribute("data-refuse");
+        const who = button.dataset.buyer || "whoever offered";
+        const ask = {offer: button.dataset.offer, piece: button.dataset.piece,
+                     refuse, chain: "{{ chain.network }}"};
+        if (!confirm(refuse
+          ? `Refuse ${who}'s offer of ${button.dataset.price}? The offer stays `
+            + "on the chain until their block is spent, so nothing here stops "
+            + "them asking again."
+          : `Answer ${who}'s offer of ${button.dataset.price}? Your key signs `
+            + "the piece at that price; their wallet signs the coins, and one "
+            + "transaction moves both or neither.")) return;
+        for (const other of document.querySelectorAll("[data-offer]")) {
+          other.disabled = true;
+        }
+        try {
+          const held = await opening;
+          if (!held) throw new Error("your wallet is not open in this tab");
+          const out = await wallet.answerOffer(held, ask);
+          say((out.refused ? "Refused, and the offer stands. Nothing was spent "
+                           : "Answered in " + String(out.txid).slice(0, 16)
+                             + "… The piece is held for them until their wallet "
+                             + "signs, and all this account spent is the fee of "
+                             + "one message.")
+              + (out.says ? " " + out.says : ""), true);
+        } catch (error) {
+          say(String(error.message || error), false);
+        } finally {
+          for (const other of document.querySelectorAll("[data-offer]")) {
+            other.disabled = false;
+          }
+        }
+      };
+    }
+    </script>
+    {% endif %}
   </div>
   {% endif %}
 

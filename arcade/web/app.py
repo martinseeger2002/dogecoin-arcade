@@ -5697,6 +5697,7 @@ def create_app(state: AppState) -> FastAPI:
         if public:
             viewer = "account" if signed_in(request) is not None else "nobody"
         mine, held, coins = False, [], 0.0
+        mine_account, asks = False, []
         if viewer == "account":
             # One read on the public path, and it is of the looking account's
             # own holdings, not of this node's wallet: an offer can only be
@@ -5707,6 +5708,7 @@ def create_app(state: AppState) -> FastAPI:
             # the address for the coins -- and nothing here asks the wallet
             # what it holds, because on this path it holds nobody's key.
             looking = signed_in(request)
+            here = ""
             try:
                 here = _account_address(looking.pubkey, chain)
                 if here:
@@ -5715,6 +5717,34 @@ def create_app(state: AppState) -> FastAPI:
                         coins = utxoslib.balance(db, here) / 100_000_000
             except Exception:
                 held, coins = [], 0.0
+            # What an account that HOLDS this piece can do from here, which is
+            # not what `mine` opens: that word means "this node's wallet holds
+            # it", and behind it are the Sell and Send buttons whose routes the
+            # door shuts on a stranger. An account holds a piece with a key
+            # this node has never seen, so its control row is the offers
+            # standing on the piece and the answer each one asks for (D-172).
+            if here and row["owner"] == here:
+                mine_account = True
+                try:
+                    held_for, until = _answer_held(chain, row["txid"])
+                    asks = [o for o in _merge_offers(
+                                [p for p in index.pending_offers()
+                                 if p["owner"] == here],
+                                index.offers_on([here]))
+                            if o["inscription"] == row["txid"]]
+                    for ask in asks:
+                        ask["price"] = swaplib.describe_leg(_take_json(ask, index))
+                        ask["tag"] = _tags_for([ask["buyer"]]).get(
+                            ask["buyer"], "")
+                        ask["accepted"] = bool(held_for
+                                               and held_for == ask["buyer"])
+                        ask["held_for"] = "" if not held_for or \
+                            held_for == ask["buyer"] else held_for
+                        ask["until"] = (time.strftime("%H:%M",
+                                                      time.localtime(until))
+                                        if held_for else "")
+                except Exception:
+                    asks = []
         # Said by the wallet, around the frame, because an inscribed page
         # cannot be changed to say it (D-051).
         advice = ""
@@ -5760,6 +5790,7 @@ def create_app(state: AppState) -> FastAPI:
                       tag=named.get(row["owner"]), sale=sale,
                       creator_tag=named.get(row["creator"]),
                       pages=pages, mine=mine, viewer=viewer,
+                      mine_account=mine_account, asks=asks,
                       tokens=held, coins=coins, advice=advice,
                       renders=row["content_type"].startswith(contentlib.RENDERABLE))
 
@@ -9077,6 +9108,288 @@ def create_app(state: AppState) -> FastAPI:
                                  "price": int(listing["price"])})
         finally:
             state.end_send(lane)
+
+    # --- answering an offer, when the answer has to be a leg -----------------
+    #
+    # `/exchange/offers/{txid}` is the operator's half of this, and every step
+    # of it belongs to a wallet this node holds the key for: accepting builds a
+    # signed OFFER, the node countersigns the buyer's half when it comes back,
+    # and the reservation is a row in `state.offers` with a locked output under
+    # it. An account has a key that signs transactions and no key that signs
+    # offers, so its answer has to be the other thing a holder can hand over --
+    # the LEG, its two SINGLE|ANYONECANPAY signatures travelling beside the
+    # bytes rather than inside them. That is exactly what `shopkeeper._fill_a_leg`
+    # finishes when the buyer is a wallet and what `/account/fill` finishes when
+    # the buyer is another account, so nothing new is asked of anybody on the
+    # far side; what is new here is only who signs.
+    #
+    # Two requests again, with nothing kept between them, and the answer is
+    # neither broadcast nor filed. The piece is held out of the market by the
+    # signatures themselves and by the coins they stand on, which is a stricter
+    # reservation than `lockunspent` and a shorter one than a row in a book:
+    # stricter because it survives this node being reinstalled, shorter because
+    # a second answer to a second buyer is refused by this node's memory and by
+    # nothing else (D-182).
+
+    def _offer_answered(index, chain, address: str, said: dict) -> dict:
+        """The offer this account is being asked to answer, and only that.
+
+        Read the way the page reads it, mempool first and then the blocks, so an
+        offer made a minute ago is answerable a minute ago (D-058). Then bound to
+        three things, none of them taken from this request: that the piece is
+        this address's -- which is what makes an answer possible at all -- that
+        the offer named is one the index says stands on that piece, and that it
+        stands at all. An offer is a transaction and not a row anybody keeps
+        (D-042), so there is nothing here to forget and nothing here to be lied
+        to.
+        """
+        row = index.inscription(contentlib._key(str(said.get("piece", ""))))
+        if row is None:
+            raise ValueError("no such inscription on this node")
+        if row["owner"] != address:
+            raise ValueError("only whoever holds a piece can answer an offer on "
+                             f"it, and this one is held by {row['owner']}")
+        wanted = str(said.get("offer") or "")
+        standing = [o for o in _merge_offers(
+                        [p for p in index.pending_offers() if p["owner"] == address],
+                        index.offers_on([address]))
+                    if o["txid"] == wanted and o["inscription"] == row["txid"]]
+        if not standing:
+            raise ValueError(
+                "no such offer on this piece -- an offer is a transaction, and "
+                "it stands only while the chain says it does. It may have been "
+                "cancelled, or made over for a piece that has since moved")
+        return standing[0]
+
+    def _answer_held(chain, piece_txid: str) -> tuple[str, float]:
+        """Who this account last answered, and until when. '' for nobody.
+
+        The operator's accept reserves with `state.offers`, and every row of
+        that book is a signature this node made -- which, on the public path, it
+        has made nothing of. The reservation of an account's answer goes in the
+        bid book instead, as a note whose direction an account's own offers
+        never take: `shopkeeper._bid` reads that book looking only for the offers
+        its own wallet made, so a note reading "in" asks nothing of any wallet
+        and holds up nothing but a second answer.
+
+        It is a receipt, not a lock, and says so on the page. A node reinstalled
+        forgets it, and the signatures do not: what really stops two buyers both
+        finishing on one piece is that both legs spend the same coin of the
+        seller's and only one of them can ever be in a block.
+        """
+        now = time.time()
+        newest: dict | None = None
+        for note in state.offers.bids(chain.network, direction="in"):
+            if note["inscription"] != piece_txid or note["status"] != "open" \
+                    or float(note["expires"] or 0) <= now:
+                continue
+            if newest is None or float(note["expires"]) > float(newest["expires"]):
+                newest = note
+        return (str((newest or {}).get("buyer") or ""),
+                float((newest or {}).get("expires") or 0))
+
+    @app.post("/account/accept")
+    def account_accept(request: Request, payload: Any = Body(None)):
+        """Show this account the leg that answers somebody's offer, and stop.
+
+        The price is never in this request. It comes out of the offer, which
+        comes out of the chain, for the same reason a seller's listing cannot be
+        priced by a browser: an answer is a signature over a price, and the
+        number it stands over has to be the number that was asked. Everything
+        `/account/list` checks still applies -- two coins of this address, one
+        signing the bytes that name the piece and one signing the payment -- and
+        one thing applies only here, because there is a person on the other end
+        of this one: the buyer has to still hold the price and still have a
+        published key, or the answer is a message fee spent on a refusal (D-040).
+
+        `decision` of "refuse" is the same question answered the other way. It
+        builds nothing and asks no signature over any coin; what it returns is
+        the words to seal, which are the answer with `ok` false, and what it
+        still checks is that this piece is this account's to say no about.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        index = state.token_index(chain)
+        from ..messaging import api as apilib
+        try:
+            ask = _offer_answered(index, chain, address, said)
+            row = index.inscription(contentlib._key(str(said.get("piece", ""))))
+            held_for, until = _answer_held(chain, row["txid"])
+            if held_for and held_for != ask["buyer"]:
+                raise swaplib.SwapError(
+                    "that piece is answered to somebody else until "
+                    f"{time.strftime('%H:%M', time.localtime(until))} -- their "
+                    "wallet has to sign first, or the answer has to expire")
+            # The buyer has to be reachable for this to end in anything: the
+            # answer goes back to them as a message, and an address is a place to
+            # pay rather than somewhere a message can be read.
+            to = _key_at(ask["buyer"])
+            take = swaplib.leg_from_json(_take_json(ask, index))
+            answer = {"swap": "bid", "swapv": swaplib.PROTOCOL, "id": ask["txid"]}
+            out = {"chain": chain.network, "offer": ask["txid"],
+                   "buyer": ask["buyer"], "number": row["number"],
+                   "seal_to": to.hex(), "stamp": apilib.stamp().hex()}
+            if str(said.get("decision") or "") == "refuse":
+                answer.update(ok=False, error="refused")
+                return JSONResponse({**out, "answer": answer, "refused": True,
+                                     "what": f"refused an offer on inscription "
+                                             f"#{row['number']}"})
+            if take.kind != inscriptionlib.LEG_COINS:
+                raise swaplib.SwapError(
+                    "that offer pays in something other than coins, and a leg "
+                    "pays in coins. Answering from a tab is the holder signing "
+                    "its own half; a price in a token needs an offer back, and "
+                    "an offer needs a key this node was never given.")
+            price = int(take.amount)
+            if price <= 0:
+                raise ValueError("that offer prices the piece at nothing")
+            cost = swaplib.describe_leg(swaplib.leg_json(take, index))
+            with chain.rpc() as rpc:
+                problem = swaplib.holds(index, rpc, ask["buyer"], take)
+            if problem:
+                raise swaplib.SwapError(
+                    f"whoever made this offer cannot pay {cost}: {problem}")
+            piece = swaplib.describe_leg(swaplib.leg_json(
+                swaplib.leg_of({"inscription": row["txid"]}, index), index))
+            what = f"sell {piece} for {cost}"
+            with contextlib.closing(index.open()) as db:
+                held = [c for c in utxoslib.unspent(db, address)
+                        if (c["txid"], c["vout"])
+                        not in _flights.spent_by(account.pubkey, chain.network)]
+                if len(held) < 2:
+                    raise ValueError(
+                        f"this address has {len(held)} coin to spend and an "
+                        f"answer is a leg, which needs two of them: one input "
+                        f"signs the bytes naming the piece, the other signs the "
+                        f"price. Send yourself a little change and answer again.")
+                leg = fundinglib.build_leg(
+                    chain.params, address, held[0], coins=price,
+                    rate=fees.MIN_FEE_PER_KB, what=what,
+                    payload=_ask_payload(row, price), coin=held[1])
+        except (fundinglib.FundingError, listingslib.ListingError,
+                swaplib.SwapError, inscriptionlib.InscriptionError,
+                tokenlib.TokenError, AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({**out, "price": price, "what": what,
+                             **leg.as_json()})
+
+    @app.post("/account/accept/sign")
+    def account_accept_sign(request: Request, payload: Any = Body(None)):
+        """Take the two signatures back, and say where the answer goes.
+
+        Nothing is broadcast, so the guards are not `/account/fill/sign`'s --
+        there is no transaction to compare a signature against, because the
+        transaction that decides this trade is the BUYER's to build, from the
+        leg this one hands over. What this node can still do, and the only thing
+        that makes the answer safe to mail, is run `Listings.register` over the
+        bytes with `record=False` and refuse to call them an answer unless they
+        say what the offer said. `register` derives the price from the leg's own
+        numbers and refuses the row if it disagrees with the price it was handed,
+        and the price it is handed here is the offer's, never this request's --
+        so a leg signed at any other price is refused in this sentence rather
+        than three blocks later, by a buyer's wallet that cannot finish it.
+
+        The piece it sells comes from the payload and not from the leg's input,
+        which is the same reading `shopkeeper._fill_a_leg` makes of the identical
+        bytes on the far side: for a piece that arrived by transfer the coin and
+        the inscription are two different transactions, and a reader that asked
+        the coin would answer about the wrong sale.
+
+        The answer object is built here rather than left to the tab for one
+        reason: it is the shape `shopkeeper._bid` reads, and two places writing
+        one is how an answer stops being recognised. The tab is left the part
+        only a tab can do -- sealing it to the buyer's key, and paying for the
+        carrier with `/account/talk`.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        index = state.token_index(chain)
+        from ..messaging import api as apilib
+        try:
+            ask = _offer_answered(index, chain, address, said)
+            row = index.inscription(contentlib._key(str(said.get("piece", ""))))
+            held_for, until = _answer_held(chain, row["txid"])
+            if held_for and held_for != ask["buyer"]:
+                raise swaplib.SwapError(
+                    "that piece is answered to somebody else until "
+                    f"{time.strftime('%H:%M', time.localtime(until))}")
+            take = swaplib.leg_from_json(_take_json(ask, index))
+            if take.kind != inscriptionlib.LEG_COINS:
+                raise swaplib.SwapError("that offer pays in something other "
+                                        "than coins, and a leg pays in coins")
+            price = int(take.amount)
+            to = _key_at(ask["buyer"])
+            _quota(account, "trade")
+            with chain.rpc() as rpc:
+                listing = state.listings.register(
+                    rpc, raw=str(said.get("raw") or ""),
+                    signatures=[str(s) for s in (said.get("signatures") or [])],
+                    pubkey=bytes.fromhex(str(said.get("pubkey") or "")),
+                    network=chain.network, owner=address, price=price,
+                    seconds=listingslib.ANSWERED_FOR, record=False)
+            named = listingslib.named_swap(
+                bytes.fromhex(str(listing["payload"] or "")))
+            if named is None or named.give.txid.hex() != row["txid"]:
+                raise swaplib.SwapError(
+                    "that leg sells something else. Its own bytes name a "
+                    f"different piece than inscription #{row['number']}, which "
+                    "is the offer's, and an answer has to say the trade the "
+                    "offer asked about")
+        except (listingslib.ListingError, fundinglib.FundingError,
+                swaplib.SwapError, inscriptionlib.InscriptionError,
+                AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        # Both coins this leg stands on are gone as far as this account is
+        # concerned, and nothing it ever broadcasts retires them -- the
+        # transaction that spends them is the buyer's, and may never be
+        # broadcast at all. The same note `/account/list/sign` leaves, for the
+        # same reason: spent from under the leg, it empties the answer.
+        committed = [(listing["input"]["txid"], listing["input"]["vout"])]
+        if listing.get("coin"):
+            committed.append((listing["coin"]["txid"], listing["coin"]["vout"]))
+        _flights.note_committed(account.pubkey, tuple(committed),
+                                network=chain.network)
+        now = time.time()
+        state.offers.add_bid({
+            "id": secrets.token_hex(8), "network": chain.network,
+            "direction": "in", "inscription": row["txid"], "number": row["number"],
+            "owner": address, "buyer": ask["buyer"], "peer_pubkey": to.hex(),
+            "take": swaplib.leg_json(take, index),
+            "note": f"answered offer {ask['txid'][:16]}…", "created": now,
+            "expires": now + swaplib.OFFER_TTL})
+        state.bump_generation()
+        return JSONResponse({
+            "chain": chain.network, "ok": True, "offer": ask["txid"],
+            "buyer": ask["buyer"], "seal_to": to.hex(),
+            "stamp": apilib.stamp().hex(), "price": price,
+            "held_until": now + swaplib.OFFER_TTL,
+            "what": f"answered an offer on inscription #{row['number']}",
+            "answer": {"swap": "bid", "swapv": swaplib.PROTOCOL,
+                       "id": ask["txid"], "ok": True,
+                       "leg": {"raw": str(said.get("raw") or ""),
+                               "signatures": [str(s) for s in
+                                              (said.get("signatures") or [])],
+                               "pubkey": str(said.get("pubkey") or ""),
+                               "seller": address,
+                               "amount": format_amount(price, True)}}})
 
     # --- a shop, for an account: the same door, paid for by the buyer --------
     #
@@ -12572,21 +12885,50 @@ def create_app(state: AppState) -> FastAPI:
             # sign, not waiting for a second Accept. Drawing the button again
             # was how somebody pressed it twice and got told their own offer
             # belonged to somebody else (D-049).
-            standing = {}
-            for offer in state.offers.open_offers(chain.network):
-                if offer["give"].get("kind") == "inscription":
-                    standing[offer["give"]["txid"]] = offer
-            for offer in state.offers.sold_offers(chain.network):
-                if offer["give"].get("kind") == "inscription":
-                    standing.setdefault(offer["give"]["txid"], offer)
-            for entry in data["offers_in"]:
-                held = standing.get(entry["inscription"])
-                entry["accepted"] = bool(held and held["buyer"] == entry["buyer"])
-                entry["held_for"] = held["buyer"] if held else ""
-                entry["until"] = (time.strftime("%H:%M", time.localtime(held["expires"]))
-                                  if held else "")
-                entry["settled"] = bool(held and held.get("status") == "sent")
-                entry["swap_txid"] = (held or {}).get("txid", "")
+            if data["viewer"] == "account":
+                # Not from `open_offers`, whatever the viewer: every row of that
+                # book is a signature THIS node made, and on a public copy this
+                # node has made nothing of the looking account's. What an account
+                # answered stands in the bid book instead, as a note with the
+                # direction its own offers never take -- a receipt of who was
+                # answered, which is also all the exclusivity behind an answer
+                # made of signatures rather than of coins this node can lock
+                # (D-182). It says nothing about whether the buyer ever signed,
+                # which is why the row waits out the note rather than reading
+                # "sold": the piece moving is the only news here, and the next
+                # page read is where that shows.
+                notes: dict[str, dict] = {}
+                for note in state.offers.bids(chain.network, direction="in"):
+                    if float(note["expires"] or 0) > time.time():
+                        before = notes.get(note["inscription"])
+                        if before is None or float(note["expires"]) > \
+                                float(before["expires"]):
+                            notes[note["inscription"]] = note
+                for entry in data["offers_in"]:
+                    note = notes.get(entry["inscription"]) or {}
+                    same = note.get("buyer") == entry["buyer"]
+                    entry["accepted"] = bool(note and same
+                                            and note.get("status") == "open")
+                    entry["held_for"] = "" if same else str(note.get("buyer") or "")
+                    entry["until"] = (time.strftime(
+                        "%H:%M", time.localtime(float(note["expires"])))
+                        if note else "")
+            else:
+                standing = {}
+                for offer in state.offers.open_offers(chain.network):
+                    if offer["give"].get("kind") == "inscription":
+                        standing[offer["give"]["txid"]] = offer
+                for offer in state.offers.sold_offers(chain.network):
+                    if offer["give"].get("kind") == "inscription":
+                        standing.setdefault(offer["give"]["txid"], offer)
+                for entry in data["offers_in"]:
+                    held = standing.get(entry["inscription"])
+                    entry["accepted"] = bool(held and held["buyer"] == entry["buyer"])
+                    entry["held_for"] = held["buyer"] if held else ""
+                    entry["until"] = (time.strftime("%H:%M", time.localtime(held["expires"]))
+                                      if held else "")
+                    entry["settled"] = bool(held and held.get("status") == "sent")
+                    entry["swap_txid"] = (held or {}).get("txid", "")
         except Exception as exc:
             data["node_error"] = data["node_error"] or str(exc)
         return render(request, "exchange.html", **data)
