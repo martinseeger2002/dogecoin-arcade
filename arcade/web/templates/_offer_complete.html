@@ -41,16 +41,23 @@ const spots = [...document.querySelectorAll("[data-answer-for]")];
       try {
         const offer = await wallet.offerFill(answer.leg, CHAIN.network);
         const shown = await wallet.checked(offer, held);
+        // Said as the trade, not as the outputs: the seller's own coin passes
+        // through this transaction and back to them, and listing it read as
+        // though the buyer paid it (filming, 2026-09-26).
+        const seller = offer.seller_tag ? "@" + offer.seller_tag
+                     : String(offer.seller || "the holder").slice(0, 12) + "\u2026";
         const ok = await arcadeAsk("Complete the purchase?",
-          `The holder accepted your offer. Pay ${spot.dataset.price}, get ${piece}. `
-          + "Their signature is already on the piece; your key signs the payment "
-          + "here, and one transaction moves both or neither. " + shown.says + ".",
+          `Pay ${spot.dataset.price} to ${seller}, get ${piece}. The network fee is `
+          + `${shown.coinsOf(shown.fee)}. Their signature is already on the piece; your `
+          + "key signs the payment here, and one transaction moves both or neither.",
           "Complete it");
         if (!ok) { button.disabled = false; button.textContent = was; return; }
         const out = await wallet.fill(held, answer.leg, offer);
-        spot.innerHTML = '<span class="pill ok">bought</span>';
-        say(`Done in ${String(out.txid).slice(0, 16)}… ${piece} is yours from the `
-            + "block it lands in.", true);
+        // Sent, not bought: until a block holds it, it is a transaction this node
+        // relayed, and the page says so (filming, 2026-09-26).
+        spot.innerHTML = '<span class="pill warn">sent &mdash; waiting for its block</span>';
+        say(`Sent in ${String(out.txid).slice(0, 16)}… ${piece} is yours when its `
+            + "block lands, usually within a few minutes.", true);
       } catch (e) {
         say(String(e.message || e), false);
         button.disabled = false; button.textContent = was;

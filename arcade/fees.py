@@ -47,6 +47,25 @@ MIN_FEE_PER_KB = COIN // 100
 #: coin paying a 0.00235 fee left 0.00765 of change, and seven posts stuck.
 DUST_LIMIT = COIN // 100
 
+def soft_dust_fee(outputs) -> int:
+    """What Pepecoin adds to the fee for outputs below the soft dust limit.
+
+    GetPepecoinDustFee charges DUST_LIMIT again for every spendable output worth
+    less than DUST_LIMIT. A zero-value OP_RETURN is unspendable and is not
+    counted. Our own node accepts a transaction that skips this, so it is priced
+    here or it waits for a block for ever: the answered-offer swap of
+    2026-09-26 returned a 0.00589 fee reservation to its seller and stuck.
+    """
+    extra = 0
+    for value, script in outputs:
+        script = bytes(script)
+        if script[:1] == b"\x6a":
+            continue
+        if 0 < int(value) < DUST_LIMIT:
+            extra += DUST_LIMIT
+    return extra
+
+
 #: -bytespersigop (policy.h:58): what one sigop weighs against the bytes.
 BYTES_PER_SIGOP = 20
 

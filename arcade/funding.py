@@ -178,7 +178,7 @@ def price(inputs: int, outputs: list, rate: int, change: bool = False) -> int:
     if change:
         raw += BYTES_PER_CHANGE
         sigops += 1
-    return fees.fee_for(raw, sigops, rate)
+    return fees.fee_for(raw, sigops, rate) + fees.soft_dust_fee(outputs)
 
 
 def sighash(raw_inputs: list[dict], outputs: list[tuple[int, bytes]],
