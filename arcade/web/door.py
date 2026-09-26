@@ -65,6 +65,7 @@ PUBLIC_PAGES = frozenset({
     "/favicon.ico",
     "/icon-32.png",
     "/icon-180.png",
+    "/admin/login",           # the remote admin password page (rate-limited)
     "/signin.js",
     "/coins.js",
     "/wallet.js",
@@ -170,6 +171,7 @@ LINKED_FROM_PUBLIC = ("/content/", "/collections", "/feed", "/u/", "/docs",
 #: that each works only on the account making the request, and the node
 #: broadcasts what it OFFERED rather than what came back.
 PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
+               "/admin/login",
                "/auth/password",
                "/account/address", "/account/announce", "/account/post",
                "/account/react",

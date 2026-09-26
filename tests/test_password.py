@@ -92,34 +92,36 @@ def test_a_username_is_a_name(named):
 
 # --- signing in ----------------------------------------------------------------
 
-def test_the_operator_signs_in_from_anywhere_and_gets_their_wallet(named):
-    """The whole point: the arcade, from somewhere other than the room the
-    machine is in, exactly as it is on the machine."""
+def test_the_operator_signs_in_from_anywhere_and_gets_the_admin_panel(named):
+    """From somewhere other than the room the machine is in, the operator is an
+    account plus the admin panel -- and the password that signs them in is the
+    admin password, so the panel opens without asking twice (2026-09-25).
+    The node's own pages stay at the machine; what they do is in /admin."""
     app, _ = named
     _claim(app)
     app.cookies.clear()
 
-    assert app.get("/wallet", headers=EDGE).status_code == 404, "not yet"
+    assert app.get("/admin/api/state", headers=EDGE).status_code in (403, 404), "not yet"
     answer = app.post("/auth/password", headers=EDGE,
                       json={"username": "robin",
                             "password": "correct horse battery"})
     assert answer.status_code == 200
     assert answer.json()["operator"] is True
 
-    for path in ("/wallet", "/messages", "/contacts", "/backup",
-                 "/inscriptions/collection", "/approvals"):
-        assert app.get(path, headers=EDGE).status_code == 200, path
+    got = app.get("/admin/api/state", headers=EDGE)
+    assert got.status_code == 200 and got.json()["local"] is False
+    assert app.get("/wallet", headers=EDGE).status_code == 404, "the node's pages stay home"
 
 
-def test_the_front_page_is_their_own_again(named):
+def test_the_front_page_is_their_own_account_with_admin(named):
     app, _ = named
     _claim(app)
     app.cookies.clear()
     app.post("/auth/password", headers=EDGE,
              json={"username": "robin", "password": "correct horse battery"})
-    body = app.get("/", headers=EDGE).text
-    assert "Known contacts" in body, "their overview, not a splash"
-    assert 'href="/wallet"' in body, "and their own navigation with it"
+    body = app.get("/me", headers=EDGE).text
+    assert 'href="/admin"' in body, "an Admin tab beside their own"
+    assert 'href="/wallet"' not in body
 
 
 def test_the_name_is_one_name_however_it_is_typed(named):
