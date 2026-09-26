@@ -10337,6 +10337,33 @@ def create_app(state: AppState) -> FastAPI:
             } for item in shown],
         })
 
+    @app.get("/account/mailbox")
+    def account_mailbox(request: Request):
+        """This account's sealed message history, for a browser to merge in."""
+        account = _signed_in_account(request)
+        have = state.mailbox().get(account.pubkey)
+        return JSONResponse(have or {"blob": "", "updated": 0})
+
+    @app.post("/account/mailbox")
+    def account_mailbox_put(request: Request, payload: Any = Body(None)):
+        """Keep this account's sealed message history (accounts.Mailbox).
+
+        Ciphertext only: the key is derived in the browser from the account's
+        words, so this node can neither read nor alter what it keeps.
+        """
+        from ..accounts import AccountError as _AccountError, MailboxMoved
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            out = state.mailbox().put(account.pubkey, str(said.get("blob") or ""),
+                                      int(said.get("base") or 0))
+        except MailboxMoved as exc:
+            return JSONResponse({"detail": str(exc), "updated": exc.updated},
+                                status_code=409)
+        except (_AccountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse(out)
+
     @app.get("/account/messages")
     def account_messages(request: Request, after: int = 0, limit: int = 200):
         """Candidate payloads, for the browser to try its key against.

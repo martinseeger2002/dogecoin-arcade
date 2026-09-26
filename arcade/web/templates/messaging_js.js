@@ -1457,3 +1457,96 @@ export async function contactCode(network, publicKey) {
                                             // matches contact.py's [:4]
   return `arcade:${network}:${coins.base58(publicKey)}:${check}`;
 }
+
+/* --- your history on every device ------------------------------------------
+ *
+ * A new browser rebuilds from the chain only what was sealed TO this key.
+ * What it SENT is sealed to the other person and can never be read back, and a
+ * group's key lives only where it was received. So the letters this account
+ * wrote and the groups it holds are kept, sealed, on the node
+ * (/account/mailbox, accounts.Mailbox), and any browser signed in with the same
+ * words merges them back (2026-09-26: "I lost my chat history" after
+ * changing browsers). The key is derived here from the messaging secret, so the
+ * node keeps bytes it cannot open or alter; a copy it tampered with fails to
+ * open and is ignored.
+ */
+const MAILBOX_CONTEXT = new TextEncoder().encode("arcade-mailbox/1");
+
+function mailboxKey(me) {
+  const both = new Uint8Array(me.secret.length + MAILBOX_CONTEXT.length);
+  both.set(me.secret); both.set(MAILBOX_CONTEXT, me.secret.length);
+  return blake2b(both, {dkLen: 32});
+}
+
+function toB64(bytes) {
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    out += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(out);
+}
+const fromB64 = (text) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+
+function sealHistory(me, history) {
+  const nonce = nacl.randomBytes(24);
+  const box = nacl.secretbox(new TextEncoder().encode(JSON.stringify(history)),
+                             nonce, mailboxKey(me));
+  const both = new Uint8Array(24 + box.length);
+  both.set(nonce); both.set(box, 24);
+  return toB64(both);
+}
+
+function openHistory(me, blob) {
+  if (!blob) return null;
+  try {
+    const both = fromB64(blob);
+    const plain = nacl.secretbox.open(both.subarray(24), both.subarray(0, 24),
+                                      mailboxKey(me));
+    return plain ? JSON.parse(new TextDecoder().decode(plain)) : null;
+  } catch (e) { return null; }
+}
+
+let syncing = null;
+/** Merge the kept copy into this browser, and this browser's into the copy.
+ *  Returns how many letters and groups came back. Safe to call often. */
+export function syncMailbox(me) {
+  if (!syncing) syncing = _syncMailbox(me).finally(() => { syncing = null; });
+  return syncing;
+}
+
+async function _syncMailbox(me) {
+  let restored = 0;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const asked = await fetch("/account/mailbox");
+    if (!asked.ok) return restored;
+    const kept = await asked.json();
+    const theirs = openHistory(me, kept.blob) || {letters: [], groups: []};
+
+    const mine = (await inbox()).filter((l) => l.mine);
+    const known = new Set(mine.map((l) => l.txid));
+    for (const letter of theirs.letters || []) {
+      if (!letter || !letter.txid || known.has(letter.txid)) continue;
+      await keep(letter); known.add(letter.txid); mine.push(letter); restored += 1;
+    }
+    const held = await groups();
+    const heldIds = new Set(held.map((g) => g.id));
+    for (const group of theirs.groups || []) {
+      if (!group || !group.id || heldIds.has(group.id)) continue;
+      await saveGroup(group); heldIds.add(group.id); held.push(group); restored += 1;
+    }
+
+    // Written back only when this browser has something the copy lacks.
+    const keptIds = new Set((theirs.letters || []).map((l) => l && l.txid));
+    const keptGroups = new Set((theirs.groups || []).map((g) => g && g.id));
+    const newer = mine.some((l) => !keptIds.has(l.txid))
+               || held.some((g) => !keptGroups.has(g.id));
+    if (!newer) return restored;
+    const put = await fetch("/account/mailbox", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({blob: sealHistory(me, {letters: mine, groups: held}),
+                            base: kept.updated || 0}),
+    });
+    if (put.status !== 409) return restored;     // 409: another device wrote first
+  }
+  return restored;
+}

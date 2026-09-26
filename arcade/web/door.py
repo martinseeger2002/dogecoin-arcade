@@ -99,6 +99,7 @@ PUBLIC_PAGES = frozenset({
     "/account",
     "/account/feed",
     "/account/messages",
+    "/account/mailbox",
     "/account/find",
     "/account/nfts",
     "/account/tokens",
@@ -193,6 +194,8 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # the request, and this node signs nothing of it.
                "/account/profile",
                "/account/write",
+               # the account's own sealed message history (accounts.Mailbox)
+               "/account/mailbox",
                "/account/claim", "/account/send", "/account/inscribe",
                "/account/run/start", "/account/run", "/account/run/piece",
                "/account/run/stop",

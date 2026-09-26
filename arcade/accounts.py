@@ -940,3 +940,69 @@ class Vault:
         """Move a wallet to another name, once the chain says it is theirs."""
         self.conn.execute("UPDATE vault SET tag = ? WHERE pubkey = ?",
                           (name_of(tag), (pubkey or "").lower()))
+
+
+MAILBOX_SCHEMA = """
+CREATE TABLE IF NOT EXISTS mailbox (
+    pubkey  TEXT PRIMARY KEY,            -- the account it belongs to
+    blob    TEXT NOT NULL,               -- ciphertext only
+    updated INTEGER NOT NULL
+);
+"""
+
+#: The most one account's message history may take here, as stored text.
+MAILBOX_MAX = 4 * 1024 * 1024
+
+
+class Mailbox:
+    """One encrypted copy of each account's own message history.
+
+    A browser rebuilds from the chain only what was sealed TO it; what it sent
+    is sealed to the other person and cannot be read back. So the browser keeps
+    its sent letters and its group keys here, sealed with a key derived from its
+    own words (messaging.js `syncMailbox`), and a new browser restores them
+    (2026-09-26: "I lost my chat history" after changing browsers).
+    This node stores bytes it cannot open, exactly as it does the vault.
+    """
+
+    def __init__(self, accounts: "Accounts"):
+        self.conn = accounts.conn
+        self.conn.executescript(MAILBOX_SCHEMA)
+
+    def get(self, pubkey: str) -> dict | None:
+        row = self.conn.execute("SELECT blob, updated FROM mailbox WHERE pubkey = ?",
+                                ((pubkey or "").lower(),)).fetchone()
+        return {"blob": row[0], "updated": int(row[1])} if row else None
+
+    def put(self, pubkey: str, blob: str, base: int, now: int | None = None) -> dict:
+        """Replace the copy, if it has not changed since the browser read it.
+
+        `base` is the `updated` the browser merged from. A newer copy written
+        by another of the account's browsers in between is refused rather than
+        overwritten, and the browser merges again -- so two devices never lose
+        each other's letters.
+        """
+        blob = str(blob or "")
+        if len(blob) > MAILBOX_MAX:
+            raise AccountError(
+                f"your message history is {len(blob):,} bytes and this node keeps "
+                f"at most {MAILBOX_MAX:,} per account")
+        now = int(now if now is not None else time.time())
+        have = self.get(pubkey)
+        if have and int(base or 0) != have["updated"]:
+            raise MailboxMoved(have["updated"])
+        stamp = max(now, (have or {}).get("updated", 0) + 1)
+        self.conn.execute(
+            "INSERT INTO mailbox (pubkey, blob, updated) VALUES (?,?,?) "
+            "ON CONFLICT(pubkey) DO UPDATE SET blob = excluded.blob, "
+            "updated = excluded.updated", ((pubkey or "").lower(), blob, stamp))
+        return {"updated": stamp}
+
+
+class MailboxMoved(AccountError):
+    """Another browser of the same account wrote the copy first."""
+
+    def __init__(self, updated: int):
+        super().__init__("your message history changed on another device; "
+                         "merge and try again")
+        self.updated = updated
