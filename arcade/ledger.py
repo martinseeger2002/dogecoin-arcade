@@ -815,6 +815,46 @@ class LedgerIndex:
                 out.append(entry)
             return out
 
+    def launches(self, limit: int = 300) -> list[dict]:
+        """Every token and every collection, as the launchpad list shows them.
+
+        Each is one row with the transaction that stands for it -- a token's
+        creation, a collection's #1 -- because that is what people like, dislike
+        and comment on (the feed's own acts, aimed at that txid), and the time
+        of its block. A launch still in the pool has time 0, which the ranking
+        reads as brand new (feed.hot).
+        """
+        out: list[dict] = []
+        with self.open() as db:
+            for row in db.conn.execute(
+                    "SELECT p.property_id, p.name, p.issuer, p.creation_txid, "
+                    "p.creation_block, COALESCE(b.time, 0) AS time "
+                    "FROM property p LEFT JOIN block b ON b.height = p.creation_block "
+                    "ORDER BY p.creation_block DESC LIMIT ?", (int(limit),)):
+                out.append({"kind": "token", "id": row["property_id"],
+                            "name": row["name"], "creator": row["issuer"],
+                            "txid": row["creation_txid"], "time": int(row["time"] or 0)})
+            for row in db.conn.execute(
+                    "SELECT c.creator, c.collection, COUNT(*) AS count, "
+                    "MIN(i.block_height) AS height FROM collection_item c "
+                    "JOIN inscription i ON i.txid = c.txid "
+                    "GROUP BY c.creator, c.collection ORDER BY height DESC LIMIT ?",
+                    (int(limit),)):
+                first = db.conn.execute(
+                    "SELECT i.txid, i.content_type, COALESCE(b.time, 0) AS time "
+                    "FROM collection_item c JOIN inscription i ON i.txid = c.txid "
+                    "LEFT JOIN block b ON b.height = i.block_height "
+                    "WHERE c.creator = ? AND c.collection = ? "
+                    "ORDER BY c.edition IS NULL, c.edition, i.number LIMIT 1",
+                    (row["creator"], row["collection"])).fetchone()
+                if first is None:
+                    continue
+                out.append({"kind": "collection", "name": row["collection"],
+                            "creator": row["creator"], "count": row["count"],
+                            "txid": first["txid"], "cover_type": first["content_type"],
+                            "time": int(first["time"] or 0)})
+        return out
+
     def collection_count(self, creator: str | None = None) -> int:
         sql = "SELECT COUNT(*) FROM (SELECT 1 FROM collection_item"
         args: list = []

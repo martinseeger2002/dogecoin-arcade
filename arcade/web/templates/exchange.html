@@ -11,7 +11,8 @@
   <a class="btn {{ 'on' if current == 'tokens' else 'ghost' }} small" href="/exchange?tab=tokens">Tokens</a>
   <a class="btn {{ 'on' if current == 'market' else 'ghost' }} small" href="/exchange?tab=market">NFTs</a>
   {# The launchpad sits beside the markets it feeds (2026-09-25). #}
-  <a class="btn small" style="margin-left:auto" href="/launch">&#128640; Launch a token or collection</a>
+  <a class="btn ghost small" style="margin-left:auto" href="/launches">Launches</a>
+  <a class="btn small" href="/launch">&#128640; Launch a token or collection</a>
 </nav>
 {% endmacro %}
 
