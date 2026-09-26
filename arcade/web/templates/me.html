@@ -22,7 +22,8 @@
 <div class="panel mecard">
   <div class="mecard-top">
     <img id="me-face" alt="" hidden>
-    <span id="me-letter" class="me-letter">@</span>
+    <span id="me-letter" class="me-letter me-add" role="button" tabindex="0"
+          title="Add a picture" onclick="document.getElementById('profile-edit').scrollIntoView({behavior:'smooth'})">@</span>
     <div style="min-width:0">
       <div class="me-name" id="tag">&mdash;</div>
       <div class="muted" style="font-size:.84rem" id="tag-note"></div>
@@ -31,6 +32,7 @@
   <p id="me-bio" class="me-bio" hidden></p>
   <p id="me-url" class="muted mono" style="font-size:.84rem;margin:0;overflow-wrap:anywhere" hidden></p>
   <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:12px">
+    <a class="btn small" href="#profile-edit">Edit profile</a>
     <button type="button" class="small ghost" id="copy-name">Copy my @name</button>
     <a class="btn ghost small" id="share-page" href="#">See my page</a>
   </div>
@@ -76,60 +78,55 @@
   <p class="muted mebackup"><strong>Your twelve words are your account.</strong> There is no
     reset &mdash; <a href="/me/backup">back them up</a> if you have not.</p>
 
-  <div class="panel" style="margin-top:14px">
+  {# The profile editor (2026-09-26: "there's no way to update your
+     profile picture, bio, URL" -- it was there, folded into two <details> whose
+     summaries read as labels). Open, in one panel: the picture to tap, the two
+     boxes, one Publish, and what it costs. The ids are the ones the script has
+     always drawn into. #}
+  <div class="panel" id="profile-edit" style="margin-top:14px">
     <h2 style="margin-top:0">Edit your profile</h2>
     <div id="profile-panel">
     <p class="msg info" id="profile-locked" hidden style="margin:0 0 12px">
       To change these, unlock your wallet with your password (at the top of this page).</p>
 
-    <details style="margin-top:10px">
-      <summary class="muted" style="cursor:pointer;font-size:.84rem">
-        Profile picture<span id="face-set"></span></summary>
-      <div class="row" style="margin-top:10px">
-        <div style="flex:1"><input autocomplete="off" id="pfp" class="mono"
-          spellcheck="false" placeholder="the inscription id of a piece you hold"></div>
-        <button type="button" class="small" id="publish-face">Publish this picture</button>
-      </div>
-      {# Pasting a 64-character id is not how a person picks a face: their own
-         pictures, to tap. The box above still takes an id (2026-09-25). #}
-      <div id="face-pick" class="facepick" hidden></div>
-      <p class="muted" id="face-none" hidden style="font-size:.82rem;margin:8px 0 0">
-        You hold no pictures yet. Put one on the chain from <a href="/nfts">NFTs</a>
-        and it shows up here.</p>
-      <div class="row" id="face-preview" hidden
-           style="margin-top:10px;align-items:center;gap:10px">
-        <img id="face-img" alt="" loading="lazy"
-             style="width:56px;height:56px;border-radius:50%;object-fit:cover">
-        <span class="muted" style="font-size:.82rem">This is your face while
-          the chain says you hold it. Empty the box to take it down.</span>
-      </div>
-      <p class="muted" style="font-size:.82rem;margin:8px 0 0;max-width:64ch">
-        Any piece this account holds, on either chain &mdash; including a
-        file it posted to the <a href="/feed">feed</a>. This publishes your
-        tag again with the new picture on it: your name does not change, and
-        everybody who draws your posts picks it up.</p>
+    <h3 class="pe-h">Picture<span id="face-set" class="muted"></span></h3>
+    <div id="face-pick" class="facepick" hidden></div>
+    <p class="muted" id="face-none" hidden style="font-size:.84rem;margin:4px 0 8px">
+      You hold no pictures yet. Put one on the chain from <a href="/nfts">NFTs</a>
+      and it shows up here to tap.</p>
+    <div class="row" style="gap:8px;align-items:center;margin-top:6px">
+      <div style="flex:1"><input autocomplete="off" id="pfp" class="mono"
+        spellcheck="false" placeholder="or paste the id of a picture you hold"></div>
+      <button type="button" class="ghost small" id="face-clear">No picture</button>
+    </div>
+    <div class="row" id="face-preview" hidden
+         style="margin-top:10px;align-items:center;gap:10px">
+      <img id="face-img" alt="" loading="lazy"
+           style="width:56px;height:56px;border-radius:50%;object-fit:cover">
+      <span class="muted" style="font-size:.84rem">Your face while the chain says
+        you hold it.</span>
     </div>
 
-    <details style="margin-top:10px" open>
-      <summary class="muted" style="cursor:pointer;font-size:.84rem">
-        Bio and link<span id="about-set"></span></summary>
-      <div class="field" style="margin-top:10px">
-        <input autocomplete="off" id="bio" maxlength="160"
-               placeholder="a line about you, shown on your feed"></div>
-      <div class="row">
-        <div style="flex:1"><input autocomplete="off" id="url" class="mono"
-          spellcheck="false" maxlength="120"
-          placeholder="https://somewhere-of-yours"></div>
-        <button type="button" class="small" id="publish-about">Publish</button>
-      </div>
-      <p class="muted" style="font-size:.82rem;margin:8px 0 0;max-width:64ch">
-        Both go on the chain under your tag, so anybody who finds you sees
-        them without asking this node anything. A link has to start with
-        https:// &mdash; it is shown on your page as words to read and copy,
-        never as somewhere to click.</p>
-    </details>
+    <h3 class="pe-h">Bio<span id="about-set" class="muted"></span></h3>
+    <textarea autocomplete="off" id="bio" maxlength="160" rows="2"
+      placeholder="a line about you, shown on your page and your posts"></textarea>
+    <h3 class="pe-h">Link</h3>
+    <input autocomplete="off" id="url" class="mono" spellcheck="false" maxlength="120"
+      placeholder="https://somewhere-of-yours">
+
+    <div class="row" style="gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap">
+      <button type="button" id="publish-about">Publish profile</button>
+      <span class="pill warn" id="profile-status" hidden>waiting for its block</span>
+    </div>
+    {# Kept for anything that still presses it; the one button above sends all three. #}
+    <button type="button" id="publish-face" hidden>Publish this picture</button>
+    <p class="muted" style="font-size:.84rem;margin:10px 0 0;max-width:64ch">
+      Publishing is one transaction from your own wallet, so it costs a small
+      network fee, and it goes on the chain under your @name for anybody to read.
+      Your name does not change. A link has to start with https:// and is shown
+      as words to copy, never as something to click.</p>
+    </div>
   </div>
-  </details>
 
   <div hidden><div id="address-panel">
     <p class="muted" style="margin:0 0 8px;font-size:.88rem">People reach you by your @name. The address behind it, for a wallet that does not know names:</p>
@@ -169,6 +166,10 @@
 
 <style>
 .mecard-top{display:flex;align-items:center;gap:14px}
+.pe-h{font-size:.95rem;margin:16px 0 6px}
+#profile-edit textarea,#profile-edit #url{width:100%;box-sizing:border-box}
+.me-add{cursor:pointer}
+
 #me-face,.me-letter{width:64px;height:64px;border-radius:50%;object-fit:cover;flex:none}
 .me-letter{display:grid;place-items:center;background:var(--code);color:var(--muted);
   font-size:1.6rem;font-weight:700}
@@ -362,6 +363,9 @@ async function draw() {
   $("announce-coming").hidden = !!said.announced || !said.announcing;
   drawProfile(said);
   drawCard(said);
+  // A typed or picked picture keeps showing in the card until it is published.
+  if ($("pfp").dataset.touched) previewFace();
+  document.dispatchEvent(new CustomEvent("arcade:me-drawn"));
   $("myaddr").textContent = said.address || "—";
   // "Not published" and "broadcast, waiting on a block" are different
   // sentences. The box below is advice to hand out a contact code instead,
@@ -410,8 +414,16 @@ function finishSetUp(said) {
 // over something being typed. An announcement replaces a whole profile at
 // once, so a box that started empty would be a quiet way of taking a field
 // down, and this page redraws itself after every publish.
+let lastPublished = null;
 function drawProfile(said) {
   const profile = said.profile || {};
+  // "Waiting for its block" until what was published is what the chain says.
+  if (lastPublished && profile.pfp === lastPublished.pfp
+      && (profile.bio || "") === lastPublished.bio
+      && (profile.url || "") === lastPublished.url) {
+    $("profile-status").hidden = true;
+    lastPublished = null;
+  }
   $("profile-locked").hidden = !!keys;
   $("publish-face").disabled = !keys;
   $("publish-about").disabled = !keys;
@@ -441,6 +453,10 @@ function previewFace() {
   const piece = /^[0-9a-f]{64}$/.test(id);
   $("face-preview").hidden = !piece;
   if (piece) $("face-img").src = "/content/" + id;
+  // And in the card at the top, as others will see it.
+  $("me-face").hidden = !piece;
+  $("me-letter").hidden = piece;
+  if (piece) $("me-face").src = "/content/" + id;
 }
 $("pfp").addEventListener("input", previewFace);
 
@@ -479,9 +495,14 @@ async function loadFacePicker() {
     }
   } catch (e) { pickedOnce = false; }
 }
-$("face-pick").closest("details").addEventListener("toggle", (e) => {
-  if (e.target.open) loadFacePicker();
-});
+// Loaded as soon as the wallet is open: the row is the way to pick, not a
+// thing behind a fold (2026-09-26).
+document.addEventListener("arcade:me-drawn", () => { if (keys) loadFacePicker(); });
+$("face-clear").onclick = () => {
+  $("pfp").value = ""; $("pfp").dataset.touched = "yes";
+  document.querySelectorAll(".faceopt").forEach((o) => o.classList.remove("on"));
+  previewFace();
+};
 
 async function refreshCounts() {
   try { $("mail").textContent = (await mail.inbox()).length; } catch (e) {}
@@ -537,10 +558,28 @@ $("publish-face").onclick = () => withWallet(
   () => mail.publishProfile(keys, me, {pfp: $("pfp").value.trim()}),
   published("Your picture is on its way to the chain."));
 
-$("publish-about").onclick = () => withWallet(
-  () => mail.publishProfile(keys, me,
-        {bio: $("bio").value, url: $("url").value.trim()}),
-  published("Your profile is on its way to the chain."));
+// One button, all three: a profile is one announcement, so publishing the
+// picture and the words together is one fee rather than two.
+$("publish-about").onclick = async () => {
+  $("publish-about").disabled = true;
+  $("publish-about").textContent = "Publishing…";
+  await withWallet(
+    () => {
+      lastPublished = {pfp: $("pfp").value.trim(),
+                       bio: $("bio").value.split(/\s+/).filter(Boolean).join(" "),
+                       url: $("url").value.trim()};
+      return mail.publishProfile(keys, me, {pfp: lastPublished.pfp,
+                                            bio: $("bio").value, url: lastPublished.url});
+    },
+    (out) => {
+      $("profile-status").hidden = false;
+      return "Your profile is on its way to the chain. It changes everywhere when "
+        + "its block lands, usually within a few minutes.";
+    });
+  for (const id of ["pfp", "bio", "url"]) delete $(id).dataset.touched;
+  $("publish-about").disabled = !keys;
+  $("publish-about").textContent = "Publish profile";
+};
 
 $("copy-addr").onclick = () => {
   navigator.clipboard.writeText($("myaddr").textContent.trim());
