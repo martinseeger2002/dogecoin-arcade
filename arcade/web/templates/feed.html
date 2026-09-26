@@ -252,7 +252,11 @@
       </div>
     </div>
     {% if whose.address and whose.address != mine.address %}
-    <button type="button" class="ghost small" id="block-them" style="margin-left:auto"
+    {# Straight to your conversation with them (2026-09-26). #}
+    <a class="btn small" style="margin-left:auto"
+       href="{% if not public %}/compose?to=@{{ whose.tag }}{% elif mine.address %}/me/messages?to=@{{ whose.tag }}{% else %}/me{% endif %}"
+       {% if public and not mine.address %}title="Sign in to message @{{ whose.tag }}"{% endif %}>Message</a>
+    <button type="button" class="ghost small" id="block-them"
             data-tag="{{ whose.tag }}" data-address="{{ whose.address }}">Block</button>
     {% endif %}
   </div>

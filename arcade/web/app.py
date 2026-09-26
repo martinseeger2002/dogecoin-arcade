@@ -1566,12 +1566,14 @@ def create_app(state: AppState) -> FastAPI:
     # --- compose --------------------------------------------------------------
 
     @app.get("/compose", response_class=HTMLResponse)
-    def compose_form(request: Request):
+    def compose_form(request: Request, to: str = ""):
         keys = []
         if state.store_path.exists():
             with state.store() as store:
                 keys = store.all_keys()
-        return render(request, "compose.html", keys=keys, plan=None, prepared=None)
+        # `?to=@tag` from a profile's Message button (2026-09-26).
+        return render(request, "compose.html", keys=keys, plan=None, prepared=None,
+                      recipient=to.strip()[:80])
 
     @app.post("/compose", response_class=HTMLResponse)
     def compose_preview(request: Request, recipient: str = Form(""), body: str = Form(""),

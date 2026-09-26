@@ -539,3 +539,11 @@ def test_blocking_is_offered_on_a_profile_and_listed_in_the_book(client):
     assert book.index("blocked-box") > book.index("Address book"), \
         "below everything else"
     assert "window.arcadeBlocked" in book
+
+
+def test_a_profiles_message_button_lands_on_a_filled_in_letter(client):
+    """The operator's Message button goes to /compose?to=@tag, and the box is
+    already filled in (2026-09-26)."""
+    app, _ = client
+    body = app.get("/compose?to=@somebody").text
+    assert 'value="@somebody"' in body
