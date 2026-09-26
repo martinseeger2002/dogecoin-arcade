@@ -84,7 +84,7 @@
 .lpick:active{transform:translateY(1px)}
 .lbig{font-size:1.8rem;line-height:1}
 .lfield{display:block;margin:0 0 12px}
-.lfield span{display:block;font-size:.86rem;color:var(--muted);margin-bottom:4px}
+.lfield label{display:block;font-size:.86rem;color:var(--muted);margin-bottom:4px}
 .lfield input,.lfield select,.lfield textarea{width:100%;box-sizing:border-box}
 #review td{padding:4px 12px 4px 0;vertical-align:top}
 #review td:first-child{color:var(--muted);white-space:nowrap}
@@ -193,10 +193,14 @@
     var box = $('fields');
     box.textContent = '';
     FIELDS[kind].forEach(function (f) {
-      var wrap = document.createElement('label');
+      // A real label for each box (filming, 2026-09-26: screen readers and
+      // automation could not tell Name from Website).
+      var wrap = document.createElement('div');
       wrap.className = 'lfield';
-      var cap = document.createElement('span');
+      var cap = document.createElement('label');
       cap.textContent = f.label;
+      cap.htmlFor = 'launch-' + f.k;
+      cap.style.display = 'block';
       wrap.appendChild(cap);
       var input;
       if (f.select) {
@@ -214,6 +218,9 @@
         if (f.num) input.inputMode = 'decimal';
       }
       input.autocomplete = 'off';
+      input.id = 'launch-' + f.k;
+      input.name = f.k;
+      if (!f.select && !f.area) input.type = 'text';
       input.dataset.k = f.k;
       if (f.ph) input.placeholder = f.ph;
       input.value = values[f.k] || (f.select ? f.select[0][0] : '');

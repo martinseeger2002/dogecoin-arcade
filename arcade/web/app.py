@@ -3599,8 +3599,9 @@ def create_app(state: AppState) -> FastAPI:
         try:
             data["my_pictures"] = [
                 {"txid": row["txid"],
-                 "label": (_fromjson(row["json"]) or {}).get("name")
-                          or f"#{row['number']:,}"}
+                 "label": " \u00b7 ".join(x for x in (
+                     (_fromjson(row["json"]) or {}).get("name"),
+                     f"#{row['number']:,}") if x)}
                 for row in index.inscriptions(owners=sorted(owned), limit=200)
                 if row["held"] and str(row["content_type"] or "").startswith("image/")]
         except Exception:

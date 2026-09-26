@@ -44,6 +44,16 @@
         {% if it.volume %}&middot; {{ "%.4g"|format(it.volume) }} {{ chain.label|lower }} coins{% endif %}</div>
     </div>
   </div>
+  {% if not acts %}
+  {# A visitor sees what people said, and how to join in (filming, 2026-09-26: a
+     signed-out phone saw no reactions at all). #}
+  <div class="row lacts" style="gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
+    <span class="pill">&#9829; {{ it.likes }}</span>
+    <span class="pill">&#128078; {{ it.dislikes }}</span>
+    <span class="pill">&#128172; {{ it.comments }}</span>
+    <a class="muted" style="font-size:.84rem" href="/me">Sign in to react</a>
+  </div>
+  {% endif %}
   {% if acts %}
   <div class="row lacts" style="gap:8px;margin-top:10px;flex-wrap:wrap">
     <form method="post" action="/feed/{{ it.txid }}/{{ 'unlike' if it.liked else 'like' }}" style="display:inline">
