@@ -62,6 +62,7 @@ PUBLIC_PAGES = frozenset({
     "/nfts",
     "/inscriptions",
     "/exchange",
+    "/launch",
     "/listings",              # legs this node holds signatures for. It can
                               # spend none of them: the key is not here.
     "/events",                # what an open page polls to know to refresh

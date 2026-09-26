@@ -5850,6 +5850,17 @@ def create_app(state: AppState) -> FastAPI:
                       tokens=held, coins=coins, advice=advice,
                       renders=row["content_type"].startswith(contentlib.RENDERABLE))
 
+    @app.get("/launch", response_class=HTMLResponse)
+    def launchpad(request: Request):
+        """The launchpad: a token or a collection from a template, in steps.
+
+        It signs and spends nothing. The last step is a link to the page that
+        already makes the thing, with the choices in its address, so what is
+        reviewed and signed is exactly what it always was (2026-09-25).
+        """
+        chain, _ = _token_chain()
+        return render(request, "launch.html", chain=chain)
+
     @app.get("/tokens", response_class=HTMLResponse)
     def tokens(request: Request):
         """Every token on the chain, and the way to make one.
@@ -5877,8 +5888,23 @@ def create_app(state: AppState) -> FastAPI:
             return render(request, "tokens.html", prepared=None,
                           account_address=address,
                           account_signed=account is not None,
-                          **_token_page_data([address] if address else []))
-        return render(request, "tokens.html", prepared=None, **_token_page_data())
+                          **{**_token_page_data([address] if address else []),
+                             **_launched(request)})
+        return render(request, "tokens.html", prepared=None,
+                      **{**_token_page_data(), **_launched(request)})
+
+    #: The fields the launchpad (/launch) may prefill on the token form.
+    LAUNCH_FIELDS = ("name", "kind", "supply", "units", "category",
+                     "subcategory", "url", "data")
+
+    def _launched(request: Request) -> dict:
+        """The launchpad's choices, carried in the address, as the create form's
+        starting values. Only prefills: the person still reviews and signs."""
+        q = request.query_params
+        if q.get("launch") != "token":
+            return {}
+        return {"form_create": {k: str(q.get(k, ""))[:200] for k in LAUNCH_FIELDS
+                                if q.get(k) is not None}}
 
     @app.post("/tokens/chain")
     def tokens_chain(request: Request, chain: str = Form(""), csrf_token: str = Form(""),
