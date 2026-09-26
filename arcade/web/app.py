@@ -13026,7 +13026,11 @@ def create_app(state: AppState) -> FastAPI:
             return None
         want = Fraction(clicked["want_amount"], clicked["sale_amount"])
         for row in book:
-            if row.get("pending") or row["txid"] == clicked["txid"]:
+            # The row that was pressed is a candidate like any other: three asks
+            # at one price are one price offered by three people, and the press
+            # is a question aimed at the price (D-083). Dropping it here made
+            # the earliest maker the one the node would not ask.
+            if row.get("pending"):
                 continue
             if Fraction(row["want_amount"], row["sale_amount"]) > want:
                 break                     # sorted, so nothing after is better
@@ -13091,12 +13095,17 @@ def create_app(state: AppState) -> FastAPI:
                 if short:
                     raise swaplib.SwapError(short)
             to = _key_at(row["address"])
-            sent = _page_send(str(order), chain, to, json.dumps({
-                "swap": "fill", "swapv": swaplib.PROTOCOL, "order": str(order),
+            # What goes out names the order actually being taken, not the row
+            # that happened to be clicked: the maker answers by looking this id
+            # up and refusing anything that is not its own to fill, and the
+            # answer comes back checked against the same id (`_fill`, which
+            # compares the offer's seller with the order it resolves to).
+            sent = _page_send(row["txid"], chain, to, json.dumps({
+                "swap": "fill", "swapv": swaplib.PROTOCOL, "order": row["txid"],
                 "tokens": tokens, "buyer": buyer}).encode())
             now = time.time()
             state.offers.add_fill({
-                "id": sent["txid"], "network": chain.network, "order": str(order),
+                "id": sent["txid"], "network": chain.network, "order": row["txid"],
                 "maker": row["address"], "buyer": buyer, "tokens": tokens,
                 "coins": coins, "created": now, "expires": now + swaplib.OFFER_TTL})
             state.flash(
