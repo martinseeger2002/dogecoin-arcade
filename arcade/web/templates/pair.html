@@ -34,7 +34,12 @@
     <div class="tick"><b>{% if day.low is not none %}{{ "%.8f"|format(day.low) }}{% else %}&mdash;{% endif %}</b>
       <span>24h low</span></div>
     <div class="tick"><b>{{ "%.4f"|format(day.coins) }}</b><span>24h volume &middot; coins</span></div>
+    {# Whose holdings that is, and who may be told: it belongs to the reader,
+       not to the market, so a stranger looking at a public copy gets no number
+       about a reader this page cannot see. #}
+    {% if viewer != 'nobody' %}
     <div class="tick"><b>{{ held }}</b><span>You hold</span></div>
+    {% endif %}
   </div>
 </div>
 
@@ -46,6 +51,7 @@
 
     <div class="panel">
       <h3 style="margin:0 0 10px">Buy and sell {{ prop.name }}</h3>
+      {% if viewer == 'wallet' %}
       <form method="post" action="/exchange/order" class="trade">
         <input type="hidden" name="csrf_token" value="{{ csrf }}">
         <input type="hidden" name="property_id" value="{{ prop.property_id }}">
@@ -67,6 +73,25 @@
         chain and stands until you cancel it. Selling holds the tokens back until
         then; a bid holds nothing, because nothing on this chain can reserve coins
         and still let a wallet spend.</p>
+      {% elif viewer == 'account' %}
+      {% if account_address %}
+      <p class="muted" style="font-size:.82rem;margin:0">You hold {{ held }}
+        {{ prop.name }} and {{ "%.4f"|format(coins) }} coins at the address this
+        key signs for &mdash; on this chain, not in this node, which is not
+        holding your key. A form that put an order on the book for you from here
+        is the next thing built: the form an operator sees spends this
+        machine&rsquo;s coins, and that would be your fee paying for their
+        order.</p>
+      {% else %}
+      <p class="muted" style="font-size:.82rem;margin:0">This account has no
+        {{ chain.label }} address here yet, so there is nothing to place an order
+        with. The wallet page makes one.</p>
+      {% endif %}
+      {% else %}
+      <p class="muted" style="font-size:.82rem;margin:0">Sign in to put an order
+        on the book. An order is a transaction on the chain, paid for and signed
+        by the wallet that places it &mdash; which this page is not holding.</p>
+      {% endif %}
     </div>
 
     {% if recent %}
@@ -109,7 +134,9 @@
             {%- else %}{{ o.address[:6] }}…{% endif %}
             {%- if o.pending %}<span class="pill" title="broadcast, not yet in a block">pool</span>{% endif %}</td>
           <td style="text-align:right;white-space:nowrap">
-            {%- if not o.mine and not o.pending and fills_ready %}
+            {%- if not o.mine and not o.pending and fills_ready and viewer == 'account' %}
+            <span class="muted" style="font-size:.72rem" title="Filling a price off the book is a transaction, and this node signs none of yours.">not with your key yet</span>
+            {%- elif not o.mine and not o.pending and fills_ready and viewer == 'wallet' %}
             <form method="post" action="/exchange/fill" class="row"
                   style="gap:4px;margin:0;justify-content:flex-end">
               <input type="hidden" name="csrf_token" value="{{ csrf }}">
@@ -191,6 +218,7 @@
               {%- if o.pending %}in the mempool{% else %}block {{ "{:,}".format(o.block_height) }}{% endif %}</td></tr>
         {% endfor %}
       </table>
+      {% if viewer == 'wallet' %}
       <div class="row" style="gap:6px;margin-top:10px">
         {% for side, what in (('ask', 'sells'), ('bid', 'buys')) %}
         <form method="post" action="/exchange/order/cancel" style="margin:0">
@@ -201,6 +229,13 @@
         </form>
         {% endfor %}
       </div>
+      {% elif viewer == 'account' %}
+      <p class="muted" style="font-size:.78rem;margin:10px 0 0">The chain says these are
+        yours, and this page only read the book to find out. Taking one down is a
+        transaction of its own &mdash; and a form here would have this machine sign it and
+        pay its fee, which is your order cancelled with somebody else&rsquo;s wallet. The
+        cancel that speaks for your key is the next thing built.</p>
+      {% endif %}
     </div>
     {% endif %}
   </div>

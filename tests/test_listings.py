@@ -757,6 +757,57 @@ def test_a_leg_that_answers_another_offer_is_not_finished(regtest, db, book,
     assert book.open_listings(NETWORK) == []
 
 
+def test_an_answer_cannot_tell_this_wallet_what_it_paid(regtest, db, book,
+                                                       tmp_path):
+    """The figure beside an answer is a stranger's word; the note is this wallet's.
+
+    `_check_leg` refuses a coin leg paid LESS than its payload asks and says
+    nothing about being paid MORE -- an overpay is valid to the engine and the
+    piece moves. So a leg that takes exactly what was offered while handing over
+    twice it is a trade this node would fund without blinking, if the number it
+    handed `register` came out of the message. It comes out of the bid note,
+    which is the sentence this wallet wrote before it asked anybody for anything,
+    and that is why both halves below turn on the same string: a lying "2" over a
+    leg that pays 2 is refused, and the same lie over a leg that pays 1 buys the
+    piece for 1.
+    """
+    rpc = regtest.rpc
+    keeper, offers, chain = _keeper(book, tmp_path)
+    index = SimpleNamespace(open=lambda: Database(tmp_path / "index.sqlite"))
+
+    def answer(leg, signatures, seller_key, seller, bid_id: str, said: str):
+        return keeper._bid(rpc, index, offers, chain, {"txid": "ee" * 32}, {
+            "swap": "bid", "swapv": S.PROTOCOL, "id": bid_id, "ok": True,
+            "leg": {"raw": leg.raw, "signatures": signatures,
+                    "pubkey": seller_key.hex(), "seller": seller,
+                    "amount": said}})
+
+    def paid() -> float:
+        return sum(float(u["amount"]) for u in
+                   rpc.call("listunspent", 1, 9_999_999, [buyer]))
+
+    greedy, signatures, seller_key, seller = _answered(rpc, db, price=2 * COIN)
+    honest, hsign, other_key, other = _answered(rpc, db, price=COIN)
+
+    buyer = rpc.call("getnewaddress")
+    rpc.call("sendtoaddress", buyer, 5.0)
+    rpc.call("generate", 1)
+
+    _bid_note(offers, greedy.inputs[0]["txid"], buyer, seller, COIN, bid_id="b1")
+    assert answer(greedy, signatures, seller_key, seller, "b1", "2") is None
+    refused = offers.get_bid("b1")
+    assert refused["status"] == "failed" and "price" in refused["error"], refused
+    assert rpc.call("getrawmempool") == [], "the lie bought the piece anyway"
+    assert paid() > 4.9, "a refusal put a coin of this wallet into a transaction"
+
+    _bid_note(offers, honest.inputs[0]["txid"], buyer, other, COIN, bid_id="b2")
+    agreed = answer(honest, hsign, other_key, other, "b2", "2")
+    assert agreed and agreed["ok"] is True, agreed
+    rpc.call("generate", 1)
+    assert 3.9 < paid() < 4.0, \
+        f"this wallet paid {5.0 - paid():.8f} for a piece it offered 1 for"
+
+
 def test_a_listing_whose_second_coin_is_spent_is_refused(regtest, db, book):
     """The seller spent the coin behind its own second signature, and not the piece.
 
