@@ -648,6 +648,7 @@ ol.words{column-gap:1.4em}
   {%- for href, label, chain, built in nav %}
     {%- if built %}
     {%- set waiting = {'/approvals': approvals_waiting, '/messages': unread_messages,
+                       '/me/notifications': notif_count, '/me/messages': mail_count,
                        '/feed': unread_board, '/exchange': offers_waiting}.get(href) %}
     <a class="{{ 'on' if path == href else '' }}" href="{{ href }}">{{ label
       }}{% if waiting %}<span class="nav-count">{{ waiting if waiting < 100 else '99+' }}</span>{% endif %}</a>

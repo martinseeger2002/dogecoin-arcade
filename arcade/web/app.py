@@ -311,8 +311,8 @@ PAGE_INSCRIPTIONS = 24
 NAV = [
     ("/",             "Overview",     None,        True),
     ("/messages",     "Messages",     "testnet",   True),
-    ("/contacts",     "Address book", None,        True),
     ("/feed",         "Feed",         "testnet",   True),
+    ("/contacts",     "Address book", None,        True),
     ("/backup",       "Backup",       None,        True),
     ("/wallet",       "Wallet",       None,        True),
     ("/tokens",       "Tokens",       "mainnet",   True),
@@ -335,8 +335,10 @@ NAV = [
 ACCOUNT_NAV = [
     ("/me",              "Your arcade",  None,        True),
     ("/me/messages",     "Messages",     "testnet",   True),
-    ("/me/contacts",     "Address book", None,        True),
+    # 2026-09-25: Messages, Notifications, Feed, then the address book.
+    ("/me/notifications", "Notifications", None,      True),
     ("/feed",            "Feed",         "testnet",   True),
+    ("/me/contacts",     "Address book", None,        True),
     ("/me/backup",       "Backup",       None,        True),
     ("/me/wallet",       "Wallet",       None,        True),
     ("/tokens",          "Tokens",       "mainnet",   True),
@@ -574,7 +576,7 @@ def create_app(state: AppState) -> FastAPI:
         """
         try:                                  # mail for phones already subscribed
             push = state.push()
-            if push is not None and push.subscribed():
+            if push is not None:              # notes every account's mail
                 _watch_for_mail()
         except Exception as exc:              # noqa: BLE001 -- never block startup
             log.info("push not started: %s", exc)
@@ -677,6 +679,7 @@ def create_app(state: AppState) -> FastAPI:
             "ledger_net": state.ledger.label,
             "approvals_waiting": _approvals_waiting(),
             "unread_messages": _unread_messages(),
+            **_account_counts(request),
             "unread_board": _unread_board(),
             "offers_waiting": _offers_waiting(),
         }
@@ -2485,7 +2488,8 @@ def create_app(state: AppState) -> FastAPI:
             return ""
 
     @app.get("/feed", response_class=HTMLResponse)
-    def feed_page(request: Request, before: str | None = None, sort: str = "popular"):
+    def feed_page(request: Request, before: str | None = None, sort: str = "popular",
+                  post: str | None = None):
         """Everybody's posts, the endorsed first: likes, shares, and tips
         weighted by what they gave (2026-09-23; feed.py says the
         arithmetic and store.py runs it as the query's own ORDER BY).
@@ -2500,6 +2504,14 @@ def create_app(state: AppState) -> FastAPI:
         sort = "new" if sort == "new" else "popular"
         rows, cursor, waiting = _feed_page(chain.network, before=before,
                                           sort=sort)
+        # One post and its thread: where a notification points (2026-09-25).
+        wanted = (post or "").strip().lower()
+        if len(wanted) == 64 and all(c in "0123456789abcdef" for c in wanted):
+            with state.store() as store:
+                rows = list(store.conn.execute(
+                    "SELECT * FROM group_post WHERE network = ? AND txid = ?",
+                    (chain.network, wanted)))
+            cursor = None
         shown = _shown(rows, chain.network, waiting, me=mine["address"])
         # Looking at it is reading it. Marked BEFORE the page is rendered, so
         # the count beside Feed is gone by the time it is drawn rather than
@@ -6501,6 +6513,81 @@ def create_app(state: AppState) -> FastAPI:
                                               daemon=True)
         _watcher["thread"].start()
 
+    # --- notifications (2026-09-25) ------------------------------------
+    #
+    # Everything that happened to an account, or to posts it follows, read from
+    # what the node already keeps (arcade/notify.py). Seen is a marker per source,
+    # kept per account in settings; the red counts on the Notifications and
+    # Messages tabs are what is past it.
+
+    def _notif_seen(pubkey: str) -> dict:
+        got = state.setting(f"notif_seen:{pubkey}")
+        return dict(got) if isinstance(got, dict) else {}
+
+    def _notif_events(account) -> list:
+        from .. import notify
+        chain = _account_chain()
+        me = _account_address(account.pubkey, chain)
+        events: list = []
+        try:
+            with state.store() as store:
+                events += notify.feed_events(store.conn, chain.network, me)
+        except Exception as exc:                          # noqa: BLE001
+            log.info("notifications: feed: %s", exc)
+        push = state.push() if hasattr(state, "push") else None
+        if push is not None:
+            events += notify.message_events(push.arrivals(account.pubkey))
+        owners = {a for a in (_account_address(account.pubkey, c)
+                              for c in _account_chains()) if a}
+        try:
+            with state.listings._open() as conn:
+                events += notify.sale_events(conn, owners)
+        except Exception as exc:                          # noqa: BLE001
+            log.info("notifications: sales: %s", exc)
+        return notify.merge(events, _notif_seen(account.pubkey))
+
+    def _account_counts(request: Request) -> dict:
+        """The red counts for an account's tabs; nothing for anybody else."""
+        if not _public_request(request):
+            return {}
+        account = signed_in(request)
+        if account is None:
+            return {}
+        try:
+            events = _notif_events(account)
+        except Exception:                                 # noqa: BLE001 -- never break a page
+            return {}
+        seen = _notif_seen(account.pubkey)
+        mail = sum(1 for e in events if e.source == "message"
+                   and e.seq > int(seen.get("message_tab", 0)))
+        return {"notif_count": sum(1 for e in events if e.unread and e.source != "message")
+                + mail, "mail_count": mail}
+
+    @app.get("/me/notifications", response_class=HTMLResponse)
+    def my_notifications(request: Request):
+        account = signed_in(request)
+        if account is None:
+            return RedirectResponse("/join", status_code=303)
+        from .. import notify
+        events = _notif_events(account)
+        chain = _account_chain()
+        index = state.token_index(chain)
+        names: dict[str, str] = {}
+        for ev in events:
+            if ev.actor and ev.actor not in names:
+                try:
+                    names[ev.actor] = index.tag_of(ev.actor) or ""
+                except Exception:                         # noqa: BLE001
+                    names[ev.actor] = ""
+        # Looked at: everything on the page is read now, the Messages count
+        # included -- written before the page is drawn, so its own tab shows no
+        # count, while the rows still say which of them were new.
+        seen = notify.seen_now(events, _notif_seen(account.pubkey))
+        seen["message_tab"] = max(int(seen.get("message_tab", 0)), int(seen.get("message", 0)))
+        state.set_setting(f"notif_seen:{account.pubkey}", seen)
+        return render(request, "notifications.html", events=events, names=names,
+                      when=_when, chain=chain)
+
     # --- seats, and signing in ------------------------------------------------
     #
     # The node is a builder, an index and a window -- never a custodian
@@ -7270,7 +7357,20 @@ def create_app(state: AppState) -> FastAPI:
         if signed_in(request) is None:
             return RedirectResponse("/join", status_code=303)
         chain = _account_chain()
-        return render(request, "my_messages.html", chain=chain, when=_when)
+        page = render(request, "my_messages.html", chain=chain, when=_when)
+        try:                     # opened: the red count on the Messages tab is read
+            account = signed_in(request)
+            push = state.push() if hasattr(state, "push") else None
+            if account is not None and push is not None:
+                latest = push.arrivals(account.pubkey, limit=1)
+                if latest:
+                    seen = _notif_seen(account.pubkey)
+                    seen["message_tab"] = max(int(seen.get("message_tab", 0)),
+                                              int(latest[0]["rowid"]))
+                    state.set_setting(f"notif_seen:{account.pubkey}", seen)
+        except Exception as exc:                          # noqa: BLE001
+            log.info("messages seen: %s", exc)
+        return page
 
     @app.get("/me/contacts", response_class=HTMLResponse)
     def my_contacts(request: Request):

@@ -89,6 +89,7 @@ PUBLIC_PAGES = frozenset({
     "/auth/door",
     "/me",
     "/me/messages",
+    "/me/notifications",
     "/me/contacts",
     "/me/backup",
     "/me/nfts",
