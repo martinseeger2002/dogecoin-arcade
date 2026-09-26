@@ -277,7 +277,10 @@ function drawWallets(said) {
     what.textContent = chain.label + " coins";
     const much = document.createElement("div");
     much.className = "v";
-    much.textContent = chain.address ? coinsOf(chain.balance) : "—";
+    // What can be spent now (Order item 4): the index's balance, less what a
+    // transaction in the pool has taken, plus change on its way back.
+    much.textContent = chain.address
+      ? coinsOf(chain.spendable ?? chain.balance) : "—";
     const note = document.createElement("div");
     note.className = "n mono";
     note.style.fontSize = ".72rem";
@@ -287,8 +290,15 @@ function drawWallets(said) {
     if (chain.incoming) {
       const coming = document.createElement("div");
       coming.className = "n";
-      coming.textContent = `${coinsOf(chain.incoming)} on its way`;
+      coming.textContent = `${coinsOf(chain.incoming)} on its way to you`;
       card.appendChild(coming);
+    }
+    if (chain.leaving) {
+      const going = document.createElement("div");
+      going.className = "n";
+      going.textContent = `${coinsOf(chain.leaving)} leaving, in a transaction `
+        + "waiting for its block";
+      card.appendChild(going);
     }
     if (chain.mainnet) {
       const real = document.createElement("div");
@@ -391,7 +401,7 @@ const tried = {name: false, key: false};
 function finishSetUp(said) {
   if (!keys || !me) return;
   const tagChain = (said.chains || [])[0] || {};
-  const coins = Number(tagChain.balance || 0) + Number(tagChain.incoming || 0);
+  const coins = Number(tagChain.spendable ?? (Number(tagChain.balance || 0) + Number(tagChain.incoming || 0)));
   if (!(coins > 0)) return;
   if (!said.tag && !said.claiming && (said.name || "") && !tried.name) {
     tried.name = true;

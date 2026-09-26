@@ -7034,6 +7034,26 @@ def create_app(state: AppState) -> FastAPI:
                    in _flights.change_for(pubkey, network)
                    if (coin["txid"], coin["vout"]) not in listed)
 
+    def _leaving(pubkey: str, network: str, db, address: str) -> int:
+        """Satoshis the index still lists for this address that a transaction in
+        the pool has already spent (this node's flights, and the node's own
+        mempool -- `Flights(pool=...)`). Neither gone nor spendable: leaving."""
+        spent = _flights.spent_by(pubkey, network)
+        return sum(coin["value"] for coin in utxoslib.unspent(db, address)
+                   if (coin["txid"], coin["vout"]) in spent)
+
+    def _spendable(row: dict) -> None:
+        """The big number (Order item 4, 2026-09-25): what can be spent now.
+
+        `balance - leaving + incoming`: a coin the pool has taken is neither
+        gone nor counted, a change output on its way is spendable before its
+        block (this node offers it), and a coin a block has filed is counted
+        once (D-175). The page prints this, and says what is arriving and
+        what is leaving under it."""
+        row["spendable"] = max(0, int(row.get("balance") or 0)
+                               - int(row.get("leaving") or 0)
+                               + int(row.get("incoming") or 0))
+
     def _watch(address: str, why: str, chain=None) -> None:
         """Start following an address's coins, so it can be funded at all."""
         index = state.token_index(chain or _account_chain())
@@ -7274,6 +7294,9 @@ def create_app(state: AppState) -> FastAPI:
                     # down is not also on its way.
                     said["incoming"] = _on_its_way(account.pubkey,
                                                    chain.network, db, address)
+                    said["leaving"] = _leaving(account.pubkey, chain.network,
+                                               db, address)
+                    _spendable(said)
                 said["tag"] = index.tag_of(address) or ""
                 with state.store() as store:
                     # Two questions, and the page has to be able to answer them
@@ -7321,8 +7344,11 @@ def create_app(state: AppState) -> FastAPI:
                         row["watching"] = utxoslib.since(db, here)
                         row["incoming"] = _on_its_way(account.pubkey,
                                                       one.network, db, here)
+                        row["leaving"] = _leaving(account.pubkey, one.network,
+                                                  db, here)
                 except Exception:
                     pass                   # a node still catching up says 0
+            _spendable(row)
             said["chains"].append(row)
 
         # What this node lets this account do, and how much of it is left.

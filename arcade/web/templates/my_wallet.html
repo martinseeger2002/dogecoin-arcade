@@ -67,7 +67,10 @@ function drawWallets(said) {
     what.textContent = chain.label + " coins";
     const much = document.createElement("div");
     much.className = "v";
-    much.textContent = chain.address ? coinsOf(chain.balance) : "—";
+    // What can be spent now (Order item 4): the index's balance, less what a
+    // transaction in the pool has taken, plus change on its way back.
+    much.textContent = chain.address
+      ? coinsOf(chain.spendable ?? chain.balance) : "—";
     const note = document.createElement("div");
     note.className = "n mono";
     note.style.cssText = "font-size:.72rem;word-break:break-all";
@@ -76,8 +79,15 @@ function drawWallets(said) {
     if (chain.incoming) {
       const coming = document.createElement("div");
       coming.className = "n";
-      coming.textContent = `${coinsOf(chain.incoming)} on its way`;
+      coming.textContent = `${coinsOf(chain.incoming)} on its way to you`;
       card.appendChild(coming);
+    }
+    if (chain.leaving) {
+      const going = document.createElement("div");
+      going.className = "n";
+      going.textContent = `${coinsOf(chain.leaving)} leaving, in a transaction `
+        + "waiting for its block";
+      card.appendChild(going);
     }
     if (chain.mainnet) {
       const real = document.createElement("div");
@@ -108,8 +118,8 @@ function sayWhich() {
   $("which-note").textContent = !chain ? ""
     : chain.mainnet
       ? `Real ${chain.label.toLowerCase()} coins, from `
-        + `${coinsOf(chain.balance)} in your wallet. Permanent once sent.`
-      : `${chain.label} coins, from ${coinsOf(chain.balance)} in your wallet.`;
+        + `${coinsOf(chain.spendable ?? chain.balance)} in your wallet. Permanent once sent.`
+      : `${chain.label} coins, from ${coinsOf(chain.spendable ?? chain.balance)} in your wallet.`;
   $("which-lock").hidden = !(chain && chain.locked);
 }
 
