@@ -5978,6 +5978,66 @@ def create_app(state: AppState) -> FastAPI:
                       tokens=held, coins=coins, advice=advice,
                       renders=row["content_type"].startswith(contentlib.RENDERABLE))
 
+    @app.get("/launches", response_class=HTMLResponse)
+    def launches_page(request: Request, sort: str = "popular"):
+        """Everything launched -- tokens and collections -- ranked like the feed.
+
+        Popular is feed.hot over likes, dislikes, comments AND trades
+        (arcade/launchlist.py has the weights); New is newest block first. A
+        like is the feed's own act aimed at the launch's txid, so the buttons
+        are the feed's forms and an account's tab signs them as it does there.
+        """
+        from .. import launchlist
+        sort = "new" if sort == "new" else "popular"
+        chain, index = _token_chain()
+        mine = _tag_of_whoever_is_asking(request)
+        try:
+            items = index.launches()
+        except Exception:
+            items = []
+        try:
+            trades = index.trades()
+        except Exception:
+            trades = []
+        # What each launch has traded: tokens by their own price history,
+        # collections by the pieces of theirs that sold for coins.
+        nft = _nft_points(index, trades) if trades else {}
+        for item in items:
+            if item["kind"] == "token":
+                points = chartlib.token_prices(trades, item["id"])
+                item["trades"] = len(points)
+                item["volume"] = sum(p["price"] * p["size"] for p in points)
+            else:
+                points = nft.get((item["creator"], item["name"]), [])
+                item["trades"] = len(points)
+                item["volume"] = sum(p["price"] for p in points)
+        targets = [item["txid"] for item in items if item.get("txid")]
+        acts: list = []
+        try:
+            with state.store() as store:
+                acts = [dict(a) for a in store.feed_acts_on(state.messaging.network, targets)]
+        except Exception:
+            acts = []
+        waiting = _pending_feed(state.messaging.network)
+        known = {a["txid"] for a in acts}
+        acts += [dict(a, height=a.get("height") or 0) for a in (waiting.acts or [])
+                 if a.get("target") in set(targets) and a["txid"] not in known]
+        said = launchlist.tally(acts)
+        me = mine.get("address") or ""
+        for item in items:
+            got = said.get(item["txid"], {"likes": set(), "dislikes": set(), "comments": []})
+            item["likes"], item["dislikes"] = len(got["likes"]), len(got["dislikes"])
+            item["liked"], item["disliked"] = me in got["likes"], me in got["dislikes"]
+            item["comment_rows"] = got["comments"][-3:]
+            item["comments"] = len(got["comments"])
+        items = launchlist.rank(items, sort, int(time.time()))
+        faces = _faces_for(index, [index.property(i["id"]) for i in items
+                                   if i["kind"] == "token"] or [])
+        return render(request, "launches.html", chain=chain, items=items, sort=sort,
+                      faces=faces, mine=mine, when=_when,
+                      names=_tags_for([i["creator"] for i in items]
+                                      + [c["author"] for i in items for c in i["comment_rows"]]))
+
     @app.get("/launch", response_class=HTMLResponse)
     def launchpad(request: Request):
         """The launchpad: a token or a collection from a template, in steps.

@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Launches · DogecoinArcade{% endblock %}
+{% block body %}
+{# The launchpad list (2026-09-25): every token and collection, ranked like
+   the feed. The buttons are the feed's own forms aimed at the launch's txid (a
+   token's creation, a collection's #1), so the operator's copy posts them as it
+   always did and an account's tab signs them (the script at the bottom). #}
+<h1>Launches</h1>
+<p class="sub">Every token and collection on {{ chain.label|lower }}. <b>Popular</b>
+  weighs what people said (likes, dislikes, comments) and what they did (trades and
+  the coins through them), and lets it wear off over time like the feed; <b>New</b>
+  is newest first. <a href="/launch">Launch your own</a>.</p>
+<nav class="row" style="gap:6px;margin:0 0 16px">
+  <a class="btn small {{ 'on' if sort != 'new' else 'ghost' }}" href="/launches">Popular</a>
+  <a class="btn small {{ 'on' if sort == 'new' else 'ghost' }}" href="/launches?sort=new">New</a>
+</nav>
+<p class="msg" id="launch-news" hidden></p>
+
+{% if not items %}
+  <div class="panel empty"><p>Nothing has been launched on this chain yet.</p>
+    <p class="muted"><a href="/launch">Be the first</a>.</p></div>
+{% endif %}
+
+{% for it in items %}
+{% set acts = (public and mine.tag) or not public %}
+<div class="panel launch" style="margin:0 0 12px">
+  <div class="row" style="gap:12px;align-items:center">
+    {% if it.kind == 'token' %}
+      {% set face = faces.get(it.id, {}) %}
+      {% if face.icon %}<img class="lface" src="/content/{{ face.icon }}" alt="">
+      {% else %}<span class="lface coinface"></span>{% endif %}
+    {% elif (it.cover_type or '').startswith('image/') %}
+      <img class="lface" src="/content/{{ it.txid }}" alt="" style="border-radius:10px">
+    {% else %}<span class="lface coinface" style="border-radius:10px"></span>{% endif %}
+    <div style="flex:1;min-width:0">
+      <a style="font-weight:600" href="{% if it.kind == 'token' %}/tokens/{{ it.id }}{% else %}/exchange/collection/{{ it.creator }}/{{ it.name|urlencode }}{% endif %}">{{ it.name }}</a>
+      <span class="pill">{{ 'token' if it.kind == 'token' else 'collection' }}</span>
+      <div class="muted" style="font-size:.82rem">by
+        {% if names.get(it.creator) %}<a href="/u/{{ names[it.creator] }}">@{{ names[it.creator] }}</a>
+        {% else %}<span class="mono">{{ it.creator[:12] }}…</span>{% endif %}
+        &middot; {{ when(it.time) if it.time else 'just now' }}
+        {% if it.kind == 'collection' %}&middot; {{ "{:,}".format(it.count) }} pieces{% endif %}
+        &middot; {{ it.trades }} trade{{ '' if it.trades == 1 else 's' }}
+        {% if it.volume %}&middot; {{ "%.4g"|format(it.volume) }} {{ chain.label|lower }} coins{% endif %}</div>
+    </div>
+  </div>
+  {% if acts %}
+  <div class="row lacts" style="gap:8px;margin-top:10px;flex-wrap:wrap">
+    <form method="post" action="/feed/{{ it.txid }}/{{ 'unlike' if it.liked else 'like' }}" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="back" value="/launches{{ '?sort=new' if sort == 'new' else '' }}">
+      <button class="small {{ 'on' if it.liked else 'ghost' }}" type="submit">&#9829; {{ it.likes }}</button></form>
+    <form method="post" action="/feed/{{ it.txid }}/{{ 'undislike' if it.disliked else 'dislike' }}" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="back" value="/launches{{ '?sort=new' if sort == 'new' else '' }}">
+      <button class="small {{ 'on' if it.disliked else 'ghost' }}" type="submit">&#128078; {{ it.dislikes }}</button></form>
+    <button class="small ghost" type="button" onclick="var f=document.getElementById('c-{{ it.txid }}');f.hidden=!f.hidden">&#128172; {{ it.comments }}</button>
+  </div>
+  {% endif %}
+  {% if it.comment_rows %}
+  <div class="lcomments">
+    {% for c in it.comment_rows %}
+    <div class="muted" style="font-size:.86rem;margin-top:6px">
+      <strong>{% if names.get(c.author) %}@{{ names[c.author] }}{% else %}{{ c.author[:10] }}…{% endif %}</strong>
+      {{ c.text }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if acts %}
+  <form method="post" action="/feed/{{ it.txid }}/reply" id="c-{{ it.txid }}" hidden
+        class="row" style="gap:8px;margin-top:8px">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="back" value="/launches{{ '?sort=new' if sort == 'new' else '' }}">
+    <div style="flex:1"><input autocomplete="off" name="text" maxlength="200" placeholder="say something about it"></div>
+    <button class="small" type="submit">Comment</button>
+  </form>
+  {% endif %}
+</div>
+{% endfor %}
+
+<style>
+.lface{width:48px;height:48px;border-radius:50%;object-fit:cover;flex:none}
+.lacts button.on{background:var(--accent,#c9a227);color:#fff}
+</style>
+
+{% if public and mine.tag %}
+<script type="module">
+/* An account's tab signs the like, dislike or comment itself, as on the feed:
+   the same forms, the same wallet.react, aimed at the launch's txid. */
+import * as wallet from "/wallet.js";
+const CHAIN = {network: "{{ state.messaging.network }}",
+               version: {{ state.messaging.params.pubkeyhash_version }}};
+const KINDS = {like: 1, unlike: 2, reply: 3, dislike: 8, undislike: 9};
+const news = document.getElementById("launch-news");
+const say = (t, bad) => { news.textContent = t; news.hidden = !t;
+                          news.className = "msg " + (bad ? "err" : "ok"); };
+const opening = wallet.opened(CHAIN);
+document.addEventListener("submit", async (event) => {
+  const form = event.target;
+  const one = (form.getAttribute("action") || "").match(
+    /^\/feed\/([0-9a-f]{64})\/(like|unlike|dislike|undislike|reply)$/);
+  if (!one) return;
+  event.preventDefault();
+  const held = await opening;
+  if (!held) { say("Open your wallet on Your arcade first.", true); return; }
+  const [, txid, doing] = one;
+  const button = form.querySelector("button[type=submit]");
+  // Pressed shows at once, before the block (2026-09-25).
+  if (button && doing !== "reply") button.classList.toggle("on");
+  if (button) button.disabled = true;
+  try {
+    const out = await wallet.react(held, txid, KINDS[doing],
+                                   (form.elements.text || {}).value || "");
+    if (form.elements.text) { form.elements.text.value = ""; form.hidden = true; }
+    say(`Sent (${out.txid.slice(0, 12)}…). It counts here when its block lands.`);
+  } catch (e) {
+    if (button && doing !== "reply") button.classList.toggle("on");
+    say(String(e.message || e), true);
+  } finally { if (button) button.disabled = false; }
+});
+</script>
+{% endif %}
+{% endblock %}
