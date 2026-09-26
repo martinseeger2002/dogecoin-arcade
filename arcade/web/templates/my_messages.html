@@ -556,6 +556,7 @@ async function send() {
       const group = await mail.currentGroup(gid);
       if (!group) throw new Error("this browser does not hold that group's key");
       await mail.writeGroup(keys, me, group, "" + text);
+    sentSince = true;
       $("body").value = "";
       grow($("body"));
       await drawConversation();
@@ -571,6 +572,7 @@ async function send() {
       `@${asking} is not who this conversation is with any more. `
       + "Check with them before writing again.");
     await mail.write(keys, me, asking, "" + text);
+    sentSince = true;
     $("body").value = "";
     grow($("body"));
     await drawConversation();
@@ -608,6 +610,7 @@ $("group-make").onclick = async () => {
   $("group-make").textContent = "Making it\u2026";
   try {
     const group = await mail.createGroup(keys, me, $("group-name").value, names);
+    sentSince = true;
     $("newgroup").hidden = true;
     $("group-name").value = ""; $("group-who").value = "";
     await show(`group:${mail.rootOf(group)}`);
@@ -630,6 +633,7 @@ $("group-remove").onclick = async () => {
     // A key cannot be taken back from somebody who holds it, so this is a new
     // key for everybody who stays; what was said before stays readable.
     const next = await mail.removeFromGroup(keys, me, group, key);
+    sentSince = true;
     await show(`group:${mail.rootOf(next)}`);
   } catch (e) {
     say(String(e.message || e));
@@ -668,6 +672,16 @@ $("back").onclick = (e) => { e.preventDefault(); show(null); };
 
 /* --- keeping up ------------------------------------------------------ */
 
+// Your sent letters and group keys, kept sealed on the node so another
+// browser signed in with your words has them too (messaging.js syncMailbox).
+// Merged on arrival, after anything you send, and otherwise once a minute.
+let lastSync = 0, sentSince = true;
+async function syncHistory() {
+  if (!sentSince && Date.now() - lastSync < 60000) return 0;
+  sentSince = false; lastSync = Date.now();
+  try { return await mail.syncMailbox(me); } catch (e) { return 0; }
+}
+
 let looking = false;
 async function check(loud) {
   if (looking || !me) return;
@@ -682,6 +696,14 @@ async function check(loud) {
       $("checking").textContent =
         `Looked at ${out.looked}; ${out.opened} were yours.`;
     }
+    await syncHistory();
+    // Holders' chats this account created: let new holders in, and move the
+    // group to a new key without anybody who sold. Each chat at most every ten
+    // minutes (messaging.js tendHolderChats).
+    try {
+      const moved = await mail.tendHolderChats(keys, me);
+      if (moved.joined || moved.left) sentSince = true;
+    } catch (e) { /* tried again on the next look */ }
     // The open conversation first: drawing it marks it read, and drawing
     // the list before that leaves a badge on the thread being looked at.
     if (here) await drawConversation();
@@ -698,6 +720,8 @@ async function ready(w) {
   me = await mail.identity(w.phrase);
   $("locked").hidden = true;
   $("msgr").hidden = false;
+  // A browser that has never seen your sent letters gets them back first.
+  await syncHistory();
   await drawThreads();
 
   // Arrived from the address book, or from a link, with somebody chosen.

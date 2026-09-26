@@ -60,6 +60,8 @@
 </div>
 {% endif %}
 
+{% set hc_kind, hc_id, hc_name, hc_label, hc_creator = 'collection', 0, summary.collection, summary.collection, summary.creator %}
+{% include "_holders_chat.html" %}
 {% if yours %}
 <h2>Yours in this collection &mdash; {{ yours|length }}</h2>
 <div class="panel" style="margin-bottom:18px">

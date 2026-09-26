@@ -4892,6 +4892,33 @@ def create_app(state: AppState) -> FastAPI:
             held = []
         return contentlib._json([contentlib.holding(row) for row in held])
 
+    @app.get("/r/holders")
+    def r_holders(token: int = 0, creator: str = "", collection: str = ""):
+        """Who holds a token, or any piece of a collection: addresses only.
+
+        Public already -- the token page lists holders and every piece page its
+        owner -- and asked for by the creator's browser, which keeps the
+        holders' group chat in step with the chain (messaging.js
+        tendHolderChats, 2026-09-25).
+        """
+        index = _content_index()
+        try:
+            if token:
+                rows = index.holders(int(token))
+                return contentlib._json({"holders": [r["address"] for r in rows]})
+            if creator and collection:
+                owners: list[str] = []
+                for offset in range(0, 5000, 500):
+                    page = index.collection_items(creator, collection, limit=500,
+                                                  offset=offset)
+                    owners += [r["owner"] for r in page]
+                    if len(page) < 500:
+                        break
+                return contentlib._json({"holders": sorted(set(owners))})
+        except Exception:
+            pass
+        return contentlib._json({"holders": []})
+
     @app.get("/r/tag/{name}")
     def r_tag(name: str):
         address = _content_index().address_of(name)
@@ -10431,6 +10458,33 @@ def create_app(state: AppState) -> FastAPI:
                 "tipped": item.tipped,
             } for item in shown],
         })
+
+    @app.get("/account/mailbox")
+    def account_mailbox(request: Request):
+        """This account's sealed message history, for a browser to merge in."""
+        account = _signed_in_account(request)
+        have = state.mailbox().get(account.pubkey)
+        return JSONResponse(have or {"blob": "", "updated": 0})
+
+    @app.post("/account/mailbox")
+    def account_mailbox_put(request: Request, payload: Any = Body(None)):
+        """Keep this account's sealed message history (accounts.Mailbox).
+
+        Ciphertext only: the key is derived in the browser from the account's
+        words, so this node can neither read nor alter what it keeps.
+        """
+        from ..accounts import AccountError as _AccountError, MailboxMoved
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            out = state.mailbox().put(account.pubkey, str(said.get("blob") or ""),
+                                      int(said.get("base") or 0))
+        except MailboxMoved as exc:
+            return JSONResponse({"detail": str(exc), "updated": exc.updated},
+                                status_code=409)
+        except (_AccountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse(out)
 
     @app.get("/account/messages")
     def account_messages(request: Request, after: int = 0, limit: int = 200):

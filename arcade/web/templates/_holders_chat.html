@@ -1,0 +1,70 @@
+{# The holders' chat switch (2026-09-25). Drawn hidden for every public
+   visitor; the browser shows it only when the signed-in account is the one that
+   made the asset (hc_creator), because only that browser can keep the group's
+   key. Set hc_kind, hc_id / hc_name, hc_label and hc_creator before including. #}
+{% if public %}
+<div class="panel" id="hc-box" hidden style="margin:16px 0">
+  <div class="row" style="align-items:center;gap:12px;flex-wrap:wrap">
+    <div style="flex:1 1 240px">
+      <strong>Holders' chat</strong>
+      <div class="muted" style="font-size:.86rem" id="hc-says">Everybody who holds
+        {{ hc_label }} in one private group chat, kept up to date by your browser
+        whenever you have Messages open. Each invitation is one message, and you
+        pay its fee.</div>
+    </div>
+    <button type="button" id="hc-go">Start the holders' chat</button>
+  </div>
+  <p class="msg" id="hc-news" hidden style="margin:8px 0 0"></p>
+</div>
+<script type="module">
+import * as wallet from "/wallet.js";
+const $ = (id) => document.getElementById(id);
+const ASSET = {{ ({"kind": hc_kind, "id": hc_id, "creator": hc_creator,
+                   "name": hc_name, "label": hc_label})|tojson }};
+const CHAIN = {network: {{ chain.network|tojson }},
+               version: {{ chain.params.pubkeyhash_version }}};
+(async () => {
+  const keys = await wallet.opened(CHAIN);
+  if (!keys) return;
+  const said = await wallet.state();
+  const mine = (said.chains || []).some((c) => c.address === ASSET.creator)
+            || said.address === ASSET.creator;
+  if (!mine) return;
+  const mail = await import("/messaging.js");
+  const asset = ASSET.kind === "token"
+    ? {kind: "token", id: ASSET.id, label: ASSET.label}
+    : {kind: "collection", creator: ASSET.creator, name: ASSET.name, label: ASSET.label};
+  const running = (await mail.holderChats()).find((g) =>
+    JSON.stringify(g.holders_of) === JSON.stringify(asset));
+  $("hc-box").hidden = false;
+  if (running) {
+    $("hc-says").textContent = `Running: ${running.members.length} in it. It keeps `
+      + "itself up to date whenever you have Messages open.";
+    $("hc-go").textContent = "Open it in Messages";
+    $("hc-go").onclick = () => { location.href = "/me/messages"; };
+    return;
+  }
+  $("hc-go").onclick = async () => {
+    const news = $("hc-news");
+    $("hc-go").disabled = true;
+    $("hc-go").textContent = "Starting…";
+    try {
+      const me = await mail.identity(keys.phrase);
+      const group = await mail.startHoldersChat(keys, me, asset, said.tag || "");
+      news.className = "msg ok";
+      news.textContent = `Started with ${group.members.length} people. Their invitations `
+        + "are on their way; it shows in Messages as a group.";
+      $("hc-go").textContent = "Open it in Messages";
+      $("hc-go").disabled = false;
+      $("hc-go").onclick = () => { location.href = "/me/messages"; };
+    } catch (e) {
+      news.className = "msg err";
+      news.textContent = String(e.message || e);
+      $("hc-go").disabled = false;
+      $("hc-go").textContent = "Start the holders' chat";
+    }
+    news.hidden = false;
+  };
+})().catch(() => {});
+</script>
+{% endif %}
