@@ -704,7 +704,9 @@ def create_app(state: AppState) -> FastAPI:
             "account_here": bool(_public_request(request)
                                  and signed_in(request) is not None),
             "unread_board": _unread_board(),
-            "offers_waiting": _offers_waiting(),
+            # The operator's own badge: on a public page nobody sees it, and
+            # working it out asks the node's wallet which addresses are its own.
+            "offers_waiting": 0 if _public_request(request) else _offers_waiting(),
         }
         base.update(context)
         # What a POST decided, picked up by the GET it redirected to. Last,
@@ -12558,11 +12560,30 @@ def create_app(state: AppState) -> FastAPI:
             out[prop["property_id"]] = face
         return out
 
-    def _offerable(chain, index):
-        """What this wallet could offer with: its tokens, and its coins."""
+    def _offerable(chain, index, request: Request | None = None):
+        """What the one looking could offer with: its tokens, and its coins.
+
+        On a public copy that is the signed-in ACCOUNT's own address and nothing
+        else -- the node's wallet is a stranger's wallet there, and drawing its
+        holdings into a visitor's offer form told the visitor what the operator
+        holds (D-184's shape, applied to the collection page; plan item 4).
+        A visitor who is not signed in holds nothing here.
+        """
         held: list[dict[str, Any]] = []
         coins = 0.0
         owned: set[str] = set()
+        if request is not None and _public_request(request):
+            account = signed_in(request)
+            here = _account_address(account.pubkey, chain) if account else ""
+            if not here:
+                return owned, held, coins
+            try:
+                held = _purses(index.balances([here]))
+                with contextlib.closing(index.open()) as db:
+                    coins = utxoslib.balance(db, here) / 100_000_000
+            except Exception:
+                held, coins = [], 0.0
+            return {here}, held, coins
         try:
             with chain.rpc() as rpc:
                 owned = set(_ledger_addresses(rpc))
@@ -13075,7 +13096,7 @@ def create_app(state: AppState) -> FastAPI:
             listed = _prices_for(index, chain)
         except Exception as exc:
             data["node_error"] = f"the prices could not be read: {exc}"
-        owned, data["tokens"], data["coins"] = _offerable(chain, index)
+        owned, data["tokens"], data["coins"] = _offerable(chain, index, request)
         try:
             data["pages"] = max(1, -(-summary["count"] // PAGE_INSCRIPTIONS))
             data["page"] = page = max(1, min(page, data["pages"]))

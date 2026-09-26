@@ -801,3 +801,39 @@ def test_the_page_script_survives_the_closing_tag_inside_it(client, tmp_path,
     script = script[:script.index("</script>")]
     assert "</script>" not in script
     assert "<\\/script>" in script, "the closing tag has to be escaped, not removed"
+
+
+def test_a_public_collection_page_never_asks_the_node_s_wallet(client, monkeypatch):
+    """Plan item 4, D-184's shape on the collection page: on a public copy the
+    offer form is the looking account's, so the node's wallet -- a stranger's
+    wallet there -- is not asked what it holds. Drawing its tokens and coins
+    into a visitor's form told the visitor what the operator holds."""
+    app, state = client
+    index_with_a_collection(state.home)
+    state.public = True
+    try:
+        # Only the wallet's own questions count: reading the chain or the
+        # mempool says nothing about whose coins these are.
+        WALLET = {"getbalance", "listunspent", "getaddressesbylabel",
+                  "getaddressesbyaccount", "listreceivedbyaddress",
+                  "listaddressgroupings", "getwalletinfo", "listlabels"}
+        asked = []
+
+        class Recorder:
+            def __enter__(self):
+                return self
+            def __exit__(self, *exc):
+                return False
+            def call(self, method, *a):
+                if method in WALLET:
+                    asked.append(method)
+                raise RuntimeError("no node in this test")
+
+        monkeypatch.setattr(type(state.ledger), "rpc", lambda self, *a, **k: Recorder(),
+                            raising=False)
+        page = app.get("/exchange/collection/nMe/Doge%20Punks")
+        assert page.status_code == 200, page.text[:500]
+        assert "Doge Punks" in page.text
+        assert asked == [], f"the node's wallet was asked on a public page: {asked}"
+    finally:
+        state.public = False
