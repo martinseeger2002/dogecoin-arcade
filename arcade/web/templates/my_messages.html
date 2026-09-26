@@ -494,19 +494,72 @@ async function drawConversation() {
       + "they know something arrived. Enter sends; Shift+Enter starts a new line.";
   }
 
+  // Only the newest few, newest at the bottom, and older ones as you scroll up
+  // (2026-09-26: "it should bring you straight to the bottom and only
+  // load the older messages as you scroll up"). A redraw -- a send, an arrival --
+  // keeps however many were loaded and stays at the bottom only if you were there.
+  const box = $("bubbles");
+  if (windowPeer !== here) { windowPeer = here; windowSize = PAGE; box.dataset.pinned = "1"; }
+  const pinned = box.dataset.pinned === "1";
+  const fromBottom = box.scrollHeight - box.scrollTop;
+  allLetters = letters;
   forgetUrls();
-  $("bubbles").innerHTML = "";
+  box.innerHTML = "";
   if (!letters.length) {
     const none = document.createElement("p");
     none.className = "muted nothing";
     none.style.padding = "30px 0";
     none.textContent = "No messages yet. Write the first one below.";
-    $("bubbles").appendChild(none);
+    box.appendChild(none);
   }
-  for (const letter of letters) $("bubbles").appendChild(bubble(letter));
-  $("bubbles").scrollTop = $("bubbles").scrollHeight;
+  drawWindow();
+  if (pinned) box.scrollTop = box.scrollHeight;
+  else box.scrollTop = box.scrollHeight - fromBottom;
   await mail.markRead(here);
 }
+
+const PAGE = 30;
+let windowPeer = null, windowSize = PAGE, allLetters = [], loadingOlder = false;
+
+/** The newest `windowSize` letters, with a marker above them if there are more. */
+function drawWindow() {
+  const box = $("bubbles");
+  const start = Math.max(0, allLetters.length - windowSize);
+  const older = document.createElement("p");
+  older.className = "muted older";
+  older.id = "older";
+  older.style.cssText = "text-align:center;font-size:.8rem;padding:8px 0";
+  older.textContent = start ? "Scroll up for older messages" : "";
+  older.hidden = !start;
+  box.appendChild(older);
+  for (const letter of allLetters.slice(start)) box.appendChild(bubble(letter));
+}
+
+/** Near the top: add the next page of older letters above, without the view jumping. */
+async function loadOlder() {
+  const box = $("bubbles");
+  if (loadingOlder || windowSize >= allLetters.length) return;
+  loadingOlder = true;
+  const before = box.scrollHeight - box.scrollTop;
+  windowSize += PAGE;
+  forgetUrls();
+  box.innerHTML = "";
+  drawWindow();
+  box.scrollTop = box.scrollHeight - before;
+  loadingOlder = false;
+}
+
+$("bubbles").addEventListener("scroll", () => {
+  const box = $("bubbles");
+  // Pinned while the reader is at (or within a line of) the bottom.
+  box.dataset.pinned = box.scrollHeight - box.scrollTop - box.clientHeight < 40 ? "1" : "";
+  if (box.scrollTop < 120) loadOlder();
+});
+// Pictures load after the scroll was set and push the bottom away; keep it there.
+$("bubbles").addEventListener("load", () => {
+  const box = $("bubbles");
+  if (box.dataset.pinned === "1") box.scrollTop = box.scrollHeight;
+}, true);
 
 async function show(peer, via) {
   here = peer;
