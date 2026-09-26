@@ -62,7 +62,7 @@
        and some browsers never show it (filming the token tutorial, 2026-09-25). #}
     <div class="iconpick" aria-label="Pick one of yours">
       <span class="muted" style="font-size:.8rem">Pick one of yours:</span>
-      {% for row in my_pictures[:12] %}
+      {% for row in my_pictures %}
       <button type="button" class="iconpick-one" data-id="{{ row.txid }}" title="{{ row.label }}">
         <img src="/content/{{ row.txid }}" alt="{{ row.label }}" loading="lazy"></button>
       {% endfor %}
@@ -93,7 +93,9 @@
 <div class="msg err" id="create-trouble" hidden></div>
 <div class="msg ok" id="create-news" hidden></div>
 <style>
-.iconpick{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px}
+.iconpick{display:flex;gap:6px;align-items:center;margin-top:8px;overflow-x:auto;
+  padding-bottom:4px;max-width:100%}
+.iconpick-one{flex:none}
 .iconpick-one{padding:0;width:40px;height:40px;border-radius:50%;overflow:hidden;
   border:1px solid var(--line);background:var(--panel);cursor:pointer}
 .iconpick-one img{width:100%;height:100%;object-fit:cover;display:block}
@@ -222,7 +224,8 @@ async function offer() {
     if (!asked.ok) throw new Error(offer.detail || "that token cannot be created");
     const shown = await wallet.checked(offer, keys);
     $("create-says").textContent =
-      `${offer.what}? ${shown.says} Worked out in this browser from the `
+      `${(offer.what || "").charAt(0).toUpperCase()}${(offer.what || "").slice(1)}? `
+      + `${shown.says.charAt(0).toUpperCase()}${shown.says.slice(1)}. Worked out in this browser from the `
       + "transaction's own bytes, not from what this node says it does."
       + (offer.class === "B" ? " It carries the payload in extra outputs, "
                              + "which is what an icon costs." : "");

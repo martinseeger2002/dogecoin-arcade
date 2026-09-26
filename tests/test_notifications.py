@@ -72,7 +72,7 @@ def test_the_red_count_shows_until_the_page_is_looked_at(public):
     page = app.get("/me", headers=EDGE).text
     assert 'href="/me/notifications">Notifications<span class="nav-count">1</span>' in page
     seen = app.get("/me/notifications", headers=EDGE).text
-    assert "liked your post" in seen and "notif new" in seen
+    assert "liked your post" in seen and "nrow new" in seen
     assert 'Notifications<span class="nav-count">' not in seen.split("</nav>")[0], \
         "its own tab is read by the time it is drawn"
     again = app.get("/me", headers=EDGE).text

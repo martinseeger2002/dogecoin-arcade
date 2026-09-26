@@ -14,35 +14,36 @@
   none of them &mdash; it builds what you ask for, you sign it, and it
   broadcasts.</p>
 
-{# The same chain card Overview shows, and the same status: whether the
-   chain is reachable at all. What is hidden is the node's OWN wallet
-   balance -- that money is the operator's, not this account's, and
-   showing it here would be both a leak and a lie about whose it is. #}
-<div class="chainbar">
-  {{ chains.card(chain, node, "Messenger — messages are conversational, and testnet chains get reset.",
-                 None, hide_wallet=True) }}
+{# 2026-09-25: "instead of displaying your wallet address it should just
+   display your @name ... Simplify that page." You first -- your face, your @name,
+   what you said about yourself -- then your coins, then what still needs doing.
+   Everything else is folded away below. The ids are the ones the script has always
+   drawn into. #}
+<div class="panel mecard">
+  <div class="mecard-top">
+    <img id="me-face" alt="" hidden>
+    <span id="me-letter" class="me-letter">@</span>
+    <div style="min-width:0">
+      <div class="me-name" id="tag">&mdash;</div>
+      <div class="muted" style="font-size:.84rem" id="tag-note"></div>
+    </div>
+  </div>
+  <p id="me-bio" class="me-bio" hidden></p>
+  <p id="me-url" class="muted mono" style="font-size:.84rem;margin:0;overflow-wrap:anywhere" hidden></p>
+  <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:12px">
+    <button type="button" class="small ghost" id="copy-name">Copy my @name</button>
+    <a class="btn ghost small" id="share-page" href="#">See my page</a>
+  </div>
+  {# Drawn into by the script, not shown: 2026-09-25 -- "it doesn't need to
+     show messages or anything like that". #}
+  <span hidden><span id="mail"></span><span id="mail-note"></span><span id="contacts"></span></span>
 </div>
 
-<div class="grid" style="margin-bottom:18px">
-  <div class="stat"><div class="k">Your name</div>
-    <div class="v" id="tag">—</div>
-    <div class="n" id="tag-note"></div></div>
-  <div class="stat"><div class="k">Messages</div>
-    <div class="v" id="mail">—</div>
-    <div class="n" id="mail-note">opened in this browser</div></div>
-  <div class="stat"><div class="k">Known contacts</div>
-    <div class="v" id="contacts">—</div>
-    <div class="n"><a href="/me/contacts">address book</a></div></div>
-</div>
-
-{# One wallet a chain, from one set of words -- a glance, not the whole
-   Wallet page. Sending lives there now, the same as locally Overview
-   shows chain cards while Wallet shows the send form. #}
-<div class="grid" id="wallets" style="margin-bottom:18px"></div>
-
+{# No wallet here (2026-09-25): coins are on the Wallet page. Kept, hidden, for
+   the script that draws into it. #}
+<div hidden><div class="grid" id="wallets"></div></div>
 <div class="msg err" id="trouble" hidden></div>
 <div class="msg ok" id="news" hidden></div>
-
 <div class="panel" id="unlock">
   <h2 style="margin-top:0">Welcome back</h2>
   <p class="muted" style="margin:0 0 10px">You are signed in, but this is a
@@ -61,7 +62,6 @@
       on the chain. Until then it is only this node's note of it.</p>
     <button class="btn primary" id="claim">Claim it</button>
   </div>
-
   <div class="panel" id="announce-panel" hidden>
     <h2 style="margin-top:0">Let people write to you</h2>
     <p class="muted" style="margin:0 0 10px">Publishing your messaging key
@@ -73,69 +73,14 @@
       nothing to press &mdash; a second announcement would be a second
       transaction saying the same thing.</p>
   </div>
+  <p class="muted mebackup"><strong>Your twelve words are your account.</strong> There is no
+    reset &mdash; <a href="/me/backup">back them up</a> if you have not.</p>
 
-  {# Overview's "Your messaging address" panel, the same shape: an address
-     to hand out, the fuller contact code for before a key is on the
-     chain, and a way to back the account up. Built here in the browser --
-     the node is not asked and cannot answer for a key it does not hold. #}
-  <div class="panel" id="address-panel">
-    <h2 style="margin-top:0">Your messaging address
-      <span class="tag testnet">test</span></h2>
-    <p>This is how people reach you. Give it to anyone who wants to message
-       you, by any means at all &mdash; it is just an address.</p>
-    <div class="phrase" style="font-size:.95rem" id="myaddr">—</div>
-    <div class="row" style="margin:10px 0 0">
-      <button type="button" class="ghost" id="copy-addr">Copy my address</button>
-      <a class="ghost btn" href="/me/contacts">Address book</a>
-      <a class="ghost btn" href="/me/backup">Back up my account</a>
-    </div>
-
-    <div class="msg info" id="not-announced" style="margin-top:14px" hidden>
-      Your address is not published on the chain yet, so someone who has
-      only your address has nothing to encrypt to. Either publish it once
-      &mdash; the button above, "Publish my key" &mdash; and your address
-      works on its own, or send the full contact code below instead.
-    </div>
-
-    <details style="margin-top:16px">
-      <summary class="muted" style="cursor:pointer;font-size:.88rem">Full
-        contact code</summary>
-      <p class="muted" style="font-size:.87rem;margin:10px 0 8px">
-        Contains your address <em>and</em> your public key, so someone can
-        write to you before your key has been seen on the chain. Longer,
-        but works immediately.</p>
-      <div class="phrase" style="font-size:.82rem" id="contact">—</div>
-      <button type="button" class="ghost" style="margin-top:9px"
-              id="copy-contact">Copy</button>
-    </details>
-
-    <div class="note" style="margin-top:16px">
-      <strong>Your twelve words are your identity.</strong> There is no
-      password reset and nothing else to write down. Losing them, or the
-      password on this account, loses the account for good &mdash; nobody
-      here can get it back for you. <a href="/me/backup">Back it up now</a>.
-    </div>
-  </div>
-
-  {# The operator's two profile forms, ported rather than redesigned. On
-     `/contacts` they write into this installation's settings and publish
-     from the node's own key; an account has neither, so the same three
-     fields go out in an announcement of its own, built by the node and
-     signed here. The boxes start with whatever is already published,
-     because one announcement replaces the whole of a profile &mdash; an
-     empty box is a thing taken down, not a thing left alone. #}
-  {# Shown whether or not the wallet is open in this tab: it was hidden until then,
-     and a signed-in person with a locked tab could not find it at all (the operator,
-     2026-09-25). Locked, it shows what is published and says how to change it. #}
-  <div class="panel" id="profile-panel">
-    <h2 style="margin-top:0">Your profile: picture, bio and link</h2>
+  <div class="panel" style="margin-top:14px">
+    <h2 style="margin-top:0">Edit your profile</h2>
+    <div id="profile-panel">
     <p class="msg info" id="profile-locked" hidden style="margin:0 0 12px">
       To change these, unlock your wallet with your password (at the top of this page).</p>
-    <p class="muted" style="margin:0 0 10px;max-width:64ch">What people see
-      when they click your name: your face, your name, a line about you, and
-      your link. It goes on the chain under your tag, so a node that has
-      never heard of you can still draw it &mdash; and every word of it is
-      what <em>you</em> said, which nobody here is vouching for.</p>
 
     <details style="margin-top:10px">
       <summary class="muted" style="cursor:pointer;font-size:.84rem">
@@ -163,9 +108,9 @@
         file it posted to the <a href="/feed">feed</a>. This publishes your
         tag again with the new picture on it: your name does not change, and
         everybody who draws your posts picks it up.</p>
-    </details>
+    </div>
 
-    <details style="margin-top:10px">
+    <details style="margin-top:10px" open>
       <summary class="muted" style="cursor:pointer;font-size:.84rem">
         Bio and link<span id="about-set"></span></summary>
       <div class="field" style="margin-top:10px">
@@ -184,41 +129,61 @@
         never as somewhere to click.</p>
     </details>
   </div>
+  </details>
+
+  <div hidden><div id="address-panel">
+    <p class="muted" style="margin:0 0 8px;font-size:.88rem">People reach you by your @name. The address behind it, for a wallet that does not know names:</p>
+    <div class="phrase" style="font-size:.95rem" id="myaddr">—</div>
+    <div class="row" style="margin:10px 0 0">
+      <button type="button" class="ghost" id="copy-addr">Copy my address</button>
+    </div>
+
+    <div class="msg info" id="not-announced" style="margin-top:14px" hidden>
+      Your address is not published on the chain yet, so someone who has
+      only your address has nothing to encrypt to. Either publish it once
+      &mdash; the button above, "Publish my key" &mdash; and your address
+      works on its own, or send the full contact code below instead.
+    </div>
+
+    <details style="margin-top:16px">
+      <summary class="muted" style="cursor:pointer;font-size:.88rem">Full
+        contact code</summary>
+      <p class="muted" style="font-size:.87rem;margin:10px 0 8px">
+        Contains your address <em>and</em> your public key, so someone can
+        write to you before your key has been seen on the chain. Longer,
+        but works immediately.</p>
+      <div class="phrase" style="font-size:.82rem" id="contact">—</div>
+      <button type="button" class="ghost" style="margin-top:9px"
+              id="copy-contact">Copy</button>
+    </details>
+    </div>
+  </div>
 </div>
 
-{# What this node lets this account do, and how much of it is left. Said
-   here rather than at the moment it runs out, because a number that only
-   appears as a refusal reads as a broken site — and this is one machine
-   shared with everybody else signed up on it. The operator sets these on
-   their Overview; nothing here can move them. #}
-<div class="panel" id="room" hidden style="margin-top:18px">
-  <h2 style="margin-top:0">What this node lets you do</h2>
-  <p class="muted" style="margin:0 0 12px;max-width:64ch">
-    One machine is shared with everybody who signed up on it, so there are
-    numbers on how much of it one account may take. Yours are these, and
-    they open again as the hour runs on.</p>
+<div class="panel" style="margin-top:14px">
+  <h2 style="margin-top:0">Your usage</h2>
+<div id="room" hidden>
+  <p class="muted" style="margin:0 0 12px;font-size:.88rem">What this node lets one account do, and how much of it you have used. It opens again as the hour goes on.</p>
   <div class="statbar" id="room-grid"></div>
-</div>
+  </div></div>
 
-{# What this page deliberately does not have, said rather than left as a
-   gap: Overview's auto-sell, auto-fill, update and scan settings all
-   configure the NODE's own automation, which runs on the node's own key.
-   An account has no such automation to configure -- accepting an offer,
-   filling a bid, or anything else that happens without a fresh signature
-   would need a key on this server that could spend on its own, which is
-   the one thing this design refuses to give it. Every action an account
-   takes is signed here, in this browser, at the moment it is taken. #}
-<details style="margin-top:20px">
-  <summary class="muted" style="cursor:pointer;font-size:.88rem">Why is
-    there no automatic selling, no update settings, no scan button?</summary>
-  <p class="muted" style="font-size:.87rem;margin:10px 0 0;max-width:64ch">
-    Those are on the operator's Overview because they run against the
-    node's own key, automatically, without anybody pressing anything at
-    the moment they happen. Doing the same for an account would mean this
-    server holding a key that can spend on its own -- which is exactly the
-    thing a non-custodial account refuses to give it. So there is nothing
-    here that spends without a signature you make at the time.</p>
-</details>
+<style>
+.mecard-top{display:flex;align-items:center;gap:14px}
+#me-face,.me-letter{width:64px;height:64px;border-radius:50%;object-fit:cover;flex:none}
+.me-letter{display:grid;place-items:center;background:var(--code);color:var(--muted);
+  font-size:1.6rem;font-weight:700}
+.me-name{font-size:1.6rem;font-weight:700;overflow-wrap:anywhere}
+.me-bio{margin:12px 0 4px}
+.mebackup{font-size:.86rem;margin:14px 2px}
+.mefold{margin-top:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel);
+  padding:0 16px}
+.mefold>summary{cursor:pointer;padding:14px 0;font-weight:600;list-style:none}
+.mefold>summary::after{content:"+";float:right;color:var(--accent)}
+.mefold[open]>summary::after{content:"\2013"}
+.mefold[open]{padding-bottom:14px}
+</style>
+
+
 
 <style>
 #unlock input,#doing input{width:100%;padding:10px 12px;
@@ -353,6 +318,29 @@ function drawRoom(said) {
   $("room-grid").replaceChildren(...cells);
 }
 
+// The card at the top: face, @name, bio and link, from what the chain has.
+function drawCard(said) {
+  const prof = said.profile || {};
+  const name = said.tag || said.name || "";
+  const face = $("me-face");
+  face.hidden = !prof.pfp;
+  $("me-letter").hidden = !!prof.pfp;
+  if (prof.pfp) face.src = "/content/" + prof.pfp;
+  $("me-letter").textContent = (name || "@").slice(0, 1).toUpperCase();
+  $("me-bio").textContent = prof.bio || "";
+  $("me-bio").hidden = !prof.bio;
+  $("me-url").textContent = prof.url || "";
+  $("me-url").hidden = !prof.url;
+  $("share-page").href = name ? "/u/" + encodeURIComponent(name) : "#";
+  $("copy-name").onclick = () => {
+    if (!name) return;
+    navigator.clipboard.writeText("@" + name).then(
+      () => { $("copy-name").textContent = "Copied"; setTimeout(() => {
+        $("copy-name").textContent = "Copy my @name"; }, 1500); },
+      () => say("@" + name));
+  };
+}
+
 async function draw() {
   const said = await wallet.state();
   drawRoom(said);
@@ -373,6 +361,7 @@ async function draw() {
   $("announce").hidden = !keys || !!said.announced || !!said.announcing;
   $("announce-coming").hidden = !!said.announced || !said.announcing;
   drawProfile(said);
+  drawCard(said);
   $("myaddr").textContent = said.address || "—";
   // "Not published" and "broadcast, waiting on a block" are different
   // sentences. The box below is advice to hand out a contact code instead,

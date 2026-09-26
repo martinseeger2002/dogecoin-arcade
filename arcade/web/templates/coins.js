@@ -569,10 +569,16 @@ export async function verifyOffer(offer, keys) {
   }
   const fee = taken - paid;
   const coinsOf = (sats) => (Number(sats) / 100000000).toFixed(8);
-  const says = pays.map((out) => out.bytes !== undefined
-    ? `${out.bytes} bytes written to the chain`
-    : `${coinsOf(out.value)} to ${out.to}${out.mine ? " (back to you)" : ""}`
-  ).join(", ") + `; ${coinsOf(fee)} in fees`
+  // The data outputs said once, counted and summed: three "99 bytes written to
+  // the chain" in a row read as a stutter (filming the token tutorial, 2026-09-25).
+  const data = pays.filter((out) => out.bytes !== undefined);
+  const bytes = data.reduce((n, out) => n + out.bytes, 0);
+  const says = [
+    ...(data.length ? [data.length === 1 ? `${bytes} bytes written to the chain`
+                       : `${bytes} bytes written to the chain in ${data.length} outputs`] : []),
+    ...pays.filter((out) => out.bytes === undefined).map((out) =>
+      `${coinsOf(out.value)} to ${out.to}${out.mine ? " (back to you)" : ""}`),
+  ].join(", ") + `; ${coinsOf(fee)} in fees`
     + (change > 0n ? `, ${coinsOf(change)} of it coming back to you` : "");
   return {tx, hashes, pays, fee: Number(fee), change: Number(change),
           what: offer.what || "", signs: {from, of: tx.inputs.length},

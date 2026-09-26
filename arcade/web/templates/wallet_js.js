@@ -526,6 +526,79 @@ async function _list(wallet, leg) {
   return {...said, says: shown.says, reserved: shown.reserved};
 }
 
+/* --- answering an offer, with this account's own key --------------------
+ *
+ * `/exchange/offers/{txid}` is where the operator's wallet answers an offer,
+ * and every step of that belongs to a wallet this node holds the key for: it
+ * signs an OFFER back, and its own node countersigns the buyer's half against
+ * it. An account holds a key that signs transactions and no key that signs an
+ * offer, so its answer is the other thing a holder can hand over -- a LEG, the
+ * same bytes `/account/list` builds and the same two signatures, at the
+ * BUYER's price instead of its own -- and the answer is a letter carrying them
+ * rather than a transaction. `/account/accept` builds it,
+ * `/account/accept/sign` checks the signatures really say the offer that was
+ * made, and `/account/talk` carries the sealed answer to whoever asked.
+ *
+ * Three signatures then, of two kinds. Two are asked of the coin key with
+ * SINGLE|ANYONECANPAY and neither is broadcast: there is no transaction here
+ * to broadcast, only a promise that the buyer's wallet finishes with its own
+ * coins. The third is an ordinary send of one message, signed the usual way
+ * and broadcast, and it is the only coin this account spends -- a fee, for a
+ * letter. That is the whole cost of saying yes from a tab, and the reason the
+ * price is never taken from the tab: a signature is over a number, and this is
+ * the number that was asked.
+ *
+ * Refusing is the third signature alone. `refuse` asks the node for the words
+ * to seal and never touches a coin key at all.
+ */
+export async function answerOffer(wallet, ask) {
+  return working(() => _answerOffer(wallet, ask));
+}
+
+async function _answerOffer(wallet, ask) {
+  const asked = await fetch("/account/accept", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({piece: ask.piece, offer: ask.offer,
+                          decision: ask.refuse ? "refuse" : "",
+                          chain: ask.chain || ""}),
+  });
+  const said = await asked.json();
+  if (!asked.ok) throw new Error(said.detail || "that offer cannot be answered");
+  const chain = said.chain || ask.chain || "";
+  let answer = said.answer, says = said.what || "";
+  if (!ask.refuse) {
+    const keys = keysOn(wallet, chain
+                        || (wallet.on && Object.keys(wallet.on)[0]));
+    const shown = await coins.verifyLeg(said, keys);
+    const signatures = [];
+    for (const sighash of shown.hashes) {
+      signatures.push(coinsHex(await coins.signInput(
+        keys.key, unhex(sighash), coins.SINGLE_ANYONECANPAY)));
+    }
+    const back = await fetch("/account/accept/sign", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({piece: ask.piece, offer: ask.offer, chain,
+                            raw: said.raw, signatures,
+                            pubkey: coinsHex(keys.pubkey)}),
+    });
+    const checked = await back.json();
+    if (!back.ok) throw new Error(checked.detail || "the node would not take it");
+    answer = checked.answer;
+    says = checked.what || says;
+  }
+  const {mail, me} = await messenger(wallet);
+  const talked = await fetch("/account/talk", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({op: "send", to: said.seal_to,
+                          sealed: mail.sealForProgram(me, said.seal_to,
+                                                     said.stamp, answer)}),
+  });
+  const carrier = await talked.json();
+  if (!talked.ok) throw new Error(carrier.detail || "the node could not carry it");
+  const sent = await signOffer(wallet, carrier);
+  return {...sent, says, refused: !!ask.refuse};
+}
+
 /* --- buying from a shop, with this account's own key --------------------
  *
  * `/swap/{txid}` is where the operator's wallet buys, and every step of it

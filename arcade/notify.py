@@ -122,3 +122,67 @@ def seen_now(events: Iterable[Event], seen: dict[str, int]) -> dict[str, int]:
     for ev in events:
         out[ev.source] = max(int(out.get(ev.source, 0)), ev.seq)
     return out
+
+
+@dataclass
+class Group:
+    """What the page draws as one row: "@a and 2 others liked your post"."""
+    kind: str
+    source: str
+    target: str
+    actors: list[str]
+    text: str = ""
+    at: int = 0
+    amount: int = 0
+    about_mine: bool = True
+    unread: bool = False
+    count: int = 1
+
+
+#: Kinds that fold into one row per post; a reply is words, so each is its own.
+FOLDS = {"liked", "disliked", "shared", "tipped", "message"}
+
+
+def grouped(events: Iterable[Event]) -> list[Group]:
+    """Rows for the page, newest first: likes, dislikes, shares and tips on one
+    post fold into one row, and several messages from one person into one; new
+    and already-seen ones are never folded together, so "New" means new."""
+    rows: list[Group] = []
+    index: dict[tuple, Group] = {}
+    for ev in events:                                  # already newest first
+        key = None
+        if ev.kind in FOLDS:
+            key = (ev.kind, ev.unread, ev.target if ev.source != "message" else ev.actor)
+        row = index.get(key) if key else None
+        if row is None:
+            row = Group(kind=ev.kind, source=ev.source, target=ev.target, actors=[ev.actor],
+                        text=ev.text, at=ev.at, amount=ev.amount,
+                        about_mine=ev.about_mine, unread=ev.unread)
+            rows.append(row)
+            if key:
+                index[key] = row
+            continue
+        row.count += 1
+        row.amount += ev.amount
+        if ev.actor not in row.actors:
+            row.actors.append(ev.actor)
+        if ev.at == 0 or (row.at and ev.at > row.at):
+            row.at = ev.at
+    return rows
+
+
+def ago(at: int, now: int) -> str:
+    """"just now", "5m", "3h", "2d", then the date."""
+    if not at:
+        return "pending"
+    gone = max(0, now - int(at))
+    if gone < 60:
+        return "just now"
+    if gone < 3600:
+        return f"{gone // 60}m"
+    if gone < 86400:
+        return f"{gone // 3600}h"
+    if gone < 7 * 86400:
+        return f"{gone // 86400}d"
+    import datetime as _dt
+    return _dt.datetime.fromtimestamp(at).strftime("%b %-d")

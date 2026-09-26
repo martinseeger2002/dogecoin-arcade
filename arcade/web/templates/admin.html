@@ -16,7 +16,7 @@
   <h2>Seats</h2>
   <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
     <label for="seats" class="muted">Seats on this node</label>
-    <input id="seats" type="number" min="1" max="10000" style="width:110px">
+    <input autocomplete="off" id="seats" type="number" min="1" max="10000" style="width:110px">
     <button type="button" class="small" id="saveseats">Save</button>
     <span class="muted" id="seatline"></span>
   </div>
@@ -59,11 +59,11 @@
   <h2>Faucet</h2>
   <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
     <label class="muted" for="faucetgift">Each new account gets</label>
-    <input id="faucetgift" style="width:120px" inputmode="decimal"> <span class="muted">test coins (0 = off)</span>
+    <input autocomplete="off" id="faucetgift" style="width:120px" inputmode="decimal"> <span class="muted">test coins (0 = off)</span>
   </div>
   <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
     <label class="muted" for="faucetdaily">At most, per day, in all</label>
-    <input id="faucetdaily" style="width:160px" placeholder="no limit"> <span class="muted">(empty = no limit)</span>
+    <input autocomplete="off" id="faucetdaily" style="width:160px" placeholder="no limit"> <span class="muted">(empty = no limit)</span>
   </div>
   <button type="button" class="small" id="savefaucet" style="margin-top:10px">Save faucet</button>
 </section>
@@ -77,8 +77,8 @@
   <p class="muted" style="margin-top:0">A model looks at pictures and posts before this arcade
     shows them. Empty = off.</p>
   <div class="row" style="gap:8px;flex-wrap:wrap">
-    <input id="modurl" placeholder="http://host:port/v1" style="flex:2;min-width:200px">
-    <input id="modmodel" placeholder="model name" style="flex:1;min-width:140px">
+    <input autocomplete="off" id="modurl" placeholder="http://host:port/v1" style="flex:2;min-width:200px">
+    <input autocomplete="off" id="modmodel" placeholder="model name" style="flex:1;min-width:140px">
   </div>
   <p class="muted" id="pushline"></p>
   <button type="button" class="small" id="saveswitches">Save switches</button>
@@ -97,11 +97,11 @@
       <button type="button" class="small" data-step="login">Sign in</button>
       <div id="tun-login" class="muted" hidden></div></li>
     <li><b>Create the tunnel</b>
-      <input id="tun-name" value="dogecoinarcade" style="width:170px">
+      <input autocomplete="off" id="tun-name" value="dogecoinarcade" style="width:170px">
       <button type="button" class="small" data-step="create">Create</button>
       <div id="tun-id" class="mono muted"></div></li>
     <li><b>Your names</b>
-      <input id="tun-domain" placeholder="yourdomain.com" style="width:190px">
+      <input autocomplete="off" id="tun-domain" placeholder="yourdomain.com" style="width:190px">
       <span class="muted">&rarr; app.&lt;domain&gt; and pages.&lt;domain&gt;</span>
       <button type="button" class="small" data-step="route">Point them here</button></li>
     <li><b>Run it</b>
@@ -242,11 +242,11 @@ section.panel h2{margin-top:0}
     var grid = $('quotas'); grid.textContent = '';
     Object.keys(d.quotas.hour).forEach(function (k) {
       var l = text('label', d.quotas.labels[k] || k);
-      var i = document.createElement('input'); i.type = 'number'; i.min = 0; i.dataset.kind = k;
+      var i = document.createElement('input'); i.autocomplete = 'off'; i.type = 'number'; i.min = 0; i.dataset.kind = k;
       i.value = d.quotas.hour[k]; l.appendChild(i); grid.appendChild(l);
     });
     var lb = text('label', 'bytes a day');
-    var ib = document.createElement('input'); ib.type = 'number'; ib.min = 0; ib.id = 'quotabytes';
+    var ib = document.createElement('input'); ib.autocomplete = 'off'; ib.type = 'number'; ib.min = 0; ib.id = 'quotabytes';
     ib.value = d.quotas.bytes; lb.appendChild(ib); grid.appendChild(lb);
 
     // wallets
