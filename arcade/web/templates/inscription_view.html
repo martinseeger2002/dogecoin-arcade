@@ -14,6 +14,17 @@
     describes it &mdash; {{ "{:,}".format(row.content_len) }} bytes hashing to
     <code class="mono" style="font-size:.8rem">{{ row.sha256[:24] }}…</code>
     &mdash; and the bytes are still on the chain.</div>
+{% elif row.content_type.startswith('image/') %}
+  {# A picture is shown as a picture, sized to itself. It used to go into the
+     page frame below, which is a fixed min(70vh, 620px) tall with a white
+     ground, so a square JPEG at phone width sat on a white strip ~140px deep
+     (seen filming the tutorial, 2026-09-25). An <img> runs no code -- not even
+     an SVG's -- so it needs no sandbox; tap opens the viewer, with its zoom. #}
+  <div class="inscription-picture">
+    <img src="/content/{{ row.txid }}" alt="inscription {{ row.number }}"
+         onclick="arcadeOpenImage('/content/{{ row.txid }}', '#{{ row.number }}',
+                                  '/content/{{ row.txid }}?download=1')">
+  </div>
 {% elif renders %}
   {# Sandboxed, and deliberately not `allow-same-origin`: with it, inscribed
      code would share this wallet's origin and could read every page in it.
@@ -516,5 +527,9 @@
   .inscription-frame{display:block;width:100%;height:min(70vh,620px);border:0;
     background:#fff}
   .back-link{font-weight:600}
+  .inscription-picture{display:flex;justify-content:center;margin-bottom:12px}
+  .inscription-picture img{display:block;max-width:100%;max-height:min(70vh,620px);
+    width:auto;height:auto;border-radius:12px;cursor:zoom-in;
+    image-rendering:auto}
 </style>
 {% endblock %}
