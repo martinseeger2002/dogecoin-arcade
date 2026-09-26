@@ -5893,7 +5893,7 @@ def create_app(state: AppState) -> FastAPI:
                                                and held_for == ask["buyer"])
                         ask["held_for"] = "" if not held_for or \
                             held_for == ask["buyer"] else held_for
-                        ask["until"] = (time.strftime("%H:%M",
+                        ask["until"] = (time.strftime("%a %H:%M",
                                                       time.localtime(until))
                                         if held_for else "")
                 except Exception:
@@ -9572,6 +9572,14 @@ def create_app(state: AppState) -> FastAPI:
                 "cancelled, or made over for a piece that has since moved")
         return standing[0]
 
+    #: How long an account's answer is shown as holding the piece for its buyer.
+    #: The operator's wallet reserves for swaplib.OFFER_TTL (15 minutes) because it
+    #: is online to finish; an account's buyer finishes from their own tab whenever
+    #: they next open it, and a quarter of an hour was gone before most buyers saw
+    #: the answer (filming, 2026-09-26). It is a receipt, not a lock: the signed leg
+    #: stays good until the piece moves, whatever this says.
+    ACCOUNT_ANSWER_HOLD = 24 * 3600
+
     def _answer_held(chain, piece_txid: str) -> tuple[str, float]:
         """Who this account last answered, and until when. '' for nobody.
 
@@ -9835,13 +9843,13 @@ def create_app(state: AppState) -> FastAPI:
             "owner": address, "buyer": ask["buyer"], "peer_pubkey": to.hex(),
             "take": swaplib.leg_json(take, index),
             "note": f"answered offer {ask['txid'][:16]}…", "created": now,
-            "expires": now + swaplib.OFFER_TTL})
+            "expires": now + ACCOUNT_ANSWER_HOLD})
         state.bump_generation()
         return JSONResponse({
             "chain": chain.network, "ok": True, "offer": ask["txid"],
             "buyer": ask["buyer"], "seal_to": to.hex(),
             "stamp": apilib.stamp().hex(), "price": price,
-            "held_until": now + swaplib.OFFER_TTL,
+            "held_until": now + ACCOUNT_ANSWER_HOLD,
             "what": f"answered an offer on inscription #{row['number']}",
             "answer": {"swap": "bid", "swapv": swaplib.PROTOCOL,
                        "id": ask["txid"], "ok": True,
@@ -13472,7 +13480,7 @@ def create_app(state: AppState) -> FastAPI:
                                             and note.get("status") == "open")
                     entry["held_for"] = "" if same else str(note.get("buyer") or "")
                     entry["until"] = (time.strftime(
-                        "%H:%M", time.localtime(float(note["expires"])))
+                        "%a %H:%M", time.localtime(float(note["expires"])))
                         if note else "")
             else:
                 standing = {}
