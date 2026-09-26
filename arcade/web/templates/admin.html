@@ -1,0 +1,318 @@
+{% extends "base.html" %}
+{% block title %}Admin · DogecoinArcade{% endblock %}
+{% block body %}
+<div class="adminhead">
+  <h1 style="margin:0">Admin</h1>
+  <span class="pill {{ 'ok' if local else 'warn' }}">{{ 'at the node machine' if local else 'remote' }}</span>
+  {% if not local %}<button type="button" class="ghost small" id="adminout">Lock the panel</button>{% endif %}
+</div>
+<p class="sub" style="margin-top:4px">Everything this node's operator runs: seats, what each
+  may do, the node's own coins, and the switches.</p>
+<p class="msg" id="said" hidden></p>
+
+<div class="cards" id="cards"></div>
+
+<section class="panel">
+  <h2>Seats</h2>
+  <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+    <label for="seats" class="muted">Seats on this node</label>
+    <input id="seats" type="number" min="1" max="10000" style="width:110px">
+    <button type="button" class="small" id="saveseats">Save</button>
+    <span class="muted" id="seatline"></span>
+  </div>
+  <div class="tablewrap"><table class="admintable">
+    <thead><tr><th>Account</th><th>Joined</th><th>Last seen</th><th></th></tr></thead>
+    <tbody id="accounts"></tbody>
+  </table></div>
+</section>
+
+<section class="panel">
+  <h2>What each seat may do</h2>
+  <p class="muted" style="margin-top:0">Per account, per hour (bytes: per day). 0 closes that
+    action. Changes apply to the next thing anybody does.</p>
+  <div class="quotagrid" id="quotas"></div>
+  <button type="button" class="small" id="savequotas">Save limits</button>
+</section>
+
+<section class="panel">
+  <h2>The node's coins</h2>
+  <div id="wallets"></div>
+  <h3 style="margin-bottom:6px">Send</h3>
+  <form class="sendform" id="sendform" onsubmit="return false">
+    <select id="sendwhich"></select>
+    <input id="sendto" placeholder="@name or address" autocomplete="off" spellcheck="false">
+    <input id="sendamount" placeholder="amount" inputmode="decimal" autocomplete="off">
+    <button type="submit" class="small">Prepare</button>
+  </form>
+  <div class="panel confirmbox" id="confirmbox" hidden>
+    <p id="confirmtext" style="margin-top:0"></p>
+    {% if not local %}<input type="password" id="sendpw" placeholder="admin password"
+      autocomplete="current-password">{% endif %}
+    <div class="row" style="gap:8px">
+      <button type="button" class="small primary" id="sendgo">Send it</button>
+      <button type="button" class="ghost small" id="sendcancel">Cancel</button>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Faucet</h2>
+  <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+    <label class="muted" for="faucetgift">Each new account gets</label>
+    <input id="faucetgift" style="width:120px" inputmode="decimal"> <span class="muted">test coins (0 = off)</span>
+  </div>
+  <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+    <label class="muted" for="faucetdaily">At most, per day, in all</label>
+    <input id="faucetdaily" style="width:160px" placeholder="no limit"> <span class="muted">(empty = no limit)</span>
+  </div>
+  <button type="button" class="small" id="savefaucet" style="margin-top:10px">Save faucet</button>
+</section>
+
+<section class="panel">
+  <h2>Switches</h2>
+  <label class="switch"><input type="checkbox" id="auto_update"> Install updates by itself</label>
+  <label class="switch"><input type="checkbox" id="auto_sell"> Sell listed pieces automatically</label>
+  <label class="switch"><input type="checkbox" id="auto_fill"> Fill exchange orders automatically</label>
+  <h3 style="margin-bottom:6px">Content screening</h3>
+  <p class="muted" style="margin-top:0">A model looks at pictures and posts before this arcade
+    shows them. Empty = off.</p>
+  <div class="row" style="gap:8px;flex-wrap:wrap">
+    <input id="modurl" placeholder="http://host:port/v1" style="flex:2;min-width:200px">
+    <input id="modmodel" placeholder="model name" style="flex:1;min-width:140px">
+  </div>
+  <p class="muted" id="pushline"></p>
+  <button type="button" class="small" id="saveswitches">Save switches</button>
+</section>
+
+<section class="panel">
+  <h2>Operator &amp; remote access</h2>
+  <p id="opline" style="margin-top:0"></p>
+  {% if local %}
+  <p class="muted">Pick the operator account in the Seats list above (<b>Make operator</b>).
+    From outside this machine, the admin panel needs that account signed in <i>and</i> this
+    password. Setting it signs every remote admin session out.</p>
+  <div class="row" style="gap:8px;flex-wrap:wrap">
+    <input type="password" id="newpw" placeholder="new admin password (10+ characters)"
+           autocomplete="new-password" style="flex:1;min-width:220px">
+    <button type="button" class="small" id="savepw">Set password</button>
+  </div>
+  {% else %}
+  <p class="muted">The operator account and the admin password are changed at the node machine.</p>
+  {% endif %}
+</section>
+
+<style>
+.adminhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.adminhead .ghost{margin-left:auto}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:14px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.card .n{font-size:1.35rem;font-weight:700}
+.card .l{color:var(--muted);font-size:.8rem}
+section.panel h2{margin-top:0}
+.tablewrap{overflow-x:auto;margin-top:10px}
+.admintable{width:100%;border-collapse:collapse;font-size:.9rem}
+.admintable th{text-align:left;color:var(--muted);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line)}
+.admintable td{padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.admintable td.acts{text-align:right}
+.quotagrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 14px;margin-bottom:10px}
+.quotagrid label{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:.9rem}
+.quotagrid input{width:90px}
+.sendform{display:flex;gap:8px;flex-wrap:wrap}
+.sendform input{flex:1;min-width:140px}
+.confirmbox{margin-top:10px}
+.confirmbox input{width:100%;margin:0 0 10px}
+.switch{display:flex;gap:8px;align-items:center;margin:6px 0}
+.wallet{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid var(--line)}
+.wallet .bal{font-weight:700}
+.wallet .addr{font-size:.8rem;word-break:break-all}
+</style>
+
+<script>
+(function () {
+  var LOCAL = {{ 'true' if local else 'false' }};
+  var $ = function (id) { return document.getElementById(id); };
+  var data = null;
+
+  function say(text, kind) {
+    var el = $('said'); el.textContent = text; el.className = 'msg ' + (kind || 'ok');
+    el.hidden = false; clearTimeout(say.t); say.t = setTimeout(function () { el.hidden = true; }, 6000);
+  }
+  function call(path, body) {
+    return fetch(path, {method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', 'X-Arcade-Admin': '1'},
+      body: JSON.stringify(body || {})})
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
+        if (r.status === 401) { location.href = '/admin/login'; }
+        if (!r.ok) throw new Error(j.detail || ('refused (' + r.status + ')'));
+        return j; }); });
+  }
+  function when(t) { return t ? new Date(t * 1000).toLocaleDateString() : '—'; }
+  function coins(sats) { return (Number(sats) / 1e8).toLocaleString(undefined, {maximumFractionDigits: 8}); }
+  function text(tag, value, cls) {
+    var el = document.createElement(tag); el.textContent = value; if (cls) el.className = cls; return el;
+  }
+
+  function draw() {
+    var d = data;
+    // headline cards
+    var cards = $('cards'); cards.textContent = '';
+    function card(n, l) { var c = text('div', '', 'card'); c.appendChild(text('div', n, 'n'));
+      c.appendChild(text('div', l, 'l')); cards.appendChild(c); }
+    card(d.seats.free + ' / ' + d.seats.total, 'seats open');
+    d.wallets.forEach(function (w) {
+      card(w.error ? 'offline' : Number(w.spendable).toLocaleString(), w.label + ' balance');
+    });
+    card(d.push.available ? String(d.push.devices) : 'off', 'accounts with notifications');
+
+    // seats
+    $('seats').value = d.seats.total;
+    $('seatline').textContent = d.seats.taken + ' taken, ' + d.seats.free + ' open';
+    var body = $('accounts'); body.textContent = '';
+    d.accounts.forEach(function (a) {
+      var tr = document.createElement('tr');
+      var who = text('td', a.tag ? '@' + a.tag : a.pubkey.slice(0, 12) + '…');
+      if (a.operator) who.appendChild(text('span', ' operator', 'pill ok'));
+      tr.appendChild(who);
+      tr.appendChild(text('td', when(a.created)));
+      tr.appendChild(text('td', when(a.seen)));
+      var acts = text('td', '', 'acts');
+      if (!a.operator) {
+        if (LOCAL) {
+          var op = text('button', 'Make operator', 'ghost small');
+          op.onclick = function () {
+            if (!confirm('Make ' + (a.tag ? '@' + a.tag : 'this account') + ' the operator? '
+                         + 'Remote admin sessions will be signed out.')) return;
+            call('/admin/api/operator', {pubkey: a.pubkey})
+              .then(function () { say('Operator set. Now set the admin password below.'); load(); })
+              .catch(function (e) { say(e.message, 'err'); });
+          };
+          acts.appendChild(op);
+        }
+        var rel = text('button', 'Free seat', 'ghost small');
+        rel.onclick = function () {
+          if (!confirm('Free this seat? They can sign in again while seats are open.')) return;
+          call('/admin/api/release', {pubkey: a.pubkey})
+            .then(function () { say('Seat freed.'); load(); })
+            .catch(function (e) { say(e.message, 'err'); });
+        };
+        acts.appendChild(rel);
+      }
+      tr.appendChild(acts);
+      body.appendChild(tr);
+    });
+
+    // quotas
+    var grid = $('quotas'); grid.textContent = '';
+    Object.keys(d.quotas.hour).forEach(function (k) {
+      var l = text('label', d.quotas.labels[k] || k);
+      var i = document.createElement('input'); i.type = 'number'; i.min = 0; i.dataset.kind = k;
+      i.value = d.quotas.hour[k]; l.appendChild(i); grid.appendChild(l);
+    });
+    var lb = text('label', 'bytes a day');
+    var ib = document.createElement('input'); ib.type = 'number'; ib.min = 0; ib.id = 'quotabytes';
+    ib.value = d.quotas.bytes; lb.appendChild(ib); grid.appendChild(lb);
+
+    // wallets
+    var ws = $('wallets'); ws.textContent = ''; var sel = $('sendwhich'); sel.textContent = '';
+    d.wallets.forEach(function (w) {
+      var row = text('div', '', 'wallet');
+      var left = document.createElement('div');
+      left.appendChild(text('div', w.label, 'muted'));
+      left.appendChild(text('div', w.error ? 'node unreachable' :
+        Number(w.spendable).toLocaleString() + (w.unconfirmed && Number(w.unconfirmed) ?
+          '  (+' + Number(w.unconfirmed).toLocaleString() + ' on its way)' : ''), 'bal'));
+      row.appendChild(left);
+      var recv = text('button', 'Receive address', 'ghost small');
+      var addr = text('div', '', 'addr mono');
+      recv.onclick = function () {
+        call('/admin/api/receive', {which: w.which})
+          .then(function (j) { addr.textContent = j.address; })
+          .catch(function (e) { say(e.message, 'err'); });
+      };
+      var right = document.createElement('div'); right.appendChild(recv); right.appendChild(addr);
+      row.appendChild(right); ws.appendChild(row);
+      var o = document.createElement('option'); o.value = w.which; o.textContent = 'from ' + w.label;
+      sel.appendChild(o);
+    });
+
+    // faucet + switches
+    $('faucetgift').value = coins(d.faucet.gift);
+    $('faucetdaily').value = d.faucet.daily ? coins(d.faucet.daily) : '';
+    ['auto_update', 'auto_sell', 'auto_fill'].forEach(function (k) { $(k).checked = !!d.selling[k]; });
+    $('modurl').value = (d.moderation && d.moderation.url) || '';
+    $('modmodel').value = (d.moderation && d.moderation.model) || '';
+    $('pushline').textContent = d.push.available
+      ? 'Message notifications are available here (' + d.push.devices + ' accounts use them).'
+      : 'Message notifications are off: this node needs `pip install .[push]`.';
+
+    // operator
+    $('opline').textContent = d.operator.pubkey
+      ? 'Operator: ' + (d.operator.tag ? '@' + d.operator.tag : d.operator.pubkey.slice(0, 16) + '…')
+        + (d.operator.password_set ? ' — remote access has a password.' : ' — no remote password yet, so the panel only opens here.')
+      : 'No operator account yet: sign up like anybody, then make that account the operator here.';
+  }
+
+  function load() {
+    return fetch('/admin/api/state', {credentials: 'same-origin', cache: 'no-store'})
+      .then(function (r) { if (r.status === 401) location.href = '/admin/login'; return r.json(); })
+      .then(function (j) { data = j; draw(); })
+      .catch(function (e) { say('Could not load: ' + e.message, 'err'); });
+  }
+
+  $('saveseats').onclick = function () {
+    call('/admin/api/seats', {seats: Number($('seats').value)})
+      .then(function () { say('Seats saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
+  };
+  $('savequotas').onclick = function () {
+    var hour = {};
+    document.querySelectorAll('#quotas input[data-kind]').forEach(function (i) { hour[i.dataset.kind] = i.value; });
+    call('/admin/api/quotas', {hour: hour, bytes: $('quotabytes').value})
+      .then(function () { say('Limits saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
+  };
+  $('savefaucet').onclick = function () {
+    call('/admin/api/settings', {faucet_gift: $('faucetgift').value, faucet_daily: $('faucetdaily').value})
+      .then(function () { say('Faucet saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
+  };
+  $('saveswitches').onclick = function () {
+    call('/admin/api/settings', {auto_update: $('auto_update').checked, auto_sell: $('auto_sell').checked,
+      auto_fill: $('auto_fill').checked,
+      moderation: {url: $('modurl').value.trim(), model: $('modmodel').value.trim()}})
+      .then(function () { say('Switches saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
+  };
+
+  var ticket = null;
+  $('sendform').onsubmit = function () {
+    call('/admin/api/send', {which: $('sendwhich').value, to: $('sendto').value.trim(),
+                             amount: $('sendamount').value.trim()})
+      .then(function (j) {
+        ticket = j.ticket;
+        $('confirmtext').textContent = 'Send ' + j.amount + ' on ' + j.network + ' to ' + j.to +
+          ', with a fee of ' + j.fee + '? This cannot be undone.';
+        $('confirmbox').hidden = false;
+      }).catch(function (e) { say(e.message, 'err'); });
+    return false;
+  };
+  $('sendcancel').onclick = function () { ticket = null; $('confirmbox').hidden = true; };
+  $('sendgo').onclick = function () {
+    var body = {ticket: ticket};
+    if (!LOCAL) body.password = $('sendpw').value;
+    call('/admin/api/send/confirm', body)
+      .then(function (j) {
+        $('confirmbox').hidden = true; $('sendamount').value = ''; ticket = null;
+        if (!LOCAL) $('sendpw').value = '';
+        say('Sent. Transaction ' + j.txid); load();
+      }).catch(function (e) { say(e.message, 'err'); });
+  };
+  if ($('savepw')) $('savepw').onclick = function () {
+    call('/admin/api/password', {password: $('newpw').value})
+      .then(function () { $('newpw').value = ''; say('Admin password set. Remote sessions were signed out.'); load(); })
+      .catch(function (e) { say(e.message, 'err'); });
+  };
+  if ($('adminout')) $('adminout').onclick = function () {
+    fetch('/admin/logout', {method: 'POST', credentials: 'same-origin'})
+      .then(function () { location.href = '/me'; });
+  };
+  load();
+})();
+</script>
+{% endblock %}

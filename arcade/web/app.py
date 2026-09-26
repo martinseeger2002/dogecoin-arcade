@@ -20,6 +20,7 @@ import threading
 import time
 import html
 import secrets
+import urllib.parse
 import shutil
 import sys
 import os
@@ -71,6 +72,7 @@ from .. import release as releaselib
 from .. import seed as seedlib
 from .. import accounts as accountslib
 from .. import faucet as faucetlib
+from .. import admin as adminlib
 from .. import funding as fundinglib
 from .. import listings as listingslib
 from .. import utxos as utxoslib
@@ -358,6 +360,7 @@ h1{font-size:1.2rem}p{color:#a0a0ab}</style>
 #: The session cookie's name. At module level because the door reads it
 #: before any route exists, and the routes read it after.
 SESSION = "arcade_session"
+from ..admin import ADMIN_COOKIE, ADMIN_HEADER  # noqa: E402
 
 #: Hostnames a browser treats as a secure context over plain http. Everywhere
 #: else -- a LAN address, a name on the local network -- `crypto.subtle` is
@@ -501,10 +504,18 @@ def the_door(state: AppState):
         # This is the door's one route-independent rule, and it is written
         # here rather than in the allowlist so that it is impossible to read
         # `door.py` and think a session opens anything.
+        # Since 2026-09-25 the operator, from outside, is an account like any
+        # other plus one thing: /admin. The panel asks for the admin password
+        # itself (arcade/admin.py), and everything the node's own wallet does
+        # from outside happens in it -- so a stolen account cookie opens that
+        # account, never the node.
         operator = state.operator
         if operator:
             account = state.account_for(request.cookies.get(SESSION, ""))
-            if account is not None and account.pubkey.lower() == operator:
+            if (account is not None and account.pubkey.lower() == operator
+                    and (path == "/admin" or path.startswith("/admin/"))):
+                # The panel itself asks for the admin password (_admin_check);
+                # everything the node's wallet does from outside is in it.
                 return await call_next(request)
         if path.startswith("/rpc"):
             # The bot RPC has its own key, in a file beside the node, and it
@@ -593,12 +604,27 @@ def create_app(state: AppState) -> FastAPI:
         """
         if not (state.public or _from_outside(request)):
             return False
-        operator = state.operator
-        if operator:
-            account = signed_in(request)
-            if account is not None and account.pubkey.lower() == operator:
-                return False
         return True
+
+    def _is_operator(request: Request) -> bool:
+        account = signed_in(request)
+        return bool(account is not None and state.operator
+                    and account.pubkey.lower() == state.operator)
+
+    def _admin_remote(request: Request) -> bool:
+        """The operator, from outside, with the admin password's session open."""
+        return _is_operator(request) and state.admin_sessions().valid(
+            request.cookies.get(ADMIN_COOKIE, ""), state.operator)
+
+    def _nav_for(request: Request) -> list:
+        """The tabs: an account's own, the operator's machine's, and Admin for the
+        operator either way (the panel itself asks for what it needs)."""
+        admin = ("/admin", "Admin", None, True)
+        if _public_request(request):
+            if signed_in(request) is not None:
+                return ACCOUNT_NAV + ([admin] if _is_operator(request) else [])
+            return [entry for entry in NAV if doorlib.public_path(entry[0])]
+        return NAV + [admin]
 
     def _again(where: str, **context: Any) -> RedirectResponse:
         """Post, redirect, get -- with what the POST decided carried over.
@@ -640,11 +666,7 @@ def create_app(state: AppState) -> FastAPI:
             # An account gets its own tabs, not the operator's with the
             # unreachable ones removed: a menu of four things that work
             # beats a menu of eleven with seven missing.
-            "nav": (ACCOUNT_NAV if (_public_request(request)
-                                    and signed_in(request) is not None)
-                    else [entry for entry in NAV
-                          if not _public_request(request)
-                          or doorlib.public_path(entry[0])]),
+            "nav": _nav_for(request),
             "public": _public_request(request),
             "path": request.url.path,
             "state": state,
@@ -10514,6 +10536,12 @@ def create_app(state: AppState) -> FastAPI:
             SESSION_COOKIE, token,
             max_age=accountslib.SESSION_DAYS * 86400,
             httponly=True, samesite="strict", secure=_over_https(request))
+        # The operator's password IS the admin password (arcade/admin.py): having
+        # just proved it, the admin panel opens too, without asking twice.
+        if account.pubkey.lower() == state.operator:
+            answer.set_cookie(ADMIN_COOKIE, state.admin_sessions().open(state.operator),
+                              max_age=adminlib.ADMIN_HOURS * 3600, httponly=True,
+                              samesite="strict", secure=_over_https(request), path="/admin")
         return answer
 
     @app.post("/auth/set-password")
@@ -10565,6 +10593,309 @@ def create_app(state: AppState) -> FastAPI:
             "settable": not _from_outside(request) and not creds.anybody(),
             "min_password": accountslib.MIN_PASSWORD,
         })
+
+    # --- the admin panel (2026-09-25) --------------------------------
+    #
+    # One place for everything a node's operator does. At the node machine it
+    # needs nothing; from outside it needs the operator account AND the admin
+    # password (arcade/admin.py). Every write also needs the X-Arcade-Admin
+    # header and, when the browser says where it came from, this very origin.
+
+    def _admin_check(request: Request, write: bool = False) -> dict:
+        """Who is using the panel, or an HTTPException saying what is missing."""
+        local = not (state.public or _from_outside(request))
+        if write:
+            if request.headers.get(ADMIN_HEADER) != "1":
+                raise HTTPException(403, "admin writes come from the admin page")
+            origin = request.headers.get("origin")
+            if origin:
+                host = request.headers.get("host", "")
+                if urllib.parse.urlsplit(origin).netloc != host:
+                    raise HTTPException(403, "that request came from another site")
+        if local:
+            return {"local": True}
+        if not _is_operator(request):
+            raise HTTPException(403, "sign in as this node's operator first")
+        if not state.admin_sessions().valid(request.cookies.get(ADMIN_COOKIE, ""),
+                                            state.operator):
+            raise HTTPException(401, "the admin password, please")
+        return {"local": False}
+
+    def _admin_password_ok(password: str, request: Request) -> bool:
+        creds = state.credentials()
+        name = adminlib.username_for(creds, state.operator)
+        if not name:
+            return False
+        try:
+            creds.check(name, password,
+                        ip=(request.headers.get("cf-connecting-ip")
+                            or (request.client.host if request.client else "")))
+            return True
+        except accountslib.AccountError:
+            return False
+
+    @app.get("/admin", response_class=HTMLResponse)
+    def admin_page(request: Request):
+        try:
+            who = _admin_check(request)
+        except HTTPException as exc:
+            if exc.status_code == 401:
+                return RedirectResponse("/admin/login", status_code=303)
+            return render(request, "admin_login.html", reason=str(exc.detail),
+                          signed_in=signed_in(request) is not None, need_account=True)
+        return render(request, "admin.html", local=who["local"])
+
+    @app.get("/admin/login", response_class=HTMLResponse)
+    def admin_login_page(request: Request):
+        return render(request, "admin_login.html", reason="",
+                      signed_in=signed_in(request) is not None,
+                      need_account=not _is_operator(request))
+
+    @app.post("/admin/login")
+    def admin_login(request: Request, payload: Any = Body(None)):
+        if not _is_operator(request):
+            return JSONResponse({"detail": "sign in as this node's operator first"},
+                                status_code=403)
+        said = payload if isinstance(payload, dict) else {}
+        if not _admin_password_ok(str(said.get("password", "")), request):
+            return JSONResponse({"detail": "that is not the admin password (or too "
+                                           "many tries -- wait a few minutes)"},
+                                status_code=403)
+        token = state.admin_sessions().open(state.operator)
+        answer = JSONResponse({"ok": True})
+        answer.set_cookie(ADMIN_COOKIE, token, max_age=adminlib.ADMIN_HOURS * 3600,
+                          httponly=True, samesite="strict", secure=_over_https(request),
+                          path="/admin")
+        return answer
+
+    @app.post("/admin/logout")
+    def admin_logout(request: Request):
+        state.admin_sessions().close(request.cookies.get(ADMIN_COOKIE, ""))
+        answer = JSONResponse({"ok": True})
+        answer.delete_cookie(ADMIN_COOKIE, path="/admin")
+        return answer
+
+    def _admin_wallets() -> list[dict]:
+        out = []
+        for which, ctx in (("messaging", state.messaging), ("ledger", state.ledger)):
+            row = {"which": which, "label": ctx.label, "network": ctx.network}
+            try:
+                with ctx.rpc() as rpc:
+                    got = walletlib.balance(rpc)
+                row.update({k: str(v) for k, v in got.items()})
+            except Exception as exc:                    # noqa: BLE001 -- node away
+                row["error"] = str(exc)[:200]
+            out.append(row)
+        return out
+
+    def _admin_tag(pubkey: str) -> str:
+        try:
+            chain = _account_chain()
+            address = _account_address(pubkey, chain)
+            return (state.token_index(chain).tag_of(address) or "") if address else ""
+        except Exception:                               # noqa: BLE001
+            return ""
+
+    @app.get("/admin/api/state")
+    def admin_state(request: Request):
+        who = _admin_check(request)
+        register = state.accounts()
+        caps = accountslib.limits(state.settings())
+        operator = state.operator
+        push = state.push() if hasattr(state, "push") else None
+        seated = register.seated()
+        return JSONResponse({
+            "local": who["local"],
+            "operator": {"pubkey": operator, "tag": _admin_tag(operator) if operator else "",
+                         "password_set": bool(operator and adminlib.username_for(
+                             state.credentials(), operator))},
+            "seats": {"total": register.seats, "taken": len(seated),
+                      "free": register.free()},
+            "accounts": [{"pubkey": a.pubkey, "tag": _admin_tag(a.pubkey),
+                          "created": a.created, "seen": a.seen,
+                          "operator": a.pubkey.lower() == operator}
+                         for a in seated],
+            "quotas": {"hour": caps["hour"], "bytes": caps["bytes"],
+                       "labels": {k: accountslib.LABELS.get(k, k) for k in caps["hour"]}},
+            "wallets": _admin_wallets(),
+            "faucet": {"gift": int(state.setting("faucet", faucetlib.GIFT)),
+                       "daily": state.setting("faucet_daily"),
+                       "real_coins": bool(state.setting("faucet_real_coins", False))},
+            "moderation": state.setting("moderation") or {},
+            "push": {"available": push is not None,
+                     "devices": (len(push.subscribed()) if push is not None else 0)},
+            "selling": {"auto_update": bool(state.setting("auto_update", True)),
+                        "auto_sell": bool(state.setting("auto_sell", True)),
+                        "auto_fill": bool(state.setting("auto_fill", True)),
+                        "trade_cut": state.setting("trade_cut")},
+            "node": {"version": state.running_version,
+                     "public_hosts": list(state.public_hosts)},
+        }, headers={"Cache-Control": "no-store"})
+
+    @app.post("/admin/api/seats")
+    def admin_seats(request: Request, payload: Any = Body(None)):
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            seats = int(said.get("seats"))
+            if not 1 <= seats <= 10_000:
+                raise ValueError
+        except (TypeError, ValueError):
+            return JSONResponse({"detail": "a number of seats from 1 to 10,000"},
+                                status_code=400)
+        state.set_setting("seats", seats)
+        state.accounts().seats = seats           # the open register, not only the next one
+        return JSONResponse({"ok": True, "seats": seats})
+
+    @app.post("/admin/api/release")
+    def admin_release(request: Request, payload: Any = Body(None)):
+        _admin_check(request, write=True)
+        pubkey = str((payload or {}).get("pubkey", "")).strip().lower()
+        if pubkey == state.operator:
+            return JSONResponse({"detail": "that is the operator's own seat"},
+                                status_code=400)
+        state.accounts().release(pubkey)
+        return JSONResponse({"ok": True})
+
+    @app.post("/admin/api/quotas")
+    def admin_quotas(request: Request, payload: Any = Body(None)):
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        numbers = {}
+        try:
+            for kind, value in (said.get("hour") or {}).items():
+                if kind not in accountslib.PER_HOUR:
+                    raise ValueError(f"no such allowance: {kind}")
+                numbers[f"quota:{kind}"] = _count(str(value), kind, accountslib.CEILING)
+            if "bytes" in said:
+                numbers["quota:bytes"] = _count(str(said["bytes"]), "bytes a day",
+                                                accountslib.BYTE_CEILING)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        for key, value in numbers.items():
+            state.set_setting(key, value)
+        return JSONResponse({"ok": True})
+
+    @app.post("/admin/api/settings")
+    def admin_settings(request: Request, payload: Any = Body(None)):
+        """The switches and numbers: faucet, screening, selling, updates."""
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            if "faucet_gift" in said:
+                gift = walletlib.parse_amount(str(said["faucet_gift"]))
+                state.set_setting("faucet", gift)
+            if "faucet_daily" in said:
+                text = str(said["faucet_daily"]).strip()
+                state.set_setting("faucet_daily",
+                                  None if text in ("", "none") else walletlib.parse_amount(text))
+            for flag in ("auto_update", "auto_sell", "auto_fill"):
+                if flag in said:
+                    state.set_setting(flag, bool(said[flag]))
+            if "moderation" in said:
+                mod = said["moderation"] or {}
+                if mod.get("url") and mod.get("model"):
+                    state.set_setting("moderation", {"url": str(mod["url"]).strip(),
+                                                     "model": str(mod["model"]).strip()})
+                else:
+                    state.set_setting("moderation", None)
+        except (ValueError, walletlib.WalletError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"ok": True})
+
+    _admin_prepared: dict[str, tuple[float, str, Any]] = {}
+
+    @app.post("/admin/api/send")
+    def admin_send(request: Request, payload: Any = Body(None)):
+        """Prepare a send from the node's own wallet: the fee is shown before
+        anything goes (the same two steps as the wallet page)."""
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            ctx = _context(str(said.get("which", "")))
+            sats = walletlib.parse_amount(str(said.get("amount", "")))
+            to = _tag_address(state, str(said.get("to", "")), mainnet=ctx.is_mainnet)
+            with ctx.rpc() as rpc:
+                prepared = walletlib.prepare_send(rpc, to, sats)
+        except Exception as exc:                        # noqa: BLE001
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        ticket = secrets.token_urlsafe(16)
+        now = time.time()
+        for key in [k for k, v in _admin_prepared.items() if now - v[0] > 600]:
+            _admin_prepared.pop(key, None)
+        _admin_prepared[ticket] = (now, str(said.get("which")), prepared)
+        return JSONResponse({"ticket": ticket, "to": to,
+                             "amount": f"{sats / 1e8:.8f}".rstrip("0").rstrip("."),
+                             "fee": f"{prepared.fee_sats / 1e8:.8f}".rstrip("0").rstrip("."),
+                             "network": ctx.label})
+
+    @app.post("/admin/api/send/confirm")
+    def admin_send_confirm(request: Request, payload: Any = Body(None)):
+        """Broadcast a prepared send. From outside, the password again, every time."""
+        who = _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        if not who["local"] and not _admin_password_ok(str(said.get("password", "")),
+                                                       request):
+            return JSONResponse({"detail": "the admin password, to send the node's coins"},
+                                status_code=403)
+        held = _admin_prepared.pop(str(said.get("ticket", "")), None)
+        if held is None or time.time() - held[0] > 600:
+            return JSONResponse({"detail": "that send has expired -- prepare it again"},
+                                status_code=400)
+        try:
+            with _context(held[1]).rpc() as rpc:
+                txid = walletlib.broadcast(rpc, held[2])
+        except Exception as exc:                        # noqa: BLE001
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"txid": txid})
+
+    @app.post("/admin/api/receive")
+    def admin_receive(request: Request, payload: Any = Body(None)):
+        _admin_check(request, write=True)
+        try:
+            with _context(str((payload or {}).get("which", ""))).rpc() as rpc:
+                return JSONResponse({"address": walletlib.receive_address(rpc, "admin")})
+        except Exception as exc:                        # noqa: BLE001
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    @app.post("/admin/api/operator")
+    def admin_operator(request: Request, payload: Any = Body(None)):
+        """Name the operator account. At the node machine only."""
+        who = _admin_check(request, write=True)
+        if not who["local"]:
+            return JSONResponse({"detail": "the operator is named at the node machine"},
+                                status_code=403)
+        pubkey = str((payload or {}).get("pubkey", "")).strip().lower()
+        if state.accounts().account(pubkey) is None:
+            return JSONResponse({"detail": "no account with that key has a seat here"},
+                                status_code=400)
+        state.claim_operator(pubkey)
+        state.admin_sessions().close_all()
+        return JSONResponse({"ok": True})
+
+    @app.post("/admin/api/password")
+    def admin_password(request: Request, payload: Any = Body(None)):
+        """Set or change the remote-access password. At the node machine only."""
+        who = _admin_check(request, write=True)
+        if not who["local"]:
+            return JSONResponse({"detail": "the password is set at the node machine"},
+                                status_code=403)
+        operator = state.operator
+        if not operator:
+            return JSONResponse({"detail": "name the operator account first"},
+                                status_code=400)
+        password = str((payload or {}).get("password", ""))
+        if len(password) < 10:
+            return JSONResponse({"detail": "at least 10 characters -- this guards the "
+                                           "node's coins from anywhere"}, status_code=400)
+        creds = state.credentials()
+        name = adminlib.username_for(creds, operator) or "operator"
+        try:
+            creds.set(name, password, operator)
+        except accountslib.AccountError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        state.admin_sessions().close_all()           # every old session is gone
+        return JSONResponse({"ok": True})
 
     @app.post("/auth/operator")
     def auth_claim_operator(request: Request):

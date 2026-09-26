@@ -51,6 +51,7 @@ dev = ["pytest>=8.3", "httpx>=0.27", "selenium>=4.20", "pillow>=10.0", "cryptogr
 [project.scripts]
 arcade-msg = "arcade.messaging.cli:main"
 arcade-web = "arcade.web.__main__:main"
+arcade-admin-window = "arcade.adminwindow:main"
 arcade-rpc = "arcade.rpccli:main"
 dogecoinarcade-update = "arcade.update:main"
 
