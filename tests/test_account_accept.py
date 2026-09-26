@@ -734,7 +734,7 @@ def test_the_offers_page_gives_an_account_the_button_it_lacked(node):
 
     _signed_answer(pair, offer, _leg(pair, offer))
     page = holder_client.get("/exchange?tab=offers").text
-    assert "accepted" in page and "waiting for" in page, \
+    assert "you answered" in page and "waiting for" in page, \
         "an answer stands out of the bid book, not out of the node's own offers"
 
     other, _secret, _pubkey, _address = _seated(app, state, rpc, 66)
