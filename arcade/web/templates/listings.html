@@ -58,7 +58,8 @@
         {%- else %}{{ row.seller }}{% endif %}</td>
       <td>{{ row.price }} coins{% if row.what %}
         <div class="muted">{{ row.what }}</div>{% endif %}</td>
-      <td class="mono">{{ row.piece }}</td>
+      <td class="mono">{% if row.sells %}<a href="/inscriptions/{{ row.sells }}/view">{{ row.sells[:16] }}…</a>
+        {%- else %}{{ row.piece }}{% endif %}</td>
       <td>
         {% if not g.asked %}<span class="muted">not asked</span>
         {%- elif row.held is none %}<span class="err">spent &mdash; this listing

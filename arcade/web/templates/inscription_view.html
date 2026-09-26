@@ -334,6 +334,95 @@
   </div>
 </div>
 
+{% if listed and not listed.theirs %}
+<h2>For sale</h2>
+<div class="panel" id="buy-panel">
+  <div class="row" style="align-items:center;gap:12px">
+    <div style="flex:1 1 200px">
+      <strong style="font-size:1.25rem">{{ listed.price }} {{ chain.label|lower }}</strong>
+      <div class="muted" style="font-size:.82rem">listed by
+        {% if listed.tag %}<strong>@{{ listed.tag }}</strong>{% else %}<span class="mono">{{ listed.seller[:12] }}…</span>{% endif %}
+        &middot; open for {{ listed.left }}</div>
+    </div>
+    {% if viewer == 'account' %}
+    <button type="button" id="buy-it"
+      {{ 'disabled' if coins * 100000000 < listed.sats }}>Buy it for {{ listed.price }}</button>
+    {% else %}
+    <a class="btn" href="/me">Sign in to buy it</a>
+    {% endif %}
+  </div>
+  {% if viewer == 'account' %}
+  <p class="msg err" id="buy-trouble" hidden></p>
+  <p class="msg ok" id="buy-news" hidden></p>
+  <p class="muted" style="font-size:.82rem;margin:8px 0 0">
+    {%- if coins * 100000000 < listed.sats %}This account holds
+      {{ "%.4f"|format(coins) }} {{ chain.label|lower }} coins, which is less
+      than the price.
+    {%- else %}One transaction: the seller already signed the piece over at this
+      price, and your key signs the coins in this tab. Both move in the same
+      block or neither does.{% endif %}</p>
+  <script type="module">
+  /* Filling somebody's listing. The seller's half is in the node's book;
+     `wallet.offerBuy` asks for the transaction around it and `wallet.buy`
+     checks it with `coins.verifyOffer` before this key signs anything, so the
+     price in the confirmation is read out of the bytes rather than off this
+     page. */
+  import * as wallet from "/wallet.js";
+
+  const $ = (id) => document.getElementById(id);
+  const say = (t) => { $("buy-trouble").textContent = t;
+                       $("buy-trouble").hidden = !t; };
+  const news = (t) => { $("buy-news").textContent = t;
+                        $("buy-news").hidden = !t; };
+  const CHAIN = {network: "{{ chain.network }}",
+                 version: {{ chain.params.pubkeyhash_version }}};
+  const LISTING = {{ listed.id|tojson }};
+  const RECEIPT = "arcade.bought." + CHAIN.network + ".{{ row.txid }}";
+  const opening = wallet.opened(CHAIN);
+
+  try {
+    const kept = JSON.parse(sessionStorage.getItem(RECEIPT) || "null");
+    if (kept && kept.says && Date.now() - Number(kept.at || 0) < 3600e3) {
+      news(kept.says);
+      $("buy-it").disabled = true;
+    } else if (kept) sessionStorage.removeItem(RECEIPT);
+  } catch (e) { /* no receipt, then */ }
+
+  $("buy-it").onclick = async () => {
+    const button = $("buy-it");
+    say(""); news("");
+    button.disabled = true;
+    // Pressed shows at once; the node's answer can take a second or two.
+    button.textContent = "Buying…";
+    try {
+      const held = await opening;
+      if (!held) throw new Error("your wallet is not open in this tab");
+      const offer = await wallet.offerBuy(LISTING, CHAIN.network);
+      const shown = await wallet.checked(offer, held);
+      const price = shown.coinsOf(Number(offer.price));
+      if (!confirm(`Buy this piece for ${price}? ` + shown.says)) {
+        button.disabled = false;
+        button.textContent = "Buy it for {{ listed.price }}";
+        return;
+      }
+      const out = await wallet.buy(held, offer);
+      const says = `Bought in ${String(out.txid).slice(0, 16)}… It is yours `
+        + "from the block it lands in.";
+      news(says);
+      button.textContent = "Bought";
+      try { sessionStorage.setItem(RECEIPT, JSON.stringify({says, at: Date.now()})); }
+      catch (e) { /* the sentence is on the page for this load */ }
+    } catch (e) {
+      say(String(e.message || e));
+      button.disabled = false;
+      button.textContent = "Buy it for {{ listed.price }}";
+    }
+  };
+  </script>
+  {% endif %}
+</div>
+{% endif %}
+
 {% if not mine %}
 <h2>Make an offer</h2>
 <div class="panel">

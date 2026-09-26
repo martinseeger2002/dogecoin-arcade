@@ -5715,7 +5715,7 @@ def create_app(state: AppState) -> FastAPI:
         viewer = "wallet"
         if public:
             viewer = "account" if signed_in(request) is not None else "nobody"
-        mine, held, coins = False, [], 0.0
+        mine, held, coins, here = False, [], 0.0, ""
         if viewer == "account":
             # One read on the public path, and it is of the looking account's
             # own holdings, not of this node's wallet: an offer can only be
@@ -5775,8 +5775,23 @@ def create_app(state: AppState) -> FastAPI:
             sale = _prices_for(index, chain).get(row["txid"])
         except Exception:
             sale = None
+        # A listing somebody signed in their own browser (`/account/list`) is
+        # in the book rather than on the chain, so `_prices_for` never sees
+        # it. On a public copy that is the one a visitor can actually buy
+        # with their own key, so the page looks it up and offers the button.
+        listed = None
+        if public:
+            try:
+                listed = _open_listing_of(chain, row["txid"])
+            except Exception as exc:
+                log.info("piece page: listing lookup: %s", exc)
+                listed = None
+            if listed is not None:
+                listed["tag"] = _tags_for([listed["seller"]]).get(listed["seller"])
+                listed["theirs"] = bool(viewer == "account" and here
+                                        and here == listed["seller"])
         return render(request, "inscription_view.html", row=row, chain=chain,
-                      tag=named.get(row["owner"]), sale=sale,
+                      tag=named.get(row["owner"]), sale=sale, listed=listed,
                       creator_tag=named.get(row["creator"]),
                       pages=pages, mine=mine, viewer=viewer,
                       tokens=held, coins=coins, advice=advice,
@@ -8606,6 +8621,41 @@ def create_app(state: AppState) -> FastAPI:
                 f"{exc} A listing is written in one OP_RETURN because a leg has "
                 f"two outputs and both are signed: what it sells, and what it "
                 f"costs.") from None
+
+    def _sold_piece(row: dict) -> str:
+        """The inscription a listing's payload sells, or "" when it names none."""
+        try:
+            swap = _listing_swap(bytes.fromhex(row["payload"] or ""))
+        except ValueError:
+            return ""
+        if swap is None or swap.give.kind != inscriptionlib.LEG_INSCRIPTION:
+            return ""
+        return swap.give.txid.hex()
+
+    def _open_listing_of(chain, piece: str) -> dict[str, Any] | None:
+        """The newest open listing in the book that sells this inscription.
+
+        Found by what the payload names, as `_listing_swap` reads it, and not
+        by the row's `input`: that is the seller's coin, which for a piece that
+        arrived by transfer is not the inscription's own txid. Only a sale for
+        coins is offered here, because that is the only kind `/account/buy`
+        can fill. Whether the piece is still where the leg says is left to
+        `/account/buy`, which asks the chain and says so in words.
+        """
+        state.listings.expire_due(chain.network)
+        for row in state.listings.open_listings(chain.network):
+            if _sold_piece(row) != piece:
+                continue
+            swap = _listing_swap(bytes.fromhex(row["payload"]))
+            if swap.take.kind != inscriptionlib.LEG_COINS:
+                continue
+            return {"id": row["id"], "seller": row["owner"],
+                    "sats": int(row["price"]),
+                    "price": f"{int(row['price']) / listingslib.COIN:.8f}"
+                             .rstrip("0").rstrip("."),
+                    "left": describe_duration(
+                        max(0, int(row["expires"] - time.time())))}
+        return None
 
     def _listing_swap(naming: bytes) -> inscriptionlib.Swap | None:
         """The trade a listing's bytes promise, or nothing if they promise none.
@@ -12549,6 +12599,7 @@ def create_app(state: AppState) -> FastAPI:
                     "tag": named.get(row["owner"], ""),
                     "price": f"{int(row['price']) / listingslib.COIN:.8f}".rstrip("0").rstrip("."),
                     "piece": f"{row['input']['txid'][:16]}…:{row['input']['vout']}",
+                    "sells": _sold_piece(row),
                     "held": held.get(row["id"]),
                     "listed": row["created"],
                     "left": describe_duration(max(0, int(row["expires"] - time.time()))),

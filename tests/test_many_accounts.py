@@ -777,6 +777,22 @@ def test_an_account_buys_a_piece_out_of_somebody_elses_shop(node, crowd):
     assert index.inscription(piece)["owner"] == maple.address, \
         "a listing holds nothing: this is still maple's piece"
 
+    # The piece page is where a buyer meets the listing: a button for anybody
+    # else, and none for the account that signed it. Served publicly, as a
+    # stranger reading this node would be, since that is who the button is for.
+    def _page(person):
+        was, state.public = state.public, True
+        try:
+            return person.client.get(f"/inscriptions/{piece}/view")
+        finally:
+            state.public = was
+    page = _page(ferns)
+    assert page.status_code == 200, page.text
+    assert "Buy it for 6" in page.text and row["id"] in page.text, \
+        "a listing in the book is offered on the piece's own page"
+    assert "Buy it for" not in _page(maple).text, \
+        "nobody is offered their own listing"
+
     sold = _balance(state, maple.address)
     had = _balance(state, ferns.address)
     asked = _offer(ferns, "/account/buy", {"listing": row["id"]})
@@ -797,6 +813,8 @@ def test_an_account_buys_a_piece_out_of_somebody_elses_shop(node, crowd):
     _settle(*node)
 
     assert index.inscription(piece)["owner"] == ferns.address, "the piece moved"
+    assert "Buy it for" not in _page(ferns).text, \
+        "a filled listing is not offered again"
     assert piece in [p["txid"] for p in _pieces(ferns)], _pieces(ferns)
     assert piece not in [p["txid"] for p in _pieces(maple)], "and it left maple"
 
