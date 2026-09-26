@@ -502,11 +502,25 @@ export async function checkedListing(leg, wallet) {
  * not off `leg.price` -- the payload is what the signatures stand over, and a
  * row priced from anywhere else could carry a number no signature covers.
  */
-export async function list(wallet, leg) {
-  return working(() => _list(wallet, leg));
+export async function list(wallet, leg, {days = 0} = {}) {
+  return working(() => _list(wallet, leg, days));
 }
 
-async function _list(wallet, leg) {
+/** Offer one payment to this account's own address in `count` coins -- what a
+ *  mintpad needs to stand one listing per piece on (two coins each). */
+export async function offerSplit(count, chain) {
+  return working(async () => {
+    const asked = await fetch("/account/split", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({count, chain: chain || ""}),
+    });
+    const offer = await asked.json();
+    if (!asked.ok) throw new Error(offer.detail || "the coins could not be split");
+    return offer;
+  });
+}
+
+async function _list(wallet, leg, days = 0) {
   const keys = keysOn(wallet, leg.chain
                       || (wallet.on && Object.keys(wallet.on)[0]));
   const shown = await coins.verifyLeg(leg, keys);
@@ -519,7 +533,7 @@ async function _list(wallet, leg) {
     method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({raw: leg.raw, chain: leg.chain || "",
                           amount: shown.coinsOf(shown.listing.sats),
-                          pubkey: coinsHex(keys.pubkey), signatures}),
+                          pubkey: coinsHex(keys.pubkey), signatures, days}),
   });
   const said = await done.json();
   if (!done.ok) throw new Error(said.detail || "the node would not take it");

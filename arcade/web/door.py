@@ -64,6 +64,7 @@ PUBLIC_PAGES = frozenset({
     "/exchange",
     "/launch",
     "/launches",
+    "/mintpad/new",
     "/listings",              # legs this node holds signatures for. It can
                               # spend none of them: the key is not here.
     "/events",                # what an open page polls to know to refresh
@@ -123,6 +124,7 @@ PUBLIC_TREES = (
     "/collections/",
     "/tokens/",               # a token's own page
     "/exchange/collection/",
+    "/mintpad/",              # an account's mintpad: pre-signed listings, read-only here
     "/exchange/pair/",
 )
 
@@ -198,6 +200,10 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/write",
                # the account's own sealed message history (accounts.Mailbox)
                "/account/mailbox",
+               # one payment to the account's own address, split for a mintpad
+               "/account/split",
+               # how the account's own mintpad page looks (presentation only)
+               "/account/mintpad",
                "/account/claim", "/account/send", "/account/inscribe",
                "/account/run/start", "/account/run", "/account/run/piece",
                "/account/run/stop",

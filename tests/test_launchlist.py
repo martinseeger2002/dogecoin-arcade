@@ -68,3 +68,14 @@ def test_a_visitor_sees_the_counts_and_how_to_join_in(client):
         state.public = False
     if "Doge Punks" in page:
         assert "Sign in to react" in page and "/like\"" not in page
+
+
+def test_the_launch_wizard_is_gone_and_its_address_goes_to_the_mintpad_wizard(client):
+    """2026-09-26: no wizard for making tokens or collections (that is
+    easy already); a mintpad wizard instead."""
+    app, _ = client
+    ex = app.get("/exchange").text
+    assert 'href="/launch"' not in ex and 'href="/launches"' in ex
+    moved = app.get("/launch", follow_redirects=False)
+    assert moved.status_code == 303 and moved.headers["location"] == "/mintpad/new"
+    assert 'href="/mintpad/new"' in app.get("/exchange?tab=mintpads").text

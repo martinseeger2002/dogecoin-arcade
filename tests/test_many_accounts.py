@@ -1946,3 +1946,83 @@ def test_a_piece_listed_and_answered_cannot_be_sold_twice(node, crowd):
     _settle(*node)
     index = state.token_index(state.messaging)
     assert index.inscription(piece)["owner"] in (osier.address, ferns.address)
+
+
+def test_a_mintpad_is_a_set_listed_at_one_price_and_minted_at_random(node, crowd):
+    """The mintpad wizard's path, as the tab walks it (2026-09-26): the
+    coins split to stand the listings on, one listing per piece for 30 days, the
+    mintpad lists them, and a buyer mints one at random through /account/buy."""
+    import time as _time
+    daemon, state = node[0], node[1]
+    maple, ferns = crowd[0], crowd[1]
+    _funded(*node, who=maple, amount=5.0)
+    _funded(*node, who=ferns, amount=5.0)
+    pieces = [_inscribed(*node, owner=maple.address, name=f"Pad Set #{n}",
+                         content=bytes([120 + n]) * 250) for n in (1, 2, 3)]
+
+    split = _do(maple, "/account/split", {"count": 6})
+    assert split.status_code == 200, split.text
+    _settle(*node)
+    for piece in pieces:
+        asked = _offer(maple, "/account/list", {"piece": piece, "amount": "1"})
+        assert asked.status_code == 200, asked.text
+        leg = asked.json()
+        done = maple.client.post("/account/list/sign", json={
+            "raw": leg["raw"], "amount": "1", "pubkey": maple.pubkey.hex(), "days": 30,
+            "signatures": [_sign(maple.secret, bytes.fromhex(d),
+                                 funding.SINGLE_ANYONECANPAY).hex()
+                           for d in leg["sighashes"]]})
+        assert done.status_code == 200, done.text
+        row = state.listings.get(done.json()["listed"])
+        assert row["expires"] - _time.time() > 29 * 86400, "a mintpad listing stands a month"
+
+    pad = maple.client.get(f"/r/mintpad/{maple.address}/Pad%20Set").json()
+    assert pad["left"] == 3 and pad["next"]["piece"] in pieces
+    assert set(pad["listed"]) == set(pieces)
+    was, state.public = state.public, True
+    try:
+        page = ferns.client.get(f"/mintpad/{maple.address}/Pad%20Set").text
+        assert "3</strong> left" in page and "Mint one" in page
+        assert f"/mintpad/{maple.address}/Pad%20Set" in ferns.client.get(
+            "/exchange?tab=mintpads").text
+    finally:
+        state.public = was
+
+    bought = _bought(ferns, pad["next"]["listing"])
+    assert bought.status_code == 200, bought.text
+    _settle(*node)
+    index = state.token_index(state.messaging)
+    assert index.inscription(pad["next"]["piece"])["owner"] == ferns.address
+    assert maple.client.get(f"/r/mintpad/{maple.address}/Pad%20Set").json()["left"] == 2
+
+
+def test_the_split_s_coins_can_be_listed_on_before_its_block(node, crowd):
+    """The wizard splits and lists straight after, with no block in between."""
+    maple = crowd[0]
+    _funded(*node, who=maple, amount=3.0)
+    piece = _inscribed(*node, owner=maple.address, name="Quick Set #1",
+                       content=b"quick" * 50)
+    split = _do(maple, "/account/split", {"count": 2})
+    assert split.status_code == 200, split.text
+    listed = _listed(maple, piece, "1")          # no _settle: the split is in the pool
+    assert listed.status_code == 200, listed.text
+
+
+def test_a_mintpad_s_look_is_the_seller_s_to_choose(node, crowd):
+    """Five templates (2026-09-26), chosen by the seller and nobody else,
+    and drawn on the page: here the lottery's wall and reel."""
+    state = node[1]
+    maple, ferns = crowd[0], crowd[1]
+    said = maple.client.post("/account/mintpad", json={
+        "collection": "Pad Set", "template": "lottery", "blurb": "Spin it."})
+    assert said.status_code == 200 and said.json()["template"] == "lottery", said.text
+    assert maple.client.post("/account/mintpad", json={
+        "collection": "Pad Set", "template": "casino-9000"}).status_code == 400
+    was, state.public = state.public, True
+    try:
+        page = ferns.client.get(f"/mintpad/{maple.address}/Pad%20Set").text
+    finally:
+        state.public = was
+    if "left" in page:
+        assert "mp-lottery" in page and 'id="ltreel"' in page and "Spin it." in page
+        assert "Spin to mint" in page

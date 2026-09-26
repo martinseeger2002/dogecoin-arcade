@@ -156,21 +156,6 @@ let keys = null;
 opening.then((found) => { keys = found; });
 const take = async () => keys || (keys = await opening);
 
-/* What the launchpad (/launch) chose for a collection, carried here in the
- * address: ?launch=collection&max=…&description=…&url=…&artist=… */
-const LAUNCH = (() => {
-  const q = new URLSearchParams(location.search);
-  if (q.get("launch") !== "collection") return {};
-  const out = {};
-  for (const k of ["max", "description", "url", "artist"]) if (q.has(k)) out[k] = q.get(k);
-  return out;
-})();
-if (LAUNCH.max !== undefined) {
-  document.addEventListener("DOMContentLoaded", () => {
-    const run = document.getElementById("build");
-    if (run) run.scrollIntoView({block: "center"});
-  });
-}
 
 /** Ask this node for an offer, say what THIS BROWSER read off it, and sign it
  *  if they say yes.
@@ -431,15 +416,9 @@ async function lookUpSet(files) {
   if (!first) return;
   const setName = String((first.collection && first.collection.name) || first.collection
     || String(first.name || "").replace(/\s*#\s*\d+\s*$/, "")).trim();
-  // Prefilled from the launchpad's choices if it sent any, else from the
-  // build, where HashLips already says it.
-  $("set-description").value = LAUNCH.description || String(first.description || "");
-  $("set-url").value = LAUNCH.url
-    || (/^https?:\/\//i.test(String(first.external_url || "")) ? first.external_url : "");
-  if (LAUNCH.artist) $("set-artist").value = LAUNCH.artist;
-  if (LAUNCH.max !== undefined) {
-    $("set-max").value = LAUNCH.max === "items" ? String(count) : LAUNCH.max;
-  }
+  // Prefilled from the build, where HashLips already says it.
+  $("set-description").value = String(first.description || "");
+  $("set-url").value = /^https?:\/\//i.test(String(first.external_url || "")) ? first.external_url : "";
   let mine = null;
   try {
     const me = await (await fetch("/account", {cache: "no-store"})).json();

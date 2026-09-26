@@ -6045,16 +6045,12 @@ def create_app(state: AppState) -> FastAPI:
                       names=_tags_for([i["creator"] for i in items]
                                       + [c["author"] for i in items for c in i["comment_rows"]]))
 
-    @app.get("/launch", response_class=HTMLResponse)
+    @app.get("/launch")
     def launchpad(request: Request):
-        """The launchpad: a token or a collection from a template, in steps.
-
-        It signs and spends nothing. The last step is a link to the page that
-        already makes the thing, with the choices in its address, so what is
-        reviewed and signed is exactly what it always was (2026-09-25).
-        """
-        chain, _ = _token_chain()
-        return render(request, "launch.html", chain=chain)
+        """Where the launch wizard was. The operator (2026-09-26) took it out -- making a
+        token or a collection is already easy -- and asked for the mintpad wizard
+        instead, so old links land there."""
+        return RedirectResponse("/mintpad/new", status_code=303)
 
     @app.get("/tokens", response_class=HTMLResponse)
     def tokens(request: Request):
@@ -6083,23 +6079,9 @@ def create_app(state: AppState) -> FastAPI:
             return render(request, "tokens.html", prepared=None,
                           account_address=address,
                           account_signed=account is not None,
-                          **{**_token_page_data([address] if address else []),
-                             **_launched(request)})
-        return render(request, "tokens.html", prepared=None,
-                      **{**_token_page_data(), **_launched(request)})
+                          **_token_page_data([address] if address else []))
+        return render(request, "tokens.html", prepared=None, **_token_page_data())
 
-    #: The fields the launchpad (/launch) may prefill on the token form.
-    LAUNCH_FIELDS = ("name", "kind", "supply", "units", "category",
-                     "subcategory", "url", "data")
-
-    def _launched(request: Request) -> dict:
-        """The launchpad's choices, carried in the address, as the create form's
-        starting values. Only prefills: the person still reviews and signs."""
-        q = request.query_params
-        if q.get("launch") != "token":
-            return {}
-        return {"form_create": {k: str(q.get(k, ""))[:200] for k in LAUNCH_FIELDS
-                                if q.get(k) is not None}}
 
     @app.post("/tokens/chain")
     def tokens_chain(request: Request, chain: str = Form(""), csrf_token: str = Form(""),
@@ -9164,7 +9146,9 @@ def create_app(state: AppState) -> FastAPI:
                     signatures=[str(s) for s in (said.get("signatures") or [])],
                     pubkey=bytes.fromhex(str(said.get("pubkey") or "")),
                     network=chain.network, owner=address, price=price,
-                    seconds=listingslib.LISTED_FOR)
+                    # A mintpad lists a whole set for weeks, not a day
+                    # (2026-09-26); anything else keeps LISTED_FOR.
+                    seconds=_listing_days(said) * 86400 or listingslib.LISTED_FOR)
         except (listingslib.ListingError, fundinglib.FundingError,
                 swaplib.SwapError, AmountError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
@@ -11311,6 +11295,155 @@ def create_app(state: AppState) -> FastAPI:
                             f"claim @{wanted}")
         return JSONResponse({"offer": offer.id, "chain": chain.network,
                              **unsigned.as_json()})
+
+    def _listing_days(said: dict) -> int:
+        """How many days a listing asked to stand, 0 for the default, capped at 90."""
+        try:
+            return max(0, min(90, int(said.get("days") or 0)))
+        except (TypeError, ValueError):
+            return 0
+
+    #: What one coin from a split is worth: enough to stand under a listing and
+    #: never under the soft-dust limit.
+    SPLIT_EACH = 5 * fees.DUST_LIMIT
+
+    @app.post("/account/split")
+    def account_split(request: Request, payload: Any = Body(None)):
+        """Offer a payment from this account to itself in `count` small coins.
+
+        A listing stands on two of the seller's coins and holds them until it is
+        bought, so a mintpad putting up a set of twelve needs twenty-four; this
+        is the one transaction that makes them (2026-09-26: the mintpad
+        wizard). Signed and broadcast like any send, through /account/sign.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse({"detail": "this account has no address yet"},
+                                status_code=400)
+        try:
+            count = int(said.get("count") or 0)
+            if not 1 <= count <= 60:
+                raise ValueError("split into between 1 and 60 coins")
+            each = SPLIT_EACH
+            index = state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address,
+                    [(each, txbuild.p2pkh_script(address))] * count,
+                    rate=fees.MIN_FEE_PER_KB,
+                    what=(f"split {format_amount(each * count, True)} "
+                          f"{chain.label.lower()} into {count} coins of your own"),
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "send")
+        except (fundinglib.FundingError, AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what)
+        return JSONResponse({"offer": offer.id, "chain": chain.network,
+                             "label": chain.label, **unsigned.as_json()})
+
+    def _mintpad_rows(chain, creator: str, name: str) -> list[dict]:
+        """Open listings of a collection's pieces, put up by `creator` -- the seller,
+        who is the collection's maker when the wizard made the pad."""
+        index = state.token_index(chain)
+        state.listings.expire_due(chain.network)
+        out = []
+        for row in state.listings.open_listings(chain.network, limit=1000):
+            if row["owner"] != creator:
+                continue
+            piece = _sold_piece(row)
+            if not piece:
+                continue
+            got = index.inscription(piece)
+            if not got or got.get("collection") != name or got["owner"] != creator:
+                continue
+            out.append({"listing": row["id"], "piece": piece, "price": int(row["price"]),
+                        "number": got["number"], "edition": got.get("edition"),
+                        "maker": got["creator"]})
+        return out
+
+    @app.get("/r/mintpad/{creator}/{name}")
+    def r_mintpad(creator: str, name: str):
+        """What a collection's mintpad has left, and one open listing chosen at
+        random to buy -- a mint is a random piece of the set (D-041)."""
+        import random as _random
+        chain, _ = _token_chain()
+        rows = _mintpad_rows(chain, creator, name)
+        pick = _random.choice(rows) if rows else None
+        return contentlib._json({"left": len(rows), "next": pick,
+                                 "prices": sorted({r["price"] for r in rows}),
+                                 "listed": sorted({r["piece"] for r in rows})})
+
+    #: How an account's mintpad page looks (2026-09-26: "several different
+    #: mint pad templates to choose from"). Presentation only, so it is kept by
+    #: this node beside the listings rather than written on the chain.
+    MINTPAD_TEMPLATES = {
+        "spotlight": "Spotlight: the cover, big, and the Mint button under it",
+        "wall": "Wall: the whole collection as a dimmed mosaic behind the card",
+        "gallery": "Gallery: a scrolling strip of the pieces above the button",
+        "arcade": "Arcade: a pixel-font cabinet with an INSERT COIN button",
+        "lottery": "Lottery: a flipping wall of the set and a reel that spins to the piece you win",
+    }
+
+    def _mintpad_look(seller: str, name: str) -> dict:
+        said = state.setting(f"mintpad:{seller}:{name}", {}) or {}
+        look = said.get("template") if isinstance(said, dict) else None
+        return {"template": look if look in MINTPAD_TEMPLATES else "spotlight",
+                "blurb": str((said or {}).get("blurb") or "")[:300]}
+
+    @app.post("/account/mintpad")
+    def account_mintpad_look(request: Request, payload: Any = Body(None)):
+        """Choose how this account's mintpad for one collection looks."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        chain, _ = _token_chain()
+        seller = _account_address(account.pubkey, chain)
+        name = str(said.get("collection") or "").strip()[:120]
+        template = str(said.get("template") or "")
+        if not seller or not name:
+            return JSONResponse({"detail": "which collection?"}, status_code=400)
+        if template not in MINTPAD_TEMPLATES:
+            return JSONResponse({"detail": "no such template"}, status_code=400)
+        state.set_setting(f"mintpad:{seller}:{name}",
+                          {"template": template,
+                           "blurb": " ".join(str(said.get("blurb") or "").split())[:300]})
+        return JSONResponse({"ok": True, **_mintpad_look(seller, name)})
+
+    @app.get("/mintpad/new", response_class=HTMLResponse)
+    def mintpad_new(request: Request):
+        """The mintpad wizard: pick one of your collections, a price, done."""
+        chain, _ = _token_chain()
+        return render(request, "mintpad_new.html", chain=chain,
+                      templates=MINTPAD_TEMPLATES)
+
+    @app.get("/mintpad/{creator}/{name}", response_class=HTMLResponse)
+    def mintpad_page(request: Request, creator: str, name: str):
+        """A collection's mintpad: how many are left, the price, and Mint."""
+        chain, index = _token_chain()
+        rows = _mintpad_rows(chain, creator, name)
+        maker = rows[0]["maker"] if rows else creator
+        summary = index.collection(maker, name) or index.collection(creator, name)
+        if summary is None:
+            state.flash("no such collection on this chain", "err")
+            return RedirectResponse("/exchange?tab=mintpads", status_code=303)
+        look = _mintpad_look(creator, name)
+        # The pieces themselves, for the Wall and the Gallery to draw.
+        try:
+            art = [r for r in index.collection_items(summary["creator"], name, limit=60)
+                   if str(r.get("content_type") or "").startswith("image/")]
+        except Exception:
+            art = []
+        return render(request, "mintpad_view.html", chain=chain, summary=summary,
+                      look=look, art=art,
+                      seller=creator, left=len(rows),
+                      prices=sorted({r["price"] for r in rows}),
+                      signed_in=signed_in(request) is not None)
 
     @app.post("/account/send")
     def account_send(request: Request, payload: Any = Body(None)):
@@ -13513,6 +13646,26 @@ def create_app(state: AppState) -> FastAPI:
             return any(l["give"].get("kind") == kind and not l["available"]
                        for l in shop["listings"])
         data["mintpads"] = [s for s in data["shops"] if selling(s, "random")]
+        # Accounts' mintpads: their pre-signed listings, one card per seller and
+        # collection (2026-09-26).
+        data["account_pads"] = []
+        try:
+            state.listings.expire_due(chain.network)
+            pads: dict = {}
+            for row in state.listings.open_listings(chain.network, limit=1000):
+                piece = _sold_piece(row)
+                got = index.inscription(piece) if piece else None
+                if not got or not got.get("collection") or got["owner"] != row["owner"]:
+                    continue
+                key = (row["owner"], got["collection"])
+                pad = pads.setdefault(key, {"seller": row["owner"], "name": got["collection"],
+                                            "left": 0, "price": int(row["price"]),
+                                            "cover": piece})
+                pad["left"] += 1
+                pad["price"] = min(pad["price"], int(row["price"]))
+            data["account_pads"] = [p for p in pads.values() if p["left"] >= 2]
+        except Exception:
+            data["account_pads"] = []
         data["market"] = [s for s in data["shops"] if selling(s, "inscription")]
         data["tokens"] = [s for s in data["shops"] if selling(s, "token")]
         data["pairs"] = data.get("pairs", [])

@@ -9,7 +9,8 @@
 <p class="sub">Every token and collection on {{ chain.label|lower }}. <b>Popular</b>
   weighs what people said (likes, dislikes, comments) and what they did (trades and
   the coins through them), and lets it wear off over time like the feed; <b>New</b>
-  is newest first. <a href="/launch">Launch your own</a>.</p>
+  is newest first. Make your own: <a href="/tokens#create">a token</a> or
+  <a href="/nfts">a collection</a>.</p>
 <nav class="row" style="gap:6px;margin:0 0 16px">
   <a class="btn small {{ 'on' if sort != 'new' else 'ghost' }}" href="/launches">Popular</a>
   <a class="btn small {{ 'on' if sort == 'new' else 'ghost' }}" href="/launches?sort=new">New</a>
@@ -18,7 +19,7 @@
 
 {% if not items %}
   <div class="panel empty"><p>Nothing has been launched on this chain yet.</p>
-    <p class="muted"><a href="/launch">Be the first</a>.</p></div>
+    <p class="muted"><a href="/tokens#create">Make a token</a> or <a href="/nfts">a collection</a>.</p></div>
 {% endif %}
 
 {% for it in items %}
