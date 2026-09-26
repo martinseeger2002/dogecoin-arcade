@@ -57,7 +57,18 @@
       <option value="{{ row.txid }}">{{ row.label }}</option>
       {% endfor %}
     </datalist>
-    {% if public %}<div class="muted" id="icon-face" style="font-size:.8rem;margin-top:6px"
+    {% if my_pictures %}
+    {# Visible, because a <datalist> shows nothing until the field is focused
+       and some browsers never show it (filming the token tutorial, 2026-09-25). #}
+    <div class="iconpick" aria-label="Pick one of yours">
+      <span class="muted" style="font-size:.8rem">Pick one of yours:</span>
+      {% for row in my_pictures[:12] %}
+      <button type="button" class="iconpick-one" data-id="{{ row.txid }}" title="{{ row.label }}">
+        <img src="/content/{{ row.txid }}" alt="{{ row.label }}" loading="lazy"></button>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if public %}<div class="muted" id="icon-face" style="font-size:.8rem;margin-top:6px;min-height:48px;display:flex;align-items:center"
       >Shows what the id names as you type it, before anything is paid for.</div>{% endif %}
     <div class="muted" style="font-size:.8rem;margin-top:4px">An inscription on
       this chain: its id, or one of yours from the list &mdash; a
@@ -81,6 +92,12 @@
 {% if public %}
 <div class="msg err" id="create-trouble" hidden></div>
 <div class="msg ok" id="create-news" hidden></div>
+<style>
+.iconpick{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px}
+.iconpick-one{padding:0;width:40px;height:40px;border-radius:50%;overflow:hidden;
+  border:1px solid var(--line);background:var(--panel);cursor:pointer}
+.iconpick-one img{width:100%;height:100%;object-fit:cover;display:block}
+</style>
 <div class="confirm" id="create-confirm" hidden>
   <p id="create-says"></p>
   <button class="btn primary" id="create-yes">Yes, create it</button>
@@ -108,21 +125,31 @@ const trouble = (t) => { $("create-trouble").textContent = t;
 // picture is handed to the <img> as a blob once it is known to be a picture.
 let looked = 0;
 let faceURL = "";
+let shownId = "";
 async function preview() {
   const said = $("icon-face");
   const raw = field("icon").value.trim();
   const id = (raw.match(/([0-9a-fA-F]{64})/) || [])[1] || "";
   if (!raw) {
+    shownId = "";
     said.className = "muted";
     said.textContent = "Shows what the id names as you type it, before anything is paid for.";
     return;
   }
   if (!id) {
+    shownId = "";
     said.className = "err";
     said.textContent = "That is not an inscription id: 64 hexadecimal characters, or a /content/ link to one.";
     return;
   }
+  // The same id again -- the "change" that leaving the field fires, usually as
+  // the Review button is being pressed -- is left alone. Redrawing it shrank
+  // the preview to one line and grew it back while the pointer was down, so
+  // the button moved out from under the click and the press did nothing at all
+  // (filming the token tutorial, 2026-09-25).
+  if (id === shownId) return;
   const mine = ++looked;
+  shownId = id;
   said.className = "muted";
   said.textContent = "Looking for it…";
   let res = null;
@@ -150,7 +177,7 @@ async function preview() {
     img.alt = "the token's icon";
     img.style.cssText = "width:48px;height:48px;object-fit:cover;border-radius:50%;display:block";
     const words = document.createElement("span");
-    words.textContent = `That is a ${type}, and the token would wear it.`;
+    words.textContent = `That is a picture (${type}), and the token would wear it.`;
     words.style.marginLeft = "8px";
     said.append(img, words);
     return;
@@ -172,6 +199,9 @@ field("icon").addEventListener("input", () => {
   waiting = setTimeout(preview, 400);
 });
 field("icon").addEventListener("change", preview);
+document.querySelectorAll(".iconpick-one").forEach((b) => {
+  b.onclick = () => { field("icon").value = b.dataset.id; preview(); };
+});
 preview();
 
 async function offer() {
