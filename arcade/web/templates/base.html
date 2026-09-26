@@ -1327,11 +1327,13 @@ details.covered[open]>summary{margin-bottom:6px}
 // The installable app (2026-09-25): register the service worker that keeps
 // an offline page and shows Messenger notifications. It caches no pages
 // (sw.js), so the live, in-place refresh above is untouched. Not in an embed:
-// a framed document is not an app.
+// a framed document is not an app. The revision is in the URL because
+// Cloudflare caches /sw.js for hours whatever the node says: a new release
+// is a new URL, so phones get it at once.
 {% if not embed %}
 if ('serviceWorker' in navigator && window.isSecureContext) {
   window.addEventListener('load', function () {
-    navigator.serviceWorker.register('/sw.js', {scope: '/'}).catch(function () {});
+    navigator.serviceWorker.register('/sw.js?v={{ state.running_version or "dev" }}', {scope: '/'}).catch(function () {});
   });
 }
 {% endif %}
