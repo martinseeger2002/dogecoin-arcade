@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Notifications · DogecoinArcade{% endblock %}
+{% block body %}
+<h1>Notifications</h1>
+<p class="sub" style="margin-top:0">What people did with your posts and pieces, replies on
+  posts you liked or shared, sales, and messages &mdash; everything here is on the chain.</p>
+
+{% macro who(address) -%}
+  {%- if names.get(address) -%}<a href="/u/{{ names[address] }}">@{{ names[address] }}</a>
+  {%- elif address -%}<span class="mono">{{ address[:10] }}&hellip;</span>
+  {%- else -%}Somebody{%- endif -%}
+{%- endmacro %}
+
+{% if events %}
+<div class="notiflist">
+  {% for e in events %}
+  {% set link = ('/me/messages' if e.source == 'message'
+                 else ('/feed?post=' ~ e.target if e.source == 'feed' else '/me/wallet')) %}
+  <a class="panel notif{{ ' new' if e.unread }}" href="{{ link }}">
+    <span class="icon" aria-hidden="true">{{ {'liked': '♥', 'disliked': '👎', 'replied to': '💬',
+      'shared': '🔁', 'tipped': '🪙', 'message': '✉️', 'sold': '🛒'}.get(e.kind, '•') }}</span>
+    <span class="what">
+      {% if e.source == 'message' %}
+        {{ who(e.actor) }} sent you a message
+      {% elif e.source == 'sale' %}
+        You sold {{ e.text }}{% if e.amount %} for {{ '%g' % (e.amount / 100000000) }} coins{% endif %}
+      {% else %}
+        {{ who(e.actor) }} {{ e.kind }} {{ 'your post' if e.about_mine else 'a post you follow' }}{% if e.amount %}
+        &middot; {{ '%g' % (e.amount / 100000000) }} coins{% endif %}
+        {% if e.text %}<span class="quote">&ldquo;{{ e.text }}&rdquo;</span>{% endif %}
+      {% endif %}
+      <span class="when muted">{{ when(e.at) if e.at else 'just now, waiting for its block' }}</span>
+    </span>
+    {% if e.unread %}<span class="dot" title="new"></span>{% endif %}
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="panel empty"><p class="muted" style="margin:0">Nothing yet. When somebody likes,
+  replies to, shares or tips one of your posts, buys something of yours, or writes to you,
+  it shows up here.</p></div>
+{% endif %}
+
+<style>
+.notiflist{display:grid;gap:8px}
+.notif{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;color:inherit;text-decoration:none;margin:0}
+.notif:hover{border-color:var(--accent)}
+.notif .icon{font-size:1.2rem;line-height:1.3;flex:none;width:1.6em;text-align:center}
+.notif .what{flex:1;min-width:0;overflow-wrap:anywhere}
+.notif .quote{display:block;color:var(--muted);font-size:.9rem;margin-top:3px}
+.notif .when{display:block;font-size:.78rem;margin-top:3px}
+.notif.new{border-color:#d6483b;box-shadow:inset 3px 0 0 #d6483b}
+.notif .dot{flex:none;width:9px;height:9px;border-radius:50%;background:#d6483b;margin-top:7px}
+</style>
+{% endblock %}

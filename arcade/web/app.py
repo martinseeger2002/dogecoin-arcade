@@ -20,6 +20,7 @@ import threading
 import time
 import html
 import secrets
+import urllib.parse
 import shutil
 import sys
 import os
@@ -71,6 +72,7 @@ from .. import release as releaselib
 from .. import seed as seedlib
 from .. import accounts as accountslib
 from .. import faucet as faucetlib
+from .. import admin as adminlib
 from .. import funding as fundinglib
 from .. import listings as listingslib
 from .. import utxos as utxoslib
@@ -309,8 +311,8 @@ PAGE_INSCRIPTIONS = 24
 NAV = [
     ("/",             "Overview",     None,        True),
     ("/messages",     "Messages",     "testnet",   True),
-    ("/contacts",     "Address book", None,        True),
     ("/feed",         "Feed",         "testnet",   True),
+    ("/contacts",     "Address book", None,        True),
     ("/backup",       "Backup",       None,        True),
     ("/wallet",       "Wallet",       None,        True),
     ("/tokens",       "Tokens",       "mainnet",   True),
@@ -333,8 +335,10 @@ NAV = [
 ACCOUNT_NAV = [
     ("/me",              "Your arcade",  None,        True),
     ("/me/messages",     "Messages",     "testnet",   True),
-    ("/me/contacts",     "Address book", None,        True),
+    # 2026-09-25: Messages, Notifications, Feed, then the address book.
+    ("/me/notifications", "Notifications", None,      True),
     ("/feed",            "Feed",         "testnet",   True),
+    ("/me/contacts",     "Address book", None,        True),
     ("/me/backup",       "Backup",       None,        True),
     ("/me/wallet",       "Wallet",       None,        True),
     ("/tokens",          "Tokens",       "mainnet",   True),
@@ -358,6 +362,7 @@ h1{font-size:1.2rem}p{color:#a0a0ab}</style>
 #: The session cookie's name. At module level because the door reads it
 #: before any route exists, and the routes read it after.
 SESSION = "arcade_session"
+from ..admin import ADMIN_COOKIE, ADMIN_HEADER  # noqa: E402
 
 #: Hostnames a browser treats as a secure context over plain http. Everywhere
 #: else -- a LAN address, a name on the local network -- `crypto.subtle` is
@@ -501,10 +506,18 @@ def the_door(state: AppState):
         # This is the door's one route-independent rule, and it is written
         # here rather than in the allowlist so that it is impossible to read
         # `door.py` and think a session opens anything.
+        # Since 2026-09-25 the operator, from outside, is an account like any
+        # other plus one thing: /admin. The panel asks for the admin password
+        # itself (arcade/admin.py), and everything the node's own wallet does
+        # from outside happens in it -- so a stolen account cookie opens that
+        # account, never the node.
         operator = state.operator
         if operator:
             account = state.account_for(request.cookies.get(SESSION, ""))
-            if account is not None and account.pubkey.lower() == operator:
+            if (account is not None and account.pubkey.lower() == operator
+                    and (path == "/admin" or path.startswith("/admin/"))):
+                # The panel itself asks for the admin password (_admin_check);
+                # everything the node's wallet does from outside is in it.
                 return await call_next(request)
         if path.startswith("/rpc"):
             # The bot RPC has its own key, in a file beside the node, and it
@@ -563,7 +576,7 @@ def create_app(state: AppState) -> FastAPI:
         """
         try:                                  # mail for phones already subscribed
             push = state.push()
-            if push is not None and push.subscribed():
+            if push is not None:              # notes every account's mail
                 _watch_for_mail()
         except Exception as exc:              # noqa: BLE001 -- never block startup
             log.info("push not started: %s", exc)
@@ -593,12 +606,27 @@ def create_app(state: AppState) -> FastAPI:
         """
         if not (state.public or _from_outside(request)):
             return False
-        operator = state.operator
-        if operator:
-            account = signed_in(request)
-            if account is not None and account.pubkey.lower() == operator:
-                return False
         return True
+
+    def _is_operator(request: Request) -> bool:
+        account = signed_in(request)
+        return bool(account is not None and state.operator
+                    and account.pubkey.lower() == state.operator)
+
+    def _admin_remote(request: Request) -> bool:
+        """The operator, from outside, with the admin password's session open."""
+        return _is_operator(request) and state.admin_sessions().valid(
+            request.cookies.get(ADMIN_COOKIE, ""), state.operator)
+
+    def _nav_for(request: Request) -> list:
+        """The tabs: an account's own, the operator's machine's, and Admin for the
+        operator either way (the panel itself asks for what it needs)."""
+        admin = ("/admin", "Admin", None, True)
+        if _public_request(request):
+            if signed_in(request) is not None:
+                return ACCOUNT_NAV + ([admin] if _is_operator(request) else [])
+            return [entry for entry in NAV if doorlib.public_path(entry[0])]
+        return NAV + [admin]
 
     def _again(where: str, **context: Any) -> RedirectResponse:
         """Post, redirect, get -- with what the POST decided carried over.
@@ -640,11 +668,7 @@ def create_app(state: AppState) -> FastAPI:
             # An account gets its own tabs, not the operator's with the
             # unreachable ones removed: a menu of four things that work
             # beats a menu of eleven with seven missing.
-            "nav": (ACCOUNT_NAV if (_public_request(request)
-                                    and signed_in(request) is not None)
-                    else [entry for entry in NAV
-                          if not _public_request(request)
-                          or doorlib.public_path(entry[0])]),
+            "nav": _nav_for(request),
             "public": _public_request(request),
             "path": request.url.path,
             "state": state,
@@ -655,6 +679,7 @@ def create_app(state: AppState) -> FastAPI:
             "ledger_net": state.ledger.label,
             "approvals_waiting": _approvals_waiting(),
             "unread_messages": _unread_messages(),
+            **_account_counts(request),
             "unread_board": _unread_board(),
             "offers_waiting": _offers_waiting(),
         }
@@ -1192,7 +1217,14 @@ def create_app(state: AppState) -> FastAPI:
                 for t in threads:
                     if t["pubkey"] == peer_key:
                         peer["address"] = t.get("address", "")
+        # `/content/<id>` in a message is drawn as the feed draws it (the operator,
+        # 2026-09-25): what each id is comes from the index, never the message.
+        from types import SimpleNamespace
+        drawable = _drawable_in([SimpleNamespace(
+            text=(m["body"] or b"").decode("utf-8", "replace") if isinstance(m["body"], bytes)
+            else str(m["body"] or ""), replies=[]) for m in (items or [])])
         return render(request, "messages.html", threads=threads, thread=items,
+                      drawable=drawable,
                       peer=peer, when=_when, fingerprint_of=fingerprint_of,
                       is_new_contact=bool(peer) and not items,
                       unfinished=unfinished,
@@ -2463,7 +2495,8 @@ def create_app(state: AppState) -> FastAPI:
             return ""
 
     @app.get("/feed", response_class=HTMLResponse)
-    def feed_page(request: Request, before: str | None = None, sort: str = "popular"):
+    def feed_page(request: Request, before: str | None = None, sort: str = "popular",
+                  post: str | None = None):
         """Everybody's posts, the endorsed first: likes, shares, and tips
         weighted by what they gave (2026-09-23; feed.py says the
         arithmetic and store.py runs it as the query's own ORDER BY).
@@ -2478,6 +2511,14 @@ def create_app(state: AppState) -> FastAPI:
         sort = "new" if sort == "new" else "popular"
         rows, cursor, waiting = _feed_page(chain.network, before=before,
                                           sort=sort)
+        # One post and its thread: where a notification points (2026-09-25).
+        wanted = (post or "").strip().lower()
+        if len(wanted) == 64 and all(c in "0123456789abcdef" for c in wanted):
+            with state.store() as store:
+                rows = list(store.conn.execute(
+                    "SELECT * FROM group_post WHERE network = ? AND txid = ?",
+                    (chain.network, wanted)))
+            cursor = None
         shown = _shown(rows, chain.network, waiting, me=mine["address"])
         # Looking at it is reading it. Marked BEFORE the page is rendered, so
         # the count beside Feed is gone by the time it is drawn rather than
@@ -6479,6 +6520,81 @@ def create_app(state: AppState) -> FastAPI:
                                               daemon=True)
         _watcher["thread"].start()
 
+    # --- notifications (2026-09-25) ------------------------------------
+    #
+    # Everything that happened to an account, or to posts it follows, read from
+    # what the node already keeps (arcade/notify.py). Seen is a marker per source,
+    # kept per account in settings; the red counts on the Notifications and
+    # Messages tabs are what is past it.
+
+    def _notif_seen(pubkey: str) -> dict:
+        got = state.setting(f"notif_seen:{pubkey}")
+        return dict(got) if isinstance(got, dict) else {}
+
+    def _notif_events(account) -> list:
+        from .. import notify
+        chain = _account_chain()
+        me = _account_address(account.pubkey, chain)
+        events: list = []
+        try:
+            with state.store() as store:
+                events += notify.feed_events(store.conn, chain.network, me)
+        except Exception as exc:                          # noqa: BLE001
+            log.info("notifications: feed: %s", exc)
+        push = state.push() if hasattr(state, "push") else None
+        if push is not None:
+            events += notify.message_events(push.arrivals(account.pubkey))
+        owners = {a for a in (_account_address(account.pubkey, c)
+                              for c in _account_chains()) if a}
+        try:
+            with state.listings._open() as conn:
+                events += notify.sale_events(conn, owners)
+        except Exception as exc:                          # noqa: BLE001
+            log.info("notifications: sales: %s", exc)
+        return notify.merge(events, _notif_seen(account.pubkey))
+
+    def _account_counts(request: Request) -> dict:
+        """The red counts for an account's tabs; nothing for anybody else."""
+        if not _public_request(request):
+            return {}
+        account = signed_in(request)
+        if account is None:
+            return {}
+        try:
+            events = _notif_events(account)
+        except Exception:                                 # noqa: BLE001 -- never break a page
+            return {}
+        seen = _notif_seen(account.pubkey)
+        mail = sum(1 for e in events if e.source == "message"
+                   and e.seq > int(seen.get("message_tab", 0)))
+        return {"notif_count": sum(1 for e in events if e.unread and e.source != "message")
+                + mail, "mail_count": mail}
+
+    @app.get("/me/notifications", response_class=HTMLResponse)
+    def my_notifications(request: Request):
+        account = signed_in(request)
+        if account is None:
+            return RedirectResponse("/join", status_code=303)
+        from .. import notify
+        events = _notif_events(account)
+        chain = _account_chain()
+        index = state.token_index(chain)
+        names: dict[str, str] = {}
+        for ev in events:
+            if ev.actor and ev.actor not in names:
+                try:
+                    names[ev.actor] = index.tag_of(ev.actor) or ""
+                except Exception:                         # noqa: BLE001
+                    names[ev.actor] = ""
+        # Looked at: everything on the page is read now, the Messages count
+        # included -- written before the page is drawn, so its own tab shows no
+        # count, while the rows still say which of them were new.
+        seen = notify.seen_now(events, _notif_seen(account.pubkey))
+        seen["message_tab"] = max(int(seen.get("message_tab", 0)), int(seen.get("message", 0)))
+        state.set_setting(f"notif_seen:{account.pubkey}", seen)
+        return render(request, "notifications.html", events=events, names=names,
+                      when=_when, chain=chain)
+
     # --- seats, and signing in ------------------------------------------------
     #
     # The node is a builder, an index and a window -- never a custodian
@@ -6687,7 +6803,36 @@ def create_app(state: AppState) -> FastAPI:
     _parts = accountpartslib.Parts(state.home / "accountparts.sqlite")
     #: What an account has broadcast and the index has not read
     #: yet, so a second transaction does not pick the same coin.
-    _flights = accountlib.Flights()
+    _pool_seen: dict[str, tuple] = {}          # txid -> the outpoints it spends
+    _pool_cache: dict[str, tuple[float, frozenset]] = {}
+
+    def _pool_spent(network: str) -> frozenset:
+        """Every outpoint a transaction in that chain's mempool spends. Cached
+        for a few seconds, and each transaction is read once: they do not change."""
+        now = time.time()
+        held = _pool_cache.get(network)
+        if held and now - held[0] < 10:
+            return held[1]
+        ctx = next((c for c in (state.messaging, state.ledger)
+                    if c.network == network), None)
+        if ctx is None:
+            return frozenset()
+        out: set = set()
+        with ctx.rpc() as rpc:
+            pool = list(rpc.call("getrawmempool"))
+            for txid in pool:
+                if txid not in _pool_seen:
+                    tx = rpc.call("getrawtransaction", txid, 1)
+                    _pool_seen[txid] = tuple((v["txid"], v["vout"])
+                                             for v in tx.get("vin", []) if "txid" in v)
+                out.update(_pool_seen[txid])
+        for gone in set(_pool_seen) - set(pool):
+            _pool_seen.pop(gone, None)
+        spent = frozenset(out)
+        _pool_cache[network] = (now, spent)
+        return spent
+
+    _flights = accountlib.Flights(pool=_pool_spent)
 
     def _account_chain():
         """The chain a tag lives on. Testnet, as tags always have been."""
@@ -6888,6 +7033,26 @@ def create_app(state: AppState) -> FastAPI:
         return sum(coin["value"] for coin
                    in _flights.change_for(pubkey, network)
                    if (coin["txid"], coin["vout"]) not in listed)
+
+    def _leaving(pubkey: str, network: str, db, address: str) -> int:
+        """Satoshis the index still lists for this address that a transaction in
+        the pool has already spent (this node's flights, and the node's own
+        mempool -- `Flights(pool=...)`). Neither gone nor spendable: leaving."""
+        spent = _flights.spent_by(pubkey, network)
+        return sum(coin["value"] for coin in utxoslib.unspent(db, address)
+                   if (coin["txid"], coin["vout"]) in spent)
+
+    def _spendable(row: dict) -> None:
+        """The big number (Order item 4, 2026-09-25): what can be spent now.
+
+        `balance - leaving + incoming`: a coin the pool has taken is neither
+        gone nor counted, a change output on its way is spendable before its
+        block (this node offers it), and a coin a block has filed is counted
+        once (D-175). The page prints this, and says what is arriving and
+        what is leaving under it."""
+        row["spendable"] = max(0, int(row.get("balance") or 0)
+                               - int(row.get("leaving") or 0)
+                               + int(row.get("incoming") or 0))
 
     def _watch(address: str, why: str, chain=None) -> None:
         """Start following an address's coins, so it can be funded at all."""
@@ -7129,6 +7294,9 @@ def create_app(state: AppState) -> FastAPI:
                     # down is not also on its way.
                     said["incoming"] = _on_its_way(account.pubkey,
                                                    chain.network, db, address)
+                    said["leaving"] = _leaving(account.pubkey, chain.network,
+                                               db, address)
+                    _spendable(said)
                 said["tag"] = index.tag_of(address) or ""
                 with state.store() as store:
                     # Two questions, and the page has to be able to answer them
@@ -7176,8 +7344,11 @@ def create_app(state: AppState) -> FastAPI:
                         row["watching"] = utxoslib.since(db, here)
                         row["incoming"] = _on_its_way(account.pubkey,
                                                       one.network, db, here)
+                        row["leaving"] = _leaving(account.pubkey, one.network,
+                                                  db, here)
                 except Exception:
                     pass                   # a node still catching up says 0
+            _spendable(row)
             said["chains"].append(row)
 
         # What this node lets this account do, and how much of it is left.
@@ -7219,7 +7390,20 @@ def create_app(state: AppState) -> FastAPI:
         if signed_in(request) is None:
             return RedirectResponse("/join", status_code=303)
         chain = _account_chain()
-        return render(request, "my_messages.html", chain=chain, when=_when)
+        page = render(request, "my_messages.html", chain=chain, when=_when)
+        try:                     # opened: the red count on the Messages tab is read
+            account = signed_in(request)
+            push = state.push() if hasattr(state, "push") else None
+            if account is not None and push is not None:
+                latest = push.arrivals(account.pubkey, limit=1)
+                if latest:
+                    seen = _notif_seen(account.pubkey)
+                    seen["message_tab"] = max(int(seen.get("message_tab", 0)),
+                                              int(latest[0]["rowid"]))
+                    state.set_setting(f"notif_seen:{account.pubkey}", seen)
+        except Exception as exc:                          # noqa: BLE001
+            log.info("messages seen: %s", exc)
+        return page
 
     @app.get("/me/contacts", response_class=HTMLResponse)
     def my_contacts(request: Request):
@@ -8702,7 +8886,7 @@ def create_app(state: AppState) -> FastAPI:
                 return JSONResponse({"detail": str(exc)}, status_code=400)
             except Exception as exc:
                 return JSONResponse({"detail": f"the node refused it: {exc}"},
-                                    status_code=502)
+                                    status_code=409)
             # The row says filled, with the transaction that spent the piece
             # beside it. This is the only place a listing reaches that word:
             # nothing in this book could have known the sale happened, and a
@@ -8883,7 +9067,7 @@ def create_app(state: AppState) -> FastAPI:
                 return JSONResponse({"detail": str(exc)}, status_code=400)
             except Exception as exc:
                 return JSONResponse({"detail": f"the node refused it: {exc}"},
-                                    status_code=502)
+                                    status_code=409)
             _flights.add(account.pubkey, txid, unsigned, address,
                          network=chain.network)
             state.bump_generation()
@@ -9139,7 +9323,7 @@ def create_app(state: AppState) -> FastAPI:
             raise
         except Exception as exc:
             return JSONResponse({"detail": f"the node could not do it: {exc}"},
-                                status_code=502)
+                                status_code=409)
 
     @app.post("/account/shop/sign")
     def account_shop_sign(request: Request, payload: Any = Body(None)):
@@ -9228,7 +9412,7 @@ def create_app(state: AppState) -> FastAPI:
             raise
         except Exception as exc:
             return JSONResponse({"detail": f"the node could not do it: {exc}"},
-                                status_code=502)
+                                status_code=409)
 
     @app.post("/account/talk")
     def account_talk(request: Request, payload: Any = Body(None)):
@@ -9320,7 +9504,7 @@ def create_app(state: AppState) -> FastAPI:
             raise
         except Exception as exc:
             return JSONResponse({"detail": f"the node could not do it: {exc}"},
-                                status_code=502)
+                                status_code=409)
 
     @app.get("/account/tokens")
     def account_tokens(request: Request):
@@ -10341,7 +10525,7 @@ def create_app(state: AppState) -> FastAPI:
                 return JSONResponse({"detail": str(exc)}, status_code=400)
             except Exception as exc:
                 return JSONResponse({"detail": f"the node refused it: {exc}"},
-                                    status_code=502)
+                                    status_code=409)
             # Remembered until the index reads it, so the next transaction
             # this account builds does not offer the coin this one just spent
             # or miss the change it just made.
@@ -10485,6 +10669,12 @@ def create_app(state: AppState) -> FastAPI:
             SESSION_COOKIE, token,
             max_age=accountslib.SESSION_DAYS * 86400,
             httponly=True, samesite="strict", secure=_over_https(request))
+        # The operator's password IS the admin password (arcade/admin.py): having
+        # just proved it, the admin panel opens too, without asking twice.
+        if account.pubkey.lower() == state.operator:
+            answer.set_cookie(ADMIN_COOKIE, state.admin_sessions().open(state.operator),
+                              max_age=adminlib.ADMIN_HOURS * 3600, httponly=True,
+                              samesite="strict", secure=_over_https(request), path="/admin")
         return answer
 
     @app.post("/auth/set-password")
@@ -10536,6 +10726,380 @@ def create_app(state: AppState) -> FastAPI:
             "settable": not _from_outside(request) and not creds.anybody(),
             "min_password": accountslib.MIN_PASSWORD,
         })
+
+    # --- the admin panel (2026-09-25) --------------------------------
+    #
+    # One place for everything a node's operator does. At the node machine it
+    # needs nothing; from outside it needs the operator account AND the admin
+    # password (arcade/admin.py). Every write also needs the X-Arcade-Admin
+    # header and, when the browser says where it came from, this very origin.
+
+    def _admin_check(request: Request, write: bool = False) -> dict:
+        """Who is using the panel, or an HTTPException saying what is missing."""
+        local = not (state.public or _from_outside(request))
+        if write:
+            if request.headers.get(ADMIN_HEADER) != "1":
+                raise HTTPException(403, "admin writes come from the admin page")
+            origin = request.headers.get("origin")
+            if origin:
+                host = request.headers.get("host", "")
+                if urllib.parse.urlsplit(origin).netloc != host:
+                    raise HTTPException(403, "that request came from another site")
+        if local:
+            return {"local": True}
+        if not _is_operator(request):
+            raise HTTPException(403, "sign in as this node's operator first")
+        if not state.admin_sessions().valid(request.cookies.get(ADMIN_COOKIE, ""),
+                                            state.operator):
+            raise HTTPException(401, "the admin password, please")
+        return {"local": False}
+
+    def _admin_password_ok(password: str, request: Request) -> bool:
+        creds = state.credentials()
+        name = adminlib.username_for(creds, state.operator)
+        if not name:
+            return False
+        try:
+            creds.check(name, password,
+                        ip=(request.headers.get("cf-connecting-ip")
+                            or (request.client.host if request.client else "")))
+            return True
+        except accountslib.AccountError:
+            return False
+
+    @app.get("/admin", response_class=HTMLResponse)
+    def admin_page(request: Request):
+        try:
+            who = _admin_check(request)
+        except HTTPException as exc:
+            if exc.status_code == 401:
+                return RedirectResponse("/admin/login", status_code=303)
+            return render(request, "admin_login.html", reason=str(exc.detail),
+                          signed_in=signed_in(request) is not None, need_account=True)
+        return render(request, "admin.html", local=who["local"])
+
+    @app.get("/admin/login", response_class=HTMLResponse)
+    def admin_login_page(request: Request):
+        return render(request, "admin_login.html", reason="",
+                      signed_in=signed_in(request) is not None,
+                      need_account=not _is_operator(request))
+
+    @app.post("/admin/login")
+    def admin_login(request: Request, payload: Any = Body(None)):
+        if not _is_operator(request):
+            return JSONResponse({"detail": "sign in as this node's operator first"},
+                                status_code=403)
+        said = payload if isinstance(payload, dict) else {}
+        if not _admin_password_ok(str(said.get("password", "")), request):
+            return JSONResponse({"detail": "that is not the admin password (or too "
+                                           "many tries -- wait a few minutes)"},
+                                status_code=403)
+        token = state.admin_sessions().open(state.operator)
+        answer = JSONResponse({"ok": True})
+        answer.set_cookie(ADMIN_COOKIE, token, max_age=adminlib.ADMIN_HOURS * 3600,
+                          httponly=True, samesite="strict", secure=_over_https(request),
+                          path="/admin")
+        return answer
+
+    @app.post("/admin/logout")
+    def admin_logout(request: Request):
+        state.admin_sessions().close(request.cookies.get(ADMIN_COOKIE, ""))
+        answer = JSONResponse({"ok": True})
+        answer.delete_cookie(ADMIN_COOKIE, path="/admin")
+        return answer
+
+    def _admin_wallets() -> list[dict]:
+        out = []
+        for which, ctx in (("messaging", state.messaging), ("ledger", state.ledger)):
+            row = {"which": which, "label": ctx.label, "network": ctx.network}
+            try:
+                with ctx.rpc() as rpc:
+                    got = walletlib.balance(rpc)
+                row.update({k: str(v) for k, v in got.items()})
+            except Exception as exc:                    # noqa: BLE001 -- node away
+                row["error"] = str(exc)[:200]
+            out.append(row)
+        return out
+
+    def _admin_tag(pubkey: str) -> str:
+        try:
+            chain = _account_chain()
+            address = _account_address(pubkey, chain)
+            return (state.token_index(chain).tag_of(address) or "") if address else ""
+        except Exception:                               # noqa: BLE001
+            return ""
+
+    @app.get("/admin/api/state")
+    def admin_state(request: Request):
+        who = _admin_check(request)
+        register = state.accounts()
+        caps = accountslib.limits(state.settings())
+        operator = state.operator
+        push = state.push() if hasattr(state, "push") else None
+        seated = register.seated()
+        return JSONResponse({
+            "local": who["local"],
+            "operator": {"pubkey": operator, "tag": _admin_tag(operator) if operator else "",
+                         "password_set": bool(operator and adminlib.username_for(
+                             state.credentials(), operator))},
+            "seats": {"total": register.seats, "taken": len(seated),
+                      "free": register.free()},
+            "accounts": [{"pubkey": a.pubkey, "tag": _admin_tag(a.pubkey),
+                          "created": a.created, "seen": a.seen,
+                          "operator": a.pubkey.lower() == operator}
+                         for a in seated],
+            "quotas": {"hour": caps["hour"], "bytes": caps["bytes"],
+                       "labels": {k: accountslib.LABELS.get(k, k) for k in caps["hour"]}},
+            "wallets": _admin_wallets(),
+            "faucet": {"gift": int(state.setting("faucet", faucetlib.GIFT)),
+                       "daily": state.setting("faucet_daily"),
+                       "real_coins": bool(state.setting("faucet_real_coins", False))},
+            "moderation": state.setting("moderation") or {},
+            "push": {"available": push is not None,
+                     "devices": (len(push.subscribed()) if push is not None else 0)},
+            "selling": {"auto_update": bool(state.setting("auto_update", True)),
+                        "auto_sell": bool(state.setting("auto_sell", True)),
+                        "auto_fill": bool(state.setting("auto_fill", True)),
+                        "trade_cut": state.setting("trade_cut")},
+            "node": {"version": state.running_version,
+                     "public_hosts": list(state.public_hosts)},
+        }, headers={"Cache-Control": "no-store"})
+
+    @app.post("/admin/api/seats")
+    def admin_seats(request: Request, payload: Any = Body(None)):
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            seats = int(said.get("seats"))
+            if not 1 <= seats <= 10_000:
+                raise ValueError
+        except (TypeError, ValueError):
+            return JSONResponse({"detail": "a number of seats from 1 to 10,000"},
+                                status_code=400)
+        state.set_setting("seats", seats)
+        state.accounts().seats = seats           # the open register, not only the next one
+        return JSONResponse({"ok": True, "seats": seats})
+
+    @app.post("/admin/api/release")
+    def admin_release(request: Request, payload: Any = Body(None)):
+        _admin_check(request, write=True)
+        pubkey = str((payload or {}).get("pubkey", "")).strip().lower()
+        if pubkey == state.operator:
+            return JSONResponse({"detail": "that is the operator's own seat"},
+                                status_code=400)
+        state.accounts().release(pubkey)
+        return JSONResponse({"ok": True})
+
+    @app.post("/admin/api/quotas")
+    def admin_quotas(request: Request, payload: Any = Body(None)):
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        numbers = {}
+        try:
+            for kind, value in (said.get("hour") or {}).items():
+                if kind not in accountslib.PER_HOUR:
+                    raise ValueError(f"no such allowance: {kind}")
+                numbers[f"quota:{kind}"] = _count(str(value), kind, accountslib.CEILING)
+            if "bytes" in said:
+                numbers["quota:bytes"] = _count(str(said["bytes"]), "bytes a day",
+                                                accountslib.BYTE_CEILING)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        for key, value in numbers.items():
+            state.set_setting(key, value)
+        return JSONResponse({"ok": True})
+
+    @app.post("/admin/api/settings")
+    def admin_settings(request: Request, payload: Any = Body(None)):
+        """The switches and numbers: faucet, screening, selling, updates."""
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            if "faucet_gift" in said:
+                gift = walletlib.parse_amount(str(said["faucet_gift"]))
+                state.set_setting("faucet", gift)
+            if "faucet_daily" in said:
+                text = str(said["faucet_daily"]).strip()
+                state.set_setting("faucet_daily",
+                                  None if text in ("", "none") else walletlib.parse_amount(text))
+            for flag in ("auto_update", "auto_sell", "auto_fill"):
+                if flag in said:
+                    state.set_setting(flag, bool(said[flag]))
+            if "moderation" in said:
+                mod = said["moderation"] or {}
+                if mod.get("url") and mod.get("model"):
+                    state.set_setting("moderation", {"url": str(mod["url"]).strip(),
+                                                     "model": str(mod["model"]).strip()})
+                else:
+                    state.set_setting("moderation", None)
+        except (ValueError, walletlib.WalletError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"ok": True})
+
+    _admin_prepared: dict[str, tuple[float, str, Any]] = {}
+
+    @app.post("/admin/api/send")
+    def admin_send(request: Request, payload: Any = Body(None)):
+        """Prepare a send from the node's own wallet: the fee is shown before
+        anything goes (the same two steps as the wallet page)."""
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            ctx = _context(str(said.get("which", "")))
+            sats = walletlib.parse_amount(str(said.get("amount", "")))
+            to = _tag_address(state, str(said.get("to", "")), mainnet=ctx.is_mainnet)
+            with ctx.rpc() as rpc:
+                prepared = walletlib.prepare_send(rpc, to, sats)
+        except Exception as exc:                        # noqa: BLE001
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        ticket = secrets.token_urlsafe(16)
+        now = time.time()
+        for key in [k for k, v in _admin_prepared.items() if now - v[0] > 600]:
+            _admin_prepared.pop(key, None)
+        _admin_prepared[ticket] = (now, str(said.get("which")), prepared)
+        return JSONResponse({"ticket": ticket, "to": to,
+                             "amount": f"{sats / 1e8:.8f}".rstrip("0").rstrip("."),
+                             "fee": f"{prepared.fee_sats / 1e8:.8f}".rstrip("0").rstrip("."),
+                             "network": ctx.label})
+
+    @app.post("/admin/api/send/confirm")
+    def admin_send_confirm(request: Request, payload: Any = Body(None)):
+        """Broadcast a prepared send. From outside, the password again, every time."""
+        who = _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        if not who["local"] and not _admin_password_ok(str(said.get("password", "")),
+                                                       request):
+            return JSONResponse({"detail": "the admin password, to send the node's coins"},
+                                status_code=403)
+        held = _admin_prepared.pop(str(said.get("ticket", "")), None)
+        if held is None or time.time() - held[0] > 600:
+            return JSONResponse({"detail": "that send has expired -- prepare it again"},
+                                status_code=400)
+        try:
+            with _context(held[1]).rpc() as rpc:
+                txid = walletlib.broadcast(rpc, held[2])
+        except Exception as exc:                        # noqa: BLE001
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"txid": txid})
+
+    @app.post("/admin/api/receive")
+    def admin_receive(request: Request, payload: Any = Body(None)):
+        _admin_check(request, write=True)
+        try:
+            with _context(str((payload or {}).get("which", ""))).rpc() as rpc:
+                return JSONResponse({"address": walletlib.receive_address(rpc, "admin")})
+        except Exception as exc:                        # noqa: BLE001
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    # --- the Cloudflare tunnel wizard (2026-09-25; arcade/tunnel.py) -----
+
+    _tunnel_wizard: dict[str, Any] = {}
+
+    def _wizard():
+        from .. import tunnel as tunnellib
+        if "w" not in _tunnel_wizard:
+            _tunnel_wizard["w"] = tunnellib.Wizard()
+        return _tunnel_wizard["w"]
+
+    @app.get("/admin/api/tunnel")
+    def admin_tunnel_status(request: Request):
+        who = _admin_check(request)
+        if not who["local"]:
+            return JSONResponse({"detail": "the tunnel is set up at the node machine"},
+                                status_code=403)
+        got = _wizard().status()
+        got.update({"public_hosts": list(state.public_hosts),
+                    "pages_host": state.pages_hostname or ""})
+        return JSONResponse(got, headers={"Cache-Control": "no-store"})
+
+    @app.post("/admin/api/tunnel")
+    def admin_tunnel_step(request: Request, payload: Any = Body(None)):
+        """One step of the wizard. At the node machine only: it changes this machine."""
+        from .. import tunnel as tunnellib
+        who = _admin_check(request, write=True)
+        if not who["local"]:
+            return JSONResponse({"detail": "the tunnel is set up at the node machine"},
+                                status_code=403)
+        said = payload if isinstance(payload, dict) else {}
+        step = str(said.get("step", ""))
+        w = _wizard()
+        port = int(request.url.port or 8420)
+        try:
+            if step == "install":
+                return JSONResponse({"ok": True, "cloudflared": w.install()})
+            if step == "login":
+                return JSONResponse({"ok": True, "url": w.login_start()})
+            if step == "create":
+                return JSONResponse({"ok": True, **w.create(str(said.get("name", "")))})
+            if step == "route":
+                return JSONResponse({"ok": True, "hostname": w.route(
+                    str(said.get("tunnel", "")), str(said.get("hostname", "")))})
+            if step == "config":
+                hosts = [h for h in said.get("hostnames") or [] if isinstance(h, str) and h]
+                return JSONResponse({"ok": True, "config": w.write_config(
+                    str(said.get("id", "")), hosts, port)})
+            if step == "service":
+                return JSONResponse({"ok": True, **w.install_service()})
+            if step == "settings":
+                app_host = str(said.get("app", "")).strip().lower()
+                pages = str(said.get("pages", "")).strip().lower()
+                if app_host:
+                    hosts = [app_host] + [h for h in state.public_hosts if h != app_host]
+                    state.set_setting("public_hosts", hosts)
+                if pages:
+                    state.set_setting("pages_host", pages)
+                return JSONResponse({"ok": True, "public_hosts": list(state.public_hosts)})
+            if step == "verify":
+                return JSONResponse(tunnellib.verify(str(said.get("hostname", ""))))
+            if step == "quick":
+                return JSONResponse({"ok": True, "url": w.quick(port)})
+            if step == "quick_stop":
+                w.quick_stop()
+                return JSONResponse({"ok": True})
+        except tunnellib.TunnelError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:                          # noqa: BLE001
+            return JSONResponse({"detail": f"that step failed: {exc}"}, status_code=400)
+        return JSONResponse({"detail": "no such step"}, status_code=400)
+
+    @app.post("/admin/api/operator")
+    def admin_operator(request: Request, payload: Any = Body(None)):
+        """Name the operator account. At the node machine only."""
+        who = _admin_check(request, write=True)
+        if not who["local"]:
+            return JSONResponse({"detail": "the operator is named at the node machine"},
+                                status_code=403)
+        pubkey = str((payload or {}).get("pubkey", "")).strip().lower()
+        if state.accounts().account(pubkey) is None:
+            return JSONResponse({"detail": "no account with that key has a seat here"},
+                                status_code=400)
+        state.claim_operator(pubkey)
+        state.admin_sessions().close_all()
+        return JSONResponse({"ok": True})
+
+    @app.post("/admin/api/password")
+    def admin_password(request: Request, payload: Any = Body(None)):
+        """Set or change the remote-access password. At the node machine only."""
+        who = _admin_check(request, write=True)
+        if not who["local"]:
+            return JSONResponse({"detail": "the password is set at the node machine"},
+                                status_code=403)
+        operator = state.operator
+        if not operator:
+            return JSONResponse({"detail": "name the operator account first"},
+                                status_code=400)
+        password = str((payload or {}).get("password", ""))
+        if len(password) < 10:
+            return JSONResponse({"detail": "at least 10 characters -- this guards the "
+                                           "node's coins from anywhere"}, status_code=400)
+        creds = state.credentials()
+        name = adminlib.username_for(creds, operator) or "operator"
+        try:
+            creds.set(name, password, operator)
+        except accountslib.AccountError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        state.admin_sessions().close_all()           # every old session is gone
+        return JSONResponse({"ok": True})
 
     @app.post("/auth/operator")
     def auth_claim_operator(request: Request):

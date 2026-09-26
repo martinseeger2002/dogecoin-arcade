@@ -75,6 +75,7 @@ PUBLIC_PAGES = frozenset({
     "/offline",
     "/push/key",              # the key a browser subscribes to this node's pushes with
     "/account/push/news",     # what woke the phone: who wrote, never what (signed in)
+    "/admin/login",           # the remote admin password page (rate-limited)
     "/signin.js",
     "/coins.js",
     "/wallet.js",
@@ -88,6 +89,7 @@ PUBLIC_PAGES = frozenset({
     "/auth/door",
     "/me",
     "/me/messages",
+    "/me/notifications",
     "/me/contacts",
     "/me/backup",
     "/me/nfts",
@@ -180,6 +182,7 @@ LINKED_FROM_PUBLIC = ("/content/", "/collections", "/feed", "/u/", "/docs",
 #: that each works only on the account making the request, and the node
 #: broadcasts what it OFFERED rather than what came back.
 PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
+               "/admin/login",
                "/auth/password",
                "/account/address", "/account/announce", "/account/post",
                "/account/react",

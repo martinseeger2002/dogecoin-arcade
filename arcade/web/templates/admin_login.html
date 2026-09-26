@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Admin · DogecoinArcade{% endblock %}
+{% block body %}
+<div class="panel" style="max-width:440px;margin:24px auto">
+  <h1 style="margin-top:0">Admin</h1>
+  {% if need_account %}
+    <p class="muted">The admin panel is for the person who runs this node. Sign in as the
+      operator's account first{% if reason %} &mdash; {{ reason }}{% endif %}.</p>
+    <a class="btn primary" href="/join">Sign in</a>
+    <p class="muted" style="font-size:.85rem;margin-top:14px">At the node machine itself the
+      panel opens without signing in: <code>http://127.0.0.1:8420/admin</code>.</p>
+  {% else %}
+    <p class="muted">You're signed in as this node's operator. From outside the node machine,
+      the admin panel also needs the admin password (it's set at the node machine).</p>
+    <form id="adminlogin" onsubmit="return false">
+      <input type="password" id="adminpw" autocomplete="current-password" placeholder="admin password"
+             style="width:100%;padding:10px 12px;margin:6px 0 10px;border:1px solid var(--line);
+             border-radius:8px;background:var(--panel);color:var(--fg);font:inherit">
+      <button class="btn primary" id="adminopen" type="submit">Open the admin panel</button>
+      <p class="msg err" id="admintrouble" hidden></p>
+    </form>
+    <script>
+    document.getElementById('adminlogin').onsubmit = function () {
+      var trouble = document.getElementById('admintrouble');
+      trouble.hidden = true;
+      fetch('/admin/login', {method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({password: document.getElementById('adminpw').value})})
+        .then(function (r) { return r.json().then(function (j) { return [r.ok, j]; }); })
+        .then(function (x) {
+          if (x[0]) { location.href = '/admin'; return; }
+          trouble.textContent = x[1].detail || 'That did not work.'; trouble.hidden = false;
+        });
+      return false;
+    };
+    </script>
+  {% endif %}
+</div>
+{% endblock %}

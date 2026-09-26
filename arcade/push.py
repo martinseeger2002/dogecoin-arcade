@@ -184,6 +184,14 @@ class Push:
             self.conn.execute("DELETE FROM news WHERE at < ?", (now - KEEP,))
         return rows
 
+    def arrivals(self, pubkey: str, limit: int = 100) -> list[dict]:
+        """Messages that paid this account, newest first, with the row id the
+        Notifications page measures "seen" by. Does not mark anything told."""
+        with self._lock:
+            return [dict(r) for r in self.conn.execute(
+                "SELECT rowid, txid, sender, at FROM news WHERE pubkey = ?"
+                " ORDER BY rowid DESC LIMIT ?", (pubkey, int(limit)))]
+
     def _note(self, pubkey: str, txid: str, sender: str, now: int) -> bool:
         with self._lock:
             before = self.conn.total_changes
@@ -253,9 +261,9 @@ class Push:
         if start is None:
             self.set_cursor(newest())
             return 0
-        if not self.subscribed():
-            self.set_cursor(newest())
-            return 0
+        # Every account's arrivals are noted, not only those with a phone to wake:
+        # the Notifications page and the Messages count read them too
+        # (arcade/notify.py). Only a subscribed device is actually pushed.
         woke = 0
         rows = candidates(start)
         for row in rows:

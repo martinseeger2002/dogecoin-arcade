@@ -902,10 +902,12 @@ def test_a_finished_inscribe_is_still_reported_when_the_page_comes_back(
                            "t.textContent = ''; t.hidden = true;")
     browser.execute_script(MAKE_A_NOTE)
     browser.find_element(By.ID, "inscribe-it").click()
-    alert = WebDriverWait(browser, 60, poll_frequency=0.3).until(
-        ec.alert_is_present())
-    assert "a note.txt" in alert.text, alert.text
-    alert.accept()
+    # The confirmation is a card on the page now, not the browser's dialog
+    # (filming the tutorial, 2026-09-25).
+    card = WebDriverWait(browser, 60, poll_frequency=0.3).until(
+        lambda d: d.find_elements(By.CSS_SELECTOR, ".askcard"))[0]
+    assert "a note.txt" in card.text, card.text
+    card.find_element(By.CSS_SELECTOR, ".row button").click()
     _wait(browser, lambda d: bool(_show(d, "news").strip()))
     said = _show(browser, "news")
     assert said.startswith("Inscribed: a note.txt"), said

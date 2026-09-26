@@ -72,7 +72,7 @@ def test_the_front_page_is_the_splash_not_the_wallet(public):
     Overview's balances and unread counts."""
     app, _ = public
     body = app.get("/", headers=LOCAL).text
-    assert "seats free" in body or "No seats free" in body
+    assert "seats open" in body or "No open seats" in body
     assert "Spendable" not in body
     assert "Known contacts" not in body
 
@@ -449,7 +449,7 @@ def test_the_front_page_follows_the_request_too(named):
     theirs = app.get("/", headers={"host": "node.dogecoinarcade.com"}).text
     assert "Known contacts" in mine, "the operator gets their overview"
     assert "Known contacts" not in theirs, "a stranger gets the splash"
-    assert "seats free" in theirs or "No seats free" in theirs
+    assert "seats open" in theirs or "No open seats" in theirs
 
 
 def test_the_navigation_follows_the_request_too(named):
@@ -479,30 +479,30 @@ def _seat(app, headers=LOCAL):
     return key.verify_key.encode().hex()
 
 
-def test_the_operator_reaches_their_wallet_from_outside(named):
-    """Whoever runs a node has to be able to use it from somewhere other
-    than the room it is in. One account, not one secret."""
+def test_the_operator_reaches_the_admin_panel_from_outside(named):
+    """Whoever runs a node has to be able to use it from somewhere other than
+    the room it is in. Since 2026-09-25 that is their account plus /admin, and
+    /admin asks for the admin password -- a session alone opens nothing of the
+    node's."""
     app, state = named
     mine = _seat(app)
-    assert app.get("/wallet", headers=EDGE).status_code == 404, "not yet"
-
     claimed = app.post("/auth/operator", headers=LOCAL)
     assert claimed.status_code == 200
     assert claimed.json()["operator"] == mine
     assert state.operator == mine
 
-    assert app.get("/wallet", headers=EDGE).status_code == 200
-    assert app.get("/messages", headers=EDGE).status_code == 200
-    assert app.get("/contacts", headers=EDGE).status_code == 200
+    assert app.get("/wallet", headers=EDGE).status_code == 404
+    assert app.get("/admin/api/state", headers=EDGE).status_code == 401, \
+        "through the door, and asked for the password"
 
 
-def test_the_operator_is_shown_their_own_pages_not_the_splash(named):
+def test_the_operator_is_shown_their_account_and_an_admin_tab(named):
     app, _ = named
     _seat(app)
     app.post("/auth/operator", headers=LOCAL)
-    body = app.get("/", headers=EDGE).text
-    assert "Known contacts" in body, "their overview, not a splash"
-    assert 'href="/wallet"' in body, "and their own navigation with it"
+    body = app.get("/me", headers=EDGE).text
+    assert 'href="/admin"' in body
+    assert 'href="/wallet"' not in body
 
 
 def test_somebody_else_s_session_opens_nothing(named):

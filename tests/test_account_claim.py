@@ -363,6 +363,12 @@ def test_a_payment_the_index_has_read_is_not_also_on_its_way(arcade):
     away = app.get("/account").json()
     assert away["incoming"] == offer["change"], \
         "the change is real and no block has it yet"
+    # Order item 4 (2026-09-25): the big number is what can be spent now. The
+    # 4-coin output is still in the index but a pool transaction has spent it:
+    # leaving, not gone and not spendable. So the figure is the change alone.
+    assert away["leaving"] == 4 * COIN
+    assert away["spendable"] == offer["change"]
+    assert away["chains"][0]["spendable"] == offer["change"]
 
     rpc.call("generate", 1)
     _catch_up(state, rpc)
@@ -371,3 +377,5 @@ def test_a_payment_the_index_has_read_is_not_also_on_its_way(arcade):
     assert back["incoming"] == 0, \
         "and it is not ALSO on its way. One output, counted once: the index " \
         "has read it, so the index is what the page says."
+    assert back["leaving"] == 0 and back["spendable"] == offer["change"], \
+        "and the number a person reads did not move when the block came"

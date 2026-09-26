@@ -603,6 +603,13 @@ class AppState:
         """
         return str(self.setting("operator", "") or "").strip().lower()
 
+    def admin_sessions(self):
+        """Remote admin sessions (arcade/admin.py), opened by the admin password."""
+        if getattr(self, "_admin_sessions", None) is None:
+            from ..admin import AdminSessions
+            self._admin_sessions = AdminSessions(self.home)
+        return self._admin_sessions
+
     def claim_operator(self, pubkey: str) -> None:
         self.set_setting("operator", (pubkey or "").strip().lower())
 

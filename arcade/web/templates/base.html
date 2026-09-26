@@ -648,6 +648,7 @@ ol.words{column-gap:1.4em}
   {%- for href, label, chain, built in nav %}
     {%- if built %}
     {%- set waiting = {'/approvals': approvals_waiting, '/messages': unread_messages,
+                       '/me/notifications': notif_count, '/me/messages': mail_count,
                        '/feed': unread_board, '/exchange': offers_waiting}.get(href) %}
     <a class="{{ 'on' if path == href else '' }}" href="{{ href }}">{{ label
       }}{% if waiting %}<span class="nav-count">{{ waiting if waiting < 100 else '99+' }}</span>{% endif %}</a>
@@ -1313,12 +1314,15 @@ function arcadeFileCost(bytes){
   document.addEventListener('DOMContentLoaded', look);
   if (document.readyState !== 'loading') look();
   document.addEventListener('arcade:changed', look);
+  window.arcadeScreenLook = look;       // for pictures a page draws later
 })();
 </script>
 <style>
 .screenlabel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2;
   padding:7px 12px;border-radius:999px;border:0;background:rgba(0,0,0,.72);color:#fff;
   font:600 .8rem/1.2 inherit;cursor:pointer;box-shadow:none;white-space:nowrap}
+.bubble img.postmedia{display:block;max-width:100%;max-height:340px;height:auto;
+  border-radius:10px;margin:6px 0;cursor:zoom-in}
 details.covered>summary{cursor:pointer;color:var(--muted);font-size:.9rem;padding:8px 12px;
   border:1px dashed var(--line);border-radius:10px;list-style:none}
 details.covered[open]>summary{margin-bottom:6px}
@@ -1327,11 +1331,13 @@ details.covered[open]>summary{margin-bottom:6px}
 // The installable app (2026-09-25): register the service worker that keeps
 // an offline page and shows Messenger notifications. It caches no pages
 // (sw.js), so the live, in-place refresh above is untouched. Not in an embed:
-// a framed document is not an app.
+// a framed document is not an app. The revision is in the URL because
+// Cloudflare caches /sw.js for hours whatever the node says: a new release
+// is a new URL, so phones get it at once.
 {% if not embed %}
 if ('serviceWorker' in navigator && window.isSecureContext) {
   window.addEventListener('load', function () {
-    navigator.serviceWorker.register('/sw.js', {scope: '/'}).catch(function () {});
+    navigator.serviceWorker.register('/sw.js?v={{ state.running_version or "dev" }}', {scope: '/'}).catch(function () {});
   });
 }
 {% endif %}
