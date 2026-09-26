@@ -10965,6 +10965,77 @@ def create_app(state: AppState) -> FastAPI:
         except Exception as exc:                        # noqa: BLE001
             return JSONResponse({"detail": str(exc)}, status_code=400)
 
+    # --- the Cloudflare tunnel wizard (2026-09-25; arcade/tunnel.py) -----
+
+    _tunnel_wizard: dict[str, Any] = {}
+
+    def _wizard():
+        from .. import tunnel as tunnellib
+        if "w" not in _tunnel_wizard:
+            _tunnel_wizard["w"] = tunnellib.Wizard()
+        return _tunnel_wizard["w"]
+
+    @app.get("/admin/api/tunnel")
+    def admin_tunnel_status(request: Request):
+        who = _admin_check(request)
+        if not who["local"]:
+            return JSONResponse({"detail": "the tunnel is set up at the node machine"},
+                                status_code=403)
+        got = _wizard().status()
+        got.update({"public_hosts": list(state.public_hosts),
+                    "pages_host": state.pages_hostname or ""})
+        return JSONResponse(got, headers={"Cache-Control": "no-store"})
+
+    @app.post("/admin/api/tunnel")
+    def admin_tunnel_step(request: Request, payload: Any = Body(None)):
+        """One step of the wizard. At the node machine only: it changes this machine."""
+        from .. import tunnel as tunnellib
+        who = _admin_check(request, write=True)
+        if not who["local"]:
+            return JSONResponse({"detail": "the tunnel is set up at the node machine"},
+                                status_code=403)
+        said = payload if isinstance(payload, dict) else {}
+        step = str(said.get("step", ""))
+        w = _wizard()
+        port = int(request.url.port or 8420)
+        try:
+            if step == "install":
+                return JSONResponse({"ok": True, "cloudflared": w.install()})
+            if step == "login":
+                return JSONResponse({"ok": True, "url": w.login_start()})
+            if step == "create":
+                return JSONResponse({"ok": True, **w.create(str(said.get("name", "")))})
+            if step == "route":
+                return JSONResponse({"ok": True, "hostname": w.route(
+                    str(said.get("tunnel", "")), str(said.get("hostname", "")))})
+            if step == "config":
+                hosts = [h for h in said.get("hostnames") or [] if isinstance(h, str) and h]
+                return JSONResponse({"ok": True, "config": w.write_config(
+                    str(said.get("id", "")), hosts, port)})
+            if step == "service":
+                return JSONResponse({"ok": True, **w.install_service()})
+            if step == "settings":
+                app_host = str(said.get("app", "")).strip().lower()
+                pages = str(said.get("pages", "")).strip().lower()
+                if app_host:
+                    hosts = [app_host] + [h for h in state.public_hosts if h != app_host]
+                    state.set_setting("public_hosts", hosts)
+                if pages:
+                    state.set_setting("pages_host", pages)
+                return JSONResponse({"ok": True, "public_hosts": list(state.public_hosts)})
+            if step == "verify":
+                return JSONResponse(tunnellib.verify(str(said.get("hostname", ""))))
+            if step == "quick":
+                return JSONResponse({"ok": True, "url": w.quick(port)})
+            if step == "quick_stop":
+                w.quick_stop()
+                return JSONResponse({"ok": True})
+        except tunnellib.TunnelError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:                          # noqa: BLE001
+            return JSONResponse({"detail": f"that step failed: {exc}"}, status_code=400)
+        return JSONResponse({"detail": "no such step"}, status_code=400)
+
     @app.post("/admin/api/operator")
     def admin_operator(request: Request, payload: Any = Body(None)):
         """Name the operator account. At the node machine only."""

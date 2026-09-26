@@ -84,6 +84,40 @@
   <button type="button" class="small" id="saveswitches">Save switches</button>
 </section>
 
+{% if local %}
+<section class="panel" id="tunnel">
+  <h2>Put this arcade online</h2>
+  <p class="muted" style="margin-top:0">Your arcade on your own domain, through a free
+    Cloudflare tunnel: nothing to open on your router. Each step can be run again.</p>
+  <div class="msg info" id="tun-existing" hidden></div>
+  <ol class="tunsteps">
+    <li><b>cloudflared</b> <span id="tun-cf" class="muted"></span>
+      <button type="button" class="small" data-step="install">Install it</button></li>
+    <li><b>Sign in to Cloudflare</b> <span id="tun-signed" class="muted"></span>
+      <button type="button" class="small" data-step="login">Sign in</button>
+      <div id="tun-login" class="muted" hidden></div></li>
+    <li><b>Create the tunnel</b>
+      <input id="tun-name" value="dogecoinarcade" style="width:170px">
+      <button type="button" class="small" data-step="create">Create</button>
+      <div id="tun-id" class="mono muted"></div></li>
+    <li><b>Your names</b>
+      <input id="tun-domain" placeholder="yourdomain.com" style="width:190px">
+      <span class="muted">&rarr; app.&lt;domain&gt; and pages.&lt;domain&gt;</span>
+      <button type="button" class="small" data-step="route">Point them here</button></li>
+    <li><b>Run it</b>
+      <button type="button" class="small" data-step="config">Write the config &amp; start it</button>
+      <div id="tun-linger" class="muted" hidden></div></li>
+    <li><b>Tell the arcade its names</b>
+      <button type="button" class="small" data-step="settings">Save them</button></li>
+    <li><b>Check from outside</b>
+      <button type="button" class="small" data-step="verify">Check</button></li>
+  </ol>
+  <p class="muted">No domain yet? <button type="button" class="ghost small" data-step="quick">Get a
+    temporary address</button> <span id="tun-quick" class="mono"></span></p>
+  <p class="msg" id="tun-said" hidden></p>
+</section>
+{% endif %}
+
 <section class="panel">
   <h2>Operator &amp; remote access</h2>
   <p id="opline" style="margin-top:0"></p>
@@ -125,6 +159,9 @@ section.panel h2{margin-top:0}
 .wallet{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid var(--line)}
 .wallet .bal{font-weight:700}
 .wallet .addr{font-size:.8rem;word-break:break-all}
+.tunsteps{padding-left:22px;display:grid;gap:12px}
+.tunsteps li{line-height:2.2}
+.tunsteps button{margin-left:6px}
 </style>
 
 <script>
@@ -313,6 +350,76 @@ section.panel h2{margin-top:0}
       .then(function () { location.href = '/me'; });
   };
   load();
+
+  // --- the tunnel wizard (arcade/tunnel.py) ---
+  var TUN = {id: '', name: ''};
+  function tunSay(text, kind) {
+    var el = $('tun-said'); if (!el) return;
+    el.textContent = text; el.className = 'msg ' + (kind || 'ok'); el.hidden = !text;
+  }
+  function tunLoad() {
+    if (!$('tunnel')) return;
+    fetch('/admin/api/tunnel', {cache: 'no-store'}).then(function (r) { return r.json(); })
+      .then(function (t) {
+        $('tun-cf').textContent = t.cloudflared ? '\u2713 ' + (t.version || t.cloudflared) : 'not installed';
+        $('tun-signed').textContent = t.signed_in ? '\u2713 signed in' : (t.login_waiting ? 'waiting for you in the browser\u2026' : 'not yet');
+        if (t.existing_config) {
+          $('tun-existing').hidden = false;
+          $('tun-existing').textContent = 'This machine already runs a tunnel (' + t.existing_config + ') serving '
+            + (t.existing_hostnames.join(', ') || 'no names') + '. The wizard leaves it alone; steps 6 and 7 still work.';
+        }
+        if (t.our_hostnames && t.our_hostnames.length) $('tun-domain').value = t.our_hostnames[0].replace(/^app\./, '');
+        if (!$('tun-domain').value && t.public_hosts && t.public_hosts.length)
+          $('tun-domain').value = t.public_hosts[0].replace(/^app\./, '');
+        if (t.quick_url) $('tun-quick').textContent = t.quick_url;
+        if (t.login_waiting) setTimeout(tunLoad, 4000);
+      }).catch(function () {});
+  }
+  function hosts() {
+    var d = ($('tun-domain').value || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    return d ? ['app.' + d, 'pages.' + d] : [];
+  }
+  document.querySelectorAll('#tunnel [data-step]').forEach(function (b) {
+    b.onclick = function () {
+      var step = b.dataset.step, body = {step: step}, h = hosts();
+      if (step === 'create') body.name = $('tun-name').value;
+      if ((step === 'route' || step === 'settings' || step === 'verify') && !h.length)
+        return tunSay('Type your domain first (step 4).', 'err');
+      var chain = Promise.resolve();
+      if (step === 'route') {
+        chain = h.reduce(function (p, host) {
+          return p.then(function () { return call('/admin/api/tunnel', {step: 'route', tunnel: TUN.name || $('tun-name').value, hostname: host}); });
+        }, chain).then(function () { return {said: 'Both names point at the tunnel: ' + h.join(', ')}; });
+      } else if (step === 'config') {
+        chain = call('/admin/api/tunnel', {step: 'config', id: TUN.id, hostnames: h})
+          .then(function () { return call('/admin/api/tunnel', {step: 'service'}); })
+          .then(function (j) { $('tun-linger').hidden = false;
+            $('tun-linger').textContent = 'Running. To keep it running after a reboot with nobody logged in, run once: ' + j.linger;
+            return {said: 'The tunnel is running.'}; });
+      } else {
+        if (step === 'settings') { body.app = h[0]; body.pages = h[1]; }
+        if (step === 'verify') body.hostname = h[0];
+        chain = call('/admin/api/tunnel', body);
+      }
+      b.disabled = true;
+      chain.then(function (j) {
+        if (step === 'login') {
+          if (j.url) { $('tun-login').hidden = false; $('tun-login').textContent = '';
+            var a = document.createElement('a'); a.href = j.url; a.target = '_blank'; a.rel = 'noopener';
+            a.textContent = 'Open Cloudflare to sign in and pick your domain \u2197';
+            $('tun-login').append(a); window.open(j.url, '_blank'); setTimeout(tunLoad, 4000); }
+          else tunSay('Already signed in.');
+        } else if (step === 'create') { TUN.id = j.id; TUN.name = j.name;
+          $('tun-id').textContent = 'tunnel ' + j.name + ' \u00b7 ' + j.id; tunSay('Tunnel created.'); }
+        else if (step === 'quick') { $('tun-quick').textContent = j.url; tunSay('A temporary address, until this machine restarts: ' + j.url); }
+        else if (step === 'verify') tunSay(j.said, j.ok ? 'ok' : 'err');
+        else tunSay(j.said || 'Done.');
+        tunLoad();
+      }).catch(function (e) { tunSay(e.message, 'err'); })
+        .then(function () { b.disabled = false; });
+    };
+  });
+  tunLoad();
 })();
 </script>
 {% endblock %}
