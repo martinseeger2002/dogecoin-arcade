@@ -724,6 +724,20 @@ export async function verifyLeg(leg, keys) {
       }
     }
   }
+  // The other direction, and the one nothing else catches: bytes that take a token
+  // with no words about it at all. A coin price is in the finished transaction as
+  // well as in the payload, so a silent coin leg can still be checked by
+  // arithmetic; a token moves in the engine's ledger on the strength of those bytes
+  // and nowhere else, so a missing `take` is not a prettier sentence missing — it
+  // is a price with no name and no amount, and the card a person decides on would
+  // have to invent one to be printed at all. Every route that hands this function a
+  // leg states `take` when its payload takes a token; this is what one that forgets
+  // costs the tab, which is nothing.
+  if (listing.token && !told) {
+    throw new Error("that listing takes a token and says nothing about which one "
+      + "or how much, so there is no price here to read aloud. A card that named "
+      + "one would be making it up. Nothing was signed.");
+  }
 
   // The arithmetic of a leg is not an offer's: its payment output is the
   // seller's own coins PLUS the price minus what it reserved for the fee, so
