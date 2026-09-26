@@ -1733,3 +1733,32 @@ def test_offers_between_accounts_are_made_answered_refused_and_finished(node, cr
 
     assert index.inscription(ours)["owner"] == ferns.address, "yes moved the piece"
     assert index.inscription(theirs)["owner"] == ferns.address, "no kept it"
+
+
+def test_a_listing_ends_when_its_piece_is_sent_away(node, crowd):
+    """A leg's coin can stay unspent while its piece leaves by transfer, because
+    owning an inscription is a payload's reading and not a coin's. The book
+    kept advertising such a listing, and a buyer could have paid for a piece
+    the seller no longer held (2026-09-26: @yourfirstname listed #25,
+    then sent it to @apple three minutes later)."""
+    state = node[1]
+    maple, ferns, oak = crowd[0], crowd[1], crowd[2]
+    piece = _inscribed(*node, owner=maple.address, name="Sent-away piece",
+                       content=b"moved" * 60)
+    priced = _listed(maple, piece, "4")
+    assert priced.status_code == 200, priced.text
+    listing = priced.json()["listed"]
+
+    moved = _do(maple, "/account/nft/send", {"piece": piece, "to": ferns.address})
+    assert moved.status_code == 200, moved.text
+    _settle(*node, blocks=2)
+    index = state.token_index(state.messaging)
+    assert index.inscription(piece)["owner"] == ferns.address
+    assert state.listings.get(listing)["status"] == "open", \
+        "the leg's own coin was never touched"
+
+    tried = _offer(oak, "/account/buy", {"listing": listing})
+    assert tried.status_code == 400, tried.text
+    assert "no longer holds" in tried.json()["detail"]
+    assert state.listings.get(listing)["status"] == "moved"
+    assert listing not in oak.client.get("/listings").text

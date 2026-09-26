@@ -9009,6 +9009,49 @@ def create_app(state: AppState) -> FastAPI:
             return ""
         return swap.give.txid.hex()
 
+    _book_swept: dict[str, float] = {}
+
+    def _sweep_book(chain, force: bool = False) -> None:
+        """Close what the book can no longer honestly advertise.
+
+        Expiry, and two things the chain says (2026-09-26, "offers seem
+        a bit wonky"): the piece a row sells has moved away from its seller --
+        its coin can stay unspent while the piece goes by transfer, which left
+        a listing of a piece its seller no longer held on every page -- or a
+        coin the leg signed is spent, which is an answered offer nobody can
+        complete any more. Every page reads `open_listings`, so closing the row
+        is what takes it off all of them. At most every twenty seconds per
+        chain, and only on an answer the node actually gave: a daemon that
+        cannot be asked closes nothing.
+        """
+        state.listings.expire_due(chain.network)
+        now = time.time()
+        if not force and now - _book_swept.get(chain.network, 0) < 20:
+            return
+        _book_swept[chain.network] = now
+        rows = state.listings.open_listings(chain.network, limit=1000)
+        if not rows:
+            return
+        try:
+            index = state.token_index(chain)
+            for row in rows:
+                sold = _sold_piece(row)
+                got = index.inscription(sold) if sold else None
+                if sold and got is not None and got["owner"] != row["owner"]:
+                    state.listings.close(row["id"], "moved")
+                    row["status"] = "moved"
+            with chain.rpc() as rpc:
+                for row in rows:
+                    if row["status"] != "open":
+                        continue
+                    for coin in (row["input"], row["coin"]):
+                        if coin and not rpc.call("gettxout", coin["txid"],
+                                                 int(coin["vout"]), True):
+                            state.listings.close(row["id"], "spent")
+                            break
+        except Exception:
+            return
+
     def _open_listing_of(chain, piece: str) -> dict[str, Any] | None:
         """The newest open listing in the book that sells this inscription.
 
@@ -9019,7 +9062,7 @@ def create_app(state: AppState) -> FastAPI:
         can fill. Whether the piece is still where the leg says is left to
         `/account/buy`, which asks the chain and says so in words.
         """
-        state.listings.expire_due(chain.network)
+        _sweep_book(chain)
         for row in state.listings.open_listings(chain.network):
             if _sold_piece(row) != piece:
                 continue
@@ -9273,6 +9316,19 @@ def create_app(state: AppState) -> FastAPI:
             raise swaplib.SwapError("a wallet cannot fill its own order")
 
         index = state.token_index(chain)
+        # The piece, not the coin. A leg's coin can sit unspent long after its
+        # piece was sent away by transfer (ownership is read from payloads, not
+        # coins), and filling it then would take the buyer's coins for a piece
+        # the seller no longer holds (2026-09-26: @yourfirstname's
+        # listing of #25, three minutes before it went to @apple).
+        sold = _sold_piece(listing)
+        got = index.inscription(sold) if sold else None
+        if sold and (got is None or got["owner"] != listing["owner"]):
+            if listing.get("id") and state.listings.get(str(listing["id"])):
+                state.listings.close(listing["id"], "moved")
+            raise swaplib.SwapError(
+                "the seller no longer holds that piece, so this listing is over. "
+                "Nothing was spent.")
         naming = bytes.fromhex(str(listing["payload"] or ""))
         # What the seller's two signatures stand over -- its bytes at output 0,
         # its payment at the next, its own coins in front, and the fee it
@@ -9540,6 +9596,39 @@ def create_app(state: AppState) -> FastAPI:
                         "price paid in tokens those bytes are the only place "
                         "the price is written")
         return listing
+
+    @app.post("/account/fill/check")
+    def account_fill_check(request: Request, payload: Any = Body(None)):
+        """Which answered offers can still be completed, before a button says so.
+
+        An answer is a signed leg in the buyer's sealed messages, and nothing
+        ever took one back: when the seller later spent a coin it signed, or sent
+        the piece away, the offer still read "Complete the purchase" and only
+        failed on the click (2026-09-26: "offers that exist that the UTXO
+        have already been spent for"). Same checks as `/account/fill`, nothing
+        built: {legs: {offer txid: leg}} -> {offer txid: "" or why not}.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        legs = said.get("legs") if isinstance(said.get("legs"), dict) else {}
+        out: dict[str, str] = {}
+        index = state.token_index(chain)
+        for key, leg in list(legs.items())[:50]:
+            try:
+                listing = _leg_answered({"leg": leg}, chain, address)
+                sold = _sold_piece(listing)
+                got = index.inscription(sold) if sold else None
+                if sold and (got is None or got["owner"] != listing["owner"]):
+                    raise ValueError("the seller no longer holds that piece")
+                out[str(key)] = ""
+            except Exception as exc:
+                out[str(key)] = str(exc) or "it can no longer be completed"
+        return JSONResponse({"legs": out})
 
     @app.post("/account/fill")
     def account_fill(request: Request, payload: Any = Body(None)):
@@ -13446,7 +13535,7 @@ def create_app(state: AppState) -> FastAPI:
                 # reading the feed is what marks it read. `expired` costs nothing
                 # to write and unlocks nothing -- it says this node stopped
                 # advertising, which is the only thing an expiry ever was.
-                state.listings.expire_due(chain.network)
+                _sweep_book(chain)
                 rows = state.listings.open_listings(chain.network)
             except Exception as exc:
                 book_error = f"the listing book could not be read: {exc}"

@@ -228,7 +228,7 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # this path, and an account that made the listing is refused at
                # both halves.
                "/account/buy", "/account/buy/sign",
-               "/account/fill", "/account/fill/sign",
+               "/account/fill", "/account/fill/sign", "/account/fill/check",
                # the pair that answers one of those offers with the piece: the
                # first shows the leg at the buyer's price, the second checks the
                # signatures really say that offer and says where to mail them.
