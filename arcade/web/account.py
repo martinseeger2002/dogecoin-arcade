@@ -161,8 +161,16 @@ class InFlight:
 class Flights:
     """Everything an account has broadcast and the index has not yet read."""
 
-    def __init__(self) -> None:
+    def __init__(self, pool=None) -> None:
         self._all: list[InFlight] = []
+        # `pool(network)` -> the outpoints the node's mempool already spends. What
+        # this list remembers is only what THIS process broadcast in the last
+        # IN_FLIGHT_SECONDS; a transaction still waiting past that, or from before
+        # a restart, spends its coin just the same. Without asking the node, the
+        # builder picked such a coin again and every post from that account came
+        # back "txn-mempool-conflict" (live, 2026-09-25: an account with one of the
+        # dust-stuck posts could not post at all).
+        self._pool = pool
 
     def add(self, pubkey: str, txid: str, unsigned, address: str,
             network: str = "") -> None:
@@ -200,6 +208,11 @@ class Flights:
         out: set = set()
         for flight in self._mine(pubkey, network):
             out.update(flight.spent)
+        if self._pool is not None:
+            try:
+                out.update(self._pool(network))
+            except Exception:                      # noqa: BLE001 -- node away
+                pass
         return frozenset(out)
 
     def change_for(self, pubkey: str, network: str = "") -> list:
