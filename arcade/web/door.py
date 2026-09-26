@@ -62,6 +62,7 @@ PUBLIC_PAGES = frozenset({
     "/nfts",
     "/inscriptions",
     "/exchange",
+    "/launch",
     "/listings",              # legs this node holds signatures for. It can
                               # spend none of them: the key is not here.
     "/events",                # what an open page polls to know to refresh
@@ -99,6 +100,7 @@ PUBLIC_PAGES = frozenset({
     "/account",
     "/account/feed",
     "/account/messages",
+    "/account/mailbox",
     "/account/find",
     "/account/nfts",
     "/account/tokens",
@@ -193,6 +195,8 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # the request, and this node signs nothing of it.
                "/account/profile",
                "/account/write",
+               # the account's own sealed message history (accounts.Mailbox)
+               "/account/mailbox",
                "/account/claim", "/account/send", "/account/inscribe",
                "/account/run/start", "/account/run", "/account/run/piece",
                "/account/run/stop",

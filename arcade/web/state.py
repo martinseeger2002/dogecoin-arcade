@@ -532,6 +532,11 @@ class AppState:
         from ..accounts import Vault
         return Vault(self.accounts())
 
+    def mailbox(self):
+        """Each account's own message history, sealed by its browser."""
+        from ..accounts import Mailbox
+        return Mailbox(self.accounts())
+
     def screen(self):
         """Content screening (arcade/moderation.py): the `moderation` setting names a
         model to ask. Off when unset. Rebuilt only when the setting changes."""

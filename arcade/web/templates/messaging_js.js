@@ -1457,3 +1457,201 @@ export async function contactCode(network, publicKey) {
                                             // matches contact.py's [:4]
   return `arcade:${network}:${coins.base58(publicKey)}:${check}`;
 }
+
+/* --- your history on every device ------------------------------------------
+ *
+ * A new browser rebuilds from the chain only what was sealed TO this key.
+ * What it SENT is sealed to the other person and can never be read back, and a
+ * group's key lives only where it was received. So the letters this account
+ * wrote and the groups it holds are kept, sealed, on the node
+ * (/account/mailbox, accounts.Mailbox), and any browser signed in with the same
+ * words merges them back (2026-09-26: "I lost my chat history" after
+ * changing browsers). The key is derived here from the messaging secret, so the
+ * node keeps bytes it cannot open or alter; a copy it tampered with fails to
+ * open and is ignored.
+ */
+const MAILBOX_CONTEXT = new TextEncoder().encode("arcade-mailbox/1");
+
+function mailboxKey(me) {
+  const both = new Uint8Array(me.secret.length + MAILBOX_CONTEXT.length);
+  both.set(me.secret); both.set(MAILBOX_CONTEXT, me.secret.length);
+  return blake2b(both, {dkLen: 32});
+}
+
+function toB64(bytes) {
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    out += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(out);
+}
+const fromB64 = (text) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+
+function sealHistory(me, history) {
+  const nonce = nacl.randomBytes(24);
+  const box = nacl.secretbox(new TextEncoder().encode(JSON.stringify(history)),
+                             nonce, mailboxKey(me));
+  const both = new Uint8Array(24 + box.length);
+  both.set(nonce); both.set(box, 24);
+  return toB64(both);
+}
+
+function openHistory(me, blob) {
+  if (!blob) return null;
+  try {
+    const both = fromB64(blob);
+    const plain = nacl.secretbox.open(both.subarray(24), both.subarray(0, 24),
+                                      mailboxKey(me));
+    return plain ? JSON.parse(new TextDecoder().decode(plain)) : null;
+  } catch (e) { return null; }
+}
+
+let syncing = null;
+/** Merge the kept copy into this browser, and this browser's into the copy.
+ *  Returns how many letters and groups came back. Safe to call often. */
+export function syncMailbox(me) {
+  if (!syncing) syncing = _syncMailbox(me).finally(() => { syncing = null; });
+  return syncing;
+}
+
+async function _syncMailbox(me) {
+  let restored = 0;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const asked = await fetch("/account/mailbox");
+    if (!asked.ok) return restored;
+    const kept = await asked.json();
+    const theirs = openHistory(me, kept.blob) || {letters: [], groups: []};
+
+    const mine = (await inbox()).filter((l) => l.mine);
+    const known = new Set(mine.map((l) => l.txid));
+    for (const letter of theirs.letters || []) {
+      if (!letter || !letter.txid || known.has(letter.txid)) continue;
+      await keep(letter); known.add(letter.txid); mine.push(letter); restored += 1;
+    }
+    const held = await groups();
+    const heldIds = new Set(held.map((g) => g.id));
+    for (const group of theirs.groups || []) {
+      if (!group || !group.id || heldIds.has(group.id)) continue;
+      await saveGroup(group); heldIds.add(group.id); held.push(group); restored += 1;
+    }
+
+    // Written back only when this browser has something the copy lacks.
+    const keptIds = new Set((theirs.letters || []).map((l) => l && l.txid));
+    const keptGroups = new Set((theirs.groups || []).map((g) => g && g.id));
+    const newer = mine.some((l) => !keptIds.has(l.txid))
+               || held.some((g) => !keptGroups.has(g.id));
+    if (!newer) return restored;
+    const put = await fetch("/account/mailbox", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({blob: sealHistory(me, {letters: mine, groups: held}),
+                            base: kept.updated || 0}),
+    });
+    if (put.status !== 409) return restored;     // 409: another device wrote first
+  }
+  return restored;
+}
+
+/* --- holders' chats ---------------------------------------------------------
+ *
+ * Hold a token or a piece of a collection and you are in its group chat
+ * (2026-09-25). It is an ordinary group -- one shared key pair, sealed
+ * to each member -- so the node never holds its key. The CREATOR's browser
+ * keeps it in step: it asks the chain who holds the asset now, invites new
+ * holders, and when somebody no longer holds, moves the group to a new key
+ * without them so they stop reading what comes next. That happens whenever the
+ * creator has Messages open, so a new holder is let in then, not instantly,
+ * and each invitation is one message the creator pays the fee for.
+ */
+function holdersQuery(asset) {
+  return asset.kind === "token"
+    ? `token=${encodeURIComponent(asset.id)}`
+    : `creator=${encodeURIComponent(asset.creator)}&collection=${encodeURIComponent(asset.name)}`;
+}
+
+async function holdersNow(asset) {
+  const said = await (await fetch(`/r/holders?${holdersQuery(asset)}`)).json();
+  return new Set((said.holders || []).map(String));
+}
+
+const reachable = new Map();       // address -> {tag, key, address} or null, per tab
+async function reachOf(address) {
+  if (!reachable.has(address)) {
+    let them = null;
+    try {
+      const found = await lookUp(address);
+      if (found.key) them = {tag: found.tag || "", key: found.key, address: found.address || address};
+    } catch (e) { them = null; }
+    reachable.set(address, them);
+  }
+  return reachable.get(address);
+}
+
+/** Every holders' chat this browser runs, current keys only. */
+export async function holderChats() {
+  return (await groups()).filter((g) => g.current && g.holders_of);
+}
+
+/** Start the chat for an asset this account created. */
+export async function startHoldersChat(wallet, me, asset, myTag = "") {
+  const existing = (await holderChats()).find((g) =>
+    JSON.stringify(g.holders_of) === JSON.stringify(asset));
+  if (existing) return existing;
+  const names = [];
+  for (const address of await holdersNow(asset)) {
+    if (address === wallet.address) continue;
+    const them = await reachOf(address);
+    if (them) names.push(them.tag ? "@" + them.tag : them.address);
+  }
+  if (!names.length) {
+    throw new Error("nobody else who holds it has published a messaging key yet, "
+      + "so there is nobody to start the chat with. It can be started once they have.");
+  }
+  const group = await createGroup(wallet, me, `${asset.label} holders`, names, myTag);
+  const kept = {...group, holders_of: asset, tended: Math.floor(Date.now() / 1000)};
+  await saveGroup(kept);
+  return kept;
+}
+
+/** Bring each holders' chat this account created in line with the chain.
+ *  Returns how many people were let in and let go. At most once every ten
+ *  minutes per chat. */
+export async function tendHolderChats(wallet, me) {
+  let joined = 0, left = 0;
+  const now = Math.floor(Date.now() / 1000);
+  for (const group of await holderChats()) {
+    if (group.creator !== hex(me.publicKey)) continue;
+    if (now - (group.tended || 0) < 600) continue;
+    const holding = await holdersNow(group.holders_of);
+    const staying = group.members.filter((m) =>
+      m.key === hex(me.publicKey) || holding.has(m.address));
+    const inside = new Set(group.members.map((m) => m.key));
+    const arriving = [];
+    for (const address of holding) {
+      if (address === wallet.address) continue;
+      const them = await reachOf(address);
+      if (them && !inside.has(them.key)) arriving.push(them);
+    }
+    if (staying.length < group.members.length) {
+      // Somebody sold: a new key, sealed only to who still holds.
+      const pair = nacl.box.keyPair();
+      const next = {id: await groupId(pair.publicKey), root: rootOf(group), name: group.name,
+                    secret: hex(pair.secretKey), public: hex(pair.publicKey),
+                    members: staying.concat(arriving), creator: group.creator, current: true,
+                    created: now, rotated_from: group.id, holders_of: group.holders_of,
+                    tended: now};
+      await saveGroup(next);
+      await saveGroup({...group, current: false, moved_to: next.id});
+      await invite(wallet, me, next, next.members);
+      left += group.members.length - staying.length;
+      joined += arriving.length;
+    } else if (arriving.length) {
+      const grown = {...group, members: group.members.concat(arriving), tended: now};
+      await saveGroup(grown);
+      await invite(wallet, me, grown, arriving);
+      joined += arriving.length;
+    } else {
+      await saveGroup({...group, tended: now});
+    }
+  }
+  return {joined, left};
+}

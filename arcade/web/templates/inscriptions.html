@@ -25,8 +25,7 @@
   <table>
     <tr><td class="muted" style="width:74px">Owner</td>
         <td class="mono" style="word-break:break-all">
-          {% if tags.get(row.owner) %}<strong>@{{ tags[row.owner] }}</strong>
-          {%- else %}{{ row.owner }}{% endif %}</td></tr>
+           {{ row.owner|who }}</td></tr>
     <tr><td class="muted">Block</td>
         <td>{{ "{:,}".format(row.block_height) }}</td></tr>
     {% if row.collection %}

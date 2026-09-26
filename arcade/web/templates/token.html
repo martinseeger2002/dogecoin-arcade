@@ -107,7 +107,7 @@
 <div class="panel">
   <table>
     <tr><td class="muted" style="width:130px">Issuer</td>
-        <td>{% if tags and tags.get(prop.issuer) %}<a href="/u/{{ tags[prop.issuer] }}">@{{ tags[prop.issuer] }}</a> {% endif %}<code class="addr" onclick="copyAddr(this)" title="Click to copy">{{ prop.issuer }}</code>
+        <td>{{ prop.issuer|who }}
           {% if is_issuer %}<span class="pill ok">you</span>{% endif %}</td></tr>
     {% if prop.category or prop.subcategory %}
     <tr><td class="muted">Category</td><td>{{ prop.category }}{% if prop.subcategory %} / {{ prop.subcategory }}{% endif %}</td></tr>
@@ -157,12 +157,14 @@
 </div>
 {% endif %}
 
+{% set hc_kind, hc_id, hc_name, hc_label, hc_creator = 'token', prop.property_id, '', prop.name, prop.issuer %}
+{% include "_holders_chat.html" %}
 <h2>Holders</h2>
 <div class="panel">
 {% if holders %}
   <table class="wallets">
   {% for h in holders %}
-    <tr><td>{% if tags and tags.get(h.address) %}<a href="/u/{{ tags[h.address] }}">@{{ tags[h.address] }}</a> {% endif %}<code class="addr" onclick="copyAddr(this)" title="Click to copy">{{ h.address }}</code>
+    <tr><td>{{ h.address|who }}
           {% if h.address in owned %}<span class="pill ok">you</span>{% endif %}</td>
         <td style="text-align:right;font-variant-numeric:tabular-nums">{{ h.display }}</td></tr>
   {% endfor %}
@@ -182,8 +184,8 @@
         {% if not h.valid %}<span class="pill bad">did nothing</span>{% endif %}</td>
       <td style="font-variant-numeric:tabular-nums;text-align:right">{{ h.amount_display }}</td>
       <td style="font-size:.8rem">
-        <div class="mono" style="word-break:break-all">{{ h.sender }}
-          {%- if h.reference and h.reference != h.sender %} &rarr; {{ h.reference }}{% endif %}</div>
+        <div>{{ h.sender|who }}
+          {%- if h.reference and h.reference != h.sender %} &rarr; {{ h.reference|who }}{% endif %}</div>
         {% if not h.valid %}<div class="muted">{{ h.invalid_reason }}</div>{% endif %}
         <div class="muted">block {{ "{:,}".format(h.block_height) }} &middot;
           <span class="mono">{{ h.txid[:16] }}&hellip;</span></div></td>

@@ -39,7 +39,7 @@
 </div>
 {% endif %}
 
-<h2>Create a token</h2>
+<h2 id="create">Create a token</h2>
 <div class="panel">
 {# The fields live in _token_create_form.html, in one copy, because there are
    two ways to submit them and a token's name cannot be taken back. On a
@@ -97,8 +97,7 @@
               title="In the mempool: everybody can see it, and it is a token when its block lands"
           >waiting for its block</span></td>
       <td class="muted">&mdash;</td><td class="muted">&mdash;</td>
-      <td>{% if tags.get(t.issuer) %}<strong>@{{ tags[t.issuer] }}</strong>
-        {%- else %}<code class="addr">{{ t.issuer }}</code>{% endif %}
+      <td> {{ t.issuer|who }}
         {% if t.issuer in owned %}<span class="pill ok">you</span>{% endif %}</td>
     </tr>
   {% endfor %}
@@ -115,10 +114,7 @@
         {% if t.managed %}<span class="muted" style="font-size:.78rem">managed</span>{% endif %}</td>
       <td style="font-variant-numeric:tabular-nums">{{ t.total_display }}</td>
       <td>{{ t.holder_count }}</td>
-      <td>{% if tags.get(t.issuer) %}<strong>@{{ tags[t.issuer] }}</strong>
-          <div class="mono muted" style="font-size:.72rem" onclick="copyAddr(this)"
-               title="Click to copy">{{ t.issuer }}</div>
-        {%- else %}<code class="addr" onclick="copyAddr(this)" title="Click to copy">{{ t.issuer }}</code>{% endif %}
+      <td> {{ t.issuer|who }}
         {% if t.issuer in owned %}<span class="pill ok">you</span>{% endif %}</td>
     </tr>
   {% endfor %}

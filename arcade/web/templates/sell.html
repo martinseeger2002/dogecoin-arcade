@@ -30,7 +30,7 @@
         {%- if row.collection %} · <a href="/exchange/collection/{{ row.creator }}/{{ row.collection|urlencode }}">{{ row.collection }}</a>
           {%- if row.edition is not none %} #{{ row.edition }}{% endif %}{% endif %}</p>
       <p class="mono muted" style="margin:6px 0 0;font-size:.8rem;word-break:break-all">
-        held by {{ row.owner }}</p>
+        held by {{ row.owner|who }}</p>
     </div>
   </div>
 </div>

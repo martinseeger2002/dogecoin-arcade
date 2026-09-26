@@ -699,8 +699,14 @@ def create_app(state: AppState) -> FastAPI:
             "approvals_waiting": _approvals_waiting(),
             "unread_messages": _unread_messages(),
             **_account_counts(request),
+            # Whether this page is drawn for a signed-in account, for the
+            # key-publishing check every page runs (base.html).
+            "account_here": bool(_public_request(request)
+                                 and signed_in(request) is not None),
             "unread_board": _unread_board(),
-            "offers_waiting": _offers_waiting(),
+            # The operator's own badge: on a public page nobody sees it, and
+            # working it out asks the node's wallet which addresses are its own.
+            "offers_waiting": 0 if _public_request(request) else _offers_waiting(),
         }
         base.update(context)
         # What a POST decided, picked up by the GET it redirected to. Last,
@@ -1574,12 +1580,14 @@ def create_app(state: AppState) -> FastAPI:
     # --- compose --------------------------------------------------------------
 
     @app.get("/compose", response_class=HTMLResponse)
-    def compose_form(request: Request):
+    def compose_form(request: Request, to: str = ""):
         keys = []
         if state.store_path.exists():
             with state.store() as store:
                 keys = store.all_keys()
-        return render(request, "compose.html", keys=keys, plan=None, prepared=None)
+        # `?to=@tag` from a profile's Message button (2026-09-26).
+        return render(request, "compose.html", keys=keys, plan=None, prepared=None,
+                      recipient=to.strip()[:80])
 
     @app.post("/compose", response_class=HTMLResponse)
     def compose_preview(request: Request, recipient: str = Form(""), body: str = Form(""),
@@ -2513,6 +2521,23 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             return ""
 
+    def _operator_friends(request: Request) -> list[str]:
+        """The operator's own address book, as addresses, for the Friends feed.
+
+        The operator's book is on this node already (the contacts table), so it
+        is handed to the page; an account's is in its browser and the page
+        reads it there. Nothing for a public request.
+        """
+        if _public_request(request) or not state.store_path.exists():
+            return []
+        try:
+            with state.store() as store:
+                return sorted({a for row in store.contacts()
+                               for a in (row["testnet_address"],
+                                         row["mainnet_address"]) if a})
+        except Exception:
+            return []
+
     @app.get("/feed", response_class=HTMLResponse)
     def feed_page(request: Request, before: str | None = None, sort: str = "popular",
                   post: str | None = None):
@@ -2526,10 +2551,15 @@ def create_app(state: AppState) -> FastAPI:
         """
         chain = state.messaging
         mine = _tag_of_whoever_is_asking(request)
-        # Popular, the default, or New: newest first (2026-09-25).
-        sort = "new" if sort == "new" else "popular"
-        rows, cursor, waiting = _feed_page(chain.network, before=before,
-                                          sort=sort)
+        # Popular, the default, or New: newest first (2026-09-25). And
+        # Friends: New, narrowed in the browser to the people in the reader's
+        # address book. An account's book lives only in its browser, and asking
+        # the node for "these people's posts" would hand it the book, so the
+        # node sends the newest posts and the page hides the rest.
+        sort = sort if sort in ("new", "friends") else "popular"
+        rows, cursor, waiting = _feed_page(
+            chain.network, before=before,
+            sort="new" if sort == "friends" else sort)
         # One post and its thread: where a notification points (2026-09-25).
         wanted = (post or "").strip().lower()
         if len(wanted) == 64 and all(c in "0123456789abcdef" for c in wanted):
@@ -2550,8 +2580,9 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "feed.html", chain=chain, posts=shown,
                       bylines=_bylines(shown, waiting),
                       drawable=_drawable_in(shown), cursor=cursor, whose=None,
-                      here="/feed" if sort == "popular" else "/feed?sort=new",
+                      here="/feed" if sort == "popular" else f"/feed?sort={sort}",
                       sort=sort, mine=mine, kinds=feedlib.BY_NAME,
+                      friends=_operator_friends(request) if sort == "friends" else [],
                       when=_when, node=chain.status())
 
     @app.get("/u/{tag}", response_class=HTMLResponse)
@@ -4521,6 +4552,67 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             return {}
 
+    # One name per address, remembered for a minute: a page of offers or a
+    # collection's holders asks for the same few people over and over.
+    _names: dict[str, tuple[str, float]] = {}
+
+    def _name_of(address: str) -> str:
+        """The @tag behind an address on either chain, or "" when it has none.
+
+        A mainnet address has no tag of its own: the account's tag lives on
+        the tag chain, and its key announcement names the mainnet address as
+        `other_address`, which is what joins the two.
+        """
+        address = str(address or "").strip()
+        if not address:
+            return ""
+        now = time.time()
+        kept = _names.get(address)
+        if kept and now - kept[1] < 60:
+            return kept[0]
+        tag = _tags_for([address]).get(address, "")
+        if not tag and state.store_path.exists():
+            try:
+                with state.store() as store:
+                    row = store.conn.execute(
+                        "SELECT address FROM key_announcement WHERE other_address = ? "
+                        "ORDER BY rowid DESC LIMIT 1", (address,)).fetchone()
+                if row:
+                    tag = _tags_for([row[0]]).get(row[0], "")
+            except Exception:
+                tag = ""
+        if len(_names) > 5000:
+            _names.clear()
+        _names[address] = (tag, now)
+        return tag
+
+    def _who(address: Any, short: int = 12) -> Markup:
+        """A template filter: another person, as their @tag linked to their page,
+        or a shortened address when they have not claimed one (the operator,
+        2026-09-26: "anywhere else addresses are shown replace them with @tag
+        unless it is where the user specifically needs to see his address").
+        The whole address stays in the title, to copy or compare."""
+        address = str(address or "")
+        if not address:
+            return Markup("")
+        tag = _name_of(address)
+        if tag:
+            return Markup('<a href="/u/{t}" title="{a}">@{t}</a>').format(
+                t=tag, a=address)
+        shown = address if len(address) <= short + 1 else address[:short] + "\u2026"
+        return Markup('<span class="mono" title="{a}">{s}</span>').format(
+            a=address, s=shown)
+
+    def _who_text(address: Any) -> str:
+        """The same person as plain words, for an attribute or a confirmation."""
+        address = str(address or "")
+        tag = _name_of(address)
+        return f"@{tag}" if tag else (address[:12] + "\u2026" if len(address) > 13 else address)
+
+    TEMPLATES.env.filters["who"] = _who
+    TEMPLATES.env.filters["who_text"] = _who_text
+    TEMPLATES.env.globals["name_of"] = _name_of
+
     def _tag_of_whoever_is_asking(request: Request) -> dict[str, Any]:
         """Whose name to show on a page: the reader's, not the node's.
 
@@ -4862,6 +4954,33 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             held = []
         return contentlib._json([contentlib.holding(row) for row in held])
+
+    @app.get("/r/holders")
+    def r_holders(token: int = 0, creator: str = "", collection: str = ""):
+        """Who holds a token, or any piece of a collection: addresses only.
+
+        Public already -- the token page lists holders and every piece page its
+        owner -- and asked for by the creator's browser, which keeps the
+        holders' group chat in step with the chain (messaging.js
+        tendHolderChats, 2026-09-25).
+        """
+        index = _content_index()
+        try:
+            if token:
+                rows = index.holders(int(token))
+                return contentlib._json({"holders": [r["address"] for r in rows]})
+            if creator and collection:
+                owners: list[str] = []
+                for offset in range(0, 5000, 500):
+                    page = index.collection_items(creator, collection, limit=500,
+                                                  offset=offset)
+                    owners += [r["owner"] for r in page]
+                    if len(page) < 500:
+                        break
+                return contentlib._json({"holders": sorted(set(owners))})
+        except Exception:
+            pass
+        return contentlib._json({"holders": []})
 
     @app.get("/r/tag/{name}")
     def r_tag(name: str):
@@ -5727,7 +5846,7 @@ def create_app(state: AppState) -> FastAPI:
         viewer = "wallet"
         if public:
             viewer = "account" if signed_in(request) is not None else "nobody"
-        mine, held, coins = False, [], 0.0
+        mine, held, coins, here = False, [], 0.0, ""
         mine_account, asks = False, []
         if viewer == "account":
             # One read on the public path, and it is of the looking account's
@@ -5820,6 +5939,21 @@ def create_app(state: AppState) -> FastAPI:
             sale = _prices_for(index, chain).get(row["txid"])
         except Exception:
             sale = None
+        # A listing somebody signed in their own browser (`/account/list`) is
+        # in the book rather than on the chain, so `_prices_for` never sees
+        # it. On a public copy that is the one a visitor can actually buy
+        # with their own key, so the page looks it up and offers the button.
+        listed = None
+        if public:
+            try:
+                listed = _open_listing_of(chain, row["txid"])
+            except Exception as exc:
+                log.info("piece page: listing lookup: %s", exc)
+                listed = None
+            if listed is not None:
+                listed["tag"] = _tags_for([listed["seller"]]).get(listed["seller"])
+                listed["theirs"] = bool(viewer == "account" and here
+                                        and here == listed["seller"])
         # This account's own offers on this piece, so the page can offer to
         # finish one the holder has answered (_offer_complete.html).
         my_offers = []
@@ -5836,12 +5970,24 @@ def create_app(state: AppState) -> FastAPI:
                 my_offers = []
         return render(request, "inscription_view.html", row=row, chain=chain,
                       my_offers=my_offers,
+                      listed=listed,
                       tag=named.get(row["owner"]), sale=sale,
                       creator_tag=named.get(row["creator"]),
                       pages=pages, mine=mine, viewer=viewer,
                       mine_account=mine_account, asks=asks,
                       tokens=held, coins=coins, advice=advice,
                       renders=row["content_type"].startswith(contentlib.RENDERABLE))
+
+    @app.get("/launch", response_class=HTMLResponse)
+    def launchpad(request: Request):
+        """The launchpad: a token or a collection from a template, in steps.
+
+        It signs and spends nothing. The last step is a link to the page that
+        already makes the thing, with the choices in its address, so what is
+        reviewed and signed is exactly what it always was (2026-09-25).
+        """
+        chain, _ = _token_chain()
+        return render(request, "launch.html", chain=chain)
 
     @app.get("/tokens", response_class=HTMLResponse)
     def tokens(request: Request):
@@ -5870,8 +6016,23 @@ def create_app(state: AppState) -> FastAPI:
             return render(request, "tokens.html", prepared=None,
                           account_address=address,
                           account_signed=account is not None,
-                          **_token_page_data([address] if address else []))
-        return render(request, "tokens.html", prepared=None, **_token_page_data())
+                          **{**_token_page_data([address] if address else []),
+                             **_launched(request)})
+        return render(request, "tokens.html", prepared=None,
+                      **{**_token_page_data(), **_launched(request)})
+
+    #: The fields the launchpad (/launch) may prefill on the token form.
+    LAUNCH_FIELDS = ("name", "kind", "supply", "units", "category",
+                     "subcategory", "url", "data")
+
+    def _launched(request: Request) -> dict:
+        """The launchpad's choices, carried in the address, as the create form's
+        starting values. Only prefills: the person still reviews and signs."""
+        q = request.query_params
+        if q.get("launch") != "token":
+            return {}
+        return {"form_create": {k: str(q.get(k, ""))[:200] for k in LAUNCH_FIELDS
+                                if q.get(k) is not None}}
 
     @app.post("/tokens/chain")
     def tokens_chain(request: Request, chain: str = Form(""), csrf_token: str = Form(""),
@@ -7967,7 +8128,10 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/account/run/start")
     def account_run_start(request: Request, files: list[UploadFile] = File([]),
-                          name: str = Form(""), run_chain: str = Form("")):
+                          name: str = Form(""), run_chain: str = Form(""),
+                          max_supply: str = Form(""), numbering: str = Form("continue"),
+                          description: str = Form(""), url: str = Form(""),
+                          artist: str = Form(""), icon: str = Form("")):
         """Write a collection down as this account's run. Nothing is inscribed.
 
         One upload, one run, and no transaction in it. The pieces are asked
@@ -8017,9 +8181,88 @@ def create_app(state: AppState) -> FastAPI:
                 collectionlib.find_build(_save_upload(files)))
         except (collectionlib.CollectionError, ValueError, OSError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
+        # The set's rules are #1's (2026-09-25): a NEW collection writes
+        # its details and its maximum supply (0 = unlimited) onto #1; a batch
+        # added to one already on the chain from this address inherits them,
+        # moves up to follow it (unless the build's own numbers are kept), and
+        # stops at the cap #1 set.
+        try:
+            index = state.token_index(chain)
+            taken = index.collection_editions(address, build.collection)
+            cover = index.collection_cover(address, build.collection) if taken else None
+        except Exception:
+            taken, cover = set(), None
+        cap = None
+        repeat_note = ""
+        if taken:
+            # Which of these pictures are already in the set, by their bytes:
+            # a HashLips batch numbers itself from 1 every time, so an edition
+            # number cannot tell a new batch from the same folder uploaded
+            # again. The same picture is left out (it is up already); only what
+            # is new is written down, after the last one on the chain.
+            try:
+                have = set()
+                for offset in range(0, 10000, 500):
+                    page = index.collection_items(address, build.collection,
+                                                  limit=500, offset=offset)
+                    have |= {row["sha256"] for row in page if row["sha256"]}
+                    if len(page) < 500:
+                        break
+            except Exception:
+                have = set()
+            fresh = [item for item in build.items
+                     if hashlib.sha256((build.folder / item.image).read_bytes()
+                                       ).hexdigest() not in have]
+            if not fresh:
+                return JSONResponse({"detail": (
+                    f"{build.collection} is already on this chain from this "
+                    f"address, all {len(build.items):,} pieces of it. Inscribing "
+                    "it again would pay for a second copy of every item, and no "
+                    "node would file the copies into the set. Nothing has been "
+                    "paid for.")}, status_code=400)
+            if len(fresh) < len(build.items):
+                repeat_note = (
+                    f"{len(build.items) - len(fresh):,} of these are already on "
+                    f"this chain from this address, so this run is written down "
+                    f"as the other {len(fresh):,}. A second copy joins nothing "
+                    "and costs again.")
+                build = dataclasses.replace(build, items=fresh)
+            cap = inscriptionlib.collection_details((cover or {}).get("json") or "").get("supply")
+            if numbering != "keep":
+                build = collectionlib.renumbered(build, max(taken) + 1)
+            top = max(item.edition for item in build.items)
+            if cap and top > cap:
+                room = max(0, cap - len(taken))
+                return JSONResponse({"detail": (
+                    f"{build.collection} is sealed at {cap:,} by its #1, and "
+                    f"{len(taken):,} are on the chain, so there is room for "
+                    f"{room:,} more, not {len(build.items):,}. Nothing has been "
+                    "paid for.")}, status_code=400)
+        else:
+            try:
+                supply = int(str(max_supply or "0").replace(",", "").strip() or 0)
+            except ValueError:
+                return JSONResponse({"detail": "the maximum supply is a whole "
+                                     "number, or 0 for no limit"}, status_code=400)
+            top = max(item.edition for item in build.items)
+            if supply < 0 or (supply and supply < top):
+                return JSONResponse({"detail": (
+                    f"a maximum supply of {supply:,} is smaller than this build, "
+                    f"whose editions go up to #{top:,}. Set it to at least "
+                    f"{top:,}, or 0 for no limit.")}, status_code=400)
+            # No other platforms' links (2026-09-25): no Twitter, Discord
+            # or Telegram fields are offered or written.
+            details = {"description": description, "url": url, "artist": artist,
+                       "icon": inscriptionlib.inscription_in(icon or ""), "supply": supply}
+            build = collectionlib.with_details(build, details)
+            cap = supply or None
         # Asked between the two writes and not inside either: the refusal is
         # about the chain and the run book, and `create` is about the build.
-        already = _what_the_account_has(account, chain, address, build, name)
+        # A continuation was checked against the set above, picture by picture;
+        # the book's "finished and not indexed yet" guard is for a FIRST run,
+        # whose set the index cannot see yet.
+        already = ({"blocked": "", "note": repeat_note, "skip": set()} if taken
+                   else _what_the_account_has(account, chain, address, build, name))
         if already["blocked"]:
             return JSONResponse({"detail": already["blocked"]}, status_code=400)
         if already["skip"]:
@@ -8045,7 +8288,9 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"run": run_id, "name": run["name"],
                              "items": run["items"], "fee": run["fee"],
                              "dust": run["dust"], "chain": chain.network,
-                             "note": run["note"], "next": run["next"]})
+                             "note": run["note"], "next": run["next"],
+                             "supply": cap, "continues": bool(taken),
+                             "on_chain": len(taken)})
 
     @app.post("/account/run")
     def account_runs(request: Request):
@@ -8599,6 +8844,41 @@ def create_app(state: AppState) -> FastAPI:
                 f"two outputs and both are signed: what it sells, and what it "
                 f"costs.") from None
 
+    def _sold_piece(row: dict) -> str:
+        """The inscription a listing's payload sells, or "" when it names none."""
+        try:
+            swap = _listing_swap(bytes.fromhex(row["payload"] or ""))
+        except ValueError:
+            return ""
+        if swap is None or swap.give.kind != inscriptionlib.LEG_INSCRIPTION:
+            return ""
+        return swap.give.txid.hex()
+
+    def _open_listing_of(chain, piece: str) -> dict[str, Any] | None:
+        """The newest open listing in the book that sells this inscription.
+
+        Found by what the payload names, as `_listing_swap` reads it, and not
+        by the row's `input`: that is the seller's coin, which for a piece that
+        arrived by transfer is not the inscription's own txid. Only a sale for
+        coins is offered here, because that is the only kind `/account/buy`
+        can fill. Whether the piece is still where the leg says is left to
+        `/account/buy`, which asks the chain and says so in words.
+        """
+        state.listings.expire_due(chain.network)
+        for row in state.listings.open_listings(chain.network):
+            if _sold_piece(row) != piece:
+                continue
+            swap = _listing_swap(bytes.fromhex(row["payload"]))
+            if swap.take.kind != inscriptionlib.LEG_COINS:
+                continue
+            return {"id": row["id"], "seller": row["owner"],
+                    "sats": int(row["price"]),
+                    "price": f"{int(row['price']) / listingslib.COIN:.8f}"
+                             .rstrip("0").rstrip("."),
+                    "left": describe_duration(
+                        max(0, int(row["expires"] - time.time())))}
+        return None
+
     def _listing_swap(naming: bytes) -> inscriptionlib.Swap | None:
         """The trade a listing's bytes promise, or nothing if they promise none.
 
@@ -8707,8 +8987,8 @@ def create_app(state: AppState) -> FastAPI:
                         f"this address has {len(held)} coin to spend and a "
                         f"listing that says what it sells needs two of them: "
                         f"one input signs the bytes naming the piece, the other "
-                        f"signs the price. Send yourself a little change and "
-                        f"list it again.")
+                        f"signs the price. Split it first: Wallet, Send, 1 coin to your own @name, "
+                        f"then list it again.")
                 leg = fundinglib.build_leg(
                     chain.params, address, held[0], coins=price,
                     rate=fees.MIN_FEE_PER_KB, what=what,
@@ -8905,6 +9185,7 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"chain": chain.network,
                              "listing": listing["id"],
                              "seller": listing["owner"],
+                             "seller_tag": _tags_for([listing["owner"]]).get(listing["owner"], ""),
                              "price": int(listing["price"]),
                              **unsigned.as_json()})
 
@@ -9148,6 +9429,7 @@ def create_app(state: AppState) -> FastAPI:
         # address is what a page has to hold onto.
         return JSONResponse({"chain": chain.network, "answered": True,
                              "seller": listing["owner"],
+                             "seller_tag": _tags_for([listing["owner"]]).get(listing["owner"], ""),
                              "price": int(listing["price"]),
                              **unsigned.as_json()})
 
@@ -9406,7 +9688,7 @@ def create_app(state: AppState) -> FastAPI:
                         f"this address has {len(held)} coin to spend and an "
                         f"answer is a leg, which needs two of them: one input "
                         f"signs the bytes naming the piece, the other signs the "
-                        f"price. Send yourself a little change and answer again.")
+                        f"price. Split it first -- Wallet, Send, 1 coin to your own @name -- and answer again.")
                 leg = fundinglib.build_leg(
                     chain.params, address, held[0], coins=price,
                     rate=fees.MIN_FEE_PER_KB, what=what,
@@ -10352,6 +10634,33 @@ def create_app(state: AppState) -> FastAPI:
             } for item in shown],
         })
 
+    @app.get("/account/mailbox")
+    def account_mailbox(request: Request):
+        """This account's sealed message history, for a browser to merge in."""
+        account = _signed_in_account(request)
+        have = state.mailbox().get(account.pubkey)
+        return JSONResponse(have or {"blob": "", "updated": 0})
+
+    @app.post("/account/mailbox")
+    def account_mailbox_put(request: Request, payload: Any = Body(None)):
+        """Keep this account's sealed message history (accounts.Mailbox).
+
+        Ciphertext only: the key is derived in the browser from the account's
+        words, so this node can neither read nor alter what it keeps.
+        """
+        from ..accounts import AccountError as _AccountError, MailboxMoved
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            out = state.mailbox().put(account.pubkey, str(said.get("blob") or ""),
+                                      int(said.get("base") or 0))
+        except MailboxMoved as exc:
+            return JSONResponse({"detail": str(exc), "updated": exc.updated},
+                                status_code=409)
+        except (_AccountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse(out)
+
     @app.get("/account/messages")
     def account_messages(request: Request, after: int = 0, limit: int = 200):
         """Candidate payloads, for the browser to try its key against.
@@ -10898,8 +11207,10 @@ def create_app(state: AppState) -> FastAPI:
             complaint = _check_address(to, mainnet=chain.is_mainnet)
             if complaint:
                 raise ValueError(complaint)
-            if to == address:
-                raise ValueError("that is this account's own address")
+            # Coins to your own address are allowed: it is how one coin becomes
+            # two, which a listing and an answer both need, and both refusals say
+            # to do exactly this. It used to be refused here, which left that
+            # advice with no way to follow it (plan item 3's test, 2026-09-26).
             amount = parse_amount(str(said.get("amount", "")), True)
             if amount <= 0:
                 raise ValueError("a payment of nothing is not a payment")
@@ -12251,11 +12562,30 @@ def create_app(state: AppState) -> FastAPI:
             out[prop["property_id"]] = face
         return out
 
-    def _offerable(chain, index):
-        """What this wallet could offer with: its tokens, and its coins."""
+    def _offerable(chain, index, request: Request | None = None):
+        """What the one looking could offer with: its tokens, and its coins.
+
+        On a public copy that is the signed-in ACCOUNT's own address and nothing
+        else -- the node's wallet is a stranger's wallet there, and drawing its
+        holdings into a visitor's offer form told the visitor what the operator
+        holds (D-184's shape, applied to the collection page; plan item 4).
+        A visitor who is not signed in holds nothing here.
+        """
         held: list[dict[str, Any]] = []
         coins = 0.0
         owned: set[str] = set()
+        if request is not None and _public_request(request):
+            account = signed_in(request)
+            here = _account_address(account.pubkey, chain) if account else ""
+            if not here:
+                return owned, held, coins
+            try:
+                held = _purses(index.balances([here]))
+                with contextlib.closing(index.open()) as db:
+                    coins = utxoslib.balance(db, here) / 100_000_000
+            except Exception:
+                held, coins = [], 0.0
+            return {here}, held, coins
         try:
             with chain.rpc() as rpc:
                 owned = set(_ledger_addresses(rpc))
@@ -12768,7 +13098,7 @@ def create_app(state: AppState) -> FastAPI:
             listed = _prices_for(index, chain)
         except Exception as exc:
             data["node_error"] = f"the prices could not be read: {exc}"
-        owned, data["tokens"], data["coins"] = _offerable(chain, index)
+        owned, data["tokens"], data["coins"] = _offerable(chain, index, request)
         try:
             data["pages"] = max(1, -(-summary["count"] // PAGE_INSCRIPTIONS))
             data["page"] = page = max(1, min(page, data["pages"]))
@@ -12968,6 +13298,7 @@ def create_app(state: AppState) -> FastAPI:
                     "tag": named.get(row["owner"], ""),
                     "price": f"{int(row['price']) / listingslib.COIN:.8f}".rstrip("0").rstrip("."),
                     "piece": f"{row['input']['txid'][:16]}…:{row['input']['vout']}",
+                    "sells": _sold_piece(row),
                     "held": held.get(row["id"]),
                     "listed": row["created"],
                     "left": describe_duration(max(0, int(row["expires"] - time.time()))),

@@ -664,6 +664,50 @@ export async function fill(wallet, leg, offer) {
   });
 }
 
+/* --- filling a listing, with this account's own key ----------------------
+ *
+ * The other half of `list`. The seller's two signatures are already in the
+ * book; `/account/buy` builds the transaction around them with this account's
+ * coins behind, and says in `signed_from` where those coins start. So the
+ * check is `coins.verifyOffer`, which refuses to sign any input before that
+ * point or any coin this key does not hold, and the signatures go to
+ * `/account/buy/sign`, which pastes them in and broadcasts -- this node signs
+ * nothing of either side.
+ */
+
+export async function offerBuy(listing, chain) {
+  return working(async () => {
+    const asked = await fetch("/account/buy", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({listing, chain: chain || ""}),
+    });
+    const offer = await asked.json();
+    if (!asked.ok) throw new Error(offer.detail || "that cannot be bought");
+    return offer;
+  });
+}
+
+export async function buy(wallet, offer) {
+  return working(async () => {
+    const keys = keysOn(wallet, offer.chain
+                        || (wallet.on && Object.keys(wallet.on)[0]));
+    const shown = await coins.verifyOffer(offer, keys);
+    const signatures = [];
+    for (const sighash of shown.hashes) {
+      signatures.push(coinsHex(await coins.signInput(keys.key, unhex(sighash))));
+    }
+    const done = await fetch("/account/buy/sign", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({listing: offer.listing, chain: offer.chain || "",
+                            raw: offer.raw, signatures,
+                            pubkey: coinsHex(keys.pubkey)}),
+    });
+    const said = await done.json();
+    if (!done.ok) throw new Error(said.detail || "the node would not take it");
+    return {...said, fee: shown.fee, says: shown.says};
+  });
+}
+
 /* --- buying from a shop, with this account's own key --------------------
  *
  * `/swap/{txid}` is where the operator's wallet buys, and every step of it
@@ -1045,14 +1089,22 @@ export async function setUp(wallet, identity, tag, {onStep, faucetRefusal} = {})
 
   // The key, whether or not the name went: they are separate things and
   // somebody unreachable is worse off than somebody unnamed.
+  // Tried twice: the first failure is usually the name's transaction still
+  // settling on the node, and a signup that leaves an account unreachable
+  // is worse than one that takes ten seconds longer (9 of 43 names had no key,
+  // 2026-09-26). Every page tries again later too (base.html).
   step("key", "publishing");
-  try {
-    const mail = await import("/messaging.js");
-    out.announced = (await mail.announce(wallet, identity, tag)).txid;
-    step("key", "on its way");
-  } catch (e) {
-    out.trouble.push(`your key was not published: ${e.message || e}`);
-    step("key", "failed");
+  const mail = await import("/messaging.js");
+  for (let attempt = 1; attempt <= 2 && !out.announced; attempt++) {
+    try {
+      out.announced = (await mail.announce(wallet, identity, tag)).txid;
+      step("key", "on its way");
+    } catch (e) {
+      if (attempt === 1) { await new Promise((ok) => setTimeout(ok, 10000)); continue; }
+      out.trouble.push(`your key was not published yet (it is tried again by `
+        + `itself): ${e.message || e}`);
+      step("key", "failed");
+    }
   }
 
   // "On its way" is where this stopped for a year, and it is not what the
