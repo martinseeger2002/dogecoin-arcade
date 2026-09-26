@@ -449,6 +449,24 @@
 </div>
 {% endif %}
 
+{% if my_offers %}
+<h2>Your offer</h2>
+<div class="panel">
+  <table>
+    {% for o in my_offers %}
+    <tr><td><strong>{{ o.price }}</strong>
+          <div class="muted" style="font-size:.8rem">
+            {%- if o.pending %}in the mempool{% else %}block {{ "{:,}".format(o.block_height) }}{% endif %}</div></td>
+        <td style="text-align:right;white-space:nowrap" data-answer-for="{{ o.txid }}"
+            data-piece="{{ row.txid }}" data-price="{{ o.price }}" data-number="{{ row.number }}">
+          <span class="muted">waiting for the holder</span></td></tr>
+    {% endfor %}
+  </table>
+  <p class="msg" id="fill-news" hidden></p>
+  {% include "_offer_complete.html" %}
+</div>
+{% endif %}
+
 {% if not mine and not mine_account %}
 <h2>Make an offer</h2>
 <div class="panel">

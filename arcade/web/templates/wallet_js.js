@@ -599,6 +599,71 @@ async function _answerOffer(wallet, ask) {
   return {...sent, says, refused: !!ask.refuse};
 }
 
+/* --- finishing an offer somebody answered -------------------------------
+ *
+ * The other end of `answerOffer`. The seller's answer arrives as a sealed
+ * program message carrying their signed leg; `/account/fill` builds the
+ * transaction around it with this account's coins behind, and
+ * `/account/fill/sign` pastes this key's signatures in and broadcasts. Nothing
+ * is signed before `coins.verifyOffer` has checked that only this key's own
+ * inputs (from `signed_from` on) are asked for. Until 2026-09-26 no page did
+ * this, so an accepted offer could never be finished from a browser (found
+ * filming the accept video).
+ *
+ * The answers are read with `programAnswers` and kept in this browser, with
+ * the cursor, so each page load reads only what is new.
+ */
+const ANSWERS = (pubkey) => `arcade.answers.${pubkey}`;
+
+export async function answersToMe(wallet) {
+  const {mail, me} = await messenger(wallet);
+  const slot = ANSWERS(coinsHex(me.publicKey));
+  let kept = {cursor: 0, answers: {}};
+  try { kept = JSON.parse(localStorage.getItem(slot) || "null") || kept; } catch (e) {}
+  const read = await mail.programAnswers(me, kept.cursor);
+  for (const a of read.answers) {
+    const j = a.json || {};
+    if (j.swap !== "bid" || !j.id) continue;
+    kept.answers[j.id] = {id: j.id, ok: !!j.ok, leg: j.leg || null,
+                          error: j.error || "", when: a.when, txid: a.txid};
+  }
+  kept.cursor = read.cursor;
+  try { localStorage.setItem(slot, JSON.stringify(kept)); } catch (e) {}
+  return kept.answers;                     // offer txid -> the answer to it
+}
+
+export async function offerFill(leg, chain) {
+  return working(async () => {
+    const asked = await fetch("/account/fill", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({leg, chain: chain || ""}),
+    });
+    const offer = await asked.json();
+    if (!asked.ok) throw new Error(offer.detail || "that answer cannot be finished");
+    return offer;
+  });
+}
+
+export async function fill(wallet, leg, offer) {
+  return working(async () => {
+    const keys = keysOn(wallet, offer.chain
+                        || (wallet.on && Object.keys(wallet.on)[0]));
+    const shown = await coins.verifyOffer(offer, keys);
+    const signatures = [];
+    for (const sighash of shown.hashes) {
+      signatures.push(coinsHex(await coins.signInput(keys.key, unhex(sighash))));
+    }
+    const done = await fetch("/account/fill/sign", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({leg, chain: offer.chain || "", raw: offer.raw,
+                            signatures, pubkey: coinsHex(keys.pubkey)}),
+    });
+    const said = await done.json();
+    if (!done.ok) throw new Error(said.detail || "the node would not take it");
+    return {...said, fee: shown.fee, says: shown.says};
+  });
+}
+
 /* --- buying from a shop, with this account's own key --------------------
  *
  * `/swap/{txid}` is where the operator's wallet buys, and every step of it

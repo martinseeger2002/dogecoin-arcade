@@ -193,7 +193,8 @@
   {% else %}
   <div class="panel">
     <table>
-      <tr><th>NFT</th><th>You offered</th><th>Held by</th><th>Made</th></tr>
+      <tr><th>NFT</th><th>You offered</th><th>Held by</th><th>Made</th>
+        {% if viewer == 'account' %}<th></th>{% endif %}</tr>
       {% for b in offers_out %}
       <tr><td><a href="/inscriptions/{{ b.inscription }}/view">
             {%- if b.number is not none %}#{{ "{:,}".format(b.number) }}
@@ -205,9 +206,18 @@
             {%- if tags.get(b.owner) %}<strong>@{{ tags[b.owner] }}</strong>
             {%- else %}{{ b.owner }}{% endif %}</td>
           <td class="muted" style="white-space:nowrap">
-            {%- if b.pending %}in the mempool{% else %}block {{ "{:,}".format(b.block_height) }}{% endif %}</td></tr>
+            {%- if b.pending %}in the mempool{% else %}block {{ "{:,}".format(b.block_height) }}{% endif %}</td>
+          {% if viewer == 'account' %}
+          <td style="text-align:right;white-space:nowrap" data-answer-for="{{ b.txid }}"
+              data-piece="{{ b.inscription }}" data-price="{{ b.price }}"
+              data-number="{{ b.number if b.number is not none else '' }}"></td>
+          {% endif %}</tr>
       {% endfor %}
     </table>
+    {% if viewer == 'account' %}
+    <p class="msg" id="fill-news" hidden></p>
+    {% include "_offer_complete.html" %}
+    {% endif %}
   </div>
   {% endif %}
 

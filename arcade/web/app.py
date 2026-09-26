@@ -5820,7 +5820,22 @@ def create_app(state: AppState) -> FastAPI:
             sale = _prices_for(index, chain).get(row["txid"])
         except Exception:
             sale = None
+        # This account's own offers on this piece, so the page can offer to
+        # finish one the holder has answered (_offer_complete.html).
+        my_offers = []
+        if viewer == "account" and not mine_account:
+            try:
+                me_at = _account_address(signed_in(request).pubkey, chain)
+                if me_at:
+                    my_offers = [o for o in _merge_offers(
+                        [p for p in index.pending_offers() if p["buyer"] == me_at],
+                        index.offers_by([me_at])) if o["inscription"] == row["txid"]]
+                    for o in my_offers:
+                        o["price"] = swaplib.describe_leg(_take_json(o, index))
+            except Exception:
+                my_offers = []
         return render(request, "inscription_view.html", row=row, chain=chain,
+                      my_offers=my_offers,
                       tag=named.get(row["owner"]), sale=sale,
                       creator_tag=named.get(row["creator"]),
                       pages=pages, mine=mine, viewer=viewer,

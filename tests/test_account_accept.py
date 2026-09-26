@@ -740,3 +740,29 @@ def test_the_offers_page_gives_an_account_the_button_it_lacked(node):
     other, _secret, _pubkey, _address = _seated(app, state, rpc, 66)
     page = other.get("/exchange?tab=offers").text
     assert "Nothing yet." in page, "another person's post is not this account's mail"
+
+
+def test_the_buyer_is_given_the_way_to_finish_an_answered_offer(node):
+    """The half nobody could press (found filming the accept video, 2026-09-26).
+
+    The seller answered, the answer went to the buyer as a sealed message, and
+    no page anywhere called /account/fill. Now the buyer's Offers tab and the
+    piece page carry a spot per offer of theirs, and the tab finds the answer in
+    its own messages and turns the spot into "Complete the purchase". The
+    finishing itself is /account/fill and /account/fill/sign, which the tests
+    above already walk end to end.
+    """
+    app, state, rpc = node
+    state.public = True
+    pair = _pair(node, 80, 81)
+    offer = _offered(pair)
+    bidder = pair["bidder"][0]
+
+    tab = bidder.get("/exchange?tab=offers").text
+    assert f'data-answer-for="{offer}"' in tab, "a spot on the buyer's own row"
+    assert "wallet.answersToMe" in tab and "wallet.fill(" in tab
+
+    page = bidder.get(f"/inscriptions/{pair['piece']}/view").text
+    assert "Your offer" in page and f'data-answer-for="{offer}"' in page
+    holder = pair["holder"][0].get(f"/inscriptions/{pair['piece']}/view").text
+    assert "Your offer" not in holder, "the holder answers; it has nothing to finish"
