@@ -222,3 +222,40 @@ def test_an_unjudged_post_says_it_is_being_checked(client):
     a_post(state, "11" * 32, text="not judged yet")
     body = app.get("/feed").text
     assert "not judged yet" not in body and "Checking this post" in body
+
+
+def test_a_better_prompt_asks_again_about_what_the_old_one_passed(tmp_path, model):
+    """Verdicts are kept per content, so without a prompt version a better question
+    never reached anything already judged: "Fuck my asshole" stayed "ok -- profanity
+    only" after the prompt learned better (2026-09-25)."""
+    screen = mod.Screen(tmp_path, {"url": model.url, "model": "m"})
+    digest = mod.digest_of("Fuck my asshole")
+    screen.conn.execute("INSERT INTO verdict (digest, kind, verdict, reason, model, checked_at,"
+                        " prompt) VALUES (?,?,?,?,?,?,?)",
+                        (digest, "text", "ok", "profanity only", "m", 0, "an-older-prompt"))
+    screen.conn.commit()
+    assert screen.known(digest) is None, "asked again, not trusted"
+    model.says = '{"verdict": "sensitive", "reason": "crude sexual reference"}'
+    assert screen.check_text("Fuck my asshole", now=True) == mod.SENSITIVE
+    assert screen.known(digest) == mod.SENSITIVE
+
+
+def test_an_illegal_verdict_is_never_reopened_by_a_new_prompt(tmp_path):
+    screen = mod.Screen(tmp_path, None)
+    screen.conn.execute("INSERT INTO verdict (digest, kind, verdict, reason, model, checked_at,"
+                        " prompt) VALUES (?,?,?,?,?,?,?)",
+                        ("cd" * 32, "image", "illegal", "x", "m", 0, "an-older-prompt"))
+    screen.conn.commit()
+    assert screen.known("cd" * 32) == mod.ILLEGAL
+
+
+def test_a_table_from_before_the_prompt_column_still_opens(tmp_path):
+    import sqlite3
+    old = sqlite3.connect(tmp_path / "moderation.sqlite")
+    old.executescript("CREATE TABLE verdict (digest TEXT PRIMARY KEY, kind TEXT NOT NULL,"
+                      " verdict TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '',"
+                      " model TEXT NOT NULL DEFAULT '', checked_at INTEGER NOT NULL);"
+                      "INSERT INTO verdict VALUES ('ee', 'text', 'ok', '', 'm', 0);")
+    old.commit(); old.close()
+    screen = mod.Screen(tmp_path, None)
+    assert screen.known("ee") is None, "judged under no known prompt: asked again"
