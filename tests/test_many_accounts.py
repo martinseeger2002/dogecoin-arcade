@@ -1594,3 +1594,77 @@ def test_each_of_them_issues_a_token_wearing_a_picture_of_its_own(node, crowd):
         assert tokenlib.details(token)["icon"] == icon, token
         assert _tokens(person)[str(token["property_id"])]["balance"] \
             == 1000 * COIN, _tokens(person)
+
+
+# --- the trading half: offers, both ways (plan item 3) -------------------------
+
+def test_offers_between_accounts_are_made_answered_refused_and_finished(node, crowd):
+    """The half of "trading between them, both ways" that waited for routes.
+
+    Ferns offers for a piece of Maple's and Maple offers for a piece of Ferns's.
+    Maple answers yes -- a leg at the price Ferns asked, two signatures, sent as a
+    message -- and Ferns finishes it from the leg alone, which is the path a
+    buyer's tab takes (/account/fill, then /account/fill/sign). Ferns answers
+    Maple's no. What changes hands is read off the index afterwards, not off
+    any route's own report of what it did.
+    """
+    state = node[1]
+    maple, ferns = crowd[0], crowd[1]
+    ours = _inscribed(*node, owner=maple.address, name="Traded piece",
+                      content=b"offers" * 60)
+    theirs = _inscribed(*node, owner=ferns.address, name="Kept piece",
+                        content=b"refuse" * 60)
+    index = state.token_index(state.messaging)
+
+    # Both offers, one each way.
+    made = _do(ferns, "/account/offer", {"piece": ours, "amount": "3"})
+    assert made.status_code == 200, made.text
+    wanted = _do(maple, "/account/offer", {"piece": theirs, "amount": "2"})
+    assert wanted.status_code == 200, wanted.text
+    _settle(*node)
+    offer_in, offer_back = made.json()["txid"], wanted.json()["txid"]
+
+    # An answer is a leg on two of the seller's coins, and Maple's own offer
+    # just spent hers down to one. The refusal says to split it by sending a
+    # coin to yourself -- which /account/send used to refuse, a dead end -- so
+    # that is what Maple does.
+    one = maple.client.post("/account/accept", json={"piece": ours, "offer": offer_in})
+    assert one.status_code == 400 and "Split it first" in one.json()["detail"], one.text
+    change = _do(maple, "/account/send", {"to": maple.address, "amount": "1"})
+    assert change.status_code == 200, change.text
+    _settle(*node)
+
+    # Maple says yes to Ferns: the leg at Ferns's price, signed twice.
+    leg = maple.client.post("/account/accept", json={"piece": ours, "offer": offer_in})
+    assert leg.status_code == 200, leg.text
+    leg = leg.json()
+    answered = maple.client.post("/account/accept/sign", json={
+        "piece": ours, "offer": offer_in, "raw": leg["raw"],
+        "pubkey": maple.pubkey.hex(),
+        "signatures": [_sign(maple.secret, bytes.fromhex(d),
+                             funding.SINGLE_ANYONECANPAY).hex()
+                       for d in leg["sighashes"]]})
+    assert answered.status_code == 200, answered.text
+    answer = answered.json()["answer"]
+    assert answer["ok"] is True and answer["id"] == offer_in
+
+    # Ferns says no to Maple, and nothing is signed for it.
+    no = ferns.client.post("/account/accept", json={
+        "piece": theirs, "offer": offer_back, "decision": "refuse"})
+    assert no.status_code == 200, no.text
+    assert no.json()["refused"] is True and no.json()["answer"]["ok"] is False
+
+    # Ferns finishes Maple's yes from the leg it was sent.
+    shown = ferns.client.post("/account/fill", json={"leg": answer["leg"]})
+    assert shown.status_code == 200, shown.text
+    shown = shown.json()
+    assert shown["seller"] == maple.address
+    done = ferns.client.post("/account/fill/sign", json={
+        "leg": answer["leg"], "raw": shown["raw"], "pubkey": ferns.pubkey.hex(),
+        "signatures": [_sign(ferns.secret, bytes.fromhex(d)).hex()
+                       for d in shown["sighashes"]]})
+    assert done.status_code == 200, done.text
+    _settle(*node)
+
+    assert index.inscription(ours)["owner"] == ferns.address, "yes moved the piece"
+    assert index.inscription(theirs)["owner"] == ferns.address, "no kept it"

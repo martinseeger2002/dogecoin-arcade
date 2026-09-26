@@ -8987,8 +8987,8 @@ def create_app(state: AppState) -> FastAPI:
                         f"this address has {len(held)} coin to spend and a "
                         f"listing that says what it sells needs two of them: "
                         f"one input signs the bytes naming the piece, the other "
-                        f"signs the price. Send yourself a little change and "
-                        f"list it again.")
+                        f"signs the price. Split it first: Wallet, Send, 1 coin to your own @name, "
+                        f"then list it again.")
                 leg = fundinglib.build_leg(
                     chain.params, address, held[0], coins=price,
                     rate=fees.MIN_FEE_PER_KB, what=what,
@@ -9688,7 +9688,7 @@ def create_app(state: AppState) -> FastAPI:
                         f"this address has {len(held)} coin to spend and an "
                         f"answer is a leg, which needs two of them: one input "
                         f"signs the bytes naming the piece, the other signs the "
-                        f"price. Send yourself a little change and answer again.")
+                        f"price. Split it first -- Wallet, Send, 1 coin to your own @name -- and answer again.")
                 leg = fundinglib.build_leg(
                     chain.params, address, held[0], coins=price,
                     rate=fees.MIN_FEE_PER_KB, what=what,
@@ -11207,8 +11207,10 @@ def create_app(state: AppState) -> FastAPI:
             complaint = _check_address(to, mainnet=chain.is_mainnet)
             if complaint:
                 raise ValueError(complaint)
-            if to == address:
-                raise ValueError("that is this account's own address")
+            # Coins to your own address are allowed: it is how one coin becomes
+            # two, which a listing and an answer both need, and both refusals say
+            # to do exactly this. It used to be refused here, which left that
+            # advice with no way to follow it (plan item 3's test, 2026-09-26).
             amount = parse_amount(str(said.get("amount", "")), True)
             if amount <= 0:
                 raise ValueError("a payment of nothing is not a payment")

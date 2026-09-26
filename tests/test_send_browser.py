@@ -222,9 +222,11 @@ def test_a_tag_is_resolved_and_the_address_is_shown(funded):
         window.w.offerSend(arguments[0], arguments[1]).then(done,
           (e) => done({error: String(e.message || e)}));""",
         "@" + made["tag"], "1")
-    # Paying yourself is refused, which is how we know the tag resolved to
-    # this account's own address rather than being taken literally.
-    assert "own address" in offer.get("error", ""), offer
+    # The tag resolved to this account's own address rather than being taken
+    # literally, and the offer says so before anything is signed. (Paying
+    # yourself is allowed now: it is how one coin becomes two.)
+    assert "error" not in offer, offer
+    assert made["address"] in offer.get("what", ""), offer
 
 
 def test_a_name_nobody_holds_is_refused(funded):
