@@ -54,6 +54,32 @@
     <span id="picked-build-text"></span>
     <span id="build-pace" style="display:block;margin-top:4px"></span>
     <span id="build-sizes" class="sizes" hidden></span></p>
+  {# The set's rules, set by its #1 (2026-09-25): a new collection says
+     them here; a batch added to one already on the chain inherits them. #}
+  <div id="set-new" class="setbox" hidden>
+    <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+      <label for="set-max"><strong>Maximum supply</strong></label>
+      <input autocomplete="off" id="set-max" inputmode="numeric" value="0" style="width:110px">
+      <span class="muted" style="font-size:.85rem">0 = no limit (&infin;): add to it whenever
+        you like. A number seals the set at that size. Set by #1, for good.</span>
+    </div>
+    <details style="margin-top:8px" open>
+      <summary class="muted" style="cursor:pointer;font-size:.88rem">The collection's details,
+        written on #1</summary>
+      <div class="setgrid">
+        <input autocomplete="off" id="set-description" placeholder="description" maxlength="400">
+        <input autocomplete="off" id="set-url" placeholder="website (https://…)" maxlength="200">
+        <input autocomplete="off" id="set-artist" placeholder="artist" maxlength="80">
+        <input autocomplete="off" id="set-icon" placeholder="thumbnail: an inscription id of yours (optional)" maxlength="120">
+      </div>
+    </details>
+  </div>
+  <div id="set-more" class="setbox msg info" hidden>
+    <p id="set-more-says" style="margin:0 0 8px"></p>
+    <label style="display:flex;gap:8px;align-items:center;font-size:.9rem">
+      <input type="checkbox" id="set-renumber" checked> Continue the numbering after the
+      pieces already on the chain (a new build starts at #1 again)</label>
+  </div>
   <div class="row" id="run-go" hidden>
     <div style="flex:1" class="muted" id="run-says"
       style="font-size:.86rem"></div>
@@ -397,6 +423,47 @@ async function inscribeTheFile() {
   } catch (e) { say(String(e.message || e)); }
 }
 
+/* -- the set's rules: new, or added to one of yours (2026-09-25) -- */
+
+let setCap = null;          // what the approval card says the set is sealed at
+async function lookUpSet(files) {
+  $("set-new").hidden = true; $("set-more").hidden = true;
+  const meta = files.find((f) => f.name === "_metadata.json")
+            || files.find((f) => /\.json$/i.test(f.name));
+  if (!meta) return;
+  let first = null;
+  try {
+    const said = JSON.parse(await meta.text());
+    first = Array.isArray(said) ? said.slice().sort((a, b) => (a.edition || 0) - (b.edition || 0))[0] : said;
+  } catch (e) { return; }
+  if (!first) return;
+  const setName = String((first.collection && first.collection.name) || first.collection
+    || String(first.name || "").replace(/\s*#\s*\d+\s*$/, "")).trim();
+  // Prefilled from the build, where HashLips already says it.
+  $("set-description").value = String(first.description || "");
+  $("set-url").value = /^https?:\/\//i.test(String(first.external_url || "")) ? first.external_url : "";
+  let mine = null;
+  try {
+    const me = await (await fetch("/account", {cache: "no-store"})).json();
+    const row = (me.chains || []).find((c) => c.network === CHAIN.network) || {};
+    if (row.address && setName) {
+      const sets = await (await fetch("/r/collections?creator="
+                                      + encodeURIComponent(row.address))).json();
+      mine = (sets || []).find((c) => c.name === setName) || null;
+    }
+  } catch (e) { mine = null; }
+  if (mine) {
+    setCap = mine.supply || 0;
+    $("set-more-says").textContent = `Adding to your collection ${setName}: `
+      + `${commas(mine.count)} of ${mine.supply ? commas(mine.supply) : "\u221e"} are on the `
+      + "chain. The details and the maximum supply were set by #1 and can't be edited.";
+    $("set-more").hidden = false;
+  } else {
+    setCap = null;
+    $("set-new").hidden = false;
+  }
+}
+
 /* -- a run of them, one transaction at a time -- */
 
 /** This account's inscription allowance on this node: {limit, left}. */
@@ -508,12 +575,24 @@ async function autoRun(run) {
     await runs();
   }
 }
-function showed(row) {
-  $("run-go").hidden = !row;
+let shownRun = null;          // the row the panel is about, for its name
+function showed(row, finished = null) {
+  shownRun = row;
+  // A finished run keeps its line until the next upload, so somebody who comes
+  // back sees it done rather than an empty panel (filming, 2026-09-25).
+  $("run-go").hidden = !row && !finished;
+  $("run-piece").hidden = $("run-stop").hidden = !row;
   $("run-piece").dataset.run = row ? row.run : "";
   $("run-stop").dataset.run = row ? row.run : "";
-  $("run-page").href = row ? `/me/run/${row.run}` : "#";
-  if (!row) return;
+  $("run-page").href = row ? `/me/run/${row.run}`
+                     : finished ? `/me/run/${finished.run}` : "#";
+  if (!row) {
+    if (finished) {
+      $("run-says").textContent = `${finished.name}: all ${commas(finished.items)} `
+        + "are on the chain. They show up as their blocks are mined.";
+    }
+    return;
+  }
   runButtons(row.run);
   if (autoOf(row.run) && !autoOf(row.run).paused && running !== row.run) {
     setTimeout(() => autoRun(row.run), 0);    // approved earlier: carry on
@@ -541,8 +620,9 @@ function showed(row) {
 async function runs() {
   try {
     const said = await (await fetch("/account/run", {method: "POST"})).json();
-    showed((said.runs || []).find((row) => row.status !== "done"
-                                      && row.status !== "stopped") || null);
+    const all = said.runs || [];
+    showed(all.find((row) => row.status !== "done" && row.status !== "stopped") || null,
+           all.find((row) => row.status === "done") || null);
   } catch (e) { say(String(e.message || e)); }
 }
 
@@ -584,6 +664,7 @@ async function measureBuild() {
   const jsons = files.filter((f) => /\.json$/i.test(f.name));
   const meta = jsons.some((f) => f.name === "_metadata.json");
   const pics = files.filter(arcadeIsImage).length;
+  lookUpSet(files);
   // The pace, said when the folder is chosen rather than after it is uploaded
   // (filming, 2026-09-25: the line came later and Start cleared it).
   $("build-pace").textContent = "";
@@ -719,6 +800,12 @@ $("run-start").onclick = async () => {
   // presses the button would cost more than re-encoding it a second time.
   for (const file of files) form.append("files", await buildFile(file));
   form.append("run_chain", CHAIN.network);
+  if (!$("set-new").hidden) {
+    form.append("max_supply", $("set-max").value.trim() || "0");
+    for (const f of ["description", "url", "artist", "icon"])
+      form.append(f, $("set-" + f).value.trim());
+  }
+  form.append("numbering", $("set-renumber").checked ? "continue" : "keep");
   try {
     const asked = await fetch("/account/run/start",
                               {method: "POST", body: form});
@@ -729,7 +816,10 @@ $("run-start").onclick = async () => {
       ? ` This node takes ${commas(room.limit)} inscriptions an hour per account, `
         + `so about ${Math.ceil(start.items / room.limit)} hours.`
       : "";
-    news(`Written down: ${start.name}, ${commas(start.items)} items, one `
+    setCap = start.supply || 0;
+    news((start.continues ? `Added to ${start.name}, after the ${commas(start.on_chain)} `
+          + "already on the chain. " : "")
+      + `Written down: ${start.name}, ${commas(start.items)} items, one `
       + `transaction each, about ${(start.fee / 100000000).toFixed(8)} in `
       + "fees. Nothing is on the chain yet." + pace);
     showed({run: start.run, name: start.name, items: start.items, sent: 0,
@@ -764,15 +854,23 @@ $("run-piece").onclick = async () => {
     const left = Number(first.items) - Number(first.sent);
     const room = await allowance();
     const shown = await wallet.checked(first, held);
-    const ok = await askYes(`Inscribe all ${commas(left)} of ${first.name}?`,
-      `${commas(first.sent)} of ${commas(first.items)} are on the chain. The other `
-      + `${commas(left)} go up one transaction each (this one is ${commas(first.bytes)} `
+    // The run's name, not the first piece's: "…of Skull Squad", not "…of Skull
+    // Squad #1" (filming, 2026-09-25).
+    const setName = (shownRun && shownRun.name) || first.name;
+    const ok = await askYes(`Inscribe all ${commas(left)} of ${setName}?`,
+      (Number(first.sent)
+        ? `${commas(first.sent)} of ${commas(first.items)} are on the chain already. The `
+          + `other ${commas(left)}`
+        : `None are on the chain yet. All ${commas(left)}`)
+      + ` go up one transaction each (this one is ${commas(first.bytes)} `
       + `bytes for ${shown.coinsOf(shown.fee)} in fees), signed here by themselves, `
       + "one after another."
       + (room && room.limit > 0 && left > room.left
          ? ` This node takes ${commas(room.limit)} an hour per account, so it pauses when `
            + `the hour's are used and carries on by itself \u2014 about `
            + `${Math.ceil(left / room.limit)} hours in all.` : "")
+      + (setCap === null ? "" : setCap ? ` The set is sealed at ${commas(setCap)}.`
+                                        : " The set has no limit (\u221e).")
       + " Keep this tab open; if it closes, opening it again carries on. Pause or Stop "
       + "at any time.", "Start");
     if (!ok) return;
@@ -805,6 +903,16 @@ $("run-stop").onclick = async () => {
 
 tellItAgain();
 runs();
+// The panel asks again on its own, and whenever the page hears a block. A tab
+// that sent the last three pieces of a run by itself once sat on "9 of 12, next
+// is #10" with Pause showing, the run long finished (filming, 2026-09-25); one
+// answer from /account/run puts it right, so it is asked for rather than
+// trusted to have arrived. Not while this tab is sending: autoRun asks when it
+// is done.
+const recheck = () => { if (!running && !document.hidden) runs(); };
+setInterval(recheck, 30000);
+document.addEventListener("visibilitychange", recheck);
+document.addEventListener("arcade:changed", recheck);
 document.body.dataset.inscribeReady = "yes";
 </script>
 
@@ -815,3 +923,8 @@ document.body.dataset.inscribeReady = "yes";
 .askcard h3{margin-top:0}
 .askcard .row{gap:8px;justify-content:flex-end}
 </style>
+<style>
+.setbox{margin:10px 0}
+.setgrid{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));margin-top:8px}
+</style>
+

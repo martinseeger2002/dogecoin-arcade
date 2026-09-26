@@ -33,7 +33,7 @@
     {% endif %}
     <div class="row" style="align-items:baseline">
       <strong>{{ c.collection }}</strong>
-      <span class="muted" style="margin-left:auto">{{ "{:,}".format(c.count) }} item{{ '' if c.count == 1 else 's' }}</span>
+      <span class="muted" style="margin-left:auto">{{ "{:,}".format(c.count) }} of {{ "{:,}".format(c.supply) if c.supply else "∞" }}</span>
     </div>
     <table>
       <tr><td class="muted" style="width:74px">By</td>

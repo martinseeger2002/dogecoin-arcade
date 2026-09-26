@@ -184,6 +184,8 @@ def describe_collection(row: dict) -> dict:
         "lastedition": row["last_edition"],
         "cover": row.get("cover_txid"),
         "covertype": row.get("cover_type"),
+        # The size #1 sealed the set at; null for a set with no limit.
+        "supply": row.get("supply"),
     }
 
 

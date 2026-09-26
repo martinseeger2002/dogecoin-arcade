@@ -20,14 +20,12 @@
     {% if about.description %}
       <p style="margin:0 0 6px;max-width:60ch">{{ about.description }}</p>
     {% endif %}
+    {% if about.artist %}<p class="muted" style="margin:0 0 6px">Art by {{ about.artist }}</p>{% endif %}
+    {# No links to other platforms (2026-09-25): the collection's own
+       website, and nothing that sends people to Twitter, Discord or Telegram. #}
     <div class="row" style="gap:8px">
       {% if about.url %}<a class="btn ghost small" href="{{ about.url }}"
          rel="noopener noreferrer nofollow" target="_blank">Website</a>{% endif %}
-      {% if about.twitter %}<a class="btn ghost small" rel="noopener noreferrer nofollow" target="_blank"
-         href="{{ about.twitter if about.twitter.startswith('http') else
-                  'https://x.com/' ~ about.twitter.lstrip('@') }}">Twitter</a>{% endif %}
-      {% if about.discord %}<a class="btn ghost small" href="{{ about.discord }}"
-         rel="noopener noreferrer nofollow" target="_blank">Discord</a>{% endif %}
       <a class="btn ghost small" href="/collections/{{ summary.creator }}/{{ summary.collection|urlencode }}">Traits</a>
       <a class="btn ghost small" href="/exchange?tab=market">All collections</a>
     </div>
@@ -43,10 +41,12 @@
   {# A set says how big it is on its own #1, and nothing joins it once it
      holds that many, so "17 of 100" is a fact off the chain rather than a
      promise from a website (D-120). #}
-  <div class="stat"><b>{{ "{:,}".format(summary.count) }}{% if about.supply %}<span
-        class="muted" style="font-size:.7em"> / {{ "{:,}".format(about.supply) }}</span>{% endif %}</b>
+  {# No supply on #1 is a set that never seals and can keep growing: "of ∞"
+     (2026-09-25). #}
+  <div class="stat"><b>{{ "{:,}".format(summary.count) }}<span class="muted"
+        style="font-size:.7em"> of {{ "{:,}".format(about.supply) if about.supply else "∞" }}</span></b>
     <span>{% if about.supply and summary.count >= about.supply %}Pieces &middot; complete
-          {% else %}Pieces{% endif %}</span></div>
+          {% elif about.supply %}Pieces{% else %}Pieces &middot; no limit{% endif %}</span></div>
   <div class="stat"><b>{% if traded %}{{ "%.2f"|format(volume) }}{% else %}&mdash;{% endif %}</b>
     <span>Volume &middot; {{ traded }} sold</span></div>
 </div>
