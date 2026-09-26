@@ -1120,6 +1120,20 @@ export async function addToBook(tag) {
 
 export async function removeFromBook(tag) {
   await awaited((await bookShelf("readwrite")).objectStore(BOOK).delete(tag));
+  // Remembered with a time, so a copy on another device does not bring them back
+  // (syncMailbox): a later add wins over an earlier removal.
+  gone(BOOK_GONE, tag, Date.now());
+}
+
+const BOOK_GONE = "arcade.book.gone", BLOCK_GONE = "arcade.blocked.gone", BLOCKED = "arcade.blocked";
+function readJson(key, empty) {
+  try { const v = JSON.parse(localStorage.getItem(key) || "null"); return v || empty; }
+  catch (e) { return empty; }
+}
+function gone(key, id, at) {
+  const all = readJson(key, {});
+  if (!all[id] || all[id] < at) all[id] = at;
+  try { localStorage.setItem(key, JSON.stringify(all)); } catch (e) {}
 }
 
 export async function findNames(text) {
@@ -1535,15 +1549,55 @@ async function _syncMailbox(me) {
       await saveGroup(group); heldIds.add(group.id); held.push(group); restored += 1;
     }
 
+    // The address book and the blocked list follow the account too (filming,
+    // 2026-09-26: Friends and Block stayed behind in one browser). Union by name /
+    // address, with removals kept as times so the newer of add and remove wins.
+    const bookGone = {...(theirs.bookGone || {}), ...readJson(BOOK_GONE, {})};
+    for (const [tag, at] of Object.entries(theirs.bookGone || {})) gone(BOOK_GONE, tag, at);
+    const shelf = await book();
+    const onShelf = new Map(shelf.map((e) => [e.tag, e]));
+    for (const entry of theirs.book || []) {
+      if (!entry || !entry.tag || onShelf.has(entry.tag)) continue;
+      if ((bookGone[entry.tag] || 0) >= (entry.added || 0)) continue;
+      await awaited((await bookShelf("readwrite")).objectStore(BOOK).put(entry));
+      onShelf.set(entry.tag, entry); restored += 1;
+    }
+    for (const [tag, entry] of [...onShelf]) {
+      if ((bookGone[tag] || 0) > (entry.added || 0)) {
+        await awaited((await bookShelf("readwrite")).objectStore(BOOK).delete(tag));
+        onShelf.delete(tag);
+      }
+    }
+    const blockGone = {...(theirs.blockedGone || {}), ...readJson(BLOCK_GONE, {})};
+    for (const [a, at] of Object.entries(theirs.blockedGone || {})) gone(BLOCK_GONE, a, at);
+    const blocked = new Map(readJson(BLOCKED, []).map((b) => [b.address, b]));
+    for (const b of theirs.blocked || []) {
+      if (b && b.address && !blocked.has(b.address) && (blockGone[b.address] || 0) < (b.at || 0)) {
+        blocked.set(b.address, b); restored += 1;
+      }
+    }
+    for (const [a, b] of [...blocked]) if ((blockGone[a] || 0) > (b.at || 0)) blocked.delete(a);
+    try { localStorage.setItem(BLOCKED, JSON.stringify([...blocked.values()])); } catch (e) {}
+
     // Written back only when this browser has something the copy lacks.
     const keptIds = new Set((theirs.letters || []).map((l) => l && l.txid));
     const keptGroups = new Set((theirs.groups || []).map((g) => g && g.id));
+    const keptBook = new Set((theirs.book || []).map((e) => e && e.tag));
+    const keptBlocked = new Set((theirs.blocked || []).map((b) => b && b.address));
+    const allGone = {book: readJson(BOOK_GONE, {}), blocked: readJson(BLOCK_GONE, {})};
     const newer = mine.some((l) => !keptIds.has(l.txid))
-               || held.some((g) => !keptGroups.has(g.id));
+               || held.some((g) => !keptGroups.has(g.id))
+               || [...onShelf.keys()].some((t) => !keptBook.has(t))
+               || [...blocked.keys()].some((a) => !keptBlocked.has(a))
+               || JSON.stringify(allGone.book) !== JSON.stringify(theirs.bookGone || {})
+               || JSON.stringify(allGone.blocked) !== JSON.stringify(theirs.blockedGone || {});
     if (!newer) return restored;
     const put = await fetch("/account/mailbox", {
       method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({blob: sealHistory(me, {letters: mine, groups: held}),
+      body: JSON.stringify({blob: sealHistory(me, {
+                              letters: mine, groups: held,
+                              book: [...onShelf.values()], bookGone: allGone.book,
+                              blocked: [...blocked.values()], blockedGone: allGone.blocked}),
                             base: kept.updated || 0}),
     });
     if (put.status !== 409) return restored;     // 409: another device wrote first

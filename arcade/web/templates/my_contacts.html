@@ -2,8 +2,8 @@
 {% block title %}Address book · DogecoinArcade{% endblock %}
 {% block body %}
 <h1>Address book</h1>
-<p class="sub">People you know, by the name they claimed on the chain. Stored
-  only in this browser.</p>
+<p class="sub">People you know, by the name they claimed on the chain. Kept
+  encrypted with your own key, so it follows you to any browser you sign in on.</p>
 
 <div class="msg err" id="trouble" hidden></div>
 <div class="msg ok" id="news" hidden></div>
@@ -90,10 +90,11 @@
 </div>
 
 <div class="note" style="margin-top:20px">
-  This book never leaves this browser. It is not published, not on any chain,
-  and not visible to anyone you message &mdash; this node cannot see it either,
-  which is the point: a node that held everybody's address book would know who
-  talks to whom without opening a single message.
+  This book is not published, not on any chain, and not visible to anyone you
+  message. A copy follows your account to other browsers, encrypted with a key
+  only your words can make, so this node keeps it without being able to read
+  it: a node that could read everybody's address book would know who talks to
+  whom without opening a single message.
 </div>
 
 <style>
@@ -321,6 +322,14 @@ const already = await wallet.opened(CHAIN);
 if (already) {
   keys = already;
   me = await mail.identity(keys.phrase);
+  // The book (and the blocked list) follow the account: bring in what another
+  // browser added before drawing (messaging.js syncMailbox, 2026-09-26).
+  try {
+    if (await mail.syncMailbox(me)) {
+      await drawBook();
+      document.dispatchEvent(new CustomEvent("arcade:blocked"));
+    }
+  } catch (e) { /* the book as this browser has it */ }
 }
 await drawMe();
 document.body.dataset.contactsReady = "yes";

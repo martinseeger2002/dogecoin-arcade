@@ -232,3 +232,27 @@ def test_a_search_puts_the_likelier_name_first(tmp_path):
     # The @ changes nothing, and neither does case.
     assert index.search_tags("@MAR") == index.search_tags("mar")
     assert index.search_tags("  ") == []
+
+
+def test_a_name_with_an_underscore_is_found(tmp_path):
+    """"arcade_demo" could not be found: the search deleted "_" to stop it being a
+    wildcard, and searched for "arcadedemo" (filming, 2026-09-26). It is escaped
+    now, and still is no wildcard: "arcade_demo" does not find "arcadexdemo"."""
+    from arcade.config import NETWORKS
+    from arcade.db import Database
+    from arcade.ledger import LedgerIndex
+    from arcade.state import install_schema
+
+    path = tmp_path / "ledger.sqlite"
+    db = Database(path)
+    install_schema(db)
+    for n, tag in enumerate(("arcade_demo", "arcadexdemo", "arcade_buyer")):
+        db.conn.execute("INSERT INTO tag(tag,address,claimed_txid,block_height,"
+                        "position) VALUES(?,?,?,?,?)",
+                        (tag, f"address{n}", f"{n:064x}", 100 + n, 0))
+    db.conn.commit()
+    db.close()
+    index = LedgerIndex(path, NETWORKS["regtest"], rpc_factory=lambda: None)
+    assert [t["tag"] for t in index.search_tags("arcade_demo")] == ["arcade_demo"]
+    assert [t["tag"] for t in index.search_tags("arcade_")] == ["arcade_demo", "arcade_buyer"]
+    assert index.search_tags("100%") == []

@@ -396,12 +396,16 @@ class LedgerIndex:
         wanted = str(text or "").strip().lstrip("@").lower()
         if not wanted:
             return []
-        like = wanted.replace("%", "").replace("_", "")
+        # Escaped, not deleted: dropping "_" turned "arcade_demo" into
+        # "arcadedemo", which matches nothing, so no name with an underscore
+        # could be found (filming, 2026-09-26).
+        like = (wanted.replace("\\", "\\\\").replace("%", "\\%")
+                .replace("_", "\\_"))
         with self.open() as db:
             return [dict(row) for row in db.conn.execute(
-                "SELECT * FROM tag WHERE tag LIKE ? "
+                "SELECT * FROM tag WHERE tag LIKE ? ESCAPE '\\' "
                 "ORDER BY CASE WHEN tag = ? THEN 0 "
-                "              WHEN tag LIKE ? THEN 1 ELSE 2 END, "
+                "              WHEN tag LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END, "
                 "         LENGTH(tag), tag LIMIT ?",
                 (f"%{like}%", wanted, f"{like}%", max(1, min(limit, 100))))]
 

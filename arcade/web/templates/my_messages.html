@@ -489,6 +489,18 @@ async function drawConversation() {
     $("convo-sub").textContent = thread.address || "";
     $("to-book").textContent = thread.inBook ? "Address book"
                                              : "Add to address book";
+    // Added straight from here (filming, 2026-09-26): the thread already knows
+    // their tag, and the book looks the rest up on the chain, as its search does.
+    $("to-book").onclick = async (event) => {
+      if (thread.inBook || !thread.tag) return;          // just go to the book
+      event.preventDefault();
+      try {
+        await mail.addToBook(thread.tag);
+        $("to-book").textContent = "In your address book \u2713";
+        thread.inBook = true;
+        await drawThreads();
+      } catch (e) { say(String(e.message || e)); }
+    };
     $("cost-note").textContent =
       `Encrypted to ${thread.tag ? "@" + thread.tag : "them"} only. Costs a `
       + "transaction fee and a little dust, which is paid to them and is how "
