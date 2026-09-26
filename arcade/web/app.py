@@ -490,7 +490,8 @@ def the_door(state: AppState):
             # frame (opaque origin, no cookie) cannot say which. It is told the
             # wallet is off -- the answer a page already handles -- rather than
             # whose it is (a tester, 2026-09-26).
-            if doorlib.speaks_for_the_operator(path) and request.method != "OPTIONS" and (
+            if doorlib.speaks_for_the_operator(path) and path.rstrip("/") != "/r/wallet" \
+                    and request.method != "OPTIONS" and (
                     state.public or doorlib.from_outside(
                         request.headers, request.headers.get("host", ""),
                         state.public_hosts)):
@@ -2851,14 +2852,13 @@ def create_app(state: AppState) -> FastAPI:
                 entry["pieces"] = index.inscriptions(owners=[where], limit=24)
             except Exception:
                 pass
+            # From the index's own watch of the address, as every account page
+            # reads a balance: the node's wallet `listunspent` only knows the
+            # node's addresses, so every account read 0.00 here (the operator,
+            # 2026-09-26: "it should show that user profile balance").
             try:
-                with context.rpc() as rpc:
-                    entry["coins"] = sum(
-                        float(row.get("amount", 0))
-                        for row in (rpc.call("listunspent", 1, 9_999_999,
-                                             [where]) or []))
-            except HTTPException:
-                raise
+                with contextlib.closing(state.token_index(context).open()) as db:
+                    entry["coins"] = utxoslib.balance(db, where) / 100_000_000
             except Exception:
                 entry["coins"] = None     # their balance is the node's to know
             holdings.append(entry)
@@ -4829,7 +4829,7 @@ def create_app(state: AppState) -> FastAPI:
         return contentlib._json({"id": row["txid"], "routes": pageapi.declared(row)})
 
     @app.post("/r/ask")
-    def r_ask(body: dict = Body(default={})):
+    def r_ask(request: Request, body: dict = Body(default={})):
         """One page asking another a question.
 
         Held here, answered here: no message, no fee, no wait. Held
@@ -4862,7 +4862,16 @@ def create_app(state: AppState) -> FastAPI:
             except pageapi.ApiError as exc:
                 return contentlib._json({"error": str(exc)}, status=400)
         # Somebody else's. Ask their node, and hand the page the receipt so it
-        # can listen for the answer.
+        # can listen for the answer -- but only for the operator's own pages.
+        # That question is a transaction this node's wallet pays for, and from
+        # outside anybody could loop it (one anonymous POST sent 9be3f7f7...,
+        # 2026-09-26). An account's page asks with its own key, via the
+        # frame's arcade.node door, which the account signs and pays for.
+        if state.public or doorlib.from_outside(
+                request.headers, request.headers.get("host", ""), state.public_hosts):
+            return contentlib._json(
+                {"error": "that piece is held on another node, and this public "
+                          "node does not pay to ask it for you"}, status=403)
         try:
             to = _key_at(row["owner"])
             sent = _page_send(str(body.get("from") or row["txid"]),
@@ -5034,28 +5043,53 @@ def create_app(state: AppState) -> FastAPI:
             "picture": face, "content": f"/content/{face}" if face else "",
         })
 
-    @app.get("/r/wallet")
-    def r_wallet():
-        """This wallet, as an inscribed page sees it.
+    #: Viewer tickets: which account is looking at which inscribed page. Minted
+    #: when an account opens a piece's page and put on the frame's URL, because
+    #: the frame is an opaque origin and sends no cookie -- so without one the
+    #: page API cannot know who is looking, and it used to answer with the
+    #: operator's own wallet to everybody (a tester / 2026-09-26: "it
+    #: should be showing the user who is viewing the NFT's balance, not the node
+    #: balance"). A ticket names one address on one chain for one page, for an
+    #: hour, and says nothing a chain explorer could not -- except that this
+    #: viewer is that address, which is what the page is being told on purpose.
+    _viewer_tickets: dict[str, tuple[str, str, str, float]] = {}
+    VIEWER_TICKET_SECONDS = 3600
 
-        A balance is public -- anyone with an index can look one up -- but
-        WHICH address is yours is not, and that is the one thing a page cannot
-        learn from the chain. So it can be turned off, and what it says when it
-        is off is that it is off, rather than that there is nothing there.
+    def _viewer_ticket(address: str, network: str, txid: str) -> str:
+        now = time.time()
+        for key in [k for k, v in _viewer_tickets.items() if v[3] < now]:
+            _viewer_tickets.pop(key, None)
+        if len(_viewer_tickets) > 20000:
+            _viewer_tickets.clear()
+        ticket = secrets.token_urlsafe(18)
+        _viewer_tickets[ticket] = (address, network, txid, now + VIEWER_TICKET_SECONDS)
+        return ticket
+
+    def _viewer_of(request: Request, chain) -> str:
+        """The address of the account looking at the page asking, or "".
+
+        The ticket rides on the frame's URL (`?v=`), and the page's own fetch
+        carries that URL as its Referer (content is served with
+        `Referrer-Policy: unsafe-url`, and its CSP lets it fetch only from this
+        node, so the URL goes nowhere else). A page may also pass `?v=` itself.
         """
-        if not state.inscription_wallet_access:
-            return contentlib._json(
-                {"error": "this wallet does not tell inscriptions who is looking"},
-                status=403)
-        chain, index = _token_chain()
-        addresses, spendable = [], None
-        try:
-            with chain.rpc() as rpc:
-                addresses = _ledger_addresses(rpc)
-                spendable = float(rpc.call("getbalance") or 0)
-        except Exception:
-            pass
+        from urllib.parse import parse_qs, urlparse
+        ticket = request.query_params.get("v", "")
+        page = ""
+        refer = request.headers.get("referer", "")
+        if refer:
+            said = urlparse(refer)
+            ticket = ticket or (parse_qs(said.query).get("v") or [""])[0]
+            if said.path.startswith("/content/"):
+                page = said.path[len("/content/"):].split("/")[0].split("i")[0]
+        held = _viewer_tickets.get(ticket or "")
+        if not held or held[3] < time.time() or held[1] != chain.network:
+            return ""
+        if page and page != held[2]:
+            return ""                      # one page's ticket, not every page's
+        return held[0]
 
+    def _wallet_answer(chain, index, addresses: list[str], spendable) -> dict:
         # One query for every address this wallet has, then summed per token:
         # a wallet with coins on fifteen addresses holds one balance of each
         # token, not fifteen, and showing the pieces would be showing the
@@ -5078,7 +5112,7 @@ def create_app(state: AppState) -> FastAPI:
                 owned += index.inscription_count(owner=address)
             except Exception:
                 continue
-        return contentlib._json({
+        return {
             # One chain, said out loud. An inscription lives on exactly one, and
             # a page that asked for balances and silently got the other chain's
             # would be showing somebody a number about a wallet they do not have
@@ -5091,7 +5125,51 @@ def create_app(state: AppState) -> FastAPI:
                      if hasattr(chain.params, "ticker") else ""},
             "tokens": tokens,
             "inscriptions": owned,
-        })
+        }
+
+    @app.get("/r/wallet")
+    def r_wallet(request: Request):
+        """The wallet looking at this page, as an inscribed page sees it.
+
+        A balance is public -- anyone with an index can look one up -- but
+        WHICH address is the viewer's is not, and that is the one thing a page
+        cannot learn from the chain. From outside, the viewer is the signed-in
+        account the frame's ticket names, and nobody else: a stranger with no
+        account gets "off", never the operator. On the operator's own machine
+        it is the operator's wallet, as it always was, and can be turned off.
+        """
+        chain, index = _token_chain()
+        outside = state.public or doorlib.from_outside(
+            request.headers, request.headers.get("host", ""), state.public_hosts)
+        if outside:
+            address = _viewer_of(request, chain)
+            if not address:
+                return contentlib._json(
+                    {"wallet": "off",
+                     "error": "nobody signed in is looking at this page"},
+                    status=403)
+            spendable = None
+            try:
+                with contextlib.closing(index.open()) as db:
+                    spendable = utxoslib.balance(db, address) / 100_000_000
+            except Exception:
+                pass
+            return contentlib._json(
+                {**_wallet_answer(chain, index, [address], spendable),
+                 "wallet": "account"})
+        if not state.inscription_wallet_access:
+            return contentlib._json(
+                {"error": "this wallet does not tell inscriptions who is looking"},
+                status=403)
+        addresses, spendable = [], None
+        try:
+            with chain.rpc() as rpc:
+                addresses = _ledger_addresses(rpc)
+                spendable = float(rpc.call("getbalance") or 0)
+        except Exception:
+            pass
+        return contentlib._json({**_wallet_answer(chain, index, addresses, spendable),
+                                 "wallet": "operator"})
 
 
     # --- approvals: sends that a page or a bot asked for ----------------------
@@ -5981,8 +6059,12 @@ def create_app(state: AppState) -> FastAPI:
                         o["price"] = swaplib.describe_leg(_take_json(o, index))
             except Exception:
                 my_offers = []
+        # Who is looking, for the page's own /r/wallet: a ticket on the frame's
+        # URL, since the frame itself carries no cookie.
+        ticket = _viewer_ticket(here, chain.network, row["txid"]) \
+            if viewer == "account" and here else ""
         return render(request, "inscription_view.html", row=row, chain=chain,
-                      my_offers=my_offers,
+                      my_offers=my_offers, ticket=ticket,
                       listed=listed,
                       tag=named.get(row["owner"]), sale=sale,
                       creator_tag=named.get(row["creator"]),

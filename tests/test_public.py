@@ -639,3 +639,81 @@ def test_the_pages_host_never_speaks_for_the_operator_from_outside(client):
         assert local.status_code != 403 or "wallet" not in local.json()
     finally:
         state.set_setting("pages_host", "")
+
+
+def test_the_page_api_wallet_is_whoever_is_looking(client):
+    """/r/wallet answers as the signed-in account viewing the piece, not the
+    node (2026-09-26: "it should be showing the user who is viewing
+    the NFT's balance, not the node balance"). The frame carries a ticket on
+    its URL, which its fetches bring back as their Referer."""
+    import re
+
+    from test_me_page import _seat
+
+    app, state = client
+    viewer = "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg"
+    _seat(app)
+    app.post("/account/address", json={"address": viewer}, headers=LOCAL)
+    index = state.token_index(state.token_chain)
+    txid, other = "ab" * 32, "cd" * 32
+    with index.open() as db:
+        for t, n in ((txid, 901), (other, 902)):
+            db.conn.execute(
+                "INSERT OR REPLACE INTO inscription(txid,number,creator,owner,block_height,"
+                "position,content_type,content_len,sha256,json,chunks,content) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (t, n, "nMe", "nSomebodyElse", 100, 0, "text/html", 2, "ab" * 32,
+                 None, 1, b"hi"))
+        db.conn.commit()
+    state.set_setting("pages_host", "pages.example")
+    was, state.public = state.public, True
+    try:
+        page = app.get(f"/inscriptions/{txid}/view").text
+        found = re.search(rf"/content/{txid}\?v=([A-Za-z0-9_-]+)", page)
+        assert found, "the frame carries the viewer's ticket"
+        ticket = found.group(1)
+        edge = {"host": "pages.example", "cf-ray": "abc"}
+
+        mine = app.get("/r/wallet", headers={
+            **edge, "referer": f"https://pages.example/content/{txid}?v={ticket}"})
+        assert mine.status_code == 200, mine.text
+        assert mine.json()["addresses"] == [viewer]
+        assert mine.json()["wallet"] == "account"
+
+        elsewhere = app.get("/r/wallet", headers={
+            **edge, "referer": f"https://pages.example/content/{other}?v={ticket}"})
+        assert elsewhere.status_code == 403, "one page's ticket, not every page's"
+        assert app.get("/r/wallet", headers=edge).json()["wallet"] == "off"
+        assert app.get("/r/wallet", headers={**edge, "referer":
+                       f"https://pages.example/content/{txid}?v=forged"}).status_code == 403
+    finally:
+        state.public = was
+        state.set_setting("pages_host", "")
+
+    served = app.get(f"/content/{txid}")
+    assert served.headers.get("referrer-policy") == "unsafe-url"
+    assert "connect-src 'self'" in served.headers["content-security-policy"]
+
+
+def test_a_stranger_cannot_make_the_node_pay_to_ask_another(client, monkeypatch):
+    """/r/ask for a piece held elsewhere is a node-to-node message this node's
+    wallet pays for; from outside it is refused rather than sent."""
+    app, state = client
+    index = state.token_index(state.token_chain)
+    txid = "ef" * 32
+    with index.open() as db:
+        db.conn.execute(
+            "INSERT OR REPLACE INTO inscription(txid,number,creator,owner,block_height,"
+            "position,content_type,content_len,sha256,json,chunks,content) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (txid, 903, "nMe", "nSomebodyElse", 100, 0, "text/html", 2, "ab" * 32,
+             None, 1, b"hi"))
+        db.conn.commit()
+    state.set_setting("pages_host", "pages.example")
+    try:
+        answer = app.post("/r/ask", json={"inscription": txid, "route": "x"},
+                          headers={"host": "pages.example", "cf-ray": "abc"})
+    finally:
+        state.set_setting("pages_host", "")
+    assert answer.status_code == 403, answer.text
+    assert "does not pay" in answer.json()["error"]
