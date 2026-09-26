@@ -24,7 +24,7 @@
       {% if who.tag %}
         <a href="/u/{{ who.tag }}" style="font-weight:600">@{{ who.tag }}</a>
       {% else %}
-        <span class="muted mono" style="font-size:.82rem">{{ p.author[:12] }}…</span>
+        <span style="font-weight:600">{{ p.author|who }}</span>
       {% endif %}
       <div class="muted" style="font-size:.78rem">
         {{ when(p.block_time) if p.block_time else 'just now' }}

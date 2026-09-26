@@ -196,7 +196,7 @@ function when(seconds) {
 
 const nameOf = (thread) => thread.group ? "\u{1F465} " + (thread.group.name || "A group")
   : thread.tag ? "@" + thread.tag
-  : (thread.address || "Unknown sender");
+  : (thread.address ? thread.address.slice(0, 12) + "\u2026" : "Unknown sender");
 
 /* A group member as the page prints them: their @tag, else a short address. */
 const memberName = (m) => m.tag ? "@" + m.tag

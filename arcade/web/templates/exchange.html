@@ -34,8 +34,7 @@
     <tr><td class="muted" style="width:74px">Sold by</td>
         <td class="mono" style="word-break:break-all">
           {%- if s.mine %}<strong>you</strong>
-          {%- elif tags.get(s.seller) %}<strong>@{{ tags[s.seller] }}</strong>
-          {%- else %}{{ s.seller }}{% endif %}</td></tr>
+          {%- else %} {{ s.seller|who }}{% endif %}</td></tr>
   </table>
   <div class="row" style="margin-top:8px">
     <a class="btn {{ 'ghost' if s.mine else '' }} small"
@@ -76,15 +75,14 @@
           <div class="muted" style="font-size:.8rem">
             {%- if b.pending %}in the mempool{% else %}block {{ "{:,}".format(b.block_height) }}{% endif %}</div></td>
         <td class="mono" style="font-size:.8rem;word-break:break-all">
-          {%- if tags.get(b.buyer) %}<strong>@{{ tags[b.buyer] }}</strong>
-          {%- else %}{{ b.buyer }}{% endif %}</td>
+           {{ b.buyer|who }}</td>
         <td style="text-align:right;white-space:nowrap">
           {% if b.settled %}
             <span class="pill ok">sold</span>
             <div class="mono muted" style="font-size:.76rem">{{ b.swap_txid[:12] }}…</div>
           {% elif b.accepted %}
             <span class="muted">accepted &mdash; waiting for
-              {% if tags.get(b.buyer) %}@{{ tags[b.buyer] }}{% else %}their wallet{% endif %}
+               {{ b.buyer|who }}
               to sign</span>
             <div class="muted" style="font-size:.76rem">held until {{ b.until }}</div>
           {% elif b.held_for %}
@@ -95,12 +93,12 @@
                     data-offer="{{ b.txid }}" data-piece="{{ b.inscription }}"
                     data-give="{{ b.give }}"
                     data-price="{{ b.price }}"
-                    data-buyer="{% if tags.get(b.buyer) %}@{{ tags[b.buyer] }}{% else %}{{ b.buyer }}{% endif %}">Accept</button>
+                    data-buyer="{{ b.buyer|who_text }}">Accept</button>
             <button type="button" class="ghost small" data-refuse
                     data-offer="{{ b.txid }}" data-piece="{{ b.inscription }}"
                     data-give="{{ b.give }}"
                     data-price="{{ b.price }}"
-                    data-buyer="{% if tags.get(b.buyer) %}@{{ tags[b.buyer] }}{% else %}{{ b.buyer }}{% endif %}">Refuse</button>
+                    data-buyer="{{ b.buyer|who_text }}">Refuse</button>
           {% else %}
           <form method="post" action="/exchange/offers/{{ b.txid }}" class="row"
                 style="gap:6px;justify-content:flex-end;margin:0">
@@ -203,8 +201,7 @@
               {%- if b.edition is not none %} #{{ b.edition }}{% endif %}</div>{% endif %}</td>
           <td>{{ b.price }}</td>
           <td class="mono" style="font-size:.8rem;word-break:break-all">
-            {%- if tags.get(b.owner) %}<strong>@{{ tags[b.owner] }}</strong>
-            {%- else %}{{ b.owner }}{% endif %}</td>
+             {{ b.owner|who }}</td>
           <td class="muted" style="white-space:nowrap">
             {%- if b.pending %}in the mempool{% else %}block {{ "{:,}".format(b.block_height) }}{% endif %}</td>
           {% if viewer == 'account' %}
@@ -342,8 +339,7 @@
       <div class="body">
         <div class="name"><a href="{{ where }}">{{ c.name }}</a></div>
         <div class="who">{{ "{:,}".format(c.count) }} pieces &middot;
-          {%- if tags.get(c.creator) %} @{{ tags[c.creator] }}
-          {%- else %} {{ c.creator[:10] }}…{% endif %}</div>
+           {{ c.creator|who }}</div>
         <div class="row" style="gap:10px;margin-top:2px">
           <div><div class="who">Floor</div>
             <div class="price">{% if c.floor %}<strong>{{ "%.4f"|format(c.floor / 100000000) }}</strong>
@@ -382,8 +378,7 @@
             {%- else %}<span class="muted mono" style="font-size:.7rem">no art</span>{% endif %}</a></td>
         <td><a href="{{ where }}"><strong>{{ c.name }}</strong></a>
           <div class="muted" style="font-size:.78rem">
-            {%- if tags.get(c.creator) %}@{{ tags[c.creator] }}
-            {%- else %}<span class="mono">{{ c.creator[:12] }}…</span>{% endif %}</div></td>
+             {{ c.creator|who }}</div></td>
         <td style="text-align:right">{{ "{:,}".format(c.count) }}</td>
         <td class="mono" style="text-align:right">
           {%- if c.floor %}<strong>{{ "%.4f"|format(c.floor / 100000000) }}</strong>
@@ -426,7 +421,7 @@
             {%- if l.collection %}<a href="/exchange/collection/{{ l.creator }}/{{ l.collection|urlencode }}">{{ l.collection }}</a>
               {%- if l.edition is not none %} #{{ l.edition }}{% endif %} &middot;
             {%- endif %} asked by
-            {%- if tags.get(l.seller) %} @{{ tags[l.seller] }}{% else %} {{ l.seller[:10] }}…{% endif %}
+             {{ l.seller|who }}
             {%- if l.when %} &middot; {{ l.when|ago }}{% endif %}</div></td>
         <td style="text-align:right"><strong>{{ l.price }}</strong>
           {%- if l.pending %}<div class="muted" style="font-size:.74rem">in the mempool</div>{% endif %}</td>
@@ -479,8 +474,8 @@
           <div class="muted" style="font-size:.76rem">{{ t.when|ago }}
             {%- if t.height %} &middot; block {{ "{:,}".format(t.height) }}{% endif %}</div></td>
         <td class="muted" style="text-align:right;font-size:.78rem">
-          sold by {% if tags.get(t.seller) %}@{{ tags[t.seller] }}{% else %}{{ t.seller[:10] }}…{% endif %}
-          <div>held by {% if tags.get(t.owner) %}@{{ tags[t.owner] }}{% else %}{{ t.owner[:10] }}…{% endif %}</div></td>
+          sold by  {{ t.seller|who }}
+          <div>held by  {{ t.owner|who }}</div></td>
       </tr>
       {% endfor %}
     </table>

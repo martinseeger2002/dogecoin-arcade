@@ -54,8 +54,7 @@
     {% for row in g.rows %}
     <tr>
       <td class="mono" style="word-break:break-all">
-        {% if row.tag %}<a href="/u/{{ row.tag }}">@{{ row.tag }}</a>
-        {%- else %}{{ row.seller }}{% endif %}</td>
+        {{ row.seller|who }}</td>
       <td>{{ row.price }} coins{% if row.what %}
         <div class="muted">{{ row.what }}</div>{% endif %}</td>
       <td class="mono">{% if row.sells %}<a href="/inscriptions/{{ row.sells }}/view">{{ row.sells[:16] }}…</a>

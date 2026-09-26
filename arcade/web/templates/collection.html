@@ -4,7 +4,7 @@
 <h1>{{ summary.collection }}</h1>
 <p class="sub">{{ "{:,}".format(summary.count) }} inscription{{ '' if summary.count == 1 else 's' }}
   on {{ chain.label }} by
-  {% if tags.get(summary.creator) %}@{{ tags[summary.creator] }}{% else %}<span class="mono">{{ summary.creator }}</span>{% endif %},
+   {{ summary.creator|who }},
   editions {{ summary.first_edition }} to {{ summary.last_edition }},
   numbers #{{ "{:,}".format(summary.first_number) }} to #{{ "{:,}".format(summary.last_number) }}.</p>
 
@@ -44,8 +44,7 @@
     <table>
       <tr><td class="muted" style="width:74px">Owner</td>
           <td class="mono" style="word-break:break-all">
-            {% if tags.get(row.owner) %}<strong>@{{ tags[row.owner] }}</strong>
-            {%- else %}{{ row.owner }}{% endif %}</td></tr>
+             {{ row.owner|who }}</td></tr>
     </table>
     <div class="row" style="margin-top:8px">
       <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view">Open</a>

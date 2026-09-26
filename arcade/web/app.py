@@ -4550,6 +4550,67 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             return {}
 
+    # One name per address, remembered for a minute: a page of offers or a
+    # collection's holders asks for the same few people over and over.
+    _names: dict[str, tuple[str, float]] = {}
+
+    def _name_of(address: str) -> str:
+        """The @tag behind an address on either chain, or "" when it has none.
+
+        A mainnet address has no tag of its own: the account's tag lives on
+        the tag chain, and its key announcement names the mainnet address as
+        `other_address`, which is what joins the two.
+        """
+        address = str(address or "").strip()
+        if not address:
+            return ""
+        now = time.time()
+        kept = _names.get(address)
+        if kept and now - kept[1] < 60:
+            return kept[0]
+        tag = _tags_for([address]).get(address, "")
+        if not tag and state.store_path.exists():
+            try:
+                with state.store() as store:
+                    row = store.conn.execute(
+                        "SELECT address FROM key_announcement WHERE other_address = ? "
+                        "ORDER BY rowid DESC LIMIT 1", (address,)).fetchone()
+                if row:
+                    tag = _tags_for([row[0]]).get(row[0], "")
+            except Exception:
+                tag = ""
+        if len(_names) > 5000:
+            _names.clear()
+        _names[address] = (tag, now)
+        return tag
+
+    def _who(address: Any, short: int = 12) -> Markup:
+        """A template filter: another person, as their @tag linked to their page,
+        or a shortened address when they have not claimed one (the operator,
+        2026-09-26: "anywhere else addresses are shown replace them with @tag
+        unless it is where the user specifically needs to see his address").
+        The whole address stays in the title, to copy or compare."""
+        address = str(address or "")
+        if not address:
+            return Markup("")
+        tag = _name_of(address)
+        if tag:
+            return Markup('<a href="/u/{t}" title="{a}">@{t}</a>').format(
+                t=tag, a=address)
+        shown = address if len(address) <= short + 1 else address[:short] + "\u2026"
+        return Markup('<span class="mono" title="{a}">{s}</span>').format(
+            a=address, s=shown)
+
+    def _who_text(address: Any) -> str:
+        """The same person as plain words, for an attribute or a confirmation."""
+        address = str(address or "")
+        tag = _name_of(address)
+        return f"@{tag}" if tag else (address[:12] + "\u2026" if len(address) > 13 else address)
+
+    TEMPLATES.env.filters["who"] = _who
+    TEMPLATES.env.filters["who_text"] = _who_text
+    TEMPLATES.env.globals["name_of"] = _name_of
+
     def _tag_of_whoever_is_asking(request: Request) -> dict[str, Any]:
         """Whose name to show on a page: the reader's, not the node's.
 

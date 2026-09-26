@@ -130,8 +130,7 @@
           <td class="mono" style="text-align:right">{{ o.tokens_shown }}</td>
           <td class="mono muted" style="text-align:right">{{ o.coins_shown }}</td>
           <td class="muted" style="font-size:.74rem">
-            {%- if o.mine %}yours{% elif tags.get(o.address) %}@{{ tags[o.address] }}
-            {%- else %}{{ o.address[:6] }}…{% endif %}
+            {%- if o.mine %}yours{%- else %} {{ o.address|who }}{% endif %}
             {%- if o.pending %}<span class="pill" title="broadcast, not yet in a block">pool</span>{% endif %}</td>
           <td style="text-align:right;white-space:nowrap">
             {%- if not o.mine and not o.pending and fills_ready and viewer == 'account' %}
@@ -170,8 +169,7 @@
           <td class="mono" style="text-align:right">{{ o.tokens_shown }}</td>
           <td class="mono muted" style="text-align:right">{{ o.coins_shown }}</td>
           <td class="muted" style="font-size:.74rem">
-            {%- if o.mine %}yours{% elif tags.get(o.address) %}@{{ tags[o.address] }}
-            {%- else %}{{ o.address[:6] }}…{% endif %}
+            {%- if o.mine %}yours{%- else %} {{ o.address|who }}{% endif %}
             {%- if o.pending %}<span class="pill" title="broadcast, not yet in a block">pool</span>{% endif %}</td>
           <td></td></tr>
         {% endfor %}
