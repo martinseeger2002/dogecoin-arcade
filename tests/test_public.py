@@ -72,7 +72,7 @@ def test_the_front_page_is_the_splash_not_the_wallet(public):
     Overview's balances and unread counts."""
     app, _ = public
     body = app.get("/", headers=LOCAL).text
-    assert "seats free" in body or "No seats free" in body
+    assert "seats open" in body or "No open seats" in body
     assert "Spendable" not in body
     assert "Known contacts" not in body
 
@@ -449,7 +449,7 @@ def test_the_front_page_follows_the_request_too(named):
     theirs = app.get("/", headers={"host": "node.dogecoinarcade.com"}).text
     assert "Known contacts" in mine, "the operator gets their overview"
     assert "Known contacts" not in theirs, "a stranger gets the splash"
-    assert "seats free" in theirs or "No seats free" in theirs
+    assert "seats open" in theirs or "No open seats" in theirs
 
 
 def test_the_navigation_follows_the_request_too(named):
