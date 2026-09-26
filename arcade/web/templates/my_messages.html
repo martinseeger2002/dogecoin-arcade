@@ -504,7 +504,7 @@ async function drawConversation() {
   const fromBottom = box.scrollHeight - box.scrollTop;
   allLetters = letters;
   forgetUrls();
-  box.innerHTML = "";
+  box.replaceChildren();
   if (!letters.length) {
     const none = document.createElement("p");
     none.className = "muted nothing";
@@ -543,7 +543,7 @@ async function loadOlder() {
   const before = box.scrollHeight - box.scrollTop;
   windowSize += PAGE;
   forgetUrls();
-  box.innerHTML = "";
+  box.replaceChildren();
   drawWindow();
   box.scrollTop = box.scrollHeight - before;
   loadingOlder = false;
