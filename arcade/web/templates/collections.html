@@ -38,8 +38,7 @@
     <table>
       <tr><td class="muted" style="width:74px">By</td>
           <td class="mono" style="word-break:break-all">
-            {% if tags.get(c.creator) %}<strong>@{{ tags[c.creator] }}</strong>
-            {%- else %}{{ c.creator }}{% endif %}</td></tr>
+             {{ c.creator|who }}</td></tr>
       <tr><td class="muted">Numbers</td>
           <td>#{{ "{:,}".format(c.first_number) }} to #{{ "{:,}".format(c.last_number) }}</td></tr>
     </table>

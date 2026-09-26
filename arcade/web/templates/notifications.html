@@ -7,6 +7,7 @@
 
 {% macro name(address) -%}
   {%- if names.get(address) -%}@{{ names[address] }}
+  {%- elif address and name_of(address) -%}@{{ name_of(address) }}
   {%- elif address -%}{{ address[:8] }}&hellip;
   {%- else -%}Somebody{%- endif -%}
 {%- endmacro %}

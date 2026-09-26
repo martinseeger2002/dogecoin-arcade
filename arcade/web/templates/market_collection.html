@@ -13,8 +13,7 @@
   <div class="who">
     <h1>{{ summary.collection }}</h1>
     <p class="muted" style="margin:0 0 6px">
-      by {% if tags.get(summary.creator) %}<strong>@{{ tags[summary.creator] }}</strong>
-         {%- else %}<span class="mono">{{ summary.creator }}</span>{% endif %}
+      by  {{ summary.creator|who }}
       &middot; {{ chain.label }}
       &middot; inscriptions #{{ "{:,}".format(summary.first_number) }}&ndash;#{{ "{:,}".format(summary.last_number) }}</p>
     {% if about.description %}
@@ -103,12 +102,10 @@
       <div class="name" title="{{ data.name if data and data.name else row.txid }}">
         {{ data.name if data and data.name else (summary.collection ~ ' #' ~ row.edition) }}</div>
       <div class="who">#{{ "{:,}".format(row.number) }} &middot; by
-        {%- if tags.get(row.creator) %} @{{ tags[row.creator] }}
-        {%- else %} {{ row.creator[:10] }}…{% endif %}</div>
+         {{ row.creator|who }}</div>
       <div class="who">held by
         {%- if row.mine %} <strong>you</strong>
-        {%- elif tags.get(row.owner) %} @{{ tags[row.owner] }}
-        {%- else %} {{ row.owner[:10] }}…{% endif %}</div>
+        {%- else %} {{ row.owner|who }}{% endif %}</div>
       <div class="price">
         {%- if row.listing %}<strong>{{ row.listing.price }}</strong>
         {%- if row.listing.pending %} <span class="pill" title="broadcast, not yet in a block">pool</span>{% endif %}

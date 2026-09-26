@@ -305,11 +305,9 @@
 <div class="panel">
   <table>
     <tr><td class="muted" style="width:120px">Owner</td>
-        <td class="mono" style="word-break:break-all">
-          {% if tag %}<strong>@{{ tag }}</strong> &middot; {% endif %}{{ row.owner }}</td></tr>
+        <td>{{ row.owner|who }}</td></tr>
     <tr><td class="muted">Creator</td>
-        <td class="mono" style="word-break:break-all">
-          {% if creator_tag %}<strong>@{{ creator_tag }}</strong> &middot; {% endif %}{{ row.creator }}</td></tr>
+        <td>{{ row.creator|who }}</td></tr>
     <tr><td class="muted">Inscribed</td>
         <td>block {{ "{:,}".format(row.block_height) }}</td></tr>
     <tr><td class="muted">Id</td>
@@ -350,12 +348,11 @@
           <div class="muted" style="font-size:.8rem">
             {%- if a.pending %}in the mempool{% else %}their offer{% endif %}</div></td>
         <td class="mono" style="font-size:.8rem;word-break:break-all">
-          {%- if a.tag %}<strong>@{{ a.tag }}</strong>
-          {%- else %}{{ a.buyer }}{% endif %}</td>
+          {{ a.buyer|who }}</td>
         <td style="text-align:right;white-space:nowrap">
           {% if a.accepted %}
             <span class="muted">answered &mdash; waiting for
-              {% if a.tag %}@{{ a.tag }}{% else %}their wallet{% endif %}
+              {{ a.buyer|who }}
               to sign</span>
             <div class="muted" style="font-size:.76rem">held until {{ a.until }}</div>
           {% elif a.held_for %}
@@ -365,12 +362,12 @@
                     data-offer="{{ a.txid }}" data-piece="{{ row.txid }}"
                     data-give="{{ a.give }}"
                     data-price="{{ a.price }}"
-                    data-buyer="{% if a.tag %}@{{ a.tag }}{% else %}{{ a.buyer }}{% endif %}">Accept</button>
+                    data-buyer="{{ a.buyer|who_text }}">Accept</button>
             <button type="button" class="ghost small" data-refuse
                     data-offer="{{ a.txid }}" data-piece="{{ row.txid }}"
                     data-give="{{ a.give }}"
                     data-price="{{ a.price }}"
-                    data-buyer="{% if a.tag %}@{{ a.tag }}{% else %}{{ a.buyer }}{% endif %}">Refuse</button>
+                    data-buyer="{{ a.buyer|who_text }}">Refuse</button>
           {% endif %}</td>
       </tr>
       {% endfor %}
