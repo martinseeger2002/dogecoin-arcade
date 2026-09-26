@@ -50,15 +50,17 @@
     <button type="button" id="run-start">Upload it</button>
   </div>
   <p class="muted picked" id="picked-build" hidden>
+    <strong id="build-folder" style="display:block"></strong>
     <span id="picked-build-text"></span>
     <span id="build-sizes" class="sizes" hidden></span></p>
   <div class="row" id="run-go" hidden>
     <div style="flex:1" class="muted" id="run-says"
       style="font-size:.86rem"></div>
     <a class="btn small ghost" id="run-page" href="#">The run</a>
-    <button type="button" id="run-piece">Inscribe the next piece</button>
+    <button type="button" id="run-piece">Inscribe the rest</button>
     <button type="button" class="ghost" id="run-stop">Stop</button>
   </div>
+  <p class="msg err" id="run-note" hidden style="margin:8px 0 0"></p>
   <p class="muted" style="font-size:.86rem;margin:8px 0 0">
     <a href="/me/runs">Every run this account has written down</a> &mdash; the
     pieces, which one stopped it, and what it cost.</p>
@@ -396,6 +398,35 @@ async function inscribeTheFile() {
 
 /* -- a run of them, one transaction at a time -- */
 
+/** This account's inscription allowance on this node: {limit, left}. */
+async function allowance() {
+  try {
+    const said = await (await fetch("/account", {cache: "no-store"})).json();
+    const row = ((said.quota || {}).actions || []).find((a) => a.kind === "inscribe");
+    if (!row) return null;
+    return {limit: Number(row.limit), left: Math.max(0, Number(row.limit) - Number(row.used))};
+  } catch (e) { return null; }
+}
+
+/** A refusal said where the button is, and the button waiting it out (filming,
+ *  2026-09-25: "Room appears again in 27 minutes" went to the top of the page,
+ *  so the button looked broken). */
+let resumeTimer = null;
+function runNote(text) {
+  const note = $("run-note"), button = $("run-piece");
+  note.textContent = text || "";
+  note.hidden = !text;
+  const wait = /again in (\d+) minute/.exec(text || "");
+  clearTimeout(resumeTimer);
+  if (wait) {
+    button.disabled = true;
+    button.textContent = `Next piece in ${wait[1]} min`;
+    resumeTimer = setTimeout(() => {
+      button.disabled = false; button.textContent = "Inscribe the rest"; runNote("");
+    }, Number(wait[1]) * 60 * 1000 + 5000);
+  }
+}
+
 function showed(row) {
   $("run-go").hidden = !row;
   $("run-piece").dataset.run = row ? row.run : "";
@@ -461,6 +492,15 @@ async function measureBuild() {
   buildSize = "large"; buildMeasured = "";
   if (!files.length) { note.hidden = true; text.innerHTML = ""; return; }
   note.hidden = false;
+  // The folder, by name, and what is in it: the browser's own box only says
+  // "25 files selected" (filming the collection tutorial, 2026-09-25).
+  const folder = ((files[0].webkitRelativePath || "").split("/")[0]) || "the folder";
+  const jsons = files.filter((f) => /\.json$/i.test(f.name));
+  const meta = jsons.some((f) => f.name === "_metadata.json");
+  const pics = files.filter(arcadeIsImage).length;
+  $("build-folder").textContent = `${folder}: ${commas(pics)} picture${pics === 1 ? "" : "s"}, `
+    + `${commas(jsons.length - (meta ? 1 : 0))} JSON file${jsons.length - (meta ? 1 : 0) === 1 ? "" : "s"}`
+    + (meta ? ", and _metadata.json" : ", and no _metadata.json (the Art Engine writes one)");
   const pictures = files.filter(arcadeIsImage);
   const bytes = pictures.reduce((n, file) => n + file.size, 0);
   if (!pictures.length) {
@@ -586,43 +626,70 @@ $("run-start").onclick = async () => {
                               {method: "POST", body: form});
     const start = await asked.json();
     if (!asked.ok) throw new Error(start.detail || "that is not a build");
+    const room = await allowance();
+    const pace = room && room.limit > 0 && start.items > room.limit
+      ? ` This node takes ${commas(room.limit)} inscriptions an hour per account, `
+        + `so about ${Math.ceil(start.items / room.limit)} hours.`
+      : "";
     news(`Written down: ${start.name}, ${commas(start.items)} items, one `
       + `transaction each, about ${(start.fee / 100000000).toFixed(8)} in `
-      + "fees. Nothing is on the chain yet.");
+      + "fees. Nothing is on the chain yet." + pace);
     showed({run: start.run, name: start.name, items: start.items, sent: 0,
             next: start.next});
   } catch (e) { say(String(e.message || e)); }
 };
 
+// One question for the batch the hour allows, then every piece signed without
+// asking again (filming, 2026-09-25: a confirm per piece was twelve dialogs for
+// twelve skulls, and would be a hundred for a HashLips build).
 $("run-piece").onclick = async () => {
   const where = $("run-piece").dataset.run;
   if (!where) return;
-  say(""); news("");
+  say(""); news(""); runNote("");
+  const button = $("run-piece");
   try {
     const held = await take();
-    const asked = await fetch("/account/run/piece", {
-      method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({run: where}),
-    });
-    const offer = await asked.json();
-    if (!asked.ok) throw new Error(offer.detail || "that piece cannot go out");
-    if (offer.finished) {
-      news(`That run is finished. All ${commas(offer.items)} of them are on `
-        + "the chain.");
+    if (!held) throw new Error("your wallet is not open in this tab");
+    const first = await ask("/account/run/piece", {run: where});
+    if (first.finished) {
+      news(`That run is finished. All ${commas(first.items)} of them are on the chain.`);
       await runs();
       return;
     }
-    if (!held) throw new Error("your wallet is not open in this tab");
-    const shown = await wallet.checked(offer, held);
-    if (!confirm(`${offer.name}: ${commas(offer.bytes)} bytes on the chain `
-                 + `forever, for ${shown.coinsOf(shown.fee)} in `
-                 + `fees. ${commas(offer.sent)} of ${commas(offer.items)} are `
-                 + "already there.")) return;
-    const out = await wallet.confirm(held, offer);
-    news(`Inscribed: ${out.txid.slice(0, 16)}… Piece ${offer.piece} of `
-      + `${commas(offer.items)}. It shows up when its block is mined.`);
+    const left = Number(first.items) - Number(first.sent);
+    const room = await allowance();
+    const batch = room ? Math.max(1, Math.min(left, room.left)) : left;
+    const shown = await wallet.checked(first, held);
+    const ok = await askYes(`Inscribe ${commas(batch)} of ${first.name}?`,
+      `${commas(first.sent)} of ${commas(first.items)} are on the chain. The next `
+      + `${commas(batch)} go up now, one transaction each (this one is `
+      + `${commas(first.bytes)} bytes for ${shown.coinsOf(shown.fee)} in fees), signed `
+      + "here without asking again."
+      + (batch < left ? ` This node takes ${commas(room.limit)} an hour per account, so `
+                        + `the other ${commas(left - batch)} wait for the next hour.` : "")
+      + " Keep this tab open until they are done.", "Inscribe them");
+    if (!ok) return;
+    button.disabled = true;
+    let offer = first, done = 0;
+    for (;;) {
+      $("run-says").textContent = `${offer.name}: piece ${offer.piece} of `
+        + `${commas(offer.items)}\u2026`;
+      await wallet.checked(offer, held);
+      await wallet.confirm(held, offer);
+      done += 1;
+      if (done >= batch) break;
+      offer = await ask("/account/run/piece", {run: where});
+      if (offer.finished) break;
+    }
+    news(`Inscribed ${commas(done)} piece${done === 1 ? "" : "s"}. They show up as `
+      + "their blocks are mined.");
     await runs();
-  } catch (e) { say(String(e.message || e)); }
+  } catch (e) {
+    runNote(String(e.message || e));
+    await runs();
+  } finally {
+    if (!/Next piece in/.test(button.textContent)) button.disabled = false;
+  }
 };
 
 $("run-stop").onclick = async () => {
