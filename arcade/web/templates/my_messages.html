@@ -671,6 +671,13 @@ $("group-cancel").onclick = () => {
 $("group-make").onclick = async () => {
   const names = $("group-who").value.split(/[\s,]+/).map((w) => w.trim()).filter(Boolean);
   $("group-trouble").hidden = true;
+  // Asked first, like every other thing that costs (filming, 2026-09-26): each
+  // member is sent the group's key in a message of its own, one fee each.
+  if (names.length && !(await arcadeAsk("Make this group?",
+      `${$("group-name").value.trim() || "The group"} with ${names.length} `
+      + `${names.length === 1 ? "person" : "people"}. Each of them is sent the group's `
+      + `key in a message of its own, plus one to you for your other devices: `
+      + `${names.length + 1} small transactions, one fee each.`, "Make it"))) return;
   $("group-make").disabled = true;
   const was = $("group-make").textContent;
   $("group-make").textContent = "Making it\u2026";

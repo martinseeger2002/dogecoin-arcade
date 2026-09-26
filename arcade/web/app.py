@@ -8659,9 +8659,7 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError("no such inscription on this node")
             if row["owner"] != address:
                 raise ValueError("that piece is not this account's to send")
-            to = str(said.get("to", "")).strip()
-            if taglib.looks_like_a_tag(to):
-                to = _where_to_pay(taglib.normalise(to), chain)
+            to, to_tag = _payee(said.get("to", ""), chain)
             complaint = _check_address(to, mainnet=chain.is_mainnet)
             if complaint:
                 raise ValueError(complaint)
@@ -9077,9 +9075,9 @@ def create_app(state: AppState) -> FastAPI:
                 index))
             what = f"list {piece} for {cost}"
             with contextlib.closing(index.open()) as db:
-                held = [c for c in utxoslib.unspent(db, address)
+                held = _smallest_two_first([c for c in utxoslib.unspent(db, address)
                         if (c["txid"], c["vout"])
-                        not in _flights.spent_by(account.pubkey, chain.network)]
+                        not in _flights.spent_by(account.pubkey, chain.network)])
                 if len(held) < 2:
                     raise ValueError(
                         f"this address has {len(held)} coin to spend and a "
@@ -9800,9 +9798,9 @@ def create_app(state: AppState) -> FastAPI:
                 swaplib.leg_of({"inscription": row["txid"]}, index), index))
             what = f"sell {piece} for {cost}"
             with contextlib.closing(index.open()) as db:
-                held = [c for c in utxoslib.unspent(db, address)
+                held = _smallest_two_first([c for c in utxoslib.unspent(db, address)
                         if (c["txid"], c["vout"])
-                        not in _flights.spent_by(account.pubkey, chain.network)]
+                        not in _flights.spent_by(account.pubkey, chain.network)])
                 if len(held) < 2:
                     raise ValueError(
                         f"this address has {len(held)} coin to spend and an "
@@ -10462,9 +10460,7 @@ def create_app(state: AppState) -> FastAPI:
             prop = index.property(property_id)
             if prop is None:
                 raise tokenlib.TokenError(f"there is no token {property_id}.")
-            to = str(said.get("to", "")).strip()
-            if taglib.looks_like_a_tag(to):
-                to = _where_to_pay(taglib.normalise(to), chain)
+            to, to_tag = _payee(said.get("to", ""), chain)
             complaint = _check_address(to, mainnet=chain.is_mainnet)
             if complaint:
                 raise ValueError(complaint)
@@ -11307,6 +11303,36 @@ def create_app(state: AppState) -> FastAPI:
     #: never under the soft-dust limit.
     SPLIT_EACH = 5 * fees.DUST_LIMIT
 
+    @app.get("/restore", response_class=HTMLResponse)
+    def restore_page(request: Request):
+        """Forgot your password? The one page that asks for the twelve words.
+
+        The operator (2026-09-26) chose this over "backup file only": signup promises
+        the words are the way back, and without this page they were not. The
+        words never leave the browser: they make the login key that signs in, and
+        the wallet is sealed again under a new password there; this node is only
+        handed the new encrypted blob (/account/vault).
+        """
+        return render(request, "restore.html", chain=_account_chain())
+
+    @app.post("/account/vault")
+    def account_vault(request: Request, payload: Any = Body(None)):
+        """Replace this account's encrypted wallet with one sealed under a new
+        password. Signed in by the words' own key, so only the words can do it."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        blob = said.get("blob")
+        try:
+            text = json.dumps(blob) if isinstance(blob, dict) else str(blob or "")
+            if not state.vault().replace_blob(account.pubkey, text):
+                return JSONResponse({"detail": (
+                    "this node keeps no wallet for these words. If you signed up on "
+                    "another node, restore there, or open a backup file here.")},
+                    status_code=404)
+        except accountslib.AccountError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"ok": True})
+
     @app.post("/account/split")
     def account_split(request: Request, payload: Any = Body(None)):
         """Offer a payment from this account to itself in `count` small coins.
@@ -11466,13 +11492,10 @@ def create_app(state: AppState) -> FastAPI:
                 {"detail": f"this account has no {chain.label.lower()} "
                            f"address yet"}, status_code=400)
         try:
-            to = str(said.get("to", "")).strip()
             # A @tag is a name for an address, so it is resolved here and
             # the ANSWER is shown: somebody paying @robin should see the
             # address their coins are going to before they sign.
-            if to.startswith("@") or (to and not _looks_like_an_address(to)):
-                wanted = taglib.validate(to.lstrip("@"))
-                to = _where_to_pay(wanted, chain)
+            to, to_tag = _payee(said.get("to", ""), chain)
             complaint = _check_address(to, mainnet=chain.is_mainnet)
             if complaint:
                 raise ValueError(complaint)
@@ -11500,9 +11523,44 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         offer = _offers.add(account.pubkey, chain.network, unsigned,
                             unsigned.what)
-        return JSONResponse({"offer": offer.id, "to": to, "amount": amount,
-                             "chain": chain.network, "label": chain.label,
-                             **unsigned.as_json()})
+        return JSONResponse({"offer": offer.id, "to": to, "to_tag": to_tag,
+                             "amount": amount, "chain": chain.network,
+                             "label": chain.label, **unsigned.as_json()})
+
+    def _smallest_two_first(coins: list) -> list:
+        """A leg's two coins: the smallest that are not dust, not the largest.
+
+        A listing or an answer holds its two coins until somebody buys, and the
+        index lists coins largest first, so every leg used to lock the account's
+        two biggest -- one stuck swap froze 273 of @arcade_demo's 284 coins
+        (filming, 2026-09-26). Smallest first, each at least DUST_LIMIT, so what a
+        sale pays back is never soft dust; the rest keep their order after.
+        """
+        usable = sorted((c for c in coins if int(c["value"]) >= fees.DUST_LIMIT),
+                        key=lambda c: int(c["value"]))
+        return usable + [c for c in coins if c not in usable]
+
+    def _payee(raw: Any, chain) -> tuple[str, str]:
+        """Who a send is to: (address, tag or ""), from what somebody typed.
+
+        One reading for the coin, token and piece sends (filming, 2026-09-26: a
+        token and an NFT send answered "@arcade_buyer" with an address checksum
+        error while the coin send took it). A phone keyboard can add invisible
+        characters or a full-width "＠", so the text is normalised first; then a
+        name is anything with an @, or anything that is not an address.
+        """
+        import unicodedata
+        text = unicodedata.normalize("NFKC", str(raw or ""))
+        text = "".join(ch for ch in text if unicodedata.category(ch) not in ("Cf", "Zs")
+                       or ch == " ").strip()
+        if not text:
+            # Said as what it is: an empty box used to reach the address check
+            # and answer "the checksum does not match" (filming, 2026-09-26).
+            raise ValueError("who is it to? Type their @name or an address.")
+        if text.startswith("@") or (text and not _looks_like_an_address(text)):
+            tag = taglib.validate(text.lstrip("@"))
+            return _where_to_pay(tag, chain), tag
+        return text, ""
 
     def _where_to_pay(tag: str, chain) -> str:
         """The address a @tag points at on the chain being paid.

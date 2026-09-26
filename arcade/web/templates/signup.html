@@ -69,6 +69,8 @@
     <p class="muted small" style="margin:10px 0 0">This node kept your
       encrypted wallet when you signed up. It did not keep it? Use the file
       its Backup page saved, below.</p>
+    <p class="small" style="margin:6px 0 0"><a href="/restore">Forgot your
+      password? Restore with your twelve words</a></p>
   </div>
 
   <div class="panel">
@@ -77,8 +79,10 @@
       The file a node&rsquo;s Backup page saves &mdash; from any node you
       made this account on. Your password opens it in this browser, so the
       words never leave here and the password never comes here either. This
-      page asks for no words, and no page that is really this one ever will:
-      <strong>anybody asking for the twelve words is stealing them.</strong></p>
+      page asks for no words. <strong>The one page that ever asks for your twelve
+      words is Restore, reached from &ldquo;Forgot your password?&rdquo; under
+      Sign in, and it never sends them anywhere. Anything else asking for them
+      is stealing them.</strong></p>
     <p class="muted">
       A node you hand a file to keeps no copy of it, which means it cannot
       send it back afterwards &mdash; the copy on your disk is the copy.
@@ -96,13 +100,14 @@
   <p class="muted">Twelve words. They are the only way back into your wallet
     if you forget your password, and this is the only time they are shown.
     Not on a screenshot &mdash; on paper.</p>
-  <p class="rule">These are typed once, now, and never again. After this,
-    this site unlocks with your password and does not ask for the words
-    &mdash; not to verify anything, not to restore anything, not to migrate
-    anything, and not on any other node you move to. A page that asks for
-    them is stealing them, whichever name it is sitting under. Type them
-    only on a domain you typed yourself, never one you followed a link
-    to.</p>
+  <p class="rule">After this, this site unlocks with your password. The one
+    page that ever asks for these words is <strong>Restore</strong>, reached
+    from &ldquo;Forgot your password?&rdquo; under Sign in, for the day the
+    password is gone &mdash; it checks them in your browser and never sends
+    them anywhere. Nothing else asks for them: not to verify, not to migrate,
+    not in a message, not by a helper. Anything else that asks is stealing them,
+    whichever name it is sitting under. Type them only on a domain you typed
+    yourself, never one you followed a link to.</p>
   <p id="gift" class="muted" hidden></p>
   <ol class="words" id="words"></ol>
   <div class="panel" id="setting-up" style="margin:12px 0">

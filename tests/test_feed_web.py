@@ -547,3 +547,24 @@ def test_a_profiles_message_button_lands_on_a_filled_in_letter(client):
     app, _ = client
     body = app.get("/compose?to=@somebody").text
     assert 'value="@somebody"' in body
+
+
+def test_page_scripts_wait_for_what_base_defines_below_them():
+    """base.html defines window.arcadeBlocked and arcadeAsk AFTER the body block,
+    so a page's classic inline script that reads them straight away finds
+    nothing: the profile's Block button did nothing at all (a tester,
+    2026-09-26). Module scripts run after parsing and are fine."""
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "arcade/web/templates"
+    late = []
+    for page in root.glob("*.html"):
+        if page.name == "base.html":
+            continue
+        for attrs, body in re.findall(r"<script([^>]*)>(.*?)</script>",
+                                      page.read_text(), re.S):
+            if "module" in attrs or "src=" in attrs:
+                continue
+            if "window.arcadeBlocked" in body and "DOMContentLoaded" not in body:
+                late.append(page.name)
+    assert not late, late

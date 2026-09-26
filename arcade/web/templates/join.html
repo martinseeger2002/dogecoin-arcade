@@ -92,9 +92,10 @@
     <button class="btn" id="make">Show me twelve words</button>
     <div id="made" hidden>
       <ol class="words" id="wordlist"></ol>
-      <p class="rule">You will never type these words again. Afterwards this
-        site unlocks with your password, and a site that asks for the words
-        &mdash; to verify, to restore, for any reason &mdash; is stealing
+      <p class="rule">Afterwards this site unlocks with your password. The one
+        page that asks for these words is Restore, reached from Sign in when the
+        password is gone, and it never sends them; anything else that asks
+        &mdash; to verify, to migrate, for any reason &mdash; is stealing
         them.</p>
       <p class="muted">
         Now type words <strong id="asked"></strong> back in, in that order,
@@ -129,10 +130,11 @@
       for the words. This is for the case where that file is gone.
     </p>
     <p class="rule">
-      Your twelve words are typed once, when you make the wallet. After
-      that, a site unlocks with your password and never asks for them
-      again. Any site asking for your twelve words &mdash; to verify, to
-      restore, to migrate, for any reason &mdash; is stealing them.
+      Your twelve words are typed when you make the wallet, and after that
+      only here, on the restore step reached from Sign in, when the password
+      is gone. They are checked in this browser and never sent. Anything else
+      asking for your twelve words &mdash; to verify, to migrate, in a
+      message, for any reason &mdash; is stealing them.
     </p>
     <p class="muted small">
       Whoever is handed the words can spend the wallet, and this node has

@@ -261,10 +261,13 @@
     {% endif %}
   </div>
   <p class="msg info" id="blocked-says" hidden>You blocked @{{ whose.tag }}: their
-    posts and messages are hidden from you, in this browser only. Undo it here or
+    posts and messages are hidden from you. Undo it here or
     under Blocked in your <a href="{{ '/me/contacts' if public else '/contacts' }}">address book</a>.</p>
   <script>
-  (function () {
+  // After the page: window.arcadeBlocked is defined at the foot of base.html, below
+  // this block, and a check made here ran before it existed -- the button did nothing
+  // (a tester, 2026-09-26).
+  document.addEventListener('DOMContentLoaded', function () {
     var b = document.getElementById('block-them');
     if (!b || !window.arcadeBlocked) return;
     var said = document.getElementById('blocked-says');
@@ -273,18 +276,21 @@
       b.textContent = on ? 'Unblock' : 'Block';
       said.hidden = !on;
     }
-    b.onclick = function () {
+    b.onclick = async function () {
       if (window.arcadeBlocked.has(b.dataset.address)) {
         window.arcadeBlocked.remove(b.dataset.address);
       } else {
-        if (!confirm('Block @' + b.dataset.tag + '? Their posts and messages are hidden from '
-                     + 'you in this browser. Nothing is put on the chain and they are not told.')) return;
+        var words = 'Their posts and messages are hidden from you. Nothing is put on '
+                    + 'the chain and they are not told.';
+        var ok = window.arcadeAsk ? await window.arcadeAsk('Block @' + b.dataset.tag + '?', words, 'Block')
+                                  : confirm('Block @' + b.dataset.tag + '? ' + words);
+        if (!ok) return;
         window.arcadeBlocked.add(b.dataset.tag, b.dataset.address);
       }
       draw();
     };
     draw();
-  })();
+  });
   </script>
   {% if not whose.address %}
     <div class="panel empty" style="margin-top:16px">

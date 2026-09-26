@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Restore · DogecoinArcade{% endblock %}
+{% block body %}
+{# Forgot your password (2026-09-26: "Restore page"). The one page that
+   asks for the twelve words, reached only from Sign in. The words stay in this
+   tab: they make the login key that signs in, and the wallet is sealed again
+   under the new password here; the node is handed only the new encrypted wallet
+   (/account/vault). Every other page says so: anything else asking for the
+   words is stealing them. #}
+<h1>Forgot your password?</h1>
+<p class="sub">Your twelve words open your account again and set a new password.</p>
+
+<div class="panel">
+  <p class="rule">This is the <strong>only</strong> page that ever asks for your twelve
+    words. Check the address bar says the domain you typed yourself, not one you
+    followed a link to. The words are checked in this browser and <strong>never sent
+    anywhere</strong> &mdash; not to this node, not to anybody. Anything else asking for
+    them &mdash; a message, a helper, another page &mdash; is stealing them.</p>
+
+  <label for="phrase">Your twelve words, in order</label>
+  <textarea id="phrase" rows="3" autocomplete="off" autocapitalize="off"
+            autocorrect="off" spellcheck="false" data-lpignore="true"
+            placeholder="word word word …"></textarea>
+  <p class="small" id="phrase-says"></p>
+
+  <label for="new-pw">A new password</label>
+  <input type="password" id="new-pw" autocomplete="new-password"
+         placeholder="at least twelve characters">
+  <p class="small" id="pw-says"></p>
+  <label for="new-pw2">The new password again</label>
+  <input type="password" id="new-pw2" autocomplete="new-password">
+
+  <p class="msg err" id="trouble" hidden></p>
+  <button class="btn primary" id="go">Restore my account</button>
+  <p class="muted small">Your @name, coins and pieces are on the chain and do not
+    change. After this your old password no longer opens the wallet on this node;
+    a backup file saved before today still opens with the old one.</p>
+</div>
+
+<div class="panel" id="done" hidden style="border-color:var(--accent)">
+  <h2 style="margin-top:0">You are back in</h2>
+  <p>Your account opens with the new password from now on, on any device.</p>
+  <a class="btn primary" href="/me">Your arcade</a>
+</div>
+
+<style>
+#phrase,#new-pw,#new-pw2{width:100%;box-sizing:border-box}
+#phrase{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+</style>
+
+<script type="module">
+import * as wallet from "/wallet.js";
+import * as signer from "/signin.js";
+const $ = (id) => document.getElementById(id);
+const CHAIN = {network: "{{ chain.network }}",
+               version: {{ chain.params.pubkeyhash_version }}};
+const say = (text) => { $("trouble").textContent = text; $("trouble").hidden = !text; };
+
+let checking = null;
+$("phrase").oninput = () => {
+  clearTimeout(checking);
+  checking = setTimeout(async () => {
+    const wrong = $("phrase").value.trim() ? await signer.complaint($("phrase").value) : "";
+    $("phrase-says").textContent = wrong || ($("phrase").value.trim() ? "These words check out." : "");
+    $("phrase-says").style.color = wrong ? "var(--bad)" : "var(--ok)";
+  }, 300);
+};
+$("new-pw").oninput = () => {
+  const said = wallet.strength($("new-pw").value);
+  $("pw-says").textContent = said.says;
+  $("pw-says").style.color = said.ok ? "var(--ok)"
+    : said.level === "instantly" ? "var(--bad)" : "var(--warn)";
+};
+
+$("go").onclick = async () => {
+  say("");
+  if ($("new-pw").value !== $("new-pw2").value) {
+    say("The two new passwords are not the same.");
+    return;
+  }
+  $("go").disabled = true;
+  $("go").textContent = "Restoring…";
+  try {
+    await wallet.restore($("phrase").value, $("new-pw").value, CHAIN);
+    $("phrase").value = "";
+    $("new-pw").value = $("new-pw2").value = "";
+    $("done").hidden = false;
+    $("go").closest(".panel").hidden = true;
+    document.body.dataset.restored = "yes";
+  } catch (e) {
+    say(String(e.message || e));
+  } finally {
+    $("go").disabled = false;
+    $("go").textContent = "Restore my account";
+  }
+};
+document.body.dataset.restoreReady = "yes";
+</script>
+{% endblock %}

@@ -932,6 +932,16 @@ class Vault:
             "VALUES (?,?,?,?,?)", (name, pubkey.lower(), address, blob, now))
         return self.get(name)
 
+    def replace_blob(self, pubkey: str, blob: str) -> bool:
+        """Put a newly encrypted wallet in place of the old one (the Restore page:
+        the same words sealed under a new password in the browser). False when
+        this node keeps no wallet for that key."""
+        if not blob or len(blob) > 20000:
+            raise AccountError("that is not an encrypted wallet")
+        cur = self.conn.execute("UPDATE vault SET blob = ? WHERE pubkey = ?",
+                                (blob, (pubkey or "").lower()))
+        return bool(getattr(cur, "rowcount", 0))
+
     def note_claim(self, tag: str, txid: str) -> None:
         self.conn.execute("UPDATE vault SET claimed = ? WHERE tag = ?",
                           (txid, name_of(tag)))

@@ -140,9 +140,24 @@ $("send").onclick = async () => {
                                          $("amount").value.trim(),
                                          $("which").value);
     const shown = await wallet.checked(offer, keys);
-    $("confirm-says").textContent =
-      `${offer.what}. ${shown.says} Worked out in this browser from the `
-      + "transaction's own bytes, not from what this node says it does.";
+    // Said as a question, by name, with the address small under it (filming,
+    // 2026-09-26: "send 2 testnet to nUpPb7…" read as a run-on and hid the name).
+    const who = offer.to_tag ? "@" + offer.to_tag : String(offer.to || "");
+    $("confirm-says").replaceChildren();
+    const q = document.createElement("strong");
+    const coins = String(Number(offer.amount) / 1e8);
+    q.textContent = `Send ${coins} ${String(offer.label || "").toLowerCase()} coins to ${who}?`;
+    const addr = document.createElement("div");
+    addr.className = "muted mono";
+    addr.style.cssText = "font-size:.78rem;word-break:break-all;margin:4px 0";
+    addr.textContent = offer.to_tag ? offer.to : "";
+    const fee = document.createElement("div");
+    fee.className = "muted";
+    fee.style.fontSize = ".84rem";
+    fee.textContent = `The network fee is ${shown.coinsOf(shown.fee)}`
+      + (shown.change ? `, and ${shown.coinsOf(shown.change)} comes back to you.` : ".")
+      + " Worked out in this browser from the transaction's own bytes.";
+    $("confirm-says").append(q, addr, fee);
     $("confirm").hidden = false;
     $("confirm-yes").onclick = async () => {
       $("confirm").hidden = true;
