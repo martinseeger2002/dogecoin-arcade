@@ -84,12 +84,14 @@ function row(token, chain) {
   const open = document.createElement("a");
   open.className = "btn ghost small";
   open.href = `/tokens/${token.property_id}`;
-  open.textContent = "Open";
+  // Yours to issue: grant, revoke and hand over live on the token's page.
+  open.textContent = token.issuer_is_me ? "Manage" : "Open";
   const send = document.createElement("button");
   send.className = "btn small";
   send.textContent = "Send";
   send.onclick = () => choose(token, chain);
-  doing.append(open, send);
+  doing.append(open);
+  if (Number(token.balance) > 0) doing.append(send);
 
   box.append(top, doing);
   return box;

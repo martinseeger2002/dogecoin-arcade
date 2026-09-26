@@ -261,6 +261,7 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/talk",
                "/account/push/subscribe", "/account/push/unsubscribe",
                "/account/token/send", "/account/token/create",
+               "/account/token/manage",
                "/account/sign",
                "/signup")
 

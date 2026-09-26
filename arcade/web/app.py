@@ -6454,7 +6454,14 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/tokens/{property_id}", response_class=HTMLResponse)
     def token(request: Request, property_id: int):
-        return render(request, "token.html", prepared=None, **_token_detail(property_id))
+        detail = _token_detail(property_id)
+        # An account that issued it gets its own controls, signed in its tab
+        # (the operator's forms below act from the node's wallet instead).
+        account = signed_in(request)
+        mine = _account_address(account.pubkey, detail["chain"]) if account else ""
+        return render(request, "token.html", prepared=None,
+                      account_issuer=bool(mine) and mine == detail["prop"]["issuer"],
+                      **detail)
 
     def _token_detail(property_id: int) -> dict[str, Any]:
         chain, index = _token_chain()
@@ -10418,6 +10425,11 @@ def create_app(state: AppState) -> FastAPI:
             try:
                 index = state.token_index(chain)
                 held = index.balances([address])
+                # What it issues, even holding none: a managed token starts at
+                # zero, and its issuer has to be able to find it to grant any.
+                have = {row["property_id"] for row in held}
+                issued = [p for p in index.properties()
+                          if p["issuer"] == address and p["property_id"] not in have]
             except Exception:
                 continue
             out.append({
@@ -10427,7 +10439,13 @@ def create_app(state: AppState) -> FastAPI:
                     "property_id": row["property_id"], "name": row["name"],
                     "issuer": row["issuer"], "divisible": row["divisible"],
                     "balance": row["balance"], "display": row["display"],
-                } for row in held],
+                    "issuer_is_me": row["issuer"] == address,
+                } for row in held] + [{
+                    "property_id": p["property_id"], "name": p["name"],
+                    "issuer": p["issuer"], "divisible": p["divisible"],
+                    "balance": 0, "display": "0", "issuer_is_me": True,
+                    "managed": bool(p.get("managed")),
+                } for p in issued],
             })
         return JSONResponse({"chains": out})
 
@@ -10586,6 +10604,100 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"offer": offer.id, "name": name.strip(),
                              "managed": managed, "chain": chain.network,
                              "class": ("B" if len(outputs) > 1 else "C"),
+                             **unsigned.as_json()})
+
+    @app.post("/account/token/manage")
+    def account_token_manage(request: Request, payload: Any = Body(None)):
+        """Offer an issuer's move on a token this account issued: grant, revoke,
+        or hand the issuer role to somebody else. Nothing is broadcast here.
+
+        The operator has had these as forms since tokens began; an account could
+        create a managed token and then never put a single unit of it anywhere
+        -- "stuck at zero forever" (a tester, 2026-09-26, filming the Community
+        points template). Built like `/account/token/send`: the genuine Omni
+        message, unwrapped, from this account's own coins, and where the message
+        names somebody (a grant to another, a new issuer) their dust output goes
+        LAST, which is the output the engine's reference rule resolves to.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        action = str(said.get("action") or "")
+        try:
+            index = state.token_index(chain)
+            property_id = int(said.get("property_id", 0))
+            prop = index.property(property_id)
+            if prop is None:
+                raise tokenlib.TokenError(f"there is no token {property_id}.")
+            if prop["issuer"] != address:
+                raise tokenlib.TokenError(
+                    f"only {prop['name']}'s issuer can do that, and it is not this account.")
+            note = str(said.get("note") or "")
+            to, to_tag = None, ""
+            if action in ("grant", "revoke"):
+                if not prop["managed"]:
+                    raise tokenlib.TokenError(
+                        f"{prop['name']} has a fixed supply: nothing can be granted "
+                        f"or revoked, only sent.")
+                amount = parse_amount(str(said.get("amount", "")), prop["divisible"])
+                shown = f"{format_amount(amount, prop['divisible'])} {prop['name']}"
+                if action == "grant":
+                    if str(said.get("to") or "").strip():
+                        to, to_tag = _payee(said.get("to"), chain)
+                        complaint = _check_address(to, mainnet=chain.is_mainnet)
+                        if complaint:
+                            raise ValueError(complaint)
+                    if to == address:
+                        to, to_tag = None, ""      # to yourself: no reference output
+                    body = tokenlib.grant_payload(property_id, amount, note)
+                    what = f"grant {shown} to " + (
+                        f"@{to_tag}" if to_tag else (to or "yourself"))
+                else:
+                    held = index.balance(address, property_id)
+                    if amount > held:
+                        raise tokenlib.TokenError(
+                            f"this account holds {format_amount(held, prop['divisible'])} "
+                            f"{prop['name']}, which is all it can revoke.")
+                    body = tokenlib.revoke_payload(property_id, amount, note)
+                    what = f"revoke {shown} (they are destroyed)"
+            elif action == "issuer":
+                to, to_tag = _payee(said.get("to"), chain)
+                complaint = _check_address(to, mainnet=chain.is_mainnet)
+                if complaint:
+                    raise ValueError(complaint)
+                if to == address:
+                    raise ValueError("this account is already the issuer.")
+                body = tokenlib.change_issuer_payload(property_id)
+                what = (f"hand {prop['name']}'s issuer role to "
+                        + (f"@{to_tag}" if to_tag else to))
+            else:
+                raise ValueError("grant, revoke or issuer, please.")
+            outputs = _class_c_or_b(chain, address, body,
+                                    _coin_pubkey(account.pubkey, chain), wrap=False)
+            if to:
+                outputs.append((sendermod.OUTPUT_VALUE, txbuild.p2pkh_script(to)))
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address, outputs,
+                    rate=fees.MIN_FEE_PER_KB, what=what,
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "send")
+        except (taglib.TagError, tokenlib.TokenError, fundinglib.FundingError,
+                AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what)
+        return JSONResponse({"offer": offer.id, "action": action, "to": to or "",
+                             "to_tag": to_tag, "property_id": property_id,
+                             "name": prop["name"], "chain": chain.network,
                              **unsigned.as_json()})
 
     @app.get("/me/backup", response_class=HTMLResponse)

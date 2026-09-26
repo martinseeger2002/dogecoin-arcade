@@ -69,7 +69,7 @@ def test_it_does_not_see_a_zero_balance(client):
     app, state = client
     _seat(app)
     app.post("/account/address", json={"address": TEST})
-    pid = _token(state)
+    pid = _token(state, issuer=SOMEBODY)
     _balance(state, TEST, pid, 0)
     said = app.get("/account/tokens").json()
     tokens = [t for chain in said["chains"] for t in chain["tokens"]]
@@ -155,3 +155,82 @@ def test_the_tokens_page_never_renders_a_name_as_markup(client):
     uses = [line.strip() for line in page.splitlines()
             if "innerHTML" in line and not line.strip().startswith("//")]
     assert uses == ['$("chains").innerHTML = "";'], uses
+
+
+def _managed(state, property_id):
+    index = state.token_index(state.messaging)
+    with index.open() as db:
+        db.conn.execute("UPDATE property SET managed = 1, total_tokens = 0 "
+                        "WHERE property_id = ?", (property_id,))
+        db.conn.commit()
+
+
+def test_a_token_you_issue_is_listed_even_at_zero(client):
+    """A managed token starts at nothing; its issuer has to find it to grant
+    any (a tester, 2026-09-26: "stuck at zero forever")."""
+    app, state = client
+    _seat(app)
+    app.post("/account/address", json={"address": TEST})
+    pid = _token(state, property_id=101, name="Skull Points", divisible=False)
+    _managed(state, pid)
+    said = app.get("/account/tokens").json()
+    tokens = [t for chain in said["chains"] for t in chain["tokens"]]
+    mine = [t for t in tokens if t["property_id"] == pid]
+    assert mine and mine[0]["issuer_is_me"] and mine[0]["balance"] == 0
+
+
+def test_only_the_issuer_manages_a_token(client):
+    app, state = client
+    _seat(app)
+    app.post("/account/address", json={"address": TEST})
+    pid = _token(state, property_id=102, issuer=SOMEBODY)
+    _managed(state, pid)
+    for action in ("grant", "revoke", "issuer"):
+        answer = app.post("/account/token/manage",
+                          json={"property_id": pid, "action": action,
+                                "amount": "1", "to": TEST})
+        assert answer.status_code == 400, action
+        assert "issuer" in answer.json()["detail"], action
+
+
+def test_a_fixed_supply_cannot_be_granted_or_revoked(client):
+    app, state = client
+    _seat(app)
+    app.post("/account/address", json={"address": TEST})
+    pid = _token(state, property_id=103)
+    for action in ("grant", "revoke"):
+        answer = app.post("/account/token/manage",
+                          json={"property_id": pid, "action": action, "amount": "1"})
+        assert answer.status_code == 400
+        assert "fixed supply" in answer.json()["detail"]
+
+
+def test_revoking_more_than_you_hold_and_handing_to_yourself_are_refused(client):
+    app, state = client
+    _seat(app)
+    app.post("/account/address", json={"address": TEST})
+    pid = _token(state, property_id=104)
+    _managed(state, pid)
+    _balance(state, TEST, pid, 1_00000000)
+    answer = app.post("/account/token/manage",
+                      json={"property_id": pid, "action": "revoke", "amount": "2"})
+    assert answer.status_code == 400 and "all it can revoke" in answer.json()["detail"]
+    answer = app.post("/account/token/manage",
+                      json={"property_id": pid, "action": "issuer", "to": TEST})
+    assert answer.status_code == 400 and "already the issuer" in answer.json()["detail"]
+    answer = app.post("/account/token/manage",
+                      json={"property_id": pid, "action": "melt"})
+    assert answer.status_code == 400
+
+
+def test_the_issuer_sees_its_controls_on_the_token_page(client):
+    app, state = client
+    _seat(app)
+    app.post("/account/address", json={"address": TEST})
+    pid = _token(state, property_id=105, name="Skull Points")
+    _managed(state, pid)
+    page = app.get(f"/tokens/{pid}").text
+    assert 'id="issuer-panel"' in page and 'id="grant-go"' in page
+    assert "Hand over the issuer role" in page
+    other = _token(state, property_id=106, issuer=SOMEBODY)
+    assert 'id="issuer-panel"' not in app.get(f"/tokens/{other}").text
