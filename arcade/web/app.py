@@ -8905,6 +8905,7 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"chain": chain.network,
                              "listing": listing["id"],
                              "seller": listing["owner"],
+                             "seller_tag": _tags_for([listing["owner"]]).get(listing["owner"], ""),
                              "price": int(listing["price"]),
                              **unsigned.as_json()})
 
@@ -9148,6 +9149,7 @@ def create_app(state: AppState) -> FastAPI:
         # address is what a page has to hold onto.
         return JSONResponse({"chain": chain.network, "answered": True,
                              "seller": listing["owner"],
+                             "seller_tag": _tags_for([listing["owner"]]).get(listing["owner"], ""),
                              "price": int(listing["price"]),
                              **unsigned.as_json()})
 
