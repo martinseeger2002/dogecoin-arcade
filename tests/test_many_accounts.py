@@ -1628,11 +1628,14 @@ def test_offers_between_accounts_are_made_answered_refused_and_finished(node, cr
     # just spent hers down to one. The refusal says to split it by sending a
     # coin to yourself -- which /account/send used to refuse, a dead end -- so
     # that is what Maple does.
+    # (Only when she really is down to one: tests earlier in this module may
+    # have left her spare coins, and then there is nothing to split.)
     one = maple.client.post("/account/accept", json={"piece": ours, "offer": offer_in})
-    assert one.status_code == 400 and "Split it first" in one.json()["detail"], one.text
-    change = _do(maple, "/account/send", {"to": maple.address, "amount": "1"})
-    assert change.status_code == 200, change.text
-    _settle(*node)
+    if one.status_code != 200:
+        assert one.status_code == 400 and "Split it first" in one.json()["detail"], one.text
+        change = _do(maple, "/account/send", {"to": maple.address, "amount": "1"})
+        assert change.status_code == 200, change.text
+        _settle(*node)
 
     # Maple says yes to Ferns: the leg at Ferns's price, signed twice.
     leg = maple.client.post("/account/accept", json={"piece": ours, "offer": offer_in})
@@ -1681,3 +1684,265 @@ def test_offers_between_accounts_are_made_answered_refused_and_finished(node, cr
         assert "You bought" in bought
     finally:
         state.public = was
+
+
+# --- the big trading test: many accounts at once (roadmap, 2026-09-26) ---------
+#
+# Everything above is one thing at a time. These are the same routes hit by
+# several accounts at the same moment, in threads, and then checked against what
+# must always be true, whatever the timing: a piece has exactly one owner, a race
+# for one listing has one winner and a clean refusal, and every transaction the
+# routes broadcast would be relayed by a real peer. That last one is the check
+# regtest cannot make by itself -- our own node takes a transaction that skips
+# Pepecoin's soft-dust surcharge (the swap of 2026-09-26 sat unmined for days),
+# so it is made here, output by output.
+
+import threading                                             # noqa: E402
+
+from arcade import fees                                      # noqa: E402
+
+
+def _relayable(rpc, txid: str) -> str:
+    """"" if peers would relay it, else why not: every spendable output under
+    DUST_LIMIT must have paid DUST_LIMIT again in fee (fees.soft_dust_fee)."""
+    tx = rpc.call("getrawtransaction", txid, True)
+    outs = []
+    for out in tx["vout"]:
+        sats = round(float(out["value"]) * COIN)
+        script = bytes.fromhex(out["scriptPubKey"]["hex"])
+        outs.append((sats, script))
+    paid_in = 0
+    for vin in tx["vin"]:
+        prev = rpc.call("getrawtransaction", vin["txid"], True)
+        paid_in += round(float(prev["vout"][vin["vout"]]["value"]) * COIN)
+    fee = paid_in - sum(v for v, _ in outs)
+    owed = fees.soft_dust_fee(outs)
+    if owed and fee < owed:
+        return f"{txid}: fee {fee} under the soft-dust surcharge {owed}"
+    return ""
+
+
+def _all_at_once(*calls):
+    """Run each call in its own thread, started together; results in order."""
+    results = [None] * len(calls)
+    gate = threading.Barrier(len(calls))
+
+    def run(i, call):
+        gate.wait()
+        try:
+            results[i] = call()
+        except Exception as exc:                     # a crash is a result too
+            results[i] = exc
+
+    threads = [threading.Thread(target=run, args=(i, c)) for i, c in enumerate(calls)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=300)
+    return results
+
+
+def test_two_buyers_race_for_one_listing_and_exactly_one_wins(node, crowd):
+    daemon, state = node[0], node[1]
+    maple, osier, quill = crowd[0], crowd[2], crowd[3]
+    for who in (maple, osier, osier, quill, quill):
+        _funded(*node, who=who, amount=5.0)
+    piece = _inscribed(*node, owner=maple.address, name="Raced piece",
+                       content=b"race" * 70)
+    listed = _listed(maple, piece, "2")
+    assert listed.status_code == 200, listed.text
+    row = listed.json()["listed"]
+
+    first, second = _all_at_once(lambda: _bought(osier, row), lambda: _bought(quill, row))
+    codes = sorted(r.status_code if hasattr(r, "status_code") else 999
+                   for r in (first, second))
+    assert codes[0] == 200, (first, second)
+    assert codes[1] in (400, 409), \
+        f"the loser is refused cleanly, not crashed: {getattr(second, 'text', second)}"
+    won = next(r for r in (first, second) if getattr(r, "status_code", 0) == 200).json()
+    assert not _relayable(daemon.rpc, won["txid"]), _relayable(daemon.rpc, won["txid"])
+
+    _settle(*node)
+    index = state.token_index(state.messaging)
+    owner = index.inscription(piece)["owner"]
+    assert owner in (osier.address, quill.address), "the piece went to one of them"
+    assert daemon.rpc.call("getrawmempool") == [], "nothing left waiting"
+
+
+def test_four_accounts_trade_in_a_ring_at_the_same_moment(node, crowd):
+    """Each lists a piece and each buys the next one's, all four buys at once."""
+    daemon, state = node[0], node[1]
+    for who in crowd:
+        _funded(*node, who=who, amount=5.0)
+        _funded(*node, who=who, amount=5.0)
+    pieces, rows = [], []
+    for i, who in enumerate(crowd):
+        piece = _inscribed(*node, owner=who.address, name=f"Ring piece {i}",
+                           content=bytes([65 + i]) * 300)
+        listed = _listed(who, piece, "1")
+        assert listed.status_code == 200, listed.text
+        pieces.append(piece)
+        rows.append(listed.json()["listed"])
+
+    # Person i buys person (i+1)'s piece; all four at once.
+    n = len(crowd)
+    results = _all_at_once(*[
+        (lambda i=i: _bought(crowd[i], rows[(i + 1) % n])) for i in range(n)])
+    for i, r in enumerate(results):
+        assert getattr(r, "status_code", 0) == 200, (i, getattr(r, "text", r))
+        assert not _relayable(daemon.rpc, r.json()["txid"])
+
+    _settle(*node)
+    index = state.token_index(state.messaging)
+    for i in range(n):
+        assert index.inscription(pieces[(i + 1) % n])["owner"] == crowd[i].address, i
+    assert daemon.rpc.call("getrawmempool") == []
+
+
+def test_every_account_offers_on_every_other_piece_and_the_best_offer_wins(node, crowd):
+    """Twelve offers at once, one answer per holder, every buyer finishes."""
+    daemon, state = node[0], node[1]
+    for who in crowd:
+        _funded(*node, who=who, amount=5.0)
+        _funded(*node, who=who, amount=5.0)
+    pieces = [_inscribed(*node, owner=who.address, name=f"Offered piece {i}",
+                         content=bytes([97 + i]) * 280)
+              for i, who in enumerate(crowd)]
+
+    bids = []
+    for h, holder in enumerate(crowd):
+        for b, bidder in enumerate(crowd):
+            if b != h:
+                bids.append((h, b, str(1 + b)))        # the richest bid is the last person's
+    # One account's own sends are refused while another of its sends is going
+    # (its lane), which is the design; so each bidder makes its offers one after
+    # another, and the four bidders run at the same moment.
+    def bidder_run(b):
+        out = {}
+        for h, bb, amt in bids:
+            if bb == b:
+                out[(h, b)] = _do(crowd[b], "/account/offer",
+                                  {"piece": pieces[h], "amount": amt})
+        return out
+    runs = _all_at_once(*[(lambda b=b: bidder_run(b)) for b in range(len(crowd))])
+    by_pair = {}
+    for r in runs:
+        assert isinstance(r, dict), r
+        by_pair.update(r)
+    made = [by_pair[(h, b)] for h, b, _amt in bids]
+    for (h, b, _amt), r in zip(bids, made):
+        assert getattr(r, "status_code", 0) == 200, (h, b, getattr(r, "text", r))
+    _settle(*node)
+    # Answering takes two of the holder's coins; its own offers just spent some.
+    for who in crowd:
+        _funded(*node, who=who, amount=2.0)
+        _funded(*node, who=who, amount=2.0)
+
+    # Each holder answers its best offer; the answers go out at once.
+    best = {}
+    for (h, b, amt), r in zip(bids, made):
+        if h not in best or int(amt) > int(best[h][1]):
+            best[h] = (b, amt, r.json()["txid"])
+
+    def answer(h):
+        holder, (b, amt, offer) = crowd[h], best[h]
+        leg = holder.client.post("/account/accept", json={"piece": pieces[h], "offer": offer})
+        if leg.status_code != 200:
+            return leg
+        leg = leg.json()
+        return holder.client.post("/account/accept/sign", json={
+            "piece": pieces[h], "offer": offer, "raw": leg["raw"],
+            "pubkey": holder.pubkey.hex(),
+            "signatures": [_sign(holder.secret, bytes.fromhex(d),
+                                 funding.SINGLE_ANYONECANPAY).hex()
+                           for d in leg["sighashes"]]})
+
+    answers = _all_at_once(*[(lambda h=h: answer(h)) for h in range(len(crowd))])
+    for h, a in enumerate(answers):
+        assert getattr(a, "status_code", 0) == 200, (h, getattr(a, "text", a))
+
+    # Each winning buyer finishes its own purchase; all at once.
+    def finish(h):
+        b = best[h][0]
+        buyer, leg = crowd[b], answers[h].json()["answer"]["leg"]
+        shown = buyer.client.post("/account/fill", json={"leg": leg})
+        if shown.status_code != 200:
+            return shown
+        shown = shown.json()
+        return buyer.client.post("/account/fill/sign", json={
+            "leg": leg, "raw": shown["raw"], "pubkey": buyer.pubkey.hex(),
+            "signatures": [_sign(buyer.secret, bytes.fromhex(d)).hex()
+                           for d in shown["sighashes"]]})
+
+    # A buyer who won several finishes them one after another (its lane refuses
+    # two at once, by design); different buyers run at the same moment.
+    by_buyer = {}
+    for h in range(len(crowd)):
+        by_buyer.setdefault(best[h][0], []).append(h)
+    def buyer_run(hs):
+        return {h: finish(h) for h in hs}
+    runs = _all_at_once(*[(lambda hs=hs: buyer_run(hs)) for hs in by_buyer.values()])
+    finished = {}
+    for r in runs:
+        assert isinstance(r, dict), r
+        finished.update(r)
+    done = [finished[h] for h in range(len(crowd))]
+    for h, d in enumerate(done):
+        assert getattr(d, "status_code", 0) == 200, (h, getattr(d, "text", d))
+        assert not _relayable(daemon.rpc, d.json()["txid"]), _relayable(daemon.rpc, d.json()["txid"])
+
+    _settle(*node)
+    index = state.token_index(state.messaging)
+    for h in range(len(crowd)):
+        assert index.inscription(pieces[h])["owner"] == crowd[best[h][0]].address, h
+    assert daemon.rpc.call("getrawmempool") == []
+
+
+def test_a_piece_listed_and_answered_cannot_be_sold_twice(node, crowd):
+    """The double sale. Maple lists a piece AND answers Ferns's offer on it; the
+    listing and the answer stand on different coins of Maple's, so nothing at the
+    coin level stops both. Osier buys the listing and Ferns finishes the answer
+    at the same moment. Whatever the timing, exactly one of them may pay: the
+    other must be refused before its coins move, because a coin payment settles
+    even when the piece has already gone (D-082)."""
+    daemon, state = node[0], node[1]
+    maple, ferns, osier = crowd[0], crowd[1], crowd[2]
+    for who in (maple, maple, maple, maple, ferns, ferns, osier, osier):
+        _funded(*node, who=who, amount=3.0)
+    piece = _inscribed(*node, owner=maple.address, name="Twice sold?",
+                       content=b"twice" * 60)
+    listed = _listed(maple, piece, "2")
+    assert listed.status_code == 200, listed.text
+    row = listed.json()["listed"]
+    offer = _do(ferns, "/account/offer", {"piece": piece, "amount": "3"})
+    assert offer.status_code == 200, offer.text
+    _settle(*node)
+    offer = offer.json()["txid"]
+    leg = maple.client.post("/account/accept", json={"piece": piece, "offer": offer})
+    assert leg.status_code == 200, leg.text
+    leg = leg.json()
+    answered = maple.client.post("/account/accept/sign", json={
+        "piece": piece, "offer": offer, "raw": leg["raw"], "pubkey": maple.pubkey.hex(),
+        "signatures": [_sign(maple.secret, bytes.fromhex(d),
+                             funding.SINGLE_ANYONECANPAY).hex() for d in leg["sighashes"]]})
+    assert answered.status_code == 200, answered.text
+    answer_leg = answered.json()["answer"]["leg"]
+
+    def fill():
+        shown = ferns.client.post("/account/fill", json={"leg": answer_leg})
+        if shown.status_code != 200:
+            return shown
+        shown = shown.json()
+        return ferns.client.post("/account/fill/sign", json={
+            "leg": answer_leg, "raw": shown["raw"], "pubkey": ferns.pubkey.hex(),
+            "signatures": [_sign(ferns.secret, bytes.fromhex(d)).hex()
+                           for d in shown["sighashes"]]})
+
+    by_listing, by_answer = _all_at_once(lambda: _bought(osier, row), fill)
+    paid = [r for r in (by_listing, by_answer) if getattr(r, "status_code", 0) == 200]
+    assert len(paid) == 1, ("exactly one sale may be broadcast",
+                            getattr(by_listing, "text", by_listing),
+                            getattr(by_answer, "text", by_answer))
+    _settle(*node)
+    index = state.token_index(state.messaging)
+    assert index.inscription(piece)["owner"] in (osier.address, ferns.address)

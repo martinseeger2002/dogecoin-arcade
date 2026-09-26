@@ -8931,6 +8931,35 @@ def create_app(state: AppState) -> FastAPI:
                 f"two outputs and both are signed: what it sells, and what it "
                 f"costs.") from None
 
+    def _claim_piece(chain, listing: dict) -> tuple[str, str]:
+        """Hold the piece a sale moves for this request, or say why not.
+
+        Returns (lane to release, "") or ("", refusal). A piece can stand in more
+        than one signed leg at once -- a listing AND an answered offer, on
+        different coins of the seller's -- and nothing at the coin level stops
+        both being finished; the second buyer's coins then move and the piece
+        does not, because a coin payment settles whatever the meta-layer says
+        (D-082). The crowd test caught both being broadcast (2026-09-26). So: one
+        completion of a piece at a time on this node, and none while a swap of
+        it is already waiting in the mempool.
+        """
+        piece = _sold_piece(listing)
+        if not piece:
+            return "", ""
+        lane = f"piece {piece}"
+        if not state.begin_send(lane):
+            return "", ("another sale of this piece is going through right now. "
+                        "Nothing was spent; look again in a minute.")
+        try:
+            waiting = state.token_index(chain).pending_swaps().get(piece, "")
+        except Exception:
+            waiting = ""
+        if waiting:
+            state.end_send(lane)
+            return "", (f"this piece is already sold in {waiting[:16]}…, which is "
+                        "waiting for its block. Nothing was spent.")
+        return lane, ""
+
     def _sold_piece(row: dict) -> str:
         """The inscription a listing's payload sells, or "" when it names none."""
         try:
@@ -9312,6 +9341,7 @@ def create_app(state: AppState) -> FastAPI:
         # This account's own lane, for the reason `/account/sign` gives: it
         # covers the broadcast and the note after it, not the build before it.
         lane = f"account {account.pubkey}"
+        piece_lane = ""
         if not state.begin_send(lane):
             return JSONResponse(
                 {"detail": "one of your transactions is still going. Wait for "
@@ -9325,6 +9355,9 @@ def create_app(state: AppState) -> FastAPI:
             except (fundinglib.FundingError, listingslib.ListingError,
                     swaplib.SwapError, ValueError) as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=400)
+            piece_lane, refusal = _claim_piece(chain, listing)
+            if refusal:
+                return JSONResponse({"detail": refusal}, status_code=409)
             try:
                 _real_coins_gate(account, chain)
                 if str(said.get("raw") or "") != unsigned.raw:
@@ -9380,6 +9413,8 @@ def create_app(state: AppState) -> FastAPI:
                                  "price": int(listing["price"])})
         finally:
             state.end_send(lane)
+            if piece_lane:
+                state.end_send(piece_lane)
 
     def _leg_answered(said: dict, chain, buyer: str = "") -> dict:
         """A leg that arrived by message: checked end to end, left unwritten.
@@ -9550,6 +9585,7 @@ def create_app(state: AppState) -> FastAPI:
                 {"detail": f"this account has no {chain.label.lower()} "
                            f"address yet"}, status_code=400)
         lane = f"account {account.pubkey}"
+        piece_lane = ""
         if not state.begin_send(lane):
             return JSONResponse(
                 {"detail": "one of your transactions is still going. Wait for "
@@ -9563,6 +9599,9 @@ def create_app(state: AppState) -> FastAPI:
             except (fundinglib.FundingError, listingslib.ListingError,
                     swaplib.SwapError, AmountError, ValueError) as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=400)
+            piece_lane, refusal = _claim_piece(chain, listing)
+            if refusal:
+                return JSONResponse({"detail": refusal}, status_code=409)
             try:
                 _real_coins_gate(account, chain)
                 if str(said.get("raw") or "") != unsigned.raw:
@@ -9606,6 +9645,8 @@ def create_app(state: AppState) -> FastAPI:
                                  "price": int(listing["price"])})
         finally:
             state.end_send(lane)
+            if piece_lane:
+                state.end_send(piece_lane)
 
     # --- answering an offer, when the answer has to be a leg -----------------
     #
