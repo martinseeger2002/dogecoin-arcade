@@ -224,6 +224,13 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # both halves.
                "/account/buy", "/account/buy/sign",
                "/account/fill", "/account/fill/sign",
+               # the pair that answers one of those offers with the piece: the
+               # first shows the leg at the buyer's price, the second checks the
+               # signatures really say that offer and says where to mail them.
+               # Neither broadcasts -- an answer is a signature plus a message,
+               # and the message is `/account/talk`'s, sealed in the tab that
+               # holds the key this node was never given.
+               "/account/accept", "/account/accept/sign",
                # a shop, bought by an account rather than by this wallet. The
                # door offers three transactions and broadcasts the two messages
                # out of them; the trade itself is not broadcast here at all,

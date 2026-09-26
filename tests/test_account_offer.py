@@ -398,13 +398,18 @@ def test_the_piece_page_offers_an_account_its_own_form(node):
     visitor's key can sign. So the test is that the sentence is gone, the
     fields are there, and the one thing that must not come back -- a form
     posted at the node's own `/exchange/offer` -- stays off a public page.
+
+    The looking account is not the one holding the piece, and that is not
+    incidental. The owner's copy of this page has its own row now (the answers
+    standing on it, in `test_account_accept`), and the way to know the offer
+    form did not simply move is to ask the page as the person it is for.
     """
     app, state, rpc = node
     state.public = True
-    who, secret, pubkey, _address = _seated(app, state, rpc, 19)
-    piece = _inscribed(who, state, rpc, secret, pubkey, "looked at publicly")
+    pair = _pair(node, 19, 20)
+    piece = pair["piece"]
 
-    page = who.get(f"/inscriptions/{piece}/view").text
+    page = pair["bidder"][0].get(f"/inscriptions/{piece}/view").text
     assert "Make an offer" in page
     assert 'id="offer-amount"' in page and 'id="offer-it"' in page
     assert "/account/offer" in page, "and it asks the account's own route"
@@ -414,8 +419,12 @@ def test_the_piece_page_offers_an_account_its_own_form(node):
     # which are not built yet are not links, and that comment is a good thing.
     assert "Offering from an account is not built yet" not in page
 
+    page = pair["holder"][0].get(f"/inscriptions/{piece}/view").text
+    assert "Make an offer" not in page and "Offered for it" in page, \
+        "whoever holds it is not asked to pay a fee to ask their own wallet"
+
     state.public = False
-    page = who.get(f"/inscriptions/{piece}/view").text
+    page = pair["holder"][0].get(f"/inscriptions/{piece}/view").text
     assert 'action="/exchange/offer"' in page, \
         "the operator's own copy still offers its own form"
 
@@ -435,10 +444,11 @@ def test_the_offers_page_shows_an_account_only_offers_of_theirs(node):
     and nothing else, so this is one read changed rather than a page rewritten
     (D-172).
 
-    The button stays off, deliberately. Accepting means signing a leg with the
-    key that holds the piece, and on this instance that key is in the tab and
-    nowhere else -- which is the half that is not built, and what the page says
-    instead of a button that would be refused.
+    The button is there now, and it is a button rather than a form: accepting
+    means signing a leg with the key that holds the piece, and on this instance
+    that key is in the tab and nowhere else. What must still not appear is the
+    operator's form, posted at `/exchange/offers/`, which a public instance
+    shuts -- the same refusal, asked of the door instead of of the page.
     """
     app, state, rpc = node
     state.public = True
@@ -457,7 +467,7 @@ def test_the_offers_page_shows_an_account_only_offers_of_theirs(node):
     assert bid in page, "the offer that stands on this account's own piece"
     assert 'action="/exchange/offers/' not in page, \
         "no button that posts at the door this instance shuts"
-    assert "not built yet" in page
+    assert "answering an offer from a tab is not built yet" not in page
 
     other, _secret, _pubkey, _address = _seated(app, state, rpc, 23)
     page = other.get("/exchange?tab=offers").text

@@ -334,6 +334,121 @@
   </div>
 </div>
 
+{% if viewer == 'account' and mine_account %}
+<h2>Offered for it</h2>
+<div class="panel">
+  {% if not asks %}
+    <p class="muted" style="margin:0">Nobody has offered for this one, and it is
+      yours. An offer is made by whoever wants the piece, from this page; what
+      you can do from here is answer one when it arrives.</p>
+  {% else %}
+    <table>
+      <tr><th>Offered</th><th>By</th><th style="text-align:right"></th></tr>
+      {% for a in asks %}
+      <tr>
+        <td><strong>{{ a.price }}</strong>
+          <div class="muted" style="font-size:.8rem">
+            {%- if a.pending %}in the mempool{% else %}their offer{% endif %}</div></td>
+        <td class="mono" style="font-size:.8rem;word-break:break-all">
+          {%- if a.tag %}<strong>@{{ a.tag }}</strong>
+          {%- else %}{{ a.buyer }}{% endif %}</td>
+        <td style="text-align:right;white-space:nowrap">
+          {% if a.accepted %}
+            <span class="muted">answered &mdash; waiting for
+              {% if a.tag %}@{{ a.tag }}{% else %}their wallet{% endif %}
+              to sign</span>
+            <div class="muted" style="font-size:.76rem">held until {{ a.until }}</div>
+          {% elif a.held_for %}
+            <span class="muted">answered to another buyer until {{ a.until }}</span>
+          {% else %}
+            <button type="button" class="small" data-accept
+                    data-offer="{{ a.txid }}" data-piece="{{ row.txid }}"
+                    data-give="{{ a.give }}"
+                    data-price="{{ a.price }}"
+                    data-buyer="{% if a.tag %}@{{ a.tag }}{% else %}{{ a.buyer }}{% endif %}">Accept</button>
+            <button type="button" class="ghost small" data-refuse
+                    data-offer="{{ a.txid }}" data-piece="{{ row.txid }}"
+                    data-give="{{ a.give }}"
+                    data-price="{{ a.price }}"
+                    data-buyer="{% if a.tag %}@{{ a.tag }}{% else %}{{ a.buyer }}{% endif %}">Refuse</button>
+          {% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  {% endif %}
+  <p class="msg" id="answer-news" hidden></p>
+  {% if asks %}
+  <p class="muted" style="font-size:.82rem;margin:8px 0 0">Accepting signs this
+    piece at the price in the offer &mdash; two signatures in this tab, over the
+    bytes naming it and over the payment, and neither is a transaction: the
+    answer goes to whoever offered as one message, which costs a fee, and their
+    wallet signs its half against the price it offered. Nothing moves unless
+    both halves do.</p>
+  <script type="module">
+  /* The piece page from the side that holds the piece. On the other side of
+     this page an offer is one transaction and one signature; here an answer
+     is two signatures over a leg and one over the letter that carries it, and
+     `wallet.answerOffer` runs all three. The node refuses an answer whose
+     bytes do not say the offer that was made, so the price on this row is the
+     price the signatures stand over.
+  */
+  import * as wallet from "/wallet.js";
+
+  const news = document.getElementById("answer-news");
+  const CHAIN = {network: "{{ chain.network }}",
+                 version: {{ chain.params.pubkeyhash_version }}};
+  const opening = wallet.opened(CHAIN);
+  const say = (text, ok) => {
+    news.textContent = text;
+    news.hidden = !text;
+    news.className = "msg " + (ok ? "ok" : "err");
+  };
+
+  for (const button of document.querySelectorAll("[data-offer]")) {
+    button.onclick = async () => {
+      const refuse = button.hasAttribute("data-refuse");
+      const who = button.dataset.buyer || "whoever offered";
+      const gave = button.dataset.give || "this piece";
+      const paid = button.dataset.price || "the price in the offer";
+      const ok = await arcadeAsk(
+        refuse ? "Refuse this offer?" : "Answer this offer?",
+        refuse
+          ? `Refuse ${who}'s offer of ${paid} for ${gave}? The offer stays on the `
+            + "chain until their transaction is spent, so nothing here stops them "
+            + "asking again."
+          : `Give ${gave}, get ${paid}. Your key signs this piece at that price; `
+            + "their wallet signs the payment, and one transaction moves both or "
+            + "neither.",
+        refuse ? "Refuse" : "Answer it");
+      if (!ok) return;
+      for (const other of document.querySelectorAll("[data-offer]")) {
+        other.disabled = true;
+      }
+      try {
+        const held = await opening;
+        if (!held) throw new Error("your wallet is not open in this tab");
+        const out = await wallet.answerOffer(held, {
+          offer: button.dataset.offer, piece: button.dataset.piece,
+          refuse, chain: CHAIN.network});
+        say(out.refused ? "Refused, and the offer stands. Nothing was spent."
+                        : "Answered in " + String(out.txid).slice(0, 16)
+                          + "… The piece is held for them until their wallet "
+                          + "signs, and all this account spent is the fee of "
+                          + "one message.", true);
+      } catch (error) {
+        say(String(error.message || error), false);
+      } finally {
+        for (const other of document.querySelectorAll("[data-offer]")) {
+          other.disabled = false;
+        }
+      }
+    };
+  }
+  </script>
+  {% endif %}
+</div>
+{% endif %}
+
 {% if listed and not listed.theirs %}
 <h2>For sale</h2>
 <div class="panel" id="buy-panel">
@@ -423,7 +538,25 @@
 </div>
 {% endif %}
 
-{% if not mine %}
+{% if my_offers %}
+<h2>Your offer</h2>
+<div class="panel">
+  <table>
+    {% for o in my_offers %}
+    <tr><td><strong>{{ o.price }}</strong>
+          <div class="muted" style="font-size:.8rem">
+            {%- if o.pending %}in the mempool{% else %}block {{ "{:,}".format(o.block_height) }}{% endif %}</div></td>
+        <td style="text-align:right;white-space:nowrap" data-answer-for="{{ o.txid }}"
+            data-piece="{{ row.txid }}" data-price="{{ o.price }}" data-number="{{ row.number }}">
+          <span class="muted">waiting for the holder</span></td></tr>
+    {% endfor %}
+  </table>
+  <p class="msg" id="fill-news" hidden></p>
+  {% include "_offer_complete.html" %}
+</div>
+{% endif %}
+
+{% if not mine and not mine_account %}
 <h2>Make an offer</h2>
 <div class="panel">
   {% if offer_error %}<div class="msg err">{{ offer_error }}</div>{% endif %}

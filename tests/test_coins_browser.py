@@ -611,6 +611,11 @@ CHECK_LEG = """
           pubkey: coin.pubkey, address: await c.address(coin.pubkey, 111)});
         done({hashes: out.hashes, says: out.says,
               listing: [out.listing.txid, Number(out.listing.sats)],
+              token: out.listing.token
+                     ? [out.listing.token.propertyid,
+                        String(out.listing.token.units),
+                        out.listing.token.name || null,
+                        out.listing.token.text || null] : null,
               paid: out.back, reserved: out.reserved,
               signs: [out.signs.from, out.signs.of]});
       } catch (e) { done({error: String(e && e.message || e)}); }
@@ -629,6 +634,23 @@ def _listing_payload(txid: str = PIECE, price: int = COIN) -> bytes:
     from arcade import encoding, inscriptions as I, payload as P
     body = I.Swap(give=I.Leg(I.LEG_INSCRIPTION, txid=bytes.fromhex(txid)),
                   take=I.Leg(I.LEG_COINS, amount=price)).encode()
+    return encoding.encode_class_c(P.AnyData(data=body).encode())
+
+
+def _token_listing_payload(txid: str = PIECE, prop: int = 6,
+                           units: int = 10 * COIN) -> bytes:
+    """The same bytes, priced in a token: the price is then ONLY in these bytes.
+
+    A coin price is written twice, once here and once in the payment output, so
+    arithmetic can catch one disagreeing with the other. A token has no output —
+    it moves in the engine's ledger on the strength of this payload — which is
+    why the browser decodes it here and why the node's words about it are worth
+    checking against it rather than believed beside it.
+    """
+    from arcade import encoding, inscriptions as I, payload as P
+    body = I.Swap(give=I.Leg(I.LEG_INSCRIPTION, txid=bytes.fromhex(txid)),
+                  take=I.Leg(I.LEG_TOKEN, property_id=prop,
+                             amount=units)).encode()
     return encoding.encode_class_c(P.AnyData(data=body).encode())
 
 
@@ -673,6 +695,45 @@ def test_a_leg_is_hashed_the_same_in_python_and_in_the_browser(loaded):
     # the signatures stand over -- not repeated from `what`, which is a claim.
     assert PIECE[:16] in shown["says"] and "1.00000000 coins" in shown["says"]
     assert "a leg the node built" not in shown["says"]
+
+
+def test_a_leg_that_takes_a_token_says_which_token(loaded):
+    """A price in tokens is in the payload, and the payload cannot be read.
+
+    `listingPayload` decodes it, so the browser knows a token is being taken;
+    `take` is what tells a person WHICH token and how much, and the card they
+    decide on is built from that. Both halves are asserted: the leg that states
+    its token is the one whose price this browser can say out loud, and the leg
+    that stays silent is refused rather than drawn with a figure nobody named.
+    Every route that gets here states it — `wallet_js.js` at its three callers
+    and `/account/accept` — and an invariant kept by four call sites and pinned
+    by no test is the one that breaks at the fifth.
+    """
+    from arcade import funding
+    from arcade.config import NETWORKS
+
+    browser, _, _ = loaded
+    mine = _key(browser)
+    held = _seller_coins(mine)
+    # `coins=0` because a token price pays no coin: the price IS the token, and
+    # the only coin leaving this transaction is the fee.
+    leg = funding.build_leg(NETWORKS["regtest"], mine, held[0], coins=0,
+                            rate=RATE, payload=_token_listing_payload(),
+                            coin=held[1], what="a leg priced in poop")
+
+    stated = dict(leg.as_json(), take={"kind": "token", "propertyid": 6,
+                                       "name": "poop", "amount": "10",
+                                       "units": 10 * COIN})
+    shown = browser.execute_async_script(CHECK_LEG, json.dumps(stated))
+    assert "error" not in shown, shown
+    assert shown["token"] == [6, str(10 * COIN), "poop", "10"], \
+        "the price read off the bytes, named by the node's words about them"
+
+    silent = {k: v for k, v in leg.as_json().items() if k != "take"}
+    refused = browser.execute_async_script(CHECK_LEG, json.dumps(silent))
+    assert "hashes" not in refused, refused
+    assert "says nothing about which" in refused["error"], refused
+    assert "Nothing was signed" in refused["error"], refused
 
 
 def test_a_leg_that_pays_the_price_to_somebody_else_is_refused(loaded):

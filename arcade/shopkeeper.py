@@ -664,20 +664,27 @@ class Shopkeeper:
         note left open over a piece that is already bought is the same lie as one
         reading "signed" over a reply that never went out, only backwards.
         """
-        from .ledger import AmountError, parse_amount
+        from .ledger import AmountError
 
         state = self.state
         bid_id = str(question.get("id") or "")
         said = question["leg"]
         try:
             owed = mine.get("take") or {}
-            if str(owed.get("kind") or "coins") != "coins":
-                raise swaplib.SwapError(
-                    f"this wallet offered {owed.get('kind')} for it, and a leg pays "
-                    f"in coins. Answer with an offer and this wallet will sign one")
-            price = parse_amount(str(said.get("amount", "")), True)
-            if not _same_price({"kind": "coins", "sats": price}, owed):
-                raise swaplib.SwapError("that is not the price that was offered")
+            # The coins the leg pays out, read out of this wallet's own note and
+            # never out of the answer's word. It matters in one direction only:
+            # the engine refuses a coin leg that is paid LESS than it asks and
+            # says nothing about being paid more, so a number taken from the
+            # stranger would be funded by this wallet -- an answer that took N
+            # and asked for 2N would buy the piece it offered for N at twice the
+            # price. A price in coins is paid inside the finished transaction, so
+            # it stands in the leg's own output and `register` refuses a leg whose
+            # output does not close at exactly this figure; a price in a token pays
+            # no coin at all, so the leg this answer carries is the same leg with
+            # nothing in its payment, and the payload comparison below is the guard
+            # (D-182, D-183).
+            price = (int(owed.get("sats") or 0)
+                     if str(owed.get("kind") or "coins") == "coins" else 0)
             listing = state.listings.register(
                 rpc, raw=str(said.get("raw") or ""),
                 signatures=[str(s) for s in (said.get("signatures") or [])],
@@ -691,6 +698,8 @@ class Shopkeeper:
                 bytes.fromhex(str(listing.get("payload") or "")))
             if named is None or named.give.txid.hex() != mine["inscription"]:
                 raise swaplib.SwapError("that is not the item that was offered for")
+            if not _same_price(swaplib.leg_json(named.take, index), owed):
+                raise swaplib.SwapError("that is not the price that was offered")
             with contextlib.closing(index.open()) as db:
                 txid = listingslib.wallet_completes(
                     rpc, db, chain.params, listing, str(mine.get("buyer") or ""),
