@@ -1550,3 +1550,108 @@ async function _syncMailbox(me) {
   }
   return restored;
 }
+
+/* --- holders' chats ---------------------------------------------------------
+ *
+ * Hold a token or a piece of a collection and you are in its group chat
+ * (2026-09-25). It is an ordinary group -- one shared key pair, sealed
+ * to each member -- so the node never holds its key. The CREATOR's browser
+ * keeps it in step: it asks the chain who holds the asset now, invites new
+ * holders, and when somebody no longer holds, moves the group to a new key
+ * without them so they stop reading what comes next. That happens whenever the
+ * creator has Messages open, so a new holder is let in then, not instantly,
+ * and each invitation is one message the creator pays the fee for.
+ */
+function holdersQuery(asset) {
+  return asset.kind === "token"
+    ? `token=${encodeURIComponent(asset.id)}`
+    : `creator=${encodeURIComponent(asset.creator)}&collection=${encodeURIComponent(asset.name)}`;
+}
+
+async function holdersNow(asset) {
+  const said = await (await fetch(`/r/holders?${holdersQuery(asset)}`)).json();
+  return new Set((said.holders || []).map(String));
+}
+
+const reachable = new Map();       // address -> {tag, key, address} or null, per tab
+async function reachOf(address) {
+  if (!reachable.has(address)) {
+    let them = null;
+    try {
+      const found = await lookUp(address);
+      if (found.key) them = {tag: found.tag || "", key: found.key, address: found.address || address};
+    } catch (e) { them = null; }
+    reachable.set(address, them);
+  }
+  return reachable.get(address);
+}
+
+/** Every holders' chat this browser runs, current keys only. */
+export async function holderChats() {
+  return (await groups()).filter((g) => g.current && g.holders_of);
+}
+
+/** Start the chat for an asset this account created. */
+export async function startHoldersChat(wallet, me, asset, myTag = "") {
+  const existing = (await holderChats()).find((g) =>
+    JSON.stringify(g.holders_of) === JSON.stringify(asset));
+  if (existing) return existing;
+  const names = [];
+  for (const address of await holdersNow(asset)) {
+    if (address === wallet.address) continue;
+    const them = await reachOf(address);
+    if (them) names.push(them.tag ? "@" + them.tag : them.address);
+  }
+  if (!names.length) {
+    throw new Error("nobody else who holds it has published a messaging key yet, "
+      + "so there is nobody to start the chat with. It can be started once they have.");
+  }
+  const group = await createGroup(wallet, me, `${asset.label} holders`, names, myTag);
+  const kept = {...group, holders_of: asset, tended: Math.floor(Date.now() / 1000)};
+  await saveGroup(kept);
+  return kept;
+}
+
+/** Bring each holders' chat this account created in line with the chain.
+ *  Returns how many people were let in and let go. At most once every ten
+ *  minutes per chat. */
+export async function tendHolderChats(wallet, me) {
+  let joined = 0, left = 0;
+  const now = Math.floor(Date.now() / 1000);
+  for (const group of await holderChats()) {
+    if (group.creator !== hex(me.publicKey)) continue;
+    if (now - (group.tended || 0) < 600) continue;
+    const holding = await holdersNow(group.holders_of);
+    const staying = group.members.filter((m) =>
+      m.key === hex(me.publicKey) || holding.has(m.address));
+    const inside = new Set(group.members.map((m) => m.key));
+    const arriving = [];
+    for (const address of holding) {
+      if (address === wallet.address) continue;
+      const them = await reachOf(address);
+      if (them && !inside.has(them.key)) arriving.push(them);
+    }
+    if (staying.length < group.members.length) {
+      // Somebody sold: a new key, sealed only to who still holds.
+      const pair = nacl.box.keyPair();
+      const next = {id: await groupId(pair.publicKey), root: rootOf(group), name: group.name,
+                    secret: hex(pair.secretKey), public: hex(pair.publicKey),
+                    members: staying.concat(arriving), creator: group.creator, current: true,
+                    created: now, rotated_from: group.id, holders_of: group.holders_of,
+                    tended: now};
+      await saveGroup(next);
+      await saveGroup({...group, current: false, moved_to: next.id});
+      await invite(wallet, me, next, next.members);
+      left += group.members.length - staying.length;
+      joined += arriving.length;
+    } else if (arriving.length) {
+      const grown = {...group, members: group.members.concat(arriving), tended: now};
+      await saveGroup(grown);
+      await invite(wallet, me, grown, arriving);
+      joined += arriving.length;
+    } else {
+      await saveGroup({...group, tended: now});
+    }
+  }
+  return {joined, left};
+}

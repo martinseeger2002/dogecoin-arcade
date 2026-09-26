@@ -694,6 +694,13 @@ async function check(loud) {
         `Looked at ${out.looked}; ${out.opened} were yours.`;
     }
     await syncHistory();
+    // Holders' chats this account created: let new holders in, and move the
+    // group to a new key without anybody who sold. Each chat at most every ten
+    // minutes (messaging.js tendHolderChats).
+    try {
+      const moved = await mail.tendHolderChats(keys, me);
+      if (moved.joined || moved.left) sentSince = true;
+    } catch (e) { /* tried again on the next look */ }
     // The open conversation first: drawing it marks it read, and drawing
     // the list before that leaves a badge on the thread being looked at.
     if (here) await drawConversation();

@@ -157,6 +157,8 @@
 </div>
 {% endif %}
 
+{% set hc_kind, hc_id, hc_name, hc_label, hc_creator = 'token', prop.property_id, '', prop.name, prop.issuer %}
+{% include "_holders_chat.html" %}
 <h2>Holders</h2>
 <div class="panel">
 {% if holders %}

@@ -4863,6 +4863,33 @@ def create_app(state: AppState) -> FastAPI:
             held = []
         return contentlib._json([contentlib.holding(row) for row in held])
 
+    @app.get("/r/holders")
+    def r_holders(token: int = 0, creator: str = "", collection: str = ""):
+        """Who holds a token, or any piece of a collection: addresses only.
+
+        Public already -- the token page lists holders and every piece page its
+        owner -- and asked for by the creator's browser, which keeps the
+        holders' group chat in step with the chain (messaging.js
+        tendHolderChats, 2026-09-25).
+        """
+        index = _content_index()
+        try:
+            if token:
+                rows = index.holders(int(token))
+                return contentlib._json({"holders": [r["address"] for r in rows]})
+            if creator and collection:
+                owners: list[str] = []
+                for offset in range(0, 5000, 500):
+                    page = index.collection_items(creator, collection, limit=500,
+                                                  offset=offset)
+                    owners += [r["owner"] for r in page]
+                    if len(page) < 500:
+                        break
+                return contentlib._json({"holders": sorted(set(owners))})
+        except Exception:
+            pass
+        return contentlib._json({"holders": []})
+
     @app.get("/r/tag/{name}")
     def r_tag(name: str):
         address = _content_index().address_of(name)
