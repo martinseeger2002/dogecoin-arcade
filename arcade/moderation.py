@@ -48,11 +48,19 @@ VERDICTS = (OK, SENSITIVE, ILLEGAL)
 
 PROMPT = (
     'You review content for a public website before it is shown. Classify it into exactly '
-    'one verdict: "ok" (fine for everyone), "sensitive" (nudity, sexual content, graphic '
-    'violence or gore; legal for adults but should be behind a click-to-show cover), or '
-    '"illegal" (sexual content involving anyone who may be a minor, or other content that '
-    'is illegal to show). Answer only with JSON: '
+    'one verdict: "ok" (fine for everyone, including ordinary swearing that is not sexual, '
+    'e.g. "fuck, my code broke"), "sensitive" (nudity, sexual content, sexual or crude '
+    'references to genitals, anuses or sex acts -- however short, vulgar or joking --, '
+    'graphic violence or gore, and threats of violence against people; legal for adults but '
+    'should be behind a click-to-show cover), or "illegal" (sexual content involving anyone '
+    'who may be a minor, or other content that is illegal to show). Answer only with JSON: '
     '{"verdict": "ok"|"sensitive"|"illegal", "reason": "<a few words>"}')
+
+#: Which question a stored verdict answered. A verdict is kept per CONTENT, so a
+#: better prompt would otherwise never reach anything already judged: "Fuck my
+#: asshole" stayed "ok -- profanity only" under the first prompt (the operator,
+#: 2026-09-25). A verdict from another prompt is asked again.
+PROMPT_VERSION = hashlib.sha256(PROMPT.encode()).hexdigest()[:12]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS verdict (
@@ -61,7 +69,8 @@ CREATE TABLE IF NOT EXISTS verdict (
     verdict    TEXT NOT NULL,
     reason     TEXT NOT NULL DEFAULT '',
     model      TEXT NOT NULL DEFAULT '',
-    checked_at INTEGER NOT NULL
+    checked_at INTEGER NOT NULL,
+    prompt     TEXT NOT NULL DEFAULT ''   -- PROMPT_VERSION it was asked under
 );
 """
 
@@ -87,6 +96,10 @@ class Screen:
         self.conn = sqlite3.connect(self.home / "moderation.sqlite", check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(verdict)")}
+        if "prompt" not in columns:                 # a table from before PROMPT_VERSION
+            self.conn.execute("ALTER TABLE verdict ADD COLUMN prompt TEXT NOT NULL DEFAULT ''")
+            self.conn.commit()
         self._lock = threading.Lock()
         self._queue: dict[str, str] = {}          # digest -> words waiting for a verdict
         self._worker: threading.Thread | None = None
@@ -95,17 +108,23 @@ class Screen:
 
     def known(self, digest: str) -> str | None:
         with self._lock:
-            row = self.conn.execute("SELECT verdict FROM verdict WHERE digest = ?",
+            row = self.conn.execute("SELECT verdict, prompt FROM verdict WHERE digest = ?",
                                     (digest,)).fetchone()
-        return row["verdict"] if row else None
+        if not row:
+            return None
+        # An "illegal" verdict stands whatever the prompt: it is never shown while
+        # a newer question is being asked. Anything else is asked again.
+        if row["prompt"] != PROMPT_VERSION and row["verdict"] != ILLEGAL:
+            return None
+        return row["verdict"]
 
     def _keep(self, digest: str, kind: str, verdict: str, reason: str) -> None:
         with self._lock:
             self.conn.execute(
-                "INSERT OR REPLACE INTO verdict (digest, kind, verdict, reason, model, checked_at)"
-                " VALUES (?,?,?,?,?,?)",
+                "INSERT OR REPLACE INTO verdict (digest, kind, verdict, reason, model, checked_at,"
+                " prompt) VALUES (?,?,?,?,?,?,?)",
                 (digest, kind, verdict, reason[:200],
-                 str((self.config or {}).get("model", "")), int(time.time())))
+                 str((self.config or {}).get("model", "")), int(time.time()), PROMPT_VERSION))
             self.conn.commit()
         if verdict == ILLEGAL:
             try:
