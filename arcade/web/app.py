@@ -7726,6 +7726,7 @@ def create_app(state: AppState) -> FastAPI:
         chain = _account_chain()
         register = state.accounts()
         return render(request, "me.html", chain=chain,
+                      me_tag=(_tag_of_whoever_is_asking(request).get("tag") or ""),
                       node=chain.status(), when=_when,
                       messaging=messaging_status(), ledger=ledger_status(),
                       seats_free=register.free(), seats_total=register.seats)

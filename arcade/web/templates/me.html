@@ -52,9 +52,17 @@
     new tab and your wallet is encrypted &mdash; so it needs your password
     once more to open here. Signing in opens it; closing the tab shuts it
     again. It never leaves this browser.</p>
-  <input type="password" id="pw" autocomplete="current-password"
-         placeholder="password">
-  <button class="btn primary" id="open">Open my wallet</button>
+  {# A username beside the password (2026-09-26): without one, the browser's
+     saved login put the @name into the nearest text box on the page -- the picture's
+     inscription id. It is the account's own name, read-only, and only for autofill. #}
+  <form id="unlock-form" onsubmit="return false" style="margin:0">
+    <input type="text" name="username" autocomplete="username" value="{{ me_tag }}"
+           readonly tabindex="-1" aria-hidden="true"
+           style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
+    <input type="password" id="pw" autocomplete="current-password"
+           placeholder="password">
+    <button class="btn primary" id="open" type="submit">Open my wallet</button>
+  </form>
 </div>
 
 <div id="doing" hidden>
@@ -95,7 +103,7 @@
       You hold no pictures yet. Put one on the chain from <a href="/nfts">NFTs</a>
       and it shows up here to tap.</p>
     <div class="row" style="gap:8px;align-items:center;margin-top:6px">
-      <div style="flex:1"><input autocomplete="off" id="pfp" class="mono"
+      <div style="flex:1"><input autocomplete="off" data-lpignore="true" data-1p-ignore data-form-type="other" name="piece-id" id="pfp" class="mono"
         spellcheck="false" placeholder="or paste the id of a picture you hold"></div>
       <button type="button" class="ghost small" id="face-clear">Remove picture</button>
     </div>
