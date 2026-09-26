@@ -429,8 +429,8 @@
           refuse, chain: CHAIN.network});
         say(out.refused ? "Refused, and the offer stands. Nothing was spent."
                         : "Answered in " + String(out.txid).slice(0, 16)
-                          + "… The piece is held for them until their wallet "
-                          + "signs, and all this account spent is the fee of "
+                          + "… The piece is held for them for a day, until their "
+                          + "wallet signs; all this account spent is the fee of "
                           + "one message.", true);
       } catch (error) {
         say(String(error.message || error), false);
