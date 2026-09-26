@@ -1361,6 +1361,42 @@ window.arcadeBlocked = (function () {
   };
 })();
 </script>
+{% if account_here and not embed and path not in ('/me', '/join') %}
+<script type="module">
+// Nobody can write to an account that has not published its messaging key, so
+// signup publishes it straight after claiming the name. When that fails -- no
+// coins yet, the first transaction still settling -- /me used to be the only
+// page that tried again, and somebody who never opened it stayed unreachable
+// (2026-09-26: "message keys should automatically be posted when an
+// account is created"; 9 of 43 names had none). So every page checks, quietly,
+// at most once every ten minutes per tab, and only with the wallet open here.
+(async () => {
+  const LAST = "arcade.keycheck";
+  try {
+    if (Date.now() - Number(sessionStorage.getItem(LAST) || 0) < 600e3) return;
+    sessionStorage.setItem(LAST, String(Date.now()));
+  } catch (e) { return; }
+  const CHAIN = {network: {{ state.messaging.network|tojson }},
+                 version: {{ state.messaging.params.pubkeyhash_version }}};
+  const wallet = await import("/wallet.js");
+  const keys = await wallet.opened(CHAIN);
+  if (!keys) return;
+  const said = await wallet.state();
+  const first = (said.chains || [])[0] || {};
+  const coins = Number(first.spendable ?? (Number(first.balance || 0) + Number(first.incoming || 0)));
+  if (!(coins > 0) || document.body.dataset.working) return;
+  if (!said.tag && !said.claiming && said.name) {
+    try { await wallet.claim(keys); } catch (e) { return; }
+  }
+  if (!said.announced && !said.announcing) {
+    const mail = await import("/messaging.js");
+    const me = await mail.identity(keys.phrase);
+    try { await mail.announce(keys, me, said.tag || said.name || ""); }
+    catch (e) { try { sessionStorage.removeItem(LAST); } catch (x) {} }
+  }
+})().catch(() => {});
+</script>
+{% endif %}
 <script>
 // The installable app (2026-09-25): register the service worker that keeps
 // an offline page and shows Messenger notifications. It caches no pages

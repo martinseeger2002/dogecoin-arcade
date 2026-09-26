@@ -907,14 +907,22 @@ export async function setUp(wallet, identity, tag, {onStep, faucetRefusal} = {})
 
   // The key, whether or not the name went: they are separate things and
   // somebody unreachable is worse off than somebody unnamed.
+  // Tried twice: the first failure is usually the name's transaction still
+  // settling on the node, and a signup that leaves an account unreachable
+  // is worse than one that takes ten seconds longer (9 of 43 names had no key,
+  // 2026-09-26). Every page tries again later too (base.html).
   step("key", "publishing");
-  try {
-    const mail = await import("/messaging.js");
-    out.announced = (await mail.announce(wallet, identity, tag)).txid;
-    step("key", "on its way");
-  } catch (e) {
-    out.trouble.push(`your key was not published: ${e.message || e}`);
-    step("key", "failed");
+  const mail = await import("/messaging.js");
+  for (let attempt = 1; attempt <= 2 && !out.announced; attempt++) {
+    try {
+      out.announced = (await mail.announce(wallet, identity, tag)).txid;
+      step("key", "on its way");
+    } catch (e) {
+      if (attempt === 1) { await new Promise((ok) => setTimeout(ok, 10000)); continue; }
+      out.trouble.push(`your key was not published yet (it is tried again by `
+        + `itself): ${e.message || e}`);
+      step("key", "failed");
+    }
   }
 
   // "On its way" is where this stopped for a year, and it is not what the

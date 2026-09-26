@@ -687,6 +687,10 @@ def create_app(state: AppState) -> FastAPI:
             "approvals_waiting": _approvals_waiting(),
             "unread_messages": _unread_messages(),
             **_account_counts(request),
+            # Whether this page is drawn for a signed-in account, for the
+            # key-publishing check every page runs (base.html).
+            "account_here": bool(_public_request(request)
+                                 and signed_in(request) is not None),
             "unread_board": _unread_board(),
             "offers_waiting": _offers_waiting(),
         }

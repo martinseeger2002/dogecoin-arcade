@@ -274,3 +274,15 @@ def test_it_says_who_a_message_is_going_to_before_it_is_written(client):
     assert 'id="convo-name"' in body and 'id="convo-sub"' in body
     assert "mail.lookUp" in body
     assert "is not who this conversation is with any more" in body
+
+
+def test_every_account_page_finishes_publishing_the_key(public):
+    """An account whose key publish failed at signup is fixed from whatever
+    page it opens next, not only from /me (2026-09-26). A stranger's
+    pages and the operator's do not carry the check."""
+    app, _ = public
+    assert "arcade.keycheck" not in app.get("/feed", headers=EDGE).text
+    _seat(app)
+    assert "arcade.keycheck" in app.get("/feed", headers=EDGE).text
+    assert "arcade.keycheck" not in app.get("/me", headers=EDGE).text, \
+        "/me does this itself"
