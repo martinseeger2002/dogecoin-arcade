@@ -1,0 +1,78 @@
+{# Blocked people (2026-09-25): at the bottom of the address book, shut
+   until asked for. The list is this browser's (window.arcadeBlocked in
+   base.html), like the book itself, so this node never learns it. #}
+<details class="panel" id="blocked-box" style="margin-top:20px">
+  <summary style="cursor:pointer" class="muted">Blocked <span id="blocked-count"></span></summary>
+  <p class="muted" style="font-size:.86rem;margin:10px 0">Posts and messages from
+    these people are hidden from you in this browser. Nothing goes on the chain
+    and nobody is told.</p>
+  <div id="blocked-list"></div>
+  <div class="row" style="gap:8px;margin-top:10px">
+    <div style="flex:1"><input autocomplete="off" id="block-who" class="mono"
+      spellcheck="false" placeholder="@tag or address to block"></div>
+    <button type="button" class="ghost" id="block-add">Block</button>
+  </div>
+  <p class="msg err" id="block-trouble" hidden></p>
+</details>
+<script>
+(function () {
+  var B = window.arcadeBlocked;
+  if (!B) return;
+  var $ = function (id) { return document.getElementById(id); };
+  function draw() {
+    var all = B.all(), list = $('blocked-list');
+    $('blocked-count').textContent = all.length ? '(' + all.length + ')' : '';
+    list.textContent = '';
+    if (!all.length) {
+      var none = document.createElement('p');
+      none.className = 'muted'; none.style.margin = '0'; none.textContent = 'Nobody.';
+      list.appendChild(none);
+      return;
+    }
+    all.forEach(function (b) {
+      var row = document.createElement('div');
+      row.className = 'row';
+      row.style.cssText = 'align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line)';
+      var who = document.createElement('div');
+      who.style.cssText = 'flex:1;min-width:0';
+      if (b.tag) {
+        var a = document.createElement('a');
+        a.href = `/u/${encodeURIComponent(b.tag)}`;
+        a.textContent = '@' + b.tag;
+        who.appendChild(a);
+      } else {
+        var addr = document.createElement('span');
+        addr.className = 'muted mono';
+        addr.style.cssText = 'font-size:.78rem;word-break:break-all';
+        addr.textContent = b.address;
+        who.appendChild(addr);
+      }
+      var undo = document.createElement('button');
+      undo.type = 'button'; undo.className = 'ghost small'; undo.textContent = 'Unblock';
+      undo.onclick = function () { B.remove(b.address); };
+      row.appendChild(who); row.appendChild(undo);
+      list.appendChild(row);
+    });
+  }
+  $('block-add').onclick = function () {
+    var said = $('block-who').value.trim(), trouble = $('block-trouble');
+    trouble.hidden = true;
+    if (!said) return;
+    // An address is blocked as typed; a name is looked up first, so what is
+    // kept is the address it points at now (the book does the same).
+    if (/^[A-Za-z0-9]{26,40}$/.test(said) && !said.startsWith('@')) {
+      B.add('', said); $('block-who').value = ''; return;
+    }
+    $('block-add').disabled = true;
+    fetch('/r/tag/' + encodeURIComponent(said.replace(/^@/, '').toLowerCase()))
+      .then(function (r) { return r.json().then(function (j) {
+        if (!r.ok || !j.address) throw new Error('nobody holds ' + said + ' on this chain');
+        return j; }); })
+      .then(function (them) { B.add(them.tag || said, them.address); $('block-who').value = ''; })
+      .catch(function (e) { trouble.textContent = String(e.message || e); trouble.hidden = false; })
+      .then(function () { $('block-add').disabled = false; });
+  };
+  document.addEventListener('arcade:blocked', draw);
+  draw();
+})();
+</script>

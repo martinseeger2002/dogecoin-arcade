@@ -10,7 +10,7 @@
    pays when one is pressed: the node, through the form's own route, or this
    tab, through /account/react. See the script at the bottom of the page. #}
 {% set acts = public and mine.tag %}
-<div class="panel feedpost{{ ' reply' if p.is_reply }}"
+<div class="panel feedpost{{ ' reply' if p.is_reply }}" data-author="{{ p.author }}"
      style="margin:0 0 12px;{{ 'margin-left:%dpx' % (depth * 22) if depth }}">
   {% set who = bylines.get(p.author, {}) %}
   <div class="row" style="align-items:center;gap:10px">
@@ -251,7 +251,41 @@
         {% endif %}
       </div>
     </div>
+    {% if whose.address and whose.address != mine.address %}
+    {# Straight to your conversation with them (2026-09-26). #}
+    <a class="btn small" style="margin-left:auto"
+       href="{% if not public %}/compose?to=@{{ whose.tag }}{% elif mine.address %}/me/messages?to=@{{ whose.tag }}{% else %}/me{% endif %}"
+       {% if public and not mine.address %}title="Sign in to message @{{ whose.tag }}"{% endif %}>Message</a>
+    <button type="button" class="ghost small" id="block-them"
+            data-tag="{{ whose.tag }}" data-address="{{ whose.address }}">Block</button>
+    {% endif %}
   </div>
+  <p class="msg info" id="blocked-says" hidden>You blocked @{{ whose.tag }}: their
+    posts and messages are hidden from you, in this browser only. Undo it here or
+    under Blocked in your <a href="{{ '/me/contacts' if public else '/contacts' }}">address book</a>.</p>
+  <script>
+  (function () {
+    var b = document.getElementById('block-them');
+    if (!b || !window.arcadeBlocked) return;
+    var said = document.getElementById('blocked-says');
+    function draw() {
+      var on = window.arcadeBlocked.has(b.dataset.address);
+      b.textContent = on ? 'Unblock' : 'Block';
+      said.hidden = !on;
+    }
+    b.onclick = function () {
+      if (window.arcadeBlocked.has(b.dataset.address)) {
+        window.arcadeBlocked.remove(b.dataset.address);
+      } else {
+        if (!confirm('Block @' + b.dataset.tag + '? Their posts and messages are hidden from '
+                     + 'you in this browser. Nothing is put on the chain and they are not told.')) return;
+        window.arcadeBlocked.add(b.dataset.tag, b.dataset.address);
+      }
+      draw();
+    };
+    draw();
+  })();
+  </script>
   {% if not whose.address %}
     <div class="panel empty" style="margin-top:16px">
       <p>Nobody holds <strong>@{{ whose.tag }}</strong> on this chain.</p>
@@ -262,12 +296,15 @@
   <h1>Feed</h1>
   <p class="sub">Everything anybody has posted. <b>Popular</b> puts what people
     endorsed first, gives new posts a head start so they get seen, and lets
-    popularity wear off over time; <b>New</b> is simply newest first. Every like,
+    popularity wear off over time; <b>New</b> is simply newest first;
+    <b>Friends</b> is only the people in your address book. Every like,
     dislike, tip and share is on the chain, so everybody sees the same numbers.</p>
   <nav class="row feedsort" aria-label="Order" style="gap:6px;margin:0 0 16px">
     <a class="btn small {{ 'on' if sort != 'new' else 'ghost' }}" href="/feed">Popular</a>
     <a class="btn small {{ 'on' if sort == 'new' else 'ghost' }}" href="/feed?sort=new">New</a>
+    <a class="btn small {{ 'on' if sort == 'friends' else 'ghost' }}" href="/feed?sort=friends">Friends</a>
   </nav>
+  <div class="panel empty" id="no-friends" hidden></div>
 {% endif %}
 
 {% if not whose %}
@@ -664,6 +701,65 @@ document.addEventListener('click', function (event) {
       });
   }, {rootMargin: '300px'});
   watch.observe(more);
+  // A page whose cards are all hidden (Friends, or a blocked author) leaves
+  // this marker in view, and an observer only calls back on a change -- so it
+  // is looked at again after every page, which keeps fetching while it shows.
+  document.addEventListener('arcade:feedshown', function () {
+    if (!more.isConnected || asking) return;
+    watch.unobserve(more); watch.observe(more);
+  });
 })();
+</script>
+<script type="module">
+/* Who is shown (2026-09-25). Blocked people are hidden everywhere on
+   the feed, their replies too; on Friends, only posts by the people in your
+   address book are left. Both lists are this browser's (base.html,
+   messaging.js), so the node never learns either one. */
+const FRIENDS = {{ 'true' if sort == 'friends' and not whose else 'false' }};
+let book = null;
+if (FRIENDS) {
+  {% if public %}
+  try {
+    const mail = await import("/messaging.js");
+    book = new Set((await mail.book()).map((e) => String(e.address).toLowerCase()));
+  } catch (e) { book = new Set(); }
+  {% else %}
+  book = new Set({{ (friends or [])|tojson }}.map((a) => a.toLowerCase()));
+  {% endif %}
+}
+function sift() {
+  let shown = 0;
+  for (const card of document.querySelectorAll(".feedpost[data-author]")) {
+    const who = card.dataset.author.toLowerCase();
+    let hide = window.arcadeBlocked && window.arcadeBlocked.has(who);
+    if (!hide && FRIENDS && !card.classList.contains("reply")) hide = !book.has(who);
+    card.hidden = hide;
+    if (!hide && !card.classList.contains("reply")) shown++;
+  }
+  const none = document.getElementById("no-friends");
+  if (none && FRIENDS) {
+    const more = document.getElementById("more");
+    none.hidden = shown > 0 || (!!more && book.size > 0);
+    const words = book.size
+      ? "<p>Nobody in your address book has posted yet.</p>"
+      : "<p>Your address book is empty.</p><p class=\"muted\">Friends shows posts by "
+        + "the people in it. <a href=\"{{ '/me/contacts' if public else '/contacts' }}\">Add "
+        + "somebody by their @tag</a>.</p>";
+    // Only when it changes: this page watches itself for new cards.
+    if (none.dataset.words !== words) { none.dataset.words = words; none.innerHTML = words; }
+  }
+  document.dispatchEvent(new CustomEvent("arcade:feedshown"));
+}
+sift();
+document.addEventListener("arcade:blocked", sift);
+document.addEventListener("arcade:changed", sift);
+// Cards arrive later too: the next page, and the in-place refresh on a block.
+let queued = false;
+new MutationObserver((changes) => {
+  if (queued || !changes.some((c) => [...c.addedNodes].some((n) => n.nodeType === 1
+      && (n.matches(".feedpost") || n.querySelector(".feedpost"))))) return;
+  queued = true;
+  requestAnimationFrame(() => { queued = false; sift(); });
+}).observe(document.querySelector("main") || document.body, {childList: true, subtree: true});
 </script>
 {% endblock %}

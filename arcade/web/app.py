@@ -593,6 +593,13 @@ def create_app(state: AppState) -> FastAPI:
         needs it once shutdown has begun. Written without `await` so the guard
         that keeps the routes synchronous still reads cleanly.
         """
+        try:                                  # the faucet's daily top-off
+            # Not on an app pointed at no node (the tests' datadir does not exist).
+            where = state.messaging.datadir
+            if where is None or Path(where).exists():
+                _start_top_offs()
+        except Exception as exc:              # noqa: BLE001 -- never block startup
+            log.info("top-off not started: %s", exc)
         try:                                  # mail for phones already subscribed
             push = state.push()
             if push is not None:              # notes every account's mail
@@ -699,6 +706,10 @@ def create_app(state: AppState) -> FastAPI:
             "approvals_waiting": _approvals_waiting(),
             "unread_messages": _unread_messages(),
             **_account_counts(request),
+            # Whether this page is drawn for a signed-in account, for the
+            # key-publishing check every page runs (base.html).
+            "account_here": bool(_public_request(request)
+                                 and signed_in(request) is not None),
             "unread_board": _unread_board(),
             "offers_waiting": _offers_waiting(),
         }
@@ -1574,12 +1585,14 @@ def create_app(state: AppState) -> FastAPI:
     # --- compose --------------------------------------------------------------
 
     @app.get("/compose", response_class=HTMLResponse)
-    def compose_form(request: Request):
+    def compose_form(request: Request, to: str = ""):
         keys = []
         if state.store_path.exists():
             with state.store() as store:
                 keys = store.all_keys()
-        return render(request, "compose.html", keys=keys, plan=None, prepared=None)
+        # `?to=@tag` from a profile's Message button (2026-09-26).
+        return render(request, "compose.html", keys=keys, plan=None, prepared=None,
+                      recipient=to.strip()[:80])
 
     @app.post("/compose", response_class=HTMLResponse)
     def compose_preview(request: Request, recipient: str = Form(""), body: str = Form(""),
@@ -2513,6 +2526,23 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             return ""
 
+    def _operator_friends(request: Request) -> list[str]:
+        """The operator's own address book, as addresses, for the Friends feed.
+
+        The operator's book is on this node already (the contacts table), so it
+        is handed to the page; an account's is in its browser and the page
+        reads it there. Nothing for a public request.
+        """
+        if _public_request(request) or not state.store_path.exists():
+            return []
+        try:
+            with state.store() as store:
+                return sorted({a for row in store.contacts()
+                               for a in (row["testnet_address"],
+                                         row["mainnet_address"]) if a})
+        except Exception:
+            return []
+
     @app.get("/feed", response_class=HTMLResponse)
     def feed_page(request: Request, before: str | None = None, sort: str = "popular",
                   post: str | None = None):
@@ -2526,10 +2556,15 @@ def create_app(state: AppState) -> FastAPI:
         """
         chain = state.messaging
         mine = _tag_of_whoever_is_asking(request)
-        # Popular, the default, or New: newest first (2026-09-25).
-        sort = "new" if sort == "new" else "popular"
-        rows, cursor, waiting = _feed_page(chain.network, before=before,
-                                          sort=sort)
+        # Popular, the default, or New: newest first (2026-09-25). And
+        # Friends: New, narrowed in the browser to the people in the reader's
+        # address book. An account's book lives only in its browser, and asking
+        # the node for "these people's posts" would hand it the book, so the
+        # node sends the newest posts and the page hides the rest.
+        sort = sort if sort in ("new", "friends") else "popular"
+        rows, cursor, waiting = _feed_page(
+            chain.network, before=before,
+            sort="new" if sort == "friends" else sort)
         # One post and its thread: where a notification points (2026-09-25).
         wanted = (post or "").strip().lower()
         if len(wanted) == 64 and all(c in "0123456789abcdef" for c in wanted):
@@ -2550,8 +2585,9 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "feed.html", chain=chain, posts=shown,
                       bylines=_bylines(shown, waiting),
                       drawable=_drawable_in(shown), cursor=cursor, whose=None,
-                      here="/feed" if sort == "popular" else "/feed?sort=new",
+                      here="/feed" if sort == "popular" else f"/feed?sort={sort}",
                       sort=sort, mine=mine, kinds=feedlib.BY_NAME,
+                      friends=_operator_friends(request) if sort == "friends" else [],
                       when=_when, node=chain.status())
 
     @app.get("/u/{tag}", response_class=HTMLResponse)
@@ -7154,6 +7190,84 @@ def create_app(state: AppState) -> FastAPI:
                                - int(row.get("leaving") or 0)
                                + int(row.get("incoming") or 0))
 
+    _topoff_thread: dict[str, Any] = {}
+
+    def _top_off_all(now: int | None = None) -> int:
+        """One pass of the daily top-off (2026-09-25): every seated account
+        brought back up to the faucet's gift on the tag chain, if it is short."""
+        from .. import faucet as faucetmod
+        chain = _account_chain()
+        if chain.is_mainnet or not bool(state.setting("faucet_topoff", True)):
+            return 0
+        faucet = state.faucet()
+        sent = 0
+        index = state.token_index(chain)
+        for account in state.accounts().seated():
+            address = _account_address(account.pubkey, chain)
+            if not address:
+                continue
+            row = {}
+            with contextlib.closing(index.open()) as db:
+                row["balance"] = utxoslib.balance(db, address)
+                row["incoming"] = _on_its_way(account.pubkey, chain.network, db, address)
+                row["leaving"] = _leaving(account.pubkey, chain.network, db, address)
+            _spendable(row)
+            try:
+                sent += faucetmod.top_off(chain, faucet, account.pubkey, address,
+                                          row["spendable"], now=now)
+            except Exception as exc:                      # noqa: BLE001 -- next account
+                log.info("top-off for %s: %s", account.pubkey[:12], exc)
+        return sent
+
+    def _auto_mine_pass() -> bool:
+        """Mine a block to the node's own testnet wallet when the faucet runs low
+        (2026-09-25). Spendable and still-maturing coins both count, so it
+        stops asking for more once enough is on its way. One block per pass,
+        never while a mining run is already going, testnet only (Miner refuses
+        mainnet), and an operator can switch it off (`faucet_mine`)."""
+        if not bool(state.setting("faucet_mine", True)) or state.mining is not None:
+            return False
+        chain = state.messaging
+        if chain.is_mainnet:
+            return False
+        gift = int(state.setting("faucet", faucetlib.GIFT) or 0)
+        low = int(state.setting("faucet_low", 20 * gift) or 0)
+        if gift <= 0 or low <= 0:
+            return False
+        with chain.rpc() as rpc:
+            held = walletlib.balance(rpc)
+            have = int((held["spendable"] + held["immature"]) * 100_000_000)
+            if have >= low:
+                return False
+            miner = Miner(rpc, chain.params)                   # refuses mainnet
+            address = state.derived_address or rpc.call("getnewaddress")
+            expected = miner.expected_hashes()
+        log.info("faucet low (%s of %s): mining a block", have, low)
+        state.mining = {"started": time.time(), "address": address, "tries": 0,
+                        "rate": 0.0, "expected": expected, "stop": False, "auto": True}
+        threading.Thread(target=_mine_one, args=(address,), name="arcade-mine",
+                         daemon=True).start()
+        return True
+
+    def _start_top_offs() -> None:
+        if _topoff_thread.get("t") is not None:
+            return
+
+        def loop():
+            while not getattr(state, "shutting_down", False):
+                try:
+                    _top_off_all()
+                except Exception as exc:                  # noqa: BLE001 -- keep going
+                    log.info("top-off pass: %s", exc)
+                try:
+                    _auto_mine_pass()
+                except Exception as exc:                  # noqa: BLE001 -- keep going
+                    log.info("auto-mine pass: %s", exc)
+                time.sleep(1800)
+
+        _topoff_thread["t"] = threading.Thread(target=loop, name="arcade-topoff", daemon=True)
+        _topoff_thread["t"].start()
+
     def _watch(address: str, why: str, chain=None) -> None:
         """Start following an address's coins, so it can be funded at all."""
         index = state.token_index(chain or _account_chain())
@@ -11349,7 +11463,9 @@ def create_app(state: AppState) -> FastAPI:
             "quotas": {"hour": caps["hour"], "bytes": caps["bytes"],
                        "labels": {k: accountslib.LABELS.get(k, k) for k in caps["hour"]}},
             "wallets": _admin_wallets(),
-            "faucet": {"gift": int(state.setting("faucet", faucetlib.GIFT)),
+            "faucet": {"topoff": bool(state.setting("faucet_topoff", True)),
+                       "mine": bool(state.setting("faucet_mine", True)),
+                       "gift": int(state.setting("faucet", faucetlib.GIFT)),
                        "daily": state.setting("faucet_daily"),
                        "real_coins": bool(state.setting("faucet_real_coins", False))},
             "moderation": state.setting("moderation") or {},
@@ -11420,7 +11536,7 @@ def create_app(state: AppState) -> FastAPI:
                 text = str(said["faucet_daily"]).strip()
                 state.set_setting("faucet_daily",
                                   None if text in ("", "none") else walletlib.parse_amount(text))
-            for flag in ("auto_update", "auto_sell", "auto_fill"):
+            for flag in ("auto_update", "auto_sell", "auto_fill", "faucet_topoff", "faucet_mine"):
                 if flag in said:
                     state.set_setting(flag, bool(said[flag]))
             if "moderation" in said:
