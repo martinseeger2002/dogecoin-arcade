@@ -451,6 +451,85 @@ def test_an_order_goes_on_the_book_and_can_be_taken_off(web):
         assert index.balance(home, prop["property_id"]) == 1000 * 10**8
 
 
+def test_the_pair_page_tells_a_stranger_nothing_about_this_wallet(web):
+    """The hole that was on the public site, in a test, about a number.
+
+    `/exchange/pair/<id>` stands in the door's public trees, and until now it
+    had one reading of itself and that reading was the operator's: it asked the
+    node what it held before it asked who was looking, so a stranger on the
+    public host was answered with the operator's own balance in a tick beside a
+    chart -- measured on app.dogecoinarcade.com on 2026-09-26, `190992.3622
+    coins`. `test_public.py` could not catch this by walking routes: nothing was
+    LINKED where the door would shut, and what crossed was a figure. So this
+    test is about a figure, and it is asserted on the same page twice, once with
+    the door open and once without it.
+
+    The second half is the same mistake in the other direction, found reviewing
+    this fix: a stranger was still drawn a `Take` button beside every ask, and
+    `/exchange/fill` is not a public route, so the press answered "Not here" --
+    a button drawn and refused, which is the thing this change says a page does
+    not owe anybody.
+    """
+    app, state, node, alice, bob = web
+    csrf = state.csrf_token
+    form = dict(csrf_token=csrf, sender=alice, name="Book Token", supply="1000",
+                kind="fixed", units="divisible")
+    txid = shown(app.post("/tokens/create", data=form).text, "txid")
+    app.post("/tokens/create", data={**form, "confirmed": txid},
+             follow_redirects=False)
+    mine_and_index(node, state)
+    # What this node's wallet says it holds, and the figure the operator's copy
+    # of the page prints. Read last, and off the page: the first so that no
+    # block mined between the two moves the number out from under the
+    # comparison, the second so the test cannot pass by matching a figure the
+    # page stopped showing.
+    index = state.token_index(state.ledger)
+    (prop,) = index.properties()
+    pid = str(prop["property_id"])
+    # A resting order on the book first, so that the empty cell where a Take
+    # button would be has a row to be about: on an empty book "no button" is
+    # true of nothing. This one is the operator's own, and the reason it is the
+    # row that matters is that `mine` is settled from the READER's addresses --
+    # on a public copy nobody holds anything, so this order is not the
+    # stranger's either, which is precisely how a stranger came to be handed a
+    # button posting to a route the door shuts.
+    import unittest.mock as mock
+    home = index.balances([alice])[0]["address"]
+    with mock.patch.object(type(state), "home_address", lambda self, chain: home):
+        app.post("/exchange/order",
+                 data=dict(csrf_token=csrf, property_id=pid, side="ask",
+                           amount="100", price="0.5"), follow_redirects=False)
+        mine_and_index(node, state)
+    balance = float(node.rpc.call("getbalance"))
+    assert balance > 0, "the node has coins, which is what makes this a test"
+    body = app.get(f"/exchange/pair/{pid}").text
+    figure = f"{balance:.4f} coins"
+    assert figure in body, "and the operator is told what their own machine holds"
+    assert 'action="/exchange/order"' in body
+    assert "0.5" in body, "the ask is on the book the operator reads"
+
+    state.public = True
+    try:
+        gone = app.get(f"/exchange/pair/{pid}").text
+        assert "0.5" in gone, \
+            "the same ask, on the public copy: a row this page could have offered"
+        assert 'action="/exchange/fill"' not in gone, \
+            "and it does not offer it with a button whose press the door shuts"
+        assert figure not in gone, "the node's coins are not the market's news"
+        assert "You hold" not in gone, \
+            "a stranger has no holdings, and a page does not say otherwise"
+        assert 'action="/exchange/order"' not in gone, \
+            "and no form here stands a stranger's click behind this machine's coins"
+        assert "Sign in to put an order" in gone, "which is what it says instead"
+    finally:
+        state.public = False
+    # And nothing was lost on the way: read by the machine the page is about,
+    # it is the same page it always was. A fix that gets here by blanking the
+    # panel would pass every assertion above.
+    back = app.get(f"/exchange/pair/{pid}").text
+    assert figure in back and 'action="/exchange/order"' in back
+
+
 def test_a_name_already_on_the_chain_is_refused_before_it_costs_anything(web):
     """One name, one token. The chain refuses the second issuance now, and a
     refused issuance still costs its fee -- so the wallet asks first (D-122)."""

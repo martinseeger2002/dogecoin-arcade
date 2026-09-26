@@ -12266,16 +12266,49 @@ def create_app(state: AppState) -> FastAPI:
             trades = []
         points = chartlib.token_prices(trades, property_id)
         book = index.book(property_id)
+        # Who is looking, settled before anything is read about a wallet. This
+        # page stands in the door's public trees, and until now it had one
+        # reading of itself and that reading was the operator's: the node was
+        # asked what it held before the request was asked who was looking, so a
+        # public copy handed a stranger the operator's own balance -- "You hold
+        # 0 Arcade and 191092.3664 coins", in a tick beside a chart, on the
+        # public host. Three readers, as on the piece page, and the same rule
+        # underneath them: this machine may ask its wallet anything; an account
+        # is answered out of the index, because on this path the node holds
+        # nobody's key; a stranger is told nothing about a reader, because there
+        # is no reader to describe.
+        public = _public_request(request)
+        viewer = "wallet"
+        if public:
+            viewer = "account" if signed_in(request) is not None else "nobody"
         owned, held, coins = set(), 0, 0.0
-        try:
-            with chain.rpc() as rpc:
-                owned = set(_ledger_addresses(rpc))
-                coins = float(rpc.call("getbalance") or 0)
-            held = sum(index.balance(a, property_id) for a in owned)
-        except HTTPException:
-            raise
-        except Exception:
-            pass
+        account_address = ""
+        if viewer == "wallet":
+            try:
+                with chain.rpc() as rpc:
+                    owned = set(_ledger_addresses(rpc))
+                    coins = float(rpc.call("getbalance") or 0)
+                held = sum(index.balance(a, property_id) for a in owned)
+            except HTTPException:
+                raise
+            except Exception:
+                pass
+        elif viewer == "account":
+            # Two numbers, both worth having on this page: an order sells a
+            # token, so the figure that decides whether a press is worth its
+            # fee is how much of THIS token this address holds. Neither comes
+            # from the wallet -- the ledger's own book for the token, this
+            # node's watch of that one address for the coins (D-040).
+            try:
+                account_address = _account_address(signed_in(request).pubkey,
+                                                   chain)
+                if account_address:
+                    owned = {account_address}
+                    held = index.balance(account_address, property_id)
+                    with contextlib.closing(index.open()) as db:
+                        coins = utxoslib.balance(db, account_address) / 100_000_000
+            except Exception:
+                owned, held, coins = set(), 0, 0.0
         for side in ("asks", "bids"):
             for order in book[side]:
                 order["mine"] = order["address"] in owned
@@ -12300,7 +12333,14 @@ def create_app(state: AppState) -> FastAPI:
                       recent=sorted(points, key=lambda p: -p["when"])[:12],
                       held=format_amount(held, prop["divisible"]), held_units=held,
                       coins=coins, mine=index.orders_of(sorted(owned)),
-                      fills=state.offers.fills(chain.network, limit=8),
+                      viewer=viewer, account_address=account_address,
+                      # Whose fills these are: the list is of times THIS node
+                      # went looking to take a price and whether it came off,
+                      # so on a public copy they are nobody's. An account's own
+                      # fill log is not built here, which is why the panel is
+                      # empty above rather than somebody else's.
+                      fills=[] if viewer != "wallet"
+                      else state.offers.fills(chain.network, limit=8),
                       fills_from=chain.params.fills_from,
                       fills_ready=(chain.params.fills_from is not None
                                    and (index.indexed_height() or 0)
