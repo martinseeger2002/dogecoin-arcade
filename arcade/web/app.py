@@ -1217,7 +1217,14 @@ def create_app(state: AppState) -> FastAPI:
                 for t in threads:
                     if t["pubkey"] == peer_key:
                         peer["address"] = t.get("address", "")
+        # `/content/<id>` in a message is drawn as the feed draws it (the operator,
+        # 2026-09-25): what each id is comes from the index, never the message.
+        from types import SimpleNamespace
+        drawable = _drawable_in([SimpleNamespace(
+            text=(m["body"] or b"").decode("utf-8", "replace") if isinstance(m["body"], bytes)
+            else str(m["body"] or ""), replies=[]) for m in (items or [])])
         return render(request, "messages.html", threads=threads, thread=items,
+                      drawable=drawable,
                       peer=peer, when=_when, fingerprint_of=fingerprint_of,
                       is_new_contact=bool(peer) and not items,
                       unfinished=unfinished,

@@ -307,6 +307,48 @@ async function drawThreads() {
   return all;
 }
 
+// A `/content/<id>` line is shown as the picture it names, as the feed does
+// (2026-09-25). The words stay text: the line becomes a link first, and
+// only an id the NODE says is an image becomes an <img> -- never markup from the
+// message itself. The picture goes through /content, so screening covers it.
+const PIECE = /\/content\/([0-9a-f]{64})/g;
+const pieceKinds = new Map();
+const kindOf = (id) => {
+  if (!pieceKinds.has(id)) {
+    pieceKinds.set(id, fetch("/r/inscription/" + id)
+      .then((r) => r.ok ? r.json() : {}).then((j) => j.contenttype || "")
+      .catch(() => ""));
+  }
+  return pieceKinds.get(id);
+};
+function drawPieces(el) {
+  const text = el.textContent;
+  const found = [...text.matchAll(PIECE)];
+  if (!found.length) return;
+  el.textContent = "";
+  let last = 0;
+  for (const m of found) {
+    el.append(text.slice(last, m.index));
+    const link = document.createElement("a");
+    link.href = "/inscriptions/" + m[1] + "/view";
+    link.textContent = "/content/" + m[1].slice(0, 12) + "\u2026";
+    el.append(link);
+    kindOf(m[1]).then((kind) => {
+      if (!kind.startsWith("image/") || !link.isConnected) return;
+      const img = document.createElement("img");
+      img.className = "postmedia";
+      img.alt = "";
+      img.loading = "lazy";
+      img.src = "/content/" + m[1];
+      img.onclick = () => window.arcadeOpenImage && window.arcadeOpenImage(img.src, "", img.src);
+      link.replaceWith(img);
+      if (window.arcadeScreenLook) window.arcadeScreenLook();
+    });
+    last = m.index + m[0].length;
+  }
+  el.append(text.slice(last));
+}
+
 function bubble(letter) {
   const row = document.createElement("div");
   row.className = "bubble-row " + (letter.mine ? "mine" : "theirs");
@@ -317,6 +359,7 @@ function bubble(letter) {
   // textContent, always: a message is somebody else's words, and a page
   // that renders them as markup is a page that runs them.
   body.textContent = mail.text(letter);
+  drawPieces(body);
   const parts = [body];
   // In a group, each line says who said it: the address that PAID for it,
   // which is signed by that person's own coin key (messaging.js explains why

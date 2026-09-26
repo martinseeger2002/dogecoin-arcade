@@ -103,3 +103,25 @@ def test_seen_is_a_row_marker_not_a_clock():
     seen = notify.seen_now(ev, {})
     ev[0].at = 12345                                 # its block lands
     assert notify.merge(ev, seen)[0].unread is False
+
+
+# --- /content/<id> in messages (2026-09-25) ------------------------------------
+
+
+def test_a_picture_named_in_a_message_is_drawn_as_the_feed_draws_it(client, monkeypatch):
+    app, state = client
+    from arcade.messaging.keys import Identity
+    state.identity = Identity.generate()
+    peer = b"\x42" * 32
+    piece = "ab" * 32
+    with state.store() as store:
+        store.add_message(None, "t1", "t1", 1, 0, "nThem", peer, state.identity.fingerprint,
+                          f"look at this\n/content/{piece}\n<b>not bold</b>".encode())
+
+    class Index:
+        def inscription(self, key):
+            return {"content_type": "image/png"} if key == piece else None
+    monkeypatch.setattr(type(state), "token_index", lambda self, chain=None: Index())
+    body = app.get(f"/messages/{peer.hex()}").text
+    assert f'<img class="postmedia" src="/content/{piece}"' in body
+    assert "&lt;b&gt;not bold&lt;/b&gt;" in body, "the message's own markup stays text"

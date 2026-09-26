@@ -1314,12 +1314,15 @@ function arcadeFileCost(bytes){
   document.addEventListener('DOMContentLoaded', look);
   if (document.readyState !== 'loading') look();
   document.addEventListener('arcade:changed', look);
+  window.arcadeScreenLook = look;       // for pictures a page draws later
 })();
 </script>
 <style>
 .screenlabel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2;
   padding:7px 12px;border-radius:999px;border:0;background:rgba(0,0,0,.72);color:#fff;
   font:600 .8rem/1.2 inherit;cursor:pointer;box-shadow:none;white-space:nowrap}
+.bubble img.postmedia{display:block;max-width:100%;max-height:340px;height:auto;
+  border-radius:10px;margin:6px 0;cursor:zoom-in}
 details.covered>summary{cursor:pointer;color:var(--muted);font-size:.9rem;padding:8px 12px;
   border:1px dashed var(--line);border-radius:10px;list-style:none}
 details.covered[open]>summary{margin-bottom:6px}

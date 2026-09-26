@@ -100,7 +100,7 @@
       {% for m in thread %}
         <div class="bubble-row {{ 'mine' if m.mine else 'theirs' }}">
           <div class="bubble">
-            {% if m.body %}<div class="text">{{ m.body.decode('utf-8', 'replace') }}</div>{% endif %}
+            {% if m.body %}<div class="text">{{ render_post(m.body.decode('utf-8', 'replace'), drawable) }}</div>{% endif %}
             {% if m.file %}
               {% if m.file.kind == 'image' %}
                 {# Still an anchor, so it works with no JavaScript and the
