@@ -510,3 +510,32 @@ def test_a_page_can_look_somebody_up_by_name(client):
     assert found["url"] == "https://dogecoinarcade.com"
     assert found["picture"] == "", "they announced none"
     assert app.get("/r/profile/nobody").status_code == 404
+
+
+def test_friends_is_a_third_order_narrowed_to_the_address_book(client):
+    """Friends (2026-09-25): the newest posts, with the operator's book
+    handed to the page as addresses for the browser to narrow them by. The
+    node sends everybody's posts; which are shown is the page's to decide."""
+    app, state = client
+    FRIEND = "nFriendAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    a_post(state, f"{1:064x}", text="from a friend", sender=FRIEND, height=101)
+    a_post(state, f"{2:064x}", text="from a stranger", height=102)
+    with state.store() as store:
+        store.save_contact(name="friend", testnet_address=FRIEND)
+    body = app.get("/feed?sort=friends").text
+    assert 'href="/feed?sort=friends"' in body and ">Friends</a>" in body
+    assert f'data-author="{FRIEND}"' in body and f'data-author="{THEM}"' in body
+    assert FRIEND in body.split("book = new Set(")[1].split(")")[0], \
+        "the operator's book is what the page narrows by"
+    assert "from a stranger" in app.get("/feed").text, "Popular is unchanged"
+
+
+def test_blocking_is_offered_on_a_profile_and_listed_in_the_book(client):
+    """A Block button on somebody's page, and the Blocked list at the bottom of
+    the address book, shut until opened (2026-09-25)."""
+    app, state = client
+    book = app.get("/contacts").text
+    assert '<details class="panel" id="blocked-box"' in book
+    assert book.index("blocked-box") > book.index("Address book"), \
+        "below everything else"
+    assert "window.arcadeBlocked" in book

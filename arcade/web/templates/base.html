@@ -1330,6 +1330,38 @@ details.covered>summary{cursor:pointer;color:var(--muted);font-size:.9rem;paddin
 details.covered[open]>summary{margin-bottom:6px}
 </style>
 <script>
+// Blocked people (2026-09-25): kept in this browser only, like the
+// address book, so this node never learns who anybody blocked. Pages read it to
+// hide what those people post and send; the address book lists and undoes it.
+window.arcadeBlocked = (function () {
+  var KEY = 'arcade.blocked';
+  function all() {
+    try { var v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v : []; }
+    catch (e) { return []; }
+  }
+  function save(list) {
+    try { localStorage.setItem(KEY, JSON.stringify(list)); } catch (e) {}
+    try { document.dispatchEvent(new CustomEvent('arcade:blocked')); } catch (e) {}
+  }
+  return {
+    all: all,
+    has: function (address) {
+      address = String(address || '').toLowerCase();
+      return !!address && all().some(function (b) { return String(b.address).toLowerCase() === address; });
+    },
+    add: function (tag, address) {
+      if (!address) return;
+      var list = all().filter(function (b) { return b.address !== address; });
+      list.push({tag: String(tag || '').replace(/^@/, ''), address: address, at: Date.now()});
+      save(list);
+    },
+    remove: function (address) {
+      save(all().filter(function (b) { return b.address !== address; }));
+    }
+  };
+})();
+</script>
+<script>
 // The installable app (2026-09-25): register the service worker that keeps
 // an offline page and shows Messenger notifications. It caches no pages
 // (sw.js), so the live, in-place refresh above is untouched. Not in an embed:

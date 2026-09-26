@@ -265,7 +265,10 @@ function fileBox(file) {
 }
 
 async function drawThreads() {
-  const all = await mail.threads();
+  // Somebody blocked is left out of the list (2026-09-25); unblocking
+  // them in the address book brings the conversation back, nothing is deleted.
+  const all = (await mail.threads()).filter((t) =>
+    !(window.arcadeBlocked && window.arcadeBlocked.has(t.address)));
   // Names before rows: a list that grows a name under a finger already
   // reaching for a thread is worse than one that arrives a moment late.
   await Promise.all(all.map(async (t) => {

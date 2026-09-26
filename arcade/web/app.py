@@ -2501,6 +2501,23 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             return ""
 
+    def _operator_friends(request: Request) -> list[str]:
+        """The operator's own address book, as addresses, for the Friends feed.
+
+        The operator's book is on this node already (the contacts table), so it
+        is handed to the page; an account's is in its browser and the page
+        reads it there. Nothing for a public request.
+        """
+        if _public_request(request) or not state.store_path.exists():
+            return []
+        try:
+            with state.store() as store:
+                return sorted({a for row in store.contacts()
+                               for a in (row["testnet_address"],
+                                         row["mainnet_address"]) if a})
+        except Exception:
+            return []
+
     @app.get("/feed", response_class=HTMLResponse)
     def feed_page(request: Request, before: str | None = None, sort: str = "popular",
                   post: str | None = None):
@@ -2514,10 +2531,15 @@ def create_app(state: AppState) -> FastAPI:
         """
         chain = state.messaging
         mine = _tag_of_whoever_is_asking(request)
-        # Popular, the default, or New: newest first (2026-09-25).
-        sort = "new" if sort == "new" else "popular"
-        rows, cursor, waiting = _feed_page(chain.network, before=before,
-                                          sort=sort)
+        # Popular, the default, or New: newest first (2026-09-25). And
+        # Friends: New, narrowed in the browser to the people in the reader's
+        # address book. An account's book lives only in its browser, and asking
+        # the node for "these people's posts" would hand it the book, so the
+        # node sends the newest posts and the page hides the rest.
+        sort = sort if sort in ("new", "friends") else "popular"
+        rows, cursor, waiting = _feed_page(
+            chain.network, before=before,
+            sort="new" if sort == "friends" else sort)
         # One post and its thread: where a notification points (2026-09-25).
         wanted = (post or "").strip().lower()
         if len(wanted) == 64 and all(c in "0123456789abcdef" for c in wanted):
@@ -2538,8 +2560,9 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "feed.html", chain=chain, posts=shown,
                       bylines=_bylines(shown, waiting),
                       drawable=_drawable_in(shown), cursor=cursor, whose=None,
-                      here="/feed" if sort == "popular" else "/feed?sort=new",
+                      here="/feed" if sort == "popular" else f"/feed?sort={sort}",
                       sort=sort, mine=mine, kinds=feedlib.BY_NAME,
+                      friends=_operator_friends(request) if sort == "friends" else [],
                       when=_when, node=chain.status())
 
     @app.get("/u/{tag}", response_class=HTMLResponse)
