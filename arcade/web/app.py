@@ -4854,7 +4854,19 @@ def create_app(state: AppState) -> FastAPI:
                 own = _ledger_addresses(rpc)
         except Exception:
             own = []
-        if row["owner"] in own:
+        # Held here: the operator's own wallet, or an account on this node (an
+        # address this node's index watches). Either way the answer is a
+        # lookup in what the piece's creator inscribed, free and immediate --
+        # an arena on the public arcade asking about a creature an account
+        # holds used to pay for a node-to-node message to that account.
+        watched = False
+        if row["owner"] not in own:
+            try:
+                with contextlib.closing(_content_index().open()) as db:
+                    watched = utxoslib.since(db, row["owner"]) is not None
+            except Exception:
+                watched = False
+        if row["owner"] in own or watched:
             try:
                 items = state.pagestore.items(row["txid"])
                 return contentlib._json({"answer": pageapi.answer(row, route, items),

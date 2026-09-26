@@ -717,3 +717,35 @@ def test_a_stranger_cannot_make_the_node_pay_to_ask_another(client, monkeypatch)
         state.set_setting("pages_host", "")
     assert answer.status_code == 403, answer.text
     assert "does not pay" in answer.json()["error"]
+
+
+def test_an_arena_asking_about_an_account_s_piece_is_answered_here(client):
+    """D-091 routes are lookups in what the creator inscribed, so a piece held by
+    an account on this node is answered here, free -- not by a paid message to
+    the account, and not refused from outside."""
+    import json as _json
+
+    from arcade import utxos as utxoslib
+
+    app, state = client
+    index = state.token_index(state.token_chain)
+    txid, holder = "fa" * 32, "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg"
+    meta = _json.dumps({"api": {"power": {"const": 7}}})
+    with index.open() as db:
+        db.conn.execute(
+            "INSERT OR REPLACE INTO inscription(txid,number,creator,owner,block_height,"
+            "position,content_type,content_len,sha256,json,chunks,content) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (txid, 904, "nMe", holder, 100, 0, "text/html", 2, "ab" * 32,
+             meta, 1, b"hi"))
+        utxoslib.watch(db, holder, 1, "account")
+        db.conn.commit()
+    state.set_setting("pages_host", "pages.example")
+    try:
+        answer = app.post("/r/ask", json={"inscription": txid, "route": "power"},
+                          headers={"host": "pages.example", "cf-ray": "abc"})
+    finally:
+        state.set_setting("pages_host", "")
+    assert answer.status_code != 403, answer.text
+    assert answer.json().get("from") == "here", answer.text
+    assert answer.json()["answer"] == 7
