@@ -800,13 +800,18 @@ class LedgerIndex:
             for row in db.conn.execute(sql, args):
                 entry = dict(row)
                 cover = db.conn.execute(
-                    "SELECT i.txid, i.content_type FROM collection_item c "
+                    "SELECT i.txid, i.content_type, i.json FROM collection_item c "
                     "JOIN inscription i ON i.txid = c.txid "
                     "WHERE c.creator = ? AND c.collection = ? "
                     "ORDER BY c.edition IS NULL, c.edition, i.number LIMIT 1",
                     (entry["creator"], entry["collection"])).fetchone()
                 entry["cover_txid"] = cover["txid"] if cover else None
                 entry["cover_type"] = cover["content_type"] if cover else None
+                # What #1 says the set's size is: a number, or None for a set
+                # that never seals ("of ∞", 2026-09-25).
+                from . import inscriptions as I
+                entry["supply"] = (I.collection_details(cover["json"] or "").get("supply")
+                                   if cover else None)
                 out.append(entry)
             return out
 

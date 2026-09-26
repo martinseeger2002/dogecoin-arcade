@@ -80,7 +80,7 @@ def test_the_pages_and_the_api_show_the_set(client):
 
     page = app.get("/collections")
     assert page.status_code == 200
-    assert "Doge Punks" in page.text and "5 items" in page.text
+    assert "Doge Punks" in page.text and "5 of ∞" in page.text, "N of M, or of ∞ with no cap (2026-09-25)"
 
     page = app.get("/collections/nMe/Doge%20Punks")
     assert page.status_code == 200
@@ -94,7 +94,8 @@ def test_the_pages_and_the_api_show_the_set(client):
     assert listing.json()[0] == {
         "creator": "nMe", "name": "Doge Punks", "count": 5,
         "firstnumber": 0, "lastnumber": 4, "firstedition": 1, "lastedition": 5,
-        "cover": f"{1:064x}", "covertype": "image/png"}
+        "cover": f"{1:064x}", "covertype": "image/png",
+        "supply": None}  # no cap on its #1: unlimited (2026-09-25)
     assert app.get("/r/collections/count").json() == {"count": 1}
 
     one = app.get("/r/collection/nMe/Doge%20Punks?traits=1&limit=2").json()

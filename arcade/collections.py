@@ -166,6 +166,38 @@ def strip_offchain(entry: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in entry.items() if key != "image"}
 
 
+def renumbered(build: "Build", first: int) -> "Build":
+    """The same build, its editions starting at `first` (2026-09-25).
+
+    Adding a second batch to a collection that is already on the chain: a new
+    HashLips build numbers from 1 again, and every one of those editions is
+    taken, so the batch is moved up to follow the set instead. Each item's
+    `edition` and the `#N` of its name change together (membership is read off
+    the name, `inscriptions.collection_of`); nothing else in its JSON moves.
+    """
+    import re as _re
+    out: list[Item] = []
+    for n, item in enumerate(sorted(build.items, key=lambda i: i.edition)):
+        edition = int(first) + n
+        try:
+            data = json.loads(item.json)
+        except ValueError:
+            data = None
+        name = _re.sub(r"#\s*\d+\s*$", f"#{edition}", item.name) if _re.search(
+            r"#\s*\d+\s*$", item.name or "") else f"{build.collection} #{edition}"
+        if isinstance(data, dict):
+            data["edition"] = edition
+            if isinstance(data.get("name"), str) and _re.search(r"#\s*\d+\s*$", data["name"]):
+                data["name"] = _re.sub(r"#\s*\d+\s*$", f"#{edition}", data["name"])
+            elif "name" in data:
+                data["name"] = name
+            text = compact(data)
+        else:
+            text = item.json
+        out.append(dataclasses.replace(item, edition=edition, name=name, json=text))
+    return dataclasses.replace(build, items=out)
+
+
 def with_details(build: "Build", details: dict[str, Any]) -> "Build":
     """Put what the set says about ITSELF onto its #1.
 
@@ -189,7 +221,11 @@ def with_details(build: "Build", details: dict[str, Any]) -> "Build":
     # once it is there, no node will file a hundred-and-first item into a
     # hundred-item set, which is what stops a build being inscribed twice
     # (D-120).
-    wanted.setdefault("supply", len(build.items))
+    # A supply of 0 is a decision, not a blank: the set never seals and can keep
+    # growing (2026-09-25). Only a set that says nothing gets its size.
+    unlimited = (details or {}).get("supply") == 0
+    if not unlimited:
+        wanted.setdefault("supply", len(build.items))
     first = min(build.items, key=lambda item: item.edition)
     try:
         data = json.loads(first.json)
@@ -210,6 +246,8 @@ def with_details(build: "Build", details: dict[str, Any]) -> "Build":
     existing = data.get("collection")
     if isinstance(existing, dict):
         about = {**existing, **about}
+    if unlimited:
+        about.pop("supply", None)
     data["collection"] = about
     said = dataclasses.replace(first, json=compact(data))
     items = [said if item is first else item for item in build.items]

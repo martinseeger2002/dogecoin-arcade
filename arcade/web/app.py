@@ -5976,6 +5976,17 @@ def create_app(state: AppState) -> FastAPI:
                       tokens=held, coins=coins, advice=advice,
                       renders=row["content_type"].startswith(contentlib.RENDERABLE))
 
+    @app.get("/launch", response_class=HTMLResponse)
+    def launchpad(request: Request):
+        """The launchpad: a token or a collection from a template, in steps.
+
+        It signs and spends nothing. The last step is a link to the page that
+        already makes the thing, with the choices in its address, so what is
+        reviewed and signed is exactly what it always was (2026-09-25).
+        """
+        chain, _ = _token_chain()
+        return render(request, "launch.html", chain=chain)
+
     @app.get("/tokens", response_class=HTMLResponse)
     def tokens(request: Request):
         """Every token on the chain, and the way to make one.
@@ -6003,8 +6014,23 @@ def create_app(state: AppState) -> FastAPI:
             return render(request, "tokens.html", prepared=None,
                           account_address=address,
                           account_signed=account is not None,
-                          **_token_page_data([address] if address else []))
-        return render(request, "tokens.html", prepared=None, **_token_page_data())
+                          **{**_token_page_data([address] if address else []),
+                             **_launched(request)})
+        return render(request, "tokens.html", prepared=None,
+                      **{**_token_page_data(), **_launched(request)})
+
+    #: The fields the launchpad (/launch) may prefill on the token form.
+    LAUNCH_FIELDS = ("name", "kind", "supply", "units", "category",
+                     "subcategory", "url", "data")
+
+    def _launched(request: Request) -> dict:
+        """The launchpad's choices, carried in the address, as the create form's
+        starting values. Only prefills: the person still reviews and signs."""
+        q = request.query_params
+        if q.get("launch") != "token":
+            return {}
+        return {"form_create": {k: str(q.get(k, ""))[:200] for k in LAUNCH_FIELDS
+                                if q.get(k) is not None}}
 
     @app.post("/tokens/chain")
     def tokens_chain(request: Request, chain: str = Form(""), csrf_token: str = Form(""),
@@ -8100,7 +8126,10 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/account/run/start")
     def account_run_start(request: Request, files: list[UploadFile] = File([]),
-                          name: str = Form(""), run_chain: str = Form("")):
+                          name: str = Form(""), run_chain: str = Form(""),
+                          max_supply: str = Form(""), numbering: str = Form("continue"),
+                          description: str = Form(""), url: str = Form(""),
+                          artist: str = Form(""), icon: str = Form("")):
         """Write a collection down as this account's run. Nothing is inscribed.
 
         One upload, one run, and no transaction in it. The pieces are asked
@@ -8150,9 +8179,88 @@ def create_app(state: AppState) -> FastAPI:
                 collectionlib.find_build(_save_upload(files)))
         except (collectionlib.CollectionError, ValueError, OSError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
+        # The set's rules are #1's (2026-09-25): a NEW collection writes
+        # its details and its maximum supply (0 = unlimited) onto #1; a batch
+        # added to one already on the chain from this address inherits them,
+        # moves up to follow it (unless the build's own numbers are kept), and
+        # stops at the cap #1 set.
+        try:
+            index = state.token_index(chain)
+            taken = index.collection_editions(address, build.collection)
+            cover = index.collection_cover(address, build.collection) if taken else None
+        except Exception:
+            taken, cover = set(), None
+        cap = None
+        repeat_note = ""
+        if taken:
+            # Which of these pictures are already in the set, by their bytes:
+            # a HashLips batch numbers itself from 1 every time, so an edition
+            # number cannot tell a new batch from the same folder uploaded
+            # again. The same picture is left out (it is up already); only what
+            # is new is written down, after the last one on the chain.
+            try:
+                have = set()
+                for offset in range(0, 10000, 500):
+                    page = index.collection_items(address, build.collection,
+                                                  limit=500, offset=offset)
+                    have |= {row["sha256"] for row in page if row["sha256"]}
+                    if len(page) < 500:
+                        break
+            except Exception:
+                have = set()
+            fresh = [item for item in build.items
+                     if hashlib.sha256((build.folder / item.image).read_bytes()
+                                       ).hexdigest() not in have]
+            if not fresh:
+                return JSONResponse({"detail": (
+                    f"{build.collection} is already on this chain from this "
+                    f"address, all {len(build.items):,} pieces of it. Inscribing "
+                    "it again would pay for a second copy of every item, and no "
+                    "node would file the copies into the set. Nothing has been "
+                    "paid for.")}, status_code=400)
+            if len(fresh) < len(build.items):
+                repeat_note = (
+                    f"{len(build.items) - len(fresh):,} of these are already on "
+                    f"this chain from this address, so this run is written down "
+                    f"as the other {len(fresh):,}. A second copy joins nothing "
+                    "and costs again.")
+                build = dataclasses.replace(build, items=fresh)
+            cap = inscriptionlib.collection_details((cover or {}).get("json") or "").get("supply")
+            if numbering != "keep":
+                build = collectionlib.renumbered(build, max(taken) + 1)
+            top = max(item.edition for item in build.items)
+            if cap and top > cap:
+                room = max(0, cap - len(taken))
+                return JSONResponse({"detail": (
+                    f"{build.collection} is sealed at {cap:,} by its #1, and "
+                    f"{len(taken):,} are on the chain, so there is room for "
+                    f"{room:,} more, not {len(build.items):,}. Nothing has been "
+                    "paid for.")}, status_code=400)
+        else:
+            try:
+                supply = int(str(max_supply or "0").replace(",", "").strip() or 0)
+            except ValueError:
+                return JSONResponse({"detail": "the maximum supply is a whole "
+                                     "number, or 0 for no limit"}, status_code=400)
+            top = max(item.edition for item in build.items)
+            if supply < 0 or (supply and supply < top):
+                return JSONResponse({"detail": (
+                    f"a maximum supply of {supply:,} is smaller than this build, "
+                    f"whose editions go up to #{top:,}. Set it to at least "
+                    f"{top:,}, or 0 for no limit.")}, status_code=400)
+            # No other platforms' links (2026-09-25): no Twitter, Discord
+            # or Telegram fields are offered or written.
+            details = {"description": description, "url": url, "artist": artist,
+                       "icon": inscriptionlib.inscription_in(icon or ""), "supply": supply}
+            build = collectionlib.with_details(build, details)
+            cap = supply or None
         # Asked between the two writes and not inside either: the refusal is
         # about the chain and the run book, and `create` is about the build.
-        already = _what_the_account_has(account, chain, address, build, name)
+        # A continuation was checked against the set above, picture by picture;
+        # the book's "finished and not indexed yet" guard is for a FIRST run,
+        # whose set the index cannot see yet.
+        already = ({"blocked": "", "note": repeat_note, "skip": set()} if taken
+                   else _what_the_account_has(account, chain, address, build, name))
         if already["blocked"]:
             return JSONResponse({"detail": already["blocked"]}, status_code=400)
         if already["skip"]:
@@ -8178,7 +8286,9 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"run": run_id, "name": run["name"],
                              "items": run["items"], "fee": run["fee"],
                              "dust": run["dust"], "chain": chain.network,
-                             "note": run["note"], "next": run["next"]})
+                             "note": run["note"], "next": run["next"],
+                             "supply": cap, "continues": bool(taken),
+                             "on_chain": len(taken)})
 
     @app.post("/account/run")
     def account_runs(request: Request):
