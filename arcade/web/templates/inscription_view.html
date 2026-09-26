@@ -363,10 +363,12 @@
           {% else %}
             <button type="button" class="small" data-accept
                     data-offer="{{ a.txid }}" data-piece="{{ row.txid }}"
+                    data-give="{{ a.give }}"
                     data-price="{{ a.price }}"
                     data-buyer="{% if a.tag %}@{{ a.tag }}{% else %}{{ a.buyer }}{% endif %}">Accept</button>
             <button type="button" class="ghost small" data-refuse
                     data-offer="{{ a.txid }}" data-piece="{{ row.txid }}"
+                    data-give="{{ a.give }}"
                     data-price="{{ a.price }}"
                     data-buyer="{% if a.tag %}@{{ a.tag }}{% else %}{{ a.buyer }}{% endif %}">Refuse</button>
           {% endif %}</td>
@@ -406,13 +408,19 @@
     button.onclick = async () => {
       const refuse = button.hasAttribute("data-refuse");
       const who = button.dataset.buyer || "whoever offered";
-      if (!confirm(refuse
-        ? `Refuse ${who}'s offer of ${button.dataset.price}? The offer stays on `
-          + "the chain until their transaction is spent, so nothing here stops "
-          + "them asking again."
-        : `Answer ${who}'s offer of ${button.dataset.price}? Your key signs `
-          + "this piece at that price; their wallet signs the coins, and one "
-          + "transaction moves both or neither.")) return;
+      const gave = button.dataset.give || "this piece";
+      const paid = button.dataset.price || "the price in the offer";
+      const ok = await arcadeAsk(
+        refuse ? "Refuse this offer?" : "Answer this offer?",
+        refuse
+          ? `Refuse ${who}'s offer of ${paid} for ${gave}? The offer stays on the `
+            + "chain until their transaction is spent, so nothing here stops them "
+            + "asking again."
+          : `Give ${gave}, get ${paid}. Your key signs this piece at that price; `
+            + "their wallet signs the payment, and one transaction moves both or "
+            + "neither.",
+        refuse ? "Refuse" : "Answer it");
+      if (!ok) return;
       for (const other of document.querySelectorAll("[data-offer]")) {
         other.disabled = true;
       }

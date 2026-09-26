@@ -394,6 +394,7 @@ const ANYDATA = 200;                                 // the inscription carrier
 const INSCRIPTION_VERSION = 1;
 const KIND_SWAP = 5;
 const LEG_INSCRIPTION = 1;
+const LEG_TOKEN = 2;
 const LEG_COINS = 3;
 
 /** The single push an OP_RETURN output carries, opcodes gone, or null.
@@ -414,11 +415,17 @@ function opreturnData(script) {
   return script.slice(at, at + length);
 }
 
-/** What a listing's payload promises, read off those bytes: {txid, sats}.
+/** What a listing's payload promises, read off those bytes:
+ *  {txid, sats, token} -- `sats` is the price when it is paid in coins and 0
+ *  when it is paid in a token, which is then in `token`.
  *
- * `gives` is an inscription and `takes` is coins, because that is the only
- * trade a pre-signed leg can make -- the other half of a piece-for-a-piece
- * swap would need a signature that does not exist yet.
+ * `gives` is an inscription, because that is the only half a pre-signed leg can
+ * hand over -- the other half of a piece-for-a-piece swap would need a signature
+ * that does not exist yet. What it `takes` can be coins or a token, and the two
+ * are not alike: coins move inside the finished transaction, so the leg's own
+ * payment states a coin price a second time and arithmetic can be checked
+ * against it, while a token moves in the engine's ledger on the strength of
+ * these bytes alone, which makes them the only record of that price there is.
  */
 function listingPayload(data) {
   const refuse = (what) => {
@@ -454,15 +461,23 @@ function listingPayload(data) {
     refuse("gives something besides a piece, which no signature here covers");
   }
   const txid = hex(field(32, "names no piece"));
-  if (field(1, "has no second leg")[0] !== LEG_COINS) {
-    refuse("takes something besides coins, which nobody has signed");
-  }
   // Big-endian, because the payload is the protocol's own encoding and not the
   // transaction's: every number in a leg is written the other way round from
   // every number in the serialisation above it.
-  const sats = toBig(field(8, "names no price"));
+  const kind = field(1, "has no second leg")[0];
+  let sats = 0n, token = null;
+  if (kind === LEG_COINS) {
+    sats = toBig(field(8, "names no price"));
+  } else if (kind === LEG_TOKEN) {
+    // Read, and read only here: a token is not paid inside this transaction,
+    // so nothing else states this price and nothing else can contradict it.
+    token = {propertyid: Number(toBig(field(4, "names no token"))),
+             units: toBig(field(8, "names no amount"))};
+  } else {
+    refuse("takes something besides coins or tokens, which nobody has signed");
+  }
   if (at !== data.length) refuse("longer than the trade it states");
-  return {txid, sats};
+  return {txid, sats, token};
 }
 
 /* --- what this key may sign ---------------------------------------------
@@ -675,11 +690,47 @@ export async function verifyLeg(leg, keys) {
       + "the price stands over -- does not pay this address. The price would "
       + "come back to somebody else. Nothing was signed.");
   }
+  // The node's words about the price, when it bothered to send any. The numbers
+  // come from the bytes and never from them; but where a listing speaks of a
+  // token it has to mean the one its own bytes name, because a token price is
+  // written nowhere else to be checked against. What it adds that the bytes
+  // cannot is a name, and a name is only for reading aloud.
+  const told = (leg.take && leg.take.kind === "token") ? leg.take : null;
+  if (told) {
+    const units = /^\d+$/.test(String(told.units)) ? BigInt(String(told.units))
+                                                   : null;
+    if (!listing.token || !units || units !== listing.token.units
+        || Number(told.propertyid) !== listing.token.propertyid) {
+      throw new Error("the listing says it takes a token and its own bytes take "
+        + "something else. A price paid in tokens is written nowhere but those "
+        + "bytes. Nothing was signed.");
+    }
+    listing.token.name = String(told.name || "");
+    // `amount` is a rendering of `units`, not a second fact, and a card that
+    // reads a price out loud has to be reading the number the bytes take. So it
+    // is kept only when it reconciles with them -- the same units read as a
+    // divisible token, eight decimals, or as whole units, which is every way
+    // this repository writes one. A figure that reconciles neither way is
+    // dropped and the page says the units it checked instead, so a node cannot
+    // pick the sentence a person decides on by answering with a number that
+    // means something else.
+    listing.token.text = null;
+    const said = /^(\d+)(?:\.(\d{1,8}))?$/.exec(String(told.amount || "").trim());
+    if (said) {
+      const asUnits = BigInt(said[1]) * 100000000n
+                    + BigInt((said[2] || "").padEnd(8, "0"));
+      if (asUnits === units || (!said[2] && BigInt(said[1]) === units)) {
+        listing.token.text = String(told.amount);
+      }
+    }
+  }
 
   // The arithmetic of a leg is not an offer's: its payment output is the
   // seller's own coins PLUS the price minus what it reserved for the fee, so
   // paying out more than it takes in is the correct shape here rather than a
-  // fraud sign. What must not go negative is the reservation.
+  // fraud sign. What must not go negative is the reservation. A token price
+  // pays no coin at all, so it adds nothing here and only the fee comes out of
+  // the coins -- which is why the reservation is still the number to check.
   let taken = 0n;
   for (const coin of named) taken += BigInt(coin.value || 0);
   const back = tx.outputs[1].value;
@@ -690,8 +741,12 @@ export async function verifyLeg(leg, keys) {
       + "mempool until it fell out. Nothing was signed.");
   }
   const coinsOf = (sats) => (Number(sats) / 100000000).toFixed(8);
+  const price = listing.token
+    ? `${listing.token.text || listing.token.units} `
+      + `${listing.token.name || `token ${listing.token.propertyid}`}`
+    : `${coinsOf(listing.sats)} coins`;
   const says = `gives inscription ${listing.txid.slice(0, 16)}… and takes `
-    + `${coinsOf(listing.sats)} coins; ${coinsOf(back)} comes back to you when `
+    + `${price}; ${coinsOf(back)} comes back to you when `
     + `it sells, ${coinsOf(reserved)} of it reserved for the fee`;
   return {tx, hashes, listing, reserved: Number(reserved), back: Number(back),
           what: leg.what || "", signs: {from: 0, of: tx.inputs.length},

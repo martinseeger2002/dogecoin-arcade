@@ -93,10 +93,12 @@
           {% elif viewer == 'account' %}
             <button type="button" class="small" data-accept
                     data-offer="{{ b.txid }}" data-piece="{{ b.inscription }}"
+                    data-give="{{ b.give }}"
                     data-price="{{ b.price }}"
                     data-buyer="{% if tags.get(b.buyer) %}@{{ tags[b.buyer] }}{% else %}{{ b.buyer }}{% endif %}">Accept</button>
             <button type="button" class="ghost small" data-refuse
                     data-offer="{{ b.txid }}" data-piece="{{ b.inscription }}"
+                    data-give="{{ b.give }}"
                     data-price="{{ b.price }}"
                     data-buyer="{% if tags.get(b.buyer) %}@{{ tags[b.buyer] }}{% else %}{{ b.buyer }}{% endif %}">Refuse</button>
           {% else %}
@@ -141,15 +143,21 @@
       button.onclick = async () => {
         const refuse = button.hasAttribute("data-refuse");
         const who = button.dataset.buyer || "whoever offered";
+        const gave = button.dataset.give || "the piece";
+        const paid = button.dataset.price || "the price in the offer";
+        const ok = await arcadeAsk(
+          refuse ? "Refuse this offer?" : "Answer this offer?",
+          refuse
+            ? `Refuse ${who}'s offer of ${paid} for ${gave}? The offer stays on `
+              + "the chain until their block is spent, so nothing here stops them "
+              + "asking again."
+            : `Give ${gave}, get ${paid}. Your key signs the piece at that price; `
+              + "their wallet signs the payment, and one transaction moves both or "
+              + "neither.",
+          refuse ? "Refuse" : "Answer it");
+        if (!ok) return;
         const ask = {offer: button.dataset.offer, piece: button.dataset.piece,
                      refuse, chain: "{{ chain.network }}"};
-        if (!confirm(refuse
-          ? `Refuse ${who}'s offer of ${button.dataset.price}? The offer stays `
-            + "on the chain until their block is spent, so nothing here stops "
-            + "them asking again."
-          : `Answer ${who}'s offer of ${button.dataset.price}? Your key signs `
-            + "the piece at that price; their wallet signs the coins, and one "
-            + "transaction moves both or neither.")) return;
         for (const other of document.querySelectorAll("[data-offer]")) {
           other.disabled = true;
         }

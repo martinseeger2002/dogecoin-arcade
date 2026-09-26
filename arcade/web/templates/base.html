@@ -124,6 +124,11 @@ button.danger{background:var(--bad);border-color:var(--bad);color:#fff}
 .msg.reveal{background:var(--code);border-color:var(--accent);border-width:2px;
   font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:1.05rem;
   letter-spacing:.02em;user-select:all;word-break:break-word}
+.askcard-back{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.45);
+  display:flex;align-items:center;justify-content:center;padding:16px}
+.askcard{max-width:440px;width:100%;margin:0}
+.askcard h3{margin-top:0}
+.askcard .row{gap:8px;justify-content:flex-end}
 .pill{font-size:.72rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
 .pill.ok{color:var(--ok);border-color:var(--ok)}
 .pill.warn{color:var(--warn);border-color:var(--warn)}
@@ -985,6 +990,40 @@ function arcadeOfferSizes(file, onReady){
     rest.forEach(function(r){ if (r) results.push(r); });
     onReady(results);
     return results;
+  });
+}
+
+// A yes/no card on the page instead of the browser's own dialog. Found filming
+// the tutorial, 2026-09-25: window.confirm looked foreign, and its one run-on
+// sentence read badly. Resolves true for the first button, false otherwise —
+// including a click outside it, which is a no that somebody meant.
+function arcadeAsk(title, detail, yes = "Yes"){
+  return new Promise(function(answer){
+    var back = document.createElement('div');
+    back.className = 'askcard-back';
+    var card = document.createElement('div');
+    card.className = 'panel askcard';
+    card.setAttribute('role', 'dialog');
+    var h = document.createElement('h3');
+    h.textContent = title;
+    var p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = detail;
+    var row = document.createElement('div');
+    row.className = 'row';
+    var ok = document.createElement('button');
+    ok.type = 'button'; ok.textContent = yes;
+    var no = document.createElement('button');
+    no.type = 'button'; no.className = 'ghost'; no.textContent = 'Cancel';
+    row.append(ok, no);
+    card.append(h, p, row);
+    back.append(card);
+    document.body.append(back);
+    var done = function(v){ back.remove(); answer(v); };
+    ok.onclick = function(){ done(true); };
+    no.onclick = function(){ done(false); };
+    back.onclick = function(e){ if (e.target === back) done(false); };
+    ok.focus();
   });
 }
 

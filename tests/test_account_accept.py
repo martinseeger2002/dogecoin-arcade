@@ -29,6 +29,7 @@ for, whether the offer the index reads back is the one that was broadcast, what
 all look right on paper.
 """
 
+import contextlib
 import pathlib
 import sys
 
@@ -36,6 +37,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_account_offer import (_inscribed, _pair, _seated,          # noqa: E402
                                 _settled, _signed, node)
 from test_funding import _sign                                         # noqa: E402
+from test_account_tokens import _balance, _token                       # noqa: E402
 from test_web import app_state, client                               # noqa: F401,E402
 
 from arcade import encoding, funding, inscriptions as I               # noqa: E402
@@ -58,6 +60,35 @@ def _swap(txid: str, price: int) -> bytes:
     body = I.Swap(give=I.Leg(I.LEG_INSCRIPTION, txid=bytes.fromhex(txid)),
                   take=I.Leg(I.LEG_COINS, amount=price)).encode()
     return encoding.encode_class_c(P.AnyData(data=body).encode())
+
+
+def _swap_token(txid: str, property_id: int, units: int) -> bytes:
+    """The same bytes, priced in a token instead.
+
+    And that difference is the whole of the second section of this file: a coin
+    price is written twice, once here and once in what the leg pays out, so a
+    wrong one is caught by arithmetic. A token price is written only here --
+    the engine moves tokens in its ledger on the strength of these bytes --
+    which makes reading them the only check there is, and worth a payload
+    written by somebody who did not write the route.
+    """
+    body = I.Swap(give=I.Leg(I.LEG_INSCRIPTION, txid=bytes.fromhex(txid)),
+                  take=I.Leg(I.LEG_TOKEN, property_id=property_id,
+                             amount=units)).encode()
+    return encoding.encode_class_c(P.AnyData(data=body).encode())
+
+
+def _priced_in(state, address: str, units: int, property_id: int) -> int:
+    """A token that exists, and that one address holds.
+
+    Filed in the index rather than mined, for the reason every file that hands
+    an account a token gives: an issuance needs a wallet, and an account here is
+    a key this node has never seen. It lands in the table `swaplib.holds` reads,
+    which is the only balance an answer cares about.
+    """
+    _token(state, property_id=property_id)
+    _balance(state, address, property_id, units)
+    return property_id
 
 
 def _offered(pair, amount: str = "1", **kw) -> str:
@@ -382,6 +413,272 @@ def test_the_dial_that_closes_an_answer_says_which_dial_it_was(node):
     assert refused.status_code == 400
     assert "trade" in refused.json()["detail"].lower(), refused.json()["detail"]
     assert pair["state"].offers.bids("regtest", "in") == []
+
+
+# --- a price that is not coins ----------------------------------------------
+
+def test_an_offer_priced_in_a_token_is_answered_by_the_same_leg(node):
+    """What a token buys is not inside the transaction at all.
+
+    The leg is the one from the first section, twice signed, two inputs, two
+    outputs -- and its payment pays out no price, because a token does not move
+    from one output to another. `state.Engine._check_leg` reads a BALANCE and
+    `_move_leg` moves the amount between ledgers, on the strength of the payload
+    alone. So the answer's `price`, which is the number of coins the leg hands
+    over, is zero, and the price itself is in `take` and in the bytes.
+
+    Which is why the leg is checked against `_swap_token` here rather than
+    against a number: for a token there is no second record to agree with.
+    """
+    pair = _pair(node, 67, 68)
+    pid = _priced_in(pair["state"], pair["bidder"][3], 10 * COIN, 101)
+    offer = _offered(pair, amount="10", kind="token", property_id=pid)
+
+    asked = pair["holder"][0].post("/account/accept",
+                                   json={"piece": pair["piece"],
+                                         "offer": offer})
+    assert asked.status_code == 200, asked.text
+    said = asked.json()
+    assert int(said["price"]) == 0, "a token pays no coin inside the leg"
+    assert said["take"]["kind"] == "token" \
+        and int(said["take"]["units"]) == 10 * COIN
+    assert "Testcoin" in said["what"], said["what"]
+    assert said["payload"] == _swap_token(pair["piece"], pid, 10 * COIN).hex(), \
+        "the bytes are the whole of the price, so they are what to check"
+    assert len(said["sighashes"]) == 2
+    assert pair["rpc"].call("getrawmempool") == []
+
+    done = _signed_answer(pair, offer, said)
+    assert done.status_code == 200, done.text
+    (note,) = pair["state"].offers.bids("regtest", "in")
+    assert note["take"]["kind"] == "token" \
+        and int(note["take"]["units"]) == 10 * COIN, \
+        "the note holds the token terms, which is what the far side compares"
+    assert int(note["number"]) == said["number"]
+    assert pair["state"].listings.for_piece(
+        said["inputs"][0]["txid"], int(said["inputs"][0]["vout"])) == []
+
+
+def test_a_leg_whose_bytes_take_another_token_price_is_not_an_answer(node):
+    """The arithmetic closes on this one. Only the bytes give it away.
+
+    A real leg, signed by the right key over two right coins, selling the right
+    piece -- at the SECOND bidder's price, because it was built for that offer.
+    For a coin that lie cannot survive: `Listings.register` works the price back
+    out of what the leg pays out and refuses the row. A token pays nothing out,
+    so the row closes at zero whatever the payload claims, and the only thing
+    left is to read the payload and compare it with the offer -- which is what
+    the request that takes the signatures back now does, and what this checks
+    was not quietly true.
+    """
+    app, state, rpc = node
+    pair = _pair(node, 69, 70)
+    pid = _priced_in(pair["state"], pair["bidder"][3], 10 * COIN, 101)
+    offer = _offered(pair, amount="10", kind="token", property_id=pid)
+
+    other_client, osecret, opubkey, other = _seated(app, state, rpc, 71)
+    _balance(state, other, pid, 20 * COIN)
+    second = other_client.post("/account/offer", json={
+        "piece": pair["piece"], "amount": "20", "kind": "token",
+        "property_id": pid})
+    assert second.status_code == 200, second.text
+    second_id = _signed(other_client, osecret, opubkey,
+                        second.json()).json()["txid"]
+    _settled(state, rpc)
+
+    priced = _leg(pair, second_id)
+    assert int(priced["price"]) == 0
+    assert priced["payload"] == _swap_token(pair["piece"], pid, 20 * COIN).hex()
+
+    refused = _signed_answer(pair, offer, priced)
+    assert refused.status_code == 400
+    assert "price" in refused.json()["detail"], refused.json()["detail"]
+    assert state.offers.bids("regtest", "in") == [], \
+        "a refused answer reserves the piece for nobody"
+    assert rpc.call("getrawmempool") == []
+
+
+def test_the_token_answer_is_the_leg_a_wallet_finishes(node):
+    """The wire contract again, this time with nothing in the payment.
+
+    The same four things are what `shopkeeper._fill_a_leg` reads, and the same
+    `register` call is what it makes -- with the price it takes from the note it
+    wrote when it offered, which for a token is zero coins. So this asks whether
+    the answer that route mails can be registered by a wallet that has to finish
+    the trade, and whether the token terms survive the round trip: the bytes
+    name the piece, the bytes take the token, and the `take` beside them says the
+    same thing in the words a page would show. It is the far side's reading, run
+    here where a failure costs nothing.
+    """
+    from arcade import listings as listingslib
+
+    pair = _pair(node, 74, 75)
+    pid = _priced_in(pair["state"], pair["bidder"][3], 10 * COIN, 101)
+    offer = _offered(pair, amount="10", kind="token", property_id=pid)
+    answer = _signed_answer(pair, offer, _leg(pair, offer)).json()["answer"]
+    said = answer["leg"]
+
+    row = pair["state"].listings.register(
+        pair["rpc"], raw=said["raw"],
+        signatures=list(said["signatures"]),
+        pubkey=bytes.fromhex(said["pubkey"]), network="regtest",
+        owner=said["seller"], price=0, record=False)
+    assert int(row["price"]) == 0, "a token pays nothing into the leg"
+    assert row["owner"] == pair["holder"][3]
+    named = listingslib.named_swap(bytes.fromhex(row["payload"]))
+    assert named is not None and named.give.txid.hex() == pair["piece"]
+    assert named.take.kind == I.LEG_TOKEN \
+        and named.take.property_id == pid \
+        and int(named.take.amount) == 10 * COIN, \
+        "the bytes are the price, and they say ten of them"
+    assert said["take"]["kind"] == "token" \
+        and int(said["take"]["units"]) == 10 * COIN \
+        and said["take"]["name"] == "Testcoin"
+    assert int(said["amount"]) == 0, \
+        "and the coins it hands over, which is all `amount` ever meant, are none"
+
+
+def test_an_answer_refuses_while_the_bidder_cannot_pay_its_own_price(node):
+    """D-040, asked on the side that would spend a message fee to learn it.
+
+    An offer escrows nothing: it is a message, and nothing stops a bidder
+    spending the tokens it offered before anybody answers. A coin has the same
+    hole and `holds` has always covered it by asking the ledger for the balance;
+    for a token that question is the ONLY one that can be asked, so this is the
+    one place a token answer is checked before a signature is rather than in a
+    block that rejects the finished swap.
+    """
+    pair = _pair(node, 72, 73)
+    pid = _priced_in(pair["state"], pair["bidder"][3], 10 * COIN, 101)
+    offer = _offered(pair, amount="10", kind="token", property_id=pid)
+    _balance(pair["state"], pair["bidder"][3], pid, 0)
+
+    refused = pair["holder"][0].post("/account/accept",
+                                     json={"piece": pair["piece"],
+                                           "offer": offer})
+    assert refused.status_code == 400
+    assert "cannot pay" in refused.json()["detail"], refused.json()["detail"]
+    assert "sighashes" not in refused.json(), \
+        "no signature was asked for, which is the order this has to happen in"
+    assert pair["rpc"].call("getrawmempool") == []
+    assert pair["state"].offers.bids("regtest", "in") == []
+
+    # And the refusal cost nothing, which is the part a node gets wrong by
+    # answering first and noticing after. `note_committed` retires a coin for a
+    # leg this account never sends; a refusal that had touched it would leave
+    # this same request short of the second coin an answer needs.
+    _balance(pair["state"], pair["bidder"][3], pid, 10 * COIN)
+    again = pair["holder"][0].post("/account/accept",
+                                   json={"piece": pair["piece"],
+                                         "offer": offer})
+    assert again.status_code == 200, again.text
+    assert len(again.json()["sighashes"]) == 2, \
+        "the refusal had retired a coin it never spent"
+
+
+def test_a_token_answer_completes_with_the_bidder_s_own_signatures(node):
+    """The account that offered is the account that finishes, in tokens.
+
+    Both halves of this trade belong to accounts whose keys this node has never
+    held, and until this change nothing in the tests walked from one to the
+    other: `/account/fill` priced the leg it was handed out of `amount`, a token
+    answer's `amount` is 0, and `parse_amount` refuses a zero by design -- so the
+    route that exists to complete a private trade died on "the amount must be
+    more than zero" instead of completing it. So this is the whole of it with
+    nothing imported from the operator's side: an offer in a token, an answer the
+    holder built and signed, and the bidder's own two requests.
+
+    Hardest is the end. The piece moves, the engine calls the swap VALID, and the
+    tokens cross -- which is the only proof that the payload the answer carried
+    is the payload `register` priced the leg at, since for a token there is no
+    second record of the price to agree with.
+    """
+    pair = _pair(node, 78, 79)
+    pid = _priced_in(pair["state"], pair["bidder"][3], 10 * COIN, 101)
+    offer = _offered(pair, amount="10", kind="token", property_id=pid)
+    answer = _signed_answer(pair, offer, _leg(pair, offer)).json()["answer"]
+
+    asked = pair["bidder"][0].post("/account/fill",
+                                   json={"leg": answer["leg"]})
+    assert asked.status_code == 200, asked.text
+    said = asked.json()
+    assert said["answered"] is True and int(said["price"]) == 0, \
+        "a token pays no coin into the leg, and that is not a price of nothing"
+    assert said["seller"] == pair["holder"][3], "whose piece, read off the leg"
+    assert pair["state"].listings.open_listings("regtest") == [], \
+        "an answer between two accounts is not a page for strangers"
+
+    done = pair["bidder"][0].post("/account/fill/sign", json={
+        "leg": answer["leg"], "raw": said["raw"],
+        "pubkey": pair["bidder"][2].hex(),
+        "signatures": [_sign(pair["bidder"][1], bytes.fromhex(d)).hex()
+                       for d in said["sighashes"]]})
+    assert done.status_code == 200, done.text
+    assert int(done.json()["price"]) == 0
+    assert done.json()["txid"] in pair["rpc"].call("getrawmempool")
+
+    _settled(pair["state"], pair["rpc"])
+    index = pair["state"].token_index(pair["state"].messaging)
+    with contextlib.closing(index.open()) as db:
+        verdict = db.conn.execute(
+            "SELECT valid, invalid_reason FROM arcade_tx WHERE txid = ?",
+            (done.json()["txid"],)).fetchone()
+    assert verdict["valid"] == 1, verdict["invalid_reason"]
+    assert index.inscription(pair["piece"])["owner"] == pair["bidder"][3], \
+        "the piece crossed"
+    assert int(index.balance(pair["bidder"][3], pid)) == 0
+    assert int(index.balance(pair["holder"][3], pid)) == 10 * COIN, \
+        "the price crossed the other way, in the ledger rather than an output"
+
+
+def test_an_answer_taking_more_than_the_bidder_offered_is_not_funded(node):
+    """The bytes are the price, so this is the place the bidder reads them.
+
+    A token priced answer is the one trade whose price is nowhere a node is
+    forced to agree: `register` closes its arithmetic at zero whatever the
+    payload takes, because nothing in the transaction disagrees. `/account/accept`
+    compares the bytes against the offer, but the account holding the piece is a
+    node, not this node, and what arrives here travels through it. So this route
+    compares them too, against the note `/account/offer` wrote from the offer the
+    bidder broadcast -- and the refusal has to come before the coin, because the
+    next request is a broadcast.
+
+    The leg below is real: right piece, right two coins, right signatures, made
+    for the SECOND bidder's offer of 20. Handing it to the one that offered 10 is
+    the whole of the trick.
+    """
+    app, state, rpc = node
+    pair = _pair(node, 80, 81)
+    pid = _priced_in(pair["state"], pair["bidder"][3], 30 * COIN, 101)
+    offer = _offered(pair, amount="10", kind="token", property_id=pid)
+
+    other_client, osecret, opubkey, other = _seated(app, state, rpc, 82)
+    _balance(state, other, pid, 20 * COIN)
+    second = other_client.post("/account/offer", json={
+        "piece": pair["piece"], "amount": "20", "kind": "token",
+        "property_id": pid})
+    assert second.status_code == 200, second.text
+    second_id = _signed(other_client, osecret, opubkey,
+                        second.json()).json()["txid"]
+    _settled(state, rpc)
+
+    answered = _signed_answer(pair, second_id, _leg(pair, second_id))
+    assert answered.status_code == 200, answered.text
+    forged = answered.json()["answer"]["leg"]
+    assert int(forged["take"]["units"]) == 20 * COIN
+
+    refused = pair["bidder"][0].post("/account/fill", json={"leg": forged})
+    assert refused.status_code == 400
+    assert "price" in refused.json()["detail"], refused.json()["detail"]
+
+    signed = pair["bidder"][0].post("/account/fill/sign",
+                                    json={"leg": forged})
+    assert signed.status_code == 400, \
+        "the second request is the one that broadcasts, and it refused nothing"
+    assert rpc.call("getrawmempool") == []
+    index = state.token_index(state.messaging)
+    assert int(index.balance(pair["bidder"][3], pid)) == 30 * COIN, \
+        "the tokens were spent by a refusal"
 
 
 # --- the page that asks for it ---------------------------------------------
