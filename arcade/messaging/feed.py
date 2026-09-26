@@ -56,6 +56,13 @@ EDIT = 5
 DELETE = 6
 #: This transaction's payment was for that post.
 TIP = 7
+#: A thumbs-down: the post's popularity goes DOWN by what a like would add
+#: (2026-09-25). One person holds one opinion of a post at a time --
+#: the latest of their like, unlike, dislike and undislike is the one that
+#: counts -- so liking after disliking is a change of mind, not both.
+DISLIKE = 8
+#: Taking a dislike back, the same way UNLIKE takes back a like.
+UNDISLIKE = 9
 
 #: The kinds that carry text. Everything else is a bare target.
 WITH_TEXT = (REPLY, SHARE, EDIT)
@@ -63,11 +70,15 @@ WITH_TEXT = (REPLY, SHARE, EDIT)
 #: The kinds only the post's own author may perform.
 AUTHOR_ONLY = (EDIT, DELETE)
 
-KINDS = (LIKE, UNLIKE, REPLY, SHARE, EDIT, DELETE, TIP)
+KINDS = (LIKE, UNLIKE, REPLY, SHARE, EDIT, DELETE, TIP, DISLIKE, UNDISLIKE)
+
+#: The kinds that are one person's opinion of a post; the latest of them stands.
+OPINIONS = (LIKE, UNLIKE, DISLIKE, UNDISLIKE)
 
 #: Kind names, for pages and for the reasons the index records.
 NAMES = {LIKE: "like", UNLIKE: "unlike", REPLY: "reply", SHARE: "share",
-         EDIT: "edit", DELETE: "delete", TIP: "tip"}
+         EDIT: "edit", DELETE: "delete", TIP: "tip",
+         DISLIKE: "dislike", UNDISLIKE: "undislike"}
 
 #: The same map the other way, for a page that has the word and needs the
 #: byte. It lives here rather than in the page because a browser that sends a
@@ -92,6 +103,9 @@ MAX_TEXT = 2000
 
 #: A like, a share, and anything else that is one person saying one thing.
 LIKE_VALUE = 1.0
+
+#: A dislike takes away exactly what a like gives.
+DISLIKE_VALUE = LIKE_VALUE
 
 #: Every confirmed tip is worth at least this much -- more than a like, which
 #: is the rule as stated, and the reason the log alone cannot carry it.
@@ -120,6 +134,34 @@ def tip_value(sats: int, network: str) -> float:
     """
     unit = TIP_UNITS.get(network, TIP_UNIT_DEFAULT)
     return TIP_FLOOR + math.log10(1.0 + max(0, int(sats)) / unit)
+
+
+# --- where a post sits: endorsement, and how long ago --------------------------
+#
+# Decided by 2026-09-25: ordering by endorsement alone meant a new post,
+# at zero, was never seen, and an old favourite held the top for ever. So the
+# feed's order is the Hacker News shape: (HEAD_START + endorsement) divided by
+# the post's age plus two hours, to a power. HEAD_START is what a new post is
+# worth before anybody has reacted -- enough to put it above a day-old post with
+# ten likes (0.35 against 0.08) and below a two-hour-old one with five (0.75),
+# so a fresh post is seen and then rises or sinks on what people do with it.
+# GRAVITY is how fast popularity wears off. A post with more dislikes than
+# everything else goes negative, and a negative numerator sinks it.
+
+HEAD_START = 1.0
+GRAVITY = 1.5
+
+
+def hot(score: float, block_time: int, asof: int) -> float:
+    """Where a post sits on the feed at the moment `asof` (unix seconds).
+
+    `score` is the endorsement (likes, shares and tips, less dislikes);
+    `block_time` is when its block was made, 0 for a post still in the pool,
+    which is age 0 -- a post nobody has had time to see is as new as posts get.
+    Also a SQL function inside the store, for the same reason tip_value is.
+    """
+    age = max(0, int(asof) - int(block_time)) / 3600.0 if block_time else 0.0
+    return (HEAD_START + float(score or 0)) / ((age + 2.0) ** GRAVITY)
 
 
 class FeedError(Exception):

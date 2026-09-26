@@ -48,6 +48,9 @@ PUBLIC_PAGES = frozenset({
     "/join",
     "/join/keys",
     "/clone",
+    "/instances",             # who runs which arcade, as the chain says
+    "/.well-known/dogecoinarcade.json",   # this arcade's own claim, to check it
+    "/moderation/verdicts",   # what this arcade covers, so a page can label it
     "/source.tar.gz",
     "/source.tar.gz.sha256",
     "/source.rev",
@@ -65,6 +68,13 @@ PUBLIC_PAGES = frozenset({
     "/favicon.ico",
     "/icon-32.png",
     "/icon-180.png",
+    "/icon-192.png",
+    "/icon-512.png",
+    "/manifest.webmanifest",  # the app, installable (a PWA)
+    "/sw.js",                 # its service worker: an offline page and push, no cache of pages
+    "/offline",
+    "/push/key",              # the key a browser subscribes to this node's pushes with
+    "/account/push/news",     # what woke the phone: who wrote, never what (signed in)
     "/signin.js",
     "/coins.js",
     "/wallet.js",
@@ -225,6 +235,7 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # lives on mainnet is refused, because sealed messages are
                # testnet's (D-010).
                "/account/talk",
+               "/account/push/subscribe", "/account/push/unsubscribe",
                "/account/token/send", "/account/token/create",
                "/account/sign",
                "/signup")

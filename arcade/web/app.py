@@ -170,32 +170,42 @@ TEMPLATES.env.filters["coins"] = _coins
 
 
 def _cursor(before: Any) -> tuple[int | None, float | None]:
-    """The two halves of a feed cursor, out of the one token a link carries.
+    """The (id, anchor) halves of a feed cursor; `_cursor3` also gives the moment."""
+    ident, anchor, _asof = _cursor3(before)
+    return ident, anchor
 
-    `412@7.4` means "post 412, and that is the score it had when the page
-    that linked here was made". A popularity order is cut along a number that
-    moves, so a cursor has to remember where the cut WAS; and one query
-    parameter rather than two, because a link that needs its two halves to
-    agree is a link that breaks when somebody copies one of them. An id on
-    its own -- a bookmark, an old link, a profile page -- is still understood,
-    and store.py measures that post's score itself.
+
+def _cursor3(before: Any) -> tuple[int | None, float | None, int | None]:
+    """A feed cursor out of the one token a link carries: `id@anchor@asof`.
+
+    `412@0.35@1790350000` means "post 412, the rank it had, and the moment it
+    was ranked at". A popularity order is cut along a number that moves, so a
+    cursor remembers where the cut WAS -- and since 2026-09-25 the rank also
+    moves with the clock (feed.hot), so every page of one scroll is ranked at
+    the moment its first page was made. One query parameter rather than three,
+    because a link whose parts must agree breaks when somebody copies one. An
+    older `id@anchor`, or a bare id (a bookmark, a profile page), still parses:
+    its page is ranked now, and store.py measures the anchor itself if absent.
     """
     if before is None:
-        return None, None
-    ident, _, score = str(before).partition("@")
+        return None, None, None
+    ident, _, rest = str(before).partition("@")
+    score, _, asof = rest.partition("@")
     try:
         number = int(ident)
     except ValueError:
-        return None, None
-    if not score:
-        return number, None
+        return None, None, None
     try:
-        return number, float(score)
+        when = int(asof) if asof else None
     except ValueError:
-        return number, None
+        when = None
+    try:
+        return number, (float(score) if score else None), when
+    except ValueError:
+        return number, None, when
 
 
-def _next_cursor(rows: list[Any], sort: str) -> Any:
+def _next_cursor(rows: list[Any], sort: str, asof: int | None = None) -> Any:
     """What the next page's link carries, which depends on the order.
 
     Newest-first needs the id and nothing else: an id does not move. The
@@ -211,11 +221,25 @@ def _next_cursor(rows: list[Any], sort: str) -> Any:
     last = rows[-1]
     if sort != "popular":
         return last["id"]
-    return f"{last['id']}@{int(float(last['score']) * 1_000_000) / 1_000_000}"
+    # The RANK now (feed.hot), truncated as the score was, and the moment it was
+    # ranked at, so the next page is ranked at that same moment.
+    value = last["rank"] if "rank" in last.keys() else last["score"]
+    token = f"{last['id']}@{int(float(value) * 1_000_000_000) / 1_000_000_000}"
+    return f"{token}@{int(asof)}" if asof else token
 
 
 # A global rather than a filter: it takes what the page already looked up,
 # and a filter taking a second argument reads worse in the template.
+def _screen_text(text: str):
+    """A post's verdict for the feed card, from whichever state serves the page."""
+    screen = getattr(TEMPLATES, "_screen_of", None)
+    if screen is None:
+        return "ok"
+    s = screen()
+    return s.check_text(text) if s.enabled else "ok"
+
+
+TEMPLATES.env.globals["screen_text"] = _screen_text
 TEMPLATES.env.globals["render_post"] = lambda text, drawable=None: Markup(
     post_html(text, drawable))
 
@@ -502,7 +526,18 @@ def the_door(state: AppState):
     return guard
 
 
+def _above_dust(sats: int, what: str) -> None:
+    """Refuse an amount the network will not carry. An output under the dust limit
+    must pay 0.01 more in fee or no peer relays the transaction, so it would sit
+    "waiting for its block" for good (fees.DUST_LIMIT)."""
+    if sats < fees.DUST_LIMIT:
+        raise ValueError(f"the smallest {what} the network will carry is "
+                         f"{fees.DUST_LIMIT / 100_000_000:g} -- anything less is dust, "
+                         f"and nobody would relay it")
+
+
 def create_app(state: AppState) -> FastAPI:
+    TEMPLATES._screen_of = state.screen          # the feed card's screen_text()
     @contextlib.asynccontextmanager
     async def _lifespan(_app: FastAPI):
         """Hold the shutdown while a send is in flight.
@@ -526,6 +561,12 @@ def create_app(state: AppState) -> FastAPI:
         needs it once shutdown has begun. Written without `await` so the guard
         that keeps the routes synchronous still reads cleanly.
         """
+        try:                                  # mail for phones already subscribed
+            push = state.push()
+            if push is not None and push.subscribed():
+                _watch_for_mail()
+        except Exception as exc:              # noqa: BLE001 -- never block startup
+            log.info("push not started: %s", exc)
         yield
         if not state.begin_shutdown():
             print("arcade-web: a send was still running at shutdown. What is "
@@ -2267,18 +2308,20 @@ def create_app(state: AppState) -> FastAPI:
         page by, and a post that has not confirmed cannot be older -- or
         less endorsed -- than one that has.
         """
-        ident, anchor = _cursor(before)
+        ident, anchor, asof = _cursor3(before)
+        if sort == "popular" and asof is None:
+            asof = int(time.time())
         with state.store() as store:
             if sort == "popular":
                 rows = store.feed_posts_popular(network, cursor=ident,
                                                 anchor=anchor, limit=limit + 1,
-                                                author=author)
+                                                author=author, asof=asof)
             else:
                 rows = store.feed_posts(network, author=author, before=ident,
                                         limit=limit + 1)
         more = rows[limit:]
         rows = rows[:limit]
-        cursor = _next_cursor(rows, sort) if rows and more else None
+        cursor = _next_cursor(rows, sort, asof) if rows and more else None
         waiting = _pending_feed(network)
         if before is None:
             known = {row["txid"] for row in rows}
@@ -2420,7 +2463,7 @@ def create_app(state: AppState) -> FastAPI:
             return ""
 
     @app.get("/feed", response_class=HTMLResponse)
-    def feed_page(request: Request, before: str | None = None):
+    def feed_page(request: Request, before: str | None = None, sort: str = "popular"):
         """Everybody's posts, the endorsed first: likes, shares, and tips
         weighted by what they gave (2026-09-23; feed.py says the
         arithmetic and store.py runs it as the query's own ORDER BY).
@@ -2431,8 +2474,10 @@ def create_app(state: AppState) -> FastAPI:
         """
         chain = state.messaging
         mine = _tag_of_whoever_is_asking(request)
+        # Popular, the default, or New: newest first (2026-09-25).
+        sort = "new" if sort == "new" else "popular"
         rows, cursor, waiting = _feed_page(chain.network, before=before,
-                                          sort="popular")
+                                          sort=sort)
         shown = _shown(rows, chain.network, waiting, me=mine["address"])
         # Looking at it is reading it. Marked BEFORE the page is rendered, so
         # the count beside Feed is gone by the time it is drawn rather than
@@ -2445,7 +2490,8 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "feed.html", chain=chain, posts=shown,
                       bylines=_bylines(shown, waiting),
                       drawable=_drawable_in(shown), cursor=cursor, whose=None,
-                      here="/feed", mine=mine, kinds=feedlib.BY_NAME,
+                      here="/feed" if sort == "popular" else "/feed?sort=new",
+                      sort=sort, mine=mine, kinds=feedlib.BY_NAME,
                       when=_when, node=chain.status())
 
     @app.get("/u/{tag}", response_class=HTMLResponse)
@@ -2812,6 +2858,7 @@ def create_app(state: AppState) -> FastAPI:
         byte, and a route per kind would be six copies of this (D-138).
         """
         kinds = {"like": feedlib.LIKE, "unlike": feedlib.UNLIKE,
+                 "dislike": feedlib.DISLIKE, "undislike": feedlib.UNDISLIKE,
                  "reply": feedlib.REPLY, "share": feedlib.SHARE,
                  "edit": feedlib.EDIT, "delete": feedlib.DELETE}
         try:
@@ -4495,8 +4542,65 @@ def create_app(state: AppState) -> FastAPI:
         return index
 
     @app.get("/content/{key}")
-    def inscription_content(key: str, download: int = 0):
+    def inscription_content(key: str, download: int = 0, reveal: int = 0):
+        """An inscription's bytes -- screened first when this arcade screens
+        (arcade/moderation.py): a sensitive picture comes back blurred unless the
+        viewer asked to see it (`reveal=1`), an illegal one as a notice, and one not
+        yet judged is judged now (about a second) or, if the model is away, shown
+        as "checking". Everything else about the response is unchanged."""
+        screen = state.screen()
+        if screen.enabled:
+            index = _content_index()
+            found = index.inscription_content(contentlib._key(key))
+            if found is not None:
+                answer = _screened(screen, *found, reveal=bool(reveal))
+                if answer is not None:
+                    return answer
         return contentlib.content(_content_index(), key, download=bool(download))
+
+    def _screened(screen, content_type: str, body: bytes, reveal: bool):
+        """The response a screened piece gets instead of its bytes, or None to serve
+        them as usual."""
+        from .. import moderation as mod
+        if content_type.startswith("image/"):
+            verdict = screen.check_image(content_type, body)
+        elif content_type.startswith("text/"):
+            verdict = screen.check_text(body.decode("utf-8", "replace")[:20000], now=True)
+        else:
+            return None                                # sound, video: not screened yet
+        fresh = {**contentlib.CONTENT_HEADERS, "Cache-Control": "no-store"}
+        if verdict == mod.OK:
+            return None
+        if verdict == mod.ILLEGAL:
+            return Response(mod.notice_image("Removed by this arcade"), status_code=451,
+                            media_type="image/png", headers=fresh)
+        if verdict is None:
+            return Response(mod.notice_image("Checking this picture\u2026"), status_code=503,
+                            media_type="image/png", headers={**fresh, "Retry-After": "5"})
+        if reveal:                                     # sensitive, and asked for
+            return Response(body, media_type=content_type, headers=fresh)
+        if content_type.startswith("image/"):
+            cover = mod.blurred(body) or mod.notice_image("Sensitive picture")
+            return Response(cover, media_type="image/png", headers=fresh)
+        return Response("Sensitive content. Open it with ?reveal=1 if you want to see it.",
+                        media_type="text/plain", headers=fresh)
+
+    @app.get("/moderation/verdicts")
+    def moderation_verdicts(ids: str = ""):
+        """What this arcade decided about some pieces, for the page to label its
+        covers: ok, sensitive, illegal, or null while checking. Known verdicts only:
+        asking is the /content route's job."""
+        screen = state.screen()
+        if not screen.enabled:
+            return JSONResponse({"enabled": False, "verdicts": {}})
+        from .. import moderation as mod
+        index = _content_index()
+        out: dict[str, Any] = {}
+        for key in [k for k in ids.split(",") if k][:200]:
+            found = index.inscription_content(contentlib._key(key))
+            out[key] = screen.known(mod.digest_of(found[1])) if found else None
+        return JSONResponse({"enabled": True, "verdicts": out},
+                            headers={"Cache-Control": "no-store"})
 
     @app.get("/r/inscription/{key}")
     def r_inscription(key: str):
@@ -6222,6 +6326,10 @@ def create_app(state: AppState) -> FastAPI:
 
     ICONS = {"/icon-32.png": "icon-32.png",
              "/icon-180.png": "icon-180.png",
+             # The installable app's (manifest.webmanifest): the same artwork
+             # as the homepage's, at the two sizes every platform asks for.
+             "/icon-192.png": "icon-192.png",
+             "/icon-512.png": "icon-512.png",
              # Browsers ask for this by name when a page carries no link tag
              # -- an error page, or a route that answers without a template.
              # It is a PNG under an .ico name, which every browser in use
@@ -6230,6 +6338,8 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/icon-32.png")
     @app.get("/icon-180.png")
+    @app.get("/icon-192.png")
+    @app.get("/icon-512.png")
     @app.get("/favicon.ico")
     def icon(request: Request):
         name = ICONS.get(request.url.path)
@@ -6240,6 +6350,134 @@ def create_app(state: AppState) -> FastAPI:
             # A year. The picture is the application's identity; when it
             # changes, its name changes with it.
             headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+    # --- the installable app, and push for the Messenger (2026-09-25) ---
+    #
+    # A PWA so a phone can put the arcade on its home screen, and -- because an
+    # installed app is what iOS needs before it allows web push -- notifications
+    # when a message arrives (arcade/push.py). The service worker caches ONE
+    # thing, the offline page: pages, balances, keys and messages always come
+    # live, so an update can never be hidden behind a stale copy.
+
+    @app.get("/manifest.webmanifest")
+    def web_manifest():
+        return JSONResponse({
+            "name": "DogecoinArcade", "short_name": "Arcade",
+            "description": "Messages, a feed, tokens and art on Pepecoin.",
+            "id": "/", "start_url": "/", "scope": "/", "display": "standalone",
+            "background_color": "#faf8f4", "theme_color": "#1b1a17",
+            "icons": [
+                {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png",
+                 "purpose": "any"},
+                {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png",
+                 "purpose": "any"},
+            ],
+        }, media_type="application/manifest+json",
+            headers={"Cache-Control": "public, max-age=3600"})
+
+    @app.get("/sw.js")
+    def service_worker():
+        body = TEMPLATES.get_template("sw.js").render(
+            revision=state.running_version or "dev")
+        return Response(body, media_type="text/javascript", headers={
+            # Never cached: a new worker has to be seen the moment the site changes.
+            "Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
+
+    @app.get("/offline", response_class=HTMLResponse)
+    def offline_page():
+        return HTMLResponse(TEMPLATES.get_template("offline.html").render(),
+                            headers={"Cache-Control": "no-cache"})
+
+    @app.get("/push/key")
+    def push_key():
+        push = state.push()
+        if push is None:
+            return JSONResponse({"enabled": False})
+        return JSONResponse({"enabled": True, "key": push.public_key()})
+
+    @app.post("/account/push/subscribe")
+    def push_subscribe(request: Request, payload: Any = Body(None)):
+        account = _signed_in_account(request)
+        push = state.push()
+        if push is None:
+            return JSONResponse({"detail": "this arcade does not send notifications"},
+                                status_code=400)
+        said = payload if isinstance(payload, dict) else {}
+        keys = said.get("keys") if isinstance(said.get("keys"), dict) else {}
+        try:
+            push.subscribe(account.pubkey, str(said.get("endpoint", "")),
+                           str(keys.get("p256dh", "")), str(keys.get("auth", "")))
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        _watch_for_mail()
+        return JSONResponse({"ok": True})
+
+    @app.post("/account/push/unsubscribe")
+    def push_unsubscribe(request: Request, payload: Any = Body(None)):
+        account = _signed_in_account(request)
+        push = state.push()
+        said = payload if isinstance(payload, dict) else {}
+        if push is not None:
+            push.unsubscribe(account.pubkey, str(said.get("endpoint", "")))
+        return JSONResponse({"ok": True})
+
+    @app.get("/account/push/news")
+    def push_news(request: Request):
+        """What woke this account's phone: who wrote, and when. Never what."""
+        account = _signed_in_account(request)
+        push = state.push()
+        rows = push.news(account.pubkey) if push is not None else []
+        out = []
+        for row in rows:
+            name = ""
+            try:
+                name = state.token_index(_account_chain()).tag_of(row["sender"]) or ""
+            except Exception:                           # noqa: BLE001
+                pass
+            out.append({"from": f"@{name}" if name else row["sender"][:10] + "\u2026",
+                        "txid": row["txid"], "at": row["at"]})
+        return JSONResponse({"news": out}, headers={"Cache-Control": "no-store"})
+
+    def _owners() -> dict[str, str]:
+        """Every account address on this node -> the account. Read per pass, so a
+        new account is covered without a restart."""
+        owners: dict[str, str] = {}
+        for key, value in state.settings().items():
+            if key.startswith("address:") and isinstance(value, str) and value:
+                owners[value] = key.rsplit(":", 1)[1]
+        return owners
+
+    def _paid(txid: str) -> list[str]:
+        with state.messaging.rpc() as rpc:
+            tx = rpc.call("getrawtransaction", txid, 1)
+        out = []
+        for vout in tx.get("vout", []):
+            spk = vout.get("scriptPubKey", {})
+            out.extend(spk.get("addresses") or ([spk["address"]] if spk.get("address") else []))
+        return out
+
+    _watcher: dict[str, Any] = {}
+
+    def _watch_for_mail() -> None:
+        """Start the one thread that notices mail for subscribed accounts."""
+        push = state.push()
+        if push is None or _watcher.get("thread") is not None:
+            return
+
+        def loop():
+            while not getattr(state, "shutting_down", False):
+                try:
+                    owners = _owners()
+                    with state.store() as store:
+                        push.watch(lambda after: store.candidates_for_others(after, 200),
+                                   store.newest_candidate, _paid, owners.get)
+                except Exception as exc:                # noqa: BLE001 -- keep watching
+                    log.info("push watch: %s", exc)
+                time.sleep(4)
+
+        _watcher["thread"] = threading.Thread(target=loop, name="arcade-push",
+                                              daemon=True)
+        _watcher["thread"].start()
 
     # --- seats, and signing in ------------------------------------------------
     #
@@ -8150,6 +8388,7 @@ def create_app(state: AppState) -> FastAPI:
             price = parse_amount(str(said.get("amount", "")), True)
             if price <= 0:
                 raise ValueError("a listing names a price, and that is nothing")
+            _above_dust(price, "price")
             index = state.token_index(chain)
             row = index.inscription(contentlib._key(str(said.get("piece", ""))))
             if row is None:
@@ -9642,6 +9881,7 @@ def create_app(state: AppState) -> FastAPI:
                 amount = parse_amount(str(said.get("amount", "")), True)
                 if amount <= 0:
                     raise ValueError("a tip of nothing is not a tip")
+                _above_dust(amount, "tip")
                 where = _feed_author_address(chain, target)
                 if not where:
                     raise ValueError(
@@ -9981,6 +10221,7 @@ def create_app(state: AppState) -> FastAPI:
             amount = parse_amount(str(said.get("amount", "")), True)
             if amount <= 0:
                 raise ValueError("a payment of nothing is not a payment")
+            _above_dust(amount, "payment")
             index = state.token_index(chain)
             with contextlib.closing(index.open()) as db:
                 unsigned = fundinglib.build(
@@ -10376,7 +10617,51 @@ def create_app(state: AppState) -> FastAPI:
         index = state.ledger_index_path(context)
         tip = state.ledger_tips.get(network) or state.tips.get(network)
         return bootstraplib.current(state.home, network, index,
-                                    context.params.activation_height, tip)
+                                    context.params.index_start, tip)
+
+    # --- identity by key: who runs which arcade (arcade/instance.py) -------------
+
+    @app.get("/.well-known/dogecoinarcade.json")
+    def instance_claim():
+        """This arcade's own claim, for a directory visitor's browser to check
+        against the chain: the fee address that announces it, and its revision.
+        Open to any origin on purpose -- it is the one file another site's page
+        must be able to read -- and it says nothing that is not public."""
+        with state.store() as store:
+            mine = [dict(r) for r in store.instances(state.messaging.network)
+                    if r["address"] == state.derived_address]
+        return JSONResponse(
+            {"fee_address": state.derived_address or "",
+             "revision": state.running_version or "",
+             "domains": list(state.public_hosts),
+             "announced": [{"domain": r["domain"], "txid": r["txid"],
+                            "height": r["height"]} for r in mine]},
+            headers={"Access-Control-Allow-Origin": "*",
+                     "Cache-Control": "no-store"})
+
+    @app.get("/instances", response_class=HTMLResponse)
+    def instances_page(request: Request):
+        """Every arcade that has said on the chain who runs it."""
+        with state.store() as store:
+            rows = [dict(r) for r in store.instances(state.messaging.network)]
+        return render(request, "instances.html", rows=rows,
+                      fee_address=state.derived_address or "",
+                      revision=state.running_version or "",
+                      hosts=list(state.public_hosts), when=_when)
+
+    @app.post("/instances/announce")
+    def instances_announce(request: Request, domain: str = Form(""),
+                           csrf_token: str = Form("")):
+        """The operator says, on the chain, that this arcade is theirs."""
+        try:
+            check_csrf(csrf_token)
+            said = state.announce_instance(domain)
+            state.flash(f"Announced {said['domain']} at revision {said['revision']} "
+                        f"from {said['fee_address']} ({said['txid'][:16]}...). It shows "
+                        "in the directory once its block lands.", "ok")
+        except Exception as exc:                       # noqa: BLE001 -- said to the operator
+            state.flash(f"Not announced: {exc}", "err")
+        return RedirectResponse("/instances", status_code=303)
 
     @app.get("/clone", response_class=HTMLResponse)
     def clone_page(request: Request):

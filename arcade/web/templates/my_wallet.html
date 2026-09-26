@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "_account_wallettabs.html" as wt %}
+{% import "_not_ordinals.html" as notord %}
 {% block title %}Wallet · DogecoinArcade{% endblock %}
 {% block body %}
 <h1>Wallet</h1>
@@ -14,6 +15,7 @@
 <div class="msg err" id="trouble" hidden></div>
 <div class="msg ok" id="news" hidden></div>
 
+{{ notord.receiving() }}
 <div class="grid" id="wallets" style="margin-bottom:18px"></div>
 
 <div class="panel" id="send-panel">
@@ -148,5 +150,12 @@ keys = await wallet.opened(CHAIN);
 $("shut").hidden = !!keys;
 await draw();
 document.body.dataset.walletReady = "yes";
+
+// Balances and "on its way" are drawn here from the keys in this tab, so the
+// server's copy of the page has only placeholders for them: they redraw
+// themselves when a block brings something (base.html's `arcade:changed`), and
+// the page says so, so no "tap to refresh" is offered for them.
+document.body.dataset.selfRefreshing = "yes";
+document.addEventListener("arcade:changed", () => { draw().catch(() => {}); });
 </script>
 {% endblock %}

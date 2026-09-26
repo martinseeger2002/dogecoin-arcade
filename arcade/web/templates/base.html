@@ -6,6 +6,13 @@
 <title>{% block title %}DogecoinArcade{% endblock %}</title>
 <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
 <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#faf8f4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141310" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Arcade">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <style>
 :root{
   --bg:#faf8f4; --panel:#fffdf9; --fg:#1b1a17; --muted:#6b665c; --line:#e2ddd3;
@@ -444,8 +451,15 @@ a.thread.on{background:var(--code);box-shadow:inset 3px 0 0 var(--accent)}
 .lightbox{display:none;position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.86);
   align-items:center;justify-content:center;flex-direction:column;gap:10px;padding:14px}
 .lightbox.on{display:flex}
+.lightbox-stage{flex:1 1 auto;min-height:0;width:100%;display:flex;align-items:center;
+  justify-content:center;overflow:hidden;touch-action:none}
 .lightbox img{max-width:100%;max-height:calc(100vh - 90px);object-fit:contain;
-  border-radius:8px;background:#fff}
+  border-radius:8px;background:#fff;transform-origin:0 0;will-change:transform;
+  touch-action:none;user-select:none;-webkit-user-select:none;-webkit-user-drag:none;cursor:zoom-in}
+.lightbox.zoomed img{cursor:grab}
+.lightbox-zoom{display:flex;gap:6px}
+.lightbox-zoom button{background:transparent;border:1px solid rgba(255,255,255,.4);color:#fff;
+  border-radius:7px;min-width:40px;min-height:40px;padding:0 10px;font-size:1.05rem;line-height:1}
 .lightbox-bar{display:flex;align-items:center;gap:12px;color:#fff;font-size:.85rem;
   max-width:100%}
 .lightbox-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.85}
@@ -691,9 +705,13 @@ function arcadeOpenImage(src, name, saveHref){
     box.id = 'lightbox';
     box.className = 'lightbox';
     box.innerHTML =
-      '<img alt="">' +
+      '<div class="lightbox-stage"><img alt="" draggable="false"></div>' +
       '<div class="lightbox-bar">' +
         '<span class="lightbox-name"></span>' +
+        '<span class="lightbox-zoom">' +
+          '<button type="button" class="lightbox-out" title="Zoom out">&minus;</button>' +
+          '<button type="button" class="lightbox-in" title="Zoom in">+</button>' +
+        '</span>' +
         '<a class="lightbox-save" download>Save</a>' +
         '<button type="button" class="lightbox-close" title="Close">Close</button>' +
       '</div>';
@@ -701,10 +719,13 @@ function arcadeOpenImage(src, name, saveHref){
     // Anywhere but the picture itself closes it, which is what every phone
     // does and what a finger expects.
     box.addEventListener('click', function (event) {
-      if (event.target === box || event.target.className === 'lightbox-close')
+      if (event.target === box || event.target.className === 'lightbox-stage' ||
+          event.target.className === 'lightbox-close')
         arcadeCloseImage();
     });
+    arcadeZoomable(box);
   }
+  box._zoom.reset();
   box.querySelector('img').src = src;
   box.querySelector('.lightbox-name').textContent = name || '';
   var save = box.querySelector('.lightbox-save');
@@ -719,6 +740,7 @@ function arcadeCloseImage(){
   var box = document.getElementById('lightbox');
   if (!box) return;
   box.classList.remove('on');
+  if (box._zoom) box._zoom.reset();
   box.querySelector('img').src = '';        // stop it holding the bytes
   document.body.style.overflow = '';
   document.removeEventListener('keydown', arcadeLightboxKey);
@@ -726,6 +748,123 @@ function arcadeCloseImage(){
 
 function arcadeLightboxKey(event){
   if (event.key === 'Escape') arcadeCloseImage();
+  var box = document.getElementById('lightbox');
+  if (!box || !box._zoom) return;
+  if (event.key === '+' || event.key === '=') box._zoom.by(1.5);
+  if (event.key === '-') box._zoom.by(1 / 1.5);
+  if (event.key === '0') box._zoom.reset();
+}
+
+// The viewer's own zoom. A picture opened here used to be a page of its own, and
+// the phone's pinch zoomed it; inside the viewer a pinch zoomed the page behind
+// instead (2026-09-25). So the viewer zooms itself: pinch or wheel around
+// the point under the fingers, drag to look around, double-tap to go in and out,
+// and + / - for anybody with neither a trackpad nor two fingers free.
+function arcadeZoomable(box){
+  var stage = box.querySelector('.lightbox-stage');
+  var img = box.querySelector('img');
+  var MAX = 8;
+  var z = {s: 1, x: 0, y: 0};
+  var points = {};            // pointerId -> {x, y}
+  var pinch = null, drag = null, lastTap = 0, moved = false;
+
+  function clamp() {
+    if (z.s <= 1) { z.s = 1; z.x = 0; z.y = 0; return; }
+    // Keep some of the picture on screen: never pan it wholly out of view.
+    var w = img.offsetWidth * z.s, h = img.offsetHeight * z.s;
+    var sw = stage.clientWidth, sh = stage.clientHeight;
+    var bx = img.offsetLeft, by = img.offsetTop;
+    var minX = Math.min(0, sw - bx - w), maxX = Math.max(0, -bx);
+    var minY = Math.min(0, sh - by - h), maxY = Math.max(0, -by);
+    z.x = Math.min(maxX, Math.max(minX, z.x));
+    z.y = Math.min(maxY, Math.max(minY, z.y));
+  }
+  function draw() {
+    clamp();
+    img.style.transform = 'translate(' + z.x + 'px,' + z.y + 'px) scale(' + z.s + ')';
+    box.classList.toggle('zoomed', z.s > 1);
+  }
+  // Zoom to `s`, keeping the point (cx, cy) -- in page pixels -- where it is.
+  function zoomAt(s, cx, cy) {
+    s = Math.min(MAX, Math.max(1, s));
+    var r = img.getBoundingClientRect();
+    var px = (cx - r.left) / z.s, py = (cy - r.top) / z.s;   // point in the picture
+    z.x += (cx - r.left) - px * s;
+    z.y += (cy - r.top) - py * s;
+    z.s = s;
+    draw();
+  }
+  function centre() {
+    var r = stage.getBoundingClientRect();
+    return [r.left + r.width / 2, r.top + r.height / 2];
+  }
+  box._zoom = {
+    reset: function () { z = {s: 1, x: 0, y: 0}; points = {}; pinch = drag = null; draw(); },
+    by: function (f) { var c = centre(); zoomAt(z.s * f, c[0], c[1]); }
+  };
+  box.querySelector('.lightbox-in').onclick = function () { box._zoom.by(1.5); };
+  box.querySelector('.lightbox-out').onclick = function () { box._zoom.by(1 / 1.5); };
+
+  stage.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    zoomAt(z.s * Math.exp(-e.deltaY * 0.002), e.clientX, e.clientY);
+  }, {passive: false});
+
+  img.addEventListener('pointerdown', function (e) {
+    e.preventDefault();
+    img.setPointerCapture(e.pointerId);
+    points[e.pointerId] = {x: e.clientX, y: e.clientY};
+    var ids = Object.keys(points);
+    moved = false;
+    if (ids.length === 2) {
+      var a = points[ids[0]], b = points[ids[1]];
+      pinch = {d: Math.hypot(a.x - b.x, a.y - b.y) || 1, s: z.s};
+      drag = null;
+    } else if (ids.length === 1) {
+      drag = {x: e.clientX, y: e.clientY, zx: z.x, zy: z.y};
+    }
+  });
+  img.addEventListener('pointermove', function (e) {
+    if (!points[e.pointerId]) return;
+    points[e.pointerId] = {x: e.clientX, y: e.clientY};
+    var ids = Object.keys(points);
+    if (pinch && ids.length >= 2) {
+      var a = points[ids[0]], b = points[ids[1]];
+      zoomAt(pinch.s * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d,
+             (a.x + b.x) / 2, (a.y + b.y) / 2);
+      moved = true;
+    } else if (drag && z.s > 1) {
+      if (Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) > 4) moved = true;
+      z.x = drag.zx + e.clientX - drag.x;
+      z.y = drag.zy + e.clientY - drag.y;
+      draw();
+    }
+  });
+  function up(e) {
+    if (!points[e.pointerId]) return;
+    delete points[e.pointerId];
+    var left = Object.keys(points);
+    if (left.length < 2) pinch = null;
+    if (left.length === 1) {            // one finger lifted from a pinch: pan with the other
+      var p = points[left[0]];
+      drag = {x: p.x, y: p.y, zx: z.x, zy: z.y};
+      return;
+    }
+    drag = null;
+    if (left.length || moved || e.type === 'pointercancel') return;
+    // A tap: two in quick succession go in (to where they landed) or back out.
+    var now = Date.now();
+    if (now - lastTap < 320) {
+      lastTap = 0;
+      if (z.s > 1) box._zoom.reset(); else zoomAt(2.5, e.clientX, e.clientY);
+    } else {
+      lastTap = now;
+    }
+  }
+  img.addEventListener('pointerup', up);
+  img.addEventListener('pointercancel', up);
+  // A mouse has no second finger: a double-click does what a double-tap does.
+  img.addEventListener('dblclick', function (e) { e.preventDefault(); });
 }
 
 // The page you are on, brought into view: a strip that scrolls is only honest
@@ -918,86 +1057,284 @@ function arcadeFileCost(bytes){
           coins: outputs * dustEach + chunks * feePerChunk};
 }
 
-// Refresh a conversation when a new block brings something to show.
+// Show what a new block brought, IN PLACE. The page is never reloaded by itself.
 //
-// Polls a counter the block watcher maintains, rather than reloading on a timer:
-// a block with nothing in it for you must not interrupt you. Anything half
-// typed, and any open confirmation, suppresses the reload -- losing a draft to
-// an automatic refresh would be a worse bug than the staleness it fixes.
+// History: this used to be location.reload() on every block (~once a minute), which shut
+// open sections, jumped the scroll, blinked the page and ate what was about to be typed
+// (2026-09-25: "the page shouldn't be auto reloading; the page components
+// should"). A first in-place version (branch live-updates, 2026-09-23, never merged)
+// merged the fresh page straight into the open one -- which also overwrote whatever the
+// page had drawn for itself in the browser: balances, "on its way", a reply box the
+// reader opened, the older posts they had scrolled into.
+//
+// So this one is THREE-WAY. It keeps the server's previous copy of the page (`base`) and,
+// on a change, applies to the open document only what the SERVER changed between that copy
+// and the new one. Anything the server did not change -- including every part the page
+// drew itself and every section a person opened -- is left exactly as it is. The page's
+// own components hear `arcade:changed` and redraw their browser-side parts themselves.
 (function () {
-  var el = document.getElementById('live');       // where a notice can go
+  var el = document.getElementById('live');       // where a short notice can go
   var known = parseInt(
     (document.body && document.body.dataset.generation) ||
     (el && el.dataset.generation) || '0', 10);
+  var base = null;          // the server's copy of this page as of `known`
+  var fetching = false;
 
-  function busy() {
-    // A wallet operation in flight. Set by the browser's own half while it
-    // is deriving, signing or waiting for the node (templates/wallet_js.js)
-    // -- and NOT covered by the draft checks below, which is how a page
-    // came to reload in the middle of signing a transaction: the claim
-    // bumped the generation, the poller saw it, and the keys went with the
-    // document. Nothing was lost that time because nothing had been
-    // broadcast; the next one would have been broadcast and unfinished.
-    if (document.body.dataset.working) return true;
-    // A trade a page is mid-way through, held by the page that is relaying
-    // it (templates/inscription_view.html). The one above covers the wallet's
-    // own calls; this covers the waiting between them, which is most of a
-    // buy: the storefront in the frame is what watches for the shop's answer,
-    // and a reload takes that watch -- and the rest of the buy -- with it.
-    // Nothing is lost by reloading in the sense of money moving wrongly, but
-    // the trade stalls half-done and reads as a broken shop.
-    if (document.body.dataset.trading) return true;
-    // A file going up as several transactions, held by the inscribe panel
-    // (templates/_account_inscribe.html) for the whole of the job. Same shape
-    // again, but the hazard is sharper here: the pieces wait for the SPLIT's
-    // block, and that block is the generation bump this poller is watching --
-    // so the reload arrives at the one moment the loop cannot survive it. On
-    // the live instance that cost a split's fee and inscribed nothing.
-    if (document.body.dataset.inscribing) return true;
-    // Reading further down a feed than its first page (templates/feed.html):
-    // a reload shows the first page again, and the posts being read vanish.
-    if (document.body.dataset.reading) return true;
-    var active = document.activeElement;
-    if (active && /^(TEXTAREA|INPUT)$/.test(active.tagName)) return true;
-    var drafts = document.querySelectorAll('textarea, input[type=text]');
-    for (var i = 0; i < drafts.length; i++) {
-      if (drafts[i].value && drafts[i].value.trim()) return true;
+  function frozen() {
+    // Moments when nothing on the page may move at all. The wallet signing
+    // (templates/wallet_js.js), a trade being relayed (inscription_view.html), a file
+    // going up in pieces (_account_inscribe.html), an open confirmation: each of these
+    // once lost work to the old reload. Typing is NOT here: fields are protected one by
+    // one in dirty()/keep(), so a message can arrive while somebody writes one.
+    var d = document.body.dataset;
+    return !!(d.working || d.trading || d.inscribing || document.querySelector('.confirm'));
+  }
+
+  function dirty(node) {
+    if (!node || node.nodeType !== 1) return false;
+    if (!/^(TEXTAREA|INPUT|SELECT)$/.test(node.nodeName)) return false;
+    if (node === document.activeElement) return true;
+    if (node.type === 'checkbox' || node.type === 'radio') return node.checked !== node.defaultChecked;
+    if (node.type === 'hidden') return false;
+    return !!(node.value && node.value.trim());
+  }
+
+  function keep(node) {
+    // Never demolish a branch holding the caret, a half-written field or work in flight.
+    if (!node || node.nodeType !== 1) return false;
+    var a = document.activeElement;
+    if (a && a !== document.body && node.contains(a)) return true;
+    if (node.hasAttribute('data-working') || (node.classList && node.classList.contains('confirm'))) return true;
+    if (dirty(node)) return true;
+    var f = node.querySelectorAll('textarea, input, select');
+    for (var i = 0; i < f.length; i++) if (dirty(f[i])) return true;
+    return false;
+  }
+
+  function key(n) {
+    // What a child is, for lining two lists up: an id if it has one, else the first id
+    // inside it (a feed card carries reply-<txid>), else its tag. Text is keyed by text.
+    if (n.nodeType === 3) return '#t' + n.nodeValue.trim();
+    if (n.nodeType !== 1) return '#' + n.nodeType;
+    if (n.id) return n.nodeName + '#' + n.id;
+    if (n.getAttribute('data-key')) return n.nodeName + '@' + n.getAttribute('data-key');
+    var inner = n.querySelector && n.querySelector('[id]');
+    return n.nodeName + '>' + (inner ? inner.id : '');
+  }
+
+  function attrs(live, was, now) {
+    var i, at, n;
+    for (i = 0; i < now.attributes.length; i++) {
+      at = now.attributes[i]; n = at.name;
+      if (was.getAttribute(n) !== at.value && live.getAttribute(n) === was.getAttribute(n)) live.setAttribute(n, at.value);
     }
-    return !!document.querySelector('.confirm');
+    for (i = 0; i < was.attributes.length; i++) {
+      n = was.attributes[i].name;
+      if (!now.hasAttribute(n) && live.getAttribute(n) === was.getAttribute(n)) live.removeAttribute(n);
+    }
+  }
+
+  function apply(live, was, now) {
+    if (!live || !was || !now) return;
+    if (was.nodeType === 3 || was.nodeType === 8) {
+      // Text the server changed, where the page has not drawn over it.
+      if (was.nodeValue !== now.nodeValue && live.nodeType === was.nodeType &&
+          live.nodeValue === was.nodeValue) live.nodeValue = now.nodeValue;
+      return;
+    }
+    if (was.nodeType !== 1 || was.isEqualNode(now)) return;   // the server changed nothing here
+    if (live.nodeType !== 1 || live.nodeName !== was.nodeName) return;   // reshaped by the page
+    if (live.hasAttribute('data-client')) return;   // drawn in the browser; it redraws itself
+    if (live.nodeName === 'SCRIPT' || live.nodeName === 'STYLE') return;
+    if (was.nodeName !== now.nodeName || (was.id || '') !== (now.id || '')) {
+      if (!keep(live)) live.parentNode.replaceChild(document.importNode(now, true), live);
+      return;
+    }
+    if (dirty(live)) return;
+    attrs(live, was, now);
+    var W = Array.prototype.slice.call(was.childNodes),
+        N = Array.prototype.slice.call(now.childNodes),
+        L = Array.prototype.slice.call(live.childNodes), i, j = 0, M = [];
+    // Line the open page's children up with the server's old ones by what they are, not
+    // where they are: the page adds its own (a floating note, the picture viewer) and those
+    // are simply stepped over. A server child the page has removed maps to nothing.
+    for (i = 0; i < W.length; i++) {
+      var k = key(W[i]), found = -1;
+      for (var t = j; t < L.length; t++) if (key(L[t]) === k) { found = t; break; }
+      if (found >= 0) { M[i] = L[found]; j = found + 1; } else M[i] = null;
+    }
+    if (W.length === N.length) {
+      var same = true;
+      for (i = 0; i < W.length; i++) if (key(W[i]) !== key(N[i])) { same = false; break; }
+      if (same) { for (i = 0; i < W.length; i++) if (M[i]) apply(M[i], W[i], N[i]); return; }
+    }
+    // The server added or removed children: keep the common head and tail, swap the middle.
+    var p = 0, s = 0;
+    while (p < W.length && p < N.length && key(W[p]) === key(N[p])) p++;
+    while (s < W.length - p && s < N.length - p &&
+           key(W[W.length - 1 - s]) === key(N[N.length - 1 - s])) s++;
+    for (i = p; i < W.length - s; i++) if (M[i] && keep(M[i])) return;   // a draft sits in what would go
+    for (i = 0; i < p; i++) if (M[i]) apply(M[i], W[i], N[i]);
+    for (i = 0; i < s; i++) {
+      var w = W.length - 1 - i;
+      if (M[w]) apply(M[w], W[w], N[N.length - 1 - i]);
+    }
+    // Where the new middle goes: before the first surviving tail child, else after the
+    // last head child, else at the end.
+    var after = null;
+    for (i = W.length - s; i < W.length; i++) if (M[i]) { after = M[i]; break; }
+    if (!after) { for (i = p - 1; i >= 0; i--) if (M[i]) { after = M[i].nextSibling; break; } }
+    for (i = p; i < W.length - s; i++) if (M[i] && M[i].parentNode === live) live.removeChild(M[i]);
+    for (i = p; i < N.length - s; i++) live.insertBefore(document.importNode(N[i], true), after);
+  }
+
+  function version(doc) {
+    var f = doc.querySelector('footer.version');
+    return f ? f.textContent.replace(/\s+/g, ' ').trim() : '';
+  }
+
+  function offer(text) {
+    // The one case the page cannot take in place: the site's own code changed. Offer it.
+    if (document.getElementById('newposts')) return;
+    var u = document.createElement('a');
+    u.id = 'newposts'; u.href = location.pathname + location.search; u.textContent = text;
+    u.style.cssText = 'position:fixed;left:16px;right:16px;margin:0 auto;width:fit-content;' +
+      'bottom:18px;z-index:5;padding:10px 18px;border-radius:999px;' +
+      'background:var(--accent);color:var(--accent-fg);font-weight:600;' +
+      'box-shadow:0 4px 16px rgba(0,0,0,.22);text-decoration:none';
+    document.body.appendChild(u);
+  }
+
+  function page() {
+    return fetch(location.href, {cache: 'no-store', credentials: 'same-origin',
+                                 headers: {'X-Arcade-Live': '1'}})
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); })
+      .then(function (h) { return new DOMParser().parseFromString(h, 'text/html'); });
   }
 
   function poll() {
+    if (fetching) return;
     fetch('/events', {cache: 'no-store'})
       .then(function (r) { return r.json(); })
       .then(function (data) {
-        if (data.generation === known) return;
-        if (busy()) {
-          // Never interrupt somebody mid-sentence: losing a draft to an
-          // automatic refresh is a worse bug than the staleness it fixes.
-          if (document.body.dataset.reading) {
-            // The reader is far down the page, where a notice at the top is
-            // never seen: float one at the bottom. Pressing it is the reload.
-            if (!document.getElementById('newposts')) {
-              var n = document.createElement('a');
-              n.id = 'newposts'; n.href = location.pathname + location.search;
-              n.textContent = 'New posts are in \u2014 show them';
-              n.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);' +
-                'bottom:18px;z-index:5;padding:10px 18px;border-radius:999px;' +
-                'background:var(--accent);color:var(--accent-fg);font-weight:600;' +
-                'box-shadow:0 4px 16px rgba(0,0,0,.22);text-decoration:none';
-              document.body.appendChild(n);
-            }
-          } else if (el) {
-            el.textContent = 'something new — finish typing to see it';
+        if (data.generation === known) {
+          if (!base) {           // take the baseline while nothing is happening
+            fetching = true;
+            return page().then(function (doc) {
+              if (parseInt(doc.body.dataset.generation || '0', 10) === known) base = doc;
+            }).finally(function () { fetching = false; });
           }
           return;
         }
-        location.reload();
+        if (frozen()) { if (el) el.textContent = 'something new — it shows when this finishes'; return; }
+        if (document.body.dataset.reading) {
+          // Far down the feed: the posts above are the server's first page, the rest were
+          // added by scrolling. Say what is new rather than move the ground.
+          offer('New posts are in — show them'); known = data.generation; return;
+        }
+        fetching = true;
+        return page().then(function (doc) {
+          if (base && version(doc) !== version(base)) {
+            offer('The site was updated — tap to refresh');
+          } else if (base) {
+            if (document.title !== doc.title) document.title = doc.title;
+            apply(document.body, base.body, doc.body);
+          } else {
+            offer('Updated — tap to refresh');
+          }
+          base = doc;
+          known = parseInt(doc.body.dataset.generation || data.generation, 10) || data.generation;
+          if (el) el.textContent = '';
+          try { document.dispatchEvent(new CustomEvent('arcade:changed', {detail: {generation: known}})); } catch (e) {}
+        }).catch(function () { /* the node was away; the next poll tries again */ })
+          .finally(function () { fetching = false; });
       })
       .catch(function () { /* node or server momentarily away; try again */ });
   }
   setInterval(poll, 5000);
+  setTimeout(poll, 300);   // the baseline, as soon as the page is up
+  // For a page that used to reload itself to show new state: ask for the same update.
+  window.arcadeLiveUpdate = function () { known = -1; poll(); };
 })();
+</script>
+<script>
+// Content screening's covers on pictures (arcade/moderation.py). The /content
+// route already serves a sensitive picture blurred and an unchecked one as
+// "checking"; this labels them and lets the viewer lift a cover. Nothing here
+// runs unless this arcade screens.
+(function () {
+  function ids() {
+    var out = {};
+    document.querySelectorAll('img[src*="/content/"]').forEach(function (img) {
+      var m = img.getAttribute('src').match(/\/content\/([0-9a-f]{64})(?![^?]*reveal)/);
+      if (m && !img.dataset.screened) (out[m[1]] = out[m[1]] || []).push(img);
+    });
+    return out;
+  }
+  function label(img, text, onclick) {
+    var tag = document.createElement('button');
+    tag.type = 'button'; tag.className = 'screenlabel'; tag.textContent = text;
+    tag.onclick = function (e) { e.preventDefault(); e.stopPropagation(); onclick(tag); };
+    var box = img.parentNode;
+    if (getComputedStyle(box).position === 'static') box.style.position = 'relative';
+    box.appendChild(tag);
+    return tag;
+  }
+  function look() {
+    var found = ids(), keys = Object.keys(found);
+    if (!keys.length) return;
+    fetch('/moderation/verdicts?ids=' + keys.join(','), {cache: 'no-store'})
+      .then(function (r) { return r.json(); })
+      .then(function (said) {
+        if (!said.enabled) return;
+        var again = false;
+        keys.forEach(function (key) {
+          var verdict = said.verdicts[key];
+          found[key].forEach(function (img) {
+            if (verdict === 'sensitive') {
+              img.dataset.screened = '1';
+              label(img, 'Sensitive \u2014 tap to show', function (tag) {
+                img.src = '/content/' + key + '?reveal=1'; tag.remove();
+              });
+            } else if (verdict === null || verdict === undefined) {
+              again = true;               // still checking: ask the picture again soon
+              setTimeout(function () {
+                img.src = '/content/' + key + '?t=' + Date.now();
+              }, 4000);
+            } else {
+              img.dataset.screened = '1'; // ok, or removed: the picture says so itself
+            }
+          });
+        });
+        if (again) setTimeout(look, 5000);
+      })
+      .catch(function () {});
+  }
+  document.addEventListener('DOMContentLoaded', look);
+  if (document.readyState !== 'loading') look();
+  document.addEventListener('arcade:changed', look);
+})();
+</script>
+<style>
+.screenlabel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2;
+  padding:7px 12px;border-radius:999px;border:0;background:rgba(0,0,0,.72);color:#fff;
+  font:600 .8rem/1.2 inherit;cursor:pointer;box-shadow:none;white-space:nowrap}
+details.covered>summary{cursor:pointer;color:var(--muted);font-size:.9rem;padding:8px 12px;
+  border:1px dashed var(--line);border-radius:10px;list-style:none}
+details.covered[open]>summary{margin-bottom:6px}
+</style>
+<script>
+// The installable app (2026-09-25): register the service worker that keeps
+// an offline page and shows Messenger notifications. It caches no pages
+// (sw.js), so the live, in-place refresh above is untouched. Not in an embed:
+// a framed document is not an app.
+{% if not embed %}
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('/sw.js', {scope: '/'}).catch(function () {});
+  });
+}
+{% endif %}
 </script>
 {% if not embed %}
 <footer class="version">

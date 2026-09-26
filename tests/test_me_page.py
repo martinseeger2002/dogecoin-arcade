@@ -257,6 +257,7 @@ def test_a_message_is_drawn_as_words_there_too(client):
     uses = [line.strip() for line in page.splitlines()
             if "innerHTML" in line and not line.strip().startswith("//")]
     assert uses == ['$("threads").innerHTML = "";',
+                    '$("group-drop").innerHTML = "";',   # the member list, refilled by hand
                     '$("bubbles").innerHTML = "";'], uses
 
 

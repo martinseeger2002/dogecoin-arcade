@@ -28,7 +28,27 @@
     <div class="threads-head">
       <strong>Conversations</strong>
       <button type="button" class="ghost small" id="new">New</button>
+      <button type="button" class="ghost small" id="new-group"
+              title="A private group: only the people in it can read it">New group</button>
     </div>
+
+    <form class="newconv" id="newgroup" hidden onsubmit="return false">
+      <label>What the group is called</label>
+      <input autocomplete="off" id="group-name" maxlength="60" placeholder="Weekend crew">
+      <label style="margin-top:8px">Who is in it</label>
+      <input autocomplete="off" id="group-who" class="mono" spellcheck="false"
+             placeholder="@alice, @bob, @carol">
+      <div class="row" style="margin-top:9px">
+        <button type="button" class="small" id="group-make">Make the group</button>
+        <button type="button" class="ghost small" id="group-cancel">Cancel</button>
+      </div>
+      <p class="muted" style="font-size:.78rem;margin:9px 0 0">
+        Only the people in the group can read it. Each of them is sent the group's
+        key in a private message, so making the group costs one small message per
+        person; after that each thing said is one message, however many are in it.</p>
+      <p class="msg err" id="group-trouble" hidden
+         style="font-size:.8rem;margin:9px 0 0"></p>
+    </form>
 
     <form class="newconv" id="newconv" hidden onsubmit="return false">
       <label>Their @tag, or their address</label>
@@ -54,6 +74,10 @@
       <button type="button" class="ghost small" id="check">Check for new</button>
       <span class="muted" id="checking"></span>
     </div>
+    <div class="threads-foot notifyrow" id="notifyrow" hidden>
+      <button type="button" class="ghost small" id="notify">&#128276; Notify me</button>
+      <span class="muted" id="notify-said" style="font-size:.78rem"></span>
+    </div>
   </aside>
 
   <section class="convo">
@@ -71,6 +95,10 @@
         <div>
           <div class="convo-name" id="convo-name">—</div>
           <div class="convo-sub" id="convo-sub"></div>
+          <div class="convo-sub" id="group-admin" hidden style="margin-top:4px">
+            <select id="group-drop" style="width:auto;padding:3px 6px;font-size:.78rem"></select>
+            <button type="button" class="ghost small" id="group-remove">Remove from the group</button>
+          </div>
         </div>
         <a class="ghost small btn" id="to-book" href="/me/contacts"
            style="margin-left:auto">Address book</a>
@@ -166,8 +194,13 @@ function when(seconds) {
        + `${pad(at.getHours())}:${pad(at.getMinutes())}`;
 }
 
-const nameOf = (thread) => thread.tag ? "@" + thread.tag
+const nameOf = (thread) => thread.group ? "\u{1F465} " + (thread.group.name || "A group")
+  : thread.tag ? "@" + thread.tag
   : (thread.address || "Unknown sender");
+
+/* A group member as the page prints them: their @tag, else a short address. */
+const memberName = (m) => m.tag ? "@" + m.tag
+  : (NAMED[m.address] ? "@" + NAMED[m.address] : (m.address || "").slice(0, 10) + "\u2026");
 
 /* An attachment is somebody else's bytes opened inside the origin that
    holds a wallet, so it is shown for what its OWN leading bytes are and
@@ -285,6 +318,17 @@ function bubble(letter) {
   // that renders them as markup is a page that runs them.
   body.textContent = mail.text(letter);
   const parts = [body];
+  // In a group, each line says who said it: the address that PAID for it,
+  // which is signed by that person's own coin key (messaging.js explains why
+  // the inner box is not trusted for this).
+  if (letter.group && !letter.mine) {
+    const who = document.createElement("div");
+    who.className = "muted";
+    who.style.cssText = "font-size:.75rem;font-weight:600;margin-bottom:2px";
+    const name = NAMED[letter.from_address];
+    who.textContent = name ? "@" + name : (letter.from_address || "someone").slice(0, 12) + "\u2026";
+    parts.unshift(who);
+  }
   const file = mail.attachment(letter);
   if (file) parts.push(fileBox(file));
   // What the sender volunteered about themselves, which they may not have:
@@ -366,14 +410,43 @@ async function drawConversation() {
 
   const letters = await mail.conversation(here);
   const thread = (await peerOf(here)) || {peer: here, tag: "", address: ""};
-  paintName(thread);
-  $("convo-sub").textContent = thread.address || "";
-  $("to-book").textContent = thread.inBook ? "Address book"
-                                           : "Add to address book";
-  $("cost-note").textContent =
-    `Encrypted to ${thread.tag ? "@" + thread.tag : "them"} only. Costs a `
-    + "transaction fee and a little dust, which is paid to them and is how "
-    + "they know something arrived. Enter sends; Shift+Enter starts a new line.";
+  const group = mail.groupOfPeer(here) ? (thread.group || await mail.currentGroup(mail.groupOfPeer(here))) : null;
+  $("group-admin").hidden = true;
+  if (group) {
+    // Names for everybody who has spoken, before the lines are drawn.
+    await Promise.all([...new Set(letters.filter((l) => !l.mine)
+      .map((l) => l.from_address).filter(Boolean))].map(tagOf));
+    await Promise.all((group.members || []).map((m) => m.address && !m.tag ? tagOf(m.address) : null));
+    $("convo-name").textContent = nameOf({group});
+    $("convo-sub").textContent = (group.members || []).map(memberName).join(", ")
+      + (group.current === false ? " \u00b7 this group moved to a new key" : "");
+    $("to-book").hidden = true;
+    const mine = me && group.creator === mail.hex(me.publicKey);
+    if (mine && group.current !== false) {
+      $("group-drop").innerHTML = "";
+      for (const m of group.members || []) {
+        if (m.key === mail.hex(me.publicKey)) continue;
+        const o = document.createElement("option");
+        o.value = m.key; o.textContent = memberName(m);
+        $("group-drop").appendChild(o);
+      }
+      $("group-admin").hidden = !$("group-drop").options.length;
+    }
+    $("cost-note").textContent =
+      `Only the ${(group.members || []).length} people in this group can read it. `
+      + "Each thing you say is one small transaction, however many are in the group. "
+      + "Enter sends; Shift+Enter starts a new line.";
+  } else {
+    paintName(thread);
+    $("to-book").hidden = false;
+    $("convo-sub").textContent = thread.address || "";
+    $("to-book").textContent = thread.inBook ? "Address book"
+                                             : "Add to address book";
+    $("cost-note").textContent =
+      `Encrypted to ${thread.tag ? "@" + thread.tag : "them"} only. Costs a `
+      + "transaction fee and a little dust, which is paid to them and is how "
+      + "they know something arrived. Enter sends; Shift+Enter starts a new line.";
+  }
 
   forgetUrls();
   $("bubbles").innerHTML = "";
@@ -432,6 +505,17 @@ async function send() {
     // different one. So whatever comes back is checked against the key
     // this conversation has been with, and a mismatch is refused rather
     // than sealed to the wrong person.
+    const gid = mail.groupOfPeer(here);
+    if (gid) {
+      const group = await mail.currentGroup(gid);
+      if (!group) throw new Error("this browser does not hold that group's key");
+      await mail.writeGroup(keys, me, group, "" + text);
+      $("body").value = "";
+      grow($("body"));
+      await drawConversation();
+      await drawThreads();
+      return;
+    }
     const thread = await peerOf(here);
     const asking = thread && (thread.tag || thread.address);
     if (!asking) throw new Error(
@@ -460,6 +544,53 @@ $("body").addEventListener("keydown", (e) => {
   e.preventDefault();
   send();
 });
+
+$("new-group").onclick = () => {
+  $("newconv").hidden = true;
+  $("newgroup").hidden = false;
+  $("group-name").focus();
+};
+$("group-cancel").onclick = () => {
+  $("newgroup").hidden = true;
+  $("group-trouble").hidden = true;
+};
+$("group-make").onclick = async () => {
+  const names = $("group-who").value.split(/[\s,]+/).map((w) => w.trim()).filter(Boolean);
+  $("group-trouble").hidden = true;
+  $("group-make").disabled = true;
+  const was = $("group-make").textContent;
+  $("group-make").textContent = "Making it\u2026";
+  try {
+    const group = await mail.createGroup(keys, me, $("group-name").value, names);
+    $("newgroup").hidden = true;
+    $("group-name").value = ""; $("group-who").value = "";
+    await show(`group:${mail.rootOf(group)}`);
+  } catch (e) {
+    $("group-trouble").textContent = String(e.message || e);
+    $("group-trouble").hidden = false;
+  } finally {
+    $("group-make").disabled = false;
+    $("group-make").textContent = was;
+  }
+};
+$("group-remove").onclick = async () => {
+  const gid = mail.groupOfPeer(here);
+  const group = gid && await mail.currentGroup(gid);
+  const key = $("group-drop").value;
+  if (!group || !key) return;
+  say("");
+  $("group-remove").disabled = true;
+  try {
+    // A key cannot be taken back from somebody who holds it, so this is a new
+    // key for everybody who stays; what was said before stays readable.
+    const next = await mail.removeFromGroup(keys, me, group, key);
+    await show(`group:${mail.rootOf(next)}`);
+  } catch (e) {
+    say(String(e.message || e));
+  } finally {
+    $("group-remove").disabled = false;
+  }
+};
 
 $("new").onclick = () => {
   $("newconv").hidden = false;
@@ -539,6 +670,11 @@ async function ready(w) {
   // and promotes them in place when the block lands.
   await check(true);
   setInterval(() => check(false), 20000);
+  // A block that brought something: look at once rather than at the next
+  // twenty-second tick, and do not offer a reload -- this page draws its own
+  // conversations from this tab's keys (base.html's `arcade:changed`).
+  document.body.dataset.selfRefreshing = "yes";
+  document.addEventListener("arcade:changed", () => { check(false); });
 }
 
 $("open").onclick = async () => {
@@ -558,5 +694,76 @@ const already = await wallet.opened(CHAIN);
 if (already) await ready(already);
 else $("locked").hidden = false;
 document.body.dataset.messagesReady = "yes";
+</script>
+<script>
+// Notifications for new messages on this device (arcade/push.py). Offered only
+// where the browser can do it and this arcade sends them. On an iPhone that
+// means the arcade has been added to the Home Screen and opened from there --
+// Safari in a tab cannot receive web push, so it says how instead.
+(function () {
+  var row = document.getElementById('notifyrow');
+  var button = document.getElementById('notify');
+  var said = document.getElementById('notify-said');
+  if (!row || !('serviceWorker' in navigator)) return;
+  var standalone = window.matchMedia('(display-mode: standalone)').matches ||
+                   window.navigator.standalone === true;
+  var ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  function b64(s) {
+    var pad = '='.repeat((4 - s.length % 4) % 4);
+    var raw = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  function show(on, text) {
+    row.hidden = false;
+    button.textContent = on ? '\uD83D\uDD14 Notifications on' : '\uD83D\uDD14 Notify me';
+    button.dataset.on = on ? '1' : '';
+    said.textContent = text || '';
+  }
+  fetch('/push/key', {cache: 'no-store'}).then(function (r) { return r.json(); })
+    .then(function (info) {
+      if (!info.enabled) return;                       // this arcade does not push
+      if (!('PushManager' in window) || !('Notification' in window)) {
+        if (ios && !standalone) {
+          row.hidden = false; button.hidden = true;
+          said.textContent = 'For notifications: Share \u2192 Add to Home Screen, then open the arcade from there.';
+        }
+        return;
+      }
+      navigator.serviceWorker.ready.then(function (reg) {
+        return reg.pushManager.getSubscription().then(function (sub) {
+          show(!!sub && Notification.permission === 'granted',
+               Notification.permission === 'denied' ? 'Blocked in this browser\u2019s settings.' : '');
+          button.onclick = function () {
+            if (button.dataset.on) {
+              return reg.pushManager.getSubscription().then(function (s) {
+                if (!s) return show(false);
+                var endpoint = s.endpoint;
+                return s.unsubscribe().then(function () {
+                  return fetch('/account/push/unsubscribe', {method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({endpoint: endpoint})});
+                }).then(function () { show(false, 'Off on this device.'); });
+              });
+            }
+            return Notification.requestPermission().then(function (answer) {
+              if (answer !== 'granted') return show(false, 'Not allowed \u2014 nothing was turned on.');
+              return reg.pushManager.subscribe({userVisibleOnly: true,
+                                                applicationServerKey: b64(info.key)})
+                .then(function (s) {
+                  return fetch('/account/push/subscribe', {method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(s.toJSON())});
+                }).then(function (r) {
+                  if (!r.ok) throw new Error('refused');
+                  show(true, 'You\u2019ll be told who wrote \u2014 never what they wrote.');
+                }).catch(function () { show(false, 'Could not turn it on here.'); });
+            });
+          };
+        });
+      });
+    }).catch(function () {});
+})();
 </script>
 {% endblock %}

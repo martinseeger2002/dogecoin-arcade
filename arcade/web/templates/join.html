@@ -10,7 +10,7 @@
 
 <div class="panel seats">
   {% if free > 0 %}
-    <p class="count"><strong>{{ free }}</strong> of {{ seats }} seats free</p>
+    <p class="count"><strong>{{ free }}</strong> of {{ seats }} seats open</p>
     <p class="muted">
       A node is one machine with one connection to the chain, and this one
       seats {{ seats }} people. A seat comes back after {{ idle_days }} days
@@ -19,7 +19,7 @@
       are on the chain, not here.
     </p>
   {% else %}
-    <p class="count"><strong>No seats free.</strong></p>
+    <p class="count"><strong>No open seats.</strong></p>
     <p class="muted">
       All {{ seats }} are taken. This is not a queue — run your own node
       and you are the operator of it, with your own {{ seats }} seats. Your

@@ -281,11 +281,13 @@ def build(db, params: Params, address: str, payload_outputs: list,
     total = sum(c["value"] for c in chosen)
     change = total - spend - fee
     outputs = list(payload_outputs)
-    if change > dust:
+    if change >= max(dust, fees.DUST_LIMIT):
         outputs.append((change, p2pkh_script(address)))
     else:
         # Too small to be worth an output: it goes to the miner rather than
-        # creating a coin nobody can afford to spend.
+        # creating a coin nobody can afford to spend. Below fees.DUST_LIMIT it
+        # would also cost the dust fee, and without it no peer relays the
+        # transaction at all.
         fee += max(0, change)
         change = 0
 
@@ -335,7 +337,7 @@ def build_one(params: Params, address: str, coin: dict,
 
     change = value - spend - fee
     outputs = list(payload_outputs)
-    if change > dust:
+    if change >= max(dust, fees.DUST_LIMIT):
         # Back to the sender, as always: a Class B payload's obfuscation is
         # seeded with the largest input, and a piece whose change wandered off
         # would be read as somebody else's and never indexed.
@@ -409,7 +411,7 @@ def build_partial(db, params: Params, address: str, foreign: list,
     total = theirs + sum(c["value"] for c in chosen)
     change = total - spend - fee
     outputs = list(payload_outputs)
-    if change > dust:
+    if change >= max(dust, fees.DUST_LIMIT):
         outputs.append((change, p2pkh_script(address)))
     else:
         fee += max(0, change)

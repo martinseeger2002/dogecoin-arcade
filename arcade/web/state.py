@@ -532,6 +532,28 @@ class AppState:
         from ..accounts import Vault
         return Vault(self.accounts())
 
+    def screen(self):
+        """Content screening (arcade/moderation.py): the `moderation` setting names a
+        model to ask. Off when unset. Rebuilt only when the setting changes."""
+        from ..moderation import Screen
+        import json as _json
+        config = self.setting("moderation")
+        said = _json.dumps(config, sort_keys=True)
+        held = getattr(self, "_screen", None)
+        if held is None or held[0] != said:
+            self._screen = (said, Screen(self.home, config))
+        return self._screen[1]
+
+    def push(self):
+        """Push notifications for the Messenger (arcade/push.py), or None when this
+        node cannot sign a push (`cryptography` not installed)."""
+        from .. import push as pushlib
+        if not pushlib.available():
+            return None
+        if getattr(self, "_push", None) is None:
+            self._push = pushlib.Push(self.home)
+        return self._push
+
     def faucet(self):
         """The record of what the faucet has given, and its limits.
 
@@ -724,6 +746,35 @@ class AppState:
             txid = sender.broadcast(prepared)
         self.bump_generation()
         return txid
+
+    def announce_instance(self, domain: str) -> dict:
+        """Say on the chain who runs this arcade: its domain and revision, paid
+        for by its FEE ADDRESS (arcade/instance.py). The fee address has to pay
+        for it itself -- the funding input is the proof -- so an address with no
+        coins is refused rather than quietly replaced by another one.
+        """
+        from .. import instance as instancelib
+        from ..messaging.sender import MessageSender, funded_address
+
+        chain = self.messaging
+        fee_address = self.derived_address
+        if not fee_address:
+            raise ValueError("this node has no fee address yet")
+        revision = self.running_version or ""
+        payload = instancelib.build(domain, revision)
+        with chain.rpc() as rpc:
+            sender = MessageSender(rpc, chain.params, public_only=True)
+            address = funded_address(rpc, prefer=fee_address, mainnet=chain.is_mainnet)
+            if address != fee_address:
+                raise ValueError(
+                    f"the fee address {fee_address} has no coins to pay for this. "
+                    "Send it a coin first: the announcement has to come FROM it, "
+                    "because that is what proves who made it.")
+            prepared = sender.prepare(address, payload, change_address=address)
+            txid = sender.broadcast(prepared)
+        self.bump_generation()
+        return {"txid": txid, "domain": instancelib.clean_domain(domain),
+                "revision": revision, "fee_address": fee_address}
 
     def send_feed_act(self, kind: int, target: str, text: str = "") -> str:
         """Put one like, reply, share, edit or delete on the chain.

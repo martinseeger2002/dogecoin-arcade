@@ -130,7 +130,31 @@ class Params:
     #: rescan. Set per network because the chains are unrelated.
     messaging_start_height: int = 0
 
+    #: Where @names (tag claims, and the messaging keys that go with them) are
+    #: read from, when that is EARLIER than the floor (2026-09-25: names
+    #: survive a floor move). Moving the floor raises `activation_height` and the
+    #: other starts; this stays where names began, so the index reads the blocks
+    #: in between for names and nothing else -- tokens, inscriptions, shops,
+    #: posts and messages there are ignored as before -- and every node derives
+    #: the same owners from the chain alone. None means "from the floor", as
+    #: before. It is a release decision like the floor itself.
+    names_from: int | None = None
+
     marker_address: str | None = None
+
+    @property
+    def index_start(self) -> int | None:
+        """Where the ledger index begins: the floor, or where names begin if that
+        is earlier (see `names_from`)."""
+        if self.names_from is None or self.activation_height is None:
+            return self.activation_height
+        return min(self.activation_height, self.names_from)
+
+    def names_only(self, height: int) -> bool:
+        """True for a block read for its names alone: below the floor, at or above
+        `names_from`."""
+        return (self.names_from is not None and self.activation_height is not None
+                and self.names_from <= height < self.activation_height)
 
     @property
     def marker(self) -> str:
@@ -228,6 +252,10 @@ TESTNET = Params(
     # (the operator).
     activation_height=1_496_133,
     messaging_start_height=1_496_133,
+    # Names began at the floor before launch. The launch floor move raises the
+    # heights above and leaves this one, so every @name claimed since keeps its
+    # owner (docs/multi-user.md, "@names persist across the floor move").
+    names_from=1_496_133,
     swaps_from=1_496_133,
     asks_from=1_496_133,
     fills_from=1_496_133,

@@ -1,0 +1,28 @@
+{# 2026-09-25: "It needs to be clear to people that these are not ords or doginals,
+   and not to send ords or doginals to the wallet or they will be lost." True, and the reason
+   is concrete: this wallet funds its transactions out of whatever coins sit at its
+   addresses (funding.choose) and knows nothing of Ordinals' sat-tracking, so an Ordinal or
+   Doginal received here is an ordinary coin to it, and the next send can spend it away. #}
+{% macro receiving() %}
+<style>.notord{border:1px solid var(--warn);border-left:4px solid var(--warn);border-radius:0 12px 12px 0;
+  background:color-mix(in srgb,var(--warn) 9%,var(--bg));padding:10px 14px;margin:0 0 16px;font-size:.9rem}
+  .notord b{display:block;margin-bottom:2px}</style>
+<div class="notord" role="note">
+  <b>Don't send Ordinals or Doginals here.</b>
+  Arcade assets are not Ordinals or Doginals, and this wallet doesn't know about those. It treats them as ordinary coins and can spend them
+  away with your next transaction, so they would be lost. Keep them in the wallet that made
+  them. Send this address coins only.
+</div>
+{% endmacro %}
+{% macro pieces() %}
+<style>.notord{border:1px solid var(--warn);border-left:4px solid var(--warn);border-radius:0 12px 12px 0;
+  background:color-mix(in srgb,var(--warn) 9%,var(--bg));padding:10px 14px;margin:0 0 16px;font-size:.9rem}
+  .notord b{display:block;margin-bottom:2px}</style>
+<div class="notord" role="note">
+  <b>Nothing made in DogecoinArcade is an Ordinal or a Doginal.</b>
+  Pictures, collections and tokens made here are arcade assets: their own kind, made and read
+  by DogecoinArcade. Ordinals and Doginal wallets and marketplaces won't show them, and this
+  wallet won't show yours. Never send Ordinals or Doginals to an arcade address: they would be
+  treated as ordinary coins and lost.
+</div>
+{% endmacro %}

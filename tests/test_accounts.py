@@ -259,3 +259,32 @@ def test_the_arcade_tree_never_touches_the_coin_path():
     assert seed.ARCADE_PURPOSE != 44
     assert seed.MESSAGING_BRANCH[0] == seed.LOGIN_BRANCH[0] == seed.ARCADE_PURPOSE
     assert seed.MESSAGING_BRANCH != seed.LOGIN_BRANCH
+
+
+def test_one_register_survives_many_threads_at_once(register):
+    """The live node shares one register across every request thread. Unguarded,
+    two threads stepping statements on the one connection logged "bad parameter
+    or other API misuse", and a COUNT(*) that came back None -- a 500 on the
+    account page (2026-09-25)."""
+    import threading
+    who = "ab" * 32
+    caps = {"hour": {"send": 10_000}, "bytes": 10_000_000}
+    errors = []
+
+    def busy(n):
+        try:
+            for i in range(200):
+                if i % 5 == 0:
+                    register.charge(who, "send", 10, caps=caps)
+                assert isinstance(register.used(who, "send"), int)
+                register.room(who, caps=caps)
+        except Exception as exc:                       # noqa: BLE001
+            errors.append(repr(exc))
+
+    threads = [threading.Thread(target=busy, args=(n,)) for n in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert register.used(who, "send") == 8 * 40

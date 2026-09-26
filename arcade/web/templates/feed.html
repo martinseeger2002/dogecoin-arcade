@@ -64,8 +64,23 @@
     {# Text, with any /content/<id> in it drawn rather than printed: a picture
        is shown, a page goes in the sandbox the viewer already uses, and
        anything else stays a link (D-138). #}
+    {# Screened first when this arcade screens (arcade/moderation.py): removed if
+       illegal, behind a cover the reader can lift if sensitive, and covered
+       while it is still being checked (2026-09-25). #}
+    {% set seen = screen_text(p.text) %}
+    {% if seen == 'illegal' %}
+    <p class="muted posttext" style="margin:10px 0 0">Removed by this arcade.</p>
+    {% elif seen == 'sensitive' %}
+    <details class="covered" style="margin:10px 0 0">
+      <summary>Sensitive post &mdash; tap to show</summary>
+      <div class="posttext" style="margin:8px 0 0;white-space:pre-wrap"
+        >{{ render_post(p.text, drawable) }}</div></details>
+    {% elif seen is none %}
+    <p class="muted posttext" style="margin:10px 0 0">Checking this post&hellip;</p>
+    {% else %}
     <div class="posttext" style="margin:10px 0 0;white-space:pre-wrap"
       >{{ render_post(p.text, drawable) }}</div>
+    {% endif %}
   {% endif %}
 
   {% if not public or acts %}
@@ -77,6 +92,17 @@
       <button class="ghost small" type="submit"
               title="Every like is a transaction, so everybody counts the same number">
         {{ '♥' if p.liked_by_me else '♡' }} {{ p.likes }}</button></form>
+
+    {# A dislike lowers where a post sits; one opinion per person, the latest
+       (feed.DISLIKE, 2026-09-25). Pressed again, it is taken back. #}
+    <form method="post" action="/feed/{{ p.txid }}/{{ 'undislike' if p.disliked_by_me else 'dislike' }}"
+          style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="back" value="{{ here }}">
+      <button class="ghost small{{ ' on' if p.disliked_by_me }}" type="submit"
+              aria-label="{{ 'Take back the dislike' if p.disliked_by_me else 'Dislike' }}"
+              title="A dislike moves this post down the feed, as a like moves it up">
+        &#128078;{% if p.dislikes %} {{ p.dislikes }}{% endif %}</button></form>
 
     <button class="ghost small" type="button"
             onclick="toggle('reply-{{ p.txid }}')">Reply</button>
@@ -139,6 +165,7 @@
     <span class="muted" style="font-size:.82rem"
           title="Every like, tip and share is a transaction, so everybody counts the same number">
       &#9825; {{ p.likes }} like{{ '' if p.likes == 1 else 's' }}
+      {% if p.dislikes %}&middot; {{ p.dislikes }} dislike{{ '' if p.dislikes == 1 else 's' }}{% endif %}
       {% if p.tips %}&middot; {{ p.tips }} tip{{ '' if p.tips == 1 else 's' }}{% endif %}
       {% if p.shares %}&middot; {{ p.shares }} share{{ '' if p.shares == 1 else 's' }}{% endif %}
       {% if p.tipped %}&middot; {% for net, sats in p.tipped|dictsort %}&#9921; {{ sats|coins }} {{ net }} tipped{% if not loop.last %} &middot;{% endif %}{% endfor %}{% endif %}</span>
@@ -233,9 +260,14 @@
   {% endif %}
 {% else %}
   <h1>Feed</h1>
-  <p class="sub">Everything anybody has posted, what people endorsed first.
-    Every like, tip and share is on the chain, so everybody sees the same
-    numbers &mdash; and the same order.</p>
+  <p class="sub">Everything anybody has posted. <b>Popular</b> puts what people
+    endorsed first, gives new posts a head start so they get seen, and lets
+    popularity wear off over time; <b>New</b> is simply newest first. Every like,
+    dislike, tip and share is on the chain, so everybody sees the same numbers.</p>
+  <nav class="row feedsort" aria-label="Order" style="gap:6px;margin:0 0 16px">
+    <a class="btn small {{ 'on' if sort != 'new' else 'ghost' }}" href="/feed">Popular</a>
+    <a class="btn small {{ 'on' if sort == 'new' else 'ghost' }}" href="/feed?sort=new">New</a>
+  </nav>
 {% endif %}
 
 {% if not whose %}
@@ -404,6 +436,7 @@
                  version: {{ chain.params.pubkeyhash_version }}};
   const $ = (id) => document.getElementById(id);
   const DONE = {like: "Liked", unlike: "Like taken back", reply: "Replied",
+                dislike: "Disliked", undislike: "Dislike taken back",
                 share: "Shared", edit: "Edited", delete: "Deleted",
                 tip: "Tipped"};
   const say = (text, bad) => {
@@ -440,7 +473,7 @@
   document.addEventListener("submit", async (event) => {
     const form = event.target;
     const one = (form.getAttribute("action") || "").match(
-      /^\/feed\/([0-9a-f]{64})\/(like|unlike|reply|share|edit|delete|tip)$/);
+      /^\/feed\/([0-9a-f]{64})\/(like|unlike|dislike|undislike|reply|share|edit|delete|tip)$/);
     if (!one) return;               // the composer, or a page with no door
     event.preventDefault();
     say("");
@@ -591,8 +624,11 @@ document.addEventListener('click', function (event) {
   var more = document.getElementById('more');
   if (!more || !window.IntersectionObserver || !window.fetch) return;
   var asking = false;
+  // A post is known by its reply form's id (reply-<txid>), not its markup: its
+  // counts can change between two pages -- a dislike moves it down past the cut.
+  var idOf = function (c) { var f = c.querySelector('[id^="reply-"]'); return f ? f.id : c.outerHTML; };
   var seen = new Set();
-  document.querySelectorAll('.feedpost').forEach(function (c) { seen.add(c.outerHTML); });
+  document.querySelectorAll('.feedpost').forEach(function (c) { seen.add(idOf(c)); });
   var watch = new IntersectionObserver(function(entries){
     if (!entries[0].isIntersecting || asking) return;
     var link = more.querySelector('a');
@@ -607,8 +643,8 @@ document.addEventListener('click', function (event) {
         var from = next ? next.parentNode : doc.querySelector('main');
         var cards = from ? from.querySelectorAll(':scope > .feedpost') : [];
         cards.forEach(function (c) {
-          if (seen.has(c.outerHTML)) return;       // the order moved under us: shown already
-          seen.add(c.outerHTML);
+          if (seen.has(idOf(c))) return;           // the order moved under us: shown already
+          seen.add(idOf(c));
           more.parentNode.insertBefore(document.importNode(c, true), more);
         });
         document.body.dataset.reading = '1';

@@ -214,7 +214,7 @@ class LedgerIndex:
     def _stop(self, exc: Exception) -> None:
         """Record why the index halted, at the height it was working on."""
         height = self.indexed_height()
-        working_on = (height + 1) if height is not None else (self.params.activation_height or 0)
+        working_on = (height + 1) if height is not None else (self.params.index_start or 0)
         if isinstance(exc, (P.UnknownMessageType, P.OutOfScopeMessageType)):
             reason = (f"a transaction uses Omni message type {exc.message_type}, which "
                       f"this version does not implement. Balances after this block "
@@ -255,9 +255,12 @@ class LedgerIndex:
         """
         height = self.indexed_height()
         start = self.params.activation_height
+        # Measured from where the index begins, which is below the floor when
+        # names start earlier (config.Params.names_from).
+        begins = self.params.index_start
         behind = None
         if node_tip is not None and start is not None:
-            behind = max(0, node_tip - (height if height is not None else start - 1))
+            behind = max(0, node_tip - (height if height is not None else begins - 1))
         return {
             "enabled": self.enabled,
             "activation_height": start,

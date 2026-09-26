@@ -53,6 +53,21 @@ CREATE TABLE IF NOT EXISTS key_announcement (
     url         TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS key_announcement_addr ON key_announcement(address, height);
+-- Arcade instances announcing who runs them (arcade/instance.py): a domain and
+-- a revision, published by the FEE ADDRESS that paid for the transaction. Every
+-- announcement is kept; the directory shows the latest per (address, domain).
+CREATE TABLE IF NOT EXISTS instance_announcement (
+    txid        TEXT PRIMARY KEY,
+    network     TEXT NOT NULL,
+    address     TEXT NOT NULL,
+    domain      TEXT NOT NULL,
+    revision    TEXT NOT NULL,
+    height      INTEGER NOT NULL,
+    block_time  INTEGER NOT NULL,
+    seen_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS instance_announcement_domain
+    ON instance_announcement(network, domain, height);
 -- The inscription somebody uses as their picture, as announced. Honoured only
 -- while the chain says they still hold it (D-138), so this is what they SAID,
 -- never what is drawn.
@@ -337,6 +352,9 @@ class MessageStore:
         # implementations agreeing to.
         self.conn.create_function("tip_value", 2, feed.tip_value,
                                   deterministic=True)
+        # Deterministic for the same three arguments: the clock is one of them
+        # (`asof`), passed in, never read inside.
+        self.conn.create_function("hot", 3, feed.hot, deterministic=True)
         self.conn.executescript(SCHEMA)
         add_missing_columns(self.conn, SCHEMA)
         self._migrate()
@@ -517,6 +535,35 @@ class MessageStore:
         row = self.conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
         return row["value"] if row else None
 
+    def add_instance_announcement(self, txid: str, network: str, address: str,
+                                  domain: str, revision: str, height: int,
+                                  block_time: int) -> None:
+        """An arcade announcing its domain and revision (arcade/instance.py).
+        A pool row (height 0) is promoted in place when its block arrives."""
+        import time as _time
+        self.conn.execute(
+            "INSERT INTO instance_announcement (txid, network, address, domain,"
+            " revision, height, block_time, seen_at) VALUES (?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(txid) DO UPDATE SET"
+            "  height = CASE WHEN excluded.height > 0 THEN excluded.height"
+            "                ELSE instance_announcement.height END,"
+            "  block_time = CASE WHEN excluded.height > 0 THEN excluded.block_time"
+            "                ELSE instance_announcement.block_time END",
+            (txid, network, address, domain, revision, int(height),
+             int(block_time), int(_time.time())))
+        self.conn.commit()
+
+    def instances(self, network: str) -> list[sqlite3.Row]:
+        """The latest announcement for each (fee address, domain), newest first.
+        Confirmed ones only: a directory entry should be something a block says."""
+        return self.conn.execute(
+            "SELECT * FROM instance_announcement a WHERE a.network = ? AND a.height > 0"
+            " AND NOT EXISTS (SELECT 1 FROM instance_announcement b"
+            "   WHERE b.network = a.network AND b.address = a.address"
+            "     AND b.domain = a.domain AND b.height > 0"
+            "     AND (b.height, b.txid) > (a.height, a.txid))"
+            " ORDER BY a.height DESC, a.txid DESC", (network,)).fetchall()
+
     def set_meta(self, key: str, value: str) -> None:
         self.conn.execute(
             "INSERT INTO meta(key,value) VALUES(?,?) "
@@ -621,6 +668,44 @@ class MessageStore:
 
     # --- key announcements ----------------------------------------------------
 
+    #: What a floor move clears: everything read off the chain below the new
+    #: floor except key announcements, which carry the @names that survive it
+    #: (config.Params.names_from). The address book, mutes and read marks were
+    #: typed or chosen by a person, not scanned, and are never touched.
+    FLOOR_CLEARS = ("candidate", "message", "sent", "api_message", "group_post",
+                    "feed_act", "group_chunk")
+
+    def clear_below_floor(self, network: str, floor: int) -> dict[str, int]:
+        """Apply a floor move to this store, once per floor. Returns what went.
+
+        Until now a floor move reached the ledger index (which rebuilds) and never
+        this store, so posts and messages from before a reset stayed on every
+        node that had seen them. Pool rows (height 0) are kept: they are not below
+        anything yet.
+        """
+        key = f"floor_cleared:{network}"
+        done = self.get_meta(key)
+        if done is None:
+            # The first time this code runs on a store it only takes note of the
+            # floor it finds: clearing what earlier floors left behind is a choice
+            # for a person, not something a merge should do on its own. From here
+            # on, each floor MOVE is applied once.
+            self.set_meta(key, str(int(floor)))
+            self.conn.commit()
+            return {}
+        if int(done) >= int(floor):
+            return {}
+        gone: dict[str, int] = {}
+        gone["attachment"] = self.conn.execute(
+            "DELETE FROM attachment WHERE message_id IN "
+            "(SELECT id FROM message WHERE height > 0 AND height < ?)", (int(floor),)).rowcount
+        for table in self.FLOOR_CLEARS:
+            gone[table] = self.conn.execute(
+                f"DELETE FROM {table} WHERE height > 0 AND height < ?", (int(floor),)).rowcount
+        self.set_meta(key, str(int(floor)))
+        self.conn.commit()
+        return {t: n for t, n in gone.items() if n}
+
     def add_key_announcement(
         self, txid: str, address: str, pubkey: bytes, fingerprint: str,
         height: int, block_time: int, stated: bool = False, name: str = "",
@@ -692,7 +777,7 @@ class MessageStore:
         """
         stated = self.conn.execute(
             "SELECT address FROM key_announcement WHERE pubkey=? AND stated=1 "
-            "ORDER BY height DESC LIMIT 1", (pubkey,)).fetchone()
+            "ORDER BY height DESC, rowid DESC LIMIT 1", (pubkey,)).fetchone()
         if stated is None:
             return []
         return [row["address"] for row in self.conn.execute(
@@ -719,6 +804,12 @@ class MessageStore:
             "UPDATE contact SET address=?, testnet_address=?, updated=? WHERE id=?",
             (address, address, now, row["id"]))
 
+    # Two announcements in ONE block (a picture, then a bio a minute later, both
+    # waiting for the same block) tie on height, and SQLite then returns either:
+    # the live profile showed the picture and lost the bio (2026-09-25). The row
+    # stored later is the one seen later -- the pool keeps arrival order, and a
+    # block's transactions are read in the order they are in it -- so `rowid`
+    # breaks the tie the way the person meant.
     def key_for(self, address: str) -> sqlite3.Row | None:
         """The announced key for an address, preferring what a key stated.
 
@@ -729,7 +820,7 @@ class MessageStore:
         """
         return self.conn.execute(
             "SELECT * FROM key_announcement WHERE address=? "
-            "ORDER BY stated DESC, height DESC LIMIT 1", (address,),
+            "ORDER BY stated DESC, height DESC, rowid DESC LIMIT 1", (address,),
         ).fetchone()
 
     def confirmed_key_for(self, address: str) -> sqlite3.Row | None:
@@ -745,7 +836,7 @@ class MessageStore:
         """
         return self.conn.execute(
             "SELECT * FROM key_announcement WHERE address=? AND height > 0 "
-            "ORDER BY stated DESC, height DESC LIMIT 1", (address,),
+            "ORDER BY stated DESC, height DESC, rowid DESC LIMIT 1", (address,),
         ).fetchone()
 
     def live_keys(self) -> list[sqlite3.Row]:
@@ -766,7 +857,7 @@ class MessageStore:
 
     def key_history(self, address: str) -> list[sqlite3.Row]:
         return list(self.conn.execute(
-            "SELECT * FROM key_announcement WHERE address=? ORDER BY height", (address,)
+            "SELECT * FROM key_announcement WHERE address=? ORDER BY height, rowid", (address,)
         ))
 
     def all_keys(self) -> list[sqlite3.Row]:
@@ -1232,8 +1323,15 @@ class MessageStore:
             AND al.kind = {like}
             AND NOT EXISTS (SELECT 1 FROM feed_act au
               WHERE au.target = al.target AND au.network = al.network
-                AND au.author = al.author AND au.kind = {unlike}
+                AND au.author = al.author AND au.kind IN ({unlike}, {dislike})
                 AND (au.height, au.txid) > (al.height, al.txid)))
+        - (SELECT COUNT(*) * {dislike_value} FROM feed_act ad
+          WHERE ad.target = {a}.txid AND ad.network = {a}.network
+            AND ad.kind = {dislike}
+            AND NOT EXISTS (SELECT 1 FROM feed_act ax
+              WHERE ax.target = ad.target AND ax.network = ad.network
+                AND ax.author = ad.author AND ax.kind IN ({undislike}, {like})
+                AND (ax.height, ax.txid) > (ad.height, ad.txid)))
         + (SELECT COUNT(*) FROM feed_act ash
             WHERE ash.target = {a}.txid AND ash.network = {a}.network
               AND ash.kind = {share})
@@ -1248,11 +1346,14 @@ class MessageStore:
     def _score(cls, alias: str) -> str:
         return cls._SCORE_SQL.format(
             a=alias, like=feed.LIKE, unlike=feed.UNLIKE,
-            share=feed.SHARE, tip=feed.TIP, like_value=feed.LIKE_VALUE)
+            dislike=feed.DISLIKE, undislike=feed.UNDISLIKE,
+            share=feed.SHARE, tip=feed.TIP, like_value=feed.LIKE_VALUE,
+            dislike_value=feed.DISLIKE_VALUE)
 
     def feed_posts_popular(self, network: str, cursor: int | None = None,
                            limit: int = 10, author: str = "",
-                           anchor: float | None = None) -> list[sqlite3.Row]:
+                           anchor: float | None = None,
+                           asof: int | None = None) -> list[sqlite3.Row]:
         """A page of the feed, most-endorsed first, and the cursor for the next.
 
         The same page contract as `feed_posts` -- newest first is the feed's
@@ -1279,7 +1380,18 @@ class MessageStore:
 
         Ties break by id, newest first, the same tie-break the counts use
         (D-122's lesson: never "whichever came back first").
+
+        Since 2026-09-25 the order is `rank` -- feed.hot(score, block_time,
+        asof) -- not the bare score: popularity wears off and a new post has a
+        head start (the operator). The rank moves with the clock, so every page of
+        one scroll is ranked at the SAME moment, `asof`, which the cursor
+        carries beside the anchor; without it the next page would be cut along
+        a line that had slid since the first. `score` is still returned for the
+        card's numbers.
         """
+        if asof is None:
+            import time as _time
+            asof = int(_time.time())
         where = "g.network = ?"
         params: list = [network]
         if author:
@@ -1297,20 +1409,23 @@ class MessageStore:
             params_anchor = anchor
             if params_anchor is None:
                 row = self.conn.execute(
-                    f"SELECT {self._score('a')} AS s, id FROM group_post a"
-                    f" WHERE a.id = ? AND a.network = ?",
-                    (int(cursor), network)).fetchone()
+                    f"SELECT hot({self._score('a')}, a.block_time, ?) AS s, id"
+                    f" FROM group_post a WHERE a.id = ? AND a.network = ?",
+                    (int(asof), int(cursor), network)).fetchone()
                 if row is None:
                     return []
                 params_anchor = row["s"]
-            clause = "WHERE (r.score, r.id) < (?, ?)"
+            clause = "WHERE (r.rank, r.id) < (?, ?)"
             params.extend([float(params_anchor), int(cursor)])
+        # Three layers so each is computed once: the post and its score, then
+        # its rank at `asof`, then the keyset and the order over that rank.
         return self.conn.execute(
-            f"SELECT * FROM (SELECT g.*, {self._score('g')} AS score"
-            f"  FROM group_post g WHERE {where}) AS r "
+            f"SELECT * FROM (SELECT s.*, hot(s.score, s.block_time, ?) AS rank"
+            f"  FROM (SELECT g.*, {self._score('g')} AS score"
+            f"        FROM group_post g WHERE {where}) AS s) AS r "
             f"{clause} "
-            f"ORDER BY r.score DESC, r.id DESC LIMIT ?",
-            (*params, max(1, min(limit, 100)))).fetchall()
+            f"ORDER BY r.rank DESC, r.id DESC LIMIT ?",
+            (int(asof), *params, max(1, min(limit, 100)))).fetchall()
 
     def feed_acts_by(self, network: str, author: str, kind: int | None = None,
                      limit: int = 200) -> list[sqlite3.Row]:

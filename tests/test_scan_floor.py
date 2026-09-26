@@ -149,7 +149,13 @@ def test_a_later_identity_may_start_later(store):
     testnet = NETWORKS["test"]
     later = testnet.messaging_start_height + 5000
     store.set_meta("identity_height:test", str(later))
-    assert Scanner(FakeRpc(), testnet, store).start_height() == later
+    scanner = Scanner(FakeRpc(), testnet, store)
+    # Messages, posts and the rest start where the identity did...
+    assert scanner.content_floor() == later
+    # ...but key announcements are read from where names begin, so every @name
+    # is reachable on this node too (Params.names_from, 2026-09-25): below the
+    # content floor nothing else is read.
+    assert scanner.start_height() == min(later, testnet.names_from or later)
 
 
 def test_the_shared_height_is_a_release_decision_not_a_guess():
