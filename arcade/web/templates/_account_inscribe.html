@@ -57,7 +57,7 @@
     <div style="flex:1" class="muted" id="run-says"
       style="font-size:.86rem"></div>
     <a class="btn small ghost" id="run-page" href="#">The run</a>
-    <button type="button" id="run-piece">Inscribe the rest</button>
+    <button type="button" id="run-piece">Inscribe them all</button>
     <button type="button" class="ghost" id="run-stop">Stop</button>
   </div>
   <p class="msg err" id="run-note" hidden style="margin:8px 0 0"></p>
@@ -408,31 +408,100 @@ async function allowance() {
   } catch (e) { return null; }
 }
 
-/** A refusal said where the button is, and the button waiting it out (filming,
- *  2026-09-25: "Room appears again in 27 minutes" went to the top of the page,
- *  so the button looked broken). */
+/* An automatic run (2026-09-25): approved once, then this tab signs and
+ * sends piece after piece by itself, waits out the node's hourly allowance and
+ * carries on, and picks up where it was when the tab is opened again. The
+ * approval and a pause are remembered per run in this browser only; the pieces
+ * themselves are the node's record, as before. */
+const AUTO = "arcadeRunAuto";
+const autoAll = () => { try { return JSON.parse(localStorage.getItem(AUTO) || "{}"); }
+                        catch (e) { return {}; } };
+const autoOf = (run) => autoAll()[run] || null;
+const autoSet = (run, value) => {
+  const all = autoAll();
+  if (value) all[run] = value; else delete all[run];
+  try { localStorage.setItem(AUTO, JSON.stringify(all)); } catch (e) {}
+};
+let running = null;          // the run id this tab is working through now
 let resumeTimer = null;
-function runNote(text) {
-  const note = $("run-note"), button = $("run-piece");
+
+function runNote(text, kind = "err") {
+  const note = $("run-note");
   note.textContent = text || "";
+  note.className = "msg " + kind;
   note.hidden = !text;
-  const wait = /again in (\d+) minute/.exec(text || "");
-  clearTimeout(resumeTimer);
-  if (wait) {
-    button.disabled = true;
-    button.textContent = `Next piece in ${wait[1]} min`;
-    resumeTimer = setTimeout(() => {
-      button.disabled = false; button.textContent = "Inscribe the rest"; runNote("");
-    }, Number(wait[1]) * 60 * 1000 + 5000);
-  }
 }
 
+function runButtons(run) {
+  const state = run ? autoOf(run) : null;
+  const go = $("run-piece");
+  go.disabled = false;
+  go.textContent = !state ? "Inscribe them all"
+                 : state.paused ? "Resume" : "Pause";
+}
+
+/** Work through a run until it is finished, paused, or out of room this hour.
+ *  Out of room is not the end: it waits the minutes the node names and goes on. */
+async function autoRun(run) {
+  if (running) return;
+  const state = autoOf(run);
+  if (!state || state.paused) return;
+  const held = await take();
+  if (!held) {
+    runNote("Your wallet is not open in this tab, so the run is waiting. Open it and it "
+            + "carries on by itself.", "info");
+    return;
+  }
+  running = run;
+  runButtons(run);
+  runNote("");
+  try {
+    for (;;) {
+      const now = autoOf(run);
+      if (!now || now.paused) break;
+      let offer;
+      try {
+        offer = await ask("/account/run/piece", {run});
+      } catch (e) {
+        const wait = /again in (\d+) minute/.exec(String(e.message || e));
+        if (!wait) throw e;
+        const minutes = Number(wait[1]);
+        runNote(`This node takes a set number of inscriptions an hour per account, and `
+                + `this hour's are used. The next piece goes by itself in about `
+                + `${minutes} min \u2014 keep this tab open, or come back and it carries on.`,
+                "info");
+        clearTimeout(resumeTimer);
+        resumeTimer = setTimeout(() => autoRun(run), minutes * 60 * 1000 + 15000);
+        return;
+      }
+      if (offer.finished) {
+        autoSet(run, null);
+        news(`All ${commas(offer.items)} are on the chain. They show up as their blocks `
+             + "are mined.");
+        break;
+      }
+      $("run-says").textContent = `${offer.name}: piece ${offer.piece} of `
+        + `${commas(offer.items)}\u2026 (${commas(offer.sent)} on the chain)`;
+      await wallet.checked(offer, held);
+      await wallet.confirm(held, offer);
+    }
+  } catch (e) {
+    runNote(String(e.message || e));
+  } finally {
+    running = null;
+    await runs();
+  }
+}
 function showed(row) {
   $("run-go").hidden = !row;
   $("run-piece").dataset.run = row ? row.run : "";
   $("run-stop").dataset.run = row ? row.run : "";
   $("run-page").href = row ? `/me/run/${row.run}` : "#";
   if (!row) return;
+  runButtons(row.run);
+  if (autoOf(row.run) && !autoOf(row.run).paused && running !== row.run) {
+    setTimeout(() => autoRun(row.run), 0);    // approved earlier: carry on
+  }
   $("run-says").textContent = `${row.name}: ${commas(row.sent)} of `
     + `${commas(row.items)} on the chain`
     + (row.next ? `, next is ${row.next}` : ".")
@@ -639,18 +708,25 @@ $("run-start").onclick = async () => {
   } catch (e) { say(String(e.message || e)); }
 };
 
-// One question for the batch the hour allows, then every piece signed without
-// asking again (filming, 2026-09-25: a confirm per piece was twelve dialogs for
-// twelve skulls, and would be a hundred for a HashLips build).
+// Approve once, then it runs by itself (2026-09-25). The same button
+// pauses it and resumes it.
 $("run-piece").onclick = async () => {
-  const where = $("run-piece").dataset.run;
-  if (!where) return;
-  say(""); news(""); runNote("");
-  const button = $("run-piece");
+  const run = $("run-piece").dataset.run;
+  if (!run) return;
+  say(""); news("");
+  const state = autoOf(run);
+  if (state) {
+    autoSet(run, {...state, paused: !state.paused});
+    clearTimeout(resumeTimer);
+    runButtons(run);
+    if (state.paused) autoRun(run);
+    else runNote("Paused. Nothing more is sent until you press Resume.", "info");
+    return;
+  }
   try {
     const held = await take();
     if (!held) throw new Error("your wallet is not open in this tab");
-    const first = await ask("/account/run/piece", {run: where});
+    const first = await ask("/account/run/piece", {run});
     if (first.finished) {
       news(`That run is finished. All ${commas(first.items)} of them are on the chain.`);
       await runs();
@@ -658,37 +734,23 @@ $("run-piece").onclick = async () => {
     }
     const left = Number(first.items) - Number(first.sent);
     const room = await allowance();
-    const batch = room ? Math.max(1, Math.min(left, room.left)) : left;
     const shown = await wallet.checked(first, held);
-    const ok = await askYes(`Inscribe ${commas(batch)} of ${first.name}?`,
-      `${commas(first.sent)} of ${commas(first.items)} are on the chain. The next `
-      + `${commas(batch)} go up now, one transaction each (this one is `
-      + `${commas(first.bytes)} bytes for ${shown.coinsOf(shown.fee)} in fees), signed `
-      + "here without asking again."
-      + (batch < left ? ` This node takes ${commas(room.limit)} an hour per account, so `
-                        + `the other ${commas(left - batch)} wait for the next hour.` : "")
-      + " Keep this tab open until they are done.", "Inscribe them");
+    const ok = await askYes(`Inscribe all ${commas(left)} of ${first.name}?`,
+      `${commas(first.sent)} of ${commas(first.items)} are on the chain. The other `
+      + `${commas(left)} go up one transaction each (this one is ${commas(first.bytes)} `
+      + `bytes for ${shown.coinsOf(shown.fee)} in fees), signed here by themselves, `
+      + "one after another."
+      + (room && room.limit > 0 && left > room.left
+         ? ` This node takes ${commas(room.limit)} an hour per account, so it pauses when `
+           + `the hour's are used and carries on by itself \u2014 about `
+           + `${Math.ceil(left / room.limit)} hours in all.` : "")
+      + " Keep this tab open; if it closes, opening it again carries on. Pause or Stop "
+      + "at any time.", "Start");
     if (!ok) return;
-    button.disabled = true;
-    let offer = first, done = 0;
-    for (;;) {
-      $("run-says").textContent = `${offer.name}: piece ${offer.piece} of `
-        + `${commas(offer.items)}\u2026`;
-      await wallet.checked(offer, held);
-      await wallet.confirm(held, offer);
-      done += 1;
-      if (done >= batch) break;
-      offer = await ask("/account/run/piece", {run: where});
-      if (offer.finished) break;
-    }
-    news(`Inscribed ${commas(done)} piece${done === 1 ? "" : "s"}. They show up as `
-      + "their blocks are mined.");
-    await runs();
+    autoSet(run, {approved: Date.now(), paused: false});
+    autoRun(run);
   } catch (e) {
     runNote(String(e.message || e));
-    await runs();
-  } finally {
-    if (!/Next piece in/.test(button.textContent)) button.disabled = false;
   }
 };
 
@@ -703,6 +765,8 @@ $("run-stop").onclick = async () => {
     });
     const stop = await asked.json();
     if (!asked.ok) throw new Error(stop.detail || "that cannot be stopped");
+    autoSet(where, null);
+    clearTimeout(resumeTimer);
     news(`${stop.name} is filed as stopped at ${commas(stop.sent)} of `
       + `${commas(stop.items)}. What is already on the chain stays there, `
       + "and asking for a piece starts it going again.");
