@@ -49,13 +49,27 @@ def timeframe(key: str) -> tuple[str, int, int]:
     return next((t for t in TIMEFRAMES if t[0] == key), TIMEFRAMES[-1])
 
 
-def _units(leg: Any) -> float:
-    """A leg as a number, in whole coins or whole tokens."""
-    return (leg.amount or 0) / COIN
+def _units(leg: Any, divisible: bool = True) -> float:
+    """A leg as a number, in whole coins or whole tokens.
+
+    A divisible token counts in hundred-millionths, exactly like a coin, so its
+    leg divides the same way. An indivisible one already counts in whole tokens,
+    and dividing it by COIN a second time reads two tokens as `0.00000002` and
+    prices the trade a hundred million times too high. Nothing in the leg says
+    which of the two it is -- only the token does -- so the caller says it.
+    """
+    amount = leg.amount or 0
+    return amount / COIN if divisible else float(amount)
 
 
-def token_prices(trades: Iterable[dict], property_id: int) -> list[dict]:
+def token_prices(trades: Iterable[dict], property_id: int,
+                 divisible: bool = True) -> list[dict]:
     """Every trade of this token against coins, as coins per token.
+
+    `divisible` is the token's own flag, and every page that draws one of these
+    charts already has it in hand: it is what one unit of a leg's `amount`
+    means, and a chart that guesses it is wrong by eight zeros on one kind of
+    token -- the other half of what the pair page's book rows learned on 2026-09-27.
 
     A token swapped for another token has no price in coins and is left out
     rather than guessed at.
@@ -69,8 +83,8 @@ def token_prices(trades: Iterable[dict], property_id: int) -> list[dict]:
         if token is None or coins is None or not token.amount:
             continue
         out.append({"when": trade["when"], "height": trade["height"],
-                    "price": _units(coins) / _units(token),
-                    "size": _units(token), "txid": trade["txid"]})
+                    "price": _units(coins) / _units(token, divisible),
+                    "size": _units(token, divisible), "txid": trade["txid"]})
     return out
 
 
