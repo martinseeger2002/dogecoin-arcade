@@ -478,7 +478,7 @@ CREATE TABLE IF NOT EXISTS bid (
     offer_id      TEXT NOT NULL DEFAULT '',
     txid          TEXT NOT NULL DEFAULT '',
     error         TEXT NOT NULL DEFAULT '',
-    coins         TEXT NOT NULL DEFAULT ''   -- 'in' answers: the coins the leg signed over, JSON
+    coins         TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS bid_open ON bid(network, direction, status);
 CREATE TABLE IF NOT EXISTS cursor (
