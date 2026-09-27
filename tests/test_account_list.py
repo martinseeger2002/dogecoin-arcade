@@ -393,3 +393,47 @@ def test_a_leg_answered_to_one_account_completes_without_a_listing(shop):
         "the seller nets the price to the satoshi, reservation handed back"
     assert owed - COIN - COIN // 10 < _balance(state, buyer_addr) < owed - COIN, \
         "the buyer pays the price and the whole fee, §1d"
+
+
+def test_a_listing_put_on_the_chain_is_filed_by_a_node_that_never_saw_it(shop):
+    """2026-09-27 ("On the chain, batched"): a mintpad sells on every
+    node because its listings are inscribed and every node files them from the
+    chain, through the same checks a browser's leg gets. Simulated on one node
+    by forgetting the row and reading it back off the chain."""
+    import sqlite3
+    from arcade import listing_announce as la
+
+    app, state, rpc = shop
+    secret, pubkey, mine = _seated(app, state, rpc, 7, coins=(4.0, 1.0, 2.0))
+    piece = _inscribed(app, state, rpc, secret, pubkey, "a piece sold everywhere")
+    said = app.post("/account/list", json={"piece": piece, "amount": "1"}).json()
+    listed = _signed(app, secret, pubkey, said)
+    assert listed.status_code == 200, listed.text
+    row = state.listings.get(listed.json()["listed"])
+
+    raw, sigs, key = la.unsign(row["leg"])
+    assert key == pubkey and len(sigs) == 2
+    assert raw == said["raw"], "the leg without its scriptSigs is the leg that was signed"
+
+    content = la.batch_json(state.messaging.network, [row])
+    offered = app.post("/account/inscribe", json={
+        "content": base64.b64encode(content).decode(), "content_type": la.CONTENT_TYPE})
+    assert offered.status_code == 200, offered.text
+    offer = offered.json()
+    assert offer.get("chunks", 1) == 1
+    done = app.post("/account/sign", json={
+        "offer": offer["offer"], "pubkey": pubkey.hex(),
+        "signatures": [_sign(secret, bytes.fromhex(d)).hex() for d in offer["sighashes"]]})
+    assert done.status_code == 200, done.text
+    rpc.call("generate", 1)
+    _catch_up(state, rpc)
+
+    with sqlite3.connect(state.listings.path) as conn:        # a node that never had it
+        conn.execute("DELETE FROM listing WHERE id=?", (row["id"],))
+    assert not state.listings.has_leg(state.messaging.network, row["leg"])
+
+    assert la.import_announced(state, state.messaging) == 1
+    again = [r for r in state.listings.open_listings(state.messaging.network)
+             if r["leg"] == row["leg"]]
+    assert len(again) == 1 and int(again[0]["price"]) == COIN and again[0]["owner"] == mine
+    assert la.import_announced(state, state.messaging) == 0, "read once, filed once"

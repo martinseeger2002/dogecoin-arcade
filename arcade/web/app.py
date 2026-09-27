@@ -13423,6 +13423,72 @@ def create_app(state: AppState) -> FastAPI:
         except (fundinglib.FundingError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
 
+    def _unannounced(chain, seller: str, name: str) -> list[dict]:
+        """This seller's open listings of a collection not yet put on the chain."""
+        done = set(state.setting(f"announced:{chain.network}:{seller}:{name}", []) or [])
+        out = []
+        for r in _mintpad_rows(chain, seller, name):
+            row = state.listings.get(r["listing"])
+            if row and row.get("status", "open") == "open" and row["id"] not in done:
+                out.append(row)
+        return out
+
+    @app.post("/account/mintpad/announce")
+    def account_mintpad_announce(request: Request, payload: Any = Body(None)):
+        """Offer the next batch of this account's mintpad listings as an
+        inscription, so every node sells from its pad (2026-09-27: "On
+        the chain, batched"; arcade/listing_announce.py). One transaction per
+        batch; the tab says which were sent with /account/mintpad/announced."""
+        from .. import listing_announce as la
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        name = str(said.get("collection") or "").strip()[:120]
+        if not address or not name:
+            return JSONResponse({"detail": "which collection?"}, status_code=400)
+        waiting = _unannounced(chain, address, name)
+        if not waiting:
+            return JSONResponse({"done": True, "left": 0})
+        batch = waiting[:la.PER_BATCH]
+        content = la.batch_json(chain.network, batch)
+        try:
+            answer = _inscribe_start(account, chain, address,
+                                     {"name": f"{name} listings"}, content, la.CONTENT_TYPE)
+        except (fundinglib.FundingError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        said_back = json.loads(answer.body)
+        if answer.status_code != 200 or said_back.get("chunks", 1) != 1:
+            return JSONResponse({"detail": said_back.get("detail")
+                                 or "that batch did not fit one transaction"},
+                                status_code=400)
+        return JSONResponse({**said_back, "ids": [r["id"] for r in batch],
+                             "count": len(batch), "left": len(waiting)})
+
+    @app.post("/account/mintpad/announced")
+    def account_mintpad_announced(request: Request, payload: Any = Body(None)):
+        """The tab broadcast a batch: those listings are on the chain now."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        name = str(said.get("collection") or "").strip()[:120]
+        ids = [str(i) for i in (said.get("ids") or []) if isinstance(i, str)][:100]
+        if not address or not name:
+            return JSONResponse({"detail": "which collection?"}, status_code=400)
+        key = f"announced:{chain.network}:{address}:{name}"
+        done = list(state.setting(key, []) or [])
+        mine = {r["listing"] for r in _mintpad_rows(chain, address, name)}
+        done += [i for i in ids if i in mine and i not in done]
+        state.set_setting(key, done[-5000:])
+        return JSONResponse({"ok": True, "left": len(_unannounced(chain, address, name))})
+
     def _mintpad_inscription(chain, creator: str, name: str) -> str:
         """The newest inscription that is this collection's mintpad, by its JSON,
         inscribed by the seller: '' when there is none yet."""
@@ -13498,6 +13564,7 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "mintpad_view.html", chain=chain, summary=summary,
                       look=look, art=art, unlisted=unlisted, is_seller=is_seller,
                       pad_txid=_mintpad_inscription(chain, creator, name),
+                      unannounced=len(_unannounced(chain, creator, name)) if is_seller else 0,
                       seller=creator, left=len(rows),
                       prices=sorted({r["price"] for r in rows}),
                       signed_in=signed_in(request) is not None)

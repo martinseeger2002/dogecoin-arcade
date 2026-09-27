@@ -55,6 +55,11 @@
   <p><a class="btn ghost small" href="/collections/{{ summary.creator }}/{{ summary.collection|urlencode }}">See the collection</a></p>
   {# The pad as an inscription (2026-09-27): on the chain, so every node
      running the arcade has it, and shareable to the feed as /content/<id>. #}
+  {% if pad_txid and unannounced %}
+  <p style="margin:12px 0 0"><button type="button" class="small" id="pad-list">Put {{ unannounced }}
+    new listing{{ '' if unannounced == 1 else 's' }} on the chain</button></p>
+  <p class="msg" id="pad-news" hidden></p>
+  {% endif %}
   {% if pad_txid %}
   <p class="muted" style="font-size:.86rem;margin:10px 0 0">This mintpad is on the chain:
     <a href="/inscriptions/{{ pad_txid }}/view">open it</a> &middot;
@@ -139,32 +144,76 @@
 })();
 </script>
 {% endif %}
-{% if is_seller and not pad_txid %}
+{% if is_seller and (not pad_txid or unannounced) %}
 <script type="module">
 import * as wallet from "/wallet.js";
 const CHAIN = {network: "{{ chain.network }}", version: {{ chain.params.pubkeyhash_version }}};
 const news = (t, ok) => { const n = document.getElementById("pad-news");
   n.textContent = t; n.hidden = !t; n.className = "msg " + (ok ? "ok" : "err"); };
-document.getElementById("pad-chain").onclick = async () => {
+// Its listings, a batch of 14 per transaction, so every node sells from the pad.
+async function announceAll(held, confirmed) {
+  let sent = 0;
+  for (;;) {
+    const asked = await fetch("/account/mintpad/announce", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({collection: NAME, chain: CHAIN.network})});
+    const offer = await asked.json();
+    if (!asked.ok) throw new Error(offer.detail || "the listings could not be put on the chain");
+    if (offer.done) return sent;
+    if (!confirmed) {
+      const shown = await wallet.checked(offer, held);
+      const txs = Math.ceil(offer.left / 14);
+      if (!(await arcadeAsk(`Put ${offer.left} listings on the chain?`,
+          `So this mintpad sells on every node running the arcade, not only this one: `
+          + `${txs} small transaction${txs === 1 ? "" : "s"}, about ${shown.coinsOf(shown.fee)} each.`,
+          "Put them on the chain"))) return sent;
+      confirmed = true;
+    } else {
+      await wallet.checked(offer, held);
+    }
+    await wallet.confirm(held, offer);
+    await fetch("/account/mintpad/announced", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({collection: NAME, ids: offer.ids, chain: CHAIN.network})});
+    sent += offer.count;
+    news(`${sent} listing${sent === 1 ? "" : "s"} on the chain…`, true);
+  }
+}
+const NAME = {{ summary.collection|tojson }};
+const chainBtn = document.getElementById("pad-chain");
+if (chainBtn) chainBtn.onclick = async () => {
   news("");
-  const button = document.getElementById("pad-chain");
   try {
     const held = (await wallet.opened(CHAIN)) || await arcadeKeys(CHAIN);
     const asked = await fetch("/account/mintpad/inscribe", {method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({collection: {{ summary.collection|tojson }}, chain: CHAIN.network})});
+      body: JSON.stringify({collection: NAME, chain: CHAIN.network})});
     const offer = await asked.json();
     if (!asked.ok) throw new Error(offer.detail || "the mintpad could not be put on the chain");
     const shown = await wallet.checked(offer, held);
     if (!(await arcadeAsk("Put this mintpad on the chain?",
-        `The mintpad page, in the look you chose, becomes an inscription: ${offer.bytes} bytes, `
-        + `one transaction, ${shown.coinsOf(shown.fee)} in fees. Every node running the arcade `
-        + "then has it, and it can be shared to the feed.", "Inscribe it"))) return;
-    button.disabled = true;
+        `The mintpad page, in the look you chose, becomes an inscription (${offer.bytes} bytes, `
+        + `one transaction, ${shown.coinsOf(shown.fee)}), and then its listings, 14 to a `
+        + "transaction, so every node running the arcade has the pad AND can sell from it. "
+        + "It can be shared to the feed.", "Put it on the chain"))) return;
+    chainBtn.disabled = true;
     const out = await wallet.confirm(held, offer);
-    news(`Inscribed (${String(out.txid).slice(0, 12)}…). It shows here, with a Share button, `
-         + "when its block lands.", true);
-  } catch (e) { button.disabled = false; news(String(e.message || e), false); }
+    news(`Mintpad inscribed (${String(out.txid).slice(0, 12)}…). Now its listings…`, true);
+    const sent = await announceAll(held, true);
+    news(`Done: the mintpad and ${sent} listing${sent === 1 ? "" : "s"} are on their way to `
+         + "the chain. The page shows Open and Share when the block lands.", true);
+  } catch (e) { chainBtn.disabled = false; news(String(e.message || e), false); }
+};
+const listBtn = document.getElementById("pad-list");
+if (listBtn) listBtn.onclick = async () => {
+  news("");
+  try {
+    const held = (await wallet.opened(CHAIN)) || await arcadeKeys(CHAIN);
+    listBtn.disabled = true;
+    const sent = await announceAll(held, false);
+    news(sent ? `${sent} listing${sent === 1 ? "" : "s"} on the way to the chain.` : "", true);
+    if (!sent) listBtn.disabled = false;
+  } catch (e) { listBtn.disabled = false; news(String(e.message || e), false); }
 };
 </script>
 {% endif %}

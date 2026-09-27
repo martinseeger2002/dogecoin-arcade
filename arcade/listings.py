@@ -425,6 +425,13 @@ class Listings:
                 "ORDER BY created DESC", (str(txid), int(vout))).fetchall()
         return [row_listing(dict(r)) for r in rows]
 
+    def has_leg(self, network: str, leg: str) -> bool:
+        """Whether this node already holds this exact signed leg, in any state:
+        an announced listing is read by every node and filed once."""
+        with self._open() as conn:
+            return conn.execute("SELECT 1 FROM listing WHERE network=? AND leg=? LIMIT 1",
+                                (network, str(leg))).fetchone() is not None
+
     def open_listings(self, network: str, limit: int = 200) -> list[dict]:
         with self._open() as conn:
             rows = conn.execute(

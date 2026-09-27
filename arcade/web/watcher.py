@@ -121,6 +121,7 @@ class BlockWatcher:
                       self._check_release_notices,
                       self._announce_release,
                       self._keep_shop,
+                      self._import_listings,
                       self._walk_home):
             try:
                 phase()
@@ -170,6 +171,24 @@ class BlockWatcher:
         except Exception:
             log.debug("gather pass failed", exc_info=True)
 
+
+    _listings_at = 0.0
+
+    def _import_listings(self) -> None:
+        """Listings other nodes' sellers put on the chain, filed here too, so a
+        mintpad inscription sells on every node (arcade/listing_announce.py)."""
+        from .. import listing_announce
+        if time.time() - self._listings_at < listing_announce.EVERY:
+            return
+        self._listings_at = time.time()
+        filed = 0
+        for chain in self.state.token_chains:
+            try:
+                filed += listing_announce.import_announced(self.state, chain)
+            except Exception:
+                log.debug("listing import on %s failed", chain.network, exc_info=True)
+        if filed:
+            self.state.bump_generation()
 
     def _keep_shop(self) -> None:
         """Answer orders at this wallet's shops (arcade/shopkeeper.py).
