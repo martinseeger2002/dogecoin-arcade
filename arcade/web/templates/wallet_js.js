@@ -601,6 +601,83 @@ async function _list(wallet, leg, days = 0) {
  * Refusing is the third signature alone. `refuse` asks the node for the words
  * to seal and never touches a coin key at all.
  */
+/** Sign the buyer's half of a pre-signed offer, once the offer itself is sent.
+ *  `offer` is what `/account/offer` answered; `sent` is the broadcast offer's
+ *  result ({txid}); `expect` is what this page asked for: {piece, seller, sats}
+ *  or {piece, seller, token: {propertyid, units}}. */
+export async function signBid(wallet, offer, sent, expect) {
+  if (!offer || !offer.presigned) return null;
+  return working(async () => {
+    const keys = keysOn(wallet, offer.chain || (wallet.on && Object.keys(wallet.on)[0]));
+    // Built on the coin the offer just set aside, now that its txid is known.
+    const built = await fetch("/account/offer/bid-build", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({offer: offer.offer, txid: sent.txid}),
+    });
+    const bid = await built.json();
+    if (!built.ok) throw new Error(bid.detail || "the node could not build the trade");
+    const take = bid.take || {};
+    const shown = await coins.verifyBid(bid, keys, {
+      piece: expect.piece, seller: expect.seller,
+      sats: take.kind === "coins" ? expect.sats : 0,
+      token: take.kind === "token" ? {propertyid: take.propertyid, units: take.units} : null});
+    const signatures = [];
+    for (const h of shown.hashes) {
+      signatures.push(coinsHex(await coins.signInput(keys.key, unhex(h),
+                                                      coins.ALL_ANYONECANPAY)));
+    }
+    const back = await fetch("/account/offer/bid", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({offer: offer.offer, txid: sent.txid, signatures,
+                            pubkey: coinsHex(keys.pubkey)}),
+    });
+    const said = await back.json();
+    if (!back.ok) throw new Error(said.detail || "the node would not keep it");
+    return said;
+  });
+}
+
+/** Take a pre-signed offer back: one small transaction spending its coins. */
+export async function withdrawOffer(wallet, txid) {
+  const asked = await fetch("/account/offer/withdraw", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({offer: txid}),
+  });
+  const offer = await asked.json();
+  if (!asked.ok) throw new Error(offer.detail || "that offer cannot be withdrawn");
+  return offer;
+}
+
+/** Accept a pre-signed offer: the trade completes now (2026-09-27).
+ *  When this account has no coin of the exact size the trade takes, one is made
+ *  first -- one small transaction -- and the trade spends it at once. */
+async function _acceptPresigned(wallet, ask, said) {
+  const chain = said.chain || ask.chain || "";
+  const keys = keysOn(wallet, chain || (wallet.on && Object.keys(wallet.on)[0]));
+  let got = said;
+  if (got.needs_coin) {
+    const split = await signOffer(wallet, got);
+    const again = await fetch("/account/accept", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({piece: ask.piece, offer: ask.offer, chain,
+                            coin: {txid: split.txid, vout: 0}}),
+    });
+    got = await again.json();
+    if (!again.ok) throw new Error(got.detail || "that offer cannot be accepted");
+  }
+  const shown = await coins.verifyFill(got, keys);
+  const signature = coinsHex(await coins.signInput(keys.key, unhex(shown.hash)));
+  const done = await fetch("/account/accept/complete", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({bid: got.bid, raw: got.raw, signature, chain,
+                          pubkey: coinsHex(keys.pubkey)}),
+  });
+  const out = await done.json();
+  if (!done.ok) throw new Error(out.detail || "the node would not send it");
+  return {...out, completed: true,
+          says: `Sold for ${got.price} to ${got.buyer_tag ? "@" + got.buyer_tag : "the buyer"}.`};
+}
+
 export async function answerOffer(wallet, ask) {
   return working(() => _answerOffer(wallet, ask));
 }
@@ -614,6 +691,7 @@ async function _answerOffer(wallet, ask) {
   });
   const said = await asked.json();
   if (!asked.ok) throw new Error(said.detail || "that offer cannot be answered");
+  if (said.presigned && !ask.refuse) return _acceptPresigned(wallet, ask, said);
   const chain = said.chain || ask.chain || "";
   let answer = said.answer, says = said.what || "";
   if (!ask.refuse) {

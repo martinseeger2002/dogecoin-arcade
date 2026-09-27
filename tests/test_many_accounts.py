@@ -2118,3 +2118,59 @@ def test_a_listing_ends_when_its_piece_is_sent_away(node, crowd):
     assert state.listings.get(listing)["status"] == "moved"
     assert listing not in oak.client.get("/listings").text
 
+
+
+def test_a_presigned_offer_completes_the_moment_it_is_accepted(node, crowd):
+    """2026-09-27: "Accepted offers need to complete the moment the offer
+    is accepted", whether or not the buyer is online. The offer carries the
+    buyer's half, signed ALL|ANYONECANPAY; Accept adds the seller's one coin of
+    EXACT_SELLER_COIN in front and the trade is broadcast by that one press."""
+    state = node[1]
+    maple, ferns = crowd[0], crowd[1]
+    index = state.token_index(state.messaging)
+    piece = _inscribed(*node, owner=ferns.address, name="Presigned piece",
+                       content=b"presigned" * 30)
+    had = _balance(state, ferns.address)
+
+    asked = _offer(maple, "/account/offer", {"piece": piece, "amount": "3"})
+    assert asked.status_code == 200, asked.text
+    offer = asked.json()
+    assert offer.get("presigned"), offer
+    sent = _complete(maple, asked)
+    assert sent.status_code == 200, sent.text
+    txid = sent.json()["txid"]
+    built = maple.client.post("/account/offer/bid-build",
+                              json={"offer": offer["offer"], "txid": txid})
+    assert built.status_code == 200, built.text
+    bid = built.json()
+    assert bid["inputs"][0]["txid"] == txid, "built on the coin the offer set aside"
+    sigs = [_sign(maple.secret, bytes.fromhex(h), funding.ALL_ANYONECANPAY).hex()
+            for h in bid["sighashes"]]
+    kept = maple.client.post("/account/offer/bid", json={
+        "offer": offer["offer"], "txid": txid, "signatures": sigs,
+        "pubkey": maple.pubkey.hex()})
+    assert kept.status_code == 200, kept.text
+    _settle(*node)
+
+    # The buyer is gone from here on: only the seller acts.
+    accept = ferns.client.post("/account/accept", json={"piece": piece, "offer": txid})
+    assert accept.status_code == 200, accept.text
+    said = accept.json()
+    assert said.get("presigned"), said
+    if said.get("needs_coin"):
+        split = _complete(ferns, accept)
+        assert split.status_code == 200, split.text
+        accept = ferns.client.post("/account/accept", json={
+            "piece": piece, "offer": txid,
+            "coin": {"txid": split.json()["txid"], "vout": 0}})
+        assert accept.status_code == 200, accept.text
+        said = accept.json()
+    sig = _sign(ferns.secret, bytes.fromhex(said["sighashes"][0])).hex()
+    done = ferns.client.post("/account/accept/complete", json={
+        "bid": said["bid"], "raw": said["raw"], "signature": sig,
+        "pubkey": ferns.pubkey.hex()})
+    assert done.status_code == 200, done.text
+    _settle(*node, blocks=2)
+    assert index.inscription(piece)["owner"] == maple.address, "the piece moved"
+    assert _balance(state, ferns.address) >= had + 3 * COIN - COIN // 10, \
+        "and the seller was paid the price (less at most the split's fee)"

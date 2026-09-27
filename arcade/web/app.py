@@ -41,6 +41,7 @@ from .. import backup, media, tokens as tokenlib, wallet as walletlib
 from ..ledger import COIN, AmountError, format_amount, parse_amount
 from ..config import NETWORKS, MainnetRefused, WrongChain
 from .. import inscribe as inscribelib
+from .. import bids as bidslib
 from .. import collections as collectionlib
 from .. import approvals as approvalslib
 from .. import payload as P
@@ -6209,6 +6210,13 @@ def create_app(state: AppState) -> FastAPI:
                                  if p["owner"] == here],
                                 index.offers_on([here]))
                             if o["inscription"] == row["txid"]]
+                    # Pre-signed offers: withdrawn, spent or already done ones
+                    # are not offers any more; open ones accept in one press.
+                    marks = _bids.statuses([o["txid"] for o in asks])
+                    asks = [o for o in asks
+                            if marks.get(o["txid"]) not in ("withdrawn", "stale", "filled")]
+                    for o in asks:
+                        o["presigned"] = marks.get(o["txid"]) == bidslib.OPEN
                     for ask in asks:
                         ask["price"] = swaplib.describe_leg(_take_json(ask, index))
                         ask["give"] = swaplib.describe_leg(swaplib.leg_json(
@@ -6291,8 +6299,10 @@ def create_app(state: AppState) -> FastAPI:
                     my_offers = [o for o in _merge_offers(
                         [p for p in index.pending_offers() if p["buyer"] == me_at],
                         index.offers_by([me_at])) if o["inscription"] == row["txid"]]
+                    marks = _bids.statuses([o["txid"] for o in my_offers])
                     for o in my_offers:
                         o["price"] = swaplib.describe_leg(_take_json(o, index))
+                        o["bid_status"] = marks.get(o["txid"], "")
             except Exception:
                 my_offers = []
         # A swap of this piece already in the mempool: its offers are not
@@ -7565,6 +7575,14 @@ def create_app(state: AppState) -> FastAPI:
         return spent
 
     _flights = accountlib.Flights(pool=_pool_spent)
+    #: Pre-signed offers (arcade/bids.py): the buyer's half of a swap, signed
+    #: when the offer was made, so the seller's Accept completes the trade.
+    _bids = bidslib.Bids(state.home / "bids.sqlite")
+    # The coins a standing offer is signed over are spent on nothing else: every
+    # funding choice reads `spent_by`, so the reservation lives in one place.
+    _flights_spent_by = _flights.spent_by
+    _flights.spent_by = lambda pubkey, network="": (
+        _flights_spent_by(pubkey, network) | _bids.reserved(pubkey, network))
 
     def _account_chain():
         """The chain a tag lives on. Testnet, as tags always have been."""
@@ -7785,6 +7803,39 @@ def create_app(state: AppState) -> FastAPI:
         row["spendable"] = max(0, int(row.get("balance") or 0)
                                - int(row.get("leaving") or 0)
                                + int(row.get("incoming") or 0))
+
+    _topping: set = set()
+
+    def _top_off_later(pubkey: str, address: str, spendable: int) -> None:
+        """The daily top-off (2026-09-25, and again 2026-09-27: "so that
+        users don't run out of test net coins"). `faucet.top_off` was written and
+        never called: no account was ever topped up. Now any page that reads an
+        account's balance tops it back up to the gift, once a UTC day, testnet
+        only, in the background so the page never waits on the wallet."""
+        chain = _account_chain()
+        if chain.is_mainnet or spendable >= int(state.setting("faucet", faucetlib.GIFT)
+                                                or faucetlib.GIFT) \
+                or pubkey in _topping:
+            return
+        _topping.add(pubkey)
+
+        def work() -> None:
+            try:
+                faucet = state.faucet()
+                sent = faucetlib.top_off(chain, faucet, pubkey, address, spendable)
+                if sent:
+                    row = faucet.conn.execute(
+                        "SELECT txid FROM topoff WHERE pubkey = ? ORDER BY at DESC LIMIT 1",
+                        (pubkey.lower(),)).fetchone()
+                    if row:
+                        _note_payment(row[0], pubkey, address, network=chain.network)
+                    log.info("faucet: topped %s… up by %s", pubkey[:12], sent)
+            except Exception as exc:                      # noqa: BLE001
+                log.info("faucet: top-off: %s", exc)
+            finally:
+                _topping.discard(pubkey)
+
+        threading.Thread(target=work, name="arcade-topoff", daemon=True).start()
 
     def _watch(address: str, why: str, chain=None) -> None:
         """Start following an address's coins, so it can be funded at all."""
@@ -8029,6 +8080,7 @@ def create_app(state: AppState) -> FastAPI:
                     said["leaving"] = _leaving(account.pubkey, chain.network,
                                                db, address)
                     _spendable(said)
+                _top_off_later(account.pubkey, address, int(said.get("spendable") or 0))
                 said["tag"] = index.tag_of(address) or ""
                 with state.store() as store:
                     # Two questions, and the page has to be able to answer them
@@ -9266,6 +9318,18 @@ def create_app(state: AppState) -> FastAPI:
                 outputs = _class_c_or_b(chain, address, body,
                                         _coin_pubkey(account.pubkey, chain))
                 what = f"offer {price} for inscription #{row['number']}"
+                # The buyer's half of the trade, signed so the seller's Accept
+                # completes it (2026-09-27). This transaction sets aside
+                # one coin of exactly what that half needs -- the price and the
+                # finished swap's fee -- and the half is built on it once this
+                # is sent (/account/offer/bid-build): one coin is all an account
+                # needs to make an offer, and one coin is what stays reserved.
+                price_sats = int(take.amount) if take.kind == inscriptionlib.LEG_COINS else 0
+                swap_bytes = _ask_payload(row, take)
+                need = fundinglib.bid_need(swap_bytes, price_sats, row["owner"],
+                                           fees.MIN_FEE_PER_KB)
+                set_aside_at = len(outputs)
+                outputs = outputs + [(need, txbuild.p2pkh_script(address))]
                 unsigned = fundinglib.build(
                     db, chain.params, address, outputs,
                     rate=fees.MIN_FEE_PER_KB, what=what,
@@ -9298,8 +9362,101 @@ def create_app(state: AppState) -> FastAPI:
 
         offer = _offers.add(account.pubkey, chain.network, unsigned, what,
                             done=note)
-        return JSONResponse({"offer": offer.id, "what": what,
-                             "number": row["number"], "chain": chain.network,
+        out = {"offer": offer.id, "what": what,
+               "number": row["number"], "chain": chain.network,
+               **unsigned.as_json()}
+        _bids.draft(draft=offer.id, network=chain.network, buyer=address,
+                    account=account.pubkey, piece=row["txid"], seller=row["owner"],
+                    take=terms, price_sats=price_sats,
+                    inputs=[{"txid": "", "vout": set_aside_at, "value": need,
+                             "address": address}],
+                    outputs=[])
+        out["presigned"] = True
+        return JSONResponse(out)
+
+    @app.post("/account/offer/bid-build")
+    def account_offer_bid_build(request: Request, payload: Any = Body(None)):
+        """The buyer's half, on the coin the offer set aside, once the offer is
+        sent and its txid known. Returned for the tab to check and sign."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        row = _bids.by_draft(str(said.get("offer") or ""))
+        txid = str(said.get("txid") or "").lower()
+        if row is None or row["account"] != account.pubkey or len(txid) != 64:
+            return JSONResponse({"detail": "no such offer of yours"}, status_code=404)
+        spot = row["inputs"][0]
+        chain = next((c for c in _account_chains() if c.network == row["network"]), None)
+        index = state.token_index(chain)
+        piece = index.inscription(row["piece"])
+        take = swaplib.leg_from_json(row["take"])
+        coin = {"txid": txid, "vout": int(spot["vout"]), "value": int(spot["value"])}
+        try:
+            bid = fundinglib.build_bid_on(coin, row["buyer"], row["seller"],
+                                          _ask_payload(piece, take), row["price_sats"],
+                                          what="the trade, when accepted")
+        except fundinglib.FundingError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        _bids.redraft(row["id"], bid.inputs, bid.outputs)
+        return JSONResponse({**bid.as_json(), "piece": row["piece"], "seller": row["seller"],
+                             "take": row["take"], "price_sats": row["price_sats"],
+                             "exact": fundinglib.EXACT_SELLER_COIN, "chain": row["network"]})
+
+    @app.post("/account/offer/bid")
+    def account_offer_bid(request: Request, payload: Any = Body(None)):
+        """The buyer's signatures over their half, kept beside the offer
+        (arcade/bids.py), once the offer itself is broadcast. Checked by the
+        only test that cannot be argued with at accept: the network."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        draft = str(said.get("offer") or "")
+        txid = str(said.get("txid") or "").lower()
+        row = _bids.by_draft(draft)
+        if row is None or row["account"] != account.pubkey:
+            return JSONResponse({"detail": "no such offer of yours"}, status_code=404)
+        try:
+            pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
+            if len(txid) != 64:
+                raise ValueError("that is not the offer's txid")
+            if b58check_decode(row["buyer"])[1] != hash160(pubkey):
+                raise ValueError("that key is not the one behind this offer's coins")
+            sigs = [str(x) for x in (said.get("signatures") or [])]
+            if any(not s or s[-2:] != "81" for s in sigs):
+                raise ValueError("each signature has to be ALL|ANYONECANPAY")
+            _bids.sign(draft, txid, sigs, pubkey.hex())
+        except (bidslib.BidError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"ok": True, "offer": txid})
+
+    @app.post("/account/offer/withdraw")
+    def account_offer_withdraw(request: Request, payload: Any = Body(None)):
+        """Take a pre-signed offer back: spend the coins it was signed over, back
+        to this account. The only way to still a signature already handed over."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        row = _bids.get(str(said.get("offer") or "").lower())
+        if row is None or row["account"] != account.pubkey or row["status"] != bidslib.OPEN:
+            return JSONResponse({"detail": "no standing offer of yours by that id"},
+                                status_code=404)
+        chain = next((c for c in _account_chains() if c.network == row["network"]), None)
+        if chain is None:
+            return JSONResponse({"detail": "that chain is not here"}, status_code=400)
+        try:
+            index = state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build_sweep(
+                    db, chain.params, row["buyer"], row["inputs"],
+                    rate=fees.MIN_FEE_PER_KB, what="withdraw your offer",
+                    exclude=_flights_spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+        except fundinglib.FundingError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+
+        def gone(_txid: str) -> None:
+            _bids.close(row["id"], "withdrawn", _txid)
+
+        offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what,
+                            done=gone)
+        return JSONResponse({"offer": offer.id, "chain": chain.network,
                              **unsigned.as_json()})
 
     @app.post("/account/order")
@@ -10900,6 +11057,143 @@ def create_app(state: AppState) -> FastAPI:
         return (str((newest or {}).get("buyer") or ""),
                 float((newest or {}).get("expires") or 0))
 
+    _completing: dict[str, tuple[str, Any]] = {}      # bid txid -> (raw, unsigned)
+
+    def _accept_presigned(account, chain, address: str, row: dict, bid: dict,
+                          said: dict):
+        """Accept an offer whose buyer signed their half when they made it.
+
+        The trade is one transaction: this account's one coin of exactly
+        `EXACT_SELLER_COIN` first (the first input is the swap's seller), then the
+        buyer's inputs with the signatures they left, and the outputs they fixed
+        -- the swap's bytes, this account paid the price plus that coin back, the
+        buyer's change. When this account has no such coin it is made first, by
+        a split this tab signs, and the swap spends it straight from the mempool.
+        """
+        index = state.token_index(chain)
+        if bid["piece"] != row["txid"]:
+            return JSONResponse({"detail": "that offer is for a different piece"},
+                                status_code=400)
+        if bid["seller"] != address:
+            return JSONResponse({"detail": (
+                "that offer was made to whoever held this piece before you, and it "
+                "pays them, not you. Nothing was signed.")}, status_code=409)
+        take = swaplib.leg_from_json(bid["take"])
+        with chain.rpc() as rpc:
+            for c in bid["inputs"]:
+                if not rpc.call("gettxout", c["txid"], int(c["vout"]), True):
+                    _bids.close(bid["id"], "stale")
+                    return JSONResponse({"detail": (
+                        "the buyer has since spent the coins behind this offer, so "
+                        "it can no longer complete. Nothing was signed.")},
+                        status_code=409)
+            problem = swaplib.holds(index, rpc, bid["buyer"], take)
+        if problem:
+            return JSONResponse({"detail": problem}, status_code=409)
+        exact = fundinglib.EXACT_SELLER_COIN
+        coin = said.get("coin") if isinstance(said.get("coin"), dict) else None
+        if coin is None:
+            spent = _flights.spent_by(account.pubkey, chain.network)
+            with contextlib.closing(index.open()) as db:
+                coin = next((c for c in utxoslib.unspent(db, address)
+                             if int(c["value"]) == exact
+                             and (c["txid"], c["vout"]) not in spent), None)
+        if coin is None:
+            # Make the coin: one small transaction, signed in this tab, and the
+            # swap spends its output straight from the mempool.
+            try:
+                with contextlib.closing(index.open()) as db:
+                    split = fundinglib.build(
+                        db, chain.params, address,
+                        [(exact, txbuild.p2pkh_script(address))],
+                        rate=fees.MIN_FEE_PER_KB,
+                        what="set aside the coin a trade needs",
+                        exclude=_flights.spent_by(account.pubkey, chain.network),
+                        extra=_flights.change_for(account.pubkey, chain.network))
+            except fundinglib.FundingError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=400)
+            offer = _offers.add(account.pubkey, chain.network, split, split.what)
+            return JSONResponse({"presigned": True, "needs_coin": True,
+                                 "offer": offer.id, "chain": chain.network,
+                                 **split.as_json()})
+        try:
+            unsigned = fundinglib.complete_bid(
+                {"txid": coin["txid"], "vout": int(coin["vout"]),
+                 "value": int(coin.get("value") or exact)},
+                address, bid["inputs"], bidslib.outputs_of(bid))
+        except fundinglib.FundingError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        _completing[bid["id"]] = (unsigned.raw, unsigned)
+        price = swaplib.describe_leg(bid["take"])
+        return JSONResponse({"presigned": True, "bid": bid["id"],
+                             "chain": chain.network, "number": row["number"],
+                             "buyer": bid["buyer"],
+                             "buyer_tag": _tags_for([bid["buyer"]]).get(bid["buyer"], ""),
+                             "price": price, "price_sats": bid["price_sats"],
+                             "exact": exact, **unsigned.as_json()})
+
+    @app.post("/account/accept/complete")
+    def account_accept_complete(request: Request, payload: Any = Body(None)):
+        """The seller's one signature on a pre-signed offer's trade, pasted beside
+        the buyer's, and the trade broadcast."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        bid = _bids.get(str(said.get("bid") or "").lower())
+        held = _completing.get(str(said.get("bid") or "").lower())
+        if bid is None or held is None or bid["status"] != bidslib.OPEN:
+            return JSONResponse({"detail": "accept it again; that trade is not waiting here"},
+                                status_code=409)
+        raw_asked, unsigned = held
+        if str(said.get("raw") or "") != raw_asked:
+            return JSONResponse({"detail": "that is not the trade this node built"},
+                                status_code=409)
+        lane = f"account {account.pubkey}"
+        if not state.begin_send(lane):
+            return JSONResponse({"detail": "one of your transactions is still going; "
+                                           "try again in a moment"}, status_code=409)
+        piece_lane = f"piece {bid['piece']}"
+        if not state.begin_send(piece_lane):
+            state.end_send(lane)
+            return JSONResponse({"detail": "another sale of this piece is going "
+                                           "through right now. Nothing was spent."},
+                                status_code=409)
+        try:
+            try:
+                waiting = state.token_index(chain).pending_swaps().get(bid["piece"], "")
+            except Exception:
+                waiting = ""
+            if waiting:
+                return JSONResponse({"detail": f"this piece is already sold in "
+                                               f"{waiting[:16]}…. Nothing was spent."},
+                                    status_code=409)
+            pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
+            if hash160(pubkey) != b58check_decode(address)[1]:
+                return JSONResponse({"detail": "that key is not this account's"},
+                                    status_code=400)
+            sig = str(said.get("signature") or "")
+            raw = fundinglib.assemble_bid(unsigned, sig, pubkey, bid["signatures"],
+                                          bytes.fromhex(bid["buyer_key"]))
+            with chain.rpc() as rpc:
+                txid = rpc.call("sendrawtransaction", raw)
+            _bids.close(bid["id"], "filled", txid)
+            _completing.pop(bid["id"], None)
+            _flights.add(account.pubkey, txid, unsigned, address, network=chain.network)
+            state.bump_generation()
+            return JSONResponse({"txid": txid, "chain": chain.network,
+                                 "buyer": bid["buyer"]})
+        except (fundinglib.FundingError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"detail": f"the node refused it: {exc}"}, status_code=409)
+        finally:
+            state.end_send(lane)
+            state.end_send(piece_lane)
+
     @app.post("/account/accept")
     def account_accept(request: Request, payload: Any = Body(None)):
         """Show this account the leg that answers somebody's offer, and stop.
@@ -10935,6 +11229,12 @@ def create_app(state: AppState) -> FastAPI:
         try:
             ask = _offer_answered(index, chain, address, said)
             row = index.inscription(contentlib._key(str(said.get("piece", ""))))
+            # A pre-signed offer: the buyer's half is already here, so Accept is
+            # the trade itself (2026-09-27).
+            bid = _bids.get(ask["txid"])
+            if bid and bid["status"] == bidslib.OPEN \
+                    and str(said.get("decision") or "") != "refuse":
+                return _accept_presigned(account, chain, address, row, bid, said)
             held_for, until = _answer_held(chain, row["txid"])
             if held_for and held_for != ask["buyer"]:
                 raise swaplib.SwapError(
@@ -15187,11 +15487,17 @@ def create_app(state: AppState) -> FastAPI:
             data["offers_out"] = _merge_offers(
                 [o for o in pending if o["buyer"] in own],
                 index.offers_by(sorted(data["owned"])))
+            # Pre-signed offers that are done, withdrawn or spent are not offers.
+            marks = _bids.statuses([o["txid"] for o in data["offers_in"] + data["offers_out"]])
+            gone = ("withdrawn", "stale", "filled")
+            data["offers_in"] = [o for o in data["offers_in"] if marks.get(o["txid"]) not in gone]
+            data["offers_out"] = [o for o in data["offers_out"] if marks.get(o["txid"]) not in gone]
             try:
                 swapping = index.pending_swaps()
             except Exception:
                 swapping = {}
             for entry in data["offers_in"] + data["offers_out"]:
+                entry["presigned"] = marks.get(entry["txid"]) == bidslib.OPEN
                 entry["busy"] = entry["inscription"] in swapping
                 entry["price"] = swaplib.describe_leg(_take_json(entry, index))
                 # The other half of the sentence an answer is confirmed with: not

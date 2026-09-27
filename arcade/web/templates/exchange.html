@@ -167,6 +167,7 @@
           const held = (await opening) || await arcadeKeys(CHAIN);
           const out = await wallet.answerOffer(held, ask);
           say((out.refused ? "Refused, and the offer stands. Nothing was spent "
+               : out.completed ? `${out.says} It's theirs when the block lands.`
                            : "Answered in " + String(out.txid).slice(0, 16)
                              + "… The piece is held for them for a day, until their "
                              + "wallet signs; all this account spent is the fee of "

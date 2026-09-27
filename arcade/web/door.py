@@ -206,6 +206,9 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # one payment to the account's own address, split for a mintpad
                "/account/split",
                "/account/list/cancel",
+               # pre-signed offers: the buyer's signatures, withdrawing, completing
+               "/account/offer/bid", "/account/offer/bid-build", "/account/offer/withdraw",
+               "/account/accept/complete",
                # the Restore page's new encrypted wallet, signed in by the words' key
                "/account/vault",
                # how the account's own mintpad page looks (presentation only)

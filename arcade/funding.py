@@ -61,6 +61,20 @@ SIGHASH_ALL = 1
 SIGHASH_SINGLE = 3
 SIGHASH_ANYONECANPAY = 0x80
 SINGLE_ANYONECANPAY = SIGHASH_SINGLE | SIGHASH_ANYONECANPAY
+#: ALL|ANYONECANPAY: what a pre-signed OFFER's inputs sign (2026-09-27:
+#: an accepted offer completes the moment it is accepted, buyer online or not).
+#: ALL, so every output -- the swap's bytes, the seller's payment, the buyer's
+#: change -- is fixed by the buyer's signature and nobody can redirect a coin;
+#: ANYONECANPAY, so the seller can add the one input the trade still needs.
+ALL_ANYONECANPAY = SIGHASH_ALL | SIGHASH_ANYONECANPAY
+
+#: The seller's side of a pre-signed offer is one coin of exactly this much,
+#: paid straight back to them in the output the buyer fixed. It has to be an
+#: amount known when the buyer signs, because the engine reads a coin price as
+#: what the seller NETS (`Engine._check_leg`: outputs to the seller minus the
+#: seller's inputs), and the buyer's signature covers every output. At the dust
+#: limit it is the smallest coin that is not itself charged the soft-dust fee.
+EXACT_SELLER_COIN = fees.DUST_LIMIT
 
 #: An output with nothing in it, written the way the legacy preimage does:
 #: `CTxOut::SetNull()`, value -1 and no scriptPubKey. A SINGLE signature at
@@ -221,6 +235,9 @@ def sighash(raw_inputs: list[dict], outputs: list[tuple[int, bytes]],
     """
     if sighash_type == SIGHASH_ALL:
         inputs, signed_at, outs = raw_inputs, index, outputs
+    elif sighash_type == ALL_ANYONECANPAY:
+        # This input alone, and every output: the other inputs are anybody's.
+        inputs, signed_at, outs = raw_inputs[index:index + 1], 0, outputs
     elif sighash_type == SINGLE_ANYONECANPAY:
         if index >= len(outputs):
             raise FundingError(
@@ -231,7 +248,7 @@ def sighash(raw_inputs: list[dict], outputs: list[tuple[int, bytes]],
         outs = [NULL_OUTPUT] * index + outputs[index:index + 1]
     else:
         raise FundingError(
-            f"this builds a sighash for SIGHASH_ALL and for "
+            f"this builds a sighash for SIGHASH_ALL, ALL|ANYONECANPAY and "
             f"SINGLE|ANYONECANPAY, not for {sighash_type:#04x}")
 
     raw = version.to_bytes(4, "little") + varint(len(inputs))
@@ -391,6 +408,131 @@ def build_sweep(db, params: Params, address: str, coins: list[dict], rate: int,
                     sighashes=[sighash(given, outputs, n, script).hex()
                                for n in range(len(given))],
                     fee=fee, change=change, what=what)
+
+
+def build_bid(db, params: Params, buyer: str, seller: str, payload: bytes,
+              price_sats: int, rate: int, what: str = "",
+              exclude=frozenset(), extra: list | None = None) -> Unsigned:
+    """The buyer's half of a pre-signed offer: every output of the finished
+    swap, and the buyer's inputs signed ALL|ANYONECANPAY over them.
+
+    Outputs, in the order the swap needs them:
+      0  the swap's own bytes (the same payload a listing carries, `_ask_payload`)
+      1  the seller, paid the price plus their own EXACT_SELLER_COIN back
+      2  the buyer's change, when there is any worth keeping
+
+    Inputs are the buyer's alone here. At accept the seller's one coin of
+    exactly EXACT_SELLER_COIN goes in FRONT of them -- the first input is the
+    swap's sender, and the sender is the seller (`Engine._swap`) -- and signs
+    SIGHASH_ALL over the finished transaction. ANYONECANPAY is what lets that
+    input be added without touching the buyer's signatures; ALL is what stops
+    anybody moving a coin the buyer did not agree to. The fee is priced for the
+    FINISHED transaction, the seller's input included, and the buyer pays it.
+    A token price pays the seller no coins, so output 1 is only their coin back.
+    """
+    payload_script = op_return_script(payload)
+    seller_out = (int(price_sats) + EXACT_SELLER_COIN, p2pkh_script(seller))
+    outputs = [(0, payload_script), seller_out]
+    spend = int(price_sats)
+    fee = price(2, outputs, rate, change=True)
+    chosen = choose(db, buyer, spend + fee, exclude=exclude, extra=extra)
+    for _ in range(3):
+        fee = price(len(chosen) + 1, outputs, rate, change=True) \
+              + fees.soft_dust_fee(outputs)
+        if sum(c["value"] for c in chosen) >= spend + fee:
+            break
+        chosen = choose(db, buyer, spend + fee, exclude=exclude, extra=extra)
+    total = sum(c["value"] for c in chosen)
+    change = total - spend - fee
+    if change < 0:
+        raise FundingError(
+            f"there is not enough here for this offer: it needs "
+            f"{(spend + fee) / 100_000_000:.8f} and this address has "
+            f"{total / 100_000_000:.8f} free")
+    outs = list(outputs)
+    if change >= fees.DUST_LIMIT:
+        outs.append((change, p2pkh_script(buyer)))
+    else:
+        fee += change
+        change = 0
+    inputs = [dict(c, address=buyer) for c in chosen]
+    raw = build_raw_tx([(c["txid"], c["vout"]) for c in inputs], outs)
+    script = p2pkh_script(buyer)
+    return Unsigned(raw=raw, inputs=inputs, outputs=outs,
+                    sighashes=[sighash(inputs, outs, n, script,
+                                       sighash_type=ALL_ANYONECANPAY).hex()
+                               for n in range(len(inputs))],
+                    fee=fee, change=change, what=what)
+
+
+def bid_need(payload: bytes, price_sats: int, seller: str, rate: int) -> int:
+    """What the coin set aside for a pre-signed offer must hold: the price, and
+    the fee of the FINISHED swap (its one buyer input, the seller's one input,
+    the swap's bytes and the seller's payment). No change: it is exact."""
+    outputs = [(0, op_return_script(payload)),
+               (int(price_sats) + EXACT_SELLER_COIN, p2pkh_script(seller))]
+    return int(price_sats) + price(2, outputs, rate) + fees.soft_dust_fee(outputs)
+
+
+def build_bid_on(coin: dict, buyer: str, seller: str, payload: bytes,
+                 price_sats: int, what: str = "") -> Unsigned:
+    """The buyer's half, built on the one coin the offer set aside for it:
+    that coin in, the swap's bytes and the seller's payment out, signed
+    ALL|ANYONECANPAY. Whatever the coin holds beyond the price is the fee."""
+    value = int(coin["value"])
+    outputs = [(0, op_return_script(payload)),
+               (int(price_sats) + EXACT_SELLER_COIN, p2pkh_script(seller))]
+    if value <= int(price_sats):
+        raise FundingError("the coin set aside for this offer does not cover its price")
+    inputs = [{"txid": str(coin["txid"]), "vout": int(coin["vout"]),
+               "value": value, "address": buyer}]
+    raw = build_raw_tx([(inputs[0]["txid"], inputs[0]["vout"])], outputs)
+    return Unsigned(raw=raw, inputs=inputs, outputs=outputs,
+                    sighashes=[sighash(inputs, outputs, 0, p2pkh_script(buyer),
+                                       sighash_type=ALL_ANYONECANPAY).hex()],
+                    fee=value - int(price_sats), change=0, what=what)
+
+
+def complete_bid(seller_coin: dict, seller: str, bid_inputs: list[dict],
+                 outputs: list[tuple[int, bytes]]) -> Unsigned:
+    """The finished swap: the seller's one coin in front of the buyer's signed
+    inputs, and the seller's SIGHASH_ALL digest over the whole of it."""
+    value = int(seller_coin.get("value", 0))
+    if value != EXACT_SELLER_COIN:
+        raise FundingError(
+            f"the seller's side of a pre-signed offer is one coin of exactly "
+            f"{EXACT_SELLER_COIN} sats, and this one holds {value}")
+    first = {"txid": str(seller_coin["txid"]), "vout": int(seller_coin["vout"]),
+             "value": value, "address": seller}
+    inputs = [first] + [dict(c) for c in bid_inputs]
+    raw = build_raw_tx([(c["txid"], c["vout"]) for c in inputs], outputs)
+    return Unsigned(raw=raw, inputs=inputs, outputs=list(outputs),
+                    sighashes=[sighash(inputs, outputs, 0, p2pkh_script(seller)).hex()],
+                    fee=0, change=0, what="complete the trade")
+
+
+def assemble_bid(unsigned: Unsigned, seller_sig: str, seller_pubkey: bytes,
+                 buyer_sigs: list[str], buyer_pubkey: bytes) -> str:
+    """Input 0 the seller's (SIGHASH_ALL), every other input the buyer's
+    (ALL|ANYONECANPAY, signed when the offer was made)."""
+    if len(buyer_sigs) != len(unsigned.inputs) - 1:
+        raise FundingError(f"{len(unsigned.inputs) - 1} buyer signatures were "
+                           f"needed and {len(buyer_sigs)} are kept")
+    raw = (1).to_bytes(4, "little") + varint(len(unsigned.inputs))
+    for n, coin in enumerate(unsigned.inputs):
+        if n == 0:
+            script_sig = push(bytes.fromhex(seller_sig)) + push(seller_pubkey)
+        else:
+            script_sig = push(bytes.fromhex(buyer_sigs[n - 1])) + push(buyer_pubkey)
+        raw += bytes.fromhex(coin["txid"])[::-1]
+        raw += int(coin["vout"]).to_bytes(4, "little")
+        raw += varint(len(script_sig)) + script_sig
+        raw += b"\xff\xff\xff\xff"
+    raw += varint(len(unsigned.outputs))
+    for value, script in unsigned.outputs:
+        raw += value.to_bytes(8, "little") + varint(len(script)) + script
+    raw += (0).to_bytes(4, "little")
+    return raw.hex()
 
 
 def build_partial(db, params: Params, address: str, foreign: list,
