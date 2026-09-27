@@ -2,6 +2,7 @@
 {% import "_chart.html" as chart %}
 {% block title %}{{ wall_text(summary.collection, 'A collection') }} · DogecoinArcade{% endblock %}
 {% block body %}
+{% import "_share_nft.html" as share %}
 <div id="live" data-generation="{{ state.generation }}" class="live"></div>
 
 {% macro coins(sats) %}{{ "%.4f"|format(sats / 100000000) }}{% endmacro %}
@@ -134,6 +135,7 @@
           {% else %}
             <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view#make-offer">Make offer</a>
           {% endif %}
+          {{ share.button(row.txid, wall_text(summary.collection) ~ ' #' ~ row.edition, row.content_type) }}
         {% elif row.mine %}
           {% if row.listing and row.listing.kind == 'ask' %}
             <a class="btn ghost small" href="/exchange/sell/{{ row.txid }}">Change the price</a>
