@@ -1134,7 +1134,7 @@ def test_the_pair_chart_picks_a_timeframe_and_offers_the_others(node):
     """a tester, 2026-09-27: thirty daily candles put a young chain's whole
     history in one or two bars. The page offers 15m/1h/4h/1d, keeps the one
     asked for, and says the period in its caption instead of "days"."""
-    seat = _bookcoin(node, 13)
+    seat = _bookcoin(node, 45)
     body = _page(seat["app"], seat["pid"])
     for t in ("15m", "1h", "4h", "1d"):
         assert f'href="?tf={t}"' in body, t
