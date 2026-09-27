@@ -880,3 +880,17 @@ def test_a_sensitive_name_is_walled_wherever_it_is_shown(public, monkeypatch):
     head = page[page.index("<h1"):page.index("</h1>")]
     assert "sens-btn" in head and "<template>@rudename</template>" in head
     assert "<title>Sensitive" in page or "<title>A profile" in page
+
+
+def test_a_price_only_ask_is_not_shown_to_buyers_as_for_sale():
+    """2026-09-27: a listed NFT is bought with the Buy button, no offer.
+    A price put on the chain alone cannot be bought, so the pages buyers read
+    leave it out; the Buy buttons carry the listing they buy."""
+    root = pathlib.Path(__file__).resolve().parents[1]
+    app_src = (root / "arcade/web/app.py").read_text()
+    assert "def _prices_for(index, chain, asks: bool = True)" in app_src
+    assert "asks=not _public_request(request)" in app_src
+    assert "_buyable_listings(index, chain)" in app_src
+    for page in ("market_collection.html", "exchange.html"):
+        body = (root / "arcade/web/templates" / page).read_text()
+        assert "data-buy-listing=" in body and '_buy_listing.html' in body, page

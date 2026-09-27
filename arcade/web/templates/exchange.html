@@ -438,14 +438,17 @@
           <div class="muted" style="font-size:.76rem">
             {%- if l.collection %}<a href="/exchange/collection/{{ l.creator }}/{{ l.collection|urlencode }}">{{ l.collection }}</a>
               {%- if l.edition is not none %} #{{ l.edition }}{% endif %} &middot;
-            {%- endif %} asked by
+            {%- endif %} listed by
              {{ l.seller|who }}
             {%- if l.when %} &middot; {{ l.when|ago }}{% endif %}</div></td>
         <td style="text-align:right"><strong>{{ l.price }}</strong>
           {%- if l.pending %}<div class="muted" style="font-size:.74rem">in the mempool</div>{% endif %}</td>
         <td style="text-align:right;width:130px">
           {% if l.seller not in owned %}
-          {% if viewer == 'account' %}
+          {% if viewer == 'account' and l.listing %}
+            <button type="button" class="small" data-buy-listing="{{ l.listing }}"
+                    data-piece="{{ wall_text(l.name) }}">Buy {{ l.price }}</button>
+          {% elif viewer == 'account' %}
             <a class="btn ghost small" href="/inscriptions/{{ l.txid }}/view">Make offer</a>
           {% else %}
           <form method="post" action="/exchange/offer" style="margin:0">
@@ -461,7 +464,7 @@
           </form>
           {% endif %}
           {% elif viewer == 'account' %}
-            <a class="btn ghost small" href="/me/nfts">Yours &mdash; price it</a>
+            <a class="btn ghost small" href="/me/nfts">Yours &mdash; change it</a>
           {% else %}
             <a class="btn ghost small" href="/exchange/sell/{{ l.txid }}">Yours &mdash; change it</a>
           {% endif %}</td>
@@ -510,4 +513,5 @@
     <div class="cards">{% for s in market %}{{ shopcard(s, 'Buy') }}{% endfor %}</div>
   {% endif %}
 {% endif %}
+{% if viewer == 'account' %}{% include "_buy_listing.html" %}{% endif %}
 {% endblock %}

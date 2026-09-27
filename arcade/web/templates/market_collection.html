@@ -123,8 +123,13 @@
             <a class="btn small" href="/me/nfts">{{ 'Your listing' if row.listing else 'Sell' }}</a>
           {% elif not signed_in %}
             <a class="btn ghost small" href="/join">Sign in to buy</a>
+          {% elif row.listing and row.listing.listing %}
+            {# One press and the trade happens (2026-09-27). #}
+            <button type="button" class="small" data-buy-listing="{{ row.listing.listing }}"
+                    data-piece="{{ wall_text(summary.collection) }} #{{ row.edition }}">Buy {{ row.listing.price }}</button>
+            <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view#make-offer">Make offer</a>
           {% elif row.listing %}
-            <a class="btn small" href="/inscriptions/{{ row.txid }}/view#for-sale">{{ 'Buy' if row.listing.kind != 'ask' else 'Offer' }} {{ row.listing.price }}</a>
+            <a class="btn small" href="/inscriptions/{{ row.txid }}/view#for-sale">Buy {{ row.listing.price }}</a>
             <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view#make-offer">Make offer</a>
           {% else %}
             <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view#make-offer">Make offer</a>
@@ -201,4 +206,5 @@
   </form>
 </nav>
 {% endif %}
+{% if account_view %}{% include "_buy_listing.html" %}{% endif %}
 {% endblock %}

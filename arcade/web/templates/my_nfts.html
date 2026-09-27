@@ -192,7 +192,7 @@ function card(piece, chain) {
     when.className = "muted";
     when.style.fontSize = ".8rem";
     when.textContent = piece.listing ? ` · open ${piece.listing.left}`
-                                     : " · an older price on the chain; buyers make offers";
+                                     : " · an older price on the chain, which nobody can Buy. Press Sell to list it for Buy.";
     forSale.append(pill, price, when);
     box.appendChild(forSale);
   }

@@ -1203,9 +1203,10 @@ function arcadeReveal(wall){
 }
 document.addEventListener('click', function(e){
   var b = e.target.closest && e.target.closest('.sens-btn');
-  if (!b) return;
+  var wall = b && b.closest('.sens-wall');
+  if (!wall) return;               // a page's own wall answers its own taps
   e.preventDefault(); e.stopPropagation();
-  arcadeReveal(b.closest('.sens-wall'));
+  arcadeReveal(wall);
 }, true);
 function arcadeShowSensitive(){
   try { return localStorage.getItem('arcade.showSensitive') === 'yes'; } catch (e) { return false; }

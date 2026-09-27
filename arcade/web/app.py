@@ -6247,7 +6247,7 @@ def create_app(state: AppState) -> FastAPI:
         # Whether this piece is already for sale, so the wallet that holds it
         # is offered the listing it has rather than a second one.
         try:
-            sale = _prices_for(index, chain).get(row["txid"])
+            sale = _prices_for(index, chain, asks=not public).get(row["txid"])
         except Exception:
             sale = None
         # A listing somebody signed in their own browser (`/account/list`) is
@@ -11544,6 +11544,9 @@ def create_app(state: AppState) -> FastAPI:
                 "mainnet": bool(chain.is_mainnet), "address": address,
                 "tokens": [{
                     "property_id": row["property_id"], "name": row["name"],
+                    # Drawn by the page's own script, so the wall is its to put
+                    # up: the screening's word travels with the name.
+                    "sensitive": bool(_verdict_of(row["name"] or "")),
                     "issuer": row["issuer"], "divisible": row["divisible"],
                     "balance": row["balance"], "display": row["display"],
                     "issuer_is_me": row["issuer"] == address,
@@ -11551,6 +11554,7 @@ def create_app(state: AppState) -> FastAPI:
                     "property_id": p["property_id"], "name": p["name"],
                     "issuer": p["issuer"], "divisible": p["divisible"],
                     "balance": 0, "display": "0", "issuer_is_me": True,
+                    "sensitive": bool(_verdict_of(p["name"] or "")),
                     "managed": bool(p.get("managed")),
                 } for p in issued],
             })
@@ -13825,7 +13829,7 @@ def create_app(state: AppState) -> FastAPI:
                     "edition": give.get("edition")})
         return out
 
-    def _prices_for(index, chain) -> dict[str, dict[str, Any]]:
+    def _prices_for(index, chain, asks: bool = True) -> dict[str, dict[str, Any]]:
         """Every NFT with a price on it right now, by the piece's txid.
 
         Two ways a price gets said, and both are read from the chain. An ASK
@@ -13888,6 +13892,12 @@ def create_app(state: AppState) -> FastAPI:
                     "when": None, "pending": False, "listing": row["id"]}
         except Exception as exc:                          # noqa: BLE001
             log.info("prices: listing book: %s", exc)
+        if not asks:
+            # 2026-09-27: "When someone lists an NFT on the marketplace,
+            # the buyer should only have to push the buy button." A price put on
+            # the chain alone cannot be bought -- it needs the holder to accept an
+            # offer -- so where buyers look it is not shown as for sale at all.
+            out = {k: v for k, v in out.items() if v.get("kind") != "ask"}
         return out
 
     def _nft_points(index, trades) -> dict[tuple[str, str] | None,
@@ -13928,6 +13938,28 @@ def create_app(state: AppState) -> FastAPI:
                 "price": (paid.amount or 0) / COIN, "size": 1,
                 "txid": trade["txid"]})
         return points
+
+    def _buyable_listings(index, chain, limit: int = 12) -> list[dict[str, Any]]:
+        """What a buyer can Buy with one press right now: the book's signed
+        listings, newest first, in the shape `_just_listed` draws (the operator,
+        2026-09-27: a listed NFT is bought with the Buy button, no offer)."""
+        out = []
+        for txid, entry in _prices_for(index, chain, asks=False).items():
+            if entry.get("kind") != "listing":
+                continue
+            row = index.inscription(txid)
+            if row is None:
+                continue
+            out.append({
+                "txid": txid, "number": row["number"], "name": _piece_name(row),
+                "collection": row.get("collection"), "edition": row.get("edition"),
+                "creator": row["creator"], "seller": entry["seller"],
+                "held": row.get("held", True), "content_type": row["content_type"],
+                "price": entry["price"], "take": entry["take"], "when": None,
+                "height": row.get("block_height", 0), "pending": False,
+                "listing": entry.get("listing"), "sats": entry.get("sats")})
+        out.sort(key=lambda l: -(l["height"] or 0))
+        return out[:limit]
 
     def _just_listed(index, limit: int = 12) -> list[dict[str, Any]]:
         """The prices most recently put on a piece, newest first.
@@ -14031,7 +14063,7 @@ def create_app(state: AppState) -> FastAPI:
             chosen = cover.get("txid") or ""
         return chosen, dict(about, edition=cover.get("edition"))
 
-    def _market_collections(index, chain, trades) -> list[dict[str, Any]]:
+    def _market_collections(index, chain, trades, public: bool = False) -> list[dict[str, Any]]:
         """Every collection on this chain as a market of its own.
 
         The same table the Tokens tab draws for pairs, because a collection
@@ -14040,7 +14072,7 @@ def create_app(state: AppState) -> FastAPI:
         member -- a market row is a name people are meant to recognise
         (D-096).
         """
-        listed = _prices_for(index, chain)
+        listed = _prices_for(index, chain, asks=not public)
         # Which set each listed piece belongs to. The listing carries the
         # collection's name but not whose it is, and a collection is (creator,
         # name) -- two people may inscribe a set called Doge Punks.
@@ -14718,7 +14750,7 @@ def create_app(state: AppState) -> FastAPI:
                               "slots": chartlib.candles(points)}
         listed: dict[str, dict[str, Any]] = {}
         try:
-            listed = _prices_for(index, chain)
+            listed = _prices_for(index, chain, asks=not _public_request(request))
         except Exception as exc:
             data["node_error"] = f"the prices could not be read: {exc}"
         owned, data["tokens"], data["coins"] = _offerable(chain, index, request)
@@ -15050,7 +15082,8 @@ def create_app(state: AppState) -> FastAPI:
             # Its chart belongs to the collection's own page, where the
             # pieces it prices are (D-096).
             try:
-                data["collections"] = _market_collections(index, chain, trades)
+                data["collections"] = _market_collections(
+                    index, chain, trades, public=_public_request(request))
                 # Popular means traded, and traded recently: what a market
                 # is for is not the biggest set, it is the busy one. Falls
                 # back on what is for sale where nothing has traded at all,
@@ -15061,7 +15094,8 @@ def create_app(state: AppState) -> FastAPI:
                                    -c["volume"], -c["for_sale"],
                                    c["name"].lower()))[:6]
                 data["sales"] = _recent_sales(index, trades)
-                data["listings"] = _just_listed(index)
+                data["listings"] = (_buyable_listings(index, chain)
+                                    if _public_request(request) else _just_listed(index))
                 data["tags"].update(_names_for(
                     index, [c["creator"] for c in data["collections"]]
                     + [s["seller"] for s in data["sales"]]
