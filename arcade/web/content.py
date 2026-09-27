@@ -69,6 +69,12 @@ CONTENT_HEADERS = {
         "font-src 'self' data:; connect-src 'self'; "
         "frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"),
     "X-Content-Type-Options": "nosniff",
+    # The frame's URL carries the viewer's ticket (`?v=`), and the page's own
+    # fetches have to carry it back as their Referer for /r/wallet to answer
+    # as the viewer. Its opaque origin makes every fetch cross-origin, which
+    # the default policy strips to the bare origin. Nothing leaves this node by
+    # it: connect-src and every other source above are 'self'.
+    "Referrer-Policy": "unsafe-url",
     "Cache-Control": "public, max-age=31536000, immutable",
 }
 

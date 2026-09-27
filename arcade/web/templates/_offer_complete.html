@@ -21,6 +21,22 @@ const spots = [...document.querySelectorAll("[data-answer-for]")];
   if (!held) return;
   let answers = {};
   try { answers = await wallet.answersToMe(held); } catch (e) { return; }
+  // Still completable? A seller can spend a coin their answer signed, or send the
+  // piece away, and the answer never says so by itself (2026-09-26).
+  const asking = {};
+  for (const spot of spots) {
+    const a = answers[spot.dataset.answerFor];
+    if (a && a.ok && a.leg) asking[spot.dataset.answerFor] = a.leg;
+  }
+  let stale = {};
+  if (Object.keys(asking).length) {
+    try {
+      const r = await fetch("/account/fill/check", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({chain: CHAIN.network, legs: asking})});
+      if (r.ok) stale = (await r.json()).legs || {};
+    } catch (e) { /* then the click says it */ }
+  }
   for (const spot of spots) {
     const answer = answers[spot.dataset.answerFor];
     if (!answer) continue;
@@ -32,6 +48,14 @@ const spots = [...document.querySelectorAll("[data-answer-for]")];
     }
     if (!answer.ok || !answer.leg) {
       spot.innerHTML = '<span class="muted">refused</span>';
+      continue;
+    }
+    if (stale[spot.dataset.answerFor]) {
+      const gone = document.createElement("span");
+      gone.className = "muted";
+      gone.title = stale[spot.dataset.answerFor];
+      gone.textContent = "no longer possible — the seller spent or moved it";
+      spot.replaceChildren(gone);
       continue;
     }
     const button = document.createElement("button");

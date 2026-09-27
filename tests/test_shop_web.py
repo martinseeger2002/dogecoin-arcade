@@ -18,7 +18,7 @@ from arcade.script import b58check_encode
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_web import app_state, client                          # noqa: F401,E402
 from test_swap import (FakeIndex, FakeNode, SELLER, BUYER, OTHER, SHOP, PIECE,  # noqa: F401,E402
-                       PIECE2, GOOF, decode, _SIGNED)
+                       PIECE2, GOOF, addr, decode, _SIGNED)
 
 #: The address a node says its cut goes to, in this chain's alphabet: an offer
 #: that names one from another chain is refused before it costs anybody a sign.
@@ -664,6 +664,99 @@ def test_a_fill_of_an_order_that_is_not_ours_is_refused(shop):
     assert body["ok"] is False and "not this wallet's to fill" in body["error"]
 
 
+#: Three strangers selling the same token at the same price, and the order
+#: their orders reached the chain in: FIRST queued first, THIRD last.
+FIRST, SECOND, THIRD = addr(11), addr(12), addr(13)
+ASK1, ASK2, ASK3 = "a1" + "1" * 62, "a2" + "2" * 62, "a3" + "3" * 62
+
+
+@pytest.fixture
+def queue(monkeypatch, client):
+    """This wallet has coins and no token; the book is three asks at one price.
+
+    A taker's world, the way `shopfront` is a buyer's: the index and the node
+    are fakes, and what a `Take` press costs is one message, caught here rather
+    than paid for. Each stranger has published a messaging key, so each one is
+    somebody this node could ask -- which is the only reason a queue of three
+    identical asks can be worked through at all.
+    """
+    _SIGNED.clear()
+    app, state = client
+    index = FakeIndex()
+    monkeypatch.setattr(type(state), "token_index", lambda self, chain: index)
+    node = FakeNode({BUYER}, UNSPENT)
+    for chain in (state.ledger, state.messaging):
+        monkeypatch.setattr(chain, "rpc", lambda: node)
+    sent = {}
+
+    class FakeSender:
+        def __init__(self, *a, **k):
+            pass
+
+        def prepare(self, address, payload):
+            sent.setdefault("payloads", []).append(payload)
+            return type("P", (), {"fee_sats": 1000, "total_sats": 1000, "size": 300})()
+
+        def broadcast(self, prepared):
+            sent["n"] = sent.get("n", 0) + 1
+            return f"msg-{sent['n']}"
+
+    monkeypatch.setattr("arcade.web.app.MessageSender", FakeSender)
+    monkeypatch.setattr("arcade.web.app.funded_address", lambda *a, **k: BUYER)
+    state.identity = Identity.generate()
+    state.ensure_identity = lambda: state.identity
+
+    keys, rows, index.orders = {}, [], {}
+    for n, (address, order, height) in enumerate(
+            ((FIRST, ASK1, 500), (SECOND, ASK2, 501), (THIRD, ASK3, 502)), 1):
+        key = Identity.generate()
+        keys[address] = key
+        _published(state, key, address=address, txid="k" * 63 + str(n))
+        row = {"txid": order, "block_height": height, "position": 0,
+               "address": address, "sale_property": 3, "sale_amount": 1000 * COIN,
+               "want_property": 0, "want_amount": 8 * COIN, "reserved": 1000 * COIN}
+        index.orders[order] = row
+        rows.append(row)
+    index.order = lambda which: index.orders.get(str(which))
+    # The list `book()` hands over, which is price first and the earliest of a
+    # price first -- the same order the pair page draws its rows in, so the top
+    # row of a price level is the maker who queued first.
+    index.book_rows = {3: {"asks": rows, "bids": []}}
+    return app, state, index, keys, sent
+
+
+def test_the_ask_that_queued_first_is_the_one_asked(queue):
+    """Price, then time -- from every row, not from all but the top one (D-083).
+
+    Pressing `Take` beside the third of three identical asks is asking to buy at
+    that price, not to choose which of three strangers sells, so the ask goes to
+    the maker who queued first. Pressing the FIRST of them is the same press on
+    the same price and is owed the same answer: the earliest of them is still
+    first, and the maker who queued behind does not become next merely because
+    their row was not the one clicked. The second half is what the route did
+    until now: it settled on the earliest at that price by walking the book and
+    skipping the row pressed, unconditionally, so the top row of a price level
+    traded with the second row of it and the first maker was served last.
+    """
+    app, state, index, keys, sent = queue
+    csrf = state.csrf_token
+
+    for pressed in (ASK3, ASK2, ASK1):
+        sent.clear()
+        app.post("/exchange/fill",
+                 data=dict(csrf_token=csrf, order=pressed, amount="10",
+                           property_id="3"), follow_redirects=False)
+        assert sent.get("payloads"), \
+            f"pressing {pressed[:6]}… asked nobody: {state.notice}"
+        _, text = api.open_payload(keys[FIRST], sent["payloads"][0])
+        body = json.loads(text)
+        assert body["swap"] == "fill" and body["order"] == ASK1, \
+            f"pressing {pressed[:6]}… asked {body.get('order', '')[:6]}… and not " \
+            f"{ASK1[:6]}…, which queued first at that price"
+        assert body["tokens"] == 10 * COIN and body["buyer"] == BUYER, \
+            "and it is the same press it always was in every other way"
+
+
 def test_an_answer_nobody_asked_for_is_ignored(shop):
     """The taker's side. An answer makes this wallet sign a transaction that
     pays coins, so without a note of having asked, any node could send one."""
@@ -781,11 +874,11 @@ def _standing(index, piece, sats, buyer=BUYER, height=300, position=0, txid="off
                               "block_height": height, "position": position}]
 
 
-def _published(state, buyer):
+def _published(state, buyer, address=BUYER, txid="k" * 64):
     """The buyer has a key on this node, so there is somebody to answer."""
     with state.store() as store:
         store.add_key_announcement(
-            txid="k" * 64, address=BUYER, pubkey=buyer.public_bytes,
+            txid=txid, address=address, pubkey=buyer.public_bytes,
             fingerprint=fingerprint_of(buyer.public_bytes), height=200,
             block_time=0, stated=True)
 

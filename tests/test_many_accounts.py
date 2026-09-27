@@ -95,8 +95,11 @@ SECRETS = (0x5151515151515151515151515151515151515151515151515151515151515151,
 NAMES = ("maple", "ferns", "osier", "quill")
 
 #: Two more people, arriving later in the file in order to be refused things.
+#: The third is a wallet for the test that needs an account that has never spent
+#: from more than one output -- which nobody in the cast still is by then.
 LATE = (0x5555555555555555555555555555555555555555555555555555555555555555,
-        0x5656565656565656565656565656565656565656565656565656565656565656)
+        0x5656565656565656565656565656565656565656565656565656565656565656,
+        0x5757575757575757575757575757575757575757575757575757575757575757)
 
 
 @dataclasses.dataclass
@@ -594,11 +597,11 @@ def test_coins_move_between_two_of_them_and_the_name_resolves(node, crowd):
     assert done.status_code == 200, done.text
     _settle(*node)
     assert _balance(state, ferns.address) >= before + 3 * COIN
-
-    own = maple.client.post("/account/send",
-                            json={"to": maple.address, "amount": "1"})
-    assert own.status_code == 400
-    assert "own address" in own.json()["detail"]
+    # What this test used to assert next was that coins to your own address are
+    # REFUSED, a refusal `c96c123` took out of the route and left behind here.
+    # It is not this pair's business, and a self-send would move the coins the
+    # offers test later inherits, so the behaviour is proved in
+    # test_an_account_with_one_output_is_told_to_split_before_it_answers.
 
 
 def test_a_token_hands_from_one_to_another(node, crowd):
@@ -1598,6 +1601,67 @@ def test_each_of_them_issues_a_token_wearing_a_picture_of_its_own(node, crowd):
 
 # --- the trading half: offers, both ways (plan item 3) -------------------------
 
+def test_an_account_with_one_output_is_told_to_split_before_it_answers(node, crowd):
+    """D-051's advice, and the way out of it, in the order a person meets them.
+
+    An answer is a leg, and a leg is two inputs: one signs the bytes naming the
+    piece, the other signs the price. So an account whose coins are in ONE output
+    cannot answer, and `/account/accept` says so before it builds anything --
+    *split it first, send a coin to your own address* -- advice rather than a
+    wall only because `/account/send` lets that send through. It used not to:
+    `c96c123` took that refusal out, having noticed that the advice and the route
+    cannot contradict each other, and updated only `test_send_browser`, which
+    drives the split in a real tab. Nothing proved it from the route, so the
+    route drifted and two assertions in this file went red with it.
+
+    The one output is made here, not inherited. Whoever has been through the
+    earlier tests in this file has spent from several, because the cast is built
+    once for the file: that is why the assertion this test replaces was red
+    against `28861b3` with nothing else changed. So a newcomer arrives and
+    inscribes the piece herself, which is the one way to hand somebody a piece
+    without handing them a coin with it -- a piece transferred in from the node's
+    wallet arrives with the reference output the token transfer rule requires,
+    and that 0.01 is a second spendable thing, which is the whole subject of the
+    refusal. She has exactly one, is offered for, and is refused.
+    """
+    state = node[1]
+    ferns = crowd[1]
+    wren = _arrive(*node, secret=LATE[2])
+    inscribed = _do(wren, "/account/inscribe", {
+        "content": base64.b64encode(b"split" * 60).decode(),
+        "content_type": "image/png", "name": "Single output",
+        "json": json.dumps({"name": "Single output"})})
+    assert inscribed.status_code == 200, inscribed.text
+    _settle(*node)
+    piece = inscribed.json()["txid"]
+
+    made = _do(ferns, "/account/offer", {"piece": piece, "amount": "3"})
+    assert made.status_code == 200, made.text
+    _settle(*node)
+    offer = made.json()["txid"]
+
+    index = state.token_index(state.messaging)
+    with contextlib.closing(index.open()) as db:
+        held = utxos.unspent(db, wren.address)
+    assert len(held) == 1, f"one output, by construction: {[h['value'] for h in held]}"
+
+    refused = wren.client.post(
+        "/account/accept", json={"piece": piece, "offer": offer})
+    assert refused.status_code == 400, refused.text
+    assert "Split it first" in refused.json()["detail"], refused.text
+
+    split = _do(wren, "/account/send", {"to": wren.address, "amount": "1"})
+    assert split.status_code == 200, split.text
+    _settle(*node)
+    with contextlib.closing(index.open()) as db:
+        became = utxos.unspent(db, wren.address)
+    assert len(became) == 2, f"the advice worked: {[c['value'] for c in became]}"
+
+    leg = wren.client.post("/account/accept", json={"piece": piece, "offer": offer})
+    assert leg.status_code == 200, leg.text
+    assert leg.json()["price"] == 3 * COIN, "the price came off the offer, not the tab"
+
+
 def test_offers_between_accounts_are_made_answered_refused_and_finished(node, crowd):
     """The half of "trading between them, both ways" that waited for routes.
 
@@ -1624,18 +1688,16 @@ def test_offers_between_accounts_are_made_answered_refused_and_finished(node, cr
     _settle(*node)
     offer_in, offer_back = made.json()["txid"], wanted.json()["txid"]
 
-    # An answer is a leg on two of the seller's coins, and Maple's own offer
-    # just spent hers down to one. The refusal says to split it by sending a
-    # coin to yourself -- which /account/send used to refuse, a dead end -- so
-    # that is what Maple does.
-    # (Only when she really is down to one: tests earlier in this module may
-    # have left her spare coins, and then there is nothing to split.)
-    one = maple.client.post("/account/accept", json={"piece": ours, "offer": offer_in})
-    if one.status_code != 200:
-        assert one.status_code == 400 and "Split it first" in one.json()["detail"], one.text
-        change = _do(maple, "/account/send", {"to": maple.address, "amount": "1"})
-        assert change.status_code == 200, change.text
-        _settle(*node)
+    # An answer is a leg on two of this wallet's coins (D-051), and how many
+    # outputs Maple has by this line is a fact about every test above it, not
+    # about this one -- the cast is built once for the file. So the refusal for
+    # having too few is proved in
+    # test_an_account_with_one_output_is_told_to_split_before_it_answers, where
+    # one output is the point rather than the inheritance, and what is proved
+    # here is that the answer the advice promises does build.
+    change = _do(maple, "/account/send", {"to": maple.address, "amount": "1"})
+    assert change.status_code == 200, change.text
+    _settle(*node)
 
     # Maple says yes to Ferns: the leg at Ferns's price, signed twice.
     leg = maple.client.post("/account/accept", json={"piece": ours, "offer": offer_in})
@@ -2026,3 +2088,31 @@ def test_a_mintpad_s_look_is_the_seller_s_to_choose(node, crowd):
     if "left" in page:
         assert "mp-lottery" in page and 'id="ltreel"' in page and "Spin it." in page
         assert "Spin to mint" in page
+
+def test_a_listing_ends_when_its_piece_is_sent_away(node, crowd):
+    """A leg's coin can stay unspent while its piece leaves by transfer, because
+    owning an inscription is a payload's reading and not a coin's. The book
+    kept advertising such a listing, and a buyer could have paid for a piece
+    the seller no longer held (2026-09-26: @yourfirstname listed #25,
+    then sent it to @apple three minutes later)."""
+    state = node[1]
+    maple, ferns, oak = crowd[0], crowd[1], crowd[2]
+    piece = _inscribed(*node, owner=maple.address, name="Sent-away piece",
+                       content=b"moved" * 60)
+    priced = _listed(maple, piece, "4")
+    assert priced.status_code == 200, priced.text
+    listing = priced.json()["listed"]
+
+    moved = _do(maple, "/account/nft/send", {"piece": piece, "to": ferns.address})
+    assert moved.status_code == 200, moved.text
+    _settle(*node, blocks=2)
+    index = state.token_index(state.messaging)
+    assert index.inscription(piece)["owner"] == ferns.address
+    assert state.listings.get(listing)["status"] == "open", \
+        "the leg's own coin was never touched"
+
+    tried = _offer(oak, "/account/buy", {"listing": listing})
+    assert tried.status_code == 400, tried.text
+    assert "no longer holds" in tried.json()["detail"]
+    assert state.listings.get(listing)["status"] == "moved"
+    assert listing not in oak.client.get("/listings").text

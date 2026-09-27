@@ -614,3 +614,138 @@ def test_the_operator_still_sees_their_own_composer(named):
     body = app.get("/feed", headers=LOCAL).text
     assert "Say something as @bigchiefenergy" in body
     assert 'action="/feed/post"' in body
+
+
+def test_the_pages_host_never_speaks_for_the_operator_from_outside(client):
+    """pages.<domain>/r/wallet handed every stranger the operator's addresses,
+    tag and balances, and a page opened by any account greeted it as the
+    operator (a tester, 2026-09-26). From outside, the page API says the
+    wallet is off; the operator's own local pages still see their wallet."""
+    app, state = client
+    state.set_setting("pages_host", "pages.example")
+    try:
+        edge = {"host": "pages.example", "cf-ray": "abc"}
+        answer = app.get("/r/wallet", headers=edge)
+        assert answer.status_code == 403
+        assert answer.json()["wallet"] == "off"
+        assert "addresses" not in answer.json()
+        assert answer.headers.get("access-control-allow-origin") == "*"
+        assert app.post("/r/send", json={"to": "x"}, headers=edge).status_code == 403
+        assert app.get("/r/send/abc", headers=edge).status_code == 403
+        # The rest of the page API is still there for pages.
+        assert app.get("/r/blockheight", headers=edge).status_code != 403
+        # Here, on the operator's own machine, it is still their wallet.
+        local = app.get("/r/wallet", headers={"host": "pages.example"})
+        assert local.status_code != 403 or "wallet" not in local.json()
+    finally:
+        state.set_setting("pages_host", "")
+
+
+def test_the_page_api_wallet_is_whoever_is_looking(client):
+    """/r/wallet answers as the signed-in account viewing the piece, not the
+    node (2026-09-26: "it should be showing the user who is viewing
+    the NFT's balance, not the node balance"). The frame carries a ticket on
+    its URL, which its fetches bring back as their Referer."""
+    import re
+
+    from test_me_page import _seat
+
+    app, state = client
+    viewer = "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg"
+    _seat(app)
+    app.post("/account/address", json={"address": viewer}, headers=LOCAL)
+    index = state.token_index(state.token_chain)
+    txid, other = "ab" * 32, "cd" * 32
+    with index.open() as db:
+        for t, n in ((txid, 901), (other, 902)):
+            db.conn.execute(
+                "INSERT OR REPLACE INTO inscription(txid,number,creator,owner,block_height,"
+                "position,content_type,content_len,sha256,json,chunks,content) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (t, n, "nMe", "nSomebodyElse", 100, 0, "text/html", 2, "ab" * 32,
+                 None, 1, b"hi"))
+        db.conn.commit()
+    state.set_setting("pages_host", "pages.example")
+    was, state.public = state.public, True
+    try:
+        page = app.get(f"/inscriptions/{txid}/view").text
+        found = re.search(rf"/content/{txid}\?v=([A-Za-z0-9_-]+)", page)
+        assert found, "the frame carries the viewer's ticket"
+        ticket = found.group(1)
+        edge = {"host": "pages.example", "cf-ray": "abc"}
+
+        mine = app.get("/r/wallet", headers={
+            **edge, "referer": f"https://pages.example/content/{txid}?v={ticket}"})
+        assert mine.status_code == 200, mine.text
+        assert mine.json()["addresses"] == [viewer]
+        assert mine.json()["wallet"] == "account"
+
+        elsewhere = app.get("/r/wallet", headers={
+            **edge, "referer": f"https://pages.example/content/{other}?v={ticket}"})
+        assert elsewhere.status_code == 403, "one page's ticket, not every page's"
+        assert app.get("/r/wallet", headers=edge).json()["wallet"] == "off"
+        assert app.get("/r/wallet", headers={**edge, "referer":
+                       f"https://pages.example/content/{txid}?v=forged"}).status_code == 403
+    finally:
+        state.public = was
+        state.set_setting("pages_host", "")
+
+    served = app.get(f"/content/{txid}")
+    assert served.headers.get("referrer-policy") == "unsafe-url"
+    assert "connect-src 'self'" in served.headers["content-security-policy"]
+
+
+def test_a_stranger_cannot_make_the_node_pay_to_ask_another(client, monkeypatch):
+    """/r/ask for a piece held elsewhere is a node-to-node message this node's
+    wallet pays for; from outside it is refused rather than sent."""
+    app, state = client
+    index = state.token_index(state.token_chain)
+    txid = "ef" * 32
+    with index.open() as db:
+        db.conn.execute(
+            "INSERT OR REPLACE INTO inscription(txid,number,creator,owner,block_height,"
+            "position,content_type,content_len,sha256,json,chunks,content) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (txid, 903, "nMe", "nSomebodyElse", 100, 0, "text/html", 2, "ab" * 32,
+             None, 1, b"hi"))
+        db.conn.commit()
+    state.set_setting("pages_host", "pages.example")
+    try:
+        answer = app.post("/r/ask", json={"inscription": txid, "route": "x"},
+                          headers={"host": "pages.example", "cf-ray": "abc"})
+    finally:
+        state.set_setting("pages_host", "")
+    assert answer.status_code == 403, answer.text
+    assert "does not pay" in answer.json()["error"]
+
+
+def test_an_arena_asking_about_an_account_s_piece_is_answered_here(client):
+    """D-091 routes are lookups in what the creator inscribed, so a piece held by
+    an account on this node is answered here, free -- not by a paid message to
+    the account, and not refused from outside."""
+    import json as _json
+
+    from arcade import utxos as utxoslib
+
+    app, state = client
+    index = state.token_index(state.token_chain)
+    txid, holder = "fa" * 32, "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg"
+    meta = _json.dumps({"api": {"power": {"const": 7}}})
+    with index.open() as db:
+        db.conn.execute(
+            "INSERT OR REPLACE INTO inscription(txid,number,creator,owner,block_height,"
+            "position,content_type,content_len,sha256,json,chunks,content) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (txid, 904, "nMe", holder, 100, 0, "text/html", 2, "ab" * 32,
+             meta, 1, b"hi"))
+        utxoslib.watch(db, holder, 1, "account")
+        db.conn.commit()
+    state.set_setting("pages_host", "pages.example")
+    try:
+        answer = app.post("/r/ask", json={"inscription": txid, "route": "power"},
+                          headers={"host": "pages.example", "cf-ray": "abc"})
+    finally:
+        state.set_setting("pages_host", "")
+    assert answer.status_code != 403, answer.text
+    assert answer.json().get("from") == "here", answer.text
+    assert answer.json()["answer"] == 7

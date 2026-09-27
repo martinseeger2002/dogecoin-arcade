@@ -407,10 +407,24 @@ def test_a_profile_wallet_shows_what_they_hold_not_what_you_hold(client):
         (piece, 7, THEM, THEM, 100, 0, "image/png", 10, "ab" * 32, "", 1, b"x"))
     db.conn.execute("INSERT INTO tag(tag,address,claimed_txid,block_height,position) "
                     "VALUES('them',?,?,100,0)", (THEM, "t" * 64))
+    # Their coins and a whole-unit token, as the index watches them: the page
+    # read the node's own wallet for coins (0.00 for every account) and divided
+    # a whole-unit balance by 10^8 (804 Grepples read 0) -- 2026-09-26.
+    from arcade import utxos as utxoslib
+    utxoslib.install(db)
+    db.conn.execute("INSERT INTO utxo(txid,vout,address,value,height) VALUES(?,?,?,?,?)",
+                    ("c1" * 32, 0, THEM, 8_510_488_000, 100))
+    db.conn.execute("INSERT OR REPLACE INTO property(property_id, ecosystem, property_type, "
+                    "issuer, name, total_tokens, creation_txid, creation_block) "
+                    "VALUES(9, 1, 1, ?, 'Grepples', 1000, ?, 1)", (THEM, "dd" * 32))
+    db.conn.execute("INSERT OR REPLACE INTO balance(address, property_id, balance) "
+                    "VALUES(?, 9, 804)", (THEM,))
     db.conn.commit()
     db.close()
 
     body = " ".join(app.get("/u/them/wallet").text.split())
+    assert "85.10" in body, "their coins, from the index"
+    assert "Grepples</a> <span class=\"muted\">804</span>" in body, body[body.find("Grepples"):][:200]
     assert "@them's wallet" in body
     assert THEM in body, "their address, not this wallet's"
     assert f"/content/{piece}" in body, "and what they hold"

@@ -503,6 +503,20 @@ def the_door(state: AppState):
 
         pages_host = state.pages_hostname
         if pages_host and host == pages_host:
+            # From outside, the page API never speaks for the operator: a page
+            # there is being looked at by a stranger or an account, and the
+            # frame (opaque origin, no cookie) cannot say which. It is told the
+            # wallet is off -- the answer a page already handles -- rather than
+            # whose it is (a tester, 2026-09-26).
+            if doorlib.speaks_for_the_operator(path) and path.rstrip("/") != "/r/wallet" \
+                    and request.method != "OPTIONS" and (
+                    state.public or doorlib.from_outside(
+                        request.headers, request.headers.get("host", ""),
+                        state.public_hosts)):
+                return contentlib._json(
+                    {"wallet": "off",
+                     "error": "this wallet does not tell inscriptions who is looking"},
+                    status=403)
             if doorlib.pages_path(path):
                 return await call_next(request)
             return locked("Not here", "Nothing is served at this address but "
@@ -2856,14 +2870,13 @@ def create_app(state: AppState) -> FastAPI:
                 entry["pieces"] = index.inscriptions(owners=[where], limit=24)
             except Exception:
                 pass
+            # From the index's own watch of the address, as every account page
+            # reads a balance: the node's wallet `listunspent` only knows the
+            # node's addresses, so every account read 0.00 here (the operator,
+            # 2026-09-26: "it should show that user profile balance").
             try:
-                with context.rpc() as rpc:
-                    entry["coins"] = sum(
-                        float(row.get("amount", 0))
-                        for row in (rpc.call("listunspent", 1, 9_999_999,
-                                             [where]) or []))
-            except HTTPException:
-                raise
+                with contextlib.closing(state.token_index(context).open()) as db:
+                    entry["coins"] = utxoslib.balance(db, where) / 100_000_000
             except Exception:
                 entry["coins"] = None     # their balance is the node's to know
             holdings.append(entry)
@@ -4835,7 +4848,7 @@ def create_app(state: AppState) -> FastAPI:
         return contentlib._json({"id": row["txid"], "routes": pageapi.declared(row)})
 
     @app.post("/r/ask")
-    def r_ask(body: dict = Body(default={})):
+    def r_ask(request: Request, body: dict = Body(default={})):
         """One page asking another a question.
 
         Held here, answered here: no message, no fee, no wait. Held
@@ -4860,7 +4873,19 @@ def create_app(state: AppState) -> FastAPI:
                 own = _ledger_addresses(rpc)
         except Exception:
             own = []
-        if row["owner"] in own:
+        # Held here: the operator's own wallet, or an account on this node (an
+        # address this node's index watches). Either way the answer is a
+        # lookup in what the piece's creator inscribed, free and immediate --
+        # an arena on the public arcade asking about a creature an account
+        # holds used to pay for a node-to-node message to that account.
+        watched = False
+        if row["owner"] not in own:
+            try:
+                with contextlib.closing(_content_index().open()) as db:
+                    watched = utxoslib.since(db, row["owner"]) is not None
+            except Exception:
+                watched = False
+        if row["owner"] in own or watched:
             try:
                 items = state.pagestore.items(row["txid"])
                 return contentlib._json({"answer": pageapi.answer(row, route, items),
@@ -4868,7 +4893,16 @@ def create_app(state: AppState) -> FastAPI:
             except pageapi.ApiError as exc:
                 return contentlib._json({"error": str(exc)}, status=400)
         # Somebody else's. Ask their node, and hand the page the receipt so it
-        # can listen for the answer.
+        # can listen for the answer -- but only for the operator's own pages.
+        # That question is a transaction this node's wallet pays for, and from
+        # outside anybody could loop it (one anonymous POST sent 9be3f7f7...,
+        # 2026-09-26). An account's page asks with its own key, via the
+        # frame's arcade.node door, which the account signs and pays for.
+        if state.public or doorlib.from_outside(
+                request.headers, request.headers.get("host", ""), state.public_hosts):
+            return contentlib._json(
+                {"error": "that piece is held on another node, and this public "
+                          "node does not pay to ask it for you"}, status=403)
         try:
             to = _key_at(row["owner"])
             sent = _page_send(str(body.get("from") or row["txid"]),
@@ -5040,28 +5074,53 @@ def create_app(state: AppState) -> FastAPI:
             "picture": face, "content": f"/content/{face}" if face else "",
         })
 
-    @app.get("/r/wallet")
-    def r_wallet():
-        """This wallet, as an inscribed page sees it.
+    #: Viewer tickets: which account is looking at which inscribed page. Minted
+    #: when an account opens a piece's page and put on the frame's URL, because
+    #: the frame is an opaque origin and sends no cookie -- so without one the
+    #: page API cannot know who is looking, and it used to answer with the
+    #: operator's own wallet to everybody (a tester / 2026-09-26: "it
+    #: should be showing the user who is viewing the NFT's balance, not the node
+    #: balance"). A ticket names one address on one chain for one page, for an
+    #: hour, and says nothing a chain explorer could not -- except that this
+    #: viewer is that address, which is what the page is being told on purpose.
+    _viewer_tickets: dict[str, tuple[str, str, str, float]] = {}
+    VIEWER_TICKET_SECONDS = 3600
 
-        A balance is public -- anyone with an index can look one up -- but
-        WHICH address is yours is not, and that is the one thing a page cannot
-        learn from the chain. So it can be turned off, and what it says when it
-        is off is that it is off, rather than that there is nothing there.
+    def _viewer_ticket(address: str, network: str, txid: str) -> str:
+        now = time.time()
+        for key in [k for k, v in _viewer_tickets.items() if v[3] < now]:
+            _viewer_tickets.pop(key, None)
+        if len(_viewer_tickets) > 20000:
+            _viewer_tickets.clear()
+        ticket = secrets.token_urlsafe(18)
+        _viewer_tickets[ticket] = (address, network, txid, now + VIEWER_TICKET_SECONDS)
+        return ticket
+
+    def _viewer_of(request: Request, chain) -> str:
+        """The address of the account looking at the page asking, or "".
+
+        The ticket rides on the frame's URL (`?v=`), and the page's own fetch
+        carries that URL as its Referer (content is served with
+        `Referrer-Policy: unsafe-url`, and its CSP lets it fetch only from this
+        node, so the URL goes nowhere else). A page may also pass `?v=` itself.
         """
-        if not state.inscription_wallet_access:
-            return contentlib._json(
-                {"error": "this wallet does not tell inscriptions who is looking"},
-                status=403)
-        chain, index = _token_chain()
-        addresses, spendable = [], None
-        try:
-            with chain.rpc() as rpc:
-                addresses = _ledger_addresses(rpc)
-                spendable = float(rpc.call("getbalance") or 0)
-        except Exception:
-            pass
+        from urllib.parse import parse_qs, urlparse
+        ticket = request.query_params.get("v", "")
+        page = ""
+        refer = request.headers.get("referer", "")
+        if refer:
+            said = urlparse(refer)
+            ticket = ticket or (parse_qs(said.query).get("v") or [""])[0]
+            if said.path.startswith("/content/"):
+                page = said.path[len("/content/"):].split("/")[0].split("i")[0]
+        held = _viewer_tickets.get(ticket or "")
+        if not held or held[3] < time.time() or held[1] != chain.network:
+            return ""
+        if page and page != held[2]:
+            return ""                      # one page's ticket, not every page's
+        return held[0]
 
+    def _wallet_answer(chain, index, addresses: list[str], spendable) -> dict:
         # One query for every address this wallet has, then summed per token:
         # a wallet with coins on fifteen addresses holds one balance of each
         # token, not fifteen, and showing the pieces would be showing the
@@ -5084,7 +5143,7 @@ def create_app(state: AppState) -> FastAPI:
                 owned += index.inscription_count(owner=address)
             except Exception:
                 continue
-        return contentlib._json({
+        return {
             # One chain, said out loud. An inscription lives on exactly one, and
             # a page that asked for balances and silently got the other chain's
             # would be showing somebody a number about a wallet they do not have
@@ -5097,7 +5156,51 @@ def create_app(state: AppState) -> FastAPI:
                      if hasattr(chain.params, "ticker") else ""},
             "tokens": tokens,
             "inscriptions": owned,
-        })
+        }
+
+    @app.get("/r/wallet")
+    def r_wallet(request: Request):
+        """The wallet looking at this page, as an inscribed page sees it.
+
+        A balance is public -- anyone with an index can look one up -- but
+        WHICH address is the viewer's is not, and that is the one thing a page
+        cannot learn from the chain. From outside, the viewer is the signed-in
+        account the frame's ticket names, and nobody else: a stranger with no
+        account gets "off", never the operator. On the operator's own machine
+        it is the operator's wallet, as it always was, and can be turned off.
+        """
+        chain, index = _token_chain()
+        outside = state.public or doorlib.from_outside(
+            request.headers, request.headers.get("host", ""), state.public_hosts)
+        if outside:
+            address = _viewer_of(request, chain)
+            if not address:
+                return contentlib._json(
+                    {"wallet": "off",
+                     "error": "nobody signed in is looking at this page"},
+                    status=403)
+            spendable = None
+            try:
+                with contextlib.closing(index.open()) as db:
+                    spendable = utxoslib.balance(db, address) / 100_000_000
+            except Exception:
+                pass
+            return contentlib._json(
+                {**_wallet_answer(chain, index, [address], spendable),
+                 "wallet": "account"})
+        if not state.inscription_wallet_access:
+            return contentlib._json(
+                {"error": "this wallet does not tell inscriptions who is looking"},
+                status=403)
+        addresses, spendable = [], None
+        try:
+            with chain.rpc() as rpc:
+                addresses = _ledger_addresses(rpc)
+                spendable = float(rpc.call("getbalance") or 0)
+        except Exception:
+            pass
+        return contentlib._json({**_wallet_answer(chain, index, addresses, spendable),
+                                 "wallet": "operator"})
 
 
     # --- approvals: sends that a page or a bot asked for ----------------------
@@ -5993,8 +6096,12 @@ def create_app(state: AppState) -> FastAPI:
             swap_waiting = index.pending_swaps().get(row["txid"], "") if public else ""
         except Exception:
             swap_waiting = ""
+        # Who is looking, for the page's own /r/wallet: a ticket on the frame's
+        # URL, since the frame itself carries no cookie.
+        ticket = _viewer_ticket(here, chain.network, row["txid"]) \
+            if viewer == "account" and here else ""
         return render(request, "inscription_view.html", row=row, chain=chain,
-                      my_offers=my_offers, swap_waiting=swap_waiting,
+                      my_offers=my_offers, swap_waiting=swap_waiting, ticket=ticket,
                       listed=listed,
                       tag=named.get(row["owner"]), sale=sale,
                       creator_tag=named.get(row["creator"]),
@@ -8982,6 +9089,49 @@ def create_app(state: AppState) -> FastAPI:
             return ""
         return swap.give.txid.hex()
 
+    _book_swept: dict[str, float] = {}
+
+    def _sweep_book(chain, force: bool = False) -> None:
+        """Close what the book can no longer honestly advertise.
+
+        Expiry, and two things the chain says (2026-09-26, "offers seem
+        a bit wonky"): the piece a row sells has moved away from its seller --
+        its coin can stay unspent while the piece goes by transfer, which left
+        a listing of a piece its seller no longer held on every page -- or a
+        coin the leg signed is spent, which is an answered offer nobody can
+        complete any more. Every page reads `open_listings`, so closing the row
+        is what takes it off all of them. At most every twenty seconds per
+        chain, and only on an answer the node actually gave: a daemon that
+        cannot be asked closes nothing.
+        """
+        state.listings.expire_due(chain.network)
+        now = time.time()
+        if not force and now - _book_swept.get(chain.network, 0) < 20:
+            return
+        _book_swept[chain.network] = now
+        rows = state.listings.open_listings(chain.network, limit=1000)
+        if not rows:
+            return
+        try:
+            index = state.token_index(chain)
+            for row in rows:
+                sold = _sold_piece(row)
+                got = index.inscription(sold) if sold else None
+                if sold and got is not None and got["owner"] != row["owner"]:
+                    state.listings.close(row["id"], "moved")
+                    row["status"] = "moved"
+            with chain.rpc() as rpc:
+                for row in rows:
+                    if row["status"] != "open":
+                        continue
+                    for coin in (row["input"], row["coin"]):
+                        if coin and not rpc.call("gettxout", coin["txid"],
+                                                 int(coin["vout"]), True):
+                            state.listings.close(row["id"], "spent")
+                            break
+        except Exception:
+            return
+
     def _open_listing_of(chain, piece: str) -> dict[str, Any] | None:
         """The newest open listing in the book that sells this inscription.
 
@@ -8992,7 +9142,7 @@ def create_app(state: AppState) -> FastAPI:
         can fill. Whether the piece is still where the leg says is left to
         `/account/buy`, which asks the chain and says so in words.
         """
-        state.listings.expire_due(chain.network)
+        _sweep_book(chain)
         for row in state.listings.open_listings(chain.network):
             if _sold_piece(row) != piece:
                 continue
@@ -9248,6 +9398,19 @@ def create_app(state: AppState) -> FastAPI:
             raise swaplib.SwapError("a wallet cannot fill its own order")
 
         index = state.token_index(chain)
+        # The piece, not the coin. A leg's coin can sit unspent long after its
+        # piece was sent away by transfer (ownership is read from payloads, not
+        # coins), and filling it then would take the buyer's coins for a piece
+        # the seller no longer holds (2026-09-26: @yourfirstname's
+        # listing of #25, three minutes before it went to @apple).
+        sold = _sold_piece(listing)
+        got = index.inscription(sold) if sold else None
+        if sold and (got is None or got["owner"] != listing["owner"]):
+            if listing.get("id") and state.listings.get(str(listing["id"])):
+                state.listings.close(listing["id"], "moved")
+            raise swaplib.SwapError(
+                "the seller no longer holds that piece, so this listing is over. "
+                "Nothing was spent.")
         naming = bytes.fromhex(str(listing["payload"] or ""))
         # What the seller's two signatures stand over -- its bytes at output 0,
         # its payment at the next, its own coins in front, and the fee it
@@ -9521,6 +9684,39 @@ def create_app(state: AppState) -> FastAPI:
                         "price paid in tokens those bytes are the only place "
                         "the price is written")
         return listing
+
+    @app.post("/account/fill/check")
+    def account_fill_check(request: Request, payload: Any = Body(None)):
+        """Which answered offers can still be completed, before a button says so.
+
+        An answer is a signed leg in the buyer's sealed messages, and nothing
+        ever took one back: when the seller later spent a coin it signed, or sent
+        the piece away, the offer still read "Complete the purchase" and only
+        failed on the click (2026-09-26: "offers that exist that the UTXO
+        have already been spent for"). Same checks as `/account/fill`, nothing
+        built: {legs: {offer txid: leg}} -> {offer txid: "" or why not}.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        legs = said.get("legs") if isinstance(said.get("legs"), dict) else {}
+        out: dict[str, str] = {}
+        index = state.token_index(chain)
+        for key, leg in list(legs.items())[:50]:
+            try:
+                listing = _leg_answered({"leg": leg}, chain, address)
+                sold = _sold_piece(listing)
+                got = index.inscription(sold) if sold else None
+                if sold and (got is None or got["owner"] != listing["owner"]):
+                    raise ValueError("the seller no longer holds that piece")
+                out[str(key)] = ""
+            except Exception as exc:
+                out[str(key)] = str(exc) or "it can no longer be completed"
+        return JSONResponse({"legs": out})
 
     @app.post("/account/fill")
     def account_fill(request: Request, payload: Any = Body(None)):
@@ -13422,7 +13618,11 @@ def create_app(state: AppState) -> FastAPI:
             return None
         want = Fraction(clicked["want_amount"], clicked["sale_amount"])
         for row in book:
-            if row.get("pending") or row["txid"] == clicked["txid"]:
+            # The row that was pressed is a candidate like any other: three asks
+            # at one price are one price offered by three people, and the press
+            # is a question aimed at the price (D-083). Dropping it here made
+            # the earliest maker the one the node would not ask.
+            if row.get("pending"):
                 continue
             if Fraction(row["want_amount"], row["sale_amount"]) > want:
                 break                     # sorted, so nothing after is better
@@ -13487,12 +13687,17 @@ def create_app(state: AppState) -> FastAPI:
                 if short:
                     raise swaplib.SwapError(short)
             to = _key_at(row["address"])
-            sent = _page_send(str(order), chain, to, json.dumps({
-                "swap": "fill", "swapv": swaplib.PROTOCOL, "order": str(order),
+            # What goes out names the order actually being taken, not the row
+            # that happened to be clicked: the maker answers by looking this id
+            # up and refusing anything that is not its own to fill, and the
+            # answer comes back checked against the same id (`_fill`, which
+            # compares the offer's seller with the order it resolves to).
+            sent = _page_send(row["txid"], chain, to, json.dumps({
+                "swap": "fill", "swapv": swaplib.PROTOCOL, "order": row["txid"],
                 "tokens": tokens, "buyer": buyer}).encode())
             now = time.time()
             state.offers.add_fill({
-                "id": sent["txid"], "network": chain.network, "order": str(order),
+                "id": sent["txid"], "network": chain.network, "order": row["txid"],
                 "maker": row["address"], "buyer": buyer, "tokens": tokens,
                 "coins": coins, "created": now, "expires": now + swaplib.OFFER_TTL})
             state.flash(
@@ -13738,7 +13943,7 @@ def create_app(state: AppState) -> FastAPI:
                 # reading the feed is what marks it read. `expired` costs nothing
                 # to write and unlocks nothing -- it says this node stopped
                 # advertising, which is the only thing an expiry ever was.
-                state.listings.expire_due(chain.network)
+                _sweep_book(chain)
                 rows = state.listings.open_listings(chain.network)
             except Exception as exc:
                 book_error = f"the listing book could not be read: {exc}"
