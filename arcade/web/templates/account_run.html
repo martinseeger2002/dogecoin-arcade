@@ -129,10 +129,11 @@ const piece = () => $("run-piece") && ($("run-piece").onclick = async () => {
     }
     const keys = (await wallet.opened(CHAIN)) || await arcadeKeys(CHAIN);
     const shown = await wallet.checked(offer, keys);
-    if (!confirm(`${offer.name}: ${commas(offer.bytes)} bytes on the chain `
-                 + `forever, for ${shown.coinsOf(shown.fee)} in fees. `
-                 + `${commas(offer.sent)} of ${commas(offer.items)} are `
-                 + "already there.")) return;
+    // The arcade's own card, not the browser's (plan item 6 / D-183).
+    if (!(await arcadeAsk(`Inscribe ${offer.name}?`,
+                 `${commas(offer.bytes)} bytes go on the chain for good, for `
+                 + `${shown.coinsOf(shown.fee)} in fees. ${commas(offer.sent)} of `
+                 + `${commas(offer.items)} are already there.`, "Inscribe it"))) return;
     const out = await wallet.confirm(keys, offer);
     $("run-count").textContent = `${commas(offer.sent + 1)} of `
       + `${commas(offer.items)} pieces on the chain`;
@@ -177,8 +178,8 @@ const retry = () => $("run-retry") && ($("run-retry").onclick = async () => {
 retry();
 
 const remove = () => $("run-delete") && ($("run-delete").onclick = async () => {
-  if (!confirm("Forget this run? What is on the chain stays there; the "
-               + "pictures this node kept for the rest of it are deleted.")) return;
+  if (!(await arcadeAsk("Forget this run?", "What is on the chain stays there; the "
+               + "pictures this node kept for the rest of it are deleted.", "Forget it"))) return;
   say(""); news("");
   try {
     await post("/account/run/delete", {});

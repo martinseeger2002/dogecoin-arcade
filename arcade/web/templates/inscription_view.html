@@ -556,7 +556,9 @@
       const offer = await wallet.offerBuy(LISTING, CHAIN.network);
       const shown = await wallet.checked(offer, held);
       const price = shown.coinsOf(Number(offer.price));
-      if (!confirm(`Buy this piece for ${price}? ` + shown.says)) {
+      if (!(await arcadeAsk(`Buy #{{ row.number }} for ${price}?`,
+            shown.says + " One transaction moves the piece and the payment together.",
+            `Buy it for ${price}`))) {
         button.disabled = false;
         button.textContent = "Buy it for {{ listed.price }}";
         return;
