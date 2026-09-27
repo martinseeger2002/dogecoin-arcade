@@ -3947,14 +3947,30 @@ def create_app(state: AppState) -> FastAPI:
         page = max(1, min(page, pages))
         rows = index.collection_items(creator, name, limit=PAGE_INSCRIPTIONS,
                                       offset=(page - 1) * PAGE_INSCRIPTIONS)
+        # Whose pieces these are, for the Send button: the looking account's on
+        # a public copy, never the node's wallet (the D-184 shape, again).
+        owned, _held, _coins = _offerable(chain, index, request)
+        public = _public_request(request)
+        # What is for sale, buyable with one press (2026-09-27): shown on
+        # each listed card and gathered at the top, so the page reads "for sale
+        # first" like the market does (a tester, the same day).
+        listed = {}
         try:
-            with chain.rpc() as rpc:
-                owned = set(_ledger_addresses(rpc))
+            listed = {t: e for t, e in _prices_for(index, chain, asks=not public).items()
+                      if e.get("collection") == name}
         except Exception:
-            owned = set()
-        senders = {r["owner"] for r in rows} | {creator}
+            listed = {}
+        for row in rows:
+            row["listing"] = listed.get(row["txid"])
+        for_sale = []
+        for txid, entry in sorted(listed.items(), key=lambda kv: kv[1].get("sats") or 0):
+            got = index.inscription(txid)
+            if got and got["creator"] == creator:
+                for_sale.append({**got, "listing": entry})
+        senders = {r["owner"] for r in rows} | {creator} | {r["owner"] for r in for_sale}
         return render(request, "collection.html", chain=chain, node=chain.status(),
                       summary=summary, inscriptions=rows, owned=owned,
+                      for_sale=for_sale, account_view=public,
                       tags=index.tags_for(sorted(senders)),
                       traits=index.collection_traits(creator, name),
                       page=page, pages=pages, per_page=PAGE_INSCRIPTIONS)

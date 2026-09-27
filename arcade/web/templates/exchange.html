@@ -342,6 +342,58 @@
 
 
 {% else %}
+{# What can be bought with one press, first (a tester, 2026-09-27). #}
+  {% if listings %}
+  <h2>For sale now</h2>
+  <div class="panel" style="margin-bottom:18px">
+    <table class="wallets">
+      {% for l in listings %}
+      <tr>
+        <td style="width:46px">
+          <a href="/inscriptions/{{ l.txid }}/view">
+            {%- if l.held and l.content_type.startswith('image/') %}
+            <img src="/content/{{ l.txid }}" alt="{{ l.name }}" loading="lazy"
+                 style="width:38px;height:38px;object-fit:cover;border-radius:8px;display:block">
+            {%- else %}<span class="coinface" style="border-radius:8px">#{{ l.number }}</span>{% endif %}</a></td>
+        <td><a href="/inscriptions/{{ l.txid }}/view"><strong>{{ wall(l.name) }}</strong></a>
+          <div class="muted" style="font-size:.76rem">
+            {%- if l.collection %}<a href="/exchange/collection/{{ l.creator }}/{{ l.collection|urlencode }}">{{ l.collection }}</a>
+              {%- if l.edition is not none %} #{{ l.edition }}{% endif %} &middot;
+            {%- endif %} listed by
+             {{ l.seller|who }}
+            {%- if l.when %} &middot; {{ l.when|ago }}{% endif %}</div></td>
+        <td style="text-align:right"><strong>{{ l.price }}</strong>
+          {%- if l.pending %}<div class="muted" style="font-size:.74rem">in the mempool</div>{% endif %}</td>
+        <td style="text-align:right;width:130px">
+          {% if l.seller not in owned %}
+          {% if viewer == 'account' and l.listing %}
+            <button type="button" class="small" data-buy-listing="{{ l.listing }}"
+                    data-piece="{{ wall_text(l.name) }}">Buy {{ l.price }}</button>
+          {% elif viewer == 'account' %}
+            <a class="btn ghost small" href="/inscriptions/{{ l.txid }}/view">Make offer</a>
+          {% else %}
+          <form method="post" action="/exchange/offer" style="margin:0">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}">
+            <input type="hidden" name="inscription" value="{{ l.txid }}">
+            <input type="hidden" name="back" value="/exchange?tab=market">
+            <input type="hidden" name="amount" value="{{ l.take.amount }}">
+            <input type="hidden" name="kind" value="{{ 'token' if l.take.kind == 'token' else 'coins' }}">
+            {% if l.take.kind == 'token' %}
+            <input type="hidden" name="property_id" value="{{ l.take.propertyid }}">
+            {% endif %}
+            <button type="submit" class="small">Buy it</button>
+          </form>
+          {% endif %}
+          {% elif viewer == 'account' %}
+            <a class="btn ghost small" href="/me/nfts">Yours &mdash; change it</a>
+          {% else %}
+            <a class="btn ghost small" href="/exchange/sell/{{ l.txid }}">Yours &mdash; change it</a>
+          {% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
   <p class="sub">Collections on {{ chain.label|lower }}, each one a market of its
     own. Open one for the whole set &mdash; what is for sale first, then the
     rest as it was inscribed. Any NFT can be offered for, listed or not.</p>
@@ -422,57 +474,6 @@
       <a href="/inscriptions/collection">collection wizard</a>.</p></div>
   {% endif %}
 
-  {% if listings %}
-  <h2>For sale now</h2>
-  <div class="panel" style="margin-bottom:18px">
-    <table class="wallets">
-      {% for l in listings %}
-      <tr>
-        <td style="width:46px">
-          <a href="/inscriptions/{{ l.txid }}/view">
-            {%- if l.held and l.content_type.startswith('image/') %}
-            <img src="/content/{{ l.txid }}" alt="{{ l.name }}" loading="lazy"
-                 style="width:38px;height:38px;object-fit:cover;border-radius:8px;display:block">
-            {%- else %}<span class="coinface" style="border-radius:8px">#{{ l.number }}</span>{% endif %}</a></td>
-        <td><a href="/inscriptions/{{ l.txid }}/view"><strong>{{ wall(l.name) }}</strong></a>
-          <div class="muted" style="font-size:.76rem">
-            {%- if l.collection %}<a href="/exchange/collection/{{ l.creator }}/{{ l.collection|urlencode }}">{{ l.collection }}</a>
-              {%- if l.edition is not none %} #{{ l.edition }}{% endif %} &middot;
-            {%- endif %} listed by
-             {{ l.seller|who }}
-            {%- if l.when %} &middot; {{ l.when|ago }}{% endif %}</div></td>
-        <td style="text-align:right"><strong>{{ l.price }}</strong>
-          {%- if l.pending %}<div class="muted" style="font-size:.74rem">in the mempool</div>{% endif %}</td>
-        <td style="text-align:right;width:130px">
-          {% if l.seller not in owned %}
-          {% if viewer == 'account' and l.listing %}
-            <button type="button" class="small" data-buy-listing="{{ l.listing }}"
-                    data-piece="{{ wall_text(l.name) }}">Buy {{ l.price }}</button>
-          {% elif viewer == 'account' %}
-            <a class="btn ghost small" href="/inscriptions/{{ l.txid }}/view">Make offer</a>
-          {% else %}
-          <form method="post" action="/exchange/offer" style="margin:0">
-            <input type="hidden" name="csrf_token" value="{{ csrf }}">
-            <input type="hidden" name="inscription" value="{{ l.txid }}">
-            <input type="hidden" name="back" value="/exchange?tab=market">
-            <input type="hidden" name="amount" value="{{ l.take.amount }}">
-            <input type="hidden" name="kind" value="{{ 'token' if l.take.kind == 'token' else 'coins' }}">
-            {% if l.take.kind == 'token' %}
-            <input type="hidden" name="property_id" value="{{ l.take.propertyid }}">
-            {% endif %}
-            <button type="submit" class="small">Buy it</button>
-          </form>
-          {% endif %}
-          {% elif viewer == 'account' %}
-            <a class="btn ghost small" href="/me/nfts">Yours &mdash; change it</a>
-          {% else %}
-            <a class="btn ghost small" href="/exchange/sell/{{ l.txid }}">Yours &mdash; change it</a>
-          {% endif %}</td>
-      </tr>
-      {% endfor %}
-    </table>
-  </div>
-  {% endif %}
 
   {% if sales %}
   <h2>Recently sold</h2>
