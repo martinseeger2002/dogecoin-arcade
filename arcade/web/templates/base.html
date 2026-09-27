@@ -1136,7 +1136,7 @@ function arcadeAsk(title, detail, yes = "Yes"){
 // should stay unlocked on all pages"). arcadeKeys(chain) is what an action asks
 // for when it needs the key: the open wallet if there is one (in this tab or any
 // other tab of this site), otherwise this sheet, and the action carries on once
-// the password opens it -- instead of sending somebody to Your arcade.
+// the password opens it -- instead of sending somebody to their own page first.
 var ARCADE_ME = {{ (account_name or '')|tojson }};
 var ARCADE_CHAIN = {network: {{ state.messaging.network|tojson }},
                     version: {{ state.messaging.params.pubkeyhash_version }}};
@@ -1196,7 +1196,7 @@ function arcadeUnlockSheet(why){
   });
 }
 // The "show me" wall (2026-09-26). A tap reveals that one; the setting on
-// Your arcade ("Show sensitive content") reveals them all, for this browser.
+// /me ("Show sensitive content") reveals them all, for this browser.
 function arcadeReveal(wall){
   var t = wall.querySelector('template');
   if (t) wall.replaceWith(t.content.cloneNode(true));
