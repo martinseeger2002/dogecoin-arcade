@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ wall_text(summary.collection, 'A collection') }} · DogecoinArcade{% endblock %}
 {% block body %}
+{% import "_share_nft.html" as share %}
 <h1>{{ wall(summary.collection, 'collection name') }}</h1>
 {% set d = summary.details or {} %}
 {% if d.description %}<p style="max-width:70ch;margin:0 0 6px">{{ d.description }}</p>{% endif %}
@@ -94,6 +95,7 @@
         {% endif %}
       {% endif %}
       <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view">Open</a>
+      {{ share.button(row.txid, (data.name if data and data.name else (wall_text(summary.collection) ~ ' #' ~ row.edition)), row.content_type) }}
       {% if row.owner in owned and not account_view %}
       <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/send">Send</a>
       {% endif %}

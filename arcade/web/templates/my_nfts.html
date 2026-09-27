@@ -212,7 +212,14 @@ function card(piece, chain) {
   send.className = "btn ghost small";
   send.textContent = "Send";
   send.onclick = () => choose(piece, chain);
-  doing.append(open, sell, send);
+  const share = document.createElement("button");
+  share.type = "button";
+  share.className = "btn ghost small";
+  share.textContent = "Share";
+  share.dataset.shareNft = piece.txid;
+  share.dataset.piece = pieceName(piece);
+  share.dataset.kind = piece.content_type || "";
+  doing.append(open, sell, send, share);
   if (cancelled) {
     sell.disabled = true;
   } else if (piece.listing) {

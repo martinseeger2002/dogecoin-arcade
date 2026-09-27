@@ -682,6 +682,90 @@ ol.words{column-gap:1.4em}
   <a class="btn small" href="/join?next={{ path|urlencode }}">Join or sign in</a>
 </div>
 {% endif %}
+{% if not embed %}
+<script type="module">
+// Share a piece to the feed, with something said about it (2026-09-27).
+// Any [data-share-nft] button on any page: one sheet with the piece, an
+// optional note, and Post. The post is an ordinary one, signed in this tab,
+// whose text ends in the piece's /content/<id>, which the feed draws.
+const LIMIT = 2000;
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest && event.target.closest("[data-share-nft]");
+  if (!button) return;
+  event.preventDefault();
+  const txid = button.dataset.shareNft, name = button.dataset.piece || "this piece";
+  if (!ARCADE_ME) {
+    location.href = "/join?next=" + encodeURIComponent(location.pathname + location.search);
+    return;
+  }
+  const ref = "/content/" + txid;
+  const room = LIMIT - ref.length - 2;
+  const back = document.createElement("div");
+  back.className = "askcard-back";
+  const card = document.createElement("form");
+  card.className = "panel askcard sharecard";
+  card.setAttribute("role", "dialog");
+  const h = document.createElement("h3");
+  h.textContent = "Share " + name + " to the feed";
+  card.append(h);
+  if ((button.dataset.kind || "").startsWith("image/")) {
+    const img = document.createElement("img");
+    img.src = ref; img.alt = ""; img.className = "sharepic";
+    card.append(img);
+  }
+  const words = document.createElement("textarea");
+  words.rows = 3; words.maxLength = room;
+  words.placeholder = "Say something about it (optional)";
+  words.setAttribute("aria-label", "Say something about it");
+  const count = document.createElement("div");
+  count.className = "muted"; count.style.fontSize = ".78rem";
+  const counted = () => { count.textContent = `${words.value.length} / ${room}`; };
+  words.oninput = counted; counted();
+  const note = document.createElement("p");
+  note.className = "muted"; note.style.fontSize = ".82rem";
+  note.textContent = "A post is one small transaction, signed in this browser. "
+    + "The piece is shown under your words.";
+  const row = document.createElement("div");
+  row.className = "row";
+  const post = document.createElement("button");
+  post.type = "submit"; post.textContent = "Post";
+  const cancel = document.createElement("button");
+  cancel.type = "button"; cancel.className = "ghost"; cancel.textContent = "Cancel";
+  const said = document.createElement("p");
+  said.className = "msg err"; said.hidden = true;
+  row.append(post, cancel);
+  card.append(words, count, note, said, row);
+  back.append(card);
+  document.body.append(back);
+  const close = () => back.remove();
+  cancel.onclick = close;
+  back.onclick = (e) => { if (e.target === back) close(); };
+  words.focus();
+  card.onsubmit = async (e) => {
+    e.preventDefault();
+    post.disabled = true; said.hidden = true;
+    post.textContent = "Posting…";
+    try {
+      const wallet = await import("/wallet.js");
+      const keys = (await wallet.opened(ARCADE_CHAIN)) || await arcadeKeys(ARCADE_CHAIN);
+      const text = (words.value.trim() ? words.value.trim() + "\n\n" : "") + ref;
+      await wallet.post(keys, text);
+      close();
+      arcadeToast(`Shared ${name} to the feed. It shows there when its block lands, `
+        + "usually within a minute or two.");
+    } catch (err) {
+      post.disabled = false; post.textContent = "Post";
+      said.textContent = String(err.message || err); said.hidden = false;
+    }
+  };
+});
+</script>
+<style>
+.sharecard textarea{width:100%;margin:8px 0 2px;font:inherit}
+.sharecard .sharepic{display:block;max-width:100%;max-height:40vh;margin:6px auto 4px;
+  border-radius:10px;image-rendering:auto}
+</style>
+{% endif %}
 {% if account_here and not embed %}
 <script type="module">
 // "Take it back": an accepted offer binds until the coins it was signed over

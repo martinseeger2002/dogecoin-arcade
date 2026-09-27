@@ -1,0 +1,10 @@
+{# Share a piece to the feed (2026-09-27: "We should be able to share any
+   NFT to the feed directly from the NFT card with the option to say something
+   about it"). The button only names the piece; base.html's handler opens the
+   sheet, and the post is an ordinary feed post whose text ends in the piece's
+   /content/<id>, which the feed already draws (post_html, D-138). #}
+{% macro button(txid, name, kind='', label='Share') -%}
+<button type="button" class="ghost small" data-share-nft="{{ txid }}"
+        data-piece="{{ name }}" data-kind="{{ kind }}"
+        title="Share it to the feed, with something said about it">{{ label }}</button>
+{%- endmacro %}

@@ -3,6 +3,7 @@
 {% import "_token_confirm.html" as tk %}
 {% block title %}NFTs · DogecoinArcade{% endblock %}
 {% import "_not_ordinals.html" as notord %}
+{% import "_share_nft.html" as share %}
 {% block body %}
 {# Macros first: Jinja does not hoist them, and one
    defined below its first use is undefined there. #}
@@ -36,6 +37,7 @@
   </table>
   <div class="row" style="margin-top:8px">
     <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view">Open</a>
+    {{ share.button(row.txid, (wall_text(row.collection) ~ ' #' ~ row.edition) if row.collection else ('#' ~ row.number), row.content_type) }}
     {% if row.owner in owned %}
     <span class="muted" style="font-size:.8rem">yours &mdash;
       <a href="{{ '/me/nfts' if public else '/wallet/nfts' }}">send it from your

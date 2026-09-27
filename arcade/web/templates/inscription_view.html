@@ -1,9 +1,13 @@
 {% extends "base.html" %}
 {% block title %}#{{ row.number }} · DogecoinArcade{% endblock %}
 {% block body %}
+{% import "_share_nft.html" as share %}
 <div class="row" style="align-items:baseline">
   <a class="back-link" href="/inscriptions">&#8592; Inscriptions</a>
   <h1 style="margin:0">#{{ "{:,}".format(row.number) }}</h1>
+  <span style="margin-left:auto">{{ share.button(row.txid,
+    (wall_text(row.collection) ~ ' #' ~ row.edition) if row.collection else ('#' ~ row.number),
+    row.content_type, 'Share to feed') }}</span>
 </div>
 <p class="sub">{{ row.content_type }} &middot;
   {{ "{:,}".format(row.content_len) }} bytes &middot;

@@ -927,3 +927,37 @@ def test_a_launch_thread_is_public_and_nests_replies(public, monkeypatch):
     assert "first comment" in page.text and "a reply to it" in page.text
     assert page.text.index("first comment") < page.text.index("a reply to it")
     assert app.get(f"/launches/{'9' * 64}", headers=LOCAL).status_code == 404
+
+
+def test_any_piece_can_be_shared_to_the_feed_from_its_card(client):
+    """2026-09-27: "We should be able to share any NFT to the feed
+    directly from the NFT card with the option to say something about it".
+    Every card names the piece on a Share button; base.html's one handler
+    opens the sheet and posts the words plus the piece's /content/<id>, which
+    the feed draws, or sends somebody signed out to join first."""
+    from test_me_page import _seat
+
+    app, state = client
+    _seat(app)
+    index = state.token_index(state.token_chain)
+    txid = "5e" * 32
+    with index.open() as db:
+        db.conn.execute(
+            "INSERT OR REPLACE INTO inscription(txid,number,creator,owner,block_height,"
+            "position,content_type,content_len,sha256,json,chunks,content) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (txid, 905, "nMe", "nSomebodyElse", 100, 0, "image/png", 2, "ab" * 32,
+             None, 1, b"hi"))
+        db.conn.commit()
+    button = f'data-share-nft="{txid}"'
+    piece = app.get(f"/inscriptions/{txid}/view").text
+    assert button in piece and "Share to feed" in piece
+    assert 'data-kind="image/png"' in piece
+    assert button in app.get("/inscriptions").text, "the browse cards too"
+    assert "/join?next=" in piece and 'LIMIT - ref.length' in piece, \
+        "the handler: signed out goes to join, the note leaves room for the piece"
+
+    # What the feed makes of such a post: the words, then the piece drawn.
+    from arcade.web.app import post_html
+    drawn = post_html(f"look at this one\n\n/content/{txid}", {txid: "image/png"})
+    assert "look at this one" in drawn and f'src="/content/{txid}"' in drawn

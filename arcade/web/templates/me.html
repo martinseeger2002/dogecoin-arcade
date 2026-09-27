@@ -84,7 +84,8 @@
       transaction saying the same thing.</p>
   </div>
   <p class="muted mebackup"><strong>Your twelve words are your account.</strong> There is no
-    reset &mdash; <a href="/me/backup">back them up</a> if you have not.</p>
+    reset &mdash; <a href="/me/backup">back them up</a> if you have not.
+    (Forgot your password? <a href="/restore">Restore with the words</a>.)</p>
 
   {# The profile editor (2026-09-26: "there's no way to update your
      profile picture, bio, URL" -- it was there, folded into two <details> whose
@@ -356,6 +357,7 @@ let publishedFace = "";
 function drawCard(said) {
   const prof = said.profile || {};
   publishedFace = prof.pfp || "";
+  $("face-clear").hidden = !($("pfp").value.trim() || publishedFace);
   const name = said.tag || said.name || "";
   const face = $("me-face");
   face.hidden = !prof.pfp;
@@ -493,11 +495,14 @@ function previewFace() {
   // 2026-09-26: "if you have a profile picture assigned, it should show on your
   // me page"). Remove picture empties the box on purpose, and hides it.
   const shown = piece ? id : ($("pfp").dataset.cleared ? "" : publishedFace);
+  // Only offered when there is a picture to remove (a tester, 2026-09-27).
+  $("face-clear").hidden = !(id || shown);
   $("me-face").hidden = !shown;
   $("me-letter").hidden = !!shown;
   if (shown) $("me-face").src = "/content/" + shown;
 }
 $("pfp").addEventListener("input", () => { delete $("pfp").dataset.cleared; previewFace(); });
+$("face-clear").hidden = !($("pfp").value.trim() || publishedFace);
 
 /* The pictures this account holds, to tap rather than paste. Asked once, the
    first time the section is opened. */
