@@ -11,6 +11,7 @@
    tab, through /account/react. See the script at the bottom of the page. #}
 {% set acts = public and mine.tag %}
 <div class="panel feedpost{{ ' reply' if p.is_reply }}" data-author="{{ p.author }}"
+     data-key="{{ p.txid }}"
      style="margin:0 0 12px;{{ 'margin-left:%dpx' % (depth * 22) if depth }}">
   {% set who = bylines.get(p.author, {}) %}
   <div class="row" style="align-items:center;gap:10px">
@@ -675,7 +676,25 @@ function foldComments(button, id){
   if (!thread) return;
   thread.hidden = !thread.hidden;
   button.textContent = thread.hidden ? button.dataset.shut : button.dataset.open;
+  if (thread.hidden) arcadeOpenThreads.delete(id); else arcadeOpenThreads.add(id);
 }
+
+// Threads the reader opened stay open (2026-09-27: "sometimes when I click
+// on the comments ... the comments do not open"). The page refreshes itself in
+// place when anything new arrives (base.html), and a refresh that lined a card up
+// wrongly swapped an open thread for the server's shut one a moment after the
+// press. So the page remembers what was opened, and opens it again after every
+// refresh. (Cards also carry data-key now, so they line up by post.)
+var arcadeOpenThreads = new Set();
+document.addEventListener('arcade:changed', function(){
+  arcadeOpenThreads.forEach(function(id){
+    var thread = document.getElementById(id);
+    if (!thread || !thread.hidden) return;
+    thread.hidden = false;
+    var button = document.getElementById('fold-' + id.slice(7));
+    if (button) button.textContent = button.dataset.open;
+  });
+});
 
 // The count under a post is a promise about a thread, and until today the page
 // kept it for exactly one navigation path: foldComments above is the only code
@@ -710,6 +729,7 @@ function openThreadFromUrl(){
   var thread = document.getElementById(id);
   if (!thread || !thread.hidden) return;
   thread.hidden = false;
+  arcadeOpenThreads.add(id);
   var button = document.getElementById('fold-' + id.slice(7));
   if (button) button.textContent = button.dataset.open;
 }
