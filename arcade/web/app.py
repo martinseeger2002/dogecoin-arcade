@@ -4124,8 +4124,7 @@ def create_app(state: AppState) -> FastAPI:
                         if job.get("floor") == floor and job.get("status") == "done"]
             if finished:
                 job = finished[-1]
-                when = dt.datetime.fromtimestamp(
-                    float(job.get("created") or 0)).strftime("%d %b %H:%M")
+                when = _ago(float(job.get("created") or 0))
                 out["blocked"] = (
                     f"this wallet already inscribed {collection} on this chain "
                     f"-- run {job['id']}, started {when}, {job.get('items', 0):,} "
@@ -6231,9 +6230,7 @@ def create_app(state: AppState) -> FastAPI:
                                                and held_for == ask["buyer"])
                         ask["held_for"] = "" if not held_for or \
                             held_for == ask["buyer"] else held_for
-                        ask["until"] = (time.strftime("%a %H:%M",
-                                                      time.localtime(until))
-                                        if held_for else "")
+                        ask["until"] = _local_time(until, "day") if held_for else ""
                 except Exception:
                     asks = []
         # Said by the wallet, around the frame, because an inscribed page
@@ -8656,8 +8653,7 @@ def create_app(state: AppState) -> FastAPI:
                         if run.get("floor") == floor and run["status"] == "done"]
             if finished:
                 run = finished[-1]
-                when = dt.datetime.fromtimestamp(
-                    float(run.get("created") or 0)).strftime("%d %b %H:%M")
+                when = _ago(float(run.get("created") or 0))
                 out["blocked"] = (
                     f"this account already inscribed {collection} on this "
                     f"chain -- run {run['id']}, started {when}, "
@@ -11241,8 +11237,8 @@ def create_app(state: AppState) -> FastAPI:
             held_for, until = _answer_held(chain, row["txid"])
             if held_for and held_for != ask["buyer"]:
                 raise swaplib.SwapError(
-                    "that piece is answered to somebody else until "
-                    f"{time.strftime('%H:%M', time.localtime(until))} -- their "
+                    "that piece is answered to somebody else for another "
+                    f"{describe_duration(max(0, int(until - time.time())))} -- their "
                     "wallet has to sign first, or the answer has to expire")
             # The buyer has to be reachable for this to end in anything: the
             # answer goes back to them as a message, and an address is a place to
@@ -11355,8 +11351,8 @@ def create_app(state: AppState) -> FastAPI:
             held_for, until = _answer_held(chain, row["txid"])
             if held_for and held_for != ask["buyer"]:
                 raise swaplib.SwapError(
-                    "that piece is answered to somebody else until "
-                    f"{time.strftime('%H:%M', time.localtime(until))}")
+                    "that piece is answered to somebody else for another "
+                    f"{describe_duration(max(0, int(until - time.time())))}")
             take = swaplib.leg_from_json(_take_json(ask, index))
             if take.kind not in (inscriptionlib.LEG_COINS,
                                  inscriptionlib.LEG_TOKEN):
@@ -15537,9 +15533,8 @@ def create_app(state: AppState) -> FastAPI:
                     entry["accepted"] = bool(note and same
                                             and note.get("status") == "open")
                     entry["held_for"] = "" if same else str(note.get("buyer") or "")
-                    entry["until"] = (time.strftime(
-                        "%a %H:%M", time.localtime(float(note["expires"])))
-                        if note else "")
+                    entry["until"] = (_local_time(float(note["expires"]), "day")
+                                      if note else "")
             else:
                 standing = {}
                 for offer in state.offers.open_offers(chain.network):
@@ -15552,7 +15547,7 @@ def create_app(state: AppState) -> FastAPI:
                     held = standing.get(entry["inscription"])
                     entry["accepted"] = bool(held and held["buyer"] == entry["buyer"])
                     entry["held_for"] = held["buyer"] if held else ""
-                    entry["until"] = (time.strftime("%H:%M", time.localtime(held["expires"]))
+                    entry["until"] = (_local_time(held["expires"], "time")
                                       if held else "")
                     entry["settled"] = bool(held and held.get("status") == "sent")
                     entry["swap_txid"] = (held or {}).get("txid", "")
@@ -15945,7 +15940,25 @@ def _picked_up(token: str) -> dict[str, Any]:
     return what
 
 
-def _when(ts: int | None = None) -> str:
-    """A timestamp, or now when called with nothing."""
-    moment = dt.datetime.now() if ts is None else dt.datetime.fromtimestamp(ts)
-    return moment.strftime("%Y-%m-%d %H:%M")
+def _when(ts: int | None = None) -> Markup:
+    """A timestamp, or now when called with nothing -- in the READER's time zone
+    (2026-09-27: "whenever a user sees a timestamp anywhere ... it should
+    be converted to their local time"). Sent as a <time> carrying the moment in
+    UTC; base.html rewrites its text in the browser's own zone. The server's
+    rendering is only what shows before that script runs."""
+    return _local_time(time.time() if ts is None else ts, "full")
+
+
+def _local_time(ts: Any, style: str = "full") -> Markup:
+    """A moment, as the reader's clock says it (see base.html `arcadeLocalTimes`).
+    `style`: "full" (date and time), "time" (hour:minute), "day" (weekday, time)."""
+    try:
+        moment = dt.datetime.fromtimestamp(float(ts), tz=dt.timezone.utc)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return Markup("")
+    shown = {"time": "%H:%M", "day": "%a %H:%M"}.get(style, "%Y-%m-%d %H:%M")
+    return Markup('<time class="lt" data-lt="{s}" datetime="{iso}">{text} UTC</time>').format(
+        s=style, iso=moment.strftime("%Y-%m-%dT%H:%M:%SZ"), text=moment.strftime(shown))
+
+
+TEMPLATES.env.globals["local_time"] = _local_time

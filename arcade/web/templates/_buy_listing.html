@@ -7,6 +7,10 @@
 <script type="module">
 const CHAIN = {network: "{{ chain.network }}",
                version: {{ chain.params.pubkeyhash_version }}};
+// A refresh moves tiles; a note left behind would sit under the wrong one.
+document.addEventListener("arcade:changed", () => {
+  for (const note of document.querySelectorAll(".buynote")) note.remove();
+});
 document.addEventListener("click", async (event) => {
   const button = event.target.closest && event.target.closest("[data-buy-listing]");
   if (!button) return;
@@ -40,7 +44,11 @@ document.addEventListener("click", async (event) => {
     if (!ok) { button.disabled = false; button.textContent = was; return; }
     await wallet.buy(held, offer);
     button.textContent = "Bought ✓";
-    done("It's yours when its block lands, usually within a few minutes.");
+    // Said in a notice of its own, not under the tile: the page re-sorts itself
+    // when the sale lands, and a note tied to a position ended up under another
+    // piece (a tester, 2026-09-27).
+    arcadeToast(`You bought ${piece}. It's yours when its block lands, usually within `
+      + "a few minutes.");
   } catch (e) {
     button.disabled = false;
     button.textContent = was;

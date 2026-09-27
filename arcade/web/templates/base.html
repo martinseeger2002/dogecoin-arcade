@@ -1250,9 +1250,27 @@ function arcadeLabel(root){
     if (name) el.setAttribute('aria-label', name);
   });
 }
+// Every time the server writes, in the reader's own time zone (the operator,
+// 2026-09-27). The server sends <time class="lt" datetime="…Z"> in UTC; this says
+// it the way the reader's clock does. Run on load and after every in-place
+// refresh (the MutationObserver below), so a refreshed page is local too.
+function arcadeLocalTimes(root){
+  (root || document).querySelectorAll('time.lt[datetime]:not([data-done])').forEach(function(t){
+    var at = new Date(t.getAttribute('datetime'));
+    if (isNaN(at)) return;
+    var style = t.getAttribute('data-lt');
+    var opts = style === 'time' ? {hour: 'numeric', minute: '2-digit'}
+             : style === 'day' ? {weekday: 'short', hour: 'numeric', minute: '2-digit'}
+             : {year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'};
+    try { t.textContent = at.toLocaleString(undefined, opts); } catch (e) { return; }
+    t.title = at.toLocaleString(undefined, {dateStyle: 'full', timeStyle: 'long'});
+    t.setAttribute('data-done', '1');
+  });
+}
 document.addEventListener('DOMContentLoaded', function(){
+  arcadeLocalTimes();
   arcadeLabel();
-  try { new MutationObserver(function(){ arcadeLabel(); })
+  try { new MutationObserver(function(){ arcadeLabel(); arcadeLocalTimes(); })
           .observe(document.body, {childList: true, subtree: true}); } catch (e) {}
 });
 
