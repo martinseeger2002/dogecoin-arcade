@@ -9,7 +9,7 @@
   Testnet coins pay message fees; mainnet coins are real.</p>
 
 <p class="muted" id="shut" hidden style="font-size:.86rem">
-  Your wallet is not open in this tab, so nothing here can be signed.
+  Your wallet is locked. Press Unlock at the top of the page, or just carry on: anything that needs your key asks for your password first.
   <a href="/me">Open it</a> and come back.</p>
 
 <div class="msg err" id="trouble" hidden></div>
@@ -135,7 +135,7 @@ $("which").onchange = sayWhich;
 $("send").onclick = async () => {
   say(""); news("");
   try {
-    if (!keys) throw new Error("your wallet is not open in this tab");
+    if (!keys) keys = await arcadeKeys(CHAIN);
     const offer = await wallet.offerSend($("to").value.trim(),
                                          $("amount").value.trim(),
                                          $("which").value);
@@ -158,6 +158,17 @@ $("send").onclick = async () => {
       + (shown.change ? `, and ${shown.coinsOf(shown.change)} comes back to you.` : ".")
       + " Worked out in this browser from the transaction's own bytes.";
     $("confirm-says").append(q, addr, fee);
+    // To yourself is allowed on purpose -- it is how a coin is split so there are
+    // two to sell or answer offers with -- but it is said (a tester, 2026-09-26).
+    const mine = (lastSaid.chains || []).some((c) => c.address && c.address === offer.to);
+    if (mine) {
+      const note = document.createElement("div");
+      note.className = "msg info";
+      note.style.margin = "6px 0 0";
+      note.textContent = "That's your own address. Nothing leaves your wallet but the "
+        + "fee: this splits a coin into two, which selling and answering offers need.";
+      $("confirm-says").append(note);
+    }
     $("confirm").hidden = false;
     $("confirm-yes").onclick = async () => {
       $("confirm").hidden = true;

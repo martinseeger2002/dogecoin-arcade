@@ -151,8 +151,8 @@ const news = (t, ok) => { $("mint-news").textContent = t; $("mint-news").hidden 
                           $("mint-news").className = "msg " + (ok ? "ok" : "err"); };
 $("mint").onclick = async () => {
   news("");
-  const held = await wallet.opened(CHAIN);
-  if (!held) { news("Open your wallet on Your arcade first.", false); return; }
+  const held = (await wallet.opened(CHAIN)) || await arcadeKeys(CHAIN).catch(() => null);
+  if (!held) { news("Sign in and unlock your wallet to mint.", false); return; }
   $("mint").disabled = true; $("mint").textContent = "Minting…";
   try {
     for (let tries = 0; tries < 3; tries++) {

@@ -749,6 +749,7 @@ def test_one_transaction_takes_no_waiting():
 @pytest.mark.parametrize("seconds,expected", [
     (0, "under a minute"), (30, "under a minute"), (90, "about 2 minutes"),
     (600, "about 10 minutes"), (5400, "about 1.5 hours"),
+    (30 * 86400, "about 30 days"), (86400 * 2, "about 2 days"),
 ])
 def test_durations_are_described_coarsely(seconds, expected):
     from arcade.messaging.sender import describe_duration

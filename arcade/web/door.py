@@ -152,6 +152,8 @@ PUBLIC_SHAPES = (
     # run that does not exist, and it has no path under `/me/run/` that spends,
     # names a folder, or reads anybody but the asker's rows.
     re.compile(r"^/me/run/[0-9a-f]{6,32}$"),
+    # One launch's whole discussion, readable by anyone (2026-09-27).
+    re.compile(r"^/launches/[0-9a-f]{64}$"),
 )
 
 #: Prefixes that look public by the rules above and are not. Checked FIRST,
@@ -204,6 +206,9 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # one payment to the account's own address, split for a mintpad
                "/account/split",
                "/account/list/cancel",
+               # pre-signed offers: the buyer's signatures, withdrawing, completing
+               "/account/offer/bid", "/account/offer/bid-build", "/account/offer/withdraw",
+               "/account/accept/complete",
                # the Restore page's new encrypted wallet, signed in by the words' key
                "/account/vault",
                # how the account's own mintpad page looks (presentation only)

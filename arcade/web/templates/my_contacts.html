@@ -223,8 +223,8 @@ function card(entry) {
   drop.style.marginLeft = "auto";
   drop.textContent = "Remove";
   drop.onclick = async () => {
-    if (!confirm(`Remove @${entry.tag} from the address book? `
-                 + "Messages already received are kept.")) return;
+    if (!(await arcadeAsk(`Remove @${entry.tag} from your address book?`,
+                 "Messages already received are kept.", "Remove"))) return;
     await mail.removeFromBook(entry.tag);
     await drawBook();
   };

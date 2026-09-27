@@ -464,4 +464,4 @@ def test_the_page_is_listening_before_a_press_arrives():
     # page and the one that matters is inside this handler.
     listener = source[source.index('document.addEventListener("submit"'):]
     assert (listener.index("event.preventDefault()")
-            < listener.index("const held = await take()"))
+            < listener.index("await take()"))

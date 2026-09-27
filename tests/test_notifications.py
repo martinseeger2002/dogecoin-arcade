@@ -213,3 +213,17 @@ def test_a_mention_in_a_post_is_a_link_to_their_feed():
     assert "bob@example.com" in out and "/u/example" not in out
     assert "&lt;b&gt;" in out, "still escaped first"
     assert 'href="/u/x"' not in out, "a tag is at least two characters"
+
+
+def test_a_swap_names_the_piece_by_its_collection():
+    """a tester, 2026-09-26: "You sold a piece for 7" -- which piece, to whom."""
+    rows = [{"seq": 5, "txid": "aa" * 32, "inscription": "bb" * 32,
+             "from_address": ME, "to_address": THEM, "block_height": 10, "time": 100,
+             "number": 44, "collection": "Skull Squad", "edition": 7},
+            {"seq": 6, "txid": "cc" * 32, "inscription": "dd" * 32,
+             "from_address": ME, "to_address": THEM, "block_height": 11, "time": 101,
+             "number": 45, "collection": None, "edition": None}]
+    got = notify.swap_events(rows, {ME}, {"aa" * 32: 700000000})
+    assert [(e.kind, e.text, e.actor) for e in got] == [
+        ("sold", "Skull Squad #7", THEM), ("sold", "#45", THEM)]
+    assert got[0].amount == 700000000

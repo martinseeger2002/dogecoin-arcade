@@ -34,7 +34,7 @@
       <img class="lface" src="/content/{{ it.txid }}" alt="" style="border-radius:10px">
     {% else %}<span class="lface coinface" style="border-radius:10px"></span>{% endif %}
     <div style="flex:1;min-width:0">
-      <a style="font-weight:600" href="{% if it.kind == 'token' %}/tokens/{{ it.id }}{% else %}/exchange/collection/{{ it.creator }}/{{ it.name|urlencode }}{% endif %}">{{ it.name }}</a>
+      <a style="font-weight:600" href="{% if it.kind == 'token' %}/tokens/{{ it.id }}{% else %}/exchange/collection/{{ it.creator }}/{{ it.name|urlencode }}{% endif %}">{{ wall(it.name) }}</a>
       <span class="pill">{{ 'token' if it.kind == 'token' else 'collection' }}</span>
       <div class="muted" style="font-size:.82rem">by
         {% if names.get(it.creator) %}<a href="/u/{{ names[it.creator] }}">@{{ names[it.creator] }}</a>
@@ -72,10 +72,16 @@
   <div class="lcomments">
     {% for c in it.comment_rows %}
     <div class="muted" style="font-size:.86rem;margin-top:6px">
-      <strong>{% if names.get(c.author) %}@{{ names[c.author] }}{% else %}{{ c.author[:10] }}…{% endif %}</strong>
+      <strong>{{ c.author|who }}</strong>
       {{ c.text }}</div>
     {% endfor %}
   </div>
+  {% endif %}
+  {% if it.txid %}
+  {# The whole discussion, replies and all, open to anyone (2026-09-27). #}
+  <a class="small" style="display:inline-block;margin-top:6px" href="/launches/{{ it.txid }}">
+    {%- if it.comments %}View all {{ it.comments }} comment{{ '' if it.comments == 1 else 's' }} and replies &rarr;
+    {%- else %}Discuss it &rarr;{% endif %}</a>
   {% endif %}
   {% if acts %}
   <form method="post" action="/feed/{{ it.txid }}/reply" id="c-{{ it.txid }}" hidden
@@ -112,8 +118,8 @@ document.addEventListener("submit", async (event) => {
     /^\/feed\/([0-9a-f]{64})\/(like|unlike|dislike|undislike|reply)$/);
   if (!one) return;
   event.preventDefault();
-  const held = await opening;
-  if (!held) { say("Open your wallet on Your arcade first.", true); return; }
+  const held = (await opening) || await arcadeKeys(CHAIN).catch(() => null);
+  if (!held) { say("Unlock your wallet to do that.", true); return; }
   const [, txid, doing] = one;
   const button = form.querySelector("button[type=submit]");
   // Pressed shows at once, before the block (2026-09-25).

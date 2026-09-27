@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ ('@' ~ whose.tag) if whose else 'Feed' }} · DogecoinArcade{% endblock %}
+{% block title %}{{ wall_text('@' ~ whose.tag, 'A profile') if whose else 'Feed' }} · DogecoinArcade{% endblock %}
 
 {# One card, drawn for a post and for every reply under it, however deep: a
    reply is a post as far as this page is concerned, which is what the format
@@ -11,6 +11,7 @@
    tab, through /account/react. See the script at the bottom of the page. #}
 {% set acts = public and mine.tag %}
 <div class="panel feedpost{{ ' reply' if p.is_reply }}" data-author="{{ p.author }}"
+     data-key="{{ p.txid }}"
      style="margin:0 0 12px;{{ 'margin-left:%dpx' % (depth * 22) if depth }}">
   {% set who = bylines.get(p.author, {}) %}
   <div class="row" style="align-items:center;gap:10px">
@@ -18,11 +19,15 @@
       <img class="coinface" src="/content/{{ who.face }}" alt=""
            style="width:38px;height:38px;border-radius:50%;object-fit:cover">
     {% else %}
-      <span class="coinface" style="width:38px;height:38px;border-radius:50%"></span>
+      {# A letter, as Notifications draws one, not an empty circle (a tester). #}
+      {% set initial = (who.tag or p.author[1:2] or '?')[:1]|upper %}
+      <span class="coinface" aria-hidden="true"
+            style="width:38px;height:38px;border-radius:50%;display:grid;place-items:center;
+                   font-weight:700;color:#fff;background:hsl({{ p.author|hue }} 45% 42%)">{{ initial }}</span>
     {% endif %}
     <div>
       {% if who.tag %}
-        <a href="/u/{{ who.tag }}" style="font-weight:600">@{{ who.tag }}</a>
+        <a href="/u/{{ who.tag }}" style="font-weight:600">{{ wall('@' ~ who.tag) }}</a>
       {% else %}
         <span style="font-weight:600">{{ p.author|who }}</span>
       {% endif %}
@@ -39,7 +44,7 @@
        node never held. So the second half asks the chain. #}
     {% if (p.mine and not public) or (acts and p.author == mine.address) %}
     <form method="post" action="/feed/{{ p.txid }}/delete" style="margin-left:auto"
-          onsubmit="return confirm('Delete this? The words stay on the chain for ever — no arcade will show them.')">
+          {% if not acts %}onsubmit="return confirm('Delete this? The words stay on the chain for ever — no arcade will show them.')"{% endif %}>
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="back" value="{{ here }}">
       <button class="ghost small" type="submit">Delete</button></form>
@@ -74,12 +79,12 @@
     <details class="covered" style="margin:10px 0 0">
       <summary>Sensitive post &mdash; tap to show</summary>
       <div class="posttext" style="margin:8px 0 0;white-space:pre-wrap"
-        >{{ render_post(p.text, drawable) }}</div></details>
+        >{{ render_post(p.text, drawable, frames) }}</div></details>
     {% elif seen is none %}
     <p class="muted posttext" style="margin:10px 0 0">Checking this post&hellip;</p>
     {% else %}
     <div class="posttext" style="margin:10px 0 0;white-space:pre-wrap"
-      >{{ render_post(p.text, drawable) }}</div>
+      >{{ render_post(p.text, drawable, frames) }}</div>
     {% endif %}
   {% endif %}
 
@@ -110,8 +115,12 @@
     <form method="post" action="/feed/{{ p.txid }}/share" style="margin:0">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="back" value="{{ here }}">
-      <button class="ghost small" type="submit"
-              title="Put this on your own feed">Share {{ p.shares or '' }}</button></form>
+      {# Shared once is shared: a second share is a second paid transaction
+         saying the same thing (a tester, 2026-09-26). #}
+      <button class="ghost small{{ ' on' if p.shared_by_me }}" type="submit"
+              {{ 'disabled' if p.shared_by_me }}
+              title="{{ 'You shared this' if p.shared_by_me else 'Put this on your own feed' }}">
+        {{ 'Shared ✓' if p.shared_by_me else 'Share' }} {{ p.shares or '' }}</button></form>
 
     {% if acts %}
     {# The one of these that costs something gets the amount box the
@@ -220,18 +229,20 @@
       border-radius:10px;margin:8px 0}
 </style>
 {% if whose %}
-  <div class="row" style="align-items:center;gap:12px">
+  {# Wraps on a phone instead of pushing the page sideways (a tester,
+     2026-09-26: /u/someone was 9px too wide at 540px). #}
+  <div class="row" style="align-items:center;gap:12px;flex-wrap:wrap;min-width:0">
     {% if whose.face %}
       <img src="/content/{{ whose.face }}" alt=""
            style="width:64px;height:64px;border-radius:50%;object-fit:cover">
     {% endif %}
-    <div>
-      <h1 style="margin:0">@{{ whose.tag }}{% if whose.claiming %}
+    <div style="min-width:0;flex:1 1 200px;overflow-wrap:anywhere">
+      <h1 style="margin:0;overflow-wrap:anywhere">{{ wall('@' ~ whose.tag) }}{% if whose.claiming %}
         <span class="pill warn" style="font-size:.6em;vertical-align:middle"
               title="Their claim is in the mempool: every node can see it, and it is theirs when its block lands"
           >claiming</span>{% endif %}</h1>
       {% if whose.bio %}<p style="margin:2px 0 0;max-width:60ch">{{ whose.bio }}</p>{% endif %}
-      <div class="row" style="gap:10px;margin-top:2px">
+      <div class="row" style="gap:10px;margin-top:2px;flex-wrap:wrap;min-width:0">
         {% if whose.address %}
           <a class="muted" style="font-size:.86rem"
              href="/u/{{ whose.tag }}/wallet">@{{ whose.tag }}'s wallet</a>
@@ -246,7 +257,7 @@
            whole thing up to paste. If this is ever revisited the replacement
            is an interstitial naming the destination — never a bare anchor. #}
         {% if whose.url %}
-          <span class="muted mono" style="font-size:.86rem"
+          <span class="muted mono" style="font-size:.86rem;overflow-wrap:anywhere;min-width:0"
                 title="their link, published by them — copy it, do not click it"
                 >{{ whose.url }}</span>
         {% endif %}
@@ -357,10 +368,25 @@
      differs is that nothing is sent until it is signed here. #}
   <div class="feedcomposer" id="account-composer">
     <div class="saybox">
-      <textarea autocomplete="off" id="account-say" rows="2"
+      <textarea autocomplete="off" id="account-say" rows="2" maxlength="2000"
+        aria-label="Your post"
         placeholder="Say something as @{{ mine.tag }}"></textarea></div>
     <button type="button" id="account-post">Post</button>
   </div>
+  {# The same cap as a reply, shown as it is typed: a longer post is more bytes
+     on the chain, and costs more (a tester, 2026-09-26). #}
+  <div class="muted small" id="account-count" style="text-align:right" aria-live="polite"></div>
+  <script>
+  (function () {
+    var box = document.getElementById('account-say'), out = document.getElementById('account-count');
+    if (!box || !out) return;
+    var draw = function () {
+      var n = box.value.length;
+      out.textContent = n ? n + ' / 2000' + (n > 280 ? ' \u00b7 longer posts cost a little more' : '') : '';
+    };
+    box.addEventListener('input', draw);
+  })();
+  </script>
   <div class="muted small" id="account-said" style="margin-top:6px"></div>
   <div id="account-unlock" hidden style="margin-top:8px">
     <p class="muted small" style="margin:0 0 6px">Your wallet is locked in
@@ -420,11 +446,11 @@
 
     $("account-post").onclick = async () => {
       say("");
-      const held = await take();
-      if (!held) { $("account-unlock").hidden = false;
-                   say("Unlock your wallet first.", true); return; }
       const text = $("account-say").value.trim();
-      if (!text) return;
+      // Said, not silently ignored (a tester, 2026-09-26).
+      if (!text) { say("Write something first.", true); $("account-say").focus(); return; }
+      const held = (await take()) || await arcadeKeys(CHAIN).catch(() => null);
+      if (!held) { say("Unlock your wallet to post.", true); return; }
       $("account-post").disabled = true;
       try {
         const out = await wallet.post(held, text);
@@ -531,14 +557,19 @@
     if (!one) return;               // the composer, or a page with no door
     event.preventDefault();
     say("");
-    const held = await take();
+    // Locked: the unlock sheet opens right here, and the like, reply or tip
+    // carries on after (a tester, 2026-09-26).
+    const held = (await take()) || await arcadeKeys(CHAIN).catch(() => null);
     if (!held) {
-      $("acts-unlock").hidden = false;
-      say("Unlock your wallet first.", true);
+      say("Unlock your wallet to do that.", true);
       return;
     }
     const [, txid, doing] = one;
     const button = form.querySelector("button[type=submit]");
+    if (doing === "delete" && !(await arcadeAsk("Delete this?",
+        "The words stay on the chain for ever, but no arcade will show them.", "Delete"))) {
+      return;
+    }
     if (button) button.disabled = true;
     try {
       let out;
@@ -573,10 +604,29 @@
       }
       say(`${DONE[doing]}. It counts here when its block lands `
           + `(${out.txid.slice(0, 12)}…).`);
+      near(form, `${DONE[doing]}. It counts when its block lands, in a minute or so.`, true);
     } catch (e) {
       say(String(e.message || e), true);
+      near(form, String(e.message || e));
     } finally { if (button) button.disabled = false; }
   });
+
+  // What went wrong, said beside the button that was pressed, not only in the
+  // box at the top of the page (a tester, 2026-09-26: a tip over the balance
+  // "gives no message at all" -- it did, out of sight).
+  function near(form, text, ok) {
+    const at = form.closest(".row") || form;
+    let p = at.parentNode.querySelector(":scope > .acterr");
+    if (!p) {
+      p = document.createElement("p");
+      p.className = "msg acterr";
+      p.style.margin = "6px 0 0";
+      at.after(p);
+    }
+    p.classList.toggle("ok", !!ok);
+    p.classList.toggle("err", !ok);
+    p.textContent = text.charAt(0).toUpperCase() + text.slice(1);
+  }
 </script>
 {% endif %}
 
@@ -626,7 +676,25 @@ function foldComments(button, id){
   if (!thread) return;
   thread.hidden = !thread.hidden;
   button.textContent = thread.hidden ? button.dataset.shut : button.dataset.open;
+  if (thread.hidden) arcadeOpenThreads.delete(id); else arcadeOpenThreads.add(id);
 }
+
+// Threads the reader opened stay open (2026-09-27: "sometimes when I click
+// on the comments ... the comments do not open"). The page refreshes itself in
+// place when anything new arrives (base.html), and a refresh that lined a card up
+// wrongly swapped an open thread for the server's shut one a moment after the
+// press. So the page remembers what was opened, and opens it again after every
+// refresh. (Cards also carry data-key now, so they line up by post.)
+var arcadeOpenThreads = new Set();
+document.addEventListener('arcade:changed', function(){
+  arcadeOpenThreads.forEach(function(id){
+    var thread = document.getElementById(id);
+    if (!thread || !thread.hidden) return;
+    thread.hidden = false;
+    var button = document.getElementById('fold-' + id.slice(7));
+    if (button) button.textContent = button.dataset.open;
+  });
+});
 
 // The count under a post is a promise about a thread, and until today the page
 // kept it for exactly one navigation path: foldComments above is the only code
@@ -661,6 +729,7 @@ function openThreadFromUrl(){
   var thread = document.getElementById(id);
   if (!thread || !thread.hidden) return;
   thread.hidden = false;
+  arcadeOpenThreads.add(id);
   var button = document.getElementById('fold-' + id.slice(7));
   if (button) button.textContent = button.dataset.open;
 }

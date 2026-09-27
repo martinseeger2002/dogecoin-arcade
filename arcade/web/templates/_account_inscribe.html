@@ -175,8 +175,7 @@ const askYes = (title, detail, yes = "Inscribe") => arcadeAsk(title, detail, yes
 async function offerAndConfirm(where, body, says, done) {
   say(""); news("");
   try {
-    const held = await take();
-    if (!held) throw new Error("your wallet is not open in this tab");
+    const held = (await take()) || await arcadeKeys(CHAIN);
     const asked = await fetch(where, {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify(body),
@@ -311,8 +310,7 @@ async function inscribeTheFile() {
   let bytes;
   try { bytes = new Uint8Array(await file.arrayBuffer()); }
   catch (e) { say(String(e.message || e)); return; }
-  const held = await take();
-  if (!held) { say("your wallet is not open in this tab"); return; }
+  const held = (await take()) || await arcadeKeys(CHAIN);
   try {
     const start = await ask("/account/inscribe", {
       content: b64(bytes),
@@ -820,8 +818,7 @@ $("run-piece").onclick = async () => {
     return;
   }
   try {
-    const held = await take();
-    if (!held) throw new Error("your wallet is not open in this tab");
+    const held = (await take()) || await arcadeKeys(CHAIN);
     const first = await ask("/account/run/piece", {run});
     if (first.finished) {
       news(`That run is finished. All ${commas(first.items)} of them are on the chain.`);

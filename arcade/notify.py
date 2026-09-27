@@ -155,7 +155,12 @@ def swap_events(rows: Iterable[dict], owners: set[str],
         out.append(Event(source="swap", seq=int(r["seq"]),
                          kind="sold" if sold else "bought",
                          actor=r["to_address"] if sold else r["from_address"],
-                         target=r["inscription"], text=f"#{r['number']:,}",
+                         target=r["inscription"],
+                         # By its name in its collection where it has one: "Skull
+                         # Squad #7" rather than "#44" (a tester, 2026-09-26).
+                         text=(f"{r['collection']} #{r['edition']}"
+                               if r.get("collection") and r.get("edition") is not None
+                               else f"#{r['number']:,}"),
                          at=int(r["time"] or 0), amount=int((paid or {}).get(r["txid"], 0)),
                          extra={"txid": r["txid"]}))
     return out

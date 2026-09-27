@@ -1006,4 +1006,9 @@ def describe_duration(seconds: int) -> str:
     if minutes < 60:
         return f"about {minutes} minute{'' if minutes == 1 else 's'}"
     hours = seconds / 3600
-    return f"about {hours:.1f} hours"
+    if hours < 36:
+        return f"about {hours:.1f} hours"
+    # Days past a day and a half (a tester, 2026-09-26: a listing read "open
+    # about 720.0 hours" for "30 days").
+    days = round(hours / 24)
+    return f"about {days} day{'' if days == 1 else 's'}"

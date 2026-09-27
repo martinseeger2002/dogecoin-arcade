@@ -92,7 +92,7 @@
   {% for t in pending_tokens %}
     <tr>
       <td style="width:40px"><span class="coinface"></span></td>
-      <td><strong>{{ t.name }}</strong>
+      <td><strong>{{ wall(t.name, 'token name') }}</strong>
         <span class="pill warn"
               title="In the mempool: everybody can see it, and it is a token when its block lands"
           >waiting for its block</span></td>
@@ -105,10 +105,10 @@
     <tr>
       <td style="width:40px"><a href="/tokens/{{ t.property_id }}">
         {%- set face = faces.get(t.property_id, {}) -%}
-        {%- if face.icon %}<img src="/content/{{ face.icon }}" alt="{{ t.name }}"
+        {%- if face.icon %}<img src="/content/{{ face.icon }}" alt="{{ wall_text(t.name) }}"
           loading="lazy" style="width:32px;height:32px;object-fit:cover;border-radius:50%;display:block">
         {%- else %}<span class="coinface"></span>{% endif %}</a></td>
-      <td><a href="/tokens/{{ t.property_id }}"><strong>{{ t.name }}</strong></a>
+      <td><a href="/tokens/{{ t.property_id }}"><strong>{{ wall(t.name, 'token name') }}</strong></a>
         <span class="muted" style="font-size:.78rem">#{{ t.property_id }}</span>
         {% if t.test_ecosystem %}<span class="tag testnet">test ecosystem</span>{% endif %}
         {% if t.managed %}<span class="muted" style="font-size:.78rem">managed</span>{% endif %}</td>

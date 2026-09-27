@@ -41,6 +41,7 @@ from .. import backup, media, tokens as tokenlib, wallet as walletlib
 from ..ledger import COIN, AmountError, format_amount, parse_amount
 from ..config import NETWORKS, MainnetRefused, WrongChain
 from .. import inscribe as inscribelib
+from .. import bids as bidslib
 from .. import collections as collectionlib
 from .. import approvals as approvalslib
 from .. import payload as P
@@ -261,8 +262,11 @@ def _screen_text(text: str):
 
 
 TEMPLATES.env.globals["screen_text"] = _screen_text
-TEMPLATES.env.globals["render_post"] = lambda text, drawable=None: Markup(
-    post_html(text, drawable))
+# A steady colour per address, for letter avatars (the feed, like Notifications).
+TEMPLATES.env.filters["hue"] = lambda text: int(
+    hashlib.sha256(str(text or "").encode()).hexdigest()[:4], 16) % 360
+TEMPLATES.env.globals["render_post"] = lambda text, drawable=None, frames=None: Markup(
+    post_html(text, drawable, frames))
 
 
 #: An inscription named in a post: a bare id is not enough, because a post is
@@ -289,7 +293,8 @@ def mentioned_in(text: str) -> set[str]:
     return {m.group(1).lower() for m in _MENTION.finditer(text or "")}
 
 
-def post_html(text: str, drawable: dict[str, str] | None = None) -> str:
+def post_html(text: str, drawable: dict[str, str] | None = None,
+              frames: dict[str, str] | None = None) -> str:
     """One post's words as HTML: escaped first, then its inscriptions drawn.
 
     Everything is escaped before anything is added, so a post that contains
@@ -316,8 +321,11 @@ def post_html(text: str, drawable: dict[str, str] | None = None) -> str:
         elif kind == "text/html":
             # Same sandbox as the inscription viewer: no same-origin, so it
             # cannot reach this page, this wallet or anybody's storage.
+            # `frames` gives the pages host and the viewer's ticket, as the
+            # piece page does, so an embed greets whoever reads the feed.
+            src = html.escape((frames or {}).get(piece) or f"/content/{piece}")
             out.append(f'<iframe class="inscription-frame postmedia" '
-                       f'src="/content/{piece}" loading="lazy" '
+                       f'src="{src}" loading="lazy" '
                        f'sandbox="allow-scripts allow-pointer-lock"></iframe>')
         else:
             out.append(f'<a href="/inscriptions/{piece}/view">'
@@ -387,12 +395,13 @@ ACCOUNT_NAV = [
 
 LOCKED_PAGE = """<!doctype html><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>DogecoinArcade</title>
+<title>%(title)s · DogecoinArcade</title>
 <style>body{font:16px/1.5 system-ui,sans-serif;margin:0;display:grid;
 place-items:center;min-height:100vh;background:#12131a;color:#e8e8ea}
 div{max-width:26rem;padding:2rem;text-align:center}
-h1{font-size:1.2rem}p{color:#a0a0ab}</style>
-<div><h1>%s</h1><p>%s</p></div>
+h1{font-size:1.2rem}p{color:#a0a0ab}a{color:#f0c040}</style>
+<div><h1>%(title)s</h1><p>%(detail)s</p>
+<p><a href="/">Home</a> &middot; <a href="/feed">Feed</a> &middot; <a href="/me">Your arcade</a></p></div>
 """
 
 
@@ -471,7 +480,8 @@ def secure_context(request: Request) -> bool:
 def locked(title: str, detail: str, status: int = 403) -> HTMLResponse:
     """What a stranger sees. Deliberately plain: it names nothing about this
     wallet, because whoever is reading it has not shown they may see it."""
-    return HTMLResponse(LOCKED_PAGE % (title, detail), status_code=status)
+    return HTMLResponse(LOCKED_PAGE % {"title": title, "detail": detail},
+                        status_code=status)
 
 
 def the_door(state: AppState):
@@ -735,6 +745,12 @@ def create_app(state: AppState) -> FastAPI:
             # key-publishing check every page runs (base.html).
             "account_here": bool(_public_request(request)
                                  and signed_in(request) is not None),
+            # The name its wallet opens under, for the unlock sheet every page
+            # carries (a tester, 2026-09-26: "unlock your wallet from each page").
+            "account_name": _account_name(request),
+            # A stranger on the public site: a sign-in hint on every page.
+            "stranger_here": bool(_public_request(request)
+                                  and signed_in(request) is None),
             "unread_board": _unread_board(),
             # The operator's own badge: on a public page nobody sees it, and
             # working it out asks the node's wallet which addresses are its own.
@@ -2477,6 +2493,25 @@ def create_app(state: AppState) -> FastAPI:
                                  me=state.derived_address if me is None
                                  else me, muted=muted)
 
+    def _frames_for(request: Request, drawable: dict[str, str]) -> dict[str, str]:
+        """Where each HTML embed on a feed page loads from: the pages host, with
+        the looking account's ticket (a tester, 2026-09-26: an embed on the feed
+        said "open this in a wallet" to a signed-in viewer, because its frame
+        was on the main host with no ticket, and /r/wallet answered "off")."""
+        pieces = [k for k, v in drawable.items() if v == "text/html"]
+        if not pieces:
+            return {}
+        base = state.pages_origin or ""
+        here = ""
+        if _public_request(request):
+            looking = signed_in(request)
+            if looking is not None:
+                here = _account_address(looking.pubkey, _token_chain()[0])
+        network = _token_chain()[0].network
+        return {piece: f"{base}/content/{piece}"
+                       + (f"?v={_viewer_ticket(here, network, piece)}" if here else "")
+                for piece in pieces}
+
     def _drawable_in(shown: list[Any]) -> dict[str, str]:
         """The content type of every inscription these posts name.
 
@@ -2602,7 +2637,26 @@ def create_app(state: AppState) -> FastAPI:
         # address book. An account's book lives only in its browser, and asking
         # the node for "these people's posts" would hand it the book, so the
         # node sends the newest posts and the page hides the rest.
-        sort = sort if sort in ("new", "friends") else "popular"
+        #
+        # Anything else is refused, not quietly answered with the default page
+        # (a tester, S14: hot/top/old/... all returned Popular). And one cursor
+        # shape per stream (S12/S14): Popular's is `id@score@asof`, New's a bare
+        # id. A cursor that does not parse, or belongs to the other stream, is a
+        # client that lost its place -- told so with a 400 rather than handed
+        # page one again as though nothing happened. An EMPTY before= is page one.
+        if sort not in ("popular", "new", "friends"):
+            raise HTTPException(400, "sort is popular, new or friends")
+        if before is not None and str(before).strip() != "":
+            token = str(before).strip()
+            ident = token.partition("@")[0]
+            if not ident.isdigit():
+                raise HTTPException(400, "that is not a feed cursor")
+            if sort == "popular" and "@" not in token:
+                raise HTTPException(400, "that cursor is from the New feed, not Popular")
+            if sort != "popular" and "@" in token:
+                raise HTTPException(400, "that cursor is from the Popular feed, not New")
+        elif before is not None:
+            before = None
         rows, cursor, waiting = _feed_page(
             chain.network, before=before,
             sort="new" if sort == "friends" else sort)
@@ -2643,7 +2697,8 @@ def create_app(state: AppState) -> FastAPI:
             pass                      # a badge is not worth failing a page for
         return render(request, "feed.html", chain=chain, posts=shown,
                       bylines=_bylines(shown, waiting),
-                      drawable=_drawable_in(shown), cursor=cursor, whose=None,
+                      drawable=(drawn := _drawable_in(shown)),
+                      frames=_frames_for(request, drawn), cursor=cursor, whose=None,
                       missing=missing, not_an_id=bool(named),
                       here="/feed" if sort == "popular" else f"/feed?sort={sort}",
                       sort=sort, mine=mine, kinds=feedlib.BY_NAME,
@@ -2662,7 +2717,8 @@ def create_app(state: AppState) -> FastAPI:
         shown = _shown(rows, chain.network, waiting, me=mine["address"])
         return render(request, "feed.html", chain=chain, posts=shown,
                       bylines=_bylines(shown, waiting),
-                      drawable=_drawable_in(shown), cursor=cursor,
+                      drawable=(drawn := _drawable_in(shown)),
+                      frames=_frames_for(request, drawn), cursor=cursor,
                       whose={"tag": wanted, "address": address,
                              "claiming": claiming,
                              "face": _face_for(address),
@@ -3895,14 +3951,30 @@ def create_app(state: AppState) -> FastAPI:
         page = max(1, min(page, pages))
         rows = index.collection_items(creator, name, limit=PAGE_INSCRIPTIONS,
                                       offset=(page - 1) * PAGE_INSCRIPTIONS)
+        # Whose pieces these are, for the Send button: the looking account's on
+        # a public copy, never the node's wallet (the D-184 shape, again).
+        owned, _held, _coins = _offerable(chain, index, request)
+        public = _public_request(request)
+        # What is for sale, buyable with one press (2026-09-27): shown on
+        # each listed card and gathered at the top, so the page reads "for sale
+        # first" like the market does (a tester, the same day).
+        listed = {}
         try:
-            with chain.rpc() as rpc:
-                owned = set(_ledger_addresses(rpc))
+            listed = {t: e for t, e in _prices_for(index, chain, asks=not public).items()
+                      if e.get("collection") == name}
         except Exception:
-            owned = set()
-        senders = {r["owner"] for r in rows} | {creator}
+            listed = {}
+        for row in rows:
+            row["listing"] = listed.get(row["txid"])
+        for_sale = []
+        for txid, entry in sorted(listed.items(), key=lambda kv: kv[1].get("sats") or 0):
+            got = index.inscription(txid)
+            if got and got["creator"] == creator:
+                for_sale.append({**got, "listing": entry})
+        senders = {r["owner"] for r in rows} | {creator} | {r["owner"] for r in for_sale}
         return render(request, "collection.html", chain=chain, node=chain.status(),
                       summary=summary, inscriptions=rows, owned=owned,
+                      for_sale=for_sale, account_view=public,
                       tags=index.tags_for(sorted(senders)),
                       traits=index.collection_traits(creator, name),
                       page=page, pages=pages, per_page=PAGE_INSCRIPTIONS)
@@ -4651,6 +4723,42 @@ def create_app(state: AppState) -> FastAPI:
         _names[address] = (tag, now)
         return tag
 
+    def _verdict_of(text: str) -> str:
+        """The screening's word on some text shown on a page: "sensitive",
+        "illegal", or "" (fine, not judged yet, or screening off). Never waits:
+        an unjudged text is queued and walled from the next draw on."""
+        try:
+            screen = state.screen()
+            if not screen.enabled or not (text or "").strip():
+                return ""
+            said = screen.check_text(text)
+        except Exception:
+            return ""
+        return said if said in ("sensitive", "illegal") else ""
+
+    def _walled(text: str, shown: Any = None, label: str = "name") -> Markup:
+        """Anything the site displays behind a "show me" wall when the screening
+        says it is sensitive (2026-09-26: "any user @tag, any tokens or
+        NFTs or anything that the site displays that may be considered sensitive
+        should be behind a show me wall"). The words are in a <template>, which a
+        page does not draw until the reader taps; a reader who has turned on
+        "Show sensitive content" (/me) sees them straight away (base.html)."""
+        body = shown if shown is not None else Markup.escape(text)
+        verdict = _verdict_of(str(text or ""))
+        if not verdict:
+            return Markup(body)
+        if verdict == "illegal":
+            return Markup('<span class="muted">[removed]</span>')
+        return Markup('<span class="sens-wall"><button type="button" class="sens-btn">'
+                      'Sensitive {l} &mdash; tap to show</button>'
+                      '<template>{b}</template></span>').format(l=label, b=Markup(body))
+
+    TEMPLATES.env.globals["wall"] = lambda text, label="name": _walled(
+        str(text or ""), None, label)
+    # For places no markup can go -- a <title>, an alt, an attribute.
+    TEMPLATES.env.globals["wall_text"] = lambda text, instead="Sensitive": (
+        instead if _verdict_of(str(text or "")) else str(text or ""))
+
     def _who(address: Any, short: int = 12) -> Markup:
         """A template filter: another person, as their @tag linked to their page,
         or a shortened address when they have not claimed one (the operator,
@@ -4662,8 +4770,8 @@ def create_app(state: AppState) -> FastAPI:
             return Markup("")
         tag = _name_of(address)
         if tag:
-            return Markup('<a href="/u/{t}" title="{a}">@{t}</a>').format(
-                t=tag, a=address)
+            return _walled(tag, Markup('<a href="/u/{t}" title="{a}">@{t}</a>').format(
+                t=tag, a=address))
         shown = address if len(address) <= short + 1 else address[:short] + "\u2026"
         return Markup('<span class="mono" title="{a}">{s}</span>').format(
             a=address, s=shown)
@@ -4672,11 +4780,36 @@ def create_app(state: AppState) -> FastAPI:
         """The same person as plain words, for an attribute or a confirmation."""
         address = str(address or "")
         tag = _name_of(address)
+        if tag and _verdict_of(tag):
+            return "a name hidden as sensitive"
         return f"@{tag}" if tag else (address[:12] + "\u2026" if len(address) > 13 else address)
 
     TEMPLATES.env.filters["who"] = _who
     TEMPLATES.env.filters["who_text"] = _who_text
     TEMPLATES.env.globals["name_of"] = _name_of
+
+    def _to_join(request: Request):
+        """To sign in, and back to where they were going afterwards (a tester,
+        2026-09-26: after /me/wallet -> /join you landed on /me)."""
+        from urllib.parse import quote
+        path = request.url.path
+        if request.url.query:
+            path += "?" + request.url.query
+        return RedirectResponse("/join?next=" + quote(path, safe=""), status_code=303)
+
+    def _account_name(request: Request) -> str:
+        """The name the signed-in account's encrypted wallet is kept under here,
+        or "" (not signed in, or a wallet this node was only shown)."""
+        if not _public_request(request):
+            return ""
+        account = signed_in(request)
+        if account is None:
+            return ""
+        try:
+            row = state.vault().by_pubkey(account.pubkey) or {}
+            return str(row.get("tag") or "")
+        except Exception:
+            return ""
 
     def _tag_of_whoever_is_asking(request: Request) -> dict[str, Any]:
         """Whose name to show on a page: the reader's, not the node's.
@@ -6080,6 +6213,13 @@ def create_app(state: AppState) -> FastAPI:
                                  if p["owner"] == here],
                                 index.offers_on([here]))
                             if o["inscription"] == row["txid"]]
+                    # Pre-signed offers: withdrawn, spent or already done ones
+                    # are not offers any more; open ones accept in one press.
+                    marks = _bids.statuses([o["txid"] for o in asks])
+                    asks = [o for o in asks
+                            if marks.get(o["txid"]) not in ("withdrawn", "stale", "filled")]
+                    for o in asks:
+                        o["presigned"] = marks.get(o["txid"]) == bidslib.OPEN
                     for ask in asks:
                         ask["price"] = swaplib.describe_leg(_take_json(ask, index))
                         ask["give"] = swaplib.describe_leg(swaplib.leg_json(
@@ -6134,7 +6274,7 @@ def create_app(state: AppState) -> FastAPI:
         # Whether this piece is already for sale, so the wallet that holds it
         # is offered the listing it has rather than a second one.
         try:
-            sale = _prices_for(index, chain).get(row["txid"])
+            sale = _prices_for(index, chain, asks=not public).get(row["txid"])
         except Exception:
             sale = None
         # A listing somebody signed in their own browser (`/account/list`) is
@@ -6162,8 +6302,10 @@ def create_app(state: AppState) -> FastAPI:
                     my_offers = [o for o in _merge_offers(
                         [p for p in index.pending_offers() if p["buyer"] == me_at],
                         index.offers_by([me_at])) if o["inscription"] == row["txid"]]
+                    marks = _bids.statuses([o["txid"] for o in my_offers])
                     for o in my_offers:
                         o["price"] = swaplib.describe_leg(_take_json(o, index))
+                        o["bid_status"] = marks.get(o["txid"], "")
             except Exception:
                 my_offers = []
         # A swap of this piece already in the mempool: its offers are not
@@ -6246,6 +6388,59 @@ def create_app(state: AppState) -> FastAPI:
                       faces=faces, mine=mine, when=_when,
                       names=_tags_for([i["creator"] for i in items]
                                       + [c["author"] for i in items for c in i["comment_rows"]]))
+
+    @app.get("/launches/{txid}", response_class=HTMLResponse)
+    def launch_thread(request: Request, txid: str):
+        """One launch's whole discussion (2026-09-27: "if somebody has
+        commented on one of the launches, anyone should be able to see it and
+        comment on the comment just like in the feed").
+
+        A comment is a feed REPLY aimed at the launch's creating transaction, and
+        a reply to a comment is a REPLY aimed at that comment -- the feed's own
+        shape -- so the thread is read out of `feed_act`, level by level, with the
+        mempool on top so a comment made a minute ago is already there.
+        """
+        txid = (txid or "").lower()
+        chain, index = _token_chain()
+        launch = next((i for i in index.launches(limit=1000) if i.get("txid") == txid), None)
+        if launch is None:
+            raise HTTPException(404, "no such launch")
+        mine = _tag_of_whoever_is_asking(request)
+        waiting = _pending_feed(state.messaging.network)
+        pool = [dict(a, height=a.get("height") or 0) for a in (waiting.acts or [])]
+        acts: list[dict] = []
+        level, seen = [txid], set()
+        for _depth in range(6):                    # six deep is deep enough
+            if not level:
+                break
+            try:
+                with state.store() as store:
+                    got = [dict(a) for a in store.feed_acts_on(state.messaging.network, level)]
+            except Exception:
+                got = []
+            known = {a["txid"] for a in got}
+            got += [a for a in pool if a.get("target") in set(level) and a["txid"] not in known]
+            acts += [a for a in got if a["txid"] not in seen]
+            seen |= {a["txid"] for a in got}
+            level = [a["txid"] for a in got if a["kind"] == feedlib.REPLY]
+        replies = [a for a in acts if a["kind"] == feedlib.REPLY]
+        likes: dict[str, set] = {}
+        for a in acts:
+            if a["kind"] == feedlib.LIKE:
+                likes.setdefault(a["target"], set()).add(a["author"])
+            elif a["kind"] == feedlib.UNLIKE:
+                likes.setdefault(a["target"], set()).discard(a["author"])
+        me = mine.get("address") or ""
+        by_parent: dict[str, list] = {}
+        for r in replies:
+            by_parent.setdefault(r["target"], []).append({
+                "txid": r["txid"], "author": r["author"], "text": r["text"] or "",
+                "when": r.get("block_time") or 0, "pending": not (r.get("height") or 0),
+                "likes": len(likes.get(r["txid"], ())), "liked": me in likes.get(r["txid"], ())})
+        return render(request, "launch_thread.html", chain=chain, launch=launch,
+                      tree=by_parent, root=txid, count=len(replies), mine=mine,
+                      public=_public_request(request), when=_when,
+                      acts=_public_request(request) and bool(mine.get("tag")))
 
     @app.get("/launch")
     def launchpad(request: Request):
@@ -7076,10 +7271,15 @@ def create_app(state: AppState) -> FastAPI:
                                       if l.kind == inscriptionlib.LEG_COINS), None)
                         if coins is not None:
                             paid[trade["txid"]] = int(coins.amount or 0)
-            # A listing sale is already told by sale_events; do not say it twice.
-            listed = {e.extra.get("txid") for e in events if e.source == "sale"}
-            events += [e for e in notify.swap_events(rows, mine_there | owners, paid)
-                       if e.extra.get("txid") not in listed]
+            # One row per sale. The swap's row says which piece and to whom ("You
+            # sold #39 to @x for 5"); a listing sale's own row only knew "a piece"
+            # (a tester, 2026-09-26). So where both describe one transaction, the
+            # swap's row is kept and the listing's is dropped.
+            swaps = notify.swap_events(rows, mine_there | owners, paid)
+            swapped = {e.extra.get("txid") for e in swaps}
+            events = [e for e in events
+                      if not (e.source == "sale" and e.extra.get("txid") in swapped)]
+            events += swaps
         except Exception as exc:                          # noqa: BLE001
             log.info("notifications: swaps: %s", exc)
         return notify.merge(events, _notif_seen(account.pubkey))
@@ -7105,7 +7305,7 @@ def create_app(state: AppState) -> FastAPI:
     def my_notifications(request: Request):
         account = signed_in(request)
         if account is None:
-            return RedirectResponse("/join", status_code=303)
+            return _to_join(request)
         from .. import notify
         events = _notif_events(account)
         chain = _account_chain()
@@ -7378,6 +7578,14 @@ def create_app(state: AppState) -> FastAPI:
         return spent
 
     _flights = accountlib.Flights(pool=_pool_spent)
+    #: Pre-signed offers (arcade/bids.py): the buyer's half of a swap, signed
+    #: when the offer was made, so the seller's Accept completes the trade.
+    _bids = bidslib.Bids(state.home / "bids.sqlite")
+    # The coins a standing offer is signed over are spent on nothing else: every
+    # funding choice reads `spent_by`, so the reservation lives in one place.
+    _flights_spent_by = _flights.spent_by
+    _flights.spent_by = lambda pubkey, network="": (
+        _flights_spent_by(pubkey, network) | _bids.reserved(pubkey, network))
 
     def _account_chain():
         """The chain a tag lives on. Testnet, as tags always have been."""
@@ -7598,6 +7806,39 @@ def create_app(state: AppState) -> FastAPI:
         row["spendable"] = max(0, int(row.get("balance") or 0)
                                - int(row.get("leaving") or 0)
                                + int(row.get("incoming") or 0))
+
+    _topping: set = set()
+
+    def _top_off_later(pubkey: str, address: str, spendable: int) -> None:
+        """The daily top-off (2026-09-25, and again 2026-09-27: "so that
+        users don't run out of test net coins"). `faucet.top_off` was written and
+        never called: no account was ever topped up. Now any page that reads an
+        account's balance tops it back up to the gift, once a UTC day, testnet
+        only, in the background so the page never waits on the wallet."""
+        chain = _account_chain()
+        if chain.is_mainnet or spendable >= int(state.setting("faucet", faucetlib.GIFT)
+                                                or faucetlib.GIFT) \
+                or pubkey in _topping:
+            return
+        _topping.add(pubkey)
+
+        def work() -> None:
+            try:
+                faucet = state.faucet()
+                sent = faucetlib.top_off(chain, faucet, pubkey, address, spendable)
+                if sent:
+                    row = faucet.conn.execute(
+                        "SELECT txid FROM topoff WHERE pubkey = ? ORDER BY at DESC LIMIT 1",
+                        (pubkey.lower(),)).fetchone()
+                    if row:
+                        _note_payment(row[0], pubkey, address, network=chain.network)
+                    log.info("faucet: topped %s… up by %s", pubkey[:12], sent)
+            except Exception as exc:                      # noqa: BLE001
+                log.info("faucet: top-off: %s", exc)
+            finally:
+                _topping.discard(pubkey)
+
+        threading.Thread(target=work, name="arcade-topoff", daemon=True).start()
 
     def _watch(address: str, why: str, chain=None) -> None:
         """Start following an address's coins, so it can be funded at all."""
@@ -7842,6 +8083,7 @@ def create_app(state: AppState) -> FastAPI:
                     said["leaving"] = _leaving(account.pubkey, chain.network,
                                                db, address)
                     _spendable(said)
+                _top_off_later(account.pubkey, address, int(said.get("spendable") or 0))
                 said["tag"] = index.tag_of(address) or ""
                 with state.store() as store:
                     # Two questions, and the page has to be able to answer them
@@ -7921,7 +8163,7 @@ def create_app(state: AppState) -> FastAPI:
         """
         account = signed_in(request)
         if account is None:
-            return RedirectResponse("/join", status_code=303)
+            return _to_join(request)
         chain = _account_chain()
         register = state.accounts()
         return render(request, "me.html", chain=chain,
@@ -7934,7 +8176,7 @@ def create_app(state: AppState) -> FastAPI:
     def my_messages(request: Request):
         """An account's own messages, opened in its own browser."""
         if signed_in(request) is None:
-            return RedirectResponse("/join", status_code=303)
+            return _to_join(request)
         chain = _account_chain()
         page = render(request, "my_messages.html", chain=chain, when=_when)
         try:                     # opened: the red count on the Messages tab is read
@@ -7955,7 +8197,7 @@ def create_app(state: AppState) -> FastAPI:
     def my_contacts(request: Request):
         """An account's own address book, kept in its own browser."""
         if signed_in(request) is None:
-            return RedirectResponse("/join", status_code=303)
+            return _to_join(request)
         return render(request, "my_contacts.html", chain=_account_chain())
 
     @app.get("/account/find")
@@ -7967,11 +8209,21 @@ def create_app(state: AppState) -> FastAPI:
         that exists on the chain rather than one they typed.
         """
         _signed_in_account(request)
-        wanted = (q or "").strip().lstrip("@").lower()
+        raw = (q or "").strip()
+        wanted = raw.lstrip("@").lower()
         if not wanted:
             return JSONResponse({"matches": []})
         chain = _account_chain()
         out = []
+        # An address finds the name it holds (a tester, 2026-09-26: searching
+        # "nUpPb7…" said nothing was claimed). Addresses are case-sensitive, so
+        # this is asked before the text is lower-cased for the tag search.
+        if _looks_like_an_address(raw):
+            try:
+                tag = state.token_index(chain).tag_of(raw)
+            except Exception:
+                tag = None
+            return JSONResponse({"matches": [{"tag": tag, "address": raw}] if tag else []})
         try:
             index = state.token_index(chain)
             for row in index.search_tags(wanted, limit=20):
@@ -8000,7 +8252,7 @@ def create_app(state: AppState) -> FastAPI:
                 held = index.inscriptions(owner=address, limit=200)
                 listed = _nft_listings(index, chain)
                 asked = _prices_for(index, chain)
-                _sweep_book(chain)
+                _sweep_book(chain, force=True)   # your own page: a cancel shows at once
                 book: dict[str, dict] = {}
                 for row in state.listings.open_listings(chain.network, limit=1000):
                     sold = _sold_piece(row) if row["owner"] == address else ""
@@ -9069,6 +9321,18 @@ def create_app(state: AppState) -> FastAPI:
                 outputs = _class_c_or_b(chain, address, body,
                                         _coin_pubkey(account.pubkey, chain))
                 what = f"offer {price} for inscription #{row['number']}"
+                # The buyer's half of the trade, signed so the seller's Accept
+                # completes it (2026-09-27). This transaction sets aside
+                # one coin of exactly what that half needs -- the price and the
+                # finished swap's fee -- and the half is built on it once this
+                # is sent (/account/offer/bid-build): one coin is all an account
+                # needs to make an offer, and one coin is what stays reserved.
+                price_sats = int(take.amount) if take.kind == inscriptionlib.LEG_COINS else 0
+                swap_bytes = _ask_payload(row, take)
+                need = fundinglib.bid_need(swap_bytes, price_sats, row["owner"],
+                                           fees.MIN_FEE_PER_KB)
+                set_aside_at = len(outputs)
+                outputs = outputs + [(need, txbuild.p2pkh_script(address))]
                 unsigned = fundinglib.build(
                     db, chain.params, address, outputs,
                     rate=fees.MIN_FEE_PER_KB, what=what,
@@ -9101,8 +9365,101 @@ def create_app(state: AppState) -> FastAPI:
 
         offer = _offers.add(account.pubkey, chain.network, unsigned, what,
                             done=note)
-        return JSONResponse({"offer": offer.id, "what": what,
-                             "number": row["number"], "chain": chain.network,
+        out = {"offer": offer.id, "what": what,
+               "number": row["number"], "chain": chain.network,
+               **unsigned.as_json()}
+        _bids.draft(draft=offer.id, network=chain.network, buyer=address,
+                    account=account.pubkey, piece=row["txid"], seller=row["owner"],
+                    take=terms, price_sats=price_sats,
+                    inputs=[{"txid": "", "vout": set_aside_at, "value": need,
+                             "address": address}],
+                    outputs=[])
+        out["presigned"] = True
+        return JSONResponse(out)
+
+    @app.post("/account/offer/bid-build")
+    def account_offer_bid_build(request: Request, payload: Any = Body(None)):
+        """The buyer's half, on the coin the offer set aside, once the offer is
+        sent and its txid known. Returned for the tab to check and sign."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        row = _bids.by_draft(str(said.get("offer") or ""))
+        txid = str(said.get("txid") or "").lower()
+        if row is None or row["account"] != account.pubkey or len(txid) != 64:
+            return JSONResponse({"detail": "no such offer of yours"}, status_code=404)
+        spot = row["inputs"][0]
+        chain = next((c for c in _account_chains() if c.network == row["network"]), None)
+        index = state.token_index(chain)
+        piece = index.inscription(row["piece"])
+        take = swaplib.leg_from_json(row["take"])
+        coin = {"txid": txid, "vout": int(spot["vout"]), "value": int(spot["value"])}
+        try:
+            bid = fundinglib.build_bid_on(coin, row["buyer"], row["seller"],
+                                          _ask_payload(piece, take), row["price_sats"],
+                                          what="the trade, when accepted")
+        except fundinglib.FundingError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        _bids.redraft(row["id"], bid.inputs, bid.outputs)
+        return JSONResponse({**bid.as_json(), "piece": row["piece"], "seller": row["seller"],
+                             "take": row["take"], "price_sats": row["price_sats"],
+                             "exact": fundinglib.EXACT_SELLER_COIN, "chain": row["network"]})
+
+    @app.post("/account/offer/bid")
+    def account_offer_bid(request: Request, payload: Any = Body(None)):
+        """The buyer's signatures over their half, kept beside the offer
+        (arcade/bids.py), once the offer itself is broadcast. Checked by the
+        only test that cannot be argued with at accept: the network."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        draft = str(said.get("offer") or "")
+        txid = str(said.get("txid") or "").lower()
+        row = _bids.by_draft(draft)
+        if row is None or row["account"] != account.pubkey:
+            return JSONResponse({"detail": "no such offer of yours"}, status_code=404)
+        try:
+            pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
+            if len(txid) != 64:
+                raise ValueError("that is not the offer's txid")
+            if b58check_decode(row["buyer"])[1] != hash160(pubkey):
+                raise ValueError("that key is not the one behind this offer's coins")
+            sigs = [str(x) for x in (said.get("signatures") or [])]
+            if any(not s or s[-2:] != "81" for s in sigs):
+                raise ValueError("each signature has to be ALL|ANYONECANPAY")
+            _bids.sign(draft, txid, sigs, pubkey.hex())
+        except (bidslib.BidError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"ok": True, "offer": txid})
+
+    @app.post("/account/offer/withdraw")
+    def account_offer_withdraw(request: Request, payload: Any = Body(None)):
+        """Take a pre-signed offer back: spend the coins it was signed over, back
+        to this account. The only way to still a signature already handed over."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        row = _bids.get(str(said.get("offer") or "").lower())
+        if row is None or row["account"] != account.pubkey or row["status"] != bidslib.OPEN:
+            return JSONResponse({"detail": "no standing offer of yours by that id"},
+                                status_code=404)
+        chain = next((c for c in _account_chains() if c.network == row["network"]), None)
+        if chain is None:
+            return JSONResponse({"detail": "that chain is not here"}, status_code=400)
+        try:
+            index = state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build_sweep(
+                    db, chain.params, row["buyer"], row["inputs"],
+                    rate=fees.MIN_FEE_PER_KB, what="withdraw your offer",
+                    exclude=_flights_spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+        except fundinglib.FundingError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+
+        def gone(_txid: str) -> None:
+            _bids.close(row["id"], "withdrawn", _txid)
+
+        offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what,
+                            done=gone)
+        return JSONResponse({"offer": offer.id, "chain": chain.network,
                              **unsigned.as_json()})
 
     @app.post("/account/order")
@@ -10703,6 +11060,143 @@ def create_app(state: AppState) -> FastAPI:
         return (str((newest or {}).get("buyer") or ""),
                 float((newest or {}).get("expires") or 0))
 
+    _completing: dict[str, tuple[str, Any]] = {}      # bid txid -> (raw, unsigned)
+
+    def _accept_presigned(account, chain, address: str, row: dict, bid: dict,
+                          said: dict):
+        """Accept an offer whose buyer signed their half when they made it.
+
+        The trade is one transaction: this account's one coin of exactly
+        `EXACT_SELLER_COIN` first (the first input is the swap's seller), then the
+        buyer's inputs with the signatures they left, and the outputs they fixed
+        -- the swap's bytes, this account paid the price plus that coin back, the
+        buyer's change. When this account has no such coin it is made first, by
+        a split this tab signs, and the swap spends it straight from the mempool.
+        """
+        index = state.token_index(chain)
+        if bid["piece"] != row["txid"]:
+            return JSONResponse({"detail": "that offer is for a different piece"},
+                                status_code=400)
+        if bid["seller"] != address:
+            return JSONResponse({"detail": (
+                "that offer was made to whoever held this piece before you, and it "
+                "pays them, not you. Nothing was signed.")}, status_code=409)
+        take = swaplib.leg_from_json(bid["take"])
+        with chain.rpc() as rpc:
+            for c in bid["inputs"]:
+                if not rpc.call("gettxout", c["txid"], int(c["vout"]), True):
+                    _bids.close(bid["id"], "stale")
+                    return JSONResponse({"detail": (
+                        "the buyer has since spent the coins behind this offer, so "
+                        "it can no longer complete. Nothing was signed.")},
+                        status_code=409)
+            problem = swaplib.holds(index, rpc, bid["buyer"], take)
+        if problem:
+            return JSONResponse({"detail": problem}, status_code=409)
+        exact = fundinglib.EXACT_SELLER_COIN
+        coin = said.get("coin") if isinstance(said.get("coin"), dict) else None
+        if coin is None:
+            spent = _flights.spent_by(account.pubkey, chain.network)
+            with contextlib.closing(index.open()) as db:
+                coin = next((c for c in utxoslib.unspent(db, address)
+                             if int(c["value"]) == exact
+                             and (c["txid"], c["vout"]) not in spent), None)
+        if coin is None:
+            # Make the coin: one small transaction, signed in this tab, and the
+            # swap spends its output straight from the mempool.
+            try:
+                with contextlib.closing(index.open()) as db:
+                    split = fundinglib.build(
+                        db, chain.params, address,
+                        [(exact, txbuild.p2pkh_script(address))],
+                        rate=fees.MIN_FEE_PER_KB,
+                        what="set aside the coin a trade needs",
+                        exclude=_flights.spent_by(account.pubkey, chain.network),
+                        extra=_flights.change_for(account.pubkey, chain.network))
+            except fundinglib.FundingError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=400)
+            offer = _offers.add(account.pubkey, chain.network, split, split.what)
+            return JSONResponse({"presigned": True, "needs_coin": True,
+                                 "offer": offer.id, "chain": chain.network,
+                                 **split.as_json()})
+        try:
+            unsigned = fundinglib.complete_bid(
+                {"txid": coin["txid"], "vout": int(coin["vout"]),
+                 "value": int(coin.get("value") or exact)},
+                address, bid["inputs"], bidslib.outputs_of(bid))
+        except fundinglib.FundingError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        _completing[bid["id"]] = (unsigned.raw, unsigned)
+        price = swaplib.describe_leg(bid["take"])
+        return JSONResponse({"presigned": True, "bid": bid["id"],
+                             "chain": chain.network, "number": row["number"],
+                             "buyer": bid["buyer"],
+                             "buyer_tag": _tags_for([bid["buyer"]]).get(bid["buyer"], ""),
+                             "price": price, "price_sats": bid["price_sats"],
+                             "exact": exact, **unsigned.as_json()})
+
+    @app.post("/account/accept/complete")
+    def account_accept_complete(request: Request, payload: Any = Body(None)):
+        """The seller's one signature on a pre-signed offer's trade, pasted beside
+        the buyer's, and the trade broadcast."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        bid = _bids.get(str(said.get("bid") or "").lower())
+        held = _completing.get(str(said.get("bid") or "").lower())
+        if bid is None or held is None or bid["status"] != bidslib.OPEN:
+            return JSONResponse({"detail": "accept it again; that trade is not waiting here"},
+                                status_code=409)
+        raw_asked, unsigned = held
+        if str(said.get("raw") or "") != raw_asked:
+            return JSONResponse({"detail": "that is not the trade this node built"},
+                                status_code=409)
+        lane = f"account {account.pubkey}"
+        if not state.begin_send(lane):
+            return JSONResponse({"detail": "one of your transactions is still going; "
+                                           "try again in a moment"}, status_code=409)
+        piece_lane = f"piece {bid['piece']}"
+        if not state.begin_send(piece_lane):
+            state.end_send(lane)
+            return JSONResponse({"detail": "another sale of this piece is going "
+                                           "through right now. Nothing was spent."},
+                                status_code=409)
+        try:
+            try:
+                waiting = state.token_index(chain).pending_swaps().get(bid["piece"], "")
+            except Exception:
+                waiting = ""
+            if waiting:
+                return JSONResponse({"detail": f"this piece is already sold in "
+                                               f"{waiting[:16]}…. Nothing was spent."},
+                                    status_code=409)
+            pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
+            if hash160(pubkey) != b58check_decode(address)[1]:
+                return JSONResponse({"detail": "that key is not this account's"},
+                                    status_code=400)
+            sig = str(said.get("signature") or "")
+            raw = fundinglib.assemble_bid(unsigned, sig, pubkey, bid["signatures"],
+                                          bytes.fromhex(bid["buyer_key"]))
+            with chain.rpc() as rpc:
+                txid = rpc.call("sendrawtransaction", raw)
+            _bids.close(bid["id"], "filled", txid)
+            _completing.pop(bid["id"], None)
+            _flights.add(account.pubkey, txid, unsigned, address, network=chain.network)
+            state.bump_generation()
+            return JSONResponse({"txid": txid, "chain": chain.network,
+                                 "buyer": bid["buyer"]})
+        except (fundinglib.FundingError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"detail": f"the node refused it: {exc}"}, status_code=409)
+        finally:
+            state.end_send(lane)
+            state.end_send(piece_lane)
+
     @app.post("/account/accept")
     def account_accept(request: Request, payload: Any = Body(None)):
         """Show this account the leg that answers somebody's offer, and stop.
@@ -10738,6 +11232,12 @@ def create_app(state: AppState) -> FastAPI:
         try:
             ask = _offer_answered(index, chain, address, said)
             row = index.inscription(contentlib._key(str(said.get("piece", ""))))
+            # A pre-signed offer: the buyer's half is already here, so Accept is
+            # the trade itself (2026-09-27).
+            bid = _bids.get(ask["txid"])
+            if bid and bid["status"] == bidslib.OPEN \
+                    and str(said.get("decision") or "") != "refuse":
+                return _accept_presigned(account, chain, address, row, bid, said)
             held_for, until = _answer_held(chain, row["txid"])
             if held_for and held_for != ask["buyer"]:
                 raise swaplib.SwapError(
@@ -11416,6 +11916,9 @@ def create_app(state: AppState) -> FastAPI:
                 "mainnet": bool(chain.is_mainnet), "address": address,
                 "tokens": [{
                     "property_id": row["property_id"], "name": row["name"],
+                    # Drawn by the page's own script, so the wall is its to put
+                    # up: the screening's word travels with the name.
+                    "sensitive": bool(_verdict_of(row["name"] or "")),
                     "issuer": row["issuer"], "divisible": row["divisible"],
                     "balance": row["balance"], "display": row["display"],
                     "issuer_is_me": row["issuer"] == address,
@@ -11423,6 +11926,7 @@ def create_app(state: AppState) -> FastAPI:
                     "property_id": p["property_id"], "name": p["name"],
                     "issuer": p["issuer"], "divisible": p["divisible"],
                     "balance": 0, "display": "0", "issuer_is_me": True,
+                    "sensitive": bool(_verdict_of(p["name"] or "")),
                     "managed": bool(p.get("managed")),
                 } for p in issued],
             })
@@ -11686,7 +12190,7 @@ def create_app(state: AppState) -> FastAPI:
         words are the whole account, and what lives only in this browser."""
         account = signed_in(request)
         if account is None:
-            return RedirectResponse("/join", status_code=303)
+            return _to_join(request)
         mine = state.vault().by_pubkey(account.pubkey) or {}
         return render(request, "my_backup.html", chain=_account_chain(),
                       my_name=mine.get("tag", ""),
@@ -11711,7 +12215,7 @@ def create_app(state: AppState) -> FastAPI:
         the operator asked for it first -- the tab bar links all three.
         """
         if signed_in(request) is None:
-            return RedirectResponse("/join", status_code=303)
+            return _to_join(request)
         return render(request, "my_wallet.html", chain=_account_chain())
 
     @app.get("/me/wallet/tokens", response_class=HTMLResponse)
@@ -11720,14 +12224,14 @@ def create_app(state: AppState) -> FastAPI:
         to send some of it -- read the same way `/account/nfts` reads
         what an account holds in inscriptions."""
         if signed_in(request) is None:
-            return RedirectResponse("/join", status_code=303)
+            return _to_join(request)
         return render(request, "my_wallet_tokens.html", chain=_account_chain())
 
     @app.get("/me/nfts", response_class=HTMLResponse)
     def my_nfts(request: Request):
         """What an account holds, and the one button that sends one on."""
         if signed_in(request) is None:
-            return RedirectResponse("/join", status_code=303)
+            return _to_join(request)
         return render(request, "my_nfts.html", chain=_account_chain())
 
     @app.get("/me/runs", response_class=HTMLResponse)
@@ -11742,7 +12246,7 @@ def create_app(state: AppState) -> FastAPI:
         """
         account = signed_in(request)
         if account is None:
-            return RedirectResponse("/join", status_code=303)
+            return _to_join(request)
         mine = [run for run in _runs.list(account=account.pubkey)]
         mine.sort(key=lambda run: (run["status"] == "done", -run["created"]))
         # The book keeps the network, which is what a run has to be to find its
@@ -11778,7 +12282,7 @@ def create_app(state: AppState) -> FastAPI:
         """
         account = signed_in(request)
         if account is None:
-            return RedirectResponse("/join", status_code=303)
+            return _to_join(request)
         run = _runs.get(run_id)
         if run is None or run["account"] != account.pubkey.lower():
             state.flash("there is no run of that id", "err")
@@ -13697,7 +14201,7 @@ def create_app(state: AppState) -> FastAPI:
                     "edition": give.get("edition")})
         return out
 
-    def _prices_for(index, chain) -> dict[str, dict[str, Any]]:
+    def _prices_for(index, chain, asks: bool = True) -> dict[str, dict[str, Any]]:
         """Every NFT with a price on it right now, by the piece's txid.
 
         Two ways a price gets said, and both are read from the chain. An ASK
@@ -13760,6 +14264,12 @@ def create_app(state: AppState) -> FastAPI:
                     "when": None, "pending": False, "listing": row["id"]}
         except Exception as exc:                          # noqa: BLE001
             log.info("prices: listing book: %s", exc)
+        if not asks:
+            # 2026-09-27: "When someone lists an NFT on the marketplace,
+            # the buyer should only have to push the buy button." A price put on
+            # the chain alone cannot be bought -- it needs the holder to accept an
+            # offer -- so where buyers look it is not shown as for sale at all.
+            out = {k: v for k, v in out.items() if v.get("kind") != "ask"}
         return out
 
     def _nft_points(index, trades) -> dict[tuple[str, str] | None,
@@ -13800,6 +14310,28 @@ def create_app(state: AppState) -> FastAPI:
                 "price": (paid.amount or 0) / COIN, "size": 1,
                 "txid": trade["txid"]})
         return points
+
+    def _buyable_listings(index, chain, limit: int = 12) -> list[dict[str, Any]]:
+        """What a buyer can Buy with one press right now: the book's signed
+        listings, newest first, in the shape `_just_listed` draws (the operator,
+        2026-09-27: a listed NFT is bought with the Buy button, no offer)."""
+        out = []
+        for txid, entry in _prices_for(index, chain, asks=False).items():
+            if entry.get("kind") != "listing":
+                continue
+            row = index.inscription(txid)
+            if row is None:
+                continue
+            out.append({
+                "txid": txid, "number": row["number"], "name": _piece_name(row),
+                "collection": row.get("collection"), "edition": row.get("edition"),
+                "creator": row["creator"], "seller": entry["seller"],
+                "held": row.get("held", True), "content_type": row["content_type"],
+                "price": entry["price"], "take": entry["take"], "when": None,
+                "height": row.get("block_height", 0), "pending": False,
+                "listing": entry.get("listing"), "sats": entry.get("sats")})
+        out.sort(key=lambda l: -(l["height"] or 0))
+        return out[:limit]
 
     def _just_listed(index, limit: int = 12) -> list[dict[str, Any]]:
         """The prices most recently put on a piece, newest first.
@@ -13903,7 +14435,7 @@ def create_app(state: AppState) -> FastAPI:
             chosen = cover.get("txid") or ""
         return chosen, dict(about, edition=cover.get("edition"))
 
-    def _market_collections(index, chain, trades) -> list[dict[str, Any]]:
+    def _market_collections(index, chain, trades, public: bool = False) -> list[dict[str, Any]]:
         """Every collection on this chain as a market of its own.
 
         The same table the Tokens tab draws for pairs, because a collection
@@ -13912,7 +14444,7 @@ def create_app(state: AppState) -> FastAPI:
         member -- a market row is a name people are meant to recognise
         (D-096).
         """
-        listed = _prices_for(index, chain)
+        listed = _prices_for(index, chain, asks=not public)
         # Which set each listed piece belongs to. The listing carries the
         # collection's name but not whose it is, and a collection is (creator,
         # name) -- two people may inscribe a set called Doge Punks.
@@ -14590,7 +15122,7 @@ def create_app(state: AppState) -> FastAPI:
                               "slots": chartlib.candles(points)}
         listed: dict[str, dict[str, Any]] = {}
         try:
-            listed = _prices_for(index, chain)
+            listed = _prices_for(index, chain, asks=not _public_request(request))
         except Exception as exc:
             data["node_error"] = f"the prices could not be read: {exc}"
         owned, data["tokens"], data["coins"] = _offerable(chain, index, request)
@@ -14922,7 +15454,8 @@ def create_app(state: AppState) -> FastAPI:
             # Its chart belongs to the collection's own page, where the
             # pieces it prices are (D-096).
             try:
-                data["collections"] = _market_collections(index, chain, trades)
+                data["collections"] = _market_collections(
+                    index, chain, trades, public=_public_request(request))
                 # Popular means traded, and traded recently: what a market
                 # is for is not the biggest set, it is the busy one. Falls
                 # back on what is for sale where nothing has traded at all,
@@ -14933,7 +15466,8 @@ def create_app(state: AppState) -> FastAPI:
                                    -c["volume"], -c["for_sale"],
                                    c["name"].lower()))[:6]
                 data["sales"] = _recent_sales(index, trades)
-                data["listings"] = _just_listed(index)
+                data["listings"] = (_buyable_listings(index, chain)
+                                    if _public_request(request) else _just_listed(index))
                 data["tags"].update(_names_for(
                     index, [c["creator"] for c in data["collections"]]
                     + [s["seller"] for s in data["sales"]]
@@ -14956,11 +15490,17 @@ def create_app(state: AppState) -> FastAPI:
             data["offers_out"] = _merge_offers(
                 [o for o in pending if o["buyer"] in own],
                 index.offers_by(sorted(data["owned"])))
+            # Pre-signed offers that are done, withdrawn or spent are not offers.
+            marks = _bids.statuses([o["txid"] for o in data["offers_in"] + data["offers_out"]])
+            gone = ("withdrawn", "stale", "filled")
+            data["offers_in"] = [o for o in data["offers_in"] if marks.get(o["txid"]) not in gone]
+            data["offers_out"] = [o for o in data["offers_out"] if marks.get(o["txid"]) not in gone]
             try:
                 swapping = index.pending_swaps()
             except Exception:
                 swapping = {}
             for entry in data["offers_in"] + data["offers_out"]:
+                entry["presigned"] = marks.get(entry["txid"]) == bidslib.OPEN
                 entry["busy"] = entry["inscription"] in swapping
                 entry["price"] = swaplib.describe_leg(_take_json(entry, index))
                 # The other half of the sentence an answer is confirmed with: not

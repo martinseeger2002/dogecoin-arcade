@@ -37,9 +37,16 @@ const spots = [...document.querySelectorAll("[data-answer-for]")];
       if (r.ok) stale = (await r.json()).legs || {};
     } catch (e) { /* then the click says it */ }
   }
+  // Already completed by this browser on its own (base.html's auto-complete).
+  let auto = {};
+  try { auto = JSON.parse(localStorage.getItem("arcade.autofill.done") || "{}") || {}; } catch (e) {}
   for (const spot of spots) {
     const answer = answers[spot.dataset.answerFor];
     if (!answer) continue;
+    if (/^[0-9a-f]{64}$/.test(String(auto[spot.dataset.answerFor] || ""))) {
+      spot.innerHTML = '<span class="pill warn">accepted &mdash; sent, waiting for its block</span>';
+      continue;
+    }
     if (spot.dataset.busy) {
       // Its coins are already in a swap that has not reached a block; a second
       // one would spend them twice (a stuck soft-dust swap sat for days).

@@ -1266,8 +1266,9 @@ class LedgerIndex:
             return [dict(r) for r in db.conn.execute(
                 f"SELECT m.rowid AS seq, m.txid, m.inscription, m.from_address, "
                 f"       m.to_address, m.block_height, COALESCE(b.time, 0) AS time, "
-                f"       i.number "
+                f"       i.number, c.collection, c.edition "
                 f"FROM inscription_move m JOIN inscription i ON i.txid = m.inscription "
+                f"LEFT JOIN collection_item c ON c.txid = m.inscription "
                 f"LEFT JOIN block b ON b.height = m.block_height "
                 f"WHERE m.how = 'swap' AND (m.from_address IN ({marks}) "
                 f"      OR m.to_address IN ({marks})) "
@@ -1961,7 +1962,7 @@ def parse_amount(text: str, divisible: bool) -> int:
     if divisible:
         scaled = value * COIN
         if scaled != scaled.to_integral_value():
-            raise AmountError("this token has eight decimal places at most.")
+            raise AmountError("at most eight decimal places: 0.00000001 is the smallest amount.")
         units = int(scaled)
     else:
         if value != value.to_integral_value():

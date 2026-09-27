@@ -811,3 +811,108 @@ def test_a_viewer_frame_gets_the_ticket_shim_and_the_bytes_stay_the_bytes(client
     assert "sandbox" in shown.headers["content-security-policy"]
     assert app.get(f"/content/{txid}?v=tick3t&download=1").content == page
 
+
+
+# --- site audit (a tester, 2026-09-26) ----------------------------------------
+
+def test_sign_in_brings_you_back_to_the_page_that_sent_you(public):
+    app, _ = public
+    answer = app.get("/me/wallet", headers=LOCAL, follow_redirects=False)
+    assert answer.status_code == 303
+    assert answer.headers["location"] == "/join?next=%2Fme%2Fwallet"
+    page = app.get("/join?next=%2Fme%2Fwallet", headers=LOCAL).text
+    assert "const NEXT" in page and "location.href = NEXT" in page
+
+
+def test_a_stranger_is_told_how_to_join_on_every_public_page(public):
+    app, _ = public
+    body = app.get("/feed", headers=LOCAL).text
+    assert "Join or sign in" in body and "/join?next=/feed" in body
+    assert "Join or sign in" not in app.get("/join", headers=LOCAL).text
+
+
+def test_the_not_here_page_has_a_way_home_and_a_title(public):
+    app, _ = public
+    answer = app.get("/wallet/nfts", headers=LOCAL)
+    assert answer.status_code in (403, 404)
+    assert '<a href="/">Home</a>' in answer.text
+    assert "<title>" in answer.text and "· DogecoinArcade</title>" in answer.text
+
+
+def test_the_address_book_finds_a_name_by_its_address(public):
+    from arcade.db import Database
+    from arcade.state import install_schema
+
+    app, state = public
+    _seat(app)
+    db = Database(state.home / f"{state.messaging.network}-ledger.sqlite")
+    install_schema(db)
+    db.conn.execute("INSERT OR REPLACE INTO tag(tag,address,claimed_txid,block_height,position) "
+                    "VALUES('findme',?,?,100,0)", (KEEPER, "f" * 64))
+    db.conn.commit()
+    db.close()
+    said = app.get(f"/account/find?q={KEEPER}", headers=LOCAL).json()
+    assert said["matches"] == [{"tag": "findme", "address": KEEPER}]
+
+
+def test_a_sensitive_name_is_walled_wherever_it_is_shown(public, monkeypatch):
+    """2026-09-26: anything shown that may be sensitive sits behind a
+    "show me" wall -- names, tokens, collections -- while links keep working."""
+    from arcade.db import Database
+    from arcade.state import install_schema
+
+    app, state = public
+
+    class Judge:
+        enabled = True
+        def check_text(self, words, now=False):
+            return "sensitive" if "rudename" in words else "ok"
+        def check_image(self, *a):
+            return "ok"
+    monkeypatch.setattr(state, "screen", lambda: Judge())
+    db = Database(state.home / f"{state.messaging.network}-ledger.sqlite")
+    install_schema(db)
+    db.conn.execute("INSERT OR REPLACE INTO tag(tag,address,claimed_txid,block_height,position) "
+                    "VALUES('rudename',?,?,100,0)", (KEEPER, "r" * 64))
+    db.conn.commit()
+    db.close()
+    page = app.get("/u/rudename", headers=LOCAL).text
+    head = page[page.index("<h1"):page.index("</h1>")]
+    assert "sens-btn" in head and "<template>@rudename</template>" in head
+    assert "<title>Sensitive" in page or "<title>A profile" in page
+
+
+def test_a_price_only_ask_is_not_shown_to_buyers_as_for_sale():
+    """2026-09-27: a listed NFT is bought with the Buy button, no offer.
+    A price put on the chain alone cannot be bought, so the pages buyers read
+    leave it out; the Buy buttons carry the listing they buy."""
+    root = pathlib.Path(__file__).resolve().parents[1]
+    app_src = (root / "arcade/web/app.py").read_text()
+    assert "def _prices_for(index, chain, asks: bool = True)" in app_src
+    assert "asks=not _public_request(request)" in app_src
+    assert "_buyable_listings(index, chain)" in app_src
+    for page in ("market_collection.html", "exchange.html"):
+        body = (root / "arcade/web/templates" / page).read_text()
+        assert "data-buy-listing=" in body and '_buy_listing.html' in body, page
+
+
+def test_a_launch_thread_is_public_and_nests_replies(public, monkeypatch):
+    """2026-09-27: anyone can read a launch's comments and answer a
+    comment, as on the feed. A reply to a comment is a REPLY aimed at it."""
+    from arcade.messaging import feed as feedlib
+    from test_feed_web import an_act
+
+    app, state = public
+    launch = "1a" * 32
+    index = state.token_index(state.token_chain)
+    monkeypatch.setattr(type(index), "launches", lambda self, limit=300: [
+        {"kind": "token", "id": 7, "name": "Talk Token", "creator": KEEPER,
+         "txid": launch, "time": 0}])
+    an_act(state, "2b" * 32, feedlib.REPLY, launch, author=KEEPER, text="first comment")
+    an_act(state, "3c" * 32, feedlib.REPLY, "2b" * 32, author=KEEPER, text="a reply to it")
+    assert door.public_path(f"/launches/{launch}")
+    page = app.get(f"/launches/{launch}", headers=LOCAL)
+    assert page.status_code == 200, page.text[:300]
+    assert "first comment" in page.text and "a reply to it" in page.text
+    assert page.text.index("first comment") < page.text.index("a reply to it")
+    assert app.get(f"/launches/{'9' * 64}", headers=LOCAL).status_code == 404

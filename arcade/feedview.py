@@ -52,6 +52,7 @@ class Shown:
     liked_by_me: bool = False
     dislikes: int = 0
     disliked_by_me: bool = False
+    shared_by_me: bool = False
     shares: int = 0
     tips: int = 0
     tipped: dict[str, int] = field(default_factory=dict)   # per chain, sats
@@ -103,7 +104,9 @@ def assemble(posts: Iterable[Any], acts: Iterable[Any], *,
     def attach(node: Shown) -> Shown:
         node.replies = sorted(
             (attach(child) for child in replies.get(node.txid, [])),
-            key=lambda r: (r.height or 0, r.txid))
+            # Oldest first, and one still waiting for its block LAST: height 0 is
+            # the newest thing in the thread, not the oldest (a tester, 2026-09-27).
+            key=lambda r: (not r.height, r.height or 0, r.txid))
         return node
 
     out: list[Shown] = []
@@ -173,6 +176,8 @@ def _one(txid: str, author: str, text: str, row: Any,
         dislikes=len(disliked),
         disliked_by_me=bool(me) and me in disliked,
         shares=sum(1 for a in acts if a["kind"] == feed.SHARE),
+        shared_by_me=bool(me) and any(a["kind"] == feed.SHARE and a["author"] == me
+                                      for a in acts),
         tips=len(tips),
         tipped=tipped,
         is_reply=is_reply,

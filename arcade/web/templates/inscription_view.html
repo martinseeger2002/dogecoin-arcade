@@ -175,11 +175,7 @@
     // its copy, whoever happens to be looking at it.
     function shopByKey(m){
       return import('/wallet.js').then(function(w){
-        return w.opened(CHAIN).then(function(wallet){
-          if (!wallet) {
-            throw new Error('this account is signed in, but its key is not open '
-              + 'in this tab. Unlock the wallet once and the shop will answer here.');
-          }
+        return arcadeKeys(CHAIN, 'This shop needs your wallet to trade.').then(function(wallet){
           return w.shopDoor(wallet, here, m);
         });
       });
@@ -198,12 +194,10 @@
       function byKey(doIt, needKey){
         import('/wallet.js').then(function(w){
           if (!needKey) return doIt(w, null);
-          return w.opened(CHAIN).then(function(wallet){
-            if (!wallet) throw new Error('this account is signed in, but its '
-              + 'key is not open in this tab. Unlock the wallet once and the '
-              + 'door will answer here.');
-            return doIt(w, wallet);
-          });
+          // The page asked for something only the key can do: open the unlock
+          // sheet in place if the wallet is locked, and carry on after.
+          return arcadeKeys(CHAIN, 'This page is asking your wallet to sign something.')
+            .then(function(wallet){ return doIt(w, wallet); });
         }).then(function(r){ answer(Object.assign({ok: true}, r)); })
           .catch(function(err){
             answer({ok: false, error: String((err && err.message) || err || 'refused')});
@@ -325,7 +319,7 @@
       {% elif sale %}
         <a class="btn ghost small" href="/inscriptions/{{ sale.shop }}/view">Its listing &mdash; {{ sale.price }}</a>
       {% else %}
-        <a class="btn ghost small" href="/exchange/sell/{{ row.txid }}">Sell it</a>
+        <a class="btn ghost small" href="/exchange/sell/{{ row.txid }}">Sell</a>
       {% endif %}
       <a class="btn small" href="/inscriptions/{{ row.txid }}/send">Send</a>
     {% endif %}
@@ -337,7 +331,7 @@
 <div class="panel row" style="align-items:center;gap:10px">
   {% if listed and listed.theirs %}
     <div style="flex:1 1 200px"><span class="pill ok">for sale</span>
-      <strong>{{ listed.price }} {{ chain.label|lower }}</strong>
+      <strong>{{ listed.price }} coins</strong>
       <span class="muted" style="font-size:.82rem">&middot; anybody can buy it, open for {{ listed.left }}</span></div>
     <a class="btn ghost small" href="/me/nfts">Change the price or cancel</a>
   {% else %}
@@ -374,6 +368,7 @@
             <span class="muted">answered to another buyer until {{ a.until }}</span>
           {% else %}
             <button type="button" class="small" data-accept
+                    {% if a.presigned %}data-presigned="1"{% endif %}
                     data-offer="{{ a.txid }}" data-piece="{{ row.txid }}"
                     data-give="{{ a.give }}"
                     data-price="{{ a.price }}"
@@ -423,26 +418,31 @@
       const gave = button.dataset.give || "this piece";
       const paid = button.dataset.price || "the price in the offer";
       const ok = await arcadeAsk(
-        refuse ? "Refuse this offer?" : "Answer this offer?",
+        refuse ? "Refuse this offer?"
+               : (button.dataset.presigned ? `Sell ${gave} for ${paid}?` : "Answer this offer?"),
         refuse
           ? `Refuse ${who}'s offer of ${paid} for ${gave}? The offer stays on the `
             + "chain until their transaction is spent, so nothing here stops them "
             + "asking again."
-          : `Give ${gave}, get ${paid}. Your key signs this piece at that price; `
-            + "their wallet signs the payment, and one transaction moves both or "
-            + "neither.",
+          : button.dataset.presigned
+            ? `${who} already signed their half, so the trade happens now: one `
+              + `transaction moves ${gave} to them and ${paid} to you.`
+            : `Give ${gave}, get ${paid}. Your key signs this piece at that price; `
+              + "their wallet signs the payment, and one transaction moves both or "
+              + "neither.",
         refuse ? "Refuse" : "Answer it");
       if (!ok) return;
       for (const other of document.querySelectorAll("[data-offer]")) {
         other.disabled = true;
       }
       try {
-        const held = await opening;
-        if (!held) throw new Error("your wallet is not open in this tab");
+        const held = (await opening) || await arcadeKeys(CHAIN);
         const out = await wallet.answerOffer(held, {
           offer: button.dataset.offer, piece: button.dataset.piece,
           refuse, chain: CHAIN.network});
         say(out.refused ? "Refused, and the offer stands. Nothing was spent."
+            : out.completed ? `${out.says} It's theirs when the block lands (`
+                              + String(out.txid).slice(0, 16) + "…)."
                         : "Answered in " + String(out.txid).slice(0, 16)
                           + "… The piece is held for them for a day, until their "
                           + "wallet signs; all this account spent is the fee of "
@@ -503,7 +503,7 @@
 <div class="panel" id="buy-panel">
   <div class="row" style="align-items:center;gap:12px">
     <div style="flex:1 1 200px">
-      <strong style="font-size:1.25rem">{{ listed.price }} {{ chain.label|lower }}</strong>
+      <strong style="font-size:1.25rem">{{ listed.price }} coins</strong>
       <div class="muted" style="font-size:.82rem">listed by
         {% if listed.tag %}<strong>@{{ listed.tag }}</strong>{% else %}<span class="mono">{{ listed.seller[:12] }}…</span>{% endif %}
         &middot; open for {{ listed.left }}</div>
@@ -559,12 +559,20 @@
     // Pressed shows at once; the node's answer can take a second or two.
     button.textContent = "Buying…";
     try {
-      const held = await opening;
-      if (!held) throw new Error("your wallet is not open in this tab");
+      const held = (await opening) || await arcadeKeys(CHAIN);
       const offer = await wallet.offerBuy(LISTING, CHAIN.network);
       const shown = await wallet.checked(offer, held);
-      const price = shown.coinsOf(Number(offer.price));
-      if (!confirm(`Buy this piece for ${price}? ` + shown.says)) {
+      // Said as the trade, by name (a tester, 2026-09-26: the old wording listed
+      // raw outputs, two of them to the seller's address -- the price, and the
+      // seller's own coin passing back to them -- which read like a scam).
+      const coins = String(Number(offer.price) / 1e8);
+      const seller = offer.seller_tag ? "@" + offer.seller_tag : "the seller";
+      const piece = {{ ((row.collection ~ ' #' ~ row.edition) if row.collection else ('#' ~ row.number))|tojson }};
+      if (!(await arcadeAsk(`Buy ${piece} for ${coins} coins?`,
+            `${coins} coins go to ${seller}, the network fee is `
+            + `${shown.coinsOf(shown.fee)}, and the rest comes back to you. The piece `
+            + "and the coins move in one transaction, checked in this browser.",
+            `Buy it for ${coins} coins`))) {
         button.disabled = false;
         button.textContent = "Buy it for {{ listed.price }}";
         return;
@@ -595,14 +603,51 @@
     <tr><td><strong>{{ o.price }}</strong>
           <div class="muted" style="font-size:.8rem">
             {%- if o.pending %}in the mempool{% else %}block {{ "{:,}".format(o.block_height) }}{% endif %}</div></td>
+        {% if o.bid_status %}
+        {# Pre-signed (2026-09-27): nothing left for this browser to do. #}
+        <td style="text-align:right;white-space:nowrap">
+          {% if o.bid_status == 'open' %}
+            <span class="muted">completes the moment they accept</span>
+            <button type="button" class="ghost small" data-withdraw="{{ o.txid }}">Withdraw</button>
+          {% elif o.bid_status == 'filled' %}<span class="pill ok">accepted &mdash; it's yours</span>
+          {% elif o.bid_status == 'withdrawn' %}<span class="muted">withdrawn</span>
+          {% elif o.bid_status == 'stale' %}<span class="muted">its coins were spent; it can't complete</span>
+          {% else %}<span class="muted">waiting for the holder</span>{% endif %}</td></tr>
+        {% else %}
         <td style="text-align:right;white-space:nowrap" data-answer-for="{{ o.txid }}"
             data-piece="{{ row.txid }}" data-price="{{ o.price }}" data-number="{{ row.number }}"
             {% if swap_waiting %}data-busy="1"{% endif %}>
           <span class="muted">waiting for the holder</span></td></tr>
+        {% endif %}
     {% endfor %}
   </table>
   <p class="msg" id="fill-news" hidden></p>
   {% include "_offer_complete.html" %}
+  <script type="module">
+  // Withdraw a pre-signed offer: spend the coins it was signed over, back to you.
+  import * as wallet from "/wallet.js";
+  const CHAIN = {network: "{{ chain.network }}", version: {{ chain.params.pubkeyhash_version }}};
+  for (const b of document.querySelectorAll("[data-withdraw]")) {
+    b.onclick = async () => {
+      const news = document.getElementById("fill-news");
+      const say = (t, ok) => { news.textContent = t; news.hidden = !t;
+                               news.className = "msg " + (ok ? "ok" : "err"); };
+      b.disabled = true;
+      try {
+        const held = (await wallet.opened(CHAIN)) || await arcadeKeys(CHAIN);
+        const offer = await wallet.withdrawOffer(held, b.dataset.withdraw);
+        const shown = await wallet.checked(offer, held);
+        if (!(await arcadeAsk("Withdraw this offer?",
+            "Nobody can accept it after this. It spends the coins it was set aside "
+            + `on back to you: one small transaction, ${shown.coinsOf(shown.fee)} in fees.`,
+            "Withdraw"))) { b.disabled = false; return; }
+        await wallet.confirm(held, offer);
+        b.replaceWith(document.createTextNode("withdrawn"));
+        say("Withdrawn. Its coins are yours to spend again when the block lands.", true);
+      } catch (e) { b.disabled = false; say(String(e.message || e), false); }
+    };
+  }
+  </script>
 </div>
 {% endif %}
 
@@ -702,8 +747,7 @@
       say(""); news("");
       $("offer-it").disabled = true;
       try {
-        const held = await take();
-        if (!held) throw new Error("your wallet is not open in this tab");
+        const held = (await take()) || await arcadeKeys(CHAIN);
         const asked = await fetch("/account/offer", {
           method: "POST", headers: {"Content-Type": "application/json"},
           body: JSON.stringify({
@@ -718,17 +762,34 @@
         // The in-page card, as everywhere else (filming, 2026-09-26: the
         // browser's own dialog read as a lowercase run-on).
         const what = String(shown.what || "Make this offer");
+        // A pre-signed offer (2026-09-27): the trade completes the moment
+        // the holder accepts, whether or not this browser is open.
+        const presigned = !!offer.presigned;
         if (!(await arcadeAsk("Make this offer?",
           what.charAt(0).toUpperCase() + what.slice(1) + `. It costs `
-          + `${shown.coinsOf(shown.fee)} in fees and reserves nothing: the piece stays `
-          + "where it is until whoever holds it says yes.", "Send offer"))) {
+          + `${shown.coinsOf(shown.fee)} in fees. `
+          + (presigned
+             ? "If the holder accepts, the trade happens at once, even while you're "
+               + "offline. The price is set aside in your wallet for this offer until "
+               + "then; withdraw it any time to get it back."
+             : "It reserves nothing: the piece stays where it is until whoever holds "
+               + "it says yes, and you finish the trade after."), "Send offer"))) {
           $("offer-it").disabled = false;
           return;
         }
         const out = await wallet.confirm(held, offer);
-        const says = `Offered in ${out.txid.slice(0, 16)}… It stands from the `
-          + "block it lands in, and whoever holds this piece sees it in their "
-          + "own Exchange.";
+        if (presigned) {
+          // The price this page asked for, in sats, and the holder it shows:
+          // what the browser holds the signed half to.
+          const typed = $("offer-kind").value === "coins"
+            ? BigInt(Math.round(parseFloat($("offer-amount").value.trim()) * 1e8)) : 0n;
+          await wallet.signBid(held, offer, out,
+                               {piece: PIECE, seller: {{ row.owner|tojson }}, sats: typed});
+        }
+        const says = `Offered in ${out.txid.slice(0, 16)}… `
+          + (presigned ? "When the holder accepts, the piece is yours at once."
+                       : "It stands from the block it lands in, and whoever holds "
+                         + "this piece sees it in their own Exchange.");
         news(says);
         try { sessionStorage.setItem(RECEIPT, JSON.stringify({says,
                                                               at: Date.now()})); }

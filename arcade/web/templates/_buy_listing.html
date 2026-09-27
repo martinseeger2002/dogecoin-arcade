@@ -1,0 +1,50 @@
+{# Buy a listed piece right where it is shown (2026-09-27: "When someone
+   lists an NFT on the marketplace, the buyer should only have to push the buy
+   button and the exchange should happen"). Every <button data-buy-listing="<id>"
+   data-piece="<name>"> on the page buys that listing: one card that says the
+   trade by name, then one transaction the seller already signed their half of.
+   Include once per page, with `chain` in scope. #}
+<script type="module">
+const CHAIN = {network: "{{ chain.network }}",
+               version: {{ chain.params.pubkeyhash_version }}};
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest && event.target.closest("[data-buy-listing]");
+  if (!button) return;
+  event.preventDefault();
+  const was = button.textContent;
+  const done = (text, bad) => {
+    let note = button.parentNode.querySelector(":scope > .buynote");
+    if (!note) {
+      note = document.createElement("div");
+      note.className = "buynote muted";
+      note.style.cssText = "font-size:.78rem;margin-top:4px";
+      button.after(note);
+    }
+    note.textContent = text;
+    note.style.color = bad ? "var(--bad)" : "";
+  };
+  button.disabled = true;
+  button.textContent = "Buying…";
+  try {
+    const wallet = await import("/wallet.js");
+    const held = (await wallet.opened(CHAIN)) || await arcadeKeys(CHAIN);
+    const offer = await wallet.offerBuy(button.dataset.buyListing, CHAIN.network);
+    const shown = await wallet.checked(offer, held);
+    const coins = String(Number(offer.price) / 1e8);
+    const seller = offer.seller_tag ? "@" + offer.seller_tag : "the seller";
+    const piece = button.dataset.piece || "this piece";
+    const ok = await arcadeAsk(`Buy ${piece} for ${coins} coins?`,
+      `${coins} coins go to ${seller}, the network fee is ${shown.coinsOf(shown.fee)}, `
+      + "and the rest comes back to you. The piece and the coins move in one "
+      + "transaction, checked in this browser.", `Buy it for ${coins} coins`);
+    if (!ok) { button.disabled = false; button.textContent = was; return; }
+    await wallet.buy(held, offer);
+    button.textContent = "Bought ✓";
+    done("It's yours when its block lands, usually within a few minutes.");
+  } catch (e) {
+    button.disabled = false;
+    button.textContent = was;
+    done(String(e.message || e), true);
+  }
+});
+</script>

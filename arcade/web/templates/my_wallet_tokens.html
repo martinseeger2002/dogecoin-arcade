@@ -8,7 +8,7 @@
   chain, and the way to send some of it.</p>
 
 <p class="muted" id="shut" hidden style="font-size:.86rem">
-  Your wallet is not open in this tab, so nothing here can be signed.
+  Your wallet is locked. Press Unlock at the top of the page, or just carry on: anything that needs your key asks for your password first.
   <a href="/me">Open it</a> and come back.</p>
 
 <div class="msg err" id="trouble" hidden></div>
@@ -68,6 +68,14 @@ function row(token, chain) {
   top.style.alignItems = "baseline";
   const name = document.createElement("strong");
   name.textContent = token.name;
+  if (token.sensitive && !arcadeShowSensitive()) {
+    // The show-me wall, as the server draws it on its own pages.
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "sens-btn";
+    b.textContent = "Sensitive token name \u2014 tap to show";
+    b.onclick = (e) => { e.stopPropagation(); b.replaceWith(document.createTextNode(token.name)); };
+    name.replaceChildren(b);
+  }
   const id_ = document.createElement("span");
   id_.className = "muted";
   id_.style.fontSize = ".78rem";
@@ -115,7 +123,7 @@ $("offer").onclick = async () => {
   say(""); news("");
   if (!chosen) return;
   try {
-    if (!keys) throw new Error("your wallet is not open in this tab");
+    if (!keys) keys = await arcadeKeys(CHAIN);
     const asked = await fetch("/account/token/send", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({

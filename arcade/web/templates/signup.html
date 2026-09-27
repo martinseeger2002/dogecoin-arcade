@@ -40,7 +40,7 @@
     <div class="field">
       <label for="pw">A password</label>
       <input type="password" id="pw" autocomplete="new-password"
-             placeholder="at least twelve characters">
+             placeholder="longer is safer: twelve characters or more">
       <p class="muted small">It opens your wallet from any device, and
         <strong>nobody can reset it</strong> &mdash; not us, not anybody.
         You will get twelve words afterwards, which are the only way back.</p>
@@ -154,6 +154,12 @@ import * as wallet from "/wallet.js";
 const $ = (id) => document.getElementById(id);
 const say = (text) => { $("trouble").textContent = text;
                         $("trouble").hidden = !text; };
+// Where to go once signed in: back to the page that sent them here, this site's
+// own paths only -- never "//elsewhere" or a full URL (a tester, 2026-09-26).
+const NEXT = (() => {
+  const n = new URLSearchParams(location.search).get("next") || "";
+  return /^\/(?![\/\\])/.test(n) ? n : "/";
+})();
 const CHAIN = {network: "{{ chain.network }}",
                version: {{ chain.params.pubkeyhash_version }}};
 
@@ -254,7 +260,7 @@ function wire() {
   }
 
   $("kept").onchange = () => { $("done").disabled = !$("kept").checked; };
-  $("done").onclick = () => { location.href = "/"; };
+  $("done").onclick = () => { location.href = NEXT; };
 
   $("enter").onclick = async () => {
     say("");
@@ -263,7 +269,7 @@ function wire() {
       // moment, and asking for it again on the next page is asking the
       // same question twice.
       await wallet.signIn($("in-tag").value.trim(), $("in-pw").value, CHAIN);
-      location.href = "/";
+      location.href = NEXT;
     } catch (e) { say(String(e.message || e)); }
   };
 
@@ -281,7 +287,7 @@ function wire() {
       // account whose wallet was made elsewhere can be used here without
       // this node ever holding what makes it spendable.
       await wallet.openFile(said, $("backup-pw").value, CHAIN);
-      location.href = "/";
+      location.href = NEXT;
     } catch (e) { say(String(e.message || e)); }
   };
 }

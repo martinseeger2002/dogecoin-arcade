@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}{{ summary.collection }} · DogecoinArcade{% endblock %}
+{% block title %}{{ wall_text(summary.collection, 'A collection') }} · DogecoinArcade{% endblock %}
 {% block body %}
-<h1>{{ summary.collection }}</h1>
+<h1>{{ wall(summary.collection, 'collection name') }}</h1>
 {% set d = summary.details or {} %}
 {% if d.description %}<p style="max-width:70ch;margin:0 0 6px">{{ d.description }}</p>{% endif %}
 <p class="sub"><strong>{{ "{:,}".format(summary.count) }} of {{ "{:,}".format(summary.supply) if summary.supply else "∞" }}</strong>
@@ -23,6 +23,33 @@
   <a class="btn ghost small" href="/collections">All collections</a>
   <a class="btn ghost small" href="/r/collection/{{ summary.creator }}/{{ summary.collection|urlencode }}?traits=1">API</a>
 </div>
+
+{% if for_sale %}
+{# For sale first (a tester, 2026-09-27): every listed piece of the set, cheapest
+   first, bought with one press. #}
+<h2 style="margin:6px 0 8px">For sale</h2>
+<div class="panel" style="margin-bottom:16px">
+  <table class="wallets">
+    {% for f in for_sale %}
+    <tr>
+      <td style="width:46px"><a href="/inscriptions/{{ f.txid }}/view">
+        {%- if f.content_type.startswith('image/') %}<img src="/content/{{ f.txid }}" alt="" loading="lazy"
+          style="width:38px;height:38px;object-fit:cover;border-radius:8px;display:block">
+        {%- else %}<span class="coinface" style="border-radius:8px">#{{ f.number }}</span>{% endif %}</a></td>
+      <td><a href="/inscriptions/{{ f.txid }}/view"><strong>{{ wall(summary.collection, 'collection name') }} #{{ f.edition }}</strong></a>
+        <div class="muted" style="font-size:.76rem">listed by {{ f.owner|who }}</div></td>
+      <td style="text-align:right"><strong>{{ f.listing.price }}</strong></td>
+      <td style="text-align:right;width:90px">
+        {% if f.owner in owned %}<span class="muted small">yours</span>
+        {% elif account_view and f.listing.listing %}
+        <button type="button" class="small" data-buy-listing="{{ f.listing.listing }}"
+                data-piece="{{ wall_text(summary.collection) }} #{{ f.edition }}">Buy</button>
+        {% else %}<a class="btn ghost small" href="/inscriptions/{{ f.txid }}/view">Open</a>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
 
 <div class="cards">
   {% for row in inscriptions %}
@@ -57,9 +84,17 @@
           <td class="mono" style="word-break:break-all">
              {{ row.owner|who }}</td></tr>
     </table>
-    <div class="row" style="margin-top:8px">
+    <div class="row" style="margin-top:8px;align-items:center;gap:6px;flex-wrap:wrap">
+      {% if row.listing %}
+        <strong>{{ row.listing.price }}</strong>
+        {% if row.owner in owned %}<span class="muted small">your listing</span>
+        {% elif account_view and row.listing.listing %}
+        <button type="button" class="small" data-buy-listing="{{ row.listing.listing }}"
+                data-piece="{{ wall_text(summary.collection) }} #{{ row.edition }}">Buy</button>
+        {% endif %}
+      {% endif %}
       <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view">Open</a>
-      {% if row.owner in owned %}
+      {% if row.owner in owned and not account_view %}
       <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/send">Send</a>
       {% endif %}
     </div>
@@ -95,4 +130,5 @@
   </table>
 </div>
 {% endif %}
+{% if account_view %}{% include "_buy_listing.html" %}{% endif %}
 {% endblock %}

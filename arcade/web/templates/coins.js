@@ -813,3 +813,107 @@ export async function signInput(priv, sighash, sighashType = 1) {
   out[der.length] = sighashType;
   return out;
 }
+
+/* --- pre-signed offers (2026-09-27) --------------------------------
+ *
+ * An offer now carries the buyer's half of the trade, signed when it is made,
+ * so the seller's Accept completes it on the spot. The buyer's inputs sign
+ * ALL|ANYONECANPAY: every output is fixed -- the swap's bytes, the seller's
+ * payment, the buyer's change -- and the seller may add the one input the
+ * trade still needs. `arcade/funding.py:build_bid` builds it; these check it.
+ */
+export const ALL_ANYONECANPAY = 0x81;
+
+/** The digest input `index` signs under ALL|ANYONECANPAY: this input alone,
+ *  and every output. */
+export async function sighashAllAcp(tx, index, scriptPubKey) {
+  const input = tx.inputs[index];
+  const parts = [writeLE(tx.version, 4), sizeOf(1n),
+                 unhex(input.txid).reverse(), writeLE(input.vout, 4),
+                 sizeOf(BigInt(scriptPubKey.length)), scriptPubKey,
+                 writeLE(0xffffffffn, 4), sizeOf(BigInt(tx.outputs.length))];
+  for (const out of tx.outputs)
+    parts.push(writeLE(out.value, 8), sizeOf(BigInt(out.script.length)), out.script);
+  parts.push(writeLE(tx.locktime, 4), writeLE(BigInt(ALL_ANYONECANPAY), 4));
+  return hash256(join(parts));
+}
+
+/** Check the buyer's half before signing it: every input this key's, output 0
+ *  the swap for this piece at this price, output 1 the seller paid the price
+ *  plus their own coin back, everything else change to this key. */
+export async function verifyBid(bid, keys, expect) {
+  const refuse = (why) => { throw new Error(`${why} Nothing was signed.`); };
+  if (!bid || !bid.raw) refuse("that offer carries no trade to sign.");
+  const tx = parseTx(bid.raw);
+  const own = keys.address || await address(keys.pubkey, keys.version);
+  const mine = p2pkh(await hash160(keys.pubkey));
+  const named = bid.inputs || [];
+  if (named.length !== tx.inputs.length
+      || named.length !== (bid.sighashes || []).length) {
+    refuse("that trade's coins do not match what it asks to be signed.");
+  }
+  for (let i = 0; i < tx.inputs.length; i++) {
+    if (tx.inputs[i].txid !== String(named[i].txid).toLowerCase()
+        || tx.inputs[i].vout !== Number(named[i].vout)
+        || String(named[i].address || "") !== own) {
+      refuse(`input ${i} is not a coin of this key's.`);
+    }
+  }
+  if (tx.outputs.length < 2 || tx.outputs.length > 3) refuse("that trade has the wrong shape.");
+  const said = listingPayload(opreturnData(tx.outputs[0].script) || refuse("output 0 is not the trade's bytes."));
+  if (said.txid !== String(expect.piece).toLowerCase()) refuse("that trade is for a different piece.");
+  const sats = BigInt(expect.sats || 0);
+  if (expect.token) {
+    if (!said.token || said.token.propertyid !== Number(expect.token.propertyid)
+        || said.token.units !== BigInt(expect.token.units)) {
+      refuse("that trade names a different token price.");
+    }
+  } else if (said.sats !== sats) {
+    refuse("that trade names a different price.");
+  }
+  const exact = BigInt(bid.exact);
+  const seller = tx.outputs[1];
+  const sellerScript = p2pkh(unbase58(expect.seller).slice(1, 21));
+  if (!SAME(seller.script, sellerScript) || seller.value !== sats + exact) {
+    refuse("that trade does not pay the piece's holder the price.");
+  }
+  let change = 0n;
+  for (const out of tx.outputs.slice(2)) {
+    if (!SAME(out.script, mine)) refuse("that trade pays somebody besides the seller and you.");
+    change += out.value;
+  }
+  const hashes = [];
+  for (let n = 0; n < tx.inputs.length; n++) {
+    const derived = hex(await sighashAllAcp(tx, n, mine));
+    if (derived !== String(bid.sighashes[n]).toLowerCase()) {
+      refuse(`what this browser worked out for input ${n} is not what the offer asks.`);
+    }
+    hashes.push(derived);
+  }
+  const into = named.reduce((t, c) => t + BigInt(c.value || 0), 0n);
+  return {hashes, fee: Number(into + exact - tx.outputs.reduce((t, o) => t + o.value, 0n)),
+          change: Number(change)};
+}
+
+/** Check the finished trade before the seller signs input 0 (SIGHASH_ALL):
+ *  input 0 this key's coin, and this key paid its coin back plus the price the
+ *  bytes name. The buyer's inputs are already signed and not this key's. */
+export async function verifyFill(offer, keys) {
+  const refuse = (why) => { throw new Error(`${why} Nothing was signed.`); };
+  const tx = parseTx(offer.raw);
+  const own = keys.address || await address(keys.pubkey, keys.version);
+  const mine = p2pkh(await hash160(keys.pubkey));
+  const first = (offer.inputs || [])[0] || {};
+  if (tx.inputs[0].txid !== String(first.txid).toLowerCase() || first.address !== own) {
+    refuse("input 0 is not this key's coin.");
+  }
+  const said = listingPayload(opreturnData(tx.outputs[0].script) || refuse("output 0 is not the trade's bytes."));
+  const exact = BigInt(offer.exact);
+  const paid = tx.outputs.filter((o) => SAME(o.script, mine)).reduce((t, o) => t + o.value, 0n);
+  if (paid < exact + said.sats) refuse("that trade does not pay you the price.");
+  const derived = hex(await sighashAll(tx, 0, mine));
+  if (derived !== String((offer.sighashes || [])[0]).toLowerCase()) {
+    refuse("what this browser worked out is not what the node asks.");
+  }
+  return {hash: derived, sats: Number(said.sats), token: said.token};
+}

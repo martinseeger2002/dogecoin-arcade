@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% import "_chart.html" as chart %}
-{% block title %}{{ summary.collection }} · DogecoinArcade{% endblock %}
+{% block title %}{{ wall_text(summary.collection, 'A collection') }} · DogecoinArcade{% endblock %}
 {% block body %}
 <div id="live" data-generation="{{ state.generation }}" class="live"></div>
 
@@ -11,7 +11,7 @@
     <img src="/content/{{ cover }}" alt="{{ summary.collection }} #1" loading="lazy">
   {% endif %}
   <div class="who">
-    <h1>{{ summary.collection }}</h1>
+    <h1>{{ wall(summary.collection, 'collection name') }}</h1>
     <p class="muted" style="margin:0 0 6px">
       by  {{ summary.creator|who }}
       &middot; {{ chain.label }}
@@ -82,7 +82,7 @@
           <strong>{{ row.listing.price }}</strong>
           <a class="btn ghost small" href="/exchange/sell/{{ row.txid }}">Change the price</a>
         {% else %}
-          <a class="btn small" href="/exchange/sell/{{ row.txid }}">Sell it</a>
+          <a class="btn small" href="/exchange/sell/{{ row.txid }}">Sell</a>
         {% endif %}
         <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/send">Send</a></td>
     </tr>
@@ -98,6 +98,7 @@
   <div class="tile">
     <a class="art" href="/inscriptions/{{ row.txid }}/view"
        title="{{ summary.collection }} #{{ row.edition }}"
+       aria-label="{{ summary.collection }} #{{ row.edition }}"
        {% if row.held and row.content_type.startswith('image/') %}
        style="background-image:url(/content/{{ row.txid }})"{% endif %}></a>
     <div class="body">
@@ -119,11 +120,16 @@
           {# An account buys, offers and sells from the piece's own page, signed
              in its tab; the forms below are the operator's wallet's. #}
           {% if row.mine %}
-            <a class="btn small" href="/me/nfts">{{ 'Your listing' if row.listing else 'Sell it' }}</a>
+            <a class="btn small" href="/me/nfts">{{ 'Your listing' if row.listing else 'Sell' }}</a>
           {% elif not signed_in %}
             <a class="btn ghost small" href="/join">Sign in to buy</a>
+          {% elif row.listing and row.listing.listing %}
+            {# One press and the trade happens (2026-09-27). #}
+            <button type="button" class="small" data-buy-listing="{{ row.listing.listing }}"
+                    data-piece="{{ wall_text(summary.collection) }} #{{ row.edition }}">Buy {{ row.listing.price }}</button>
+            <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view#make-offer">Make offer</a>
           {% elif row.listing %}
-            <a class="btn small" href="/inscriptions/{{ row.txid }}/view#for-sale">{{ 'Buy' if row.listing.kind != 'ask' else 'Offer' }} {{ row.listing.price }}</a>
+            <a class="btn small" href="/inscriptions/{{ row.txid }}/view#for-sale">Buy {{ row.listing.price }}</a>
             <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view#make-offer">Make offer</a>
           {% else %}
             <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view#make-offer">Make offer</a>
@@ -134,7 +140,7 @@
           {% elif row.listing %}
             <a class="btn ghost small" href="/inscriptions/{{ row.listing.shop }}/view">Its listing</a>
           {% else %}
-            <a class="btn small" href="/exchange/sell/{{ row.txid }}">Sell it</a>
+            <a class="btn small" href="/exchange/sell/{{ row.txid }}">Sell</a>
           {% endif %}
         {% else %}
           {% if row.listing and row.listing.kind == 'ask' %}
@@ -200,4 +206,5 @@
   </form>
 </nav>
 {% endif %}
+{% if account_view %}{% include "_buy_listing.html" %}{% endif %}
 {% endblock %}

@@ -37,7 +37,7 @@ def test_a_stranger_is_sent_to_sign_up(client):
     app, _ = client
     answer = app.get("/me", follow_redirects=False)
     assert answer.status_code == 303
-    assert answer.headers["location"] == "/join"
+    assert answer.headers["location"].split("?")[0] == "/join"
 
 
 def test_an_account_gets_its_own_page(client):
@@ -233,7 +233,7 @@ def test_messages_needs_an_account(client):
     app, _ = client
     answer = app.get("/me/messages", follow_redirects=False)
     assert answer.status_code == 303
-    assert answer.headers["location"] == "/join"
+    assert answer.headers["location"].split("?")[0] == "/join"
 
 
 def test_the_messages_page_is_there_and_is_in_the_menu(public):
@@ -297,3 +297,26 @@ def test_a_published_picture_stays_in_the_card_whatever_the_box_says(client):
     body = page[page.index("function previewFace"):]
     body = body[:body.index("\n}\n")]
     assert "publishedFace" in body and "dataset.cleared" in body
+
+
+def test_reading_an_account_tops_it_back_up(client, monkeypatch):
+    """faucet.top_off was written on 2026-09-25 and never called, so nobody was
+    ever topped up (2026-09-27). Reading an account's balance now asks
+    for it, in the background; top_off itself keeps the once-a-day rule."""
+    import time as _time
+    from arcade import faucet as faucetlib
+
+    app, state = client
+    _seat(app)
+    app.post("/account/address", json={"address": "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg"},
+             headers=LOCAL)
+    asked = []
+    monkeypatch.setattr(faucetlib, "top_off",
+                        lambda chain, faucet, pubkey, address, spendable, now=None:
+                        asked.append((address, spendable)) or 0)
+    app.get("/account", headers=LOCAL)
+    for _ in range(50):
+        if asked:
+            break
+        _time.sleep(0.05)
+    assert asked and asked[0] == ("mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg", 0)
