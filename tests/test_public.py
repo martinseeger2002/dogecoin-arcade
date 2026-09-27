@@ -961,3 +961,13 @@ def test_any_piece_can_be_shared_to_the_feed_from_its_card(client):
     from arcade.web.app import post_html
     drawn = post_html(f"look at this one\n\n/content/{txid}", {txid: "image/png"})
     assert "look at this one" in drawn and f'src="/content/{txid}"' in drawn
+
+
+def test_a_mintpad_link_may_name_its_seller_by_name(client):
+    """a tester, 2026-09-27: /mintpad/<@name>/<collection> is the link people
+    share, and it bounced to the Mintpads tab. A name resolves to its address
+    first; one nobody holds still lands on the tab, not an error."""
+    app, state = client
+    for who in ("@nobody_here", "nobody_here"):
+        answer = app.get(f"/mintpad/{who}/Pixel%20Skull", follow_redirects=False)
+        assert answer.status_code in (200, 303), answer.text[:200]

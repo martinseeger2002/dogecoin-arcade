@@ -238,7 +238,9 @@
                   `${terms.coins} coins go to ${who} at the price on their order, and `
                   + `the tokens come to you when the block lands. They don't need to be `
                   + `online. Network fee ${shown.coinsOf(shown.fee)}. `
-                  + (Number(terms.left) > 0 ? `${terms.left} stays on the book at the same price.`
+                  + (parseFloat(String(terms.left || "0").replace(/,/g, "")) > 0
+                     ? `The other ${terms.left} stay on the book at `
+                       + (btn.dataset.price ? `${btn.dataset.price} each.` : "the same price.")
                                             : "That is the whole order."),
                   `Buy for ${terms.coins} coins`))) {
               btn.disabled = false;
@@ -418,6 +420,7 @@
                    title="How much of this price to ask about. Their node prices it from their order, and the answer is checked against it."
                    style="width:6.5em;padding:3px 6px;font-size:.78rem">
             <button type="button" class="small take-price" data-order="{{ o.txid }}"
+                    data-price="{{ o.price_shown }}"
                     title="One transaction: you pay the seller what their order says, and the tokens come out of what their order holds. They don't need to be online.">Buy</button>
             {%- elif not o.mine and not o.pending and fills_ready and viewer == 'wallet' %}
             <form method="post" action="/exchange/fill" class="row"

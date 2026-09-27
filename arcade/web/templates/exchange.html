@@ -241,11 +241,11 @@
   <p class="sub">Every pad on {{ chain.label|lower }} with something left to
     sell &mdash; collections and tokens both. A pad is an inscription: it
     appears here because it is on the chain, not because anybody listed it.</p>
-  {% if not mintpads %}
+  {% if not mintpads and not account_pads %}
     <div class="panel empty"><p>No collection mintpads on this chain yet.</p>
       <p class="muted" style="font-size:.86rem">Inscribe a collection with the
         mintpad box ticked and it appears here by itself.</p></div>
-  {% else %}
+  {% elif mintpads %}
     <div class="cards">{% for s in mintpads %}{{ shopcard(s, 'Mint') }}{% endfor %}</div>
   {% endif %}
 

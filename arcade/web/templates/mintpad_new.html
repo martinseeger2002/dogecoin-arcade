@@ -175,9 +175,10 @@ $("mp-go").onclick = async () => {
   show("mp-doing");
   const say = (t) => { $("mp-says").textContent = t; };
   const bar = (n) => { $("mp-fill").style.width = Math.round(100 * n / todo.length) + "%"; };
-  let done = 0, split = false;
+  let done = 0, split = false, waited = 0;
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
   for (const p of todo) {
-    for (let tries = 0; tries < 2; tries++) {
+    for (let tries = 0; tries < 40; tries++) {
       try {
         const leg = await wallet.offerListing(p.txid, amount, CHAIN.network);
         await wallet.list(keys, leg, {days: 30});
@@ -186,14 +187,26 @@ $("mp-go").onclick = async () => {
         break;
       } catch (e) {
         const why = String(e.message || e);
-        if (!split && /coin to spend|Split it first|needs two of them/i.test(why)) {
+        const short = /coin to spend|Split it first|needs two of them/i.test(why);
+        if (short && !split) {
           // Two coins per listing: make them in one transaction, then carry on.
           say("Making coins to list on: one small transaction…");
-          const offer = await wallet.offerSplit(Math.min(60, 2 * (todo.length - done)),
-                                                CHAIN.network);
-          await wallet.checked(offer, keys);
-          await wallet.confirm(keys, offer);
+          try {
+            const offer = await wallet.offerSplit(Math.min(60, 2 * (todo.length - done)),
+                                                  CHAIN.network);
+            await wallet.checked(offer, keys);
+            await wallet.confirm(keys, offer);
+          } catch (err) { /* coins still confirming from an earlier split: wait below */ }
           split = true;
+          continue;
+        }
+        if (short && waited < 30) {
+          // The split's coins are still confirming (a tester, 2026-09-27: a
+          // retry right after a closed tab stopped here with the raw message).
+          waited += 1;
+          say(`${done} of ${todo.length} up. Your coins are confirming. This continues `
+              + "by itself, usually within a minute or two. Keep this page open.");
+          await pause(20000);
           continue;
         }
         $("mp-title").textContent = done ? "Partly up" : "Not up yet";

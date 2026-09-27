@@ -5,6 +5,12 @@
    bought one at a time as a random piece of the set. Each buy is an ordinary
    /account/buy of one listing, chosen by /r/mintpad at random. #}
 {% set d = summary.details or {} %}
+{% if unlisted %}
+<div class="msg info" style="margin:0 0 12px">
+  <strong>{{ left }} of {{ left + unlisted }} are up.</strong> {{ unlisted }} of your pieces
+  aren't listed yet (a tab closed partway, or your coins were still confirming).
+  <a href="/mintpad/new">Finish listing</a>. Nothing is listed twice.</div>
+{% endif %}
 {% set t = look.template %}
 {# Four looks (2026-09-26), one card: what differs is the frame around it. #}
 {% if t == 'wall' and art %}

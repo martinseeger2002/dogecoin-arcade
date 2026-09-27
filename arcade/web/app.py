@@ -13393,6 +13393,16 @@ def create_app(state: AppState) -> FastAPI:
     def mintpad_page(request: Request, creator: str, name: str):
         """A collection's mintpad: how many are left, the price, and Mint."""
         chain, index = _token_chain()
+        # The link people share names the seller: /mintpad/@arcade_demo/Pixel%20Skull
+        # (a tester, 2026-09-27). An address still works as it always did.
+        tag = creator[1:] if creator.startswith("@") else creator
+        if len(tag) < 26 or creator.startswith("@"):
+            try:
+                found = index.address_of(tag)
+            except Exception:
+                found = None
+            if found:
+                creator = found
         rows = _mintpad_rows(chain, creator, name)
         maker = rows[0]["maker"] if rows else creator
         summary = index.collection(maker, name) or index.collection(creator, name)
@@ -13406,8 +13416,22 @@ def create_app(state: AppState) -> FastAPI:
                    if str(r.get("content_type") or "").startswith("image/")]
         except Exception:
             art = []
+        # The seller's own view: pieces they still hold that are not up. A pad
+        # is listed from the seller's tab, so a tab closed halfway leaves it
+        # partial with nothing saying so (a tester, 2026-09-27).
+        unlisted = 0
+        viewer = signed_in(request)
+        if viewer is not None and rows is not None:
+            try:
+                if _account_address(viewer.pubkey, chain) == creator:
+                    up = {r["piece"] for r in rows}
+                    unlisted = sum(1 for r in index.collection_items(
+                                       summary["creator"], name, limit=1000)
+                                   if r["owner"] == creator and r["txid"] not in up)
+            except Exception:
+                unlisted = 0
         return render(request, "mintpad_view.html", chain=chain, summary=summary,
-                      look=look, art=art,
+                      look=look, art=art, unlisted=unlisted,
                       seller=creator, left=len(rows),
                       prices=sorted({r["price"] for r in rows}),
                       signed_in=signed_in(request) is not None)
