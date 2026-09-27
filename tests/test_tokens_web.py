@@ -585,6 +585,62 @@ def test_the_pair_page_tells_a_stranger_nothing_about_this_wallet(web):
     assert figure in back and 'action="/exchange/order"' in back
 
 
+def test_an_indivisible_price_is_read_in_coins_and_not_in_satoshis(web):
+    """An ask of 2 coins each, printed as `200000000`, on every such pair page.
+
+    `index.book` keeps the ratio of the two integers an order is made of, because
+    a book sorted on floats orders itself in a way nobody can reproduce (D-048).
+    For a divisible token both integers are scaled by COIN and their ratio is
+    coins; an indivisible token's token count is never scaled, so its ratio is
+    already satoshis. The writing side knows this -- `_cancel_one_or_pair` says
+    "divide the wrong way and the cancel names a price a hundred million off" --
+    and the reading side simply did not, so the row said what the engine means
+    instead of what the person typed.
+
+    Found by rehearsing a cancel of ONE price on the live site for a tester
+    (S18, 2026-09-27): two asks on an indivisible pair, one withdrawn, and the
+    anonymous page read back showed the surviving row as `200000000 2 4`. The
+    cancel was right and the price was not, which is why the test is about the
+    page rather than the arithmetic -- the arithmetic was never broken.
+
+    The spread is asserted beside it because it is a difference of the same two
+    figures, and a fix that stopped at the table would leave the sentence under
+    the book saying the same nonsense.
+    """
+    import re as _re
+    import unittest.mock as mock
+    app, state, node, alice, bob = web
+    csrf = state.csrf_token
+    form = dict(csrf_token=csrf, sender=alice, name="Whole Token", supply="100",
+                kind="fixed", units="indivisible")
+    txid = shown(app.post("/tokens/create", data=form).text, "txid")
+    app.post("/tokens/create", data={**form, "confirmed": txid},
+             follow_redirects=False)
+    mine_and_index(node, state)
+    index = state.token_index(state.ledger)
+    (prop,) = index.properties()
+    pid = str(prop["property_id"])
+    assert not prop["divisible"], "the whole point of the test is this one word"
+    home = index.balances([alice])[0]["address"]
+    with mock.patch.object(type(state), "home_address", lambda self, chain: home):
+        # Two sides, so the spread exists: 2 coins each wanted, 1 coin each
+        # offered. They do not cross, so both rest, and the gap is one coin.
+        for side, amount, price in (("ask", "2", "2"), ("bid", "1", "1")):
+            said = app.post("/exchange/order", data=dict(
+                csrf_token=csrf, property_id=pid, side=side, amount=amount,
+                price=price), follow_redirects=False)
+            assert said.status_code in (200, 302, 303), said.text
+        mine_and_index(node, state)
+    body = app.get(f"/exchange/pair/{pid}").text
+    prices = [_re.sub(r"<[^>]+>", "", c) for c in _re.findall(
+        r'<tr class="(?:ask|bid)[^>]*>\s*<td[^>]*>([^<]*)</td>', body)]
+    assert prices == ["2", "1"], \
+        f"each row priced in the coins somebody typed, and the page said {prices}"
+    assert "200000000" not in body and "100000000" not in body, \
+        "the satoshi figure appears nowhere, neither in a row nor in the spread"
+    assert ">1.00000000<" in body, "and the spread says one coin"
+
+
 def test_a_sensitive_name_is_walled_on_the_pair_page_as_it_is_on_the_token_page(web,
                                                                                monkeypatch):
     """a tester, 2026-09-27: the wall stood on `/tokens/11` and not on
