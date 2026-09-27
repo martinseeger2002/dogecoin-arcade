@@ -451,6 +451,59 @@ def test_an_order_goes_on_the_book_and_can_be_taken_off(web):
         assert index.balance(home, prop["property_id"]) == 1000 * 10**8
 
 
+def test_a_cancel_with_a_price_gives_back_one_price_and_not_the_pair(web):
+    """The same page's cancel, at one price, on the operator's own route.
+
+    The account's route and this one used to file the identical message, so the
+    finding is the same whichever door you come in at: two asks at two prices,
+    one press, both gone (a tester). `price` says which of the two shapes
+    the wire has is filed -- and here it is the flash line that carries the
+    answer, because that is what this route can say at all. The control is the
+    balance: an ask's tokens come back when the cancel's block lands, so the
+    spendable figure is the supply less the 25 the surviving ask still holds.
+    The 50 that was withdrawn is back in there, which is what makes this a
+    check of the cancel and not of the book.
+    """
+    app, state, node, alice, bob = web
+    csrf = state.csrf_token
+    form = dict(csrf_token=csrf, sender=alice, name="Price Token",
+                supply="1000", kind="fixed", units="divisible")
+    txid = shown(app.post("/tokens/create", data=form).text, "txid")
+    app.post("/tokens/create", data={**form, "confirmed": txid},
+             follow_redirects=False)
+    mine_and_index(node, state)
+    index = state.token_index(state.ledger)
+    (prop,) = index.properties()
+    pid = str(prop["property_id"])
+    home = index.balances([alice])[0]["address"]
+
+    import unittest.mock as mock
+    with mock.patch.object(type(state), "home_address",
+                           lambda self, chain: home):
+        for amount, price in (("50", "0.5"), ("25", "1")):
+            app.post("/exchange/order",
+                     data=dict(csrf_token=csrf, property_id=pid, side="ask",
+                               amount=amount, price=price),
+                     follow_redirects=False)
+            mine_and_index(node, state)
+        assert len(index.book(prop["property_id"])["asks"]) == 2
+
+        page = app.post("/exchange/order/cancel",
+                        data=dict(csrf_token=csrf, property_id=pid,
+                                  side="ask", price="0.5"),
+                        follow_redirects=False)
+        assert page.status_code == 303
+        assert "one price, not the pair" in (state.notice or ""), state.notice
+        mine_and_index(node, state)
+
+        book = index.book(prop["property_id"])
+        assert len(book["asks"]) == 1, \
+            "a cancel at one price took the other price with it"
+        assert float(book["asks"][0]["price"]) == 1.0
+        assert index.balance(home, prop["property_id"]) == 975 * 10**8, \
+            "the withdrawn price's tokens came back and the standing one's did not"
+
+
 def test_the_pair_page_tells_a_stranger_nothing_about_this_wallet(web):
     """The hole that was on the public site, in a test, about a number.
 
