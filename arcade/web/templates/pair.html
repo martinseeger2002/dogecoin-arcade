@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% import "_chart.html" as chart %}
-{% block title %}{{ prop.name }}/{{ chain.label|upper }} · Exchange · DogecoinArcade{% endblock %}
+{% block title %}{{ wall_text(prop.name, 'A token') }}/{{ chain.label|upper }} · Exchange · DogecoinArcade{% endblock %}
 {% block body %}
 <div id="live" data-generation="{{ state.generation }}" class="live"></div>
 <a class="back-link" href="/exchange?tab=tokens">&#8592; All markets</a>
@@ -8,13 +8,13 @@
 <div class="markethead">
   <div class="row" style="gap:12px;align-items:center;flex:0 0 auto">
     {% if face.icon %}
-      <img src="/content/{{ face.icon }}" alt="{{ prop.name }}" loading="lazy"
+      <img src="/content/{{ face.icon }}" alt="{{ wall_text(prop.name) }}" loading="lazy"
            style="width:42px;height:42px;object-fit:cover;border-radius:50%">
     {% else %}
       <span class="coinface" style="width:42px;height:42px"></span>
     {% endif %}
     <div>
-      <h1 style="margin:0;font-size:1.3rem">{{ prop.name }}<span class="muted">/{{ chain.label|upper }}</span></h1>
+      <h1 style="margin:0;font-size:1.3rem">{{ wall(prop.name, 'token name') }}<span class="muted">/{{ chain.label|upper }}</span></h1>
       <div class="muted" style="font-size:.78rem">#{{ prop.property_id }}
         {%- if face.about %} &middot; {{ face.about }}{% endif %}
         {%- if face.url %} &middot; <a href="{{ face.url }}" rel="noopener noreferrer nofollow"
@@ -59,7 +59,7 @@
     </div>
 
     <div class="panel">
-      <h3 style="margin:0 0 10px">Buy and sell {{ prop.name }}</h3>
+      <h3 style="margin:0 0 10px">Buy and sell {{ wall_text(prop.name, 'this token') }}</h3>
       {% if viewer == 'account' %}
       {% if account_address %}
       <div class="trade">
@@ -68,7 +68,7 @@
           <label><input type="radio" name="book-side" value="ask"><span>Sell</span></label>
         </div>
         <div class="row" style="gap:10px;align-items:flex-end">
-          <div class="field" style="flex:1 1 150px;margin:0"><label>Amount of {{ prop.name }}</label>
+          <div class="field" style="flex:1 1 150px;margin:0"><label>Amount of {{ wall_text(prop.name, 'this token') }}</label>
             <input autocomplete="off" id="book-amount" inputmode="decimal" placeholder="0"></div>
           <div class="field" style="flex:1 1 150px;margin:0"><label>Price, coins each</label>
             <input autocomplete="off" id="book-price" inputmode="decimal" placeholder="0.00000000"></div>
@@ -79,7 +79,7 @@
       <p class="msg err" id="book-trouble" hidden></p>
       <p class="msg ok" id="book-news" hidden></p>
       <p class="muted" style="font-size:.78rem;margin:10px 0 0">You hold {{ held }}
-        {{ prop.name }} and {{ "%.4f"|format(coins) }} coins in the wallet that
+        {{ wall_text(prop.name, 'this token') }} and {{ "%.4f"|format(coins) }} coins in the wallet that
         signs this &mdash; not in this node, which is not holding your key. The
         order goes on the chain and stands until you cancel it. Selling holds the
         tokens back until then; a bid holds nothing, because nothing on this
@@ -354,7 +354,7 @@
           <label><input type="radio" name="side" value="ask"><span>Sell</span></label>
         </div>
         <div class="row" style="gap:10px;align-items:flex-end">
-          <div class="field" style="flex:1 1 150px;margin:0"><label>Amount of {{ prop.name }}</label>
+          <div class="field" style="flex:1 1 150px;margin:0"><label>Amount of {{ wall_text(prop.name, 'this token') }}</label>
             <input autocomplete="off" name="amount" inputmode="decimal" placeholder="0"></div>
           <div class="field" style="flex:1 1 150px;margin:0"><label>Price, coins each</label>
             <input autocomplete="off" name="price" inputmode="decimal" placeholder="0.00000000"></div>
@@ -363,7 +363,7 @@
         </div>
       </form>
       <p class="muted" style="font-size:.78rem;margin:10px 0 0">You hold {{ held }}
-        {{ prop.name }} and {{ "%.4f"|format(coins) }} coins. The order goes on the
+        {{ wall_text(prop.name, 'this token') }} and {{ "%.4f"|format(coins) }} coins. The order goes on the
         chain and stands until you cancel it. Selling holds the tokens back until
         then; a bid holds nothing, because nothing on this chain can reserve coins
         and still let a wallet spend.</p>

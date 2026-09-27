@@ -59,7 +59,7 @@
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <div class="row" style="gap:8px;align-items:flex-end">
         <div class="field" style="flex:0 0 150px;margin:0">
-          <label for="lot">{{ prop.name }} per sale</label>
+          <label for="lot">{{ wall_text(prop.name, 'this token') }} per sale</label>
           <input autocomplete="off" name="lot" id="lot" inputmode="decimal"
                  placeholder="100" value="{{ pad_lot or '' }}"></div>
         <div class="field" style="flex:0 0 130px;margin:0">
@@ -76,7 +76,7 @@
       </div>
       {% if pad_plan %}
       <div class="note" style="margin-top:12px">
-        Selling <strong>{{ pad_lot }} {{ prop.name }}</strong> for
+        Selling <strong>{{ pad_lot }} {{ wall_text(prop.name, 'this token') }}</strong> for
         <strong>{{ pad_price }}</strong> a sale &mdash;
         {{ "{:,}".format(pad_plan.content_len) }} bytes in {{ pad_plan.chunks }}
         transaction{{ '' if pad_plan.chunks == 1 else 's' }},
@@ -95,7 +95,7 @@
             sandbox="allow-scripts" loading="lazy" title="launchpad preview"
             style="width:100%;height:420px;border:1px solid var(--line);border-radius:10px;background:#07060c;margin-top:10px"></iframe>
   {% else %}
-    <p class="muted" style="margin:0">Nothing is selling {{ prop.name }} from a
+    <p class="muted" style="margin:0">Nothing is selling {{ wall_text(prop.name, 'this token') }} from a
       launchpad. Its issuer can open one.</p>
   {% endif %}
 </div>
@@ -164,13 +164,13 @@
 {# An account's own issuer controls (a tester, 2026-09-26: a managed token made
    from an account was stuck at zero -- no Grant, Revoke or hand-over). Signed in
    this tab with the account's key; the node only builds the transaction. #}
-<h2>You issue {{ prop.name }}</h2>
+<h2>You issue {{ wall(prop.name, 'token name') }}</h2>
 <div class="panel" id="issuer-panel">
   <p class="msg info" id="iss-locked" hidden>Open your wallet on
     <a href="/me">Your arcade</a> first: these are signed with your key, in this tab.</p>
   {% if prop.managed %}
   <div class="issrow">
-    <strong>Grant</strong> <span class="muted small">&mdash; make new {{ prop.name }} for somebody (blank: for you)</span>
+    <strong>Grant</strong> <span class="muted small">&mdash; make new {{ wall_text(prop.name, 'this token') }} for somebody (blank: for you)</span>
     <div class="row" style="margin-top:8px;gap:8px">
       <input id="grant-amount" autocomplete="off" inputmode="{{ 'decimal' if prop.divisible else 'numeric' }}" placeholder="how many" style="flex:0 0 120px">
       <input id="grant-to" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="@name (blank: you)" style="flex:1 1 180px">
@@ -178,7 +178,7 @@
     </div>
   </div>
   <div class="issrow">
-    <strong>Revoke</strong> <span class="muted small">&mdash; destroy {{ prop.name }} you hold yourself</span>
+    <strong>Revoke</strong> <span class="muted small">&mdash; destroy {{ wall_text(prop.name, 'this token') }} you hold yourself</span>
     <div class="row" style="margin-top:8px;gap:8px">
       <input id="revoke-amount" autocomplete="off" inputmode="{{ 'decimal' if prop.divisible else 'numeric' }}" placeholder="how many" style="flex:0 0 120px">
       <button type="button" id="revoke-go" class="small ghost">Revoke</button>

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ job.name or 'Collection' }} · DogecoinArcade{% endblock %}
+{% block title %}{{ wall_text(job.name or 'Collection', 'A collection') }} · DogecoinArcade{% endblock %}
 {% block body %}
 <style>
 .run-bar{height:12px;border-radius:6px;background:var(--line);overflow:hidden;margin:10px 0 6px}

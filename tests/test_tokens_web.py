@@ -585,6 +585,86 @@ def test_the_pair_page_tells_a_stranger_nothing_about_this_wallet(web):
     assert figure in back and 'action="/exchange/order"' in back
 
 
+def test_a_sensitive_name_is_walled_on_the_pair_page_as_it_is_on_the_token_page(web,
+                                                                               monkeypatch):
+    """a tester, 2026-09-27: the wall stood on `/tokens/11` and not on
+    `/exchange/pair/11`, and what leaked was the name a stranger is least
+    prepared for -- in the tab, in the history, in the `<h1>` a screen reader
+    says first.
+
+    Measured that day on the public host: the token page answered `<title>A
+    token · Tokens · DogecoinArcade` with the name behind covers, and the pair
+    page answered `<title>bigblackcocks/TESTNET · Exchange · DogecoinArcade`
+    with none. Nothing in `tests/` asked a page about the screening at all, so
+    this is the first one, and it is written about both pages: the pair page is
+    the one that had the hole, the token page is the one that shows what correct
+    looks like.
+
+    The assertion is not that the name is missing -- a walled name is still
+    there to be uncovered, which is the whole design (2026-09-26: what
+    goes behind a cover stays on the page). It is that the page draws nothing
+    but the cover: every copy of the name is inside a `<template>`, which a
+    browser leaves undrawn until the reader taps, or inside a script, which a
+    browser never draws and which holds the working copies the panels need. A
+    page that passed this by deleting the name would fail the token page's own
+    tests; a page that passed it by blanking the panel fails the last line.
+    """
+    from arcade import moderation as mod
+    app, state, node, alice, bob = web
+    csrf = state.csrf_token
+    name = "Nude Yacht Club"          # a name, not a verdict: the screening decides
+    form = dict(csrf_token=csrf, sender=alice, name=name, supply="1000",
+                kind="fixed", units="divisible")
+    txid = shown(app.post("/tokens/create", data=form).text, "txid")
+    app.post("/tokens/create", data={**form, "confirmed": txid},
+             follow_redirects=False)
+    mine_and_index(node, state)
+    index = state.token_index(state.ledger)
+    (prop,) = [p for p in index.properties() if p["name"] == name]
+    pid = str(prop["property_id"])
+
+    # Screening switched on -- `_verdict_of` asks nothing of a node that has it
+    # off -- with the name's verdict already kept, which is what a verdict is:
+    # per content, once, whatever page it is read out on. Everything else the
+    # page displays is answered "ok" without a model being stood up.
+    monkeypatch.setattr(mod.Screen, "_ask",
+                        lambda self, content: ("ok", "answered in this test"))
+    state.set_setting("moderation", {"url": "http://127.0.0.1:9/v1",
+                                     "model": "test-model"})
+    screen = state.screen()
+    screen._keep(mod.digest_of(name), "text", mod.SENSITIVE, "seeded here")
+    assert screen.check_text(name) == mod.SENSITIVE
+
+    def drawn(page: str) -> str:
+        """The page as a browser draws it before anybody taps."""
+        return _r.sub(r"<(script|template)[^>]*>.*?</\1>", "", page, flags=_r.S)
+
+    state.public = True
+    try:
+        pair = app.get(f"/exchange/pair/{pid}").text
+        token = app.get(f"/tokens/{pid}").text
+    finally:
+        state.public = False
+
+    for label, page in (("the pair page", pair), ("the token page", token)):
+        assert "sens-wall" in page, f"{label} shows a name this node judged " \
+                                    "sensitive with nothing over it"
+        assert name in page, f"{label} has removed the name rather than walling it"
+        assert name not in drawn(page), \
+            f"{label} draws {name!r} at a stranger who did not ask for it"
+        title = _r.search(r"<title>(.*?)</title>", page, _r.S).group(1)
+        assert name not in title, f"{label} puts it in a tab and a history entry"
+
+    # The two spots the finding named, asserted on their own: the heading and
+    # the title. A wall anywhere else on the page would satisfy the loop above
+    # and still leave the tab reading like the name.
+    heading = _r.search(r"<h1[^>]*>(.*?)</h1>", pair, _r.S).group(1)
+    assert "Sensitive token name" in heading, heading[:200]
+    assert "A token/" in _r.search(r"<title>(.*?)</title>", pair, _r.S).group(1)
+    # And the page is still the page.
+    assert "Buy and sell this token" in drawn(pair)
+
+
 def test_a_name_already_on_the_chain_is_refused_before_it_costs_anything(web):
     """One name, one token. The chain refuses the second issuance now, and a
     refused issuance still costs its fee -- so the wallet asks first (D-122)."""
