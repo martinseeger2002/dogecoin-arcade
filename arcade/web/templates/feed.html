@@ -184,6 +184,7 @@
   {% if p.replies %}
   {% set count = p.replies|length %}
   <button class="ghost small" type="button" style="margin-top:8px"
+          id="fold-{{ p.txid }}"
           data-shut="{{ count }} comment{{ '' if count == 1 else 's' }}"
           data-open="Hide {{ count }} comment{{ '' if count == 1 else 's' }}"
           onclick="foldComments(this, 'thread-{{ p.txid }}')">
@@ -329,14 +330,14 @@
   <style>
     .feedcomposer{display:flex;align-items:flex-end;gap:8px}
     .feedcomposer .saybox{flex:1 1 auto;min-width:0}
-    .feedcomposer textarea{display:block;box-sizing:border-box;height:auto;min-height:48px;
+    .feedcomposer textarea{display:block;box-sizing:border-box;height:48px;min-height:48px;
       max-height:220px;padding:10px 12px;margin:0;
       font:inherit;font-size:.95rem;line-height:1.35;
       font-family:inherit;resize:none;overflow:hidden}
     .feedcomposer .attach{display:inline-flex;align-items:center;
-      justify-content:center;box-sizing:border-box;height:42px;width:42px;
+      justify-content:center;box-sizing:border-box;height:48px;width:48px;
       padding:0;margin:0;font-size:1.05rem;line-height:1;cursor:pointer;flex:none}
-    .feedcomposer button{box-sizing:border-box;height:42px;padding:0 18px;
+    .feedcomposer button{box-sizing:border-box;height:48px;padding:0 18px;
       margin:0;flex:none}
   </style>
   <form method="post" action="/feed/post" enctype="multipart/form-data"
@@ -396,12 +397,12 @@
     .feedcomposer{display:flex;align-items:flex-end;gap:8px}
     .feedcomposer .saybox{flex:1 1 auto;min-width:0}
     .feedcomposer textarea,.feedcomposer input[type=password]{
-      display:block;box-sizing:border-box;width:100%;height:auto;
+      display:block;box-sizing:border-box;width:100%;height:48px;
       min-height:48px;max-height:220px;padding:10px 12px;margin:0;
       font:inherit;font-size:.95rem;line-height:1.35;resize:none;
       overflow:hidden;border:1px solid var(--line);border-radius:8px;
       background:var(--panel);color:var(--fg)}
-    .feedcomposer button{box-sizing:border-box;height:42px;padding:0 18px;
+    .feedcomposer button{box-sizing:border-box;height:48px;padding:0 18px;
       margin:0;flex:none}
     .small{font-size:.85rem}
   </style>
@@ -454,6 +455,16 @@
         say(String(e.message || e), true);
       } finally { $("account-post").disabled = false; }
     };
+
+    // This box sits at the Post button's height until the text needs more of
+    // it, and gives the extra back when it doesn't. The operator's box has had
+    // this since 5877a3f; the account's never did, and it only mattered once
+    // the height stopped being the rows attribute.
+    $("account-say").addEventListener("input", () => {
+      const box = $("account-say");
+      box.style.height = "auto";
+      box.style.height = Math.min(box.scrollHeight, 220) + "px";
+    });
   </script>
   {% else %}
   <p style="margin:0">The feed is open to read.
@@ -619,9 +630,30 @@
   {% endif %}
 {% else %}
   <div class="panel empty">
+    {% if missing %}
+    {# The link said "this post", and this node's feed has no such row. The
+       other empty panels on this page talk about a feed with nothing in it;
+       this one has to talk about the id, because that is the thing that is
+       missing -- and a person holding a correct link and a wrong verb already
+       has to guess (S-work-3), so a link one character off should not also be
+       a guess (a tester, 2026-09-27). The id is printed because it is the
+       only way to compare it against the one you meant, and it reached here
+       only by passing the txid shape check in the route. #}
+    <p>That post is not on this node.</p>
+    <p class="muted"><code>{{ missing }}</code> is not a post this node has. It
+      may live on another node, it may never have been broadcast, or the link
+      may have lost a character on the way.</p>
+    <p><a class="ghost btn" href="/feed">Everybody's posts</a></p>
+    {% elif not_an_id %}
+    <p>That is not a post id.</p>
+    <p class="muted">A <code>post=</code> has to be a 64-character transaction
+      id. Nothing was looked up, so nothing was hidden from you.</p>
+    <p><a class="ghost btn" href="/feed">Everybody's posts</a></p>
+    {% else %}
     <p>Nothing here yet.</p>
     <p class="muted">{% if whose %}@{{ whose.tag }} has not posted on this
       chain.{% else %}Be the first: say something above.{% endif %}</p>
+    {% endif %}
   </div>
 {% endif %}
 
@@ -636,6 +668,50 @@ function foldComments(button, id){
   thread.hidden = !thread.hidden;
   button.textContent = thread.hidden ? button.dataset.shut : button.dataset.open;
 }
+
+// The count under a post is a promise about a thread, and until today the page
+// kept it for exactly one navigation path: foldComments above is the only code
+// that clears `hidden`, and it only ever ran from a click. Arrive at the same
+// URL by bookmark, pasted link, or Back, and #thread-<txid> resolved to a div
+// that stayed shut with nothing on the page that opens it -- "2 comments" and
+// no way to read them (a tester, 2026-09-27). So open it here, before
+// anything is painted, and put the button in its open state so it does not
+// offer what is already on screen.
+//
+// No scrollIntoView, deliberately: base.html scrolls the active nav item on
+// DOMContentLoaded (base.html:902), which runs after this line, so a scroll
+// started here loses to it and the page ends up wherever the nav chip is.
+//
+// Three triggers, one function, because a document gets to this URL three ways
+// and only one of them runs the line below. A fragment change inside the tab it
+// is already open in is not a navigation: nothing reloads and no first-paint
+// code re-runs, so the page has to answer hashchange or a link pasted into a
+// live tab lands on a closed thread. And a page that comes back from the
+// back/forward cache fires pageshow and never DOMContentLoaded -- it shows the
+// document exactly as it was left, which is not necessarily what the fragment
+// asked for (a tester, 2026-09-27). A pageshow listener covers that without
+// turning the fix into a router: there is no history stack here, just the one
+// question the URL already answers.
+function openThreadFromUrl(){
+  // Not decodeURIComponent: a stray % in a hand-typed fragment would throw
+  // here and take the rest of this script with it. Every fragment this page
+  // can legitimately carry is a hex txid, so percent-decoding buys nothing and
+  // a mistyped % costs the whole script.
+  var id = (location.hash || '').slice(1);
+  if (id.indexOf('thread-') !== 0) return;
+  var thread = document.getElementById(id);
+  if (!thread || !thread.hidden) return;
+  thread.hidden = false;
+  var button = document.getElementById('fold-' + id.slice(7));
+  if (button) button.textContent = button.dataset.open;
+}
+openThreadFromUrl();
+addEventListener('hashchange', openThreadFromUrl);
+// Persisted only: a normal load ran the call above already, and a second run
+// on the same document would be a second place the same decision is made.
+addEventListener('pageshow', function(event){
+  if (event.persisted) openThreadFromUrl();
+});
 
 // Enter posts; shift-enter is a new line. The box grows with what is typed
 // rather than starting three rows tall (the operator).
@@ -652,9 +728,11 @@ function foldComments(button, id){
       }
     });
     say.addEventListener('input', function(){
-      // Back to one row first, then to what the text needs: measuring
-      // without resetting only ever grows.
-      say.style.height = '42px';
+      // Back to nothing first, then to what the text needs: measuring
+      // without resetting only ever grows. The field starts at the same
+      // height as the clip and the button, and min-height keeps it there
+      // when the text is cleared again.
+      say.style.height = 'auto';
       say.style.height = Math.min(say.scrollHeight, 220) + 'px';
     });
   }
@@ -794,6 +872,31 @@ function sift() {
     if (!hide && FRIENDS && !card.classList.contains("reply")) hide = !book.has(who);
     card.hidden = hide;
     if (!hide && !card.classList.contains("reply")) shown++;
+  }
+  // The count under a post is counted on the server and cannot know about a
+  // block, which lives in this browser. So a thread whose replies are all from
+  // somebody the reader blocked opened onto nothing at all -- "2 comments", a
+  // press, and an empty box, because the cards are there and hidden
+  // (a tester, 2026-09-27, the other half of S22's report). This loop is
+  // the only place that knows which cards it just hid, so the count is
+  // corrected here and says what the div holds NOW.
+  //
+  // Both data- attributes travel with it, not just the text: foldComments
+  // reads the label from them, so writing only textContent loses the note on
+  // the first press and puts the lie back.
+  for (const thread of document.querySelectorAll("div[id^='thread-']")) {
+    const direct = [...thread.children].filter((el) => el.classList
+      && el.classList.contains("feedpost"));
+    if (!direct.length) continue;
+    const left = direct.filter((el) => !el.hidden).length;
+    const gone = direct.length - left;
+    const button = document.getElementById("fold-" + thread.id.slice(7));
+    if (!button) continue;
+    const said = left + " comment" + (left === 1 ? "" : "s")
+      + (gone ? " (" + gone + " hidden)" : "");
+    button.dataset.shut = said;
+    button.dataset.open = "Hide " + said;
+    button.textContent = thread.hidden ? said : "Hide " + said;
   }
   const none = document.getElementById("no-friends");
   if (none && FRIENDS) {

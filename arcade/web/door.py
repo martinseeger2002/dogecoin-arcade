@@ -246,6 +246,41 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # and the message is `/account/talk`'s, sealed in the tab that
                # holds the key this node was never given.
                "/account/accept", "/account/accept/sign",
+               # the token book, for an account: an order and a cancel, each one
+               # message and a fee, funded from the account's own address and
+               # signed in its tab. Nothing here spends the node's wallet, which
+               # is the only reason the operator's `/exchange/order` is not in
+               # this list. Nor does anything here reserve anything: the engine
+               # holds an ask's tokens back when it indexes the order, and coins
+               # cannot be reserved at all (D-048).
+               "/account/order", "/account/order/cancel",
+               # and the read that says what those two did. Same queue
+               # arithmetic as the take, no transaction, nothing reserved: a
+               # program that can put a price on the book and take it off has to
+               # be able to ask what is still standing, or it is hoarding its own
+               # txids (a tester, 2026-09-27). A stranger gets the door's 403
+               # with the reason in it, not a 404 that leaves them guessing
+               # whether the route exists (S-work-3).
+               "/account/order/list",
+               # and the one read that makes the book takeable by a tab: it
+               # builds nothing and sends nothing, it only says which order the
+               # queue chose, what it prices to, and which key the question has
+               # to be sealed to -- a key that lives in this node's address book
+               # and nowhere a browser can look. The message it is advice about
+               # goes out through `/account/talk`, which is already here.
+               "/account/take",
+               # and the two halves that turn the answer into a trade. The first
+               # builds the account's side out of the maker's offer and signs
+               # nothing -- it could not, since the key is in a tab and not here
+               # -- and says which inputs that tab's key starts at. The second
+               # pastes the signatures back and hands the transaction over, and
+               # broadcasts nothing: the maker's half is still unsigned, and it
+               # is the maker's node that finishes the trade, exactly as with
+               # `/account/shop` below. Nothing on either side of this pair can
+               # spend a coin the asking account does not hold, and an offer that
+               # is stale, expired, or addressed to somebody else is refused
+               # before either one answers.
+               "/account/take/build", "/account/take/sign",
                # a shop, bought by an account rather than by this wallet. The
                # door offers three transactions and broadcasts the two messages
                # out of them; the trade itself is not broadcast here at all,

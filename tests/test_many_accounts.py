@@ -2089,6 +2089,7 @@ def test_a_mintpad_s_look_is_the_seller_s_to_choose(node, crowd):
         assert "mp-lottery" in page and 'id="ltreel"' in page and "Spin it." in page
         assert "Spin to mint" in page
 
+
 def test_a_listing_ends_when_its_piece_is_sent_away(node, crowd):
     """A leg's coin can stay unspent while its piece leaves by transfer, because
     owning an inscription is a payload's reading and not a coin's. The book
@@ -2116,3 +2117,4 @@ def test_a_listing_ends_when_its_piece_is_sent_away(node, crowd):
     assert "no longer holds" in tried.json()["detail"]
     assert state.listings.get(listing)["status"] == "moved"
     assert listing not in oak.client.get("/listings").text
+

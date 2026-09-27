@@ -714,6 +714,117 @@ export async function fill(wallet, leg, offer) {
   });
 }
 
+/* --- taking a price off another node's book, with this account's key ------
+ *
+ * `/account/take` says what the trade is, what it prices to, and whose key the
+ * question has to be sealed to. These two are the question and the reading of
+ * the answer, and both are thin on purpose. The sealing happens here, by
+ * `sealForProgram`, to the key the node named: that is the arrangement that
+ * lets an account ask at all. The node wraps and pays for a carrier it cannot
+ * read, and a leg sealed to this key is readable in this browser and nowhere
+ * else (D-169).
+ *
+ * An answer is found by `re`, the id of the question it answers, which is the
+ * only thing in it this tab has to match on. Nothing else in it is trusted,
+ * least of all the price: `/account/fill` re-derives the whole transaction from
+ * the leg's own bytes and the chain and refuses one whose numbers do not say
+ * the order it names (D-063).
+ */
+const BOOKANSWERS = (pubkey) => `arcade.bookanswers.${pubkey}`;
+
+export async function askTheBook(wallet, to, body) {
+  return working(async () => {
+    const {mail, me} = await messenger(wallet);
+    const asked = await talkAsk({op: "ask", to});
+    const out = await signOffer(wallet, await talkAsk({
+      op: "send", to,
+      sealed: mail.sealForProgram(me, asked.seal_to, asked.stamp, body)}));
+    return {txid: out.txid, fee: out.fee, to: asked.to};
+  });
+}
+
+/** The book answers read since the last time, keyed by their question. */
+export async function bookAnswers(wallet, wanted) {
+  const {mail, me} = await messenger(wallet);
+  const slot = BOOKANSWERS(coinsHex(me.publicKey));
+  let kept = {cursor: 0, answers: {}};
+  try { kept = JSON.parse(localStorage.getItem(slot) || "null") || kept; } catch (e) {}
+  const read = await mail.programAnswers(me, kept.cursor);
+  for (const a of read.answers) {
+    const j = a.json || {};
+    if (j.swap !== "fill" || !j.re) continue;
+    kept.answers[j.re] = {re: j.re, ok: !!j.ok, leg: j.offer || null,
+                          error: j.error || "", when: a.when, txid: a.txid};
+  }
+  // Answers are kept rather than re-derived, cursor and all: a maker answers
+  // out of order, and an answer that is read once and then forgotten is an
+  // answer that never arrived.
+  kept.cursor = read.cursor;
+  try { localStorage.setItem(slot, JSON.stringify(kept)); } catch (e) {}
+  return wanted ? (kept.answers[wanted] || null) : kept.answers;
+}
+
+/** The transaction a book answer becomes, with this key signing nothing yet.
+ *
+ * The node builds it and cannot sign it, which is the whole arrangement: the
+ * answer says which of the maker's coins go in and what they price to, and
+ * `/account/take/build` puts this account's own coins behind that and stops
+ * there. `answer.leg` is the maker's offer, kept as it arrived. The node will
+ * build the very same transaction again when the signatures come back, so the
+ * answer travels with the result rather than being forgotten -- a tab that
+ * reloaded between the two has to be able to say what it was building.
+ */
+export async function bookTakeBuild(answer, chain) {
+  return working(async () => {
+    const asked = await fetch("/account/take/build", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({offer: answer, chain: chain || ""}),
+    });
+    const built = await asked.json();
+    if (!asked.ok) {
+      throw new Error(built.detail || "that answer cannot be made into a trade");
+    }
+    built.answer = answer;
+    return built;
+  });
+}
+
+/** Sign this account's half of a book answer, and hand it back to the maker.
+ *
+ * Two requests and one message, and no broadcast anywhere. `verifyOffer` is
+ * what stops this tab signing the maker's input: it refuses anything before
+ * `signed_from`, and anything whose coin is not this key's. The signatures go
+ * to `/account/take/sign`, which pastes them in and returns the transaction
+ * unfinished on purpose -- the maker's half is still an empty scriptSig, and
+ * only the maker can fill it. So the third step carries it back as a `sign`
+ * message, sealed to the key the node named, over the same `askTheBook` that
+ * carried the question. What comes back is the message's txid, not the
+ * trade's: the trade is the maker's node's to broadcast, and it says so in its
+ * own answer.
+ */
+export async function signTake(wallet, built) {
+  return working(async () => {
+    const keys = keysOn(wallet, built.chain
+                        || (wallet.on && Object.keys(wallet.on)[0]));
+    const shown = await coins.verifyOffer(built, keys);
+    const signatures = [];
+    for (const sighash of shown.hashes) {
+      signatures.push(coinsHex(await coins.signInput(keys.key, unhex(sighash))));
+    }
+    const done = await fetch("/account/take/sign", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({offer: built.answer, chain: built.chain || "",
+                            raw: built.raw, signatures,
+                            pubkey: coinsHex(keys.pubkey)}),
+    });
+    const half = await done.json();
+    if (!done.ok) throw new Error(half.detail || "the node would not take it");
+    const carried = await askTheBook(wallet, half.to, {
+      swap: "sign", swapv: half.swapv, offer: half.offer, hex: half.hex});
+    return {...half, fee: shown.fee, says: shown.says, message: carried.txid};
+  });
+}
+
 /* --- filling a listing, with this account's own key ----------------------
  *
  * The other half of `list`. The seller's two signatures are already in the

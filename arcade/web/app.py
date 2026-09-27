@@ -2344,12 +2344,26 @@ def create_app(state: AppState) -> FastAPI:
 
         Deliberately tiny and does no RPC of its own: the watcher thread already
         knows the answer, so a page left open overnight costs the node nothing.
+
+        Three of the four fields are public on purpose and the fourth was here
+        by accident. A generation counter, the tip of each chain and the moment
+        those tips were last read say nothing a block explorer does not already
+        publish, and an open page needs all three to know when to redraw.
+        `sending` does not: it is `send_progress`, and that carries `peer` --
+        the messaging key of whoever the node is sending to right now -- with a
+        count of how far into it this node has got. Read by the messenger's own
+        progress bubble, which is a page behind the door, and handed to every
+        anonymous caller until now (a tester, 2026-09-27). So it goes only
+        to the copy of this page that is the operator's own, which is the only
+        copy that draws it, and a stranger gets `null` where a stranger has no
+        business reading anybody's counterparty.
         """
+        mine = not _public_request(request)
         return JSONResponse({
             "generation": state.generation,
             "tips": state.tips,
             "checked": state.last_checked,
-            "sending": state.live_progress() or None,
+            "sending": (state.live_progress() or None) if mine else None,
         })
 
     # --- public group posts ---------------------------------------------------
@@ -2643,13 +2657,31 @@ def create_app(state: AppState) -> FastAPI:
             chain.network, before=before,
             sort="new" if sort == "friends" else sort)
         # One post and its thread: where a notification points (2026-09-25).
+        # And where a release post's own LINK line points, which is how this came
+        # up: a link one hex character off arrived here and was served the plain
+        # feed, because the narrowing below replaced the rows with an empty list
+        # and the page has one sentence for an empty list -- "Nothing here yet",
+        # about a feed, when the true sentence is about the id in the URL
+        # (a tester, 2026-09-27). So what was asked for travels to the page
+        # and the page says which of the two empties this is.
         wanted = (post or "").strip().lower()
-        if len(wanted) == 64 and all(c in "0123456789abcdef" for c in wanted):
+        missing = named = ""
+        if wanted and not (len(wanted) == 64
+                           and all(c in "0123456789abcdef" for c in wanted)):
+            # Not a txid, so nothing was looked up -- and the whole feed is not
+            # shown either. Somebody followed a link to one post; answering with
+            # everybody's posts is how the wrong id stayed invisible, and a page
+            # of posts they did not ask for is a worse answer than the sentence
+            # that says the id cannot be one.
+            named, rows, cursor = wanted, [], None
+        elif wanted:
             with state.store() as store:
                 rows = list(store.conn.execute(
                     "SELECT * FROM group_post WHERE network = ? AND txid = ?",
                     (chain.network, wanted)))
             cursor = None
+            if not rows:
+                missing = wanted
         shown = _shown(rows, chain.network, waiting, me=mine["address"])
         # Looking at it is reading it. Marked BEFORE the page is rendered, so
         # the count beside Feed is gone by the time it is drawn rather than
@@ -2663,6 +2695,7 @@ def create_app(state: AppState) -> FastAPI:
                       bylines=_bylines(shown, waiting),
                       drawable=(drawn := _drawable_in(shown)),
                       frames=_frames_for(request, drawn), cursor=cursor, whose=None,
+                      missing=missing, not_an_id=bool(named),
                       here="/feed" if sort == "popular" else f"/feed?sort={sort}",
                       sort=sort, mine=mine, kinds=feedlib.BY_NAME,
                       friends=_operator_friends(request) if sort == "friends" else [],
@@ -6257,7 +6290,8 @@ def create_app(state: AppState) -> FastAPI:
         ticket = _viewer_ticket(here, chain.network, row["txid"]) \
             if viewer == "account" and here else ""
         return render(request, "inscription_view.html", row=row, chain=chain,
-                      my_offers=my_offers, swap_waiting=swap_waiting, ticket=ticket,
+                      my_offers=my_offers, swap_waiting=swap_waiting,
+                      ticket=ticket,
                       listed=listed,
                       tag=named.get(row["owner"]), sale=sale,
                       creator_tag=named.get(row["creator"]),
@@ -9193,6 +9227,631 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"offer": offer.id, "what": what,
                              "number": row["number"], "chain": chain.network,
                              **unsigned.as_json()})
+
+    @app.post("/account/order")
+    def account_order(request: Request, payload: Any = Body(None)):
+        """Put this account's order on the token book. Nothing is broadcast here.
+
+        The same `MetaDExTrade` the operator's `/exchange/order` writes, funded
+        from this account's own address and signed in its own tab -- and that is
+        the whole difference, because the operator's route ends in
+        `TokenSender.prepare`, which selects inputs, funds and signs with the
+        NODE's wallet. Two integers again and never a float: the amount of token
+        and the amount of coin are what go on the chain, and the price is only
+        the ratio between them.
+
+        What is reserved is the engine's doing and not this node's. A resting
+        ask holds its tokens in `metadex_reserve` when the block carrying it is
+        indexed; a bid holds nothing, because coins cannot be reserved (D-048).
+        So exactly one check belongs here, the ask's: that this address holds
+        the tokens. Not because an order with nothing behind it is illegal -- it
+        is a transaction like any other -- but because the engine will not
+        reserve it, and an order that fails in the block it lands in costs a fee
+        on the way. A bid is checked against nothing at all, on purpose: an
+        order to buy with coins that are not there is legal, unfilled, and the
+        account's own business. That is what the book is for.
+
+        No recipient output, and `wrap=False`, for the reason `_class_c_or_b`
+        gives: this IS the message the token engine reads an order out of.
+        Enveloped in `AnyData` it would sit in a block, cost a fee, and reserve
+        nobody.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        try:
+            index = state.token_index(chain)
+            side = str(said.get("side") or "")
+            if side not in ("ask", "bid"):
+                raise ValueError("an order is an ask or a bid, and says which")
+            prop = index.property(int(said.get("property_id") or 0))
+            if prop is None:
+                raise tokenlib.TokenError(
+                    f"there is no token {said.get('property_id')}.")
+            units = parse_amount(str(said.get("amount", "")), prop["divisible"])
+            each = parse_amount(str(said.get("price", "")), True)
+            if units <= 0 or each <= 0:
+                raise tokenlib.TokenError("an amount and a price, both above zero.")
+            # Two whole numbers, and the ratio between them is not allowed to be
+            # rounded. What the engine reserves, fills and cancels is the pair
+            # written here, so a price that comes out uneven at this line is a
+            # different price on the book than the one that was typed, and the
+            # box still says the one that was.
+            raw = units * each
+            if not prop["divisible"]:
+                # Whose scale this product is in. A divisible token's units carry
+                # eight decimals and its price is per WHOLE token, so their
+                # product has one COIN too many in it and the division below is
+                # what takes it out. An indivisible token's units already ARE
+                # whole tokens, so its product is satoshis plain and dividing it
+                # prices the order a hundred million times too cheap: four of a
+                # whole token at half a coin each came to two satoshis, and the
+                # box above it went on saying half a coin.
+                raw *= COIN
+            if raw < COIN:
+                raise tokenlib.TokenError(
+                    "that comes to less than a satoshi in coins; raise the "
+                    "price or the amount.")
+            if raw % COIN:
+                raise tokenlib.TokenError(
+                    "that price does not come out in whole satoshis. The chain "
+                    "takes two whole numbers and a price is only their ratio, so "
+                    "rounded here it is a price on the book that was not typed; "
+                    "raise the price or the amount until it divides even.")
+            coins = raw // COIN
+            shown = format_amount(units, prop["divisible"])
+            if side == "ask":
+                held = index.balance(address, prop["property_id"])
+                # Minus what this address has on the book that the ledger has not
+                # reserved YET. An ask broadcast minutes ago is an order while
+                # its tokens are still spendable, because the engine reserves
+                # when the block lands — those are `book`'s `pending` rows, and
+                # only those, since a mined ask is already out of `balance` and
+                # counting it twice would understate the address. Without this,
+                # two asks of everything the address holds both pass here and the
+                # second fails in the block it lands in, which is the fee this
+                # check exists to save.
+                resting = sum(o["tokens"] for o in
+                              index.book(prop["property_id"])["asks"]
+                              if o["address"] == address and o.get("pending"))
+                if held - resting < units:
+                    raise tokenlib.TokenError(
+                        f"this account holds "
+                        f"{format_amount(held, prop['divisible'])} of "
+                        f"{prop['name']}"
+                        + (f", of which {format_amount(resting, prop['divisible'])} "
+                           "is already on this book waiting for its block"
+                           if resting > 0 else "")
+                        + f", not {shown}. An ask is held back by the "
+                        "engine when its block lands, and an order it cannot "
+                        "hold back costs a fee to fail in its own block.")
+                message = P.MetaDExTrade(
+                    property_id_for_sale=prop["property_id"], amount_for_sale=units,
+                    property_id_desired=0, amount_desired=coins)
+            else:
+                message = P.MetaDExTrade(
+                    property_id_for_sale=0, amount_for_sale=coins,
+                    property_id_desired=prop["property_id"], amount_desired=units)
+            outputs = _class_c_or_b(chain, address, message.encode(),
+                                    _coin_pubkey(account.pubkey, chain),
+                                    wrap=False)
+            what = (f"{'sell' if side == 'ask' else 'buy'} {shown} "
+                    f"{prop['name']} for {format_amount(coins, True)} coins")
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address, outputs,
+                    rate=fees.MIN_FEE_PER_KB, what=what,
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "trade")
+        except (tokenlib.TokenError, fundinglib.FundingError, AmountError,
+                ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned, what)
+        return JSONResponse({"offer": offer.id, "what": what, "side": side,
+                             "property_id": prop["property_id"],
+                             "name": prop["name"], "chain": chain.network,
+                             "amount": shown,
+                             "price": format_amount(each, True),
+                             "total": format_amount(coins, True),
+                             **unsigned.as_json()})
+
+    @app.post("/account/order/cancel")
+    def account_order_cancel(request: Request, payload: Any = Body(None)):
+        """Take this account's orders off one side of one pair.
+
+        `MetaDExCancelPair` and nothing finer, which is the shape the protocol
+        has: a cancel names a pair and a side, not an order, because an order is
+        a transaction and not a row anybody keeps (D-042). It is also why this
+        cancels MORE than a person may have meant -- every resting order of
+        theirs on that side of that pair goes, including ones made from another
+        browser with another key. The page says so; this is the route that has
+        to be honest about it, because it is the one an account can reach.
+
+        What an ask was holding comes back when the cancel's block lands, which
+        is the engine releasing `metadex_reserve` rather than this node handing
+        anything back. There is nothing to unlock on the coin side because coins
+        were never locked (D-048) -- and unlike `/account/list`, no signature
+        needs recalling: a book order promised nothing over anybody's coins, it
+        only said a price.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        try:
+            index = state.token_index(chain)
+            pid = int(said.get("property_id") or 0)
+            prop = index.property(pid)
+            if prop is None:
+                raise tokenlib.TokenError(f"there is no token {pid}.")
+            side = str(said.get("side") or "")
+            if side not in ("ask", "bid"):
+                raise ValueError("an order is an ask or a bid, and says which")
+            sale, want = (pid, 0) if side == "ask" else (0, pid)
+            message = P.MetaDExCancelPair(property_id_for_sale=sale,
+                                          property_id_desired=want)
+            outputs = _class_c_or_b(chain, address, message.encode(),
+                                    _coin_pubkey(account.pubkey, chain),
+                                    wrap=False)
+            what = f"cancel this account's {side}s for {prop['name']}"
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address, outputs,
+                    rate=fees.MIN_FEE_PER_KB, what=what,
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "trade")
+        except (tokenlib.TokenError, fundinglib.FundingError, AmountError,
+                ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned, what)
+        return JSONResponse({"offer": offer.id, "what": what, "side": side,
+                             "property_id": pid, "name": prop["name"],
+                             "chain": chain.network,
+                             "every": True, **unsigned.as_json()})
+
+    @app.post("/account/take")
+    def account_take(request: Request, payload: Any = Body(None)):
+        """What taking a price off the book would ask for, and of whom.
+
+        A read: no transaction, no message, nothing filed. It exists because of
+        one thing a tab cannot do for itself. The question that gets a maker's
+        node to answer is sealed to the messaging key that node announced for
+        the maker's address, and that key is in this node's address book
+        (`_key_at`), which a browser has no way to query. A tab pressing `Take`
+        knows an order id and an amount and nothing else, so one round trip has
+        to say the four things it cannot work out: which order the queue chose,
+        what that prices to, whose key the question goes to, and whose node is
+        being asked.
+
+        The arithmetic is `/exchange/fill`'s, carried over and not re-derived.
+        Price, then time, through `_earliest_at_or_better`: three asks at one
+        price are one price offered by three people, and the maker who queued
+        first is the one entitled to the trade (D-083) -- which is why the route
+        says which row it picked and why, rather than letting a tab aim at the
+        third row and quietly jump the two ahead of it. The coin figure is the
+        chosen row's own ratio rounded UP, because that is what the engine's
+        price guard refuses less of (D-062). And the refusals are the ones that
+        belong before anything costs a fee: a bid is not takeable, since filling
+        one means offering the tokens and this node has never seen the wallet
+        that holds them; an order with too little left; an order that is this
+        account's own; and an address whose coins are in one output, which is
+        the worst possible moment to discover it (D-051) -- so it is said here,
+        where it costs nothing, instead of after the question was paid for.
+
+        The leg itself still arrives by message and still comes back to
+        `/account/fill`, which is the route that builds a transaction. Nothing
+        is kept here in the meantime: the answer is sealed to a key this node
+        was never given, and the tab that asked is the only place it can be read
+        (D-169).
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        try:
+            index = state.token_index(chain)
+            clicked = index.order(str(said.get("order") or ""))
+            if clicked is None:
+                raise swaplib.SwapError(
+                    "that order is not on this node's book -- it may have been "
+                    "cancelled or filled, or its block may not have arrived here")
+            if clicked["want_property"] != 0:
+                raise swaplib.SwapError(
+                    "this fills an order that sells a token for coins. To fill a "
+                    "bid, the wallet holding the tokens has to offer them")
+            prop = index.property(clicked["sale_property"])
+            tokens = parse_amount(str(said.get("amount", "")),
+                                  bool(prop["divisible"]))
+            if not 0 < tokens <= clicked["sale_amount"]:
+                raise swaplib.SwapError(
+                    f"that order has {format_amount(clicked['sale_amount'], bool(prop['divisible']))} left")
+            row = _earliest_at_or_better(index, clicked, tokens) or clicked
+            prop = index.property(row["sale_property"])
+            coins = -(-row["want_amount"] * tokens // row["sale_amount"])
+            if row["address"] == address:
+                raise swaplib.SwapError("that order is your own")
+            # Two confirmed outputs, or the tab learns it after paying for the
+            # question: one output goes into the trade and one pays for the
+            # message that carries the answer, and `/account/fill/sign` would
+            # refuse to build the swap without both.
+            with contextlib.closing(index.open()) as db:
+                held = [c for c in utxoslib.unspent(db, address)
+                        if (c["txid"], c["vout"])
+                        not in _flights.spent_by(account.pubkey, chain.network)]
+            if len(held) < OUTPUTS_FOR_A_SWAP:
+                raise swaplib.SwapError(
+                    f"this account has its coins in {len(held)} confirmed "
+                    f"output{'' if len(held) == 1 else 's'}, and taking a price "
+                    "needs two: one goes into the trade and one pays for the "
+                    "message that asks about it. Split it first -- Wallet, "
+                    "Send, 1 coin to your own @name -- and take it again.")
+            to = _key_at(row["address"])
+        except swaplib.SwapError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except (tokenlib.TokenError, AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({
+            "chain": chain.network,
+            # The order the maker will actually be asked about. It names itself
+            # in the question, and the answer is checked against it, so a row
+            # that was only the row that happened to be clicked would price the
+            # taker's own trade off a different order.
+            "order": row["txid"], "clicked": clicked["txid"],
+            "moved": row["txid"] != clicked["txid"],
+            "property_id": row["sale_property"],
+            "name": prop["name"],
+            "tokens": tokens, "coins": coins,
+            "amount": format_amount(tokens, bool(prop["divisible"])),
+            "maker": row["address"],
+            "maker_tag": _tags_for([row["address"]]).get(row["address"], ""),
+            "to": to.hex(),
+            "price": f"{coins / COIN:.8f}",
+            # The two things the question has to carry that this node knows and
+            # the tab does not: the protocol the maker's shopkeeper expects to
+            # see (`_answer` answers a stranger's version with "update one of
+            # us" rather than guessing) and the address the leg is to pay.
+            "swapv": swaplib.PROTOCOL, "buyer": address,
+        })
+
+    @app.post("/account/order/list")
+    def account_order_list(request: Request, payload: Any = Body(None)):
+        """What this account has standing on the book, and where it stands in line.
+
+        A read, like `/account/take` -- nothing built, nothing signed, nothing
+        filed. It exists because a program can put an order on the book with
+        `/account/order`, take it off with `/account/order/cancel`, and could not
+        ask what it got back (a tester, 2026-09-27). What that leaves a maker
+        holding is its own txid or a guess: an order is a transaction and not a
+        row anybody keeps (D-042), so the size of it lives only in the transaction
+        that placed it and the amount left of it lives only in the engine.
+
+        Standing is not the same as not-cancelled. A filled order, a cancelled
+        one, and one whose block has not reached this node are all one absence
+        from here, and telling them apart needs the fills, which are the other
+        half of D-042 and not this route's business. So an order that is gone is
+        simply not listed, and `pending` marks the one case that is not gone:
+        broadcast and real, holding no reserve yet because its block has not
+        landed, which makes it an order that cannot yet be filled (D-061).
+
+        The amounts are the engine's remainder, not the size that was typed.
+        `sale_amount` is what is LEFT and the original amount is never stored, so
+        a half-filled ask says its remainder -- the same price, a different
+        number of coins. That is the truth about what it will do if someone fills
+        it now, and the number a maker needs if they meant to top it up.
+
+        `ahead` is D-083 put where the person it applies to can read it. At one
+        price the order that queued first is filled first, and a maker is told to
+        rely on that and cannot see it: this is how many orders at the same price
+        got there before theirs. Zero means first in line, which is the only
+        thing a queue behind somebody else can check.
+
+        A bid carries one thing more, and it is here because coins cannot be
+        reserved (D-048). A resting bid is a promise about coins this node never
+        held, and the address may have spent them since -- on a fee, or on a
+        second bid, or on a send. So a bid says what the address holds in coins
+        NOW beside what the bid would pay, and says `short` when they disagree.
+        Nothing else on a node can tell a maker that, and it is the difference
+        between a bid that fills and a bid that pays a fee to fail.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        index = state.token_index(chain)
+        from fractions import Fraction
+        rows: list[dict[str, Any]] = []
+        try:
+            only = int(said.get("property_id") or 0)
+            # The pool first and the cancelled rows out, which is `orders_of`'s
+            # rule and not this route's: an order placed forty seconds ago is
+            # yours whether or not a miner has got to it (D-061).
+            mine = index.orders_of([address])
+            if only:
+                mine = [r for r in mine if only in (r["sale_property"],
+                                                    r["want_property"])]
+            books: dict[int, dict] = {}
+            coins_held = None
+            for row in mine:
+                ask = row["want_property"] == 0
+                token = row["sale_property"] if ask else row["want_property"]
+                prop = index.property(token)
+                # Read the way `book` reads it, from the same two integers: what
+                # is for sale and what is wanted swap sides between an ask and a
+                # bid, and getting that backwards prices a bid at its own
+                # reciprocal.
+                tokens = row["sale_amount"] if ask else row["want_amount"]
+                coins = row["want_amount"] if ask else row["sale_amount"]
+                if token not in books:
+                    books[token] = index.book(token)
+                at = Fraction(coins, tokens) if tokens else Fraction(0)
+                same = [r["txid"] for r in
+                        books[token]["asks" if ask else "bids"]
+                        if r["price"] == at]
+                entry = {
+                    "order": row["txid"], "side": "ask" if ask else "bid",
+                    "property_id": token, "name": prop["name"],
+                    "tokens": tokens,
+                    "amount": format_amount(tokens, bool(prop["divisible"])),
+                    "coins": coins, "total": format_amount(coins, True),
+                    # Coins per whole token, the same figure the order form took
+                    # in -- exact through the Fraction, because a price printed
+                    # off a float is a price that drifts by an ulp and a maker
+                    # comparing two of their own orders would be told they are
+                    # two prices.
+                    "price": f"{(float(at) if prop['divisible'] else float(at) / COIN):.8f}",
+                    "pending": bool(row.get("pending")),
+                    "block": row["block_height"],
+                    "ahead": same.index(row["txid"]) if row["txid"] in same else 0,
+                }
+                if not ask:
+                    if coins_held is None:
+                        with contextlib.closing(index.open()) as db:
+                            coins_held = utxoslib.balance(db, address)
+                    entry["held"] = coins_held
+                    entry["held_amount"] = format_amount(coins_held, True)
+                    entry["short"] = coins_held < coins
+                rows.append(entry)
+        except (tokenlib.TokenError, AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"chain": chain.network, "address": address,
+                             "count": len(rows), "orders": rows})
+
+    @app.post("/account/take/build")
+    def account_take_build(request: Request, payload: Any = Body(None)):
+        """The transaction that fills the answer a maker's book sent back.
+
+        The last piece of a take, and the one that was missing. `/account/take`
+        says what to ask and what it comes to; the maker's node answers with an
+        offer, sealed to this account's key; and until this route existed
+        nothing turned that answer into bytes a signature fits. A node trading
+        for its own wallet calls `swap.build`, which chooses coins out of that
+        wallet and calls `signrawtransaction` -- it can only run where the
+        buyer's key is, and this node was never given this account's. So the
+        same trade is read the other way round: `swap.offer_terms` for what the
+        offer says, which is the one reading both builders share, and
+        `funding.build_partial` for this account's coins out of the index
+        instead of out of a wallet. Nothing is signed here, because the key
+        that would sign it is not here.
+
+        What comes back is the shape `/account/buy` already sends a tab -- the
+        bytes, the sighashes, and `signed_from` saying where this key's inputs
+        start, so a browser is never asked for a signature over the maker's own
+        coin -- beside the three things the next two steps cannot work out
+        alone: the offer's id, which the maker matches its own note against, the
+        maker's key, and the protocol the finished half has to be carried in.
+
+        The answer is a stranger's JSON by the time it gets here, so it is
+        checked like one: `check_offer` refuses one that is not an offer, that
+        names some other address as its buyer, that is expired, or whose cut
+        cannot be paid; and the order it fills is read off this node's index,
+        not out of the answer, so an offer that names an order and takes tokens
+        that order never reserved is refused here rather than by a block
+        (D-062, D-082). Nothing is spent and nothing is filed: like
+        `/account/buy`, this decides the whole trade again from the offer's
+        bytes and the chain, which is why a tab that reloaded finishes the same
+        transaction and a node that restarted in between has lost nothing.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        try:
+            index = state.token_index(chain)
+            offer = swaplib.check_offer(
+                said.get("offer"), shop="", own=[address],
+                height=index.indexed_height(), params=chain.params)
+            if str(offer.get("network") or "") != chain.network:
+                raise swaplib.SwapError(
+                    f"that answer is for {offer.get('network')}, and this "
+                    f"account is on {chain.network}")
+            order = index.order(offer["order"]) if offer["order"] else None
+            if order is None:
+                raise swaplib.SwapError(
+                    "that answer names an order this node's book cannot read -- "
+                    "it has been filled or cancelled since, or its block has "
+                    "not arrived here. Ask for another answer.")
+            to = _key_at(offer["seller"])
+            with chain.rpc() as rpc:
+                terms = swaplib.offer_terms(rpc, index, offer, [address],
+                                           from_order=order)
+            what = (f"{swaplib.describe_leg(swaplib.leg_json(terms.give, index))}"
+                    f" for {swaplib.describe_leg(swaplib.leg_json(terms.take, index))}")
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build_partial(
+                    db, chain.params, address, terms.foreign, terms.outputs,
+                    rate=fees.MIN_FEE_PER_KB, what=what,
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+        except (swaplib.SwapError, fundinglib.FundingError,
+                tokenlib.TokenError, AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({
+            "chain": chain.network, "answered": True,
+            "offer": offer["id"], "order": offer["order"],
+            "maker": offer["seller"],
+            "maker_tag": _tags_for([offer["seller"]]).get(offer["seller"], ""),
+            "to": bytes(to).hex(), "swapv": swaplib.PROTOCOL,
+            "buyer": address, "coins": max(terms.owes, 0),
+            "cut": ({"bps": int((offer.get("cut") or {}).get("bps") or 0),
+                     "sats": terms.cut, "to": terms.cut_to} if terms.cut else {}),
+            **unsigned.as_json()})
+
+    @app.post("/account/take/sign")
+    def account_take_sign(request: Request, payload: Any = Body(None)):
+        """Paste this account's signatures onto its half, and hand it back.
+
+        Nothing is broadcast, which is the whole difference from
+        `/account/fill/sign` and the reason this is a route of its own. That one
+        finishes a listing: this node already holds both of the seller's
+        signatures, so pasting the buyer's makes the transaction complete and
+        there is nothing left to ask. A book answer is not like that -- the
+        maker's half is unsigned until the maker signs it, which happens on the
+        maker's side when the finished half arrives as a message. So this stops
+        at the transaction, and the tab carries it:
+        `{swap: "sign", offer: <its id>, hex: <this>}`, sealed to the key
+        `/account/take/build` named, and the maker's node countersigns it or
+        refuses it. That is the same last step a node's own wallet takes, with
+        the browser holding the key in place of the wallet.
+
+        The guards are `/account/buy/sign`'s and they have to stay that way: the
+        trade is decided again here, out of the offer and the chain, and the
+        bytes the signatures stand over are compared with the ones this node
+        would build now. A block landing in between, or one of this account's
+        other transactions going out, is said as that, because a signature over
+        old bytes buys a trade nobody agreed to. `funding.assemble` leaves the
+        maker's input empty and fills only the inputs from `signed_from`: this
+        node signs nothing, and cannot be talked into signing the coin that is
+        not its own to sign.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        try:
+            index = state.token_index(chain)
+            offer = swaplib.check_offer(
+                said.get("offer"), shop="", own=[address],
+                height=index.indexed_height(), params=chain.params)
+            if str(offer.get("network") or "") != chain.network:
+                raise swaplib.SwapError(
+                    f"that answer is for {offer.get('network')}, and this "
+                    f"account is on {chain.network}")
+            order = index.order(offer["order"]) if offer["order"] else None
+            if order is None:
+                raise swaplib.SwapError(
+                    "that answer names an order this node's book cannot read -- "
+                    "it has been filled or cancelled since, or its block has "
+                    "not arrived here. Ask for another answer.")
+            to = _key_at(offer["seller"])
+            with chain.rpc() as rpc:
+                terms = swaplib.offer_terms(rpc, index, offer, [address],
+                                            from_order=order)
+                with contextlib.closing(index.open()) as db:
+                    unsigned = fundinglib.build_partial(
+                        db, chain.params, address, terms.foreign, terms.outputs,
+                        rate=fees.MIN_FEE_PER_KB,
+                        exclude=_flights.spent_by(account.pubkey, chain.network),
+                        extra=_flights.change_for(account.pubkey, chain.network))
+                if str(said.get("raw") or "") != unsigned.raw:
+                    raise swaplib.SwapError(
+                        "this node would build you a different transaction now "
+                        "than the one you signed -- a block landed, or one of "
+                        "your other transactions went out, or the maker's coins "
+                        "moved. Ask for the answer again and sign that; a "
+                        "signature over the old bytes would trade something you "
+                        "never agreed to.")
+                _real_coins_gate(account, chain)
+                signatures = [str(x) for x in (said.get("signatures") or [])]
+                pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
+                if not pubkey:
+                    raise ValueError("this request names no public key, and a "
+                                     "transaction nobody can trace to a key is "
+                                     "not a transaction this node will finish")
+                if hash160(pubkey) != b58check_decode(address)[1]:
+                    raise ValueError(
+                        "that public key is not the key behind this account's "
+                        f"{chain.label.lower()} address, so pasting it would "
+                        "write a trade one wallet paid and another is named on")
+                hex_ = fundinglib.assemble(unsigned, signatures, pubkey)
+                # Whose coin is whose is settled by the bytes, not by this
+                # request saying so: `signed_from` came out of the build, and
+                # every input from there on has to be this account's own. The
+                # maker's input -- input 0, the offered output -- stays an empty
+                # scriptSig, which is what makes the result a half rather than
+                # a finished transaction, and what the maker is asked to finish.
+                for n, coin in enumerate(unsigned.inputs[unsigned.signed_from:],
+                                         unsigned.signed_from):
+                    if str(coin.get("address") or "") != address:
+                        raise swaplib.SwapError(
+                            f"input {n} of that transaction spends "
+                            f"{coin.get('address')}, which is not this account's "
+                            "address, so this key was asked to sign a coin it "
+                            "does not hold")
+        except (swaplib.SwapError, fundinglib.FundingError, listingslib.ListingError,
+                tokenlib.TokenError, AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"chain": chain.network, "hex": hex_,
+                             "offer": offer["id"], "order": offer["order"],
+                             "maker": offer["seller"], "to": to.hex(),
+                             "swapv": swaplib.PROTOCOL,
+                             "fee": unsigned.fee, "signed": True})
 
     def _ask_payload(row: dict, take: inscriptionlib.Leg) -> bytes:
         """What a listing writes at output 0: the trade the finished swap IS.
@@ -13577,13 +14236,32 @@ def create_app(state: AppState) -> FastAPI:
         if book["asks"] and book["bids"]:
             spread = float(book["asks"][0]["price"]) - float(book["bids"][0]["price"])
         face = _faces_for(index, [prop])[property_id]
+        mine = index.orders_of(sorted(owned))
+        # Whether a taker's node could ask THIS reader about a resting order at
+        # all. The queue steps past a maker whose address has no published key
+        # rather than refusing the press -- one unreachable wallet must not
+        # block a price for everybody (D-042) -- so the pass-over has always
+        # been readable where the taker looked and nowhere the maker does. The
+        # same table and the same rule as `_key_at`, and a row is marked rather
+        # than hidden, because the order is real and still on the book
+        # (a tester S-work-2).
+        askable: dict[str, bool] = {}
+        if any(o["sale_property"] for o in mine):
+            with state.store() as store:
+                for order in mine:
+                    if order["sale_property"]:
+                        askable[order["address"]] = (
+                            store.key_for(order["address"]) is not None)
+        for order in mine:
+            order["askable"] = (not order["sale_property"]
+                                or askable.get(order["address"], True))
         return render(request, "pair.html", chain=chain, prop=prop, book=book,
                       face=face, spread=spread, day=chartlib.day(points),
                       stats=chartlib.last_and_change(points),
                       slots=chartlib.candles(points),
                       recent=sorted(points, key=lambda p: -p["when"])[:12],
                       held=format_amount(held, prop["divisible"]), held_units=held,
-                      coins=coins, mine=index.orders_of(sorted(owned)),
+                      coins=coins, mine=mine,
                       viewer=viewer, account_address=account_address,
                       # Whose fills these are: the list is of times THIS node
                       # went looking to take a price and whether it came off,
@@ -13620,21 +14298,46 @@ def create_app(state: AppState) -> FastAPI:
             each = parse_amount(price, True)
             if units <= 0 or each <= 0:
                 raise tokenlib.TokenError("an amount and a price, both above zero.")
-            coins = units * each // COIN
-            if coins <= 0:
+            raw = units * each
+            if not prop["divisible"]:
+                # The same scale as `/account/order`'s, and the same bug that it
+                # fixed: this line came first, so an indivisible token's order
+                # was priced a hundred million times too cheap here before it was
+                # anywhere else, and nothing on this chain quotes a whole token,
+                # so no test noticed until one asked for it.
+                raw *= COIN
+            if raw < COIN:
                 raise tokenlib.TokenError(
                     "that comes to less than a satoshi in coins; raise the price "
                     "or the amount.")
+            # The same rule as `/account/order`, in the route that had this line
+            # first: the two whole numbers are what go on the chain and the price
+            # is only their ratio, so an uneven product is a price on the book
+            # that nobody typed. Rounded down here, silently, until now.
+            if raw % COIN:
+                raise tokenlib.TokenError(
+                    "that price does not come out in whole satoshis. The chain "
+                    "takes two whole numbers and a price is only their ratio, so "
+                    "rounded here it is a price on the book that was not typed; "
+                    "raise the price or the amount until it divides even.")
+            coins = raw // COIN
             with chain.rpc() as rpc:
                 own = _ledger_addresses(rpc)
                 home = state.home_address(chain)
                 if side == "ask":
                     held = index.balance(home, prop["property_id"])
-                    if held < units:
+                    resting = sum(o["tokens"] for o in
+                                  index.book(prop["property_id"])["asks"]
+                                  if o["address"] == home and o.get("pending"))
+                    if held - resting < units:
                         raise tokenlib.TokenError(
                             f"{home} holds "
                             f"{format_amount(held, prop['divisible'])} "
-                            f"{prop['name']}, not {format_amount(units, prop['divisible'])}.")
+                            f"{prop['name']}"
+                            + (f", of which {format_amount(resting, prop['divisible'])} "
+                               "is already on this book waiting for its block"
+                               if resting > 0 else "")
+                            + f", not {format_amount(units, prop['divisible'])}.")
                     message = P.MetaDExTrade(
                         property_id_for_sale=prop["property_id"], amount_for_sale=units,
                         property_id_desired=0, amount_desired=coins)

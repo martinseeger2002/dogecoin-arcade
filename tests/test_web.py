@@ -1000,6 +1000,36 @@ def test_events_carries_the_progress(client):
     assert data["sending"]["total"] == 4
 
 
+def test_the_progress_is_the_operators_and_the_counter_is_everyones(client):
+    """/events answers an anonymous caller on purpose -- an open page has to be
+    able to ask whether anything moved -- but it carried all four fields to
+    everybody, and `sending` is `send_progress`, whose `peer` is the messaging
+    key this node is sending to, with a count of how far in it is (a tester
+    S23, 2026-09-27). The only page that draws that is the messenger, and the
+    messenger is behind the door.
+
+    So the split is the door's own, not a new rule: from outside, the three
+    fields a page needs to decide to redraw, and nothing about who this node is
+    transacting for. The counter has to survive the fix, or the fix buys
+    privacy by giving up the live page -- which is the trade
+    test_a_long_send_says_it_is_working is here to keep this file from making.
+    """
+    app, state = client
+    edge = {"host": "node.dogecoinarcade.com", "cf-ray": "abc123-LHR"}
+    state.start_progress("bb" * 32, total=4, estimate="under a minute")
+    state.update_progress(done=2)
+
+    here = app.get("/events").json()
+    assert here["sending"]["peer"] == "bb" * 32, "the bubble still has its bar"
+
+    theirs = app.get("/events", headers=edge).json()
+    assert theirs["sending"] is None, \
+        "a stranger read who this node is sending to, and how far in it is"
+    for field in ("generation", "tips", "checked"):
+        assert theirs[field] == here[field], f"{field} is not a secret, and a " \
+            "page that cannot see it never redraws"
+
+
 def test_a_failed_send_says_so_rather_than_vanishing(client):
     """A part-sent message cannot be finished later; that is worth saying."""
     app, state = client

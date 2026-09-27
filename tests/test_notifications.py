@@ -96,6 +96,50 @@ def test_a_notification_links_to_its_post_alone(public):
     assert "the one" in page and "another one" not in page
 
 
+def test_a_link_to_a_post_that_is_not_here_says_which_it_is_not(public):
+    """One hex character, and the page used to have nothing to say about it.
+
+    Measured by the reporter, not inferred: two links to a release post, one
+    character apart at position 62, both answering 200 -- one with the post on
+    it and one with the plain feed (`?post=` falls through to the empty-list
+    panel, whose one sentence is "Nothing here yet", which is a sentence about a
+    feed and not about the id in the URL). It is the same fault as a POST to a
+    route this node is older than: two different facts, one indistinguishable
+    response, and the reader has to guess which (a tester, 2026-09-27).
+
+    So the page distinguishes the three things it can actually know -- the post
+    is not here, the id cannot be an id, or there is nothing posted at all --
+    and prints the id it looked for, because that is the only way a person can
+    compare it with the one they meant. A `post=` that is not a txid is not
+    echoed: it is the one string on this page that arrived from a URL and could
+    be anything.
+
+    One shape it deliberately does NOT separate, and that is a decision rather
+    than an oversight (the reporter asked it be flagged): a txid that was real
+    on another node, and one this node indexed and later pruned, both arrive at
+    the same sentence as a txid that never existed. The page cannot tell them
+    apart -- the question is answered from the local table, and an absent row is
+    one fact, not three -- and "not on this node" is the true sentence for all
+    three. Splitting them would mean keeping a tombstone for every post id ever
+    seen to answer a question nobody is asking, so it stays one sentence and one
+    test.
+    """
+    app, state = public
+    a_post(state, "d" * 64, text="quill-42", sender=THEM)
+
+    mine = "d" * 63 + "e"
+    page = app.get(f"/feed?post={mine}", headers=EDGE).text
+    assert "That post is not on this node" in page, \
+        "a wrong id was answered with the front page"
+    assert mine in page, "it prints what it looked for, or the typo is found by hand"
+    assert "quill-42" not in page and "Nothing here yet" not in page, \
+        "one is a missing post and one is an empty feed; not both at once"
+
+    loose = app.get("/feed?post=hello", headers=EDGE).text
+    assert "not a post id" in loose, "a non-id was answered with the front page"
+    assert "hello" not in loose, "the id-shaped claim was echoed back into the page"
+
+
 def test_seen_is_a_row_marker_not_a_clock():
     """A like still in the pool has no block time; a clock marker would make it
     new again when its block lands. A row id does not move."""
