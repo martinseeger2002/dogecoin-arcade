@@ -202,7 +202,12 @@ let keys = await wallet.opened(CHAIN);
 const say = (t) => { $("iss-trouble").textContent = t; $("iss-trouble").hidden = !t; };
 const news = (t) => { $("iss-news").textContent = t; $("iss-news").hidden = !t; };
 
-async function act(button, body, title, warn, yes) {
+// Who, as a person reads it: the @name the node resolved, else what was typed
+// with its @ (a tester, 2026-09-27: "go to arcade_buyer" had lost the @).
+const who = (offer, typed) => offer.to_tag ? "@" + offer.to_tag
+  : (typed ? (/^[1-9A-HJ-NP-Za-km-z]{26,35}$/.test(typed) ? typed : "@" + typed.replace(/^@/, "")) : "you");
+
+async function act(button, body, card, yes, after) {
   say(""); news("");
   button.disabled = true;
   try {
@@ -214,11 +219,18 @@ async function act(button, body, title, warn, yes) {
     if (!asked.ok) throw new Error(offer.detail || "that cannot be done");
     keys = keys || await arcadeKeys(CHAIN);
     const shown = await wallet.checked(offer, keys);
-    const ok = await arcadeAsk(title, `${warn}${shown.says}`, yes);
+    const [title, words] = card(offer);
+    // Said in words, not as raw outputs (a tester, as for the Buy card): the
+    // fee, and what comes back. The small output to a recipient is the carrier
+    // the token rides on.
+    const fee = `The network fee is ${shown.coinsOf(shown.fee)}`
+      + (shown.change ? `, and ${shown.coinsOf(shown.change)} comes back to you.` : ".");
+    const ok = await arcadeAsk(title, `${words} ${fee}`, yes);
     if (!ok) return;
     const done = await wallet.confirm(keys, offer);
     news(`Done: ${done.txid.slice(0, 16)}… It takes effect when its block does.`);
     for (const id of ["grant-amount", "grant-to", "revoke-amount", "issuer-to"]) if ($(id)) $(id).value = "";
+    if (after) after(offer);
   } catch (e) {
     say(String(e.message || e));
   } finally { button.disabled = false; }
@@ -227,21 +239,29 @@ async function act(button, body, title, warn, yes) {
 if ($("grant-go")) $("grant-go").onclick = () => {
   const n = $("grant-amount").value.trim(), to = $("grant-to").value.trim();
   act($("grant-go"), {action: "grant", amount: n, to},
-      `Grant ${n} ${NAME}?`,
-      `${n} new ${NAME} go to ${to || "you"}. `, "Grant");
+      (offer) => [`Grant ${n} ${NAME}?`,
+                  `${n} new ${NAME} go to ${who(offer, to)}` + (offer.to ? ", carried by a tiny coin output to them." : ".")],
+      "Grant");
 };
 if ($("revoke-go")) $("revoke-go").onclick = () => {
   const n = $("revoke-amount").value.trim();
   act($("revoke-go"), {action: "revoke", amount: n},
-      `Revoke ${n} ${NAME}?`, `${n} of your own ${NAME} are destroyed. `, "Revoke");
+      () => [`Revoke ${n} ${NAME}?`, `${n} of your own ${NAME} are destroyed.`], "Revoke");
 };
 $("issuer-go").onclick = () => {
   const to = $("issuer-to").value.trim();
   act($("issuer-go"), {action: "issuer", to},
-      `Hand ${NAME} to ${to || "…"}?`,
-      `This cannot be undone. From its block on, ${to || "they"} issue ${NAME}: `
-      + "only they can grant, revoke or hand it on, and you cannot take it back. ",
-      "Hand it over for good");
+      (offer) => [`Hand ${NAME} to ${who(offer, to)}?`,
+                  `This cannot be undone. From its block on, ${who(offer, to)} issues ${NAME}: `
+                  + "only they can grant, revoke or hand it on, and you cannot take it back."],
+      "Hand it over for good",
+      (offer) => {
+        // Until its block lands the controls must not invite a second, doomed
+        // transaction (a tester, 2026-09-27).
+        for (const b of document.querySelectorAll("#issuer-panel button")) b.disabled = true;
+        for (const i of document.querySelectorAll("#issuer-panel input")) i.disabled = true;
+        news(`Handing ${NAME} over to ${who(offer, to)}… final when the next block lands.`);
+      });
 };
 </script>
 {% endif %}
