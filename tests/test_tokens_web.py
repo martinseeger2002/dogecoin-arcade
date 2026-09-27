@@ -641,6 +641,82 @@ def test_an_indivisible_price_is_read_in_coins_and_not_in_satoshis(web):
     assert ">1.00000000<" in body, "and the spread says one coin"
 
 
+def test_the_pair_page_says_one_price_for_an_indivisible_trade(web, monkeypatch):
+    """The chart and the book, on one page, about one order, in one unit.
+
+    The fix above stopped at the rows. The 24h figures, the candles and the
+    recent-trade table are built from SWAPS by `charts.token_prices`, which
+    divided every leg by COIN -- and an indivisible token's leg is already whole
+    tokens. So the sale that read as 2 tokens for 4 coins was read as a sale of
+    0.00000002 tokens at 200,000,000 coins each, and the page put
+    `200000000.00000000` in the tick beside the row that says `2`. The market
+    table did the same thing from the other direction: its last price came off
+    the trades and its best ask came off the book's raw ratio, in the same row.
+
+    A real fill needs two nodes and a message that takes blocks, so this asks
+    the page about a sale made of the two integers of an order that IS on the
+    chain -- the same legs, one each way. What is asserted is that the page
+    agrees with itself, which is the claim nobody had ever made in either
+    direction.
+    """
+    import time
+    import unittest.mock as mock
+    from arcade import inscriptions as I
+    from arcade.ledger import COIN
+    app, state, node, alice, bob = web
+    csrf = state.csrf_token
+    form = dict(csrf_token=csrf, sender=alice, name="Whole Trade", supply="100",
+                kind="fixed", units="indivisible")
+    txid = shown(app.post("/tokens/create", data=form).text, "txid")
+    app.post("/tokens/create", data={**form, "confirmed": txid},
+             follow_redirects=False)
+    mine_and_index(node, state)
+    index = state.token_index(state.ledger)
+    (prop,) = [p for p in index.properties() if p["name"] == "Whole Trade"]
+    pid = prop["property_id"]
+    assert not prop["divisible"], "the whole point of the test is this one word"
+    home = index.balances([alice])[0]["address"]
+    with mock.patch.object(type(state), "home_address", lambda self, chain: home):
+        app.post("/exchange/order",
+                 data=dict(csrf_token=csrf, property_id=str(pid), side="ask",
+                           amount="2", price="2"), follow_redirects=False)
+        mine_and_index(node, state)
+    (order,) = index.book(pid)["asks"]
+    assert (order["tokens"], order["coins"]) == (2, 4 * COIN)
+
+    sold = {"txid": "f" * 64, "height": order["block_height"], "when": time.time(),
+            "seller": home,
+            "give": I.Leg(I.LEG_TOKEN, property_id=pid, amount=order["tokens"]),
+            "take": I.Leg(I.LEG_COINS, amount=order["coins"])}
+    monkeypatch.setattr(index, "trades", lambda *a, **k: [sold])
+
+    def tick(page: str, label: str) -> str:
+        """What one of the figures above the chart says, tags off."""
+        for value, span in _r.findall(
+                r'<div class="tick"><b[^>]*>(.*?)</b>\s*<span>(.*?)</span>',
+                page, _r.S):
+            if span.startswith(label):
+                return _r.sub(r"<[^>]+>", "", value).strip()
+        raise AssertionError(f"no {label!r} tick on the page")
+
+    body = app.get(f"/exchange/pair/{pid}").text
+    assert tick(body, "Last") == "2.00000000", \
+        "the last price is coins per token, and this said satoshis per token"
+    assert tick(body, "24h volume") == "4.0000", "and four coins changed hands"
+    row = _r.search(r'<tr class="ask[^>]*>\s*<td[^>]*>([^<]*)</td>', body)
+    assert row and float(row.group(1)) == float(tick(body, "Last")), \
+        "one page, one price, two readings of it"
+    # The sale itself, in the trade table: two tokens, not 0.00000002 of one.
+    sold_row = _r.findall(r'<td class="mono">2\.00000000</td>\s*'
+                          r'<td class="mono"[^>]*>([^<]*)</td>', body)
+    assert sold_row == ["2"], f"what traded was two tokens, the page said {sold_row}"
+    assert "200000000" not in body and "0.00000002" not in body
+
+    table = app.get("/exchange?tab=tokens").text
+    assert "200000000" not in table, "no market row says eight zeros for two"
+    assert "2.00000000" in table, "its last price and its best ask, both in coins"
+
+
 def test_a_sensitive_name_is_walled_on_the_pair_page_as_it_is_on_the_token_page(web,
                                                                                monkeypatch):
     """a tester, 2026-09-27: the wall stood on `/tokens/11` and not on

@@ -577,6 +577,39 @@ def test_a_chart_is_drawn_from_swaps_and_keeps_the_gaps(tmp_path):
                                              "trades": 1}]
 
 
+def test_an_indivisible_token_is_priced_in_the_units_it_counts_in():
+    """The eight zeros, seen from the leg rather than from the book row.
+
+    A trade is two integers, and what one of them MEANS is not inside it: a
+    divisible token counts in hundred-millionths, exactly like a coin, and an
+    indivisible one counts in whole tokens. `token_prices` divided BOTH legs by
+    COIN, so two of them bought for four coins were drawn at 200,000,000 coins
+    each and sized as 0.00000002 tokens -- beside an order book that said `2`,
+    which is the number somebody typed. That is the fault the pair page's rows
+    were fixed for on 2026-09-27, on the half that reads swaps rather than
+    orders: every candle and every 24h figure on that page comes from these
+    points, so the page argued with itself about one price.
+
+    The flag is the caller's to pass, because the caller is always a page that
+    looked the token up before it drew anything about it.
+    """
+    from arcade import charts
+
+    now = 1_700_000_000
+    whole = {"when": now, "height": 9, "txid": "f" * 64,
+             "give": I.Leg(I.LEG_TOKEN, property_id=7, amount=2),
+             "take": I.Leg(I.LEG_COINS, amount=4 * COIN)}
+    (point,) = charts.token_prices([whole], 7, divisible=False)
+    assert (point["price"], point["size"]) == (2.0, 2.0), \
+        "two tokens for four coins, and the chart says what both integers mean"
+
+    # The same shape with a divisible token, where the flag is the only thing
+    # that changed -- which is the whole claim: the units, not the arithmetic.
+    split = dict(whole, give=I.Leg(I.LEG_TOKEN, property_id=7, amount=2 * COIN))
+    (same,) = charts.token_prices([split], 7)
+    assert (same["price"], same["size"]) == (2.0, 2.0)
+
+
 def test_building_a_half_holds_what_it_spends(world):
     """The offer and the signed half travel as messages, which take blocks
     and cost fees out of the same wallet. Without holding them, the buyer's

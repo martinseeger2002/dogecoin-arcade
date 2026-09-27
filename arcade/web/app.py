@@ -6369,11 +6369,16 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             trades = []
         # What each launch has traded: tokens by their own price history,
-        # collections by the pieces of theirs that sold for coins.
+        # collections by the pieces of theirs that sold for coins. A token's
+        # price needs the one thing `launches()` does not carry -- whether that
+        # token counts in hundred-millionths or in whole units -- and
+        # `properties()` says it for all of them in one go.
+        whole_units = {p["property_id"]: p["divisible"] for p in _token_props(index)}
         nft = _nft_points(index, trades) if trades else {}
         for item in items:
             if item["kind"] == "token":
-                points = chartlib.token_prices(trades, item["id"])
+                points = chartlib.token_prices(trades, item["id"],
+                                              whole_units.get(item["id"], True))
                 item["trades"] = len(points)
                 item["volume"] = sum(p["price"] * p["size"] for p in points)
             else:
@@ -14574,13 +14579,31 @@ def create_app(state: AppState) -> FastAPI:
 
     EXCHANGE_TABS = ("offers", "mintpads", "tokens", "market")
 
+    def _coins_each(price: Any, divisible: bool) -> float:
+        """The book's price ratio as coins per whole token.
+
+        `index.book` keeps the ratio of the two integers an order is made of,
+        because a book sorted on floats orders itself in a way nobody can
+        reproduce (D-048). For a divisible token both integers are scaled by
+        COIN and that ratio already is coins; an indivisible token's token count
+        is never scaled, so its ratio is satoshis per token and a page that
+        prints it straight says `200000000` where the order said `2`. The same
+        trap `_cancel_one_or_pair` names on the writing side -- "divide the wrong
+        way and the cancel names a price a hundred million off" -- arrived on the
+        reading side, and it arrived in more than one place: rehearsing a cancel
+        of one price on the live site (S18, 2026-09-27) showed the pair page's
+        row reading `200000000 2 4`, and the market table and every chart built
+        from trades are the same reading of the same two integers.
+        """
+        return float(price) if divisible else float(price) / COIN
+
     def _pairs(index, trades) -> list[dict[str, Any]]:
         """Tokens against the coin, most traded first."""
         wanted = {p["property_id"]: p for p in _token_props(index)}
         faces = _faces_for(index, wanted.values())
         out = []
         for pid, prop in wanted.items():
-            points = chartlib.token_prices(trades, pid)
+            points = chartlib.token_prices(trades, pid, prop["divisible"])
             book = index.book(pid, limit=1)
             if not points and not (book["asks"] or book["bids"]):
                 continue
@@ -14593,8 +14616,13 @@ def create_app(state: AppState) -> FastAPI:
                 "high": stats["high"], "low": stats["low"],
                 "trades": stats["trades"], "volume": stats["volume"],
                 "coins": stats["coins"],
-                "ask": book["asks"][0]["price"] if book["asks"] else None,
-                "bid": book["bids"][0]["price"] if book["bids"] else None,
+                # In coins, like every other price in this row: the table prints
+                # the last price and the day's range beside these two, and one
+                # row cannot speak two units.
+                "ask": (_coins_each(book["asks"][0]["price"], prop["divisible"])
+                        if book["asks"] else None),
+                "bid": (_coins_each(book["bids"][0]["price"], prop["divisible"])
+                        if book["bids"] else None),
             })
         # The market people are actually trading, first -- a table of pairs
         # is read from the top, and the top should be where the trading is.
@@ -15092,7 +15120,7 @@ def create_app(state: AppState) -> FastAPI:
             trades = index.trades()
         except Exception:
             trades = []
-        points = chartlib.token_prices(trades, property_id)
+        points = chartlib.token_prices(trades, property_id, prop["divisible"])
         asked = request.query_params.get("tf", "")
         frame = chartlib.timeframe(
             asked if asked in {t[0] for t in chartlib.TIMEFRAMES}
@@ -15146,19 +15174,13 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             taking = {}
 
-        # Coins per whole token, which is NOT what `index.book`'s ratio holds for
-        # an indivisible token: its token count is never scaled by COIN, so the
-        # raw ratio of its two integers is already satoshis, and a page that
-        # prints it straight says `200000000` where the order said `2`. The same
-        # trap `_cancel_one_or_pair` names on the writing side -- "divide the
-        # wrong way and the cancel names a price a hundred million off" --
-        # arrived on the reading side instead, where the only cost is that every
-        # price on an indivisible pair page reads as nonsense. Rehearsing a
-        # cancel of one price on the live site (S18, 2026-09-27) is what showed
-        # it: the surviving row printed `200000000 2 4`.
+        # Coins per whole token, which is not what `index.book`'s ratio holds
+        # for an indivisible token -- `_coins_each` has why, and it is the same
+        # reason the chart above is handed `prop["divisible"]`: a page whose row
+        # says `2` and whose tick says `200000000` is one page arguing with
+        # itself about a price somebody typed as `2`.
         def coins_each(order: dict) -> float:
-            return (float(order["price"]) if prop["divisible"]
-                    else float(order["price"]) / COIN)
+            return _coins_each(order["price"], prop["divisible"])
 
         for side in ("asks", "bids"):
             for order in book[side]:
