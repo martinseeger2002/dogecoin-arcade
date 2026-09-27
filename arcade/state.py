@@ -196,6 +196,19 @@ CREATE TABLE IF NOT EXISTS tag (
 -- Property 0 is the chain's own coin. Omni has no such id, because Omni's
 -- MetaDEx pairs two tokens and leaves the native coin to its older DEx; here
 -- the coin is one side of every pair, so it needs a name.
+-- A take (type 29) as a trade: the token amount it moved and the coins it paid
+-- the maker, written when the engine applies it. The swap path's trades are
+-- read back out of their own payloads (ledger.trades); a take's payload names
+-- only the order and the amount, so the price is written down here or it is
+-- lost with the order (a tester, 2026-09-27: Buy fills never reached the chart).
+CREATE TABLE IF NOT EXISTS take_trade (
+    txid          TEXT    PRIMARY KEY,
+    property_id   INTEGER NOT NULL,
+    tokens        INTEGER NOT NULL,
+    coins         INTEGER NOT NULL,
+    maker         TEXT    NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS book_order (
     txid          TEXT    PRIMARY KEY,
     block_height  INTEGER NOT NULL,
@@ -292,6 +305,7 @@ def install_schema(db: Database) -> None:
     register_journalled_table("nft_offer", ("txid",))
     register_journalled_table("nft_ask", ("txid",))
     register_journalled_table("inscription_move", ("txid", "inscription"))
+    register_journalled_table("take_trade", ("txid",))
     register_journalled_table("book_order", ("txid",))
     register_journalled_table("inscription_chunk",
                               ("sender", "inscription_id", "countdown"))
@@ -1107,6 +1121,10 @@ class Engine:
         moved = from_book + from_free
         self.debit(row["address"], msg.property_id, moved)
         self.credit(rtx.sender, msg.property_id, moved)
+        # The trade, for the chart and the pair page's numbers (ledger.trades).
+        self.state.insert("take_trade", {"txid": rtx.txid, "property_id": msg.property_id,
+                                         "tokens": moved, "coins": paid,
+                                         "maker": row["address"]})
 
     def _cancel_orders(self, rtx: ArcadeTransaction, sale: int, want: int,
                        price: tuple[int, int] | None) -> None:

@@ -1193,6 +1193,14 @@ def test_a_taker_buys_part_of_a_resting_ask_with_the_maker_away(node):
     assert rest["sale_amount"] == 6 * COIN and rest["want_amount"] == 3 * COIN, \
         "the rest of the ask stands, at its own price"
 
+    # And it is a trade: the chart, LAST and the 24h numbers read it (a tester,
+    # 2026-09-27: Buy fills never reached the pair page).
+    index = state.token_index(state.messaging)
+    mine = [t for t in index.trades() if t["give"].property_id == maker["pid"]]
+    assert mine and mine[0]["give"].amount == 4 * COIN and mine[0]["take"].amount == 2 * COIN
+    page = " ".join(maker["client"].get(f"/exchange/pair/{maker['pid']}").text.split())
+    assert "No trades yet" not in page
+
 
 def test_a_maker_cannot_cancel_out_from_under_a_take_in_the_same_block(node):
     """The front-run from Claude's review of D-189 (2026-09-27): the maker sees

@@ -487,7 +487,64 @@ class LedgerIndex:
             out.append({"txid": row["txid"], "height": row["block_height"],
                         "when": row["time"], "seller": row["sender"],
                         "give": swap.give, "take": swap.take})
-        return out
+        # Takes (type 29): a buy from a resting ask with its maker away. Read
+        # from take_trade, which the engine writes as it applies one; takes
+        # indexed before that table existed are filled in from their own
+        # transactions, once (_backfill_takes).
+        self._backfill_takes(since_height)
+        with self.open() as db:
+            for row in db.conn.execute(
+                    "SELECT t.txid, t.property_id, t.tokens, t.coins, t.maker, "
+                    "a.block_height, b.time FROM take_trade t "
+                    "JOIN arcade_tx a ON a.txid = t.txid "
+                    "JOIN block b ON b.height = a.block_height "
+                    "WHERE a.valid = 1 AND a.block_height >= ?", (int(since_height),)):
+                out.append({"txid": row["txid"], "height": row["block_height"],
+                            "when": row["time"], "seller": row["maker"],
+                            "give": I.Leg(I.LEG_TOKEN, property_id=row["property_id"],
+                                          amount=row["tokens"]),
+                            "take": I.Leg(I.LEG_COINS, amount=row["coins"])})
+        out.sort(key=lambda t: (t["height"], t["txid"]), reverse=True)
+        return out[:max(1, min(limit, 5000))]
+
+    TAKE_PREFIX = "0000001d"
+
+    def _backfill_takes(self, since_height: int = 0) -> None:
+        """Takes the engine applied before it wrote them down as trades: their
+        token amount from the payload, their coins from what the transaction
+        paid anybody but the taker. Written once; the engine writes the rest."""
+        with self.open() as db:
+            missing = db.conn.execute(
+                "SELECT a.txid, a.sender, a.payload_hex FROM arcade_tx a "
+                "LEFT JOIN take_trade t ON t.txid = a.txid "
+                "WHERE a.valid = 1 AND a.payload_hex LIKE ? AND t.txid IS NULL "
+                "AND a.block_height >= ? LIMIT 200",
+                (self.TAKE_PREFIX + "%", int(since_height))).fetchall()
+        if not missing:
+            return
+        found = []
+        try:
+            with self._rpc() as rpc:
+                for row in missing:
+                    msg = P.decode(bytes.fromhex(row["payload_hex"]))
+                    tx = rpc.call("getrawtransaction", row["txid"], True)
+                    paid, maker = 0, ""
+                    for out in tx.get("vout", []):
+                        spk = out.get("scriptPubKey") or {}
+                        addrs = spk.get("addresses") or ([spk["address"]] if spk.get("address") else [])
+                        if spk.get("type") == "pubkeyhash" and addrs and addrs[0] != row["sender"]:
+                            paid += round(float(out.get("value", 0)) * 100_000_000)
+                            maker = maker or addrs[0]
+                    if paid and maker:
+                        found.append((row["txid"], msg.property_id, msg.amount, paid, maker))
+        except Exception as exc:
+            log.debug("take backfill unavailable: %s", exc)
+        if found:
+            with self.open() as db:
+                db.conn.executemany(
+                    "INSERT OR IGNORE INTO take_trade(txid, property_id, tokens, coins, maker) "
+                    "VALUES(?,?,?,?,?)", found)
+                db.conn.commit()
 
     def shops(self, limit: int = 200) -> list[dict]:
         """Every inscription on this chain whose JSON names a shop.
