@@ -9499,6 +9499,204 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"chain": chain.network, "address": address,
                              "count": len(rows), "orders": rows})
 
+    @app.post("/account/take/build")
+    def account_take_build(request: Request, payload: Any = Body(None)):
+        """The transaction that fills the answer a maker's book sent back.
+
+        The last piece of a take, and the one that was missing. `/account/take`
+        says what to ask and what it comes to; the maker's node answers with an
+        offer, sealed to this account's key; and until this route existed
+        nothing turned that answer into bytes a signature fits. A node trading
+        for its own wallet calls `swap.build`, which chooses coins out of that
+        wallet and calls `signrawtransaction` -- it can only run where the
+        buyer's key is, and this node was never given this account's. So the
+        same trade is read the other way round: `swap.offer_terms` for what the
+        offer says, which is the one reading both builders share, and
+        `funding.build_partial` for this account's coins out of the index
+        instead of out of a wallet. Nothing is signed here, because the key
+        that would sign it is not here.
+
+        What comes back is the shape `/account/buy` already sends a tab -- the
+        bytes, the sighashes, and `signed_from` saying where this key's inputs
+        start, so a browser is never asked for a signature over the maker's own
+        coin -- beside the three things the next two steps cannot work out
+        alone: the offer's id, which the maker matches its own note against, the
+        maker's key, and the protocol the finished half has to be carried in.
+
+        The answer is a stranger's JSON by the time it gets here, so it is
+        checked like one: `check_offer` refuses one that is not an offer, that
+        names some other address as its buyer, that is expired, or whose cut
+        cannot be paid; and the order it fills is read off this node's index,
+        not out of the answer, so an offer that names an order and takes tokens
+        that order never reserved is refused here rather than by a block
+        (D-062, D-082). Nothing is spent and nothing is filed: like
+        `/account/buy`, this decides the whole trade again from the offer's
+        bytes and the chain, which is why a tab that reloaded finishes the same
+        transaction and a node that restarted in between has lost nothing.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        try:
+            index = state.token_index(chain)
+            offer = swaplib.check_offer(
+                said.get("offer"), shop="", own=[address],
+                height=index.indexed_height(), params=chain.params)
+            if str(offer.get("network") or "") != chain.network:
+                raise swaplib.SwapError(
+                    f"that answer is for {offer.get('network')}, and this "
+                    f"account is on {chain.network}")
+            order = index.order(offer["order"]) if offer["order"] else None
+            if order is None:
+                raise swaplib.SwapError(
+                    "that answer names an order this node's book cannot read -- "
+                    "it has been filled or cancelled since, or its block has "
+                    "not arrived here. Ask for another answer.")
+            to = _key_at(offer["seller"])
+            with chain.rpc() as rpc:
+                terms = swaplib.offer_terms(rpc, index, offer, [address],
+                                           from_order=order)
+            what = (f"{swaplib.describe_leg(swaplib.leg_json(terms.give, index))}"
+                    f" for {swaplib.describe_leg(swaplib.leg_json(terms.take, index))}")
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build_partial(
+                    db, chain.params, address, terms.foreign, terms.outputs,
+                    rate=fees.MIN_FEE_PER_KB, what=what,
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+        except (swaplib.SwapError, fundinglib.FundingError,
+                tokenlib.TokenError, AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({
+            "chain": chain.network, "answered": True,
+            "offer": offer["id"], "order": offer["order"],
+            "maker": offer["seller"],
+            "maker_tag": _tags_for([offer["seller"]]).get(offer["seller"], ""),
+            "to": bytes(to).hex(), "swapv": swaplib.PROTOCOL,
+            "buyer": address, "coins": max(terms.owes, 0),
+            "cut": ({"bps": int((offer.get("cut") or {}).get("bps") or 0),
+                     "sats": terms.cut, "to": terms.cut_to} if terms.cut else {}),
+            **unsigned.as_json()})
+
+    @app.post("/account/take/sign")
+    def account_take_sign(request: Request, payload: Any = Body(None)):
+        """Paste this account's signatures onto its half, and hand it back.
+
+        Nothing is broadcast, which is the whole difference from
+        `/account/fill/sign` and the reason this is a route of its own. That one
+        finishes a listing: this node already holds both of the seller's
+        signatures, so pasting the buyer's makes the transaction complete and
+        there is nothing left to ask. A book answer is not like that -- the
+        maker's half is unsigned until the maker signs it, which happens on the
+        maker's side when the finished half arrives as a message. So this stops
+        at the transaction, and the tab carries it:
+        `{swap: "sign", offer: <its id>, hex: <this>}`, sealed to the key
+        `/account/take/build` named, and the maker's node countersigns it or
+        refuses it. That is the same last step a node's own wallet takes, with
+        the browser holding the key in place of the wallet.
+
+        The guards are `/account/buy/sign`'s and they have to stay that way: the
+        trade is decided again here, out of the offer and the chain, and the
+        bytes the signatures stand over are compared with the ones this node
+        would build now. A block landing in between, or one of this account's
+        other transactions going out, is said as that, because a signature over
+        old bytes buys a trade nobody agreed to. `funding.assemble` leaves the
+        maker's input empty and fills only the inputs from `signed_from`: this
+        node signs nothing, and cannot be talked into signing the coin that is
+        not its own to sign.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        try:
+            index = state.token_index(chain)
+            offer = swaplib.check_offer(
+                said.get("offer"), shop="", own=[address],
+                height=index.indexed_height(), params=chain.params)
+            if str(offer.get("network") or "") != chain.network:
+                raise swaplib.SwapError(
+                    f"that answer is for {offer.get('network')}, and this "
+                    f"account is on {chain.network}")
+            order = index.order(offer["order"]) if offer["order"] else None
+            if order is None:
+                raise swaplib.SwapError(
+                    "that answer names an order this node's book cannot read -- "
+                    "it has been filled or cancelled since, or its block has "
+                    "not arrived here. Ask for another answer.")
+            to = _key_at(offer["seller"])
+            with chain.rpc() as rpc:
+                terms = swaplib.offer_terms(rpc, index, offer, [address],
+                                            from_order=order)
+                with contextlib.closing(index.open()) as db:
+                    unsigned = fundinglib.build_partial(
+                        db, chain.params, address, terms.foreign, terms.outputs,
+                        rate=fees.MIN_FEE_PER_KB,
+                        exclude=_flights.spent_by(account.pubkey, chain.network),
+                        extra=_flights.change_for(account.pubkey, chain.network))
+                if str(said.get("raw") or "") != unsigned.raw:
+                    raise swaplib.SwapError(
+                        "this node would build you a different transaction now "
+                        "than the one you signed -- a block landed, or one of "
+                        "your other transactions went out, or the maker's coins "
+                        "moved. Ask for the answer again and sign that; a "
+                        "signature over the old bytes would trade something you "
+                        "never agreed to.")
+                _real_coins_gate(account, chain)
+                signatures = [str(x) for x in (said.get("signatures") or [])]
+                pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
+                if not pubkey:
+                    raise ValueError("this request names no public key, and a "
+                                     "transaction nobody can trace to a key is "
+                                     "not a transaction this node will finish")
+                if hash160(pubkey) != b58check_decode(address)[1]:
+                    raise ValueError(
+                        "that public key is not the key behind this account's "
+                        f"{chain.label.lower()} address, so pasting it would "
+                        "write a trade one wallet paid and another is named on")
+                hex_ = fundinglib.assemble(unsigned, signatures, pubkey)
+                # Whose coin is whose is settled by the bytes, not by this
+                # request saying so: `signed_from` came out of the build, and
+                # every input from there on has to be this account's own. The
+                # maker's input -- input 0, the offered output -- stays an empty
+                # scriptSig, which is what makes the result a half rather than
+                # a finished transaction, and what the maker is asked to finish.
+                for n, coin in enumerate(unsigned.inputs[unsigned.signed_from:],
+                                         unsigned.signed_from):
+                    if str(coin.get("address") or "") != address:
+                        raise swaplib.SwapError(
+                            f"input {n} of that transaction spends "
+                            f"{coin.get('address')}, which is not this account's "
+                            "address, so this key was asked to sign a coin it "
+                            "does not hold")
+        except (swaplib.SwapError, fundinglib.FundingError, listingslib.ListingError,
+                tokenlib.TokenError, AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"chain": chain.network, "hex": hex_,
+                             "offer": offer["id"], "order": offer["order"],
+                             "maker": offer["seller"], "to": to.hex(),
+                             "swapv": swaplib.PROTOCOL,
+                             "fee": unsigned.fee, "signed": True})
+
     def _ask_payload(row: dict, take: inscriptionlib.Leg) -> bytes:
         """What a listing writes at output 0: the trade the finished swap IS.
 

@@ -1253,20 +1253,52 @@ def check_offer(offer: Any, *, shop: str, own: list[str], height: int | None,
     return out
 
 
-def build(rpc: Any, index: Any, offer: dict, own: list[str],
-          from_order: dict | None = None) -> Built:
-    """The buyer's transaction, signed by the buyer only.
+@dataclass
+class Terms:
+    """What an offer demands of the transaction that fills it, read once.
 
-    The seller's outpoint first, then the buyer's own outputs, from the one
-    address that pays and receives. Outputs: the swap, the seller made whole
-    (its input back, plus the coins it is owed, less any it gives), the cut of
-    whatever the offer announced for the node that made it, and the buyer's
-    change. The buyer pays the fee: the buyer is the one asking, and it pays
-    the announced cut on top of the price rather than out of it, so the price
-    keeps meaning what the seller asked for (§1d)."""
+    An offer is a promise about a trade, and the transaction that becomes it
+    has to be worked out from the offer's own numbers. Two readings of those
+    numbers is a trade one side agreed to and the other did not, so there is
+    one function that reads them: `build`, which finishes it out of a wallet
+    whose keys are here, and an account's route, which finishes it out of a
+    transaction a browser holds the key to, go through the same lines.
+
+    `foreign` is the seller's offered output, which goes first and stays
+    unsigned by whoever builds this -- and `outputs` is everything the buyer's
+    side must place before its own change: the bytes, the seller made whole,
+    and the cut the offer announced.
+    """
+
+    give: I.Leg
+    take: I.Leg
+    buyer: str
+    seller: str
+    owes: int             # coins buyer to seller, which may be negative
+    cut: int              # sats for the offer's maker's node, on top
+    cut_to: str
+    cut_script: bytes
+    seller_out: int
+    named: str            # the order this fills, hex; "" for a shop swap
+    payload: bytes
+    lines: int
+    foreign: list[dict]
+    outputs: list[tuple[int, bytes]]
+
+
+def offer_terms(rpc: Any, index: Any, offer: dict, own: list[str],
+                from_order: dict | None = None) -> Terms:
+    """Every check and every number in an offer, before anybody builds on it.
+
+    `own` is the addresses the caller can sign for, and it is only used to say
+    which side of the trade the caller is on: a wallet's own legs are checked
+    against what that wallet holds, and the other side's against what the
+    order reserves. That is the whole reason this is a function and not a few
+    lines inside `build` -- the account that takes a price off the book holds a
+    key and no wallet, so the caller is a browser tab, and a tab is owed the
+    same refusal as a node before it spends a fee on a trade that cannot land.
+    """
     buyer, seller = offer["buyer"], offer["seller"]
-    if buyer not in own:
-        raise SwapError(f"{buyer} is not this wallet's")
     give, take = leg_from_json(offer["give"]), leg_from_json(offer["take"])
     for who, leg, name in ((seller, give, "the shop"), (buyer, take, "this wallet")):
         if who == seller and from_order is not None and leg.kind == I.LEG_TOKEN:
@@ -1327,6 +1359,40 @@ def build(rpc: Any, index: Any, offer: dict, own: list[str],
     payload = P.AnyData(data=I.Swap(
         give=give, take=take,
         order=bytes.fromhex(named) if named else b"").encode()).encode()
+    outputs = [(0, op_return_script(encode_class_c(payload))),
+               (seller_out, p2pkh_script(seller))]
+    if cut:
+        outputs.append((cut, cut_script))
+    return Terms(give=give, take=take, buyer=buyer, seller=seller, owes=owes,
+                 cut=cut, cut_to=cut_to, cut_script=cut_script,
+                 seller_out=seller_out, named=named, payload=payload,
+                 lines=lines, outputs=outputs,
+                 foreign=[dict(offer["outpoint"], address=seller)])
+
+
+def build(rpc: Any, index: Any, offer: dict, own: list[str],
+          from_order: dict | None = None) -> Built:
+    """The buyer's transaction, signed by the buyer only.
+
+    The seller's outpoint first, then the buyer's own outputs, from the one
+    address that pays and receives. Outputs: the swap, the seller made whole
+    (its input back, plus the coins it is owed, less any it gives), the cut of
+    whatever the offer announced for the node that made it, and the buyer's
+    change. The buyer pays the fee: the buyer is the one asking, and it pays
+    the announced cut on top of the price rather than out of it, so the price
+    keeps meaning what the seller asked for (§1d).
+
+    What the offer says and what this trade costs are `offer_terms`'s, so a
+    tab that holds the buyer's key instead of a wallet can be shown the same
+    transaction; what is left here is the coin selection and the signature,
+    which only a node that holds this buyer's coins can do."""
+    buyer, seller = offer["buyer"], offer["seller"]
+    if buyer not in own:
+        raise SwapError(f"{buyer} is not this wallet's")
+    terms = offer_terms(rpc, index, offer, own, from_order)
+    owes, cut, cut_to, cut_script = (terms.owes, terms.cut, terms.cut_to,
+                                     terms.cut_script)
+    lines, payload = terms.lines, terms.payload
     unspent = sorted((u for u in (rpc.call("listunspent", 1, 9_999_999, [buyer]) or [])
                       if u.get("spendable", True)),
                      key=lambda u: -float(u["amount"]))
@@ -1358,10 +1424,7 @@ def build(rpc: Any, index: Any, offer: dict, own: list[str],
 
     fee = _fee(len(chosen) + 1, lines, len(payload))
     change = total - owes - cut - fee
-    outputs = [(0, op_return_script(encode_class_c(payload))),
-               (seller_out, p2pkh_script(seller))]
-    if cut:
-        outputs.append((cut, cut_script))
+    outputs = list(terms.outputs)
     if change >= MIN_CHANGE:
         outputs.append((change, p2pkh_script(buyer)))
     else:

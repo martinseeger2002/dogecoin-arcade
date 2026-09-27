@@ -764,6 +764,67 @@ export async function bookAnswers(wallet, wanted) {
   return wanted ? (kept.answers[wanted] || null) : kept.answers;
 }
 
+/** The transaction a book answer becomes, with this key signing nothing yet.
+ *
+ * The node builds it and cannot sign it, which is the whole arrangement: the
+ * answer says which of the maker's coins go in and what they price to, and
+ * `/account/take/build` puts this account's own coins behind that and stops
+ * there. `answer.leg` is the maker's offer, kept as it arrived. The node will
+ * build the very same transaction again when the signatures come back, so the
+ * answer travels with the result rather than being forgotten -- a tab that
+ * reloaded between the two has to be able to say what it was building.
+ */
+export async function bookTakeBuild(answer, chain) {
+  return working(async () => {
+    const asked = await fetch("/account/take/build", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({offer: answer, chain: chain || ""}),
+    });
+    const built = await asked.json();
+    if (!asked.ok) {
+      throw new Error(built.detail || "that answer cannot be made into a trade");
+    }
+    built.answer = answer;
+    return built;
+  });
+}
+
+/** Sign this account's half of a book answer, and hand it back to the maker.
+ *
+ * Two requests and one message, and no broadcast anywhere. `verifyOffer` is
+ * what stops this tab signing the maker's input: it refuses anything before
+ * `signed_from`, and anything whose coin is not this key's. The signatures go
+ * to `/account/take/sign`, which pastes them in and returns the transaction
+ * unfinished on purpose -- the maker's half is still an empty scriptSig, and
+ * only the maker can fill it. So the third step carries it back as a `sign`
+ * message, sealed to the key the node named, over the same `askTheBook` that
+ * carried the question. What comes back is the message's txid, not the
+ * trade's: the trade is the maker's node's to broadcast, and it says so in its
+ * own answer.
+ */
+export async function signTake(wallet, built) {
+  return working(async () => {
+    const keys = keysOn(wallet, built.chain
+                        || (wallet.on && Object.keys(wallet.on)[0]));
+    const shown = await coins.verifyOffer(built, keys);
+    const signatures = [];
+    for (const sighash of shown.hashes) {
+      signatures.push(coinsHex(await coins.signInput(keys.key, unhex(sighash))));
+    }
+    const done = await fetch("/account/take/sign", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({offer: built.answer, chain: built.chain || "",
+                            raw: built.raw, signatures,
+                            pubkey: coinsHex(keys.pubkey)}),
+    });
+    const half = await done.json();
+    if (!done.ok) throw new Error(half.detail || "the node would not take it");
+    const carried = await askTheBook(wallet, half.to, {
+      swap: "sign", swapv: half.swapv, offer: half.offer, hex: half.hex});
+    return {...half, fee: shown.fee, says: shown.says, message: carried.txid};
+  });
+}
+
 /* --- filling a listing, with this account's own key ----------------------
  *
  * The other half of `list`. The seller's two signatures are already in the

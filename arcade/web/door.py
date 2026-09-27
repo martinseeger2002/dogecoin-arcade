@@ -269,6 +269,18 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # and nowhere a browser can look. The message it is advice about
                # goes out through `/account/talk`, which is already here.
                "/account/take",
+               # and the two halves that turn the answer into a trade. The first
+               # builds the account's side out of the maker's offer and signs
+               # nothing -- it could not, since the key is in a tab and not here
+               # -- and says which inputs that tab's key starts at. The second
+               # pastes the signatures back and hands the transaction over, and
+               # broadcasts nothing: the maker's half is still unsigned, and it
+               # is the maker's node that finishes the trade, exactly as with
+               # `/account/shop` below. Nothing on either side of this pair can
+               # spend a coin the asking account does not hold, and an offer that
+               # is stale, expired, or addressed to somebody else is refused
+               # before either one answers.
+               "/account/take/build", "/account/take/sign",
                # a shop, bought by an account rather than by this wallet. The
                # door offers three transactions and broadcasts the two messages
                # out of them; the trade itself is not broadcast here at all,
