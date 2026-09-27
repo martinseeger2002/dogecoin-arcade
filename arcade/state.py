@@ -648,6 +648,7 @@ class Engine:
             P.MetaDExTrade: self._book_order,
             P.MetaDExCancelPrice: self._book_cancel_price,
             P.MetaDExCancelPair: self._book_cancel_pair,
+            P.MetaDExTake: self._take_order,
         }.get(type(message))
 
         if handler is None:
@@ -994,6 +995,93 @@ class Engine:
         """Type 27. Cancel every order this sender has on one pair."""
         self._cancel_orders(rtx, msg.property_id_for_sale,
                             msg.property_id_desired, price=None)
+
+    def _take_order(self, rtx: ArcadeTransaction, msg: P.MetaDExTake) -> None:
+        """Type 29. Settle somebody else's resting ask without them.
+
+        The maker signed once, when they filed the order, and what that
+        signature bought is the reserve `_book_order` moved out of their
+        balance and into `metadex_reserve` -- a column a token send cannot
+        spend, so the promise behind the price has been held ever since. Every
+        other way to fill an ask asked the maker to be awake: a swap needs both
+        inputs, and an account's key lives in its owner's tab, not on this
+        node. This is the one that works while they sleep.
+
+        What makes it safe to move a token somebody did not sign for is that
+        three things are all the same number: what the order holds, what this
+        message asks for, and what the transaction pays for at the order's own
+        price. Each is checked against each other before anything moves, and
+        any one of them failing makes the transaction invalid rather than
+        partial -- which is the whole point, because coins are the one side of
+        this that the chain moves by itself. A fill that released fewer tokens
+        than it was paid for would be a taker who paid and received nothing,
+        and no `if` downstream can undo that after the block. So there is no
+        "named and unusable, the swap still stands" here (the rule at
+        `_fills_for`, which is right there only because a swap's coin leg
+        cannot be refused without cheating somebody): here it is refused, and
+        a taker whose order went away in the last block loses a fee and tries
+        again.
+
+        A partial fill is the ordinary case, not a special one: take less than
+        the order holds and what is left keeps its price, exactly as a swap's
+        fill leaves it (D-062).
+        """
+        since = self.params.take_from
+        if since is None or rtx.block_height < since:
+            raise InvalidTransaction(
+                "an order is taken with its maker's signature until this block")
+        if len(msg.order) != 32:
+            raise InvalidTransaction("a take names the order by its txid")
+        if not 0 < msg.amount <= MAX_AMOUNT:
+            raise InvalidTransaction(f"amount {msg.amount} out of range")
+        prop = self.get_property(msg.property_id)
+        if prop is None:
+            raise InvalidTransaction(f"property {msg.property_id} does not exist")
+        if prop["property_type"] == PROPERTY_NONFUNGIBLE:
+            raise InvalidTransaction(
+                f"property {msg.property_id} is non-fungible -- a take moves "
+                f"a balance the way a fill does, not one piece by its id")
+
+        row = self.state.db.conn.execute(
+            "SELECT * FROM book_order WHERE txid=?",
+            (msg.order.hex(),)).fetchone()
+        if row is None:
+            raise InvalidTransaction(
+                "that order is not on the book -- filled, cancelled, or its "
+                "block has not reached this node")
+        row = dict(row)
+        if row["address"] == rtx.sender:
+            raise InvalidTransaction(
+                "an order is a promise to somebody else; taking your own "
+                "withdraws it, and type 26 or 27 says that")
+        if row["sale_property"] != msg.property_id \
+                or row["want_property"] != self.COIN_PROPERTY:
+            raise InvalidTransaction(
+                f"that order sells {row['sale_property']} for "
+                f"{row['want_property']}, and holds nothing of property "
+                f"{msg.property_id}")
+        if row["reserved"] < msg.amount:
+            raise InvalidTransaction(
+                f"that order holds {row['reserved']} of property "
+                f"{msg.property_id}, not {msg.amount}")
+
+        # The order's price, applied to what this take moves, is what the
+        # transaction has to have paid the maker -- floor, so a remainder of
+        # the order is never dearer than the whole was. Rounded the other way
+        # and a taker pays for tokens nobody sold.
+        need = row["want_amount"] * msg.amount // row["sale_amount"]
+        paid = rtx.paid_to(row["address"])
+        if paid < need:
+            raise InvalidTransaction(
+                f"{row['address']} is paid {paid} satoshis by this "
+                f"transaction; that order's price makes it {need}")
+
+        # Everything below is what a swap's fill already does, and it is the
+        # same three moves so the two ways of filling an order cannot drift:
+        # out of the reserve, off the order, into the taker.
+        self._fill_order(row, msg.amount, need)
+        self.debit(row["address"], msg.property_id, msg.amount)
+        self.credit(rtx.sender, msg.property_id, msg.amount)
 
     def _cancel_orders(self, rtx: ArcadeTransaction, sale: int, want: int,
                        price: tuple[int, int] | None) -> None:

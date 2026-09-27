@@ -97,6 +97,16 @@ class Params:
     #: Its own height because it makes a payload legal that was invalid
     #: before -- a swap with 32 bytes after its legs (D-082).
     named_fills_from: int | None = None
+    #: From this block a taker may settle a resting ask ALONE -- payload type
+    #: 29, the reserve behind somebody else's order taken by the person paying
+    #: for it, with no signature from the maker (D-189). Its own height for the
+    #: sharpest reason any of these have: a take carries the taker's coins in
+    #: its OUTPUTS, so a node that has not read type 29 yet still indexes the
+    #: transaction as an unknown message, moves no tokens, and leaves that
+    #: person holding a paid-for order nobody filled. Nothing files one until a
+    #: route does, and no route goes out before both nodes run this, so the
+    #: height is the paperwork and the release order is the safety.
+    take_from: int | None = None
 
     # base58 version bytes. Verified in source: pepecoin/src/chainparams.cpp
     # (mainnet :92-93, testnet, regtest).
@@ -261,6 +271,7 @@ TESTNET = Params(
     fills_from=1_496_133,
     named_fills_from=1_496_133,
     bid_fills_from=1_496_133,
+    take_from=1_496_133,
     datadir_subdir="testnet3",
     pubkeyhash_version=113,
     scripthash_version=196,
@@ -277,6 +288,7 @@ REGTEST = Params(
     bid_fills_from=0,
     fills_from=0,
     named_fills_from=0,
+    take_from=0,
     datadir_subdir="regtest",
     pubkeyhash_version=111,
     scripthash_version=196,

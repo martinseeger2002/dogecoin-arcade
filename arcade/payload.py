@@ -436,6 +436,46 @@ class MetaDExCancelEcosystem(Message):
         return cls(version=version, ecosystem=r.uint(1))
 
 
+@register
+@dataclass
+class MetaDExTake(Message):
+    """Type 29. Take this standing order: the taker's side, signed alone.
+
+    Types 25-28 say what a maker wants. This one is the first thing on the book
+    that a person on the OTHER side files: the taker is the sender, and the
+    maker is not in this transaction at all. A swap needs both signatures --
+    an input is a signature, and that is what makes one transaction where a
+    coin leg and a token leg move together (D-048) -- which is also why a
+    resting ask could only be filled while its maker's tab was awake. The
+    reserve type 25 put behind an order is the maker's consent, already given,
+    already on the chain: this says "that one, this much", and pays the
+    order's own address what its own price makes it.
+
+    It carries no coin amount on purpose. The outputs say what was paid and the
+    order says what it costs; a third place for the same number is two places
+    for it to disagree, and the engine compares the two it has.
+
+    48 bytes -- the widest thing a Class C envelope holds here is 76.
+    """
+
+    TYPE: ClassVar[int] = 29
+    property_id: int = 0
+    amount: int = 0
+    order: bytes = b""
+
+    def _pack(self) -> bytes:
+        if len(self.order) != 32:
+            raise PayloadError(f"an order is named by a 32-byte txid, not "
+                               f"{len(self.order)} bytes")
+        return (_u(self.property_id, 4, "property_id")
+                + _u(self.amount, 8, "amount") + self.order)
+
+    @classmethod
+    def _unpack(cls, r: _Reader, version: int) -> "MetaDExTake":
+        return cls(version=version, property_id=r.uint(4), amount=r.uint(8),
+                   order=r.take(32))
+
+
 # --- property creation --------------------------------------------------------
 
 

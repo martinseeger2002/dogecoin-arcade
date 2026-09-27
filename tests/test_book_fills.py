@@ -11,6 +11,15 @@ the swap having to name them. What protects the maker is the price: an order is
 a public promise to sell at a price, and its reserve may be spent at that price
 or better, never worse (D-062). The maker signs the transaction too; this is the
 rule that still holds when a wallet signs something it did not read closely.
+
+The second half of this file fills the same asks with nobody on the maker's
+side at all (payload type 29). A swap needs the maker's input because an input
+is a signature, and an account's key lives in its owner's tab, so an ask could
+only be filled while that tab was awake; the reserve is the consent, filed in
+public when the order was. Everything there is checked before anything moves,
+because a take pays its coins as ordinary outputs -- and the last test is the
+one that matters most: filled either way, the book, the balances and the
+consensus hash come out identical.
 """
 
 import pytest
@@ -18,6 +27,7 @@ import pytest
 from arcade import inscriptions as I
 from arcade import payload as P
 from arcade.config import NETWORKS, Params
+from arcade.consensushash import consensus_hash
 from arcade.db import Database
 from arcade.state import Engine, StateDB, install_schema
 from arcade.tx import ArcadeTransaction, EncodingClass
@@ -372,3 +382,174 @@ def test_a_bid_is_not_reduced_by_a_dearer_swap(world):
     assert db.conn.execute("SELECT want_amount FROM book_order WHERE txid=?",
                            (bid,)).fetchone()[0] == 100 * COIN, \
         "the bid is untouched: it never offered that price"
+
+
+# --- taking an order with the maker asleep ------------------------------------
+
+def take(n, pid, tokens, coins, order, height=None, sender=BOB, pays=ALICE):
+    """The taker's side of a fill, alone: one input, one signature, no maker.
+
+    What a swap asks of the maker is an input, because an input is a signature
+    -- and an account's key is in its owner's tab, not on this node, which is
+    how a resting ask ended up needing its maker awake to be filled. Type 29
+    needs nothing from them: the reserve the order already filed is their
+    consent. The coins here are ordinary outputs, so every guard has to hold
+    before anything moves rather than after.
+    """
+    message = P.MetaDExTake(property_id=pid, amount=tokens,
+                            order=bytes.fromhex(order))
+    return tx(n, message, sender, height=height,
+              inputs=((sender, coins + COIN),),
+              outputs=((pays, coins), (sender, COIN - 1000)))
+
+
+def test_a_taker_settles_a_resting_ask_with_nobody_on_the_makers_side(world):
+    """The whole order, one signature, and the book closed behind it."""
+    engine, state, db, pid = world
+    feed(engine, state, [tx(2, ask(pid, 1000 * COIN, 8 * COIN), ALICE)])
+    assert held(db, ALICE, pid) == (0, 1000 * COIN)
+
+    feed(engine, state, [take(3, pid, 1000 * COIN, 8 * COIN, f"{2:064x}")])
+    assert reason(db, 3) == "valid"
+    assert book(db) == [], "the order is gone, and so is its reserve"
+    assert held(db, ALICE, pid) == (0, 0), "the maker holds nothing of it now"
+    assert held(db, BOB, pid) == (1000 * COIN, 0)
+
+
+def test_a_take_of_part_of_an_ask_leaves_the_rest_at_its_price(world):
+    """A partial fill is the ordinary case. What stands keeps the price it was
+    posted at, exactly as a swap's fill leaves it (D-062)."""
+    engine, state, db, pid = world
+    feed(engine, state, [tx(2, ask(pid, 1000 * COIN, 8 * COIN), ALICE)])
+    feed(engine, state, [take(3, pid, 300 * COIN, 240_000_000, f"{2:064x}")])
+    assert reason(db, 3) == "valid"
+
+    rest = book(db)
+    assert len(rest) == 1 and rest[0]["sale_amount"] == 700 * COIN
+    assert rest[0]["reserved"] == 700 * COIN, "still held, still off the balance"
+    assert rest[0]["want_amount"] == 8 * COIN - 240_000_000
+    assert held(db, ALICE, pid) == (0, 700 * COIN)
+    assert held(db, BOB, pid) == (300 * COIN, 0)
+
+
+def test_a_take_that_underpays_is_refused_rather_than_partly_applied(world):
+    """The atomicity rule, and the reason it is not the swap's rule. A swap can
+    let a stale name slide because its coin leg settles on the chain either
+    way; a take's coins ARE its outputs, so a take that moved fewer tokens than
+    it paid for is somebody who bought nothing. Refusing it costs the taker a
+    fee. Half-applying it costs them the coins."""
+    engine, state, db, pid = world
+    feed(engine, state, [tx(2, ask(pid, 1000 * COIN, 8 * COIN), ALICE)])
+    feed(engine, state, [take(3, pid, 1000 * COIN, 7 * COIN, f"{2:064x}")])
+    assert "price makes it" in reason(db, 3)
+    assert book(db)[0]["reserved"] == 1000 * COIN, "nothing moved"
+    assert held(db, ALICE, pid) == (0, 1000 * COIN)
+    assert held(db, BOB, pid) == (0, 0), "and nobody is out a token"
+
+
+def test_a_take_cannot_ask_for_more_than_the_order_holds(world):
+    engine, state, db, pid = world
+    feed(engine, state, [tx(2, ask(pid, 400 * COIN, 4 * COIN), ALICE)])
+    feed(engine, state, [take(3, pid, 500 * COIN, 5 * COIN, f"{2:064x}")])
+    assert "holds 40000000000 of property" in reason(db, 3)
+    assert book(db)[0]["sale_amount"] == 400 * COIN
+    assert held(db, BOB, pid) == (0, 0)
+
+
+def test_a_take_of_an_order_that_is_not_there_is_refused(world):
+    """Filled, cancelled, or simply not indexed here yet. A swap shrugs this
+    off; a take refuses, because the coins it would have paid are already in
+    the transaction it is refusing."""
+    engine, state, db, pid = world
+    feed(engine, state, [take(3, pid, 100 * COIN, 1 * COIN, "ff" * 32)])
+    assert "not on the book" in reason(db, 3)
+
+
+def test_a_take_of_a_bid_is_refused_because_a_bid_holds_nothing(world):
+    """Coins cannot be reserved, so a bid reserves nothing and there is no
+    promise for a taker to hold the maker to. The mirror case is a swap that
+    names the bid, which reduces it (D-118)."""
+    engine, state, db, pid = world
+    feed(engine, state, [tx(40, P.MetaDExTrade(
+        property_id_for_sale=0, amount_for_sale=10 * COIN,
+        property_id_desired=pid, amount_desired=100 * COIN), BOB)])
+    feed(engine, state, [take(41, pid, 40 * COIN, 4 * COIN, f"{40:064x}",
+                              sender=ALICE, pays=BOB)])
+    assert "holds nothing of property" in reason(db, 41)
+    assert db.conn.execute("SELECT want_amount FROM book_order WHERE txid=?",
+                           (f"{40:064x}",)).fetchone()[0] == 100 * COIN
+
+
+def test_taking_your_own_order_is_refused(world):
+    """Meaningless as a trade and a quieter way to shrink an order than the
+    cancel that says it. Type 26 or 27 takes an order off the book, in public,
+    and gives the tokens back."""
+    engine, state, db, pid = world
+    feed(engine, state, [tx(2, ask(pid, 1000 * COIN, 8 * COIN), ALICE)])
+    feed(engine, state, [take(3, pid, 100 * COIN, 80_000_000, f"{2:064x}",
+                              sender=ALICE, pays=ALICE)])
+    assert "promise to somebody else" in reason(db, 3)
+    assert book(db)[0]["sale_amount"] == 1000 * COIN
+
+
+def test_before_its_block_a_take_is_not_read(tmp_path):
+    """A node either side of this reads the same transaction as either a fill
+    or nonsense, which is why it has its own height rather than riding along
+    with the code that added it."""
+    db = Database(tmp_path / "ledger.sqlite")
+    install_schema(db)
+    state = StateDB(db)
+    params = Params(**{**NETWORKS["regtest"].__dict__, "take_from": 500})
+    engine = Engine(state, params)
+    feed(engine, state, [tx(1, P.IssuanceFixed(
+        ecosystem=2, property_type=2, previous_property_id=0, category="c",
+        subcategory="s", name="Arcade Test", url="", data="", amount=1000 * COIN),
+        ALICE, height=101)])
+    pid = db.conn.execute("SELECT MAX(property_id) FROM property").fetchone()[0]
+    feed(engine, state, [tx(2, ask(pid, 1000 * COIN, 8 * COIN), ALICE, height=102)])
+
+    feed(engine, state, [take(3, pid, 1000 * COIN, 8 * COIN, f"{2:064x}",
+                              height=499)])
+    assert "maker's signature until" in reason(db, 3)
+    assert book(db)[0]["reserved"] == 1000 * COIN
+
+    feed(engine, state, [take(4, pid, 1000 * COIN, 8 * COIN, f"{2:064x}",
+                              height=500)])
+    assert reason(db, 4) == "valid"
+    assert book(db) == []
+
+
+def test_a_take_and_a_named_swap_leave_the_same_chain_too(tmp_path, world):
+    """Two ways to fill one order -- one signature, then two -- and the state
+    they leave is identical down to the consensus hash.
+
+    This is the assertion the design leans on. The take moves a token its new
+    owner never signed for, so the only thing that can make that honest is
+    that it does the SAME three moves a swap's fill does: out of the reserve,
+    off the order, into the taker. If those two paths ever drift, two nodes
+    disagreeing about a book is no longer a thing that cannot happen.
+    """
+    engine, state, db, pid = world
+    feed(engine, state, [tx(2, ask(pid, 1000 * COIN, 8 * COIN), ALICE)])
+    feed(engine, state, [take(3, pid, 200 * COIN, 160_000_000, f"{2:064x}")])
+
+    other = Database(tmp_path / "by-swap.sqlite")
+    install_schema(other)
+    ostate = StateDB(other)
+    oengine = Engine(ostate, NETWORKS["regtest"])
+    feed(oengine, ostate, [tx(1, P.IssuanceFixed(
+        ecosystem=2, property_type=2, previous_property_id=0, category="c",
+        subcategory="s", name="Arcade Test", url="", data="",
+        amount=1000 * COIN), ALICE)])
+    assert other.conn.execute(
+        "SELECT MAX(property_id) FROM property").fetchone()[0] == pid
+    feed(oengine, ostate, [tx(2, ask(pid, 1000 * COIN, 8 * COIN), ALICE)])
+    feed(oengine, ostate, [named_swap(3, pid, 200 * COIN, 160_000_000,
+                                      f"{2:064x}")])
+
+    assert reason(db, 3) == "valid" and reason(other, 3) == "valid"
+    assert book(db) == book(other)
+    assert held(db, ALICE, pid) == held(other, ALICE, pid)
+    assert held(db, BOB, pid) == held(other, BOB, pid)
+    assert consensus_hash(db) == consensus_hash(other), \
+        "a second node that filled it the old way says the same hash"

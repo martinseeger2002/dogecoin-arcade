@@ -43,6 +43,10 @@ FACTORIES = {
         property_id_for_sale=r(2**32), property_id_desired=r(2**32)
     ),
     P.MetaDExCancelEcosystem: lambda r: P.MetaDExCancelEcosystem(ecosystem=r(2**8)),
+    P.MetaDExTake: lambda r: P.MetaDExTake(
+        property_id=r(2**32), amount=r(2**64),
+        order=bytes(r(256) for _ in range(32)),
+    ),
     P.ChangeIssuer: lambda r: P.ChangeIssuer(property_id=r(2**32)),
     P.EnableFreezing: lambda r: P.EnableFreezing(property_id=r(2**32)),
     P.DisableFreezing: lambda r: P.DisableFreezing(property_id=r(2**32)),
@@ -169,6 +173,6 @@ def test_freeze_address_must_be_exactly_21_bytes():
 
 def test_all_in_scope_types_are_registered():
     """The registry must match the scope table in docs/DECISIONS.md D-008."""
-    expected = {0, 3, 4, 5, 20, 22, 25, 26, 27, 28, 50, 54, 55, 56,
+    expected = {0, 3, 4, 5, 20, 22, 25, 26, 27, 28, 29, 50, 54, 55, 56,
                 70, 71, 72, 73, 74, 185, 186, 200, 201, 65533, 65534, 65535}
     assert set(P.supported_types()) == expected
