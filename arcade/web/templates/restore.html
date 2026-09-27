@@ -38,9 +38,11 @@
 </div>
 
 <div class="panel" id="done" hidden style="border-color:var(--accent)">
-  <h2 style="margin-top:0">You are back in</h2>
-  <p>Your account opens with the new password from now on, on any device.</p>
-  <a class="btn primary" href="/me">Your arcade</a>
+  <h2 style="margin-top:0">Restored</h2>
+  <p>You're signed in as <strong id="done-who">your account</strong>, with your new
+    password. It opens with that password from now on, on any device.</p>
+  <p class="muted" id="done-going">Taking you to your arcade…</p>
+  <a class="btn primary" id="done-go" href="/me">Your arcade</a>
 </div>
 
 <style>
@@ -84,9 +86,20 @@ $("go").onclick = async () => {
     await wallet.restore($("phrase").value, $("new-pw").value, CHAIN);
     $("phrase").value = "";
     $("new-pw").value = $("new-pw2").value = "";
+    // Only ever a path on this site: ?next= comes from a link, not from us.
+    const next = new URLSearchParams(location.search).get("next") || "";
+    const go = /^\/(?![\/\\])/.test(next) ? next : "/me";
+    $("done-go").href = go;
+    try {
+      const me = await (await fetch("/account")).json();
+      if (me && me.name) $("done-who").textContent = "@" + me.name;
+    } catch (e) { /* the name is a courtesy; the restore already happened */ }
     $("done").hidden = false;
     $("go").closest(".panel").hidden = true;
+    say("");
+    $("phrase-says").textContent = "";
     document.body.dataset.restored = "yes";
+    setTimeout(() => { location.href = go; }, 2500);
   } catch (e) {
     say(String(e.message || e));
   } finally {

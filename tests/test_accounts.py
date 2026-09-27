@@ -288,3 +288,17 @@ def test_one_register_survives_many_threads_at_once(register):
         t.join()
     assert errors == []
     assert register.used(who, "send") == 8 * 40
+
+
+def test_a_restored_wallet_says_it_was_replaced(register):
+    """a tester, 2026-09-27: the restore worked and the page said "this node
+    keeps no wallet for these words", because the shared connection's answer
+    carried no rowcount and `replace_blob` read every UPDATE as touching none."""
+    from arcade.accounts import Vault
+
+    vault = Vault(register)
+    vault.put("rookie", "ab" * 32, "nAddress", '{"sealed": "old"}')
+    assert vault.replace_blob("ab" * 32, '{"sealed": "new"}') is True
+    assert vault.by_pubkey("ab" * 32)["blob"] == '{"sealed": "new"}'
+    assert vault.replace_blob("cd" * 32, '{"sealed": "x"}') is False, \
+        "and a key this node keeps nothing for still says so"

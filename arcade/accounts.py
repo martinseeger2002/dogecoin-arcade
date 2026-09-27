@@ -297,8 +297,12 @@ def login_message(origin: str, nonce: str) -> bytes:
 class _Rows:
     """A statement's answer, read in full while the lock was held."""
 
-    def __init__(self, rows: list):
+    def __init__(self, rows: list, rowcount: int = -1):
         self._rows = rows
+        # What an UPDATE or DELETE touched, as sqlite3's cursor says it. Without
+        # it `replace_blob` read 0 after every successful restore and the page
+        # said "this node keeps no wallet for these words" (a tester, 2026-09-27).
+        self.rowcount = rowcount
 
     def fetchone(self):
         return self._rows[0] if self._rows else None
@@ -327,7 +331,8 @@ class _Serialised:
 
     def execute(self, sql: str, params=()) -> _Rows:
         with self._lock:
-            return _Rows(self._conn.execute(sql, params).fetchall())
+            cur = self._conn.execute(sql, params)
+            return _Rows(cur.fetchall(), cur.rowcount)
 
     def executescript(self, script: str) -> None:
         with self._lock:
