@@ -468,6 +468,19 @@ def _percent(text: Any, label: str) -> float:
     return value
 
 
+async def _sandbox_names_its_host(request: Request, call_next):
+    """Every sandboxed response names the host it came from beside 'self'
+    (contentlib.own_origin says why: Safari reads 'self' as nothing). Out here
+    and not in `create_app`, whose routes may not await anything."""
+    answer = await call_next(request)
+    csp = answer.headers.get("content-security-policy", "")
+    if csp.startswith("sandbox"):
+        answer.headers["content-security-policy"] = contentlib.own_origin(
+            csp, request.headers.get("x-forwarded-proto") or request.url.scheme,
+            request.headers.get("host", ""))
+    return answer
+
+
 def secure_context(request: Request) -> bool:
     """Whether `crypto.subtle` will exist on the page we are about to send."""
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme
@@ -651,18 +664,7 @@ def create_app(state: AppState) -> FastAPI:
     app = FastAPI(title="DogecoinArcade", docs_url=None, redoc_url=None,
                   lifespan=_lifespan)
     app.middleware("http")(the_door(state))
-
-    @app.middleware("http")
-    async def _sandbox_names_its_host(request: Request, call_next):
-        """Every sandboxed response names the host it came from beside 'self'
-        (contentlib.own_origin says why: Safari reads 'self' as nothing)."""
-        answer = await call_next(request)
-        csp = answer.headers.get("content-security-policy", "")
-        if csp.startswith("sandbox"):
-            answer.headers["content-security-policy"] = contentlib.own_origin(
-                csp, request.headers.get("x-forwarded-proto") or request.url.scheme,
-                request.headers.get("host", ""))
-        return answer
+    app.middleware("http")(_sandbox_names_its_host)
 
 
     def _from_outside(request: Request) -> bool:
