@@ -611,6 +611,92 @@ def test_a_cancel_for_a_token_that_does_not_exist_is_refused(node):
     assert "no token" in answer.json()["detail"]
 
 
+def test_one_price_comes_off_the_book_and_the_other_price_stands(node):
+    """Cancel one price, and only that price goes (a tester).
+
+    The same two asks the pair test above places -- 10 at half a coin, 20 at a
+    whole one -- and the same one press. The difference is a `price` in the
+    request, which is the finer of the two shapes the wire already has:
+    `MetaDExCancelPrice` (type 26) names a price, and the engine matches it by
+    cross-multiplying the two amounts of each standing order rather than by
+    dividing anything, so it clears the orders at that price and leaves the rest
+    of the pair alone. That is the whole of what the reporter asked for, and it
+    needed no new field on the wire to do it -- which is also why the `every`
+    flag they offered is not needed either: it would only restate which type
+    number got filed, and this file already checks the bytes.
+
+    The control is the other ask's tokens. An ask holds its tokens with
+    `metadex_reserve`, released when a cancel's block lands, so the balance read
+    says which of the two the engine took off -- not what this node's own idea
+    of the book says.
+    """
+    seat = _bookcoin(node, 34)
+    asks = {}
+    for amount, price in (("10", "0.5"), ("20", "1")):
+        answer = seat["client"].post("/account/order", json={
+            "property_id": seat["pid"], "side": "ask", "amount": amount,
+            "price": price})
+        asks[price] = _signed(seat["client"], seat["secret"], seat["pubkey"],
+                              answer)
+        _settled(seat["state"], seat["rpc"])
+
+    answer = seat["client"].post("/account/order/cancel", json={
+        "property_id": seat["pid"], "side": "ask", "price": "0.5"})
+    assert answer.status_code == 200, answer.text
+    body = answer.json()
+    assert body["every"] is False, \
+        "a price was named and the answer still says it took all of them"
+    assert "one price, not the pair" in body["what"], \
+        "the sentence has to say which kind was filed, not only the field"
+    assert encoding.encode_class_c(P.MetaDExCancelPrice(
+        property_id_for_sale=seat["pid"], amount_for_sale=10 * COIN,
+        property_id_desired=0, amount_desired=5 * COIN).encode()).hex() \
+        in body["raw"], \
+        "the cancel carries the standing order's own two amounts, so its price " \
+        "is that order's price and not one rounded afresh"
+    cancel = _signed(seat["client"], seat["secret"], seat["pubkey"], answer)
+    _settled(seat["state"], seat["rpc"])
+
+    rows = _book(seat["state"], pid=seat["pid"])
+    assert [r["txid"] for r in rows] == [asks["1"].json()["txid"]], \
+        "the ask at the other price is the one that should still be standing"
+    assert _held(seat["state"], seat["address"], seat["pid"]) \
+        == (HELD - 20 * COIN, 20 * COIN), \
+        "the engine released the withdrawn price's tokens and no others"
+
+
+def test_a_price_nothing_of_yours_stands_at_is_refused(node):
+    """The refusal has to be a refusal, and it has to say what IS standing.
+
+    Cancel-by-price can be aimed at a price that never was -- a typo, or a price
+    that filled ten minutes ago -- and the alternative to refusing is filing a
+    cancel that deletes nothing and reports success. Worse, the amounts on that
+    wire are the only place the price lives, so an invented pair is a price
+    nobody offered being withdrawn from the book.
+
+    So nothing is built, nothing is spent, and the standing price is named back
+    in the same figure the order form took. The empty mempool is the assertion
+    that makes this a test and not a reading of the prose.
+    """
+    seat = _bookcoin(node, 35)
+    answer = seat["client"].post("/account/order", json={
+        "property_id": seat["pid"], "side": "ask", "amount": "10",
+        "price": "1"})
+    order = _signed(seat["client"], seat["secret"], seat["pubkey"], answer)
+    _settled(seat["state"], seat["rpc"])
+
+    answer = seat["client"].post("/account/order/cancel", json={
+        "property_id": seat["pid"], "side": "ask", "price": "3"})
+    assert answer.status_code == 400, answer.text
+    assert "nothing of yours stands at 3" in answer.json()["detail"]
+    assert "1.00000000" in answer.json()["detail"], \
+        "it says what is standing, or the typo is found by hand"
+    assert seat["rpc"].call("getrawmempool") == [], \
+        "a cancel that matches nothing was still broadcast"
+    assert [r["txid"] for r in _book(seat["state"], pid=seat["pid"])] \
+        == [order.json()["txid"]], "the ask is still there, unchanged"
+
+
 # --- the page that reaches them ----------------------------------------------
 
 def _publicly(state):

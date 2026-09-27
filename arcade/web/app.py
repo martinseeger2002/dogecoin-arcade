@@ -9243,17 +9243,105 @@ def create_app(state: AppState) -> FastAPI:
                              "total": format_amount(coins, True),
                              **unsigned.as_json()})
 
+    def _cancel_one_or_pair(index, address: str, prop: dict, side: str,
+                            price: str, who: str) -> tuple:
+        """The cancel to file for one side of one pair: one price, or all of them.
+
+        The wire has two cancel shapes and they mean different things.
+        `MetaDExCancelPair` (type 27) names a pair and a side, and takes off
+        every order of this address on that side -- which is what has been filed
+        here ever since the book landed, and what surprised the person with two
+        asks at two prices who pressed cancel once (a tester, 2026-09-27).
+        `MetaDExCancelPrice` (type 26) names a price, and the engine matches it
+        by cross-multiplying the two amounts rather than by dividing anything
+        (`ledger.py`, `cancels: "price"`), so it clears that price and leaves the
+        rest of the pair standing. The shopkeeper has filed the price kind
+        itself since the beginning, whenever it repriced a part-filled bid; no
+        route anybody presses ever did.
+
+        There is no id in either shape, and that is not an oversight: an order
+        is a transaction and not a row anybody keeps (D-042), so the finer
+        selector has to be the price itself. Which means the amounts cannot be
+        worked out of the typed price -- they are copied out of a row this node's
+        book says is standing. The pair written on the wire is what those ratios
+        get compared against, and a divisible token and an indivisible one scale
+        a price differently, so a cancel that scaled it its own way would
+        cancel a price nobody offered. A price this address has nothing standing
+        at is refused, with the prices it does have standing named back.
+        """
+        from fractions import Fraction
+
+        pid = int(prop["property_id"])
+        if not str(price or "").strip():
+            sale, want = (pid, 0) if side == "ask" else (0, pid)
+            return (P.MetaDExCancelPair(property_id_for_sale=sale,
+                                        property_id_desired=want),
+                    f"cancel {who}'s {side}s for {prop['name']}", True)
+        at = parse_amount(str(price), True)             # sats per whole token
+        if at <= 0:
+            raise tokenlib.TokenError(
+                "a price above zero -- or leave it empty to cancel every "
+                f"{side} of yours for {prop['name']}.")
+        # This address's own standing orders, which is `orders_of`'s rule and not
+        # this helper's: the pool first, so an ask placed forty seconds ago is
+        # here whether or not a miner has got to it (D-061), and nothing dropped
+        # for length. The book's own view keeps fifty rows a side, and a cancel
+        # aimed at what the fifty-first holds would be refused with a list of
+        # standing prices that does not contain the one it is asking about. This
+        # is also the source `/account/order/list` prints, so the page and the
+        # refusal cannot disagree about what that person has on the book.
+        mine = {}
+        for row in index.orders_of([address]):
+            ask = row["want_property"] == 0
+            if ask != (side == "ask") or pid not in (row["sale_property"],
+                                                     row["want_property"]):
+                continue
+            # Read from the same two integers `book` reads, swapping which side
+            # is for sale: getting that backwards prices an order at its own
+            # reciprocal.
+            tokens = row["sale_amount"] if ask else row["want_amount"]
+            if not tokens:
+                continue
+            at_row = Fraction(row["want_amount"] if ask else row["sale_amount"],
+                              tokens)
+            # Sats per whole token, which is the figure the order form took and
+            # the one `/account/order/list` prints. A divisible row's two
+            # integers are both scaled by COIN and their ratio is coins per whole
+            # token, so it needs multiplying back up; an indivisible row's token
+            # count is never scaled, so its ratio is already in satoshis. Divide
+            # the wrong way and the cancel names a price a hundred million off.
+            mine.setdefault(
+                at_row * COIN if prop["divisible"] else at_row, row)
+        row = mine.get(Fraction(int(at)))
+        if row is None:
+            raise tokenlib.TokenError(
+                f"nothing of yours stands at {price} for {prop['name']}, so "
+                f"there is no price to withdraw. Standing: "
+                + (", ".join(f"{float(o / COIN):.8f}" for o in sorted(mine))
+                   if mine else "nothing"))
+        return (P.MetaDExCancelPrice(
+            property_id_for_sale=row["sale_property"],
+            amount_for_sale=row["sale_amount"],
+            property_id_desired=row["want_property"],
+            amount_desired=row["want_amount"]),
+            f"cancel {who}'s {side}s for {prop['name']} at "
+            f"{float(Fraction(int(at)) / COIN):.8f} (one price, not the pair)",
+            False)
+
     @app.post("/account/order/cancel")
     def account_order_cancel(request: Request, payload: Any = Body(None)):
-        """Take this account's orders off one side of one pair.
+        """Take this account's orders off one side of one pair, or one price.
 
-        `MetaDExCancelPair` and nothing finer, which is the shape the protocol
-        has: a cancel names a pair and a side, not an order, because an order is
-        a transaction and not a row anybody keeps (D-042). It is also why this
-        cancels MORE than a person may have meant -- every resting order of
-        theirs on that side of that pair goes, including ones made from another
-        browser with another key. The page says so; this is the route that has
-        to be honest about it, because it is the one an account can reach.
+        `price` selects the finer of the two shapes the wire has. Left out, this
+        is `MetaDExCancelPair` and nothing finer: a cancel names a pair and a
+        side, not an order, because an order is a transaction and not a row
+        anybody keeps (D-042). That is also why it cancels MORE than a person may
+        have meant -- every resting order of theirs on that side of that pair
+        goes, including ones made from another browser with another key. The page
+        says so; this is the route that has to be honest about it, because it is
+        the one an account can reach. With a price it is `MetaDExCancelPrice`,
+        which clears just that price; `_cancel_one_or_pair` is why the same words
+        mean two things and which of the two was filed is in the `what` string.
 
         What an ask was holding comes back when the cancel's block lands, which
         is the engine releasing `metadex_reserve` rather than this node handing
@@ -9282,13 +9370,12 @@ def create_app(state: AppState) -> FastAPI:
             side = str(said.get("side") or "")
             if side not in ("ask", "bid"):
                 raise ValueError("an order is an ask or a bid, and says which")
-            sale, want = (pid, 0) if side == "ask" else (0, pid)
-            message = P.MetaDExCancelPair(property_id_for_sale=sale,
-                                          property_id_desired=want)
+            message, what, every = _cancel_one_or_pair(
+                index, address, prop, side, str(said.get("price") or ""),
+                "this account")
             outputs = _class_c_or_b(chain, address, message.encode(),
                                     _coin_pubkey(account.pubkey, chain),
                                     wrap=False)
-            what = f"cancel this account's {side}s for {prop['name']}"
             with contextlib.closing(index.open()) as db:
                 unsigned = fundinglib.build(
                     db, chain.params, address, outputs,
@@ -9305,7 +9392,13 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"offer": offer.id, "what": what, "side": side,
                              "property_id": pid, "name": prop["name"],
                              "chain": chain.network,
-                             "every": True, **unsigned.as_json()})
+                             # Which of the two shapes was filed, said as a
+                             # field and not only in the sentence: `every` was
+                             # always true here, because the pair cancel was
+                             # the only shape this route knew. It is now the
+                             # answer to "did that cancel take all of them",
+                             # which a program cannot read out of prose.
+                             "every": every, **unsigned.as_json()})
 
     @app.post("/account/take")
     def account_take(request: Request, payload: Any = Body(None)):
@@ -14239,23 +14332,35 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/exchange/order/cancel")
     def cancel_orders(request: Request, property_id: str = Form(""),
-                      side: str = Form(""), csrf_token: str = Form("")):
-        """Take this wallet's orders off one side of one pair."""
+                      side: str = Form(""), price: str = Form(""),
+                      csrf_token: str = Form("")):
+        """Take this wallet's orders off one side of one pair, or one price.
+
+        Same two shapes as the account's route, same helper: no `price` and this
+        files `MetaDExCancelPair`, which clears everything this wallet has on
+        that side; a `price` files `MetaDExCancelPrice` and clears only that
+        price. Both cancel buttons are on the pair page, and the one that has
+        always been there is the pair-wide one -- which is the finding this
+        answers (a tester): two asks at two prices, one press, both gone.
+        """
         check_csrf(csrf_token)
         chain, index = _token_chain()
         try:
             pid = int(property_id or 0)
-            if index.property(pid) is None:
+            prop = index.property(pid)
+            if prop is None:
                 raise tokenlib.TokenError(f"there is no token {property_id}.")
-            sale, want = (pid, 0) if side == "ask" else (0, pid)
-            message = P.MetaDExCancelPair(property_id_for_sale=sale,
-                                          property_id_desired=want)
+            if side not in ("ask", "bid"):
+                raise ValueError("an order is an ask or a bid, and says which")
+            message, what, _ = _cancel_one_or_pair(
+                index, state.home_address(chain), prop, side, price,
+                "this wallet")
             with chain.rpc() as rpc:
                 sender = tokenlib.TokenSender(rpc, chain.params)
                 prepared = sender.prepare(state.home_address(chain), message.encode())
                 txid = sender.broadcast(prepared)
-            state.flash(f"Cancelling in {txid}. What it was holding comes back "
-                        f"when the block lands.", "ok")
+            state.flash(f"{what[0].upper()}{what[1:]}, in {txid}. What it was "
+                        f"holding comes back when the block lands.", "ok")
         except HTTPException:
             raise
         except Exception as exc:
