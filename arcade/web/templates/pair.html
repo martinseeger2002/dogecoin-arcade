@@ -272,10 +272,10 @@
             }
             news("Sending your half to their node…");
             const done = await wallet.signTake(held, built);
-            news(`Sent back in ${String(done.message).slice(0, 16)}… Their `
-                 + "node signs its half and broadcasts the trade, which is the "
-                 + "transaction that moves the tokens and the coins. Watch this "
-                 + "row: it fills when that block lands.");
+            news(`Sent back, message ${done.message}. Their node `
+                 + "signs its half and broadcasts the trade, which is the "
+                 + "transaction that moves the tokens and the coins and is NOT "
+                 + "this id — watch this row: it fills when that block lands.");
           } catch (e) {
             say(String(e.message || e));
           } finally {
