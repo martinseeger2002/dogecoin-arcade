@@ -708,3 +708,53 @@ def test_a_stranger_who_claimed_a_name_is_shown_by_it(browser, served,
     assert browser.find_element(By.ID, "convo-name").text == "@soandso"
     assert browser.find_element(By.ID, "convo-sub").text == address, \
         "and what that name was checked against is still on the page"
+
+
+def test_a_phone_opens_a_conversation_at_the_newest_message(browser, served,
+                                                            signed_in):
+    """2026-09-27: "when I load into a conversation it should load to
+    the newest message at the bottom of the screen and all of the older
+    messages don't need to load, they can load as I scroll up". On a phone the
+    bubbles grew to their content and the page scrolled, so the jump to the
+    bottom moved a box that never scrolled and you landed on the oldest."""
+    base, _ = served
+    size = browser.get_window_size()
+    browser.set_window_size(390, 844)
+    try:
+        _page(browser, base)
+        _wipe(browser)
+        now = int(time.time())
+        letters = [{"txid": f"{n:064x}", "cursor": n, "when": now + n,
+                    "height": 900 + n, "from_address": "nTheirAddress",
+                    "sender": THEM, "peer": THEM, "mine": False,
+                    "body": _hexed(f"message number {n}")} for n in range(1, 81)]
+        assert _seed_store(browser, letters, [
+            {"tag": "robin", "address": "nTheirAddress", "key": THEM,
+             "fingerprint": "ffff", "added": now}]) == "ok"
+        _page(browser, base)
+        browser.find_elements(By.CSS_SELECTOR, "a.thread")[0].click()
+        time.sleep(1.0)
+        seen = browser.execute_script("""
+            const box = document.getElementById('bubbles');
+            const rows = box.querySelectorAll('.bubble-row');
+            const last = rows[rows.length - 1].getBoundingClientRect();
+            const send = document.querySelector('#talking textarea, #talking input');
+            const s = send ? send.getBoundingClientRect() : null;
+            return {rows: rows.length, gap: box.scrollHeight - box.scrollTop - box.clientHeight,
+                    scrolls: box.scrollHeight > box.clientHeight,
+                    lastText: rows[rows.length - 1].textContent,
+                    lastOnScreen: last.bottom <= innerHeight && last.top >= 0,
+                    composerOnScreen: !!s && s.top < innerHeight && s.bottom > 0};""")
+        assert seen["scrolls"], "the bubbles scroll inside the screen, not the page"
+        assert seen["rows"] == 30, "only the newest 30 are drawn"
+        assert "message number 80" in seen["lastText"]
+        assert seen["gap"] < 5 and seen["lastOnScreen"], seen
+        assert seen["composerOnScreen"], seen
+
+        browser.execute_script("document.getElementById('bubbles').scrollTop = 0;")
+        time.sleep(0.6)
+        more = browser.execute_script(
+            "return document.querySelectorAll('#bubbles .bubble-row').length")
+        assert more == 60, "scrolling up brings the next 30"
+    finally:
+        browser.set_window_size(size["width"], size["height"])

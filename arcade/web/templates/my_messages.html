@@ -453,7 +453,14 @@ async function drawConversation() {
   }
   $("nothing").hidden = true;
   $("talking").hidden = false;
+  const opening = windowPeer !== here;
   $("msgr").classList.add("open");
+  // On a phone the open conversation is one screen tall (base.html): bring it
+  // to the top of the screen, so its bottom -- the newest message and the
+  // composer -- is what you see.
+  if (opening && matchMedia("(max-width:760px)").matches) {
+    $("msgr").scrollIntoView({block: "start"});
+  }
 
   const letters = await mail.conversation(here);
   const thread = (await peerOf(here)) || {peer: here, tag: "", address: ""};
@@ -528,6 +535,9 @@ async function drawConversation() {
   drawWindow();
   if (pinned) box.scrollTop = box.scrollHeight;
   else box.scrollTop = box.scrollHeight - fromBottom;
+  // And once more after layout settles (fonts, the screen-tall box on a phone),
+  // or the first view can stop a few lines short of the newest message.
+  if (pinned) requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
   await mail.markRead(here);
 }
 
