@@ -837,3 +837,22 @@ def test_a_public_collection_page_never_asks_the_node_s_wallet(client, monkeypat
         assert asked == [], f"the node's wallet was asked on a public page: {asked}"
     finally:
         state.public = False
+
+
+def test_a_sealed_set_says_so_on_its_own_page_and_api(client):
+    """#1's details reach the single-set page and API, not just the list
+    (filming, 2026-09-26: "Bone Brigade" sealed at 8 said supply null)."""
+    import sqlite3
+    app, state = client
+    path = index_with_a_collection(state.home)
+    one = {"name": "Doge Punks #1", "edition": 1,
+           "collection": {"name": "Doge Punks", "description": "Five punks.",
+                          "artist": "@nMe", "url": "https://example.com", "supply": 8}}
+    conn = sqlite3.connect(path)
+    conn.execute("UPDATE inscription SET json = ? WHERE txid = ?",
+                 (json.dumps(one), f"{1:064x}"))
+    conn.commit()
+    conn.close()
+    assert app.get("/r/collection/nMe/Doge%20Punks").json()["supply"] == 8
+    page = app.get("/collections/nMe/Doge%20Punks").text
+    assert "5 of 8" in page and "Five punks." in page and "Art by @nMe" in page

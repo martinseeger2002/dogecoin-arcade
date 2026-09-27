@@ -102,6 +102,26 @@ def sale_events(conn, owners: set[str]) -> list[Event]:
                 f" ORDER BY rowid DESC LIMIT {LIMIT}", tuple(owners))]
 
 
+def swap_events(rows: Iterable[dict], owners: set[str],
+                paid: dict | None = None) -> list[Event]:
+    """Pieces sold or bought by swap (ledger.swaps_of), whatever route made them.
+
+    The listing book only knows the sales it filed; an answered offer finished by
+    its buyer never touches it, so a seller was told nothing (filming, 2026-09-26).
+    `paid` maps a swap txid to the coins it paid, in sats, where known.
+    """
+    out = []
+    for r in rows:
+        sold = r["from_address"] in owners
+        out.append(Event(source="swap", seq=int(r["seq"]),
+                         kind="sold" if sold else "bought",
+                         actor=r["to_address"] if sold else r["from_address"],
+                         target=r["inscription"], text=f"#{r['number']:,}",
+                         at=int(r["time"] or 0), amount=int((paid or {}).get(r["txid"], 0)),
+                         extra={"txid": r["txid"]}))
+    return out
+
+
 def merge(events: Iterable[Event], seen: dict[str, int]) -> list[Event]:
     """Newest first (anything still in the pool on top), marked read or unread."""
     out = []

@@ -883,13 +883,20 @@ class LedgerIndex:
                 return []
             entry = dict(row)
             cover = db.conn.execute(
-                "SELECT i.txid, i.content_type FROM collection_item c "
+                "SELECT i.txid, i.content_type, i.json FROM collection_item c "
                 "JOIN inscription i ON i.txid = c.txid "
                 "WHERE c.creator = ? AND c.collection = ? "
                 "ORDER BY c.edition IS NULL, c.edition, i.number LIMIT 1",
                 (creator, name)).fetchone()
             entry["cover_txid"] = cover["txid"] if cover else None
             entry["cover_type"] = cover["content_type"] if cover else None
+            # What #1 says about the set, as `collections()` already reads it:
+            # this single-set path never did, so a sealed set's own page and API
+            # said "supply": null (filming, 2026-09-26).
+            from . import inscriptions as I
+            details = I.collection_details(cover["json"] or "") if cover else {}
+            entry["supply"] = details.get("supply")
+            entry["details"] = details
             return [entry]
 
     def collection_items(self, creator: str, name: str, limit: int = 100,
@@ -1242,6 +1249,27 @@ class LedgerIndex:
         return ([o for o in fresh if o["address"] in here]
                 + [o for o in mine if o["txid"] not in cancelled])
 
+    def swaps_of(self, addresses: list[str], limit: int = 100) -> list[dict]:
+        """Pieces these addresses sold or bought by swap, newest first.
+
+        Read from the moves the engine filed, so a sale is here whatever route
+        made it -- a listing, an answered offer, a shop.
+        """
+        if not addresses:
+            return []
+        marks = ",".join("?" * len(addresses))
+        with self.open() as db:
+            return [dict(r) for r in db.conn.execute(
+                f"SELECT m.rowid AS seq, m.txid, m.inscription, m.from_address, "
+                f"       m.to_address, m.block_height, COALESCE(b.time, 0) AS time, "
+                f"       i.number "
+                f"FROM inscription_move m JOIN inscription i ON i.txid = m.inscription "
+                f"LEFT JOIN block b ON b.height = m.block_height "
+                f"WHERE m.how = 'swap' AND (m.from_address IN ({marks}) "
+                f"      OR m.to_address IN ({marks})) "
+                f"ORDER BY m.block_height DESC LIMIT ?",
+                (*addresses, *addresses, int(limit)))]
+
     def offers_on(self, owners: list[str], limit: int = 100) -> list[dict]:
         """Offers standing against inscriptions these addresses hold.
 
@@ -1262,6 +1290,12 @@ class LedgerIndex:
                 f"LEFT JOIN collection_item c ON c.txid = o.inscription "
                 f"LEFT JOIN block b ON b.height = o.block_height "
                 f"WHERE i.owner IN ({marks}) "
+                # Not the holder's own offer, and not one made to whoever held it
+                # before: after a sale the buyer's own (filled) offer used to show
+                # on the page as an offer to answer (filming, 2026-09-26).
+                f"AND o.buyer != i.owner "
+                f"AND o.block_height >= COALESCE((SELECT MAX(m.block_height) "
+                f"    FROM inscription_move m WHERE m.inscription = o.inscription), 0) "
                 f"ORDER BY o.block_height DESC, o.position DESC LIMIT ?",
                 tuple(owners) + (max(1, min(limit, 500)),)).fetchall()
         return [dict(row) for row in rows]
@@ -1471,6 +1505,49 @@ class LedgerIndex:
             log.debug("mempool offers unavailable: %s", exc)
             return []
         return [row for row in self._pool_offers.values() if row]
+
+    def pending_swaps(self, limit: int = 200) -> dict[str, str]:
+        """Pieces a swap in the mempool is moving: {inscription txid: swap txid}.
+
+        A swap our node took and peers refused (soft dust, 2026-09-26) sits here
+        for days, and its piece's offers kept showing Accept and "Complete the
+        purchase" over coins it had already spent. Pages ask this to say "a
+        trade of this piece is waiting for its block" instead. Read fresh,
+        cached per transaction like pending_offers, never written down.
+        """
+        from . import inscriptions as I
+        from .indexer import PrevOutCache
+        from .tx import extract
+
+        try:
+            with self._rpc() as rpc:
+                ids = list(rpc.call("getrawmempool") or [])[:max(0, limit)]
+                known = getattr(self, "_pool_swaps", {})
+                cache = PrevOutCache(rpc, self.params)
+                found: dict[str, str | None] = {}
+                for txid in ids:
+                    if txid in known:
+                        found[txid] = known[txid]
+                        continue
+                    piece = None
+                    try:
+                        tx = rpc.call("getrawtransaction", txid, True)
+                        rtx = extract(tx, 0, 0, self.params, cache.lookup)
+                        data = getattr(P.decode(rtx.payload), "data", None) if rtx and rtx.payload else None
+                        if data and I.is_inscription(data):
+                            item = I.parse(data)
+                            if isinstance(item, I.Swap):
+                                for leg in (item.give, item.take):
+                                    if leg.kind == I.LEG_INSCRIPTION:
+                                        piece = leg.txid.hex()
+                    except Exception:
+                        piece = None
+                    found[txid] = piece
+                self._pool_swaps = found
+        except Exception as exc:
+            log.debug("mempool swaps unavailable: %s", exc)
+            return {}
+        return {piece: txid for txid, piece in self._pool_swaps.items() if piece}
 
     def _offer_row(self, rtx) -> dict | None:
         """One mempool transaction as an offer row, or None if it is not one."""

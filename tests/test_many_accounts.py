@@ -1734,6 +1734,19 @@ def test_offers_between_accounts_are_made_answered_refused_and_finished(node, cr
     assert index.inscription(ours)["owner"] == ferns.address, "yes moved the piece"
     assert index.inscription(theirs)["owner"] == ferns.address, "no kept it"
 
+    # After the sale (filming, 2026-09-26): the new owner is not shown its own
+    # filled offer as one to answer, and both sides are told in Notifications.
+    was, state.public = state.public, True
+    try:
+        page = ferns.client.get(f"/inscriptions/{ours}/view").text
+        assert f'data-offer="{offer_in}"' not in page, "a filled offer is not answerable"
+        told = maple.client.get("/me/notifications").text
+        assert "You sold" in told, "the seller is told about a swap sale"
+        bought = ferns.client.get("/me/notifications").text
+        assert "You bought" in bought
+    finally:
+        state.public = was
+
 
 def test_a_listing_ends_when_its_piece_is_sent_away(node, crowd):
     """A leg's coin can stay unspent while its piece leaves by transfer, because
@@ -1762,3 +1775,4 @@ def test_a_listing_ends_when_its_piece_is_sent_away(node, crowd):
     assert "no longer holds" in tried.json()["detail"]
     assert state.listings.get(listing)["status"] == "moved"
     assert listing not in oak.client.get("/listings").text
+

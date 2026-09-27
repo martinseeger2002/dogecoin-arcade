@@ -97,7 +97,7 @@
     <div class="row" style="gap:8px;align-items:center;margin-top:6px">
       <div style="flex:1"><input autocomplete="off" id="pfp" class="mono"
         spellcheck="false" placeholder="or paste the id of a picture you hold"></div>
-      <button type="button" class="ghost small" id="face-clear">No picture</button>
+      <button type="button" class="ghost small" id="face-clear">Remove picture</button>
     </div>
     <div class="row" id="face-preview" hidden
          style="margin-top:10px;align-items:center;gap:10px">
@@ -118,6 +118,9 @@
       <button type="button" id="publish-about">Publish profile</button>
       <span class="pill warn" id="profile-status" hidden>waiting for its block</span>
     </div>
+    {# Said here too: the page's news line is at the top, and whoever pressed
+       Publish is scrolled down at this button (filming, 2026-09-26). #}
+    <p class="msg" id="profile-news" hidden style="margin:10px 0 0"></p>
     {# Kept for anything that still presses it; the one button above sends all three. #}
     <button type="button" id="publish-face" hidden>Publish this picture</button>
     <p class="muted" style="font-size:.84rem;margin:10px 0 0;max-width:64ch">
@@ -561,6 +564,7 @@ $("publish-face").onclick = () => withWallet(
 // One button, all three: a profile is one announcement, so publishing the
 // picture and the words together is one fee rather than two.
 $("publish-about").onclick = async () => {
+  $("profile-news").hidden = true;
   $("publish-about").disabled = true;
   $("publish-about").textContent = "Publishing…";
   await withWallet(
@@ -573,9 +577,19 @@ $("publish-about").onclick = async () => {
     },
     (out) => {
       $("profile-status").hidden = false;
-      return "Your profile is on its way to the chain. It changes everywhere when "
-        + "its block lands, usually within a few minutes.";
+      const words = "Your profile is on its way to the chain. It changes everywhere "
+        + "when its block lands, usually within a few minutes.";
+      $("profile-news").className = "msg ok";
+      $("profile-news").textContent = words;
+      $("profile-news").hidden = false;
+      return words;
     });
+  if (!$("trouble").hidden && $("profile-news").hidden) {
+    // A refusal, said beside the button as well.
+    $("profile-news").className = "msg err";
+    $("profile-news").textContent = $("trouble").textContent;
+    $("profile-news").hidden = false;
+  }
   for (const id of ["pfp", "bio", "url"]) delete $(id).dataset.touched;
   $("publish-about").disabled = !keys;
   $("publish-about").textContent = "Publish profile";

@@ -23,6 +23,11 @@
      block, and the amber accent is too close to the page ground to do that. */
   --sent:#2f7cf6; --sent-fg:#fff;
 }
+/* Scrollbars in the theme's own colours, not the browser's white track: color-scheme
+   alone left a white strip under the piece page's JSON in dark mode (2026-09-26). */
+*{scrollbar-color:var(--line) transparent}
+::-webkit-scrollbar{width:10px;height:10px;background:transparent}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:6px}
 :root{color-scheme:light dark}   /* native scrollbars and form parts follow the theme:
    a white overflow strip under a table in dark mode (filming, 2026-09-25) */
 @media (prefers-color-scheme:dark){
@@ -608,7 +613,11 @@ form.composer button[type=submit]{background:var(--sent);border-color:var(--sent
 :root{--shadow:0 1px 2px rgba(40,30,10,.05),0 4px 14px rgba(40,30,10,.06);--radius:14px}
 @media (prefers-color-scheme:dark){:root{--shadow:0 1px 2px rgba(0,0,0,.3),0 4px 14px rgba(0,0,0,.22)}}
 body{font-size:16px;-webkit-font-smoothing:antialiased}
-header{background:var(--bg)}
+/* Always there (2026-09-26: "the navigation bar at the top needs to be always
+   visible"): sticky above the page, under the cards and the picture viewer (50+). A
+   jump to #something lands below it rather than behind it (--head-h, set below). */
+header{background:var(--bg);position:sticky;top:0;z-index:40}
+html{scroll-padding-top:calc(var(--head-h,72px) + 8px)}
 .brand{font-family:"Arcade Pixel",monospace;font-size:12px;font-weight:400;letter-spacing:.02em}
 .brand::before{content:"\25B6";color:var(--accent);margin-right:8px;font-size:10px;vertical-align:1px}
 nav a{border-radius:999px;padding:6px 13px}
@@ -665,6 +674,16 @@ ol.words{column-gap:1.4em}
   {%- endfor %}
   </nav>
 </div></header>
+<script>
+(function () {
+  var h = document.querySelector('header');
+  if (!h) return;
+  function measure() { document.documentElement.style.setProperty('--head-h', h.offsetHeight + 'px'); }
+  measure();
+  window.addEventListener('resize', measure);
+  window.addEventListener('load', measure);
+})();
+</script>
 {# Until the launch floor move (docs/multi-user.md Order item 6): say plainly what it keeps.
    Remove this line with the move itself. 2026-09-25. #}
 <div class="resetnote"><b>Practice round.</b> At launch everything here resets except your

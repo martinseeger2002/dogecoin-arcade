@@ -257,8 +257,9 @@ def test_a_message_is_drawn_as_words_there_too(client):
     uses = [line.strip() for line in page.splitlines()
             if "innerHTML" in line and not line.strip().startswith("//")]
     assert uses == ['$("threads").innerHTML = "";',
-                    '$("group-drop").innerHTML = "";',   # the member list, refilled by hand
-                    '$("bubbles").innerHTML = "";'], uses
+                    '$("group-drop").innerHTML = "";'], uses   # the member list, refilled by hand
+    # The conversation is emptied with replaceChildren() since it loads a page
+    # at a time (2026-09-26): one innerHTML fewer, none added.
 
 
 def test_it_says_who_a_message_is_going_to_before_it_is_written(client):

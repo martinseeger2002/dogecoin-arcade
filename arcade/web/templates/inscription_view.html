@@ -350,8 +350,10 @@
         <td class="mono" style="font-size:.8rem;word-break:break-all">
           {{ a.buyer|who }}</td>
         <td style="text-align:right;white-space:nowrap">
-          {% if a.accepted %}
-            <span class="muted">answered &mdash; waiting for
+          {% if swap_waiting %}
+            <span class="muted">a trade of this piece is waiting for its block</span>
+          {% elif a.accepted %}
+            <span class="muted">you answered &mdash; waiting for
               {{ a.buyer|who }}
               to sign</span>
             <div class="muted" style="font-size:.76rem">held until {{ a.until }}</div>
@@ -544,7 +546,8 @@
           <div class="muted" style="font-size:.8rem">
             {%- if o.pending %}in the mempool{% else %}block {{ "{:,}".format(o.block_height) }}{% endif %}</div></td>
         <td style="text-align:right;white-space:nowrap" data-answer-for="{{ o.txid }}"
-            data-piece="{{ row.txid }}" data-price="{{ o.price }}" data-number="{{ row.number }}">
+            data-piece="{{ row.txid }}" data-price="{{ o.price }}" data-number="{{ row.number }}"
+            {% if swap_waiting %}data-busy="1"{% endif %}>
           <span class="muted">waiting for the holder</span></td></tr>
     {% endfor %}
   </table>
@@ -668,7 +671,7 @@
         if (!(await arcadeAsk("Make this offer?",
           what.charAt(0).toUpperCase() + what.slice(1) + `. It costs `
           + `${shown.coinsOf(shown.fee)} in fees and reserves nothing: the piece stays `
-          + "where it is until whoever holds it says yes.", "Make offer"))) {
+          + "where it is until whoever holds it says yes.", "Send offer"))) {
           $("offer-it").disabled = false;
           return;
         }
@@ -737,7 +740,7 @@
 
 {% if row.json %}
 <h2>Its JSON</h2>
-<div class="panel"><pre style="margin:0">{{ row.json }}</pre></div>
+<div class="panel"><pre style="margin:0;white-space:pre-wrap;overflow-wrap:anywhere">{{ row.json }}</pre></div>
 {% endif %}
 
 <style>
