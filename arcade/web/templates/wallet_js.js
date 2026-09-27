@@ -714,6 +714,56 @@ export async function fill(wallet, leg, offer) {
   });
 }
 
+/* --- taking a price off another node's book, with this account's key ------
+ *
+ * `/account/take` says what the trade is, what it prices to, and whose key the
+ * question has to be sealed to. These two are the question and the reading of
+ * the answer, and both are thin on purpose. The sealing happens here, by
+ * `sealForProgram`, to the key the node named: that is the arrangement that
+ * lets an account ask at all. The node wraps and pays for a carrier it cannot
+ * read, and a leg sealed to this key is readable in this browser and nowhere
+ * else (D-169).
+ *
+ * An answer is found by `re`, the id of the question it answers, which is the
+ * only thing in it this tab has to match on. Nothing else in it is trusted,
+ * least of all the price: `/account/fill` re-derives the whole transaction from
+ * the leg's own bytes and the chain and refuses one whose numbers do not say
+ * the order it names (D-063).
+ */
+const BOOKANSWERS = (pubkey) => `arcade.bookanswers.${pubkey}`;
+
+export async function askTheBook(wallet, to, body) {
+  return working(async () => {
+    const {mail, me} = await messenger(wallet);
+    const asked = await talkAsk({op: "ask", to});
+    const out = await signOffer(wallet, await talkAsk({
+      op: "send", to,
+      sealed: mail.sealForProgram(me, asked.seal_to, asked.stamp, body)}));
+    return {txid: out.txid, fee: out.fee, to: asked.to};
+  });
+}
+
+/** The book answers read since the last time, keyed by their question. */
+export async function bookAnswers(wallet, wanted) {
+  const {mail, me} = await messenger(wallet);
+  const slot = BOOKANSWERS(coinsHex(me.publicKey));
+  let kept = {cursor: 0, answers: {}};
+  try { kept = JSON.parse(localStorage.getItem(slot) || "null") || kept; } catch (e) {}
+  const read = await mail.programAnswers(me, kept.cursor);
+  for (const a of read.answers) {
+    const j = a.json || {};
+    if (j.swap !== "fill" || !j.re) continue;
+    kept.answers[j.re] = {re: j.re, ok: !!j.ok, leg: j.offer || null,
+                          error: j.error || "", when: a.when, txid: a.txid};
+  }
+  // Answers are kept rather than re-derived, cursor and all: a maker answers
+  // out of order, and an answer that is read once and then forgotten is an
+  // answer that never arrived.
+  kept.cursor = read.cursor;
+  try { localStorage.setItem(slot, JSON.stringify(kept)); } catch (e) {}
+  return wanted ? (kept.answers[wanted] || null) : kept.answers;
+}
+
 /* --- filling a listing, with this account's own key ----------------------
  *
  * The other half of `list`. The seller's two signatures are already in the
