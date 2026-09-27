@@ -60,6 +60,12 @@
     new listing{{ '' if unannounced == 1 else 's' }} on the chain</button></p>
   <p class="msg" id="pad-news" hidden></p>
   {% endif %}
+  {% if pad_txid and is_seller %}
+  {# An inscription never changes, so a pad made before a fix keeps its old
+     code: the seller can put an updated copy up, and the newest is the pad. #}
+  <p style="margin:8px 0 0"><button type="button" class="ghost small" id="pad-chain">Put an updated copy on the chain</button></p>
+  {% if not unannounced %}<p class="msg" id="pad-news" hidden></p>{% endif %}
+  {% endif %}
   {% if pad_txid %}
   <p class="muted" style="font-size:.86rem;margin:10px 0 0">This mintpad is on the chain:
     <a href="/inscriptions/{{ pad_txid }}/view">open it</a> &middot;
@@ -144,7 +150,7 @@
 })();
 </script>
 {% endif %}
-{% if is_seller and (not pad_txid or unannounced) %}
+{% if is_seller %}
 <script type="module">
 import * as wallet from "/wallet.js";
 const CHAIN = {network: "{{ chain.network }}", version: {{ chain.params.pubkeyhash_version }}};
