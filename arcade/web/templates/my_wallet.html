@@ -3,7 +3,11 @@
 {% import "_not_ordinals.html" as notord %}
 {% block title %}Wallet · DogecoinArcade{% endblock %}
 {% block body %}
-<h1>Wallet</h1>
+<div class="row" style="align-items:baseline;gap:10px">
+  <h1 style="margin:0">Wallet</h1>
+  {# Backup lives here now, not as a tab (2026-09-27). #}
+  <a class="btn ghost small" href="/me/backup" style="margin-left:auto">Back up your wallet</a>
+</div>
 {{ wt.tabs('coins') }}
 <p class="sub">Coins, one wallet per chain, from the same twelve words.
   Testnet coins pay message fees; mainnet coins are real.</p>

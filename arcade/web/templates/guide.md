@@ -397,7 +397,7 @@ names itself the same way.
 **A set can describe itself, on its #1.** The first piece is the one a
 collection is known by, so that is where collection-level details are read
 from. The **collection wizard** asks for them at step 2 — description,
-website, and a thumbnail — and writes them onto that piece; or put
+website, Twitter, and a thumbnail — and writes them onto that piece; or put
 them there yourself, in a `collection` object beside the name:
 
 ```json

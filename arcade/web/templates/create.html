@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Create · DogecoinArcade{% endblock %}
+{% block body %}
+{# One tab for making things (2026-09-27: "Combine the NFTs and tokens
+   tab into one tab called Create", with buttons to each and to the launchpad
+   wizard). #}
+<h1>Create</h1>
+<div class="createpick">
+  <a class="panel" href="/nfts">
+    <span class="ico" aria-hidden="true">&#128444;</span>
+    <strong>NFTs</strong>
+    <span class="muted">Inscribe a picture or a whole collection, and browse everything on the chain.</span>
+  </a>
+  <a class="panel" href="/tokens">
+    <span class="ico" aria-hidden="true">&#129689;</span>
+    <strong>Tokens</strong>
+    <span class="muted">Make your own token, send it, and run one you issued.</span>
+  </a>
+  <a class="panel" href="/mintpad/new">
+    <span class="ico" aria-hidden="true">&#128640;</span>
+    <strong>Launchpad wizard</strong>
+    <span class="muted">Sell a collection at one price and let people mint a random piece.</span>
+  </a>
+</div>
+<style>
+.createpick{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));margin-top:10px}
+.createpick a{display:flex;flex-direction:column;gap:6px;color:var(--fg);text-decoration:none;padding:20px}
+.createpick a:hover{border-color:var(--accent);text-decoration:none}
+.createpick .ico{font-size:2rem;line-height:1}
+.createpick strong{font-size:1.15rem}
+.createpick .muted{font-size:.9rem}
+</style>
+{% endblock %}

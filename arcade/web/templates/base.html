@@ -679,7 +679,7 @@ ol.words{column-gap:1.4em}
     {%- set waiting = {'/approvals': approvals_waiting, '/messages': unread_messages,
                        '/me/notifications': notif_count, '/me/messages': mail_count,
                        '/feed': unread_board, '/exchange': offers_waiting}.get(href) %}
-    <a class="{{ 'on' if path == href else '' }}" href="{{ href }}">{{ label
+    <a class="{{ 'on' if path == href or (href == '/create' and (path in ('/nfts', '/tokens', '/mintpad/new') or path.startswith('/tokens/'))) else '' }}" href="{{ href }}">{{ label
       }}{% if waiting %}<span class="nav-count">{{ waiting if waiting < 100 else '99+' }}</span>{% endif %}</a>
     {%- else %}
     <a class="off" href="{{ href }}" title="not built yet">{{ label }}</a>
@@ -731,11 +731,20 @@ ol.words{column-gap:1.4em}
 let minting = false;
 window.addEventListener("message", async (e) => {
   const m = e.data || {};
-  if (m.arcade !== "mint" || typeof m.seq !== "number") return;
   const frame = [...document.querySelectorAll("iframe.inscription-frame")]
     .find((f) => f.contentWindow === e.source);
   if (!frame) return;
+  // A page in a post says how tall it is, and gets that much room.
+  if (m.arcade === "size" && frame.classList.contains("postmedia")) {
+    const h = Math.round(Number(m.height) || 0);
+    if (h > 0) frame.style.height = Math.max(160, Math.min(h + 4, 1400)) + "px";
+    return;
+  }
+  if (m.arcade !== "mint" || typeof m.seq !== "number") return;
   const answer = (body) => e.source.postMessage({arcade: "mint", seq: m.seq, ...body}, "*");
+  // Heard at once: the card below waits for a person, and a pad that heard
+  // nothing for a few seconds used to give up and say it was opened bare.
+  answer({heard: true});
   if (!ARCADE_ME) {
     answer({error: "Sign in or join first, then mint."});
     arcadeToast("Sign in or join, then mint from this page.");
@@ -752,7 +761,7 @@ window.addEventListener("message", async (e) => {
     const seller = offer.seller_tag ? "@" + offer.seller_tag : "the seller";
     const ok = await arcadeAsk(`Mint for ${coins} coins?`,
       `${coins} coins go to ${seller} for one piece from this mintpad`
-      + (m.name ? ` (it says: ${String(m.name).slice(0, 80)})` : "")
+      + " (a random one: you see which when it lands)"
       + `. Network fee ${shown.coinsOf(shown.fee)}. The piece and the coins move in `
       + "one transaction, checked in this browser.", `Mint for ${coins} coins`);
     if (!ok) { answer({error: "Cancelled."}); return; }

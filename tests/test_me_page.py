@@ -322,3 +322,22 @@ def test_reading_an_account_tops_it_back_up(client, monkeypatch):
             break
         _time.sleep(0.05)
     assert asked and asked[0] == ("mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg", 0)
+
+
+def test_one_create_tab_and_backup_on_the_wallet_page(public):
+    """2026-09-27: NFTs and Tokens are one tab, Create, whose page has a
+    button to each and to the launchpad wizard; Backup is a button on the
+    Wallet page instead of a tab."""
+    app, _ = public
+    _seat(app)
+    page = app.get("/me/wallet", headers=EDGE).text
+    nav = page.split("<nav>", 1)[1].split("</nav>", 1)[0]
+    assert 'href="/create"' in nav
+    assert 'href="/nfts"' not in nav and 'href="/tokens"' not in nav
+    assert 'href="/me/backup"' not in nav
+    assert 'href="/me/backup"' in page, "Backup is a button on the Wallet page"
+    create = app.get("/create", headers=EDGE).text
+    for where in ('href="/nfts"', 'href="/tokens"', 'href="/mintpad/new"'):
+        assert where in create, where
+    assert 'class="on" href="/create"' in app.get("/tokens", headers=EDGE).text, \
+        "the Create tab stays lit on the pages behind it"

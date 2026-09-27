@@ -360,8 +360,8 @@ NAV = [
     ("/contacts",     "Address book", None,        True),
     ("/backup",       "Backup",       None,        True),
     ("/wallet",       "Wallet",       None,        True),
-    ("/tokens",       "Tokens",       "mainnet",   True),
-    ("/nfts",         "NFTs",         "mainnet",   True),
+    # One Create tab for NFTs, tokens and the launchpad wizard (2026-09-27).
+    ("/create",       "Create",       "mainnet",   True),
     ("/exchange",     "Exchange",     "mainnet",   True),
     ("/approvals",    "Approvals",    None,        True),
     ("/docs",         "Docs",         None,        True),
@@ -384,10 +384,10 @@ ACCOUNT_NAV = [
     ("/me/notifications", "Notifications", None,      True),
     ("/feed",            "Feed",         "testnet",   True),
     ("/me/contacts",     "Address book", None,        True),
-    ("/me/backup",       "Backup",       None,        True),
+    # Backup is a button on the Wallet page, not a tab (2026-09-27).
     ("/me/wallet",       "Wallet",       None,        True),
-    ("/tokens",          "Tokens",       "mainnet",   True),
-    ("/nfts",            "NFTs",         "mainnet",   True),
+    # NFTs, Tokens and the launchpad wizard, behind one tab (2026-09-27).
+    ("/create",          "Create",       "mainnet",   True),
     ("/exchange",        "Exchange",     "mainnet",   True),
     ("/docs",            "Docs",         None,        True),
 ]
@@ -3808,6 +3808,12 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             data["listed"] = {}
         return data
+
+    @app.get("/create", response_class=HTMLResponse)
+    def create_page(request: Request):
+        """One tab for making things (2026-09-27): NFTs, tokens, and
+        the launchpad wizard, each a button to the page that does it."""
+        return render(request, "create.html")
 
     @app.get("/nfts", response_class=HTMLResponse)
     def nfts_page(request: Request, page: int = 1):

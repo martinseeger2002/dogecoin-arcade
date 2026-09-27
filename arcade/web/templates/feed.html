@@ -225,8 +225,12 @@
     .posttext{overflow-wrap:anywhere}
     .posttext img.postmedia{display:block;max-width:100%;height:auto;max-height:70vh;
       object-fit:contain;border-radius:10px;margin:8px 0;cursor:zoom-in}
+    /* An inscribed page in a post: tall enough to use (2026-09-27: a
+       mintpad in the feed was "a short window, and you can't see the entire
+       content" -- an iframe with no height is 150px). A page that says how
+       tall it is gets exactly that (base.html, {arcade: "size"}). */
     .posttext iframe.postmedia{display:block;width:100%;max-width:100%;border:0;
-      border-radius:10px;margin:8px 0}
+      border-radius:10px;margin:8px 0;height:min(78vh,640px)}
 </style>
 {% if whose %}
   {# Wraps on a phone instead of pushing the page sideways (a tester,

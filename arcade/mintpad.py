@@ -170,17 +170,22 @@ let art=[];
 async function load(){const p=await j(W);const n=p?p.left:0;
  $('left').innerHTML=n?'<b>'+n+'</b> left · '+(p.prices||[]).map(x=>x/1e8).join(' / ')+' coins each':'Nothing left on this mintpad right now.';
  $('go').hidden=!n;return p}
-function spin(id){const r=$('reel'),s=$('strip');if(!r||!s)return;const c=[...s.children];let a=c.findIndex(e=>e.dataset.id===id);if(a<0)a=0;
+function spin(id){const r=$('reel'),s=$('strip');
+ if(!r||!s){const cv=$('cover');if(cv){cv.src=C+id;cv.style.boxShadow='0 0 0 3px #43e8ff,0 0 40px #43e8ffb3'}return}const c=[...s.children];let a=c.findIndex(e=>e.dataset.id===id);if(a<0)a=0;
  const x=[];for(let i=0;i<3;i++)for(const e of c)x.push(e.cloneNode(true));s.prepend(...x);s.style.transition='none';s.style.transform='none';
  requestAnimationFrame(()=>{s.style.transition='transform 3.2s cubic-bezier(.12,.8,.2,1)';s.style.transform='translateY(-'+(x.length+a)*200+'px)'});
  setTimeout(()=>r.classList.add('won'),3300)}
-let seq=0;const wait={};
-addEventListener('message',e=>{const m=e.data||{};if(m.arcade==='mint'&&wait[m.seq]){wait[m.seq](m);delete wait[m.seq]}});
+let seq=0;const wait={},heard={};
+addEventListener('message',e=>{const m=e.data||{};if(m.arcade!=='mint')return;if(m.heard){heard[m.seq]=1;return}
+ if(wait[m.seq]){wait[m.seq](m);delete wait[m.seq]}});
+const tall=()=>parent.postMessage({arcade:'size',height:document.documentElement.scrollHeight},'*');
+addEventListener('load',tall);setTimeout(tall,800);setTimeout(tall,2500);
+if(window.ResizeObserver)new ResizeObserver(tall).observe(document.body);
 $('go').onclick=async()=>{say('');const p=await load();if(!p||!p.next)return;
  const n=++seq;$('go').disabled=true;
  const got=await new Promise(ok=>{wait[n]=ok;parent.postMessage({arcade:'mint',seq:n,listing:p.next.listing,
   piece:p.next.piece,name:P.collection+' #'+(p.next.edition||p.next.number)},'*');
-  setTimeout(()=>{if(wait[n]){delete wait[n];ok({error:'Open this mintpad on DogecoinArcade to mint from it.'})}},4000)});
+  setTimeout(()=>{if(wait[n]&&!heard[n]){delete wait[n];ok({error:'Open this mintpad on DogecoinArcade to mint from it.'})}},4000)});
  $('go').disabled=false;
  if(got.error)say(got.error,'bad');else if(got.ok){spin(p.next.piece);say('Minted #'+p.next.number+'! It is yours when its block lands.','ok');setTimeout(load,4000)}};"""
 

@@ -60,6 +60,7 @@ PUBLIC_PAGES = frozenset({
     "/collections",
     "/tokens",
     "/nfts",
+    "/create",
     "/inscriptions",
     "/exchange",
     "/launch",
