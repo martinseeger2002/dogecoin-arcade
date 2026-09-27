@@ -104,7 +104,9 @@ def assemble(posts: Iterable[Any], acts: Iterable[Any], *,
     def attach(node: Shown) -> Shown:
         node.replies = sorted(
             (attach(child) for child in replies.get(node.txid, [])),
-            key=lambda r: (r.height or 0, r.txid))
+            # Oldest first, and one still waiting for its block LAST: height 0 is
+            # the newest thing in the thread, not the oldest (a tester, 2026-09-27).
+            key=lambda r: (not r.height, r.height or 0, r.txid))
         return node
 
     out: list[Shown] = []

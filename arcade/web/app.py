@@ -262,6 +262,9 @@ def _screen_text(text: str):
 
 
 TEMPLATES.env.globals["screen_text"] = _screen_text
+# A steady colour per address, for letter avatars (the feed, like Notifications).
+TEMPLATES.env.filters["hue"] = lambda text: int(
+    hashlib.sha256(str(text or "").encode()).hexdigest()[:4], 16) % 360
 TEMPLATES.env.globals["render_post"] = lambda text, drawable=None, frames=None: Markup(
     post_html(text, drawable, frames))
 
