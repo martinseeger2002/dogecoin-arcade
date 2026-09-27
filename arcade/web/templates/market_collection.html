@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% import "_chart.html" as chart %}
-{% block title %}{{ summary.collection }} · DogecoinArcade{% endblock %}
+{% block title %}{{ wall_text(summary.collection, 'A collection') }} · DogecoinArcade{% endblock %}
 {% block body %}
 <div id="live" data-generation="{{ state.generation }}" class="live"></div>
 
@@ -11,7 +11,7 @@
     <img src="/content/{{ cover }}" alt="{{ summary.collection }} #1" loading="lazy">
   {% endif %}
   <div class="who">
-    <h1>{{ summary.collection }}</h1>
+    <h1>{{ wall(summary.collection, 'collection name') }}</h1>
     <p class="muted" style="margin:0 0 6px">
       by  {{ summary.creator|who }}
       &middot; {{ chain.label }}

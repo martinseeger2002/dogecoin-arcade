@@ -6,8 +6,8 @@
   posts you follow, your sales, and new messages.</p>
 
 {% macro name(address) -%}
-  {%- if names.get(address) -%}@{{ names[address] }}
-  {%- elif address and name_of(address) -%}@{{ name_of(address) }}
+  {%- if names.get(address) -%}{{ wall('@' ~ names[address]) }}
+  {%- elif address and name_of(address) -%}{{ wall('@' ~ name_of(address)) }}
   {%- elif address -%}{{ address[:8] }}&hellip;
   {%- else -%}Somebody{%- endif -%}
 {%- endmacro %}

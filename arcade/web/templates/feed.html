@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ ('@' ~ whose.tag) if whose else 'Feed' }} · DogecoinArcade{% endblock %}
+{% block title %}{{ wall_text('@' ~ whose.tag, 'A profile') if whose else 'Feed' }} · DogecoinArcade{% endblock %}
 
 {# One card, drawn for a post and for every reply under it, however deep: a
    reply is a post as far as this page is concerned, which is what the format
@@ -74,12 +74,12 @@
     <details class="covered" style="margin:10px 0 0">
       <summary>Sensitive post &mdash; tap to show</summary>
       <div class="posttext" style="margin:8px 0 0;white-space:pre-wrap"
-        >{{ render_post(p.text, drawable) }}</div></details>
+        >{{ render_post(p.text, drawable, frames) }}</div></details>
     {% elif seen is none %}
     <p class="muted posttext" style="margin:10px 0 0">Checking this post&hellip;</p>
     {% else %}
     <div class="posttext" style="margin:10px 0 0;white-space:pre-wrap"
-      >{{ render_post(p.text, drawable) }}</div>
+      >{{ render_post(p.text, drawable, frames) }}</div>
     {% endif %}
   {% endif %}
 
@@ -231,7 +231,7 @@
            style="width:64px;height:64px;border-radius:50%;object-fit:cover">
     {% endif %}
     <div style="min-width:0;flex:1 1 200px;overflow-wrap:anywhere">
-      <h1 style="margin:0;overflow-wrap:anywhere">@{{ whose.tag }}{% if whose.claiming %}
+      <h1 style="margin:0;overflow-wrap:anywhere">{{ wall('@' ~ whose.tag) }}{% if whose.claiming %}
         <span class="pill warn" style="font-size:.6em;vertical-align:middle"
               title="Their claim is in the mempool: every node can see it, and it is theirs when its block lands"
           >claiming</span>{% endif %}</h1>

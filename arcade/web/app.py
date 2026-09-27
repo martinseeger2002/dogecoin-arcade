@@ -261,8 +261,8 @@ def _screen_text(text: str):
 
 
 TEMPLATES.env.globals["screen_text"] = _screen_text
-TEMPLATES.env.globals["render_post"] = lambda text, drawable=None: Markup(
-    post_html(text, drawable))
+TEMPLATES.env.globals["render_post"] = lambda text, drawable=None, frames=None: Markup(
+    post_html(text, drawable, frames))
 
 
 #: An inscription named in a post: a bare id is not enough, because a post is
@@ -289,7 +289,8 @@ def mentioned_in(text: str) -> set[str]:
     return {m.group(1).lower() for m in _MENTION.finditer(text or "")}
 
 
-def post_html(text: str, drawable: dict[str, str] | None = None) -> str:
+def post_html(text: str, drawable: dict[str, str] | None = None,
+              frames: dict[str, str] | None = None) -> str:
     """One post's words as HTML: escaped first, then its inscriptions drawn.
 
     Everything is escaped before anything is added, so a post that contains
@@ -316,8 +317,11 @@ def post_html(text: str, drawable: dict[str, str] | None = None) -> str:
         elif kind == "text/html":
             # Same sandbox as the inscription viewer: no same-origin, so it
             # cannot reach this page, this wallet or anybody's storage.
+            # `frames` gives the pages host and the viewer's ticket, as the
+            # piece page does, so an embed greets whoever reads the feed.
+            src = html.escape((frames or {}).get(piece) or f"/content/{piece}")
             out.append(f'<iframe class="inscription-frame postmedia" '
-                       f'src="/content/{piece}" loading="lazy" '
+                       f'src="{src}" loading="lazy" '
                        f'sandbox="allow-scripts allow-pointer-lock"></iframe>')
         else:
             out.append(f'<a href="/inscriptions/{piece}/view">'
@@ -2471,6 +2475,25 @@ def create_app(state: AppState) -> FastAPI:
                                  me=state.derived_address if me is None
                                  else me, muted=muted)
 
+    def _frames_for(request: Request, drawable: dict[str, str]) -> dict[str, str]:
+        """Where each HTML embed on a feed page loads from: the pages host, with
+        the looking account's ticket (a tester, 2026-09-26: an embed on the feed
+        said "open this in a wallet" to a signed-in viewer, because its frame
+        was on the main host with no ticket, and /r/wallet answered "off")."""
+        pieces = [k for k, v in drawable.items() if v == "text/html"]
+        if not pieces:
+            return {}
+        base = state.pages_origin or ""
+        here = ""
+        if _public_request(request):
+            looking = signed_in(request)
+            if looking is not None:
+                here = _account_address(looking.pubkey, _token_chain()[0])
+        network = _token_chain()[0].network
+        return {piece: f"{base}/content/{piece}"
+                       + (f"?v={_viewer_ticket(here, network, piece)}" if here else "")
+                for piece in pieces}
+
     def _drawable_in(shown: list[Any]) -> dict[str, str]:
         """The content type of every inscription these posts name.
 
@@ -2619,7 +2642,8 @@ def create_app(state: AppState) -> FastAPI:
             pass                      # a badge is not worth failing a page for
         return render(request, "feed.html", chain=chain, posts=shown,
                       bylines=_bylines(shown, waiting),
-                      drawable=_drawable_in(shown), cursor=cursor, whose=None,
+                      drawable=(drawn := _drawable_in(shown)),
+                      frames=_frames_for(request, drawn), cursor=cursor, whose=None,
                       here="/feed" if sort == "popular" else f"/feed?sort={sort}",
                       sort=sort, mine=mine, kinds=feedlib.BY_NAME,
                       friends=_operator_friends(request) if sort == "friends" else [],
@@ -2637,7 +2661,8 @@ def create_app(state: AppState) -> FastAPI:
         shown = _shown(rows, chain.network, waiting, me=mine["address"])
         return render(request, "feed.html", chain=chain, posts=shown,
                       bylines=_bylines(shown, waiting),
-                      drawable=_drawable_in(shown), cursor=cursor,
+                      drawable=(drawn := _drawable_in(shown)),
+                      frames=_frames_for(request, drawn), cursor=cursor,
                       whose={"tag": wanted, "address": address,
                              "claiming": claiming,
                              "face": _face_for(address),
@@ -4626,6 +4651,42 @@ def create_app(state: AppState) -> FastAPI:
         _names[address] = (tag, now)
         return tag
 
+    def _verdict_of(text: str) -> str:
+        """The screening's word on some text shown on a page: "sensitive",
+        "illegal", or "" (fine, not judged yet, or screening off). Never waits:
+        an unjudged text is queued and walled from the next draw on."""
+        try:
+            screen = state.screen()
+            if not screen.enabled or not (text or "").strip():
+                return ""
+            said = screen.check_text(text)
+        except Exception:
+            return ""
+        return said if said in ("sensitive", "illegal") else ""
+
+    def _walled(text: str, shown: Any = None, label: str = "name") -> Markup:
+        """Anything the site displays behind a "show me" wall when the screening
+        says it is sensitive (2026-09-26: "any user @tag, any tokens or
+        NFTs or anything that the site displays that may be considered sensitive
+        should be behind a show me wall"). The words are in a <template>, which a
+        page does not draw until the reader taps; a reader who has turned on
+        "Show sensitive content" (/me) sees them straight away (base.html)."""
+        body = shown if shown is not None else Markup.escape(text)
+        verdict = _verdict_of(str(text or ""))
+        if not verdict:
+            return Markup(body)
+        if verdict == "illegal":
+            return Markup('<span class="muted">[removed]</span>')
+        return Markup('<span class="sens-wall"><button type="button" class="sens-btn">'
+                      'Sensitive {l} &mdash; tap to show</button>'
+                      '<template>{b}</template></span>').format(l=label, b=Markup(body))
+
+    TEMPLATES.env.globals["wall"] = lambda text, label="name": _walled(
+        str(text or ""), None, label)
+    # For places no markup can go -- a <title>, an alt, an attribute.
+    TEMPLATES.env.globals["wall_text"] = lambda text, instead="Sensitive": (
+        instead if _verdict_of(str(text or "")) else str(text or ""))
+
     def _who(address: Any, short: int = 12) -> Markup:
         """A template filter: another person, as their @tag linked to their page,
         or a shortened address when they have not claimed one (the operator,
@@ -4637,8 +4698,8 @@ def create_app(state: AppState) -> FastAPI:
             return Markup("")
         tag = _name_of(address)
         if tag:
-            return Markup('<a href="/u/{t}" title="{a}">@{t}</a>').format(
-                t=tag, a=address)
+            return _walled(tag, Markup('<a href="/u/{t}" title="{a}">@{t}</a>').format(
+                t=tag, a=address))
         shown = address if len(address) <= short + 1 else address[:short] + "\u2026"
         return Markup('<span class="mono" title="{a}">{s}</span>').format(
             a=address, s=shown)
@@ -4647,6 +4708,8 @@ def create_app(state: AppState) -> FastAPI:
         """The same person as plain words, for an attribute or a confirmation."""
         address = str(address or "")
         tag = _name_of(address)
+        if tag and _verdict_of(tag):
+            return "a name hidden as sensitive"
         return f"@{tag}" if tag else (address[:12] + "\u2026" if len(address) > 13 else address)
 
     TEMPLATES.env.filters["who"] = _who

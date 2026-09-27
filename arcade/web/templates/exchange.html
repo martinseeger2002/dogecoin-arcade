@@ -292,7 +292,7 @@
             {%- if p.icon %}<img src="/content/{{ p.icon }}" alt="{{ p.name }}" loading="lazy"
               style="width:32px;height:32px;object-fit:cover;border-radius:50%;display:block">
             {%- else %}<span class="coinface"></span>{% endif %}</a></td>
-        <td><a href="/exchange/pair/{{ p.property_id }}"><strong>{{ p.name }}</strong></a><span
+        <td><a href="/exchange/pair/{{ p.property_id }}"><strong>{{ wall(p.name, 'token name') }}</strong></a><span
              class="muted">/{{ chain.label|upper }}</span>
           <div class="muted" style="font-size:.76rem">#{{ p.property_id }}
             {%- if p.about %} &middot; {{ p.about[:40] }}{% endif %}</div></td>
@@ -355,7 +355,7 @@
       <a class="art" href="{{ where }}" title="{{ c.name }} #{{ c.cover_edition or 1 }}" aria-label="{{ c.name }}"
          {% if c.cover %}style="background-image:url(/content/{{ c.cover }})"{% endif %}></a>
       <div class="body">
-        <div class="name"><a href="{{ where }}">{{ c.name }}</a></div>
+        <div class="name"><a href="{{ where }}">{{ wall(c.name, 'collection name') }}</a></div>
         <div class="who">{{ "{:,}".format(c.count) }} pieces &middot;
            {{ c.creator|who }}</div>
         <div class="row" style="gap:10px;margin-top:2px">
@@ -394,7 +394,7 @@
             <img src="/content/{{ c.cover }}" alt="{{ c.name }} #{{ c.cover_edition or 1 }}"
                  loading="lazy" style="width:44px;height:44px;object-fit:cover;border-radius:8px;display:block">
             {%- else %}<span class="muted mono" style="font-size:.7rem">no art</span>{% endif %}</a></td>
-        <td><a href="{{ where }}"><strong>{{ c.name }}</strong></a>
+        <td><a href="{{ where }}"><strong>{{ wall(c.name, 'collection name') }}</strong></a>
           <div class="muted" style="font-size:.78rem">
              {{ c.creator|who }}</div></td>
         <td style="text-align:right">{{ "{:,}".format(c.count) }}</td>
@@ -434,7 +434,7 @@
             <img src="/content/{{ l.txid }}" alt="{{ l.name }}" loading="lazy"
                  style="width:38px;height:38px;object-fit:cover;border-radius:8px;display:block">
             {%- else %}<span class="coinface" style="border-radius:8px">#{{ l.number }}</span>{% endif %}</a></td>
-        <td><a href="/inscriptions/{{ l.txid }}/view"><strong>{{ l.name }}</strong></a>
+        <td><a href="/inscriptions/{{ l.txid }}/view"><strong>{{ wall(l.name) }}</strong></a>
           <div class="muted" style="font-size:.76rem">
             {%- if l.collection %}<a href="/exchange/collection/{{ l.creator }}/{{ l.collection|urlencode }}">{{ l.collection }}</a>
               {%- if l.edition is not none %} #{{ l.edition }}{% endif %} &middot;
@@ -483,7 +483,7 @@
             <img src="/content/{{ t.txid }}" alt="{{ t.name }}" loading="lazy"
                  style="width:38px;height:38px;object-fit:cover;border-radius:8px;display:block">
             {%- else %}<span class="coinface" style="border-radius:8px">#{{ t.number }}</span>{% endif %}</a></td>
-        <td><a href="/inscriptions/{{ t.txid }}/view"><strong>{{ t.name }}</strong></a>
+        <td><a href="/inscriptions/{{ t.txid }}/view"><strong>{{ wall(t.name) }}</strong></a>
           <div class="muted" style="font-size:.76rem">
             {%- if t.collection %}<a href="/exchange/collection/{{ t.creator }}/{{ t.collection|urlencode }}">{{ t.collection }}</a>
               {%- if t.edition is not none %} #{{ t.edition }}{% endif %} &middot;

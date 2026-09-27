@@ -91,6 +91,27 @@
      summaries read as labels). Open, in one panel: the picture to tap, the two
      boxes, one Publish, and what it costs. The ids are the ones the script has
      always drawn into. #}
+  {# 2026-09-26: sensitive names, tokens and pictures sit behind a
+     "show me" wall; this turns the wall off for this browser. #}
+  <div class="panel" style="margin-top:14px">
+    <label class="row" style="gap:8px;align-items:center;margin:0">
+      <input type="checkbox" id="show-sensitive">
+      <span><strong>Show sensitive content</strong>
+        <span class="muted small" style="display:block">Names, tokens, collections and
+          pictures marked sensitive show straight away in this browser, instead of
+          behind "tap to show".</span></span>
+    </label>
+  </div>
+  <script>
+  (function () {
+    var box = document.getElementById('show-sensitive');
+    try { box.checked = localStorage.getItem('arcade.showSensitive') === 'yes'; } catch (e) {}
+    box.onchange = function () {
+      try { localStorage.setItem('arcade.showSensitive', box.checked ? 'yes' : 'no'); } catch (e) {}
+      if (box.checked) document.querySelectorAll('.sens-wall').forEach(arcadeReveal);
+    };
+  })();
+  </script>
   <div class="panel" id="profile-edit" style="margin-top:14px">
     <h2 style="margin-top:0">Edit your profile</h2>
     <div id="profile-panel">

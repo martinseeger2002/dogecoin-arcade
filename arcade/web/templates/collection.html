@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}{{ summary.collection }} · DogecoinArcade{% endblock %}
+{% block title %}{{ wall_text(summary.collection, 'A collection') }} · DogecoinArcade{% endblock %}
 {% block body %}
-<h1>{{ summary.collection }}</h1>
+<h1>{{ wall(summary.collection, 'collection name') }}</h1>
 {% set d = summary.details or {} %}
 {% if d.description %}<p style="max-width:70ch;margin:0 0 6px">{{ d.description }}</p>{% endif %}
 <p class="sub"><strong>{{ "{:,}".format(summary.count) }} of {{ "{:,}".format(summary.supply) if summary.supply else "∞" }}</strong>

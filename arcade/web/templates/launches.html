@@ -34,7 +34,7 @@
       <img class="lface" src="/content/{{ it.txid }}" alt="" style="border-radius:10px">
     {% else %}<span class="lface coinface" style="border-radius:10px"></span>{% endif %}
     <div style="flex:1;min-width:0">
-      <a style="font-weight:600" href="{% if it.kind == 'token' %}/tokens/{{ it.id }}{% else %}/exchange/collection/{{ it.creator }}/{{ it.name|urlencode }}{% endif %}">{{ it.name }}</a>
+      <a style="font-weight:600" href="{% if it.kind == 'token' %}/tokens/{{ it.id }}{% else %}/exchange/collection/{{ it.creator }}/{{ it.name|urlencode }}{% endif %}">{{ wall(it.name) }}</a>
       <span class="pill">{{ 'token' if it.kind == 'token' else 'collection' }}</span>
       <div class="muted" style="font-size:.82rem">by
         {% if names.get(it.creator) %}<a href="/u/{{ names[it.creator] }}">@{{ names[it.creator] }}</a>

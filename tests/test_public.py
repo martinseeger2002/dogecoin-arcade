@@ -853,3 +853,30 @@ def test_the_address_book_finds_a_name_by_its_address(public):
     db.close()
     said = app.get(f"/account/find?q={KEEPER}", headers=LOCAL).json()
     assert said["matches"] == [{"tag": "findme", "address": KEEPER}]
+
+
+def test_a_sensitive_name_is_walled_wherever_it_is_shown(public, monkeypatch):
+    """2026-09-26: anything shown that may be sensitive sits behind a
+    "show me" wall -- names, tokens, collections -- while links keep working."""
+    from arcade.db import Database
+    from arcade.state import install_schema
+
+    app, state = public
+
+    class Judge:
+        enabled = True
+        def check_text(self, words, now=False):
+            return "sensitive" if "rudename" in words else "ok"
+        def check_image(self, *a):
+            return "ok"
+    monkeypatch.setattr(state, "screen", lambda: Judge())
+    db = Database(state.home / f"{state.messaging.network}-ledger.sqlite")
+    install_schema(db)
+    db.conn.execute("INSERT OR REPLACE INTO tag(tag,address,claimed_txid,block_height,position) "
+                    "VALUES('rudename',?,?,100,0)", (KEEPER, "r" * 64))
+    db.conn.commit()
+    db.close()
+    page = app.get("/u/rudename", headers=LOCAL).text
+    head = page[page.index("<h1"):page.index("</h1>")]
+    assert "sens-btn" in head and "<template>@rudename</template>" in head
+    assert "<title>Sensitive" in page or "<title>A profile" in page
