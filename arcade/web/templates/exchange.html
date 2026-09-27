@@ -85,13 +85,13 @@
           {% elif b.busy %}
             <span class="muted">a trade of this piece is waiting for its block</span>
           {% elif b.accepted %}
-            <span class="muted">you answered &mdash; waiting for
-               {{ b.buyer|who }}
-              to sign</span>
-            <div class="muted" style="font-size:.76rem">held until {{ b.until }}</div>
+            <span class="muted">You accepted this{% if b.until %} on {{ b.until }}{% endif %}. It completes
+              when {{ b.buyer|who }} next opens their wallet.</span>
+            <div><button type="button" class="ghost small" data-takeback
+                    data-piece="{{ b.inscription }}" data-buyer="{{ b.buyer|who_text }}"
+                    style="margin-top:4px">Take it back</button></div>
           {% elif b.held_for %}
-            <span class="muted">that piece is reserved for another buyer
-              until {{ b.until }}</span>
+            <span class="muted">you accepted another buyer's offer on this piece</span>
           {% elif viewer == 'account' %}
             <button type="button" class="small" data-accept
                     data-offer="{{ b.txid }}" data-piece="{{ b.inscription }}"

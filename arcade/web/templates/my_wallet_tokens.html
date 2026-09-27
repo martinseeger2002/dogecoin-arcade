@@ -98,7 +98,11 @@ function row(token, chain) {
   send.className = "btn small";
   send.textContent = "Send";
   send.onclick = () => choose(token, chain);
-  doing.append(open);
+  const trade = document.createElement("a");
+  trade.className = "btn ghost small";
+  trade.href = `/exchange/pair/${token.property_id}`;
+  trade.textContent = "Trade";
+  doing.append(open, trade);
   if (Number(token.balance) > 0) doing.append(send);
 
   box.append(top, doing);

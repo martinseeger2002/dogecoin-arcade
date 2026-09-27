@@ -206,6 +206,8 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # one payment to the account's own address, split for a mintpad
                "/account/split",
                "/account/list/cancel",
+               "/account/answer/withdraw",
+               "/account/answer/withdrawn",
                # pre-signed offers: the buyer's signatures, withdrawing, completing
                "/account/offer/bid", "/account/offer/bid-build", "/account/offer/withdraw",
                "/account/accept/complete",

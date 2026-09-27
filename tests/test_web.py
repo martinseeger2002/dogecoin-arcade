@@ -3081,3 +3081,16 @@ def test_no_post_answers_with_a_page():
         i = j
     assert offenders == [], (
         f"these answer a POST with a page instead of redirecting: {offenders}")
+
+
+def test_a_timestamp_goes_out_in_utc_for_the_reader_to_make_local():
+    """2026-09-27: every timestamp in the reader's own time zone. The
+    server sends the moment in UTC inside <time>; base.html rewrites it."""
+    from arcade.web.app import _when, _local_time
+    html = str(_when(0))
+    assert 'datetime="1970-01-01T00:00:00Z"' in html and 'class="lt"' in html
+    assert 'data-lt="day"' in str(_local_time(0, "day"))
+    assert str(_local_time("nonsense")) == ""
+    base = (pathlib.Path(__file__).resolve().parents[1]
+            / "arcade/web/templates/base.html").read_text()
+    assert "function arcadeLocalTimes" in base

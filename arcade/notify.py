@@ -50,6 +50,12 @@ def _snippet(text: str, n: int = 80) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
+#: A reply or share its own author deleted drops out of notifications, the
+#: way it drops out of the feed (feedview._one; a tester, 2026-09-27).
+_NOT_DELETED = ("NOT EXISTS (SELECT 1 FROM feed_act d WHERE d.network = {t}.network "
+                "AND d.target = {t}.txid AND d.author = {t}.author AND d.kind = ?)")
+
+
 def feed_events(conn, network: str, me: str) -> list[Event]:
     """Acts by other people on my posts, and replies on posts I liked or shared."""
     if not me:
@@ -66,8 +72,9 @@ def feed_events(conn, network: str, me: str) -> list[Event]:
         marks = ",".join("?" * len(chunk))
         for row in conn.execute(
                 f"SELECT rowid, txid, kind, target, author, text, height, block_time, amount"
-                f" FROM feed_act WHERE network = ? AND target IN ({marks}) AND author != ?"
-                f" ORDER BY rowid DESC LIMIT {LIMIT * 2}", (network, *chunk, me)):
+                f" FROM feed_act a WHERE network = ? AND target IN ({marks}) AND author != ?"
+                f" AND {_NOT_DELETED.format(t='a')}"
+                f" ORDER BY rowid DESC LIMIT {LIMIT * 2}", (network, *chunk, me, feed.DELETE)):
             rowid, txid, kind, target, author, text, height, block_time, amount = row
             on_mine = target in mine
             names = ON_MINE if on_mine else ON_FOLLOWED
@@ -97,9 +104,11 @@ def mention_events(conn, network: str, me: str, tag: str) -> list[Event]:
     like = "%@" + tag.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
     out: list[Event] = []
     for row in conn.execute(
-            "SELECT id, txid, sender, text, height, block_time FROM group_post "
+            "SELECT id, txid, sender, text, height, block_time FROM group_post g "
             "WHERE network = ? AND sender != ? AND text LIKE ? ESCAPE '\\' "
-            f"ORDER BY id DESC LIMIT {LIMIT}", (network, me, like)):
+            "AND NOT EXISTS (SELECT 1 FROM feed_act d WHERE d.network = g.network "
+            "AND d.target = g.txid AND d.author = g.sender AND d.kind = ?) "
+            f"ORDER BY id DESC LIMIT {LIMIT}", (network, me, like, feed.DELETE)):
         rowid, txid, sender, text, height, block_time = row
         if word.search(text or ""):
             out.append(Event(source="mention", seq=int(rowid), kind="mentioned you in a post",
@@ -107,9 +116,11 @@ def mention_events(conn, network: str, me: str, tag: str) -> list[Event]:
                              at=block_time if (height or 0) > 0 else 0,
                              extra={"txid": txid}))
     for row in conn.execute(
-            "SELECT rowid, txid, kind, target, author, text, height, block_time FROM feed_act "
+            "SELECT rowid, txid, kind, target, author, text, height, block_time FROM feed_act a "
             "WHERE network = ? AND author != ? AND kind IN (?, ?) AND text LIKE ? ESCAPE '\\' "
-            f"ORDER BY rowid DESC LIMIT {LIMIT}", (network, me, feed.REPLY, feed.SHARE, like)):
+            f"AND {_NOT_DELETED.format(t='a')} "
+            f"ORDER BY rowid DESC LIMIT {LIMIT}",
+            (network, me, feed.REPLY, feed.SHARE, like, feed.DELETE)):
         rowid, txid, kind, target, author, text, height, block_time = row
         if word.search(text or ""):
             out.append(Event(source="mention_reply", seq=int(rowid),

@@ -1128,3 +1128,29 @@ def test_the_list_answers_a_stranger_with_a_reason(node):
     assert refused.status_code == 403, refused.text
     assert "sign in" in refused.json()["detail"], refused.text
 
+
+
+def test_the_pair_chart_picks_a_timeframe_and_offers_the_others(node):
+    """a tester, 2026-09-27: thirty daily candles put a young chain's whole
+    history in one or two bars. The page offers 15m/1h/4h/1d, keeps the one
+    asked for, and says the period in its caption instead of "days"."""
+    seat = _bookcoin(node, 13)
+    body = _page(seat["app"], seat["pid"])
+    for t in ("15m", "1h", "4h", "1d"):
+        assert f'href="?tf={t}"' in body, t
+    answer = seat["app"].get(f"/exchange/pair/{seat['pid']}?tf=4h")
+    assert answer.status_code == 200
+    assert 'href="?tf=4h" aria-current="true"' in " ".join(answer.text.split())
+    assert seat["app"].get(f"/exchange/pair/{seat['pid']}?tf=junk").status_code == 200
+
+
+def test_the_timeframe_is_the_coarsest_that_still_draws_eight_candles():
+    from arcade import charts
+    now = 10_000_000
+    at = lambda age: [{"when": now - age, "price": 1}]
+    assert charts.pick_timeframe([], now) == "1d"
+    assert charts.pick_timeframe(at(600), now) == "15m"          # ten minutes old
+    assert charts.pick_timeframe(at(3 * 3600), now) == "15m"     # 12 quarter hours, 3 hours
+    assert charts.pick_timeframe(at(9 * 3600), now) == "1h"
+    assert charts.pick_timeframe(at(3 * 86_400), now) == "4h"
+    assert charts.pick_timeframe(at(20 * 86_400), now) == "1d"

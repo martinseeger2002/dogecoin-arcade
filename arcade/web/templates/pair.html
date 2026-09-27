@@ -48,7 +48,14 @@
 <div class="pairgrid">
   <div>
     <div class="panel">
-      {{ chart.candles(slots, 'coins each') }}
+      {% set periods = {'15m': '15-minute period', '1h': 'hour', '4h': '4-hour period', '1d': 'day'} %}
+      <div class="row tfs" style="gap:4px;margin:0 0 8px" role="group" aria-label="Candle size">
+        {% for t in timeframes %}
+        <a class="btn small {{ '' if t == tf else 'ghost' }}" href="?tf={{ t }}"
+           {% if t == tf %}aria-current="true"{% endif %}>{{ t }}</a>
+        {% endfor %}
+      </div>
+      {{ chart.candles(slots, 'coins each', period=periods[tf]) }}
     </div>
 
     <div class="panel">

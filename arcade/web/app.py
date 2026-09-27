@@ -652,6 +652,18 @@ def create_app(state: AppState) -> FastAPI:
                   lifespan=_lifespan)
     app.middleware("http")(the_door(state))
 
+    @app.middleware("http")
+    async def _sandbox_names_its_host(request: Request, call_next):
+        """Every sandboxed response names the host it came from beside 'self'
+        (contentlib.own_origin says why: Safari reads 'self' as nothing)."""
+        answer = await call_next(request)
+        csp = answer.headers.get("content-security-policy", "")
+        if csp.startswith("sandbox"):
+            answer.headers["content-security-policy"] = contentlib.own_origin(
+                csp, request.headers.get("x-forwarded-proto") or request.url.scheme,
+                request.headers.get("host", ""))
+        return answer
+
 
     def _from_outside(request: Request) -> bool:
         return doorlib.from_outside(request.headers,
@@ -4124,8 +4136,7 @@ def create_app(state: AppState) -> FastAPI:
                         if job.get("floor") == floor and job.get("status") == "done"]
             if finished:
                 job = finished[-1]
-                when = dt.datetime.fromtimestamp(
-                    float(job.get("created") or 0)).strftime("%d %b %H:%M")
+                when = _ago(float(job.get("created") or 0))
                 out["blocked"] = (
                     f"this wallet already inscribed {collection} on this chain "
                     f"-- run {job['id']}, started {when}, {job.get('items', 0):,} "
@@ -6231,9 +6242,7 @@ def create_app(state: AppState) -> FastAPI:
                                                and held_for == ask["buyer"])
                         ask["held_for"] = "" if not held_for or \
                             held_for == ask["buyer"] else held_for
-                        ask["until"] = (time.strftime("%a %H:%M",
-                                                      time.localtime(until))
-                                        if held_for else "")
+                        ask["until"] = _local_time(until, "day") if held_for else ""
                 except Exception:
                     asks = []
         # Said by the wallet, around the frame, because an inscribed page
@@ -7585,7 +7594,27 @@ def create_app(state: AppState) -> FastAPI:
     # funding choice reads `spent_by`, so the reservation lives in one place.
     _flights_spent_by = _flights.spent_by
     _flights.spent_by = lambda pubkey, network="": (
-        _flights_spent_by(pubkey, network) | _bids.reserved(pubkey, network))
+        _flights_spent_by(pubkey, network) | _bids.reserved(pubkey, network)
+        | _answered_coins(network))
+
+    def _answered_coins(network: str) -> frozenset:
+        """The coins every standing answer is signed over. An answer binds until
+        it is taken back (`_answer_standing`), so spending one of these on an
+        ordinary send would void it without anybody saying so. Outpoints are
+        unique, so the set needs no owner: nobody else can spend them anyway."""
+        out = set()
+        try:
+            for chain in _account_chains():
+                if network and chain.network != network:
+                    continue
+                for note in state.offers.bids(chain.network, direction="in",
+                                              status="open", limit=1000):
+                    if note.get("coins") and _answer_standing(
+                            chain, note["inscription"]) is not None:
+                        out.update((c["txid"], int(c["vout"])) for c in note["coins"])
+        except Exception:
+            pass
+        return frozenset(out)
 
     def _account_chain():
         """The chain a tag lives on. Testnet, as tags always have been."""
@@ -8656,8 +8685,7 @@ def create_app(state: AppState) -> FastAPI:
                         if run.get("floor") == floor and run["status"] == "done"]
             if finished:
                 run = finished[-1]
-                when = dt.datetime.fromtimestamp(
-                    float(run.get("created") or 0)).strftime("%d %b %H:%M")
+                when = _ago(float(run.get("created") or 0))
                 out["blocked"] = (
                     f"this account already inscribed {collection} on this "
                     f"chain -- run {run['id']}, started {when}, "
@@ -10486,6 +10514,77 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"offer": offer.id, "chain": chain.network,
                              "listings": [r["id"] for r in rows], **unsigned.as_json()})
 
+    @app.post("/account/answer/withdraw")
+    def account_answer_withdraw(request: Request, payload: Any = Body(None)):
+        """Offer the transaction that takes back an accepted offer ("Take it back").
+
+        An answer is the seller's signatures in the buyer's hands, and it binds
+        until the coins they were made over are spent (`_answer_standing`). This
+        spends them back to this account. An answer from before the coins were
+        written down (2026-09-27) has none on record, so every coin of the
+        account is spent back to itself instead: one transaction that stills
+        every signature the account ever gave. Nothing is broadcast here.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        piece = str(said.get("piece") or "").strip().lower()
+        note = _answer_standing(chain, piece) if address else None
+        if note is None or note["owner"] != address:
+            return JSONResponse({"detail": "this account has no accepted offer standing "
+                                           "on that piece"}, status_code=404)
+        index = state.token_index(chain)
+        number = (index.inscription(piece) or {}).get("number", "?")
+        try:
+            with contextlib.closing(index.open()) as db:
+                held = {(c["txid"], int(c["vout"])): c
+                        for c in utxoslib.unspent(db, address)}
+                if note["coins"]:
+                    coins = [held[(c["txid"], int(c["vout"]))] for c in note["coins"]
+                             if (c["txid"], int(c["vout"])) in held]
+                    if not coins:
+                        # Already spent: the answer is void, only the note was not.
+                        state.offers.close_bid(note["id"], "withdrawn")
+                        state.bump_generation()
+                        return JSONResponse({"done": True, "chain": chain.network})
+                else:
+                    coins = list(held.values())
+                unsigned = fundinglib.build_sweep(
+                    db, chain.params, address, coins, rate=fees.MIN_FEE_PER_KB,
+                    what=f"take back your acceptance of the offer on #{number}",
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+        except (fundinglib.FundingError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what)
+        return JSONResponse({"offer": offer.id, "chain": chain.network,
+                             "answer": note["id"], "all_coins": not note["coins"],
+                             **unsigned.as_json()})
+
+    @app.post("/account/answer/withdrawn")
+    def account_answer_withdrawn(request: Request, payload: Any = Body(None)):
+        """The tab broadcast the take-back: the answer no longer stands."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        note = state.offers.get_bid(str(said.get("answer") or ""))
+        txid = str(said.get("txid") or "").lower()
+        if not note or note["owner"] != address or note["direction"] != "in" \
+                or len(txid) != 64:
+            return JSONResponse({"detail": "that is not an answer of this account's"},
+                                status_code=404)
+        state.offers.close_bid(note["id"], "withdrawn", txid=txid)
+        state.bump_generation()
+        return JSONResponse({"done": True, "chain": chain.network})
+
     @app.post("/account/list/sign")
     def account_list_sign(request: Request, payload: Any = Body(None)):
         """File the leg this browser signed, from its bytes and the chain alone.
@@ -11142,16 +11241,48 @@ def create_app(state: AppState) -> FastAPI:
         finishing on one piece is that both legs spend the same coin of the
         seller's and only one of them can ever be in a block.
         """
-        now = time.time()
+        note = _answer_standing(chain, piece_txid)
+        return (str((note or {}).get("buyer") or ""),
+                float((note or {}).get("created") or 0))
+
+    def _answer_standing(chain, piece_txid: str) -> dict | None:
+        """The answer this account gave on a piece that still binds it, if any.
+
+        An answer is a signed half-trade in the buyer's hands, and it binds until
+        it is spent from under (2026-09-27, "Always binding"): the hold
+        it was given once lapsed after fifteen minutes, the page went back to
+        Accept / Refuse, and the buyer's wallet finished the trade a day later
+        (Pixel Skull #2, #28). So no clock here. It stops standing when the
+        piece has left the address that answered, or when "Take it back" spent
+        the coins it was signed over (status 'withdrawn').
+        """
         newest: dict | None = None
-        for note in state.offers.bids(chain.network, direction="in"):
-            if note["inscription"] != piece_txid or note["status"] != "open" \
-                    or float(note["expires"] or 0) <= now:
+        for note in state.offers.bids(chain.network, direction="in", status="open",
+                                      limit=1000):
+            if note["inscription"] != piece_txid:
                 continue
-            if newest is None or float(note["expires"]) > float(newest["expires"]):
+            if newest is None or float(note["created"]) > float(newest["created"]):
                 newest = note
-        return (str((newest or {}).get("buyer") or ""),
-                float((newest or {}).get("expires") or 0))
+        if newest is None:
+            return None
+        index = state.token_index(chain)
+        row = index.inscription(piece_txid)
+        if row is None or row["owner"] != newest["owner"]:
+            return None
+        if not newest["coins"]:
+            # From before the coins were written down: nothing says whether it
+            # can still complete, so it keeps the hold it was given. The one
+            # such answer left (#38) was already spent from under (a tester).
+            return newest if float(newest["expires"] or 0) > time.time() else None
+        # A leg is void the moment either coin it signed is spent: the buyer's
+        # page already says "no longer possible", and this one must agree.
+        # Asked of the node, mempool included: a coin a split just made is not
+        # in the index yet, and a coin spent a second ago is already gone.
+        with chain.rpc() as rpc:
+            for c in newest["coins"]:
+                if rpc.call("gettxout", c["txid"], int(c["vout"]), True) is None:
+                    return None
+        return newest
 
     _completing: dict[str, tuple[str, Any]] = {}      # bid txid -> (raw, unsigned)
 
@@ -11334,8 +11465,8 @@ def create_app(state: AppState) -> FastAPI:
             held_for, until = _answer_held(chain, row["txid"])
             if held_for and held_for != ask["buyer"]:
                 raise swaplib.SwapError(
-                    "that piece is answered to somebody else until "
-                    f"{time.strftime('%H:%M', time.localtime(until))} -- their "
+                    "that piece is answered to somebody else for another "
+                    f"{describe_duration(max(0, int(until - time.time())))} -- their "
                     "wallet has to sign first, or the answer has to expire")
             # The buyer has to be reachable for this to end in anything: the
             # answer goes back to them as a message, and an address is a place to
@@ -11377,15 +11508,35 @@ def create_app(state: AppState) -> FastAPI:
                 swaplib.leg_of({"inscription": row["txid"]}, index), index))
             what = f"sell {piece} for {cost}"
             with contextlib.closing(index.open()) as db:
-                held = _smallest_two_first([c for c in utxoslib.unspent(db, address)
-                        if (c["txid"], c["vout"])
-                        not in _flights.spent_by(account.pubkey, chain.network)])
+                spent = _flights.spent_by(account.pubkey, chain.network)
+                seen: set = set()
+                coins_here = []
+                # Coins still in the mempool count: the split below is spent by
+                # the answer straight after it is broadcast.
+                for c in (list(utxoslib.unspent(db, address))
+                          + list(_flights.change_for(account.pubkey, chain.network))):
+                    key = (c["txid"], int(c["vout"]))
+                    if key in spent or key in seen:
+                        continue
+                    seen.add(key)
+                    coins_here.append(c)
+                held = _smallest_two_first(coins_here)
                 if len(held) < 2:
-                    raise ValueError(
-                        f"this address has {len(held)} coin to spend and an "
-                        f"answer is a leg, which needs two of them: one input "
-                        f"signs the bytes naming the piece, the other signs the "
-                        f"price. Split it first -- Wallet, Send, 1 coin to your own @name -- and answer again.")
+                    # An answer is a leg, which signs two coins: one over the
+                    # bytes naming the piece, one over the price. With fewer, the
+                    # tab makes a second first -- one small send to itself, on
+                    # the same confirm card -- rather than telling a person to
+                    # split coins by hand (a tester, 2026-09-27).
+                    split = fundinglib.build(
+                        db, chain.params, address,
+                        [(fundinglib.EXACT_SELLER_COIN, txbuild.p2pkh_script(address))],
+                        rate=fees.MIN_FEE_PER_KB,
+                        what="split a coin so this answer has two to sign",
+                        exclude=spent,
+                        extra=_flights.change_for(account.pubkey, chain.network))
+                    offer = _offers.add(account.pubkey, chain.network, split, split.what)
+                    return JSONResponse({"needs_split": True, "offer": offer.id,
+                                         "chain": chain.network, **split.as_json()})
                 leg = fundinglib.build_leg(
                     chain.params, address, held[0], coins=price,
                     rate=fees.MIN_FEE_PER_KB, what=what,
@@ -11448,8 +11599,8 @@ def create_app(state: AppState) -> FastAPI:
             held_for, until = _answer_held(chain, row["txid"])
             if held_for and held_for != ask["buyer"]:
                 raise swaplib.SwapError(
-                    "that piece is answered to somebody else until "
-                    f"{time.strftime('%H:%M', time.localtime(until))}")
+                    "that piece is answered to somebody else for another "
+                    f"{describe_duration(max(0, int(until - time.time())))}")
             take = swaplib.leg_from_json(_take_json(ask, index))
             if take.kind not in (inscriptionlib.LEG_COINS,
                                  inscriptionlib.LEG_TOKEN):
@@ -11532,7 +11683,10 @@ def create_app(state: AppState) -> FastAPI:
             "owner": address, "buyer": ask["buyer"], "peer_pubkey": to.hex(),
             "take": swaplib.leg_json(take, index),
             "note": f"answered offer {ask['txid'][:16]}…", "created": now,
-            "expires": now + ACCOUNT_ANSWER_HOLD})
+            "expires": now + ACCOUNT_ANSWER_HOLD,
+            # What "Take it back" has to spend: the answer is signatures over
+            # these, and nothing else stills them.
+            "coins": [{"txid": t, "vout": v} for t, v in committed]})
         state.bump_generation()
         return JSONResponse({
             "chain": chain.network, "ok": True, "offer": ask["txid"],
@@ -14677,6 +14831,10 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             trades = []
         points = chartlib.token_prices(trades, property_id)
+        asked = request.query_params.get("tf", "")
+        frame = chartlib.timeframe(
+            asked if asked in {t[0] for t in chartlib.TIMEFRAMES}
+            else chartlib.pick_timeframe(points))
         book = index.book(property_id)
         # Who is looking, settled before anything is read about a wallet. This
         # page stands in the door's public trees, and until now it had one
@@ -14760,7 +14918,8 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "pair.html", chain=chain, prop=prop, book=book,
                       face=face, spread=spread, day=chartlib.day(points),
                       stats=chartlib.last_and_change(points),
-                      slots=chartlib.candles(points),
+                      slots=chartlib.candles(points, buckets=frame[2], span=frame[1]),
+                      tf=frame[0], timeframes=[t[0] for t in chartlib.TIMEFRAMES],
                       recent=sorted(points, key=lambda p: -p["when"])[:12],
                       held=format_amount(held, prop["divisible"]), held_units=held,
                       coins=coins, mine=mine,
@@ -15629,22 +15788,13 @@ def create_app(state: AppState) -> FastAPI:
                 # which is why the row waits out the note rather than reading
                 # "sold": the piece moving is the only news here, and the next
                 # page read is where that shows.
-                notes: dict[str, dict] = {}
-                for note in state.offers.bids(chain.network, direction="in"):
-                    if float(note["expires"] or 0) > time.time():
-                        before = notes.get(note["inscription"])
-                        if before is None or float(note["expires"]) > \
-                                float(before["expires"]):
-                            notes[note["inscription"]] = note
                 for entry in data["offers_in"]:
-                    note = notes.get(entry["inscription"]) or {}
+                    note = _answer_standing(chain, entry["inscription"]) or {}
                     same = note.get("buyer") == entry["buyer"]
-                    entry["accepted"] = bool(note and same
-                                            and note.get("status") == "open")
+                    entry["accepted"] = bool(note and same)
                     entry["held_for"] = "" if same else str(note.get("buyer") or "")
-                    entry["until"] = (time.strftime(
-                        "%a %H:%M", time.localtime(float(note["expires"])))
-                        if note else "")
+                    entry["until"] = (_local_time(float(note["created"]), "day")
+                                      if note else "")
             else:
                 standing = {}
                 for offer in state.offers.open_offers(chain.network):
@@ -15657,7 +15807,7 @@ def create_app(state: AppState) -> FastAPI:
                     held = standing.get(entry["inscription"])
                     entry["accepted"] = bool(held and held["buyer"] == entry["buyer"])
                     entry["held_for"] = held["buyer"] if held else ""
-                    entry["until"] = (time.strftime("%H:%M", time.localtime(held["expires"]))
+                    entry["until"] = (_local_time(held["expires"], "time")
                                       if held else "")
                     entry["settled"] = bool(held and held.get("status") == "sent")
                     entry["swap_txid"] = (held or {}).get("txid", "")
@@ -16050,7 +16200,25 @@ def _picked_up(token: str) -> dict[str, Any]:
     return what
 
 
-def _when(ts: int | None = None) -> str:
-    """A timestamp, or now when called with nothing."""
-    moment = dt.datetime.now() if ts is None else dt.datetime.fromtimestamp(ts)
-    return moment.strftime("%Y-%m-%d %H:%M")
+def _when(ts: int | None = None) -> Markup:
+    """A timestamp, or now when called with nothing -- in the READER's time zone
+    (2026-09-27: "whenever a user sees a timestamp anywhere ... it should
+    be converted to their local time"). Sent as a <time> carrying the moment in
+    UTC; base.html rewrites its text in the browser's own zone. The server's
+    rendering is only what shows before that script runs."""
+    return _local_time(time.time() if ts is None else ts, "full")
+
+
+def _local_time(ts: Any, style: str = "full") -> Markup:
+    """A moment, as the reader's clock says it (see base.html `arcadeLocalTimes`).
+    `style`: "full" (date and time), "time" (hour:minute), "day" (weekday, time)."""
+    try:
+        moment = dt.datetime.fromtimestamp(float(ts), tz=dt.timezone.utc)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return Markup("")
+    shown = {"time": "%H:%M", "day": "%a %H:%M"}.get(style, "%Y-%m-%d %H:%M")
+    return Markup('<time class="lt" data-lt="{s}" datetime="{iso}">{text} UTC</time>').format(
+        s=style, iso=moment.strftime("%Y-%m-%dT%H:%M:%SZ"), text=moment.strftime(shown))
+
+
+TEMPLATES.env.globals["local_time"] = _local_time
