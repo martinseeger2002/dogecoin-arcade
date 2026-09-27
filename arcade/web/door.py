@@ -228,7 +228,7 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # this path, and an account that made the listing is refused at
                # both halves.
                "/account/buy", "/account/buy/sign",
-               "/account/fill", "/account/fill/sign",
+               "/account/fill", "/account/fill/sign", "/account/fill/check",
                # the pair that answers one of those offers with the piece: the
                # first shows the leg at the buyer's price, the second checks the
                # signatures really say that offer and says where to mail them.
@@ -275,6 +275,19 @@ def public_path(path: str, method: str = "GET") -> bool:
     if any(shape.match(path) for shape in PUBLIC_SHAPES):
         return True
     return any(path.startswith(tree) for tree in PUBLIC_TREES)
+
+
+def speaks_for_the_operator(path: str) -> bool:
+    """A route that answers as, or asks, the operator's own wallet.
+
+    The inscribed-pages hostname serves all of /r/, and it is reached from the
+    internet: without this, pages.<domain>/r/wallet handed every stranger the
+    operator's addresses, tag and balances, and any page opened by anybody
+    greeted them as the operator (a tester, 2026-09-26).
+    """
+    path = (path or "/").rstrip("/") or "/"
+    return any(path == deny or path.startswith(deny + "/")
+               for deny in NEVER_PUBLIC)
 
 
 def pages_path(path: str) -> bool:

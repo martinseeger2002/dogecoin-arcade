@@ -217,7 +217,8 @@ def test_the_wallet_endpoint_asks_for_every_address_at_once():
     from arcade.web import app as webapp
 
     source = inspect.getsource(webapp.create_app)
-    start = source.index("def r_wallet(")
+    # The operator's wallet and a viewing account share one answer-builder.
+    start = source.index("def _wallet_answer(")
     body = source[start:source.index("@app.get", start + 10)]
     assert "index.balances(addresses)" in body, body[:400]
 

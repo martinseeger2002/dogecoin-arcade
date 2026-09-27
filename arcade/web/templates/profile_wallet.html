@@ -42,7 +42,7 @@
         <td>{% if held.tokens %}
           {% for row in held.tokens %}
             <a href="/tokens/{{ row['property_id'] }}">{{ row['name'] or ('#' ~ row['property_id']) }}</a>
-            <span class="muted">{{ "{:,}".format(row['balance'] // 100000000) }}</span>{{ "," if not loop.last }}
+            <span class="muted">{{ row['display'] }}</span>{{ "," if not loop.last }}
           {% endfor %}
         {% else %}<span class="muted">none</span>{% endif %}</td></tr>
   </table>
