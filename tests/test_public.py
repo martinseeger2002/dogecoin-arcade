@@ -749,3 +749,36 @@ def test_an_arena_asking_about_an_account_s_piece_is_answered_here(client):
     assert answer.status_code != 403, answer.text
     assert answer.json().get("from") == "here", answer.text
     assert answer.json()["answer"] == 7
+
+
+@pytest.mark.parametrize("signed_in", [False, True])
+def test_a_collection_market_offers_nothing_the_door_refuses(public, signed_in):
+    """/exchange/collection/<creator>/<name> drew the operator's Buy / Make offer
+    forms (POST /exchange/offer) for every account, and each landed on "Not
+    here" (a tester, 2026-09-26). The census above never visited one, because
+    a market page needs a collection on the chain to draw anything."""
+    app, state = public
+    if signed_in:
+        _seat(app)
+    index = state.token_index(state.token_chain)
+    creator = "nCreatorCCCCCCCCCCCCCCCCCCCCCCCCC"
+    with index.open() as db:
+        for n in (1, 2):
+            txid = f"{n:02d}" * 32
+            db.conn.execute(
+                "INSERT OR REPLACE INTO inscription(txid,number,creator,owner,block_height,"
+                "position,content_type,content_len,sha256,json,chunks,content) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (txid, 950 + n, creator, KEEPER, 100, n, "image/png", 2, "ab" * 32,
+                 None, 1, b"hi"))
+            db.conn.execute("INSERT OR REPLACE INTO collection_item(txid,creator,collection,"
+                            "edition,name) VALUES(?,?,?,?,?)",
+                            (txid, creator, "Market Set", n, ""))
+        db.conn.commit()
+    page = f"/exchange/collection/{creator}/Market%20Set"
+    answer = app.get(page, headers=LOCAL)
+    assert answer.status_code == 200, answer.text[:300]
+    bad = [f"{m} -> {t}" for t, m in _offered(answer.text, page) + _asked(answer.text)
+           if not door.public_path(t.rstrip("/") or "/", m)]
+    assert bad == [], bad
+    assert "/view#make-offer" in answer.text or not signed_in

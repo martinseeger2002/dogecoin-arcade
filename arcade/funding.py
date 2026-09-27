@@ -353,6 +353,46 @@ def build_one(params: Params, address: str, coin: dict,
                     fee=fee, change=change, what=what)
 
 
+def build_sweep(db, params: Params, address: str, coins: list[dict], rate: int,
+                what: str = "", exclude=frozenset(), extra: list | None = None) -> Unsigned:
+    """Spend exactly these coins of `address` back to `address`.
+
+    Cancelling a listing (2026-09-26: one "Sell", with "Cancel listing"):
+    a leg signed SINGLE|ANYONECANPAY stays good until a block spends the coins it
+    signed, and spending them is the only way to take it back. The listing's two
+    coins are small, so when they cannot pay the fee and still leave a coin worth
+    keeping, one more coin of the account's is added to pay for it.
+    """
+    given = []
+    for coin in coins:
+        txid, vout = str(coin.get("txid") or ""), int(coin.get("vout", -1))
+        if len(txid) != 64 or vout < 0:
+            raise FundingError("that is not a coin this account holds")
+        given.append({"txid": txid, "vout": vout, "value": int(coin.get("value", 0)),
+                      "address": address})
+    if not given:
+        raise FundingError("there is nothing to spend")
+    taken = {(c["txid"], c["vout"]) for c in given}
+    total = sum(c["value"] for c in given)
+    fee = price(len(given), [], rate, change=True)
+    if total - fee < fees.DUST_LIMIT:
+        more = choose(db, address, fee + fees.DUST_LIMIT - total + price(1, [], rate),
+                      exclude=frozenset(exclude) | taken, extra=extra)
+        given += [dict(c, address=address) for c in more]
+        total = sum(c["value"] for c in given)
+        fee = price(len(given), [], rate, change=True)
+    change = total - fee
+    if change < fees.DUST_LIMIT:
+        raise FundingError("this account does not hold enough to pay the fee")
+    outputs = [(change, p2pkh_script(address))]
+    raw = build_raw_tx([(c["txid"], c["vout"]) for c in given], outputs)
+    script = p2pkh_script(address)
+    return Unsigned(raw=raw, inputs=given, outputs=outputs,
+                    sighashes=[sighash(given, outputs, n, script).hex()
+                               for n in range(len(given))],
+                    fee=fee, change=change, what=what)
+
+
 def build_partial(db, params: Params, address: str, foreign: list,
                   payload_outputs: list, rate: int, what: str = "",
                   dust: int = 0, exclude=frozenset(),

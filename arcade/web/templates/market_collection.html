@@ -115,7 +115,20 @@
         {%- if row.offers %} <span class="muted">&middot; {{ row.offers }} offer{{ '' if row.offers == 1 else 's' }}</span>{% endif %}</div>
 
       <div class="act">
-        {% if row.mine %}
+        {% if account_view %}
+          {# An account buys, offers and sells from the piece's own page, signed
+             in its tab; the forms below are the operator's wallet's. #}
+          {% if row.mine %}
+            <a class="btn small" href="/me/nfts">{{ 'Your listing' if row.listing else 'Sell it' }}</a>
+          {% elif not signed_in %}
+            <a class="btn ghost small" href="/join">Sign in to buy</a>
+          {% elif row.listing %}
+            <a class="btn small" href="/inscriptions/{{ row.txid }}/view#for-sale">{{ 'Buy' if row.listing.kind != 'ask' else 'Offer' }} {{ row.listing.price }}</a>
+            <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view#make-offer">Make offer</a>
+          {% else %}
+            <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view#make-offer">Make offer</a>
+          {% endif %}
+        {% elif row.mine %}
           {% if row.listing and row.listing.kind == 'ask' %}
             <a class="btn ghost small" href="/exchange/sell/{{ row.txid }}">Change the price</a>
           {% elif row.listing %}

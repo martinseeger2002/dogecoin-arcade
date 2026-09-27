@@ -333,6 +333,19 @@
 </div>
 
 {% if viewer == 'account' and mine_account %}
+{# Yours: the one "Sell" (2026-09-26) lives with the rest of your pieces. #}
+<div class="panel row" style="align-items:center;gap:10px">
+  {% if listed and listed.theirs %}
+    <div style="flex:1 1 200px"><span class="pill ok">for sale</span>
+      <strong>{{ listed.price }} {{ chain.label|lower }}</strong>
+      <span class="muted" style="font-size:.82rem">&middot; anybody can buy it, open for {{ listed.left }}</span></div>
+    <a class="btn ghost small" href="/me/nfts">Change the price or cancel</a>
+  {% else %}
+    <div style="flex:1 1 200px" class="muted">Yours. Put it up for sale at your price;
+      anybody can buy it even while you're away.</div>
+    <a class="btn small" href="/me/nfts">Sell</a>
+  {% endif %}
+</div>
 <h2>Offered for it</h2>
 <div class="panel">
   {% if not asks %}
@@ -448,8 +461,45 @@
 </div>
 {% endif %}
 
+{% if not listed and sale and sale.kind == 'ask' and sale.seller == row.owner
+      and viewer == 'account' and not mine_account %}
+{# A price the holder put on the chain (an ask). It reserves nothing and nobody
+   can finish it without the holder's signature, so what a buyer can do is offer
+   that price; the holder completes it when they accept (a tester, 2026-09-26:
+   the piece page did not say it was for sale at all). #}
+<h2 id="for-sale">Asking price</h2>
+<div class="panel">
+  <div class="row" style="align-items:center;gap:12px">
+    <div style="flex:1 1 200px">
+      <strong style="font-size:1.25rem">asking {{ sale.price }}</strong>
+      <div class="muted" style="font-size:.82rem">by {{ row.owner|who }} &middot; make an offer
+        {%- if sale.pending %} &middot; waiting for its block{% endif %}</div>
+    </div>
+    <button type="button" id="offer-the-price" data-amount="{{ '%.8f'|format((sale.sats or 0) / 100000000) if sale.sats else '' }}"
+      {{ 'disabled' if not sale.sats }}>Offer {{ sale.price }}</button>
+  </div>
+  <p class="muted" style="font-size:.82rem;margin:8px 0 0">The holder named this price.
+    Offer it and the piece is yours when they accept; they are told about it.</p>
+</div>
+<script>
+(function () {
+  var b = document.getElementById('offer-the-price');
+  if (!b) return;
+  b.onclick = function () {
+    var box = document.getElementById('offer-amount');
+    var kind = document.getElementById('offer-kind');
+    if (!box) return;
+    box.value = String(parseFloat(b.dataset.amount));
+    if (kind) kind.value = 'coins';
+    document.getElementById('make-offer').scrollIntoView({behavior: 'smooth', block: 'start'});
+    box.focus();
+  };
+})();
+</script>
+{% endif %}
+
 {% if listed and not listed.theirs %}
-<h2>For sale</h2>
+<h2 id="for-sale">For sale</h2>
 <div class="panel" id="buy-panel">
   <div class="row" style="align-items:center;gap:12px">
     <div style="flex:1 1 200px">
@@ -557,7 +607,7 @@
 {% endif %}
 
 {% if not mine and not mine_account %}
-<h2>Make an offer</h2>
+<h2 id="make-offer">Make an offer</h2>
 <div class="panel">
   {% if offer_error %}<div class="msg err">{{ offer_error }}</div>{% endif %}
   {% if viewer == 'account' %}

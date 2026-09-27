@@ -7922,6 +7922,17 @@ def create_app(state: AppState) -> FastAPI:
                 index = state.token_index(chain)
                 held = index.inscriptions(owner=address, limit=200)
                 listed = _nft_listings(index, chain)
+                asked = _prices_for(index, chain)
+                _sweep_book(chain)
+                book: dict[str, dict] = {}
+                for row in state.listings.open_listings(chain.network, limit=1000):
+                    sold = _sold_piece(row) if row["owner"] == address else ""
+                    if sold and sold not in book:
+                        book[sold] = {"id": row["id"],
+                                      "price": f"{int(row['price']) / listingslib.COIN:.8f}"
+                                               .rstrip("0").rstrip("."),
+                                      "left": describe_duration(
+                                          max(0, int(row["expires"] - time.time())))}
             except Exception:
                 continue           # a chain this node has no index for
             out.append({
@@ -7936,6 +7947,13 @@ def create_app(state: AppState) -> FastAPI:
                     "edition": row.get("edition"),
                     "creator": row["creator"],
                     "sale": listed.get(row["txid"]),
+                    # The one "Sell" (2026-09-26): a pre-signed listing in
+                    # this node's book, which anybody can buy while you are away.
+                    "listing": book.get(row["txid"]),
+                    # An older price put on the chain, shown for what it is.
+                    "ask": (asked.get(row["txid"]) or {}).get("price")
+                           if (asked.get(row["txid"]) or {}).get("kind") == "ask"
+                           and (asked.get(row["txid"]) or {}).get("seller") == address else None,
                 } for row in held],
             })
         return JSONResponse({"chains": out})
@@ -9277,6 +9295,44 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"chain": chain.network,
                              "price": price, "number": row["number"],
                              **leg.as_json()})
+
+    @app.post("/account/list/cancel")
+    def account_list_cancel(request: Request, payload: Any = Body(None)):
+        """Offer the transaction that takes this account's listings of a piece
+        back: it spends the coins their signatures were made over, back to this
+        account, which is the only thing that stills a signature that has left
+        the browser. Nothing is broadcast here; the tab signs it as usual."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        piece = str(said.get("piece") or "").strip().lower()
+        rows = [r for r in state.listings.open_listings(chain.network, limit=1000)
+                if r["owner"] == address and _sold_piece(r) == piece]
+        if not address or not rows:
+            return JSONResponse({"detail": "this account has no open listing of that piece"},
+                                status_code=404)
+        coins = []
+        for r in rows:
+            for c in (r["input"], r["coin"]):
+                if c and (c["txid"], c["vout"]) not in {(x["txid"], x["vout"]) for x in coins}:
+                    coins.append(c)
+        try:
+            index = state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build_sweep(
+                    db, chain.params, address, coins, rate=fees.MIN_FEE_PER_KB,
+                    what=f"cancel the listing of #{(index.inscription(piece) or {}).get('number', '?')}",
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+        except (fundinglib.FundingError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what)
+        return JSONResponse({"offer": offer.id, "chain": chain.network,
+                             "listings": [r["id"] for r in rows], **unsigned.as_json()})
 
     @app.post("/account/list/sign")
     def account_list_sign(request: Request, payload: Any = Body(None)):
@@ -12978,6 +13034,30 @@ def create_app(state: AppState) -> FastAPI:
         for txid, entry in _nft_listings(index, chain).items():
             entry = dict(entry, kind="shop", take=None, when=None, pending=False)
             out.setdefault(txid, entry)
+        # The one "Sell" (2026-09-26): an account's pre-signed listing in
+        # this node's book, which anybody can buy outright. It wins over an older
+        # price its holder put on the chain, because it is the one a buyer can
+        # finish without waiting for anybody.
+        try:
+            _sweep_book(chain)
+            for row in state.listings.open_listings(chain.network, limit=1000):
+                piece = _sold_piece(row)
+                if not piece or (out.get(piece) or {}).get("kind") == "listing":
+                    continue
+                got = index.inscription(piece)
+                if got is None or got["owner"] != row["owner"]:
+                    continue
+                sats = int(row["price"])
+                shown = f"{sats / listingslib.COIN:.8f}".rstrip("0").rstrip(".")
+                out[piece] = {
+                    "kind": "listing", "shop": piece, "seller": row["owner"],
+                    "price": f"{shown} coins",
+                    "take": {"kind": "coins", "sats": sats, "amount": shown},
+                    "sats": sats, "number": got["number"],
+                    "collection": got.get("collection"), "edition": got.get("edition"),
+                    "when": None, "pending": False, "listing": row["id"]}
+        except Exception as exc:                          # noqa: BLE001
+            log.info("prices: listing book: %s", exc)
         return out
 
     def _nft_points(index, trades) -> dict[tuple[str, str] | None,
@@ -13808,6 +13888,12 @@ def create_app(state: AppState) -> FastAPI:
                 + [creator])
         except Exception as exc:
             data["node_error"] = data["node_error"] or f"the index could not be read: {exc}"
+        # Whose buttons: on a public copy the operator's forms (/exchange/offer,
+        # /exchange/sell) are refused at the door, so an account is sent to the
+        # piece's own page, where buying, offering and selling are signed in its
+        # tab (a tester, 2026-09-26: "Buy for 3 coins" landed on "Not here").
+        data["account_view"] = _public_request(request)
+        data["signed_in"] = bool(signed_in(request)) if data["account_view"] else True
         return render(request, "market_collection.html", **data)
 
     # --- putting a price on one NFT ------------------------------------------

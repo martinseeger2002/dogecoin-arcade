@@ -279,7 +279,7 @@ def test_one_coin_cannot_list_a_piece_it_holds(shop):
     assert asked.status_code == 400
     detail = asked.json()["detail"]
     assert "needs two of them" in detail, detail
-    assert "Send yourself a little change" in detail, detail
+    assert "Split it first" in detail, detail
 
     rpc.call("sendtoaddress", mine, 1.0)
     rpc.call("generate", 1)
