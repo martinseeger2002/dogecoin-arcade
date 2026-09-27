@@ -125,3 +125,47 @@ def test_a_picture_named_in_a_message_is_drawn_as_the_feed_draws_it(client, monk
     body = app.get(f"/messages/{peer.hex()}").text
     assert f'<img class="postmedia" src="/content/{piece}"' in body
     assert "&lt;b&gt;not bold&lt;/b&gt;" in body, "the message's own markup stays text"
+
+
+# --- @mentions (2026-09-26) -------------------------------------------
+
+def test_a_mention_is_news_whole_names_only(public):
+    app, state = public
+    a_post(state, "f1" * 32, text="hey @Maple look at this", sender=THEM)
+    a_post(state, "f2" * 32, text="@maplesyrup is not you", sender=THEM)
+    a_post(state, "f3" * 32, text="write to maple@example.com", sender=THEM)
+    a_post(state, "f4" * 32, text="me naming @maple myself", sender=ME)
+    an_act(state, "f5" * 32, feed.REPLY, "f2" * 32, author=THEM, text="cc @maple.")
+    with state.store() as store:
+        events = notify.mention_events(store.conn, state.messaging.network, ME, "maple")
+    got = sorted((e.source, e.kind, e.target) for e in events)
+    assert got == [("mention", "mentioned you in a post", "f1" * 32),
+                   ("mention_reply", "mentioned you in a comment", "f2" * 32)]
+
+
+def test_a_mention_shows_on_the_notifications_page(public):
+    from arcade.db import Database
+    from arcade.state import install_schema
+
+    app, state = public
+    _me(app, state)
+    db = Database(state.home / f"{state.messaging.network}-ledger.sqlite")
+    install_schema(db)
+    db.conn.execute("INSERT OR REPLACE INTO tag(tag,address,claimed_txid,block_height,position) "
+                    "VALUES('maple',?,?,100,0)", (ME, "t" * 64))
+    db.conn.commit()
+    db.close()
+    a_post(state, "f6" * 32, text="thanks @maple!", sender=THEM)
+    seen = " ".join(app.get("/me/notifications", headers=EDGE).text.split())
+    assert "mentioned you in a post" in seen, seen[seen.find("Notifications"):][:600]
+    assert f"/feed?post={'f6' * 32}" in seen
+
+
+def test_a_mention_in_a_post_is_a_link_to_their_feed():
+    from arcade.web.app import post_html
+    out = post_html("hi @Maple, mail bob@example.com <b>@x</b> and @ok_name")
+    assert '<a class="mention" href="/u/maple">@Maple</a>' in out
+    assert 'href="/u/ok_name"' in out
+    assert "bob@example.com" in out and "/u/example" not in out
+    assert "&lt;b&gt;" in out, "still escaped first"
+    assert 'href="/u/x"' not in out, "a tag is at least two characters"

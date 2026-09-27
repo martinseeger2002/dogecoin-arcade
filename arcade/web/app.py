@@ -271,6 +271,24 @@ TEMPLATES.env.globals["render_post"] = lambda text, drawable=None: Markup(
 _CONTENT_IN_TEXT = re.compile(r"/content/([0-9a-f]{64})")
 
 
+#: An @name in a post, a comment or a message (2026-09-26: "if someone is
+#: @tagged in a post or comment it should show up like a link to their feed").
+#: Matched on the ESCAPED text, so it can only ever wrap characters a tag may
+#: have; not after a word character, so an email address stays an address.
+_MENTION = re.compile(r"(?<![\w@/.])@([A-Za-z0-9_]{2,24})(?![\w@])")
+
+
+def _mentions_linked(escaped: str) -> str:
+    return _MENTION.sub(
+        lambda m: f'<a class="mention" href="/u/{m.group(1).lower()}">@{m.group(1)}</a>',
+        escaped)
+
+
+def mentioned_in(text: str) -> set[str]:
+    """Every @name a text names, lower case."""
+    return {m.group(1).lower() for m in _MENTION.finditer(text or "")}
+
+
 def post_html(text: str, drawable: dict[str, str] | None = None) -> str:
     """One post's words as HTML: escaped first, then its inscriptions drawn.
 
@@ -289,7 +307,7 @@ def post_html(text: str, drawable: dict[str, str] | None = None) -> str:
     out = []
     last = 0
     for found in _CONTENT_IN_TEXT.finditer(text or ""):
-        out.append(html.escape((text or "")[last:found.start()]))
+        out.append(_mentions_linked(html.escape((text or "")[last:found.start()])))
         piece = found.group(1)
         kind = drawable.get(piece, "")
         if kind.startswith("image/"):
@@ -305,7 +323,7 @@ def post_html(text: str, drawable: dict[str, str] | None = None) -> str:
             out.append(f'<a href="/inscriptions/{piece}/view">'
                        f'/content/{piece[:12]}…</a>')
         last = found.end()
-    out.append(html.escape((text or "")[last:]))
+    out.append(_mentions_linked(html.escape((text or "")[last:])))
     return "".join(out)
 
 
@@ -6842,6 +6860,13 @@ def create_app(state: AppState) -> FastAPI:
         try:
             with state.store() as store:
                 events += notify.feed_events(store.conn, chain.network, me)
+                # Named in somebody's post or comment (2026-09-26). A reply
+                # to your own post that names you is already "replied to".
+                tag = _name_of(me) if me else ""
+                told = {e.extra.get("txid") for e in events}
+                events += [e for e in notify.mention_events(store.conn, chain.network,
+                                                            me, tag)
+                           if e.extra.get("txid") not in told]
         except Exception as exc:                          # noqa: BLE001
             log.info("notifications: feed: %s", exc)
         push = state.push() if hasattr(state, "push") else None

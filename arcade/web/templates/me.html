@@ -331,8 +331,10 @@ function drawRoom(said) {
 }
 
 // The card at the top: face, @name, bio and link, from what the chain has.
+let publishedFace = "";
 function drawCard(said) {
   const prof = said.profile || {};
+  publishedFace = prof.pfp || "";
   const name = said.tag || said.name || "";
   const face = $("me-face");
   face.hidden = !prof.pfp;
@@ -464,12 +466,17 @@ function previewFace() {
   const piece = /^[0-9a-f]{64}$/.test(id);
   $("face-preview").hidden = !piece;
   if (piece) $("face-img").src = "/content/" + id;
-  // And in the card at the top, as others will see it.
-  $("me-face").hidden = !piece;
-  $("me-letter").hidden = piece;
-  if (piece) $("me-face").src = "/content/" + id;
+  // And in the card at the top, as others will see it. Anything that is not a
+  // picture id -- a browser's autofill typing the username in here, a half-pasted
+  // id -- leaves the published picture showing rather than hiding it (the operator,
+  // 2026-09-26: "if you have a profile picture assigned, it should show on your
+  // me page"). Remove picture empties the box on purpose, and hides it.
+  const shown = piece ? id : ($("pfp").dataset.cleared ? "" : publishedFace);
+  $("me-face").hidden = !shown;
+  $("me-letter").hidden = !!shown;
+  if (shown) $("me-face").src = "/content/" + shown;
 }
-$("pfp").addEventListener("input", previewFace);
+$("pfp").addEventListener("input", () => { delete $("pfp").dataset.cleared; previewFace(); });
 
 /* The pictures this account holds, to tap rather than paste. Asked once, the
    first time the section is opened. */
@@ -498,6 +505,7 @@ async function loadFacePicker() {
       b.appendChild(img);
       b.onclick = () => {
         $("pfp").value = piece.txid; $("pfp").dataset.touched = "yes";
+        delete $("pfp").dataset.cleared;
         document.querySelectorAll(".faceopt").forEach((o) => o.classList.remove("on"));
         b.classList.add("on");
         previewFace();
@@ -510,7 +518,7 @@ async function loadFacePicker() {
 // thing behind a fold (2026-09-26).
 document.addEventListener("arcade:me-drawn", () => { if (keys) loadFacePicker(); });
 $("face-clear").onclick = () => {
-  $("pfp").value = ""; $("pfp").dataset.touched = "yes";
+  $("pfp").value = ""; $("pfp").dataset.touched = "yes"; $("pfp").dataset.cleared = "yes";
   document.querySelectorAll(".faceopt").forEach((o) => o.classList.remove("on"));
   previewFace();
 };
@@ -562,6 +570,7 @@ $("announce").onclick = () => withWallet(
 const published = (words) => () => {
   // Now the chain has it, so let the next draw fill the boxes from there.
   for (const id of ["pfp", "bio", "url"]) delete $(id).dataset.touched;
+  delete $("pfp").dataset.cleared;
   return words;
 };
 
@@ -599,6 +608,7 @@ $("publish-about").onclick = async () => {
     $("profile-news").hidden = false;
   }
   for (const id of ["pfp", "bio", "url"]) delete $(id).dataset.touched;
+  delete $("pfp").dataset.cleared;
   $("publish-about").disabled = !keys;
   $("publish-about").textContent = "Publish profile";
 };

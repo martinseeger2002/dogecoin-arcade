@@ -287,3 +287,13 @@ def test_every_account_page_finishes_publishing_the_key(public):
     assert "arcade.keycheck" in app.get("/feed", headers=EDGE).text
     assert "arcade.keycheck" not in app.get("/me", headers=EDGE).text, \
         "/me does this itself"
+
+
+def test_a_published_picture_stays_in_the_card_whatever_the_box_says(client):
+    """Autofill typing the username into the picture-id box hid the published
+    picture on /me (2026-09-26). The preview falls back to it."""
+    page = (pathlib.Path(__file__).resolve().parents[1]
+            / "arcade/web/templates/me.html").read_text()
+    body = page[page.index("function previewFace"):]
+    body = body[:body.index("\n}\n")]
+    assert "publishedFace" in body and "dataset.cleared" in body

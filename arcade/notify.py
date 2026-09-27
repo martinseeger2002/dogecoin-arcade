@@ -82,6 +82,45 @@ def feed_events(conn, network: str, me: str) -> list[Event]:
     return out
 
 
+def mention_events(conn, network: str, me: str, tag: str) -> list[Event]:
+    """Posts and comments by other people that name @tag (2026-09-26).
+
+    Two sources with their own read markers, because their row ids come from two
+    tables: `mention` (a post, group_post.id) and `mention_reply` (a comment or
+    a share's words, feed_act.rowid). The word has to be the whole name --
+    @robinez does not name @robin.
+    """
+    import re as _re
+    if not (me and tag):
+        return []
+    word = _re.compile(rf"(?<![\w@/.])@{_re.escape(tag)}(?![\w@])", _re.I)
+    like = "%@" + tag.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    out: list[Event] = []
+    for row in conn.execute(
+            "SELECT id, txid, sender, text, height, block_time FROM group_post "
+            "WHERE network = ? AND sender != ? AND text LIKE ? ESCAPE '\\' "
+            f"ORDER BY id DESC LIMIT {LIMIT}", (network, me, like)):
+        rowid, txid, sender, text, height, block_time = row
+        if word.search(text or ""):
+            out.append(Event(source="mention", seq=int(rowid), kind="mentioned you in a post",
+                             actor=sender, target=txid, text=_snippet(text),
+                             at=block_time if (height or 0) > 0 else 0,
+                             extra={"txid": txid}))
+    for row in conn.execute(
+            "SELECT rowid, txid, kind, target, author, text, height, block_time FROM feed_act "
+            "WHERE network = ? AND author != ? AND kind IN (?, ?) AND text LIKE ? ESCAPE '\\' "
+            f"ORDER BY rowid DESC LIMIT {LIMIT}", (network, me, feed.REPLY, feed.SHARE, like)):
+        rowid, txid, kind, target, author, text, height, block_time = row
+        if word.search(text or ""):
+            out.append(Event(source="mention_reply", seq=int(rowid),
+                             kind="mentioned you in a comment" if kind == feed.REPLY
+                             else "mentioned you sharing a post",
+                             actor=author, target=target, text=_snippet(text),
+                             at=block_time if (height or 0) > 0 else 0,
+                             extra={"txid": txid}))
+    return out
+
+
 def message_events(arrivals: Iterable[Any]) -> list[Event]:
     """Messages that paid this account's address (push.Push.arrivals)."""
     return [Event(source="message", seq=int(r["rowid"]), kind="message", actor=r["sender"],

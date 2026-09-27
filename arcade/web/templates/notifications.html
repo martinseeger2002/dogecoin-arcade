@@ -2,7 +2,7 @@
 {% block title %}Notifications · DogecoinArcade{% endblock %}
 {% block body %}
 <h1 style="margin-bottom:4px">Notifications</h1>
-<p class="sub" style="margin-top:0">Likes, replies, shares and tips on your posts, replies on
+<p class="sub" style="margin-top:0">Likes, replies, shares and tips on your posts, posts and comments that mention your @name, replies on
   posts you follow, your sales, and new messages.</p>
 
 {% macro name(address) -%}
@@ -14,12 +14,13 @@
 
 {% macro row(r) %}
 {% set link = ('/me/messages' if r.source == 'message'
-               else ('/feed?post=' ~ r.target if r.source == 'feed'
+               else ('/feed?post=' ~ r.target if r.source in ('feed', 'mention', 'mention_reply')
                else ('/inscriptions/' ~ r.target ~ '/view' if r.source == 'swap' else '/me/nfts'))) %}
 {% set who = r.actors[0] if r.actors else '' %}
 {% set badge = {'liked': ('♥', 'like'), 'disliked': ('↓', 'dislike'), 'replied to': ('↩', 'reply'),
                 'shared': ('⇄', 'share'), 'tipped': ('◆', 'tip'), 'message': ('✉', 'mail'),
-                'sold': ('✓', 'sale'), 'bought': ('✓', 'sale')}.get(r.kind, ('•', 'reply')) %}
+                'sold': ('✓', 'sale'), 'bought': ('✓', 'sale')}.get(r.kind,
+                ('@', 'reply') if r.source in ('mention', 'mention_reply') else ('•', 'reply')) %}
 <a class="nrow{{ ' new' if r.unread }}" href="{{ link }}">
   <span class="nface">
     {%- if faces.get(who) -%}<img src="/content/{{ faces[who] }}" alt="" loading="lazy">
@@ -37,13 +38,15 @@
         <span class="namt">{{ '%g' % (r.amount / 100000000) }}</span>{% endif %}
       {% elif r.source == 'message' %}
         <b>{{ name(who) }}</b> sent you {{ 'a message' if r.count == 1 else r.count ~ ' messages' }}
+      {% elif r.source in ('mention', 'mention_reply') %}
+        <b>{{ name(who) }}</b> {{ r.kind }}
       {% else %}
         <b>{{ name(who) }}</b>{% if r.actors|length > 1 %} and {{ r.actors|length - 1 }} other{{ '' if r.actors|length == 2 else 's' }}{% endif %}
         {{ r.kind }} {{ 'your post' if r.about_mine else 'a post you follow' }}{% if r.amount %}
         &middot; <span class="namt">{{ '%g' % (r.amount / 100000000) }} coins</span>{% endif %}
       {% endif %}
     </span>
-    {% if r.text and r.source == 'feed' %}
+    {% if r.text and r.source in ('feed', 'mention', 'mention_reply') %}
     <span class="nquote{{ ' said' if r.kind == 'replied to' }}">{{ r.text }}</span>
     {% endif %}
   </span>
