@@ -2619,7 +2619,26 @@ def create_app(state: AppState) -> FastAPI:
         # address book. An account's book lives only in its browser, and asking
         # the node for "these people's posts" would hand it the book, so the
         # node sends the newest posts and the page hides the rest.
-        sort = sort if sort in ("new", "friends") else "popular"
+        #
+        # Anything else is refused, not quietly answered with the default page
+        # (a tester, S14: hot/top/old/... all returned Popular). And one cursor
+        # shape per stream (S12/S14): Popular's is `id@score@asof`, New's a bare
+        # id. A cursor that does not parse, or belongs to the other stream, is a
+        # client that lost its place -- told so with a 400 rather than handed
+        # page one again as though nothing happened. An EMPTY before= is page one.
+        if sort not in ("popular", "new", "friends"):
+            raise HTTPException(400, "sort is popular, new or friends")
+        if before is not None and str(before).strip() != "":
+            token = str(before).strip()
+            ident = token.partition("@")[0]
+            if not ident.isdigit():
+                raise HTTPException(400, "that is not a feed cursor")
+            if sort == "popular" and "@" not in token:
+                raise HTTPException(400, "that cursor is from the New feed, not Popular")
+            if sort != "popular" and "@" in token:
+                raise HTTPException(400, "that cursor is from the Popular feed, not New")
+        elif before is not None:
+            before = None
         rows, cursor, waiting = _feed_page(
             chain.network, before=before,
             sort="new" if sort == "friends" else sort)

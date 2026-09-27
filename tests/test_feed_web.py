@@ -52,7 +52,8 @@ def test_ten_at_a_time_and_a_way_to_the_rest(client):
     with state.store() as store:
         rows = store.feed_posts(state.messaging.network, limit=99)
     oldest_shown = rows[9]["id"]
-    older = app.get(f"/feed?before={oldest_shown}").text
+    # A bare id is the New feed's cursor (S14: one cursor shape per stream).
+    older = app.get(f"/feed?sort=new&before={oldest_shown}").text
     assert "post 3" in older and "post 13" not in older
 
 
@@ -593,3 +594,18 @@ def test_a_post_you_shared_says_so_and_cannot_be_shared_again(client):
     page = (pathlib.Path(__file__).resolve().parents[1]
             / "arcade/web/templates/feed.html").read_text()
     assert "Shared ✓" in page and "{{ 'disabled' if p.shared_by_me }}" in page
+
+
+
+def test_a_cursor_the_feed_cannot_read_is_refused_not_restarted(client):
+    """a tester/S14 (2026-09-26): a garbled or cross-stream cursor, or a
+    sort that does not exist, used to come back as page one with a 200."""
+    app, state = client
+    a_post(state, "ab" * 32, text="one post")
+    assert app.get("/feed?before=AAAA").status_code == 400
+    assert app.get("/feed?sort=new&before=44@0.06@1790469609").status_code == 400
+    assert app.get("/feed?before=44").status_code == 400
+    assert app.get("/feed?sort=hot").status_code == 400
+    assert app.get("/feed?before=").status_code == 200, "empty is page one"
+    assert app.get("/feed?sort=new&before=44").status_code == 200
+    assert app.get("/feed?before=44@0.06@1790469609").status_code == 200
