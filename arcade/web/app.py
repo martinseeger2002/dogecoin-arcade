@@ -2332,12 +2332,26 @@ def create_app(state: AppState) -> FastAPI:
 
         Deliberately tiny and does no RPC of its own: the watcher thread already
         knows the answer, so a page left open overnight costs the node nothing.
+
+        Three of the four fields are public on purpose and the fourth was here
+        by accident. A generation counter, the tip of each chain and the moment
+        those tips were last read say nothing a block explorer does not already
+        publish, and an open page needs all three to know when to redraw.
+        `sending` does not: it is `send_progress`, and that carries `peer` --
+        the messaging key of whoever the node is sending to right now -- with a
+        count of how far into it this node has got. Read by the messenger's own
+        progress bubble, which is a page behind the door, and handed to every
+        anonymous caller until now (a tester, 2026-09-27). So it goes only
+        to the copy of this page that is the operator's own, which is the only
+        copy that draws it, and a stranger gets `null` where a stranger has no
+        business reading anybody's counterparty.
         """
+        mine = not _public_request(request)
         return JSONResponse({
             "generation": state.generation,
             "tips": state.tips,
             "checked": state.last_checked,
-            "sending": state.live_progress() or None,
+            "sending": (state.live_progress() or None) if mine else None,
         })
 
     # --- public group posts ---------------------------------------------------
