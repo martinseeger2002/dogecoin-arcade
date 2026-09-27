@@ -37,6 +37,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_account_offer import node, _seated, _settled        # noqa: F401,E402
 from test_account_order import (                              # noqa: E402
     _book, _bookcoin, _bookmarks, _page, _paid_out, _publicly, _signed)
+from test_funding import _sign                                # noqa: E402
 from arcade import swap as swaplib, utxos                      # noqa: E402
 from arcade.messaging import api as apilib                    # noqa: E402
 from arcade.messaging import envelope as envelopelib          # noqa: E402
@@ -540,3 +541,245 @@ def test_the_maker_sees_that_the_queue_walked_past_their_order(node):
         named["state"].public = False
     assert "cannot be asked" not in usual
     assert "steps past them" not in usual
+
+
+# --- the answer becoming a trade -------------------------------------------
+
+def _asked_of_the_node(node, which_maker: int, which_taker: int) -> dict:
+    """A node's own ask, asked about by an account's key, and answered.
+
+    The scene from `test_the_question_reaches_the_maker_and_comes_back_sealed`,
+    in one place, because what it is made of is forty lines of chain facts and
+    not a fixture anybody could reuse by accident: the node's identity taken
+    BEFORE anything asks where its home is, the order standing on the wallet
+    that will receive the question, the announcement that makes that wallet
+    somewhere a message can be read, the shopkeeper's first tick that only
+    parks a cursor, and the funding of the address that pays for the answer --
+    last, because an answer paid from coinbase is unreadable by the node that
+    sent it. What comes back is the scene: the order, what the read priced, the
+    taker's own identity, the transaction that carried the question, and the
+    offer the maker sent back sealed to that identity and nobody else's.
+    """
+    app, state, rpc = node
+    nodekey = state.ensure_identity().public_bytes
+    wallet = state.derived_address
+    issuer = _bookcoin(node, which_maker)
+    _paid_out(issuer, wallet, 100 * COIN)
+    _payable(state, rpc)
+    placed = app.post("/exchange/order", data={
+        "csrf_token": state.csrf_token, "property_id": issuer["pid"],
+        "side": "ask", "amount": "1", "price": "2"}, follow_redirects=False)
+    assert placed.status_code == 303, placed.text
+    assert "Order on the book" in (state.notice or ""), state.notice
+    _settled(state, rpc)
+    rows = [r for r in _book(state, pid=issuer["pid"]) if r["address"] == wallet]
+    assert len(rows) == 1, f"one ask of the node's, the book says {rows}"
+    with state.store() as store:
+        store.add_key_announcement("nodekey", wallet, nodekey, "ff",
+                                   int(rpc.call("getblockcount")), 0, stated=True)
+
+    taker = _seated_bookcoin(node, which_taker, coins=(20.0, 1.0), key=False)
+    me = Identity.generate()
+    _announced(taker, me.public_bytes.hex())
+    assert Shopkeeper(state).tick() == 0, "the first tick only parks the cursor"
+
+    terms = _take(taker, rows[0]["txid"], "1")
+    assert terms.status_code == 200, terms.text
+    body = json.dumps({"swap": "fill", "swapv": swaplib.PROTOCOL,
+                       "order": rows[0]["txid"],
+                       "tokens": terms.json()["tokens"],
+                       "buyer": terms.json()["buyer"]},
+                      separators=(",", ":")).encode()
+    payload = apilib.seal(me, nodekey, body)
+    hlen = len(envelopelib.Header(type=envelopelib.TYPE_API, clen=0).encode())
+    asked = taker["client"].post("/account/talk", json={
+        "op": "send", "to": nodekey.hex(), "sealed": payload[hlen:].hex()})
+    assert asked.status_code == 200, asked.text
+    sent = _signed(taker["client"], taker["secret"], taker["pubkey"], asked)
+    assert sent.status_code == 200, sent.text
+    _opened(state, rpc)
+    _payable(state, rpc)
+    assert Shopkeeper(state).tick() == 1, \
+        "one question in front of the maker's node, one answer made"
+    _opened(state, rpc)                      # so the taker can read the reply
+
+    made = None
+    for read in taker["client"].get("/account/messages?after=0").json()["candidates"]:
+        try:
+            _sender, _protocol, _fingerprint, plain = apilib.open_stamped(
+                me, bytes.fromhex(read["payload"]))
+        except envelopelib.EnvelopeError:
+            continue
+        said = json.loads(plain)
+        if said.get("swap") == "fill":
+            made = said
+    assert made is not None and made.get("ok") is True, \
+        f"the maker answered, and sealed to the one who asked: {made}"
+    return {"app": app, "state": state, "rpc": rpc, "nodekey": nodekey,
+            "wallet": wallet, "order": rows[0], "terms": terms.json(),
+            "taker": taker, "me": me, "ask_txid": sent.json()["txid"],
+            "offer": made["offer"], "pid": issuer["pid"]}
+
+
+def test_an_answer_becomes_a_transaction_the_maker_can_finish(node):
+    """The whole take, ending in a broadcast. This is the half that was missing.
+
+    Everything above this line in this file stops at the answer, and the answer
+    is a promise: it names an outpoint, a price and an order, and it is signed
+    by nobody. A node taking a price for its own wallet turns it into bytes with
+    `swap.build`, which chooses coins out of that wallet and calls
+    `signrawtransaction` -- and an account's key is not in any wallet, which is
+    exactly why the post about the take had to be corrected the day it went up.
+    So this is the sentence that post was missing, run to the end: the answer
+    comes in, `/account/take/build` makes it a transaction out of the index and
+    signs nothing, the key signs the inputs from `signed_from`,
+    `/account/take/sign` pastes them and broadcasts NOTHING -- because the
+    maker's input is still an empty scriptSig and only the maker can fill it --
+    and `swap.countersign`, which is what the maker's node does when that
+    message lands in its inbox, finishes it and puts it on the chain.
+
+    The last four assertions are the ones that matter. A half whose input 0
+    carries a scriptSig would be a finished trade this node signed by itself;
+    the tokens moving is the only proof that the whole chain of parts fit
+    together; and the order leaving the book is the proof that the engine read
+    the finished transaction as filling THAT order and not as a swap between
+    two strangers.
+    """
+    scene = _asked_of_the_node(node, 113, 114)
+    state, rpc, taker = scene["state"], scene["rpc"], scene["taker"]
+    index = state.token_index(state.messaging)
+    offer = scene["offer"]
+
+    built = taker["client"].post("/account/take/build", json={
+        "offer": offer, "chain": scene["terms"]["chain"]})
+    assert built.status_code == 200, built.text
+    say = built.json()
+    assert say["signed_from"] == 1, \
+        "the maker's coin is input 0, and this key is asked for nothing before it"
+    assert say["inputs"][0]["txid"] == offer["outpoint"]["txid"]
+    assert say["inputs"][0]["vout"] == offer["outpoint"]["vout"]
+    assert say["inputs"][0]["address"] == scene["wallet"]
+    for n, coin in enumerate(say["inputs"][1:], 1):
+        assert coin["address"] == taker["address"], \
+            f"input {n} spends {coin['address']}, and only the taker's own coins " \
+            "belong from input 1 on"
+    assert len(say["sighashes"]) == len(say["inputs"]) - 1
+    assert say["offer"] == offer["id"] and say["to"] == scene["nodekey"].hex(), \
+        "the two things the next step cannot work out on its own"
+    assert say["coins"] == 2 * COIN and say["fee"] > 0, \
+        "the price off the order, and a fee the buyer pays"
+    assert rpc.call("getrawmempool") == [], "a build spends nothing"
+    assert [r["txid"] for r in _book(state, pid=scene["pid"])] == \
+        [scene["order"]["txid"]], "and the book did not even notice"
+
+    signed = taker["client"].post("/account/take/sign", json={
+        "offer": offer, "chain": say["chain"], "raw": say["raw"],
+        "signatures": [_sign(taker["secret"], bytes.fromhex(d)).hex()
+                       for d in say["sighashes"]],
+        "pubkey": taker["pubkey"].hex()})
+    assert signed.status_code == 200, signed.text
+    half = signed.json()
+    assert half["signed"] is True
+    parts = rpc.call("decoderawtransaction", half["hex"])
+    assert parts["vin"][0]["txid"] == offer["outpoint"]["txid"]
+    assert parts["vin"][0]["scriptSig"]["hex"] == "", \
+        "this is a HALF: the maker's signature is what it is waiting for"
+    assert parts["vin"][1]["scriptSig"]["hex"], "and this account's is in it"
+    assert rpc.call("getrawmempool") == [], \
+        "nothing was broadcast here -- the maker broadcasts, not this node"
+
+    # The maker's node, doing what its shopkeeper does when the finished half
+    # arrives in its inbox: check it against its own offer, sign its own input,
+    # broadcast. This is the point where a take either ends in a trade or does
+    # not, and it is the point every test in this file so far stopped before.
+    txid = swaplib.countersign(rpc, index, state.offers,
+                              state.offers.get(half["offer"]), half["hex"])
+    assert txid
+    _settled(state, rpc)
+    assert index.balance(taker["address"], scene["pid"]) == 1 * COIN, \
+        "the token the order sold is now the taker's"
+    assert not [r for r in _book(state, pid=scene["pid"])
+                if r["address"] == scene["wallet"]], \
+        "and the order it filled is off the book, because it is filled"
+
+
+def test_an_answer_meant_for_another_key_builds_nothing(node):
+    """The offer is sealed to one account, and the build honours that.
+
+    The answer arrives in a browser and nowhere else, but a browser is a place
+    where bytes move: a tab can be told to post an answer it was not given. If
+    this route built from any offer it was handed, a second account could be
+    shown a transaction spending ITS coins to fill somebody else's trade -- or,
+    with the fields swapped, one holding the key could be walked into signing a
+    trade priced for another. `check_offer` refuses both on the same line, the
+    one that says whose address the offer names as its buyer, and it is the
+    maker's own `offer_for_order` that wrote that name in the first place.
+    """
+    from arcade.web import door
+
+    scene = _asked_of_the_node(node, 115, 116)
+    other = _seated_bookcoin(node, 117, coins=(20.0, 1.0))
+    refused = other["client"].post("/account/take/build", json={
+        "offer": scene["offer"], "chain": scene["terms"]["chain"]})
+    assert refused.status_code == 400, refused.text
+    assert scene["taker"]["address"] in refused.json()["detail"], \
+        "it says whose answer it was, which is the fact the asker needs"
+    assert scene["taker"]["address"] != other["address"]
+    assert scene["rpc"].call("getrawmempool") == []
+
+    # And the pair is public in the door's sense, which for a route that costs
+    # nothing and spends nothing means one thing only: signed by nobody, it
+    # answers nothing, with the reason in it.
+    for path in ("/account/take/build", "/account/take/sign"):
+        assert path in door.PUBLIC_POST, path
+        _publicly(scene["state"])
+        try:
+            quiet = scene["app"].post(path, json={})
+        finally:
+            scene["state"].public = False
+        assert quiet.status_code == 403, quiet.text
+        assert "sign in" in quiet.json()["detail"], quiet.text
+
+
+def test_a_signed_answer_that_no_longer_fits_is_refused(node):
+    """A block lands between the bytes and the signature: nothing is traded.
+
+    The answer is minutes old by the time a person signs it, and in that time
+    the coins it was built out of may have moved. The signature is over the
+    first bytes, so the honest answer is a refusal that says what happened --
+    not a transaction whose inputs are not the ones anybody looked at, and not
+    the maker's node finding out a block later. The same comparison is what
+    `/account/buy/sign` runs, and this is the same sentence, said of a book
+    answer instead of a listing.
+    """
+    scene = _asked_of_the_node(node, 118, 119)
+    taker, rpc = scene["taker"], scene["rpc"]
+    built = taker["client"].post("/account/take/build", json={
+        "offer": scene["offer"], "chain": scene["terms"]["chain"]})
+    assert built.status_code == 200, built.text
+    say = built.json()
+
+    # A coin the account did not have when it asked now has a block under it,
+    # which is the plainest way to make this node build the same trade out of
+    # different coins. Smallest-sufficient selection means it does.
+    rpc.call("sendtoaddress", taker["address"], 3.0)
+    _settled(scene["state"], rpc)
+
+    again = taker["client"].post("/account/take/build", json={
+        "offer": scene["offer"], "chain": say["chain"]})
+    assert again.status_code == 200, again.text
+    assert again.json()["raw"] != say["raw"], \
+        "the new coins have to actually change the bytes, or this test proves " \
+        "nothing about the old ones being refused"
+
+    stale = taker["client"].post("/account/take/sign", json={
+        "offer": scene["offer"], "chain": say["chain"], "raw": say["raw"],
+        "signatures": [_sign(taker["secret"], bytes.fromhex(d)).hex()
+                       for d in say["sighashes"]],
+        "pubkey": taker["pubkey"].hex()})
+    assert stale.status_code == 400, stale.text
+    assert "different transaction" in stale.json()["detail"], stale.text
+    assert rpc.call("getrawmempool") == []
+    assert [r["txid"] for r in _book(scene["state"], pid=scene["pid"])] == \
+        [scene["order"]["txid"]], "the order stands, unasked and unfilled"
+

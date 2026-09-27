@@ -231,8 +231,9 @@
                   + (terms.moved
                      ? ", the one that queued first at that price." : ".")
                   + " Asking costs one message fee. Their answer comes back "
-                  + "sealed to your key, and only then does this tab build and "
-                  + "sign your half. Nothing moves until both halves do.",
+                  + "sealed to your key, and only then does this tab build, "
+                  + "sign and send back your half. Nothing moves until both "
+                  + "halves do.",
                   "Ask them"))) {
               btn.disabled = false;
               return;
@@ -256,20 +257,25 @@
               return;
             }
             if (!answer.ok) throw new Error(answer.error || "they did not answer");
-            const offer = await wallet.offerFill(answer.leg, CHAIN.network);
-            const shown = await wallet.checked(offer, held);
+            const built = await wallet.bookTakeBuild(answer.leg, CHAIN.network);
+            const shown = await wallet.checked(built, held);
             if (!(await arcadeAsk(shown.what,
                   `Their half is signed and it arrived. Yours costs `
                   + `${shown.coinsOf(shown.fee)} in fees, and the price is the `
-                  + "one on their order. If a block landed while this was being "
-                  + "read, this is refused rather than traded at a different "
-                  + "price.", "Sign it"))) {
+                  + "one on their order, not the one on this page. Signing it "
+                  + "does not finish the trade: their node signs its own half "
+                  + "and broadcasts the two together. If a block landed while "
+                  + "this was being read, this is refused rather than traded at "
+                  + "a different price.", "Sign it"))) {
               news("Not signed. The order stands, and so does your question.");
               return;
             }
-            const done = await wallet.fill(held, answer.leg, offer);
-            news(`Filled, in ${done.txid}. The tokens and the coins move in `
-                 + "that one transaction.");
+            news("Sending your half to their node…");
+            const done = await wallet.signTake(held, built);
+            news(`Sent back in ${String(done.message).slice(0, 16)}… Their `
+                 + "node signs its half and broadcasts the trade, which is the "
+                 + "transaction that moves the tokens and the coins. Watch this "
+                 + "row: it fills when that block lands.");
           } catch (e) {
             say(String(e.message || e));
           } finally {
