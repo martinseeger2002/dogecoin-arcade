@@ -684,6 +684,48 @@ ol.words{column-gap:1.4em}
 {% endif %}
 {% if account_here and not embed %}
 <script type="module">
+// "Take it back": an accepted offer binds until the coins it was signed over
+// are spent (2026-09-27, "Always binding"), so taking it back is one
+// small transaction back to yourself, signed here like any other.
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest && event.target.closest("[data-takeback]");
+  if (!button) return;
+  event.preventDefault();
+  const w = await import("/wallet.js");
+  try {
+    const keys = (await w.opened(ARCADE_CHAIN)) || await arcadeKeys(ARCADE_CHAIN);
+    const asked = await fetch("/account/answer/withdraw", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({piece: button.dataset.piece, chain: ARCADE_CHAIN.network})});
+    const offer = await asked.json();
+    if (!asked.ok) throw new Error(offer.detail || "that acceptance cannot be taken back");
+    if (offer.done) { arcadeToast("That acceptance was already void."); location.reload(); return; }
+    const shown = await w.checked(offer, keys);
+    const who = button.dataset.buyer || "the buyer";
+    const ok = await arcadeAsk("Take back your acceptance?",
+      `${who} will no longer be able to complete this trade. An acceptance is a `
+      + "signature, and the way to take one back is to spend the coins it was signed "
+      + "over, back to yourself: one small transaction, "
+      + `${shown.coinsOf(shown.fee)} in fees.`
+      + (offer.all_coins ? " This acceptance is from before its coins were recorded, "
+         + "so all your coins move back to you. That also ends your open listings "
+         + "and offers." : ""), "Take it back");
+    if (!ok) return;
+    button.disabled = true;
+    const sent = await w.confirm(keys, offer);
+    await fetch("/account/answer/withdrawn", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({answer: offer.answer, txid: sent.txid || "",
+                            chain: ARCADE_CHAIN.network})});
+    arcadeToast(`Taken back. ${who} can no longer complete it.`);
+    setTimeout(() => location.reload(), 1500);
+  } catch (e) {
+    button.disabled = false;
+    arcadeToast(String(e.message || e));
+  }
+});
+</script>
+<script type="module">
 // Accepted offers finish themselves (2026-09-26: "when it is accepted, it
 // should just automatically be signed and sent"). An offer is a message, so the
 // seller's answer is half a trade -- their signature over the piece -- and the
@@ -725,7 +767,7 @@ ol.words{column-gap:1.4em}
       const out = await w.fill(keys, leg, order);
       done[offer] = out.txid || "sent";
       const who = order.seller_tag ? "@" + order.seller_tag : "the holder";
-      arcadeToast(`Your offer was accepted by ${who}. The trade is signed and sent: `
+      arcadeToast(`${who} accepted your offer. The trade is signed and sent: `
         + "it's yours when its block lands.");
     } catch (e) {
       // A trade already on its way, or coins spent since: remembered, not retried

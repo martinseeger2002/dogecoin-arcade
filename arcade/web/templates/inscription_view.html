@@ -360,12 +360,13 @@
           {% if swap_waiting %}
             <span class="muted">a trade of this piece is waiting for its block</span>
           {% elif a.accepted %}
-            <span class="muted">you answered &mdash; waiting for
-              {{ a.buyer|who }}
-              to sign</span>
-            <div class="muted" style="font-size:.76rem">held until {{ a.until }}</div>
+          <span class="muted">You accepted this{% if a.until %} on {{ a.until }}{% endif %}. It completes
+            when {{ a.buyer|who }} next opens their wallet.</span>
+          <div><button type="button" class="ghost small" data-takeback
+                  data-piece="{{ row.txid }}" data-buyer="{{ a.buyer|who_text }}"
+                  style="margin-top:4px">Take it back</button></div>
           {% elif a.held_for %}
-            <span class="muted">answered to another buyer until {{ a.until }}</span>
+            <span class="muted">you accepted another buyer's offer on this piece</span>
           {% else %}
             <button type="button" class="small" data-accept
                     {% if a.presigned %}data-presigned="1"{% endif %}

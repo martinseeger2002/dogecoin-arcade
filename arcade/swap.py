@@ -477,7 +477,8 @@ CREATE TABLE IF NOT EXISTS bid (
     status        TEXT NOT NULL DEFAULT 'open',
     offer_id      TEXT NOT NULL DEFAULT '',
     txid          TEXT NOT NULL DEFAULT '',
-    error         TEXT NOT NULL DEFAULT ''
+    error         TEXT NOT NULL DEFAULT '',
+    coins         TEXT NOT NULL DEFAULT ''   -- 'in' answers: the coins the leg signed over, JSON
 );
 CREATE INDEX IF NOT EXISTS bid_open ON bid(network, direction, status);
 CREATE TABLE IF NOT EXISTS cursor (
@@ -583,12 +584,13 @@ class Offers:
         with self._open() as conn:
             conn.execute(
                 "INSERT INTO bid(id, network, direction, inscription, number, owner, "
-                "buyer, peer_pubkey, take, note, created, expires) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                "buyer, peer_pubkey, take, note, created, expires, coins) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (bid["id"], bid["network"], bid["direction"], bid["inscription"],
                  bid.get("number"), bid["owner"], bid["buyer"],
                  bid.get("peer_pubkey", ""), json.dumps(bid["take"]),
-                 str(bid.get("note", ""))[:200], bid["created"], bid["expires"]))
+                 str(bid.get("note", ""))[:200], bid["created"], bid["expires"],
+                 json.dumps(bid["coins"]) if bid.get("coins") else ""))
 
     def bids(self, network: str, direction: str | None = None,
              status: str | None = None, limit: int = 100) -> list[dict]:
@@ -768,6 +770,7 @@ def _unsettled(index: Any, offer: dict) -> bool:
 def _bid_row(row: Any) -> dict:
     out = dict(row)
     out["take"] = json.loads(out["take"]) if out["take"] else {}
+    out["coins"] = json.loads(out["coins"]) if out.get("coins") else []
     return out
 
 

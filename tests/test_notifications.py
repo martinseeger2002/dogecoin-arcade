@@ -227,3 +227,22 @@ def test_a_swap_names_the_piece_by_its_collection():
     assert [(e.kind, e.text, e.actor) for e in got] == [
         ("sold", "Skull Squad #7", THEM), ("sold", "#45", THEM)]
     assert got[0].amount == 700000000
+
+
+def test_a_deleted_reply_or_post_is_no_longer_news(public):
+    """a tester, 2026-09-27: a reply its author deleted still showed on the
+    notifications of the post it answered. Deleted is deleted everywhere."""
+    app, state = public
+    _me(app, state)
+    a_post(state, "d1" * 32, text="my post", sender=ME)
+    an_act(state, "d2" * 32, feed.REPLY, "d1" * 32, author=THEM, text="oops, wrong post @maple")
+    an_act(state, "d3" * 32, feed.REPLY, "d1" * 32, author=THEM, text="this one stays")
+    a_post(state, "d4" * 32, text="hey @maple", sender=THEM)
+    an_act(state, "d5" * 32, feed.DELETE, "d2" * 32, author=THEM)
+    an_act(state, "d6" * 32, feed.DELETE, "d4" * 32, author=THEM)
+    an_act(state, "d7" * 32, feed.DELETE, "d3" * 32, author="nOther")  # not theirs to delete
+    with state.store() as store:
+        events = notify.feed_events(store.conn, state.messaging.network, ME)
+        mentions = notify.mention_events(store.conn, state.messaging.network, ME, "maple")
+    assert [e.extra["txid"] for e in events if e.kind == "replied to"] == ["d3" * 32]
+    assert mentions == []

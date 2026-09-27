@@ -734,7 +734,7 @@ def test_the_offers_page_gives_an_account_the_button_it_lacked(node):
 
     _signed_answer(pair, offer, _leg(pair, offer))
     page = holder_client.get("/exchange?tab=offers").text
-    assert "you answered" in page and "waiting for" in page, \
+    assert "You accepted this" in page and "next opens their wallet" in page, \
         "an answer stands out of the bid book, not out of the node's own offers"
 
     other, _secret, _pubkey, _address = _seated(app, state, rpc, 66)
@@ -782,3 +782,41 @@ def test_an_account_s_answer_holds_the_piece_for_a_day(node):
     assert signed.status_code == 200, signed.text
     left = signed.json()["held_until"] - _time.time()
     assert 23 * 3600 < left <= 24 * 3600, left
+
+
+def test_an_accepted_offer_binds_until_it_is_taken_back(node):
+    """Pixel Skull #2 (#28), 2026-09-27: the answer's hold lapsed after fifteen
+    minutes, the Offers tab went back to Accept / Refuse, and the buyer's wallet
+    finished the trade a day later. The operator chose "Always binding": the row keeps
+    saying it was accepted, with "Take it back", which spends the coins the
+    answer was signed over back to the seller."""
+    app, state, rpc = node
+    state.public = True
+    pair = _pair(node, 90, 91)
+    offer = _offered(pair)
+    holder_client = pair["holder"][0]
+    _signed_answer(pair, offer, _leg(pair, offer))
+
+    chain = state.messaging
+    notes = state.offers.bids(chain.network, direction="in", status="open")
+    assert notes and notes[0]["coins"], "the answer writes down the coins it signed over"
+    with state.offers._open() as conn:          # the old hold, long over
+        conn.execute("UPDATE bid SET expires = 1 WHERE direction = 'in'")
+
+    page = holder_client.get("/exchange?tab=offers").text
+    assert "You accepted this" in page and "Take it back</button>" in page
+    assert "data-accept" not in page, "an accepted offer is never offered for Accept again"
+
+    said = holder_client.post("/account/answer/withdraw", json={
+        "piece": notes[0]["inscription"], "chain": chain.network})
+    assert said.status_code == 200, said.text
+    body = said.json()
+    spent = {(i["txid"], i["vout"]) for i in body["inputs"]}
+    assert {(c["txid"], c["vout"]) for c in notes[0]["coins"]} <= spent, \
+        "taking it back spends exactly what the answer stands on"
+
+    done = holder_client.post("/account/answer/withdrawn", json={
+        "answer": body["answer"], "txid": "ab" * 32, "chain": chain.network})
+    assert done.status_code == 200, done.text
+    page = holder_client.get("/exchange?tab=offers").text
+    assert "Take it back</button>" not in page and "data-accept" in page

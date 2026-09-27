@@ -1601,7 +1601,7 @@ def test_each_of_them_issues_a_token_wearing_a_picture_of_its_own(node, crowd):
 
 # --- the trading half: offers, both ways (plan item 3) -------------------------
 
-def test_an_account_with_one_output_is_told_to_split_before_it_answers(node, crowd):
+def test_an_account_with_one_output_splits_as_part_of_answering(node, crowd):
     """D-051's advice, and the way out of it, in the order a person meets them.
 
     An answer is a leg, and a leg is two inputs: one signs the bytes naming the
@@ -1645,17 +1645,15 @@ def test_an_account_with_one_output_is_told_to_split_before_it_answers(node, cro
         held = utxos.unspent(db, wren.address)
     assert len(held) == 1, f"one output, by construction: {[h['value'] for h in held]}"
 
-    refused = wren.client.post(
+    # Nobody is told to split coins by hand any more (a tester, 2026-09-27):
+    # the first answer is a small send to herself, which her tab signs, and
+    # the answer asked for again stands on its two outputs, unconfirmed.
+    asked = wren.client.post(
         "/account/accept", json={"piece": piece, "offer": offer})
-    assert refused.status_code == 400, refused.text
-    assert "Split it first" in refused.json()["detail"], refused.text
-
-    split = _do(wren, "/account/send", {"to": wren.address, "amount": "1"})
+    assert asked.status_code == 200, asked.text
+    assert asked.json().get("needs_split"), asked.text
+    split = _complete(wren, asked)
     assert split.status_code == 200, split.text
-    _settle(*node)
-    with contextlib.closing(index.open()) as db:
-        became = utxos.unspent(db, wren.address)
-    assert len(became) == 2, f"the advice worked: {[c['value'] for c in became]}"
 
     leg = wren.client.post("/account/accept", json={"piece": piece, "offer": offer})
     assert leg.status_code == 200, leg.text

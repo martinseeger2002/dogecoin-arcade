@@ -7582,7 +7582,27 @@ def create_app(state: AppState) -> FastAPI:
     # funding choice reads `spent_by`, so the reservation lives in one place.
     _flights_spent_by = _flights.spent_by
     _flights.spent_by = lambda pubkey, network="": (
-        _flights_spent_by(pubkey, network) | _bids.reserved(pubkey, network))
+        _flights_spent_by(pubkey, network) | _bids.reserved(pubkey, network)
+        | _answered_coins(network))
+
+    def _answered_coins(network: str) -> frozenset:
+        """The coins every standing answer is signed over. An answer binds until
+        it is taken back (`_answer_standing`), so spending one of these on an
+        ordinary send would void it without anybody saying so. Outpoints are
+        unique, so the set needs no owner: nobody else can spend them anyway."""
+        out = set()
+        try:
+            for chain in _account_chains():
+                if network and chain.network != network:
+                    continue
+                for note in state.offers.bids(chain.network, direction="in",
+                                              status="open", limit=1000):
+                    if note.get("coins") and _answer_standing(
+                            chain, note["inscription"]) is not None:
+                        out.update((c["txid"], int(c["vout"])) for c in note["coins"])
+        except Exception:
+            pass
+        return frozenset(out)
 
     def _account_chain():
         """The chain a tag lives on. Testnet, as tags always have been."""
@@ -10389,6 +10409,77 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"offer": offer.id, "chain": chain.network,
                              "listings": [r["id"] for r in rows], **unsigned.as_json()})
 
+    @app.post("/account/answer/withdraw")
+    def account_answer_withdraw(request: Request, payload: Any = Body(None)):
+        """Offer the transaction that takes back an accepted offer ("Take it back").
+
+        An answer is the seller's signatures in the buyer's hands, and it binds
+        until the coins they were made over are spent (`_answer_standing`). This
+        spends them back to this account. An answer from before the coins were
+        written down (2026-09-27) has none on record, so every coin of the
+        account is spent back to itself instead: one transaction that stills
+        every signature the account ever gave. Nothing is broadcast here.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        piece = str(said.get("piece") or "").strip().lower()
+        note = _answer_standing(chain, piece) if address else None
+        if note is None or note["owner"] != address:
+            return JSONResponse({"detail": "this account has no accepted offer standing "
+                                           "on that piece"}, status_code=404)
+        index = state.token_index(chain)
+        number = (index.inscription(piece) or {}).get("number", "?")
+        try:
+            with contextlib.closing(index.open()) as db:
+                held = {(c["txid"], int(c["vout"])): c
+                        for c in utxoslib.unspent(db, address)}
+                if note["coins"]:
+                    coins = [held[(c["txid"], int(c["vout"]))] for c in note["coins"]
+                             if (c["txid"], int(c["vout"])) in held]
+                    if not coins:
+                        # Already spent: the answer is void, only the note was not.
+                        state.offers.close_bid(note["id"], "withdrawn")
+                        state.bump_generation()
+                        return JSONResponse({"done": True, "chain": chain.network})
+                else:
+                    coins = list(held.values())
+                unsigned = fundinglib.build_sweep(
+                    db, chain.params, address, coins, rate=fees.MIN_FEE_PER_KB,
+                    what=f"take back your acceptance of the offer on #{number}",
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+        except (fundinglib.FundingError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what)
+        return JSONResponse({"offer": offer.id, "chain": chain.network,
+                             "answer": note["id"], "all_coins": not note["coins"],
+                             **unsigned.as_json()})
+
+    @app.post("/account/answer/withdrawn")
+    def account_answer_withdrawn(request: Request, payload: Any = Body(None)):
+        """The tab broadcast the take-back: the answer no longer stands."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        note = state.offers.get_bid(str(said.get("answer") or ""))
+        txid = str(said.get("txid") or "").lower()
+        if not note or note["owner"] != address or note["direction"] != "in" \
+                or len(txid) != 64:
+            return JSONResponse({"detail": "that is not an answer of this account's"},
+                                status_code=404)
+        state.offers.close_bid(note["id"], "withdrawn", txid=txid)
+        state.bump_generation()
+        return JSONResponse({"done": True, "chain": chain.network})
+
     @app.post("/account/list/sign")
     def account_list_sign(request: Request, payload: Any = Body(None)):
         """File the leg this browser signed, from its bytes and the chain alone.
@@ -11045,16 +11136,48 @@ def create_app(state: AppState) -> FastAPI:
         finishing on one piece is that both legs spend the same coin of the
         seller's and only one of them can ever be in a block.
         """
-        now = time.time()
+        note = _answer_standing(chain, piece_txid)
+        return (str((note or {}).get("buyer") or ""),
+                float((note or {}).get("created") or 0))
+
+    def _answer_standing(chain, piece_txid: str) -> dict | None:
+        """The answer this account gave on a piece that still binds it, if any.
+
+        An answer is a signed half-trade in the buyer's hands, and it binds until
+        it is spent from under (2026-09-27, "Always binding"): the hold
+        it was given once lapsed after fifteen minutes, the page went back to
+        Accept / Refuse, and the buyer's wallet finished the trade a day later
+        (Pixel Skull #2, #28). So no clock here. It stops standing when the
+        piece has left the address that answered, or when "Take it back" spent
+        the coins it was signed over (status 'withdrawn').
+        """
         newest: dict | None = None
-        for note in state.offers.bids(chain.network, direction="in"):
-            if note["inscription"] != piece_txid or note["status"] != "open" \
-                    or float(note["expires"] or 0) <= now:
+        for note in state.offers.bids(chain.network, direction="in", status="open",
+                                      limit=1000):
+            if note["inscription"] != piece_txid:
                 continue
-            if newest is None or float(note["expires"]) > float(newest["expires"]):
+            if newest is None or float(note["created"]) > float(newest["created"]):
                 newest = note
-        return (str((newest or {}).get("buyer") or ""),
-                float((newest or {}).get("expires") or 0))
+        if newest is None:
+            return None
+        index = state.token_index(chain)
+        row = index.inscription(piece_txid)
+        if row is None or row["owner"] != newest["owner"]:
+            return None
+        if not newest["coins"]:
+            # From before the coins were written down: nothing says whether it
+            # can still complete, so it keeps the hold it was given. The one
+            # such answer left (#38) was already spent from under (a tester).
+            return newest if float(newest["expires"] or 0) > time.time() else None
+        # A leg is void the moment either coin it signed is spent: the buyer's
+        # page already says "no longer possible", and this one must agree.
+        # Asked of the node, mempool included: a coin a split just made is not
+        # in the index yet, and a coin spent a second ago is already gone.
+        with chain.rpc() as rpc:
+            for c in newest["coins"]:
+                if rpc.call("gettxout", c["txid"], int(c["vout"]), True) is None:
+                    return None
+        return newest
 
     _completing: dict[str, tuple[str, Any]] = {}      # bid txid -> (raw, unsigned)
 
@@ -11280,15 +11403,35 @@ def create_app(state: AppState) -> FastAPI:
                 swaplib.leg_of({"inscription": row["txid"]}, index), index))
             what = f"sell {piece} for {cost}"
             with contextlib.closing(index.open()) as db:
-                held = _smallest_two_first([c for c in utxoslib.unspent(db, address)
-                        if (c["txid"], c["vout"])
-                        not in _flights.spent_by(account.pubkey, chain.network)])
+                spent = _flights.spent_by(account.pubkey, chain.network)
+                seen: set = set()
+                coins_here = []
+                # Coins still in the mempool count: the split below is spent by
+                # the answer straight after it is broadcast.
+                for c in (list(utxoslib.unspent(db, address))
+                          + list(_flights.change_for(account.pubkey, chain.network))):
+                    key = (c["txid"], int(c["vout"]))
+                    if key in spent or key in seen:
+                        continue
+                    seen.add(key)
+                    coins_here.append(c)
+                held = _smallest_two_first(coins_here)
                 if len(held) < 2:
-                    raise ValueError(
-                        f"this address has {len(held)} coin to spend and an "
-                        f"answer is a leg, which needs two of them: one input "
-                        f"signs the bytes naming the piece, the other signs the "
-                        f"price. Split it first -- Wallet, Send, 1 coin to your own @name -- and answer again.")
+                    # An answer is a leg, which signs two coins: one over the
+                    # bytes naming the piece, one over the price. With fewer, the
+                    # tab makes a second first -- one small send to itself, on
+                    # the same confirm card -- rather than telling a person to
+                    # split coins by hand (a tester, 2026-09-27).
+                    split = fundinglib.build(
+                        db, chain.params, address,
+                        [(fundinglib.EXACT_SELLER_COIN, txbuild.p2pkh_script(address))],
+                        rate=fees.MIN_FEE_PER_KB,
+                        what="split a coin so this answer has two to sign",
+                        exclude=spent,
+                        extra=_flights.change_for(account.pubkey, chain.network))
+                    offer = _offers.add(account.pubkey, chain.network, split, split.what)
+                    return JSONResponse({"needs_split": True, "offer": offer.id,
+                                         "chain": chain.network, **split.as_json()})
                 leg = fundinglib.build_leg(
                     chain.params, address, held[0], coins=price,
                     rate=fees.MIN_FEE_PER_KB, what=what,
@@ -11435,7 +11578,10 @@ def create_app(state: AppState) -> FastAPI:
             "owner": address, "buyer": ask["buyer"], "peer_pubkey": to.hex(),
             "take": swaplib.leg_json(take, index),
             "note": f"answered offer {ask['txid'][:16]}…", "created": now,
-            "expires": now + ACCOUNT_ANSWER_HOLD})
+            "expires": now + ACCOUNT_ANSWER_HOLD,
+            # What "Take it back" has to spend: the answer is signatures over
+            # these, and nothing else stills them.
+            "coins": [{"txid": t, "vout": v} for t, v in committed]})
         state.bump_generation()
         return JSONResponse({
             "chain": chain.network, "ok": True, "offer": ask["txid"],
@@ -15520,20 +15666,12 @@ def create_app(state: AppState) -> FastAPI:
                 # which is why the row waits out the note rather than reading
                 # "sold": the piece moving is the only news here, and the next
                 # page read is where that shows.
-                notes: dict[str, dict] = {}
-                for note in state.offers.bids(chain.network, direction="in"):
-                    if float(note["expires"] or 0) > time.time():
-                        before = notes.get(note["inscription"])
-                        if before is None or float(note["expires"]) > \
-                                float(before["expires"]):
-                            notes[note["inscription"]] = note
                 for entry in data["offers_in"]:
-                    note = notes.get(entry["inscription"]) or {}
+                    note = _answer_standing(chain, entry["inscription"]) or {}
                     same = note.get("buyer") == entry["buyer"]
-                    entry["accepted"] = bool(note and same
-                                            and note.get("status") == "open")
+                    entry["accepted"] = bool(note and same)
                     entry["held_for"] = "" if same else str(note.get("buyer") or "")
-                    entry["until"] = (_local_time(float(note["expires"]), "day")
+                    entry["until"] = (_local_time(float(note["created"]), "day")
                                       if note else "")
             else:
                 standing = {}

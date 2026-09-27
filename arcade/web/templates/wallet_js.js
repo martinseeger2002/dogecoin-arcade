@@ -683,14 +683,25 @@ export async function answerOffer(wallet, ask) {
 }
 
 async function _answerOffer(wallet, ask) {
-  const asked = await fetch("/account/accept", {
+  const accept = () => fetch("/account/accept", {
     method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({piece: ask.piece, offer: ask.offer,
                           decision: ask.refuse ? "refuse" : "",
                           chain: ask.chain || ""}),
   });
-  const said = await asked.json();
+  let asked = await accept();
+  let said = await asked.json();
   if (!asked.ok) throw new Error(said.detail || "that offer cannot be answered");
+  let splitNote = "";
+  if (said.needs_split) {
+    splitNote = " One coin was split first, a small send to yourself, so the answer had two to sign.";
+    // One coin in the wallet and an answer signs two: a small send to yourself
+    // first, then the answer is asked for again (a tester, 2026-09-27).
+    await signOffer(wallet, said);
+    asked = await accept();
+    said = await asked.json();
+    if (!asked.ok) throw new Error(said.detail || "that offer cannot be answered");
+  }
   if (said.presigned && !ask.refuse) return _acceptPresigned(wallet, ask, said);
   const chain = said.chain || ask.chain || "";
   let answer = said.answer, says = said.what || "";
@@ -724,7 +735,7 @@ async function _answerOffer(wallet, ask) {
   const carrier = await talked.json();
   if (!talked.ok) throw new Error(carrier.detail || "the node could not carry it");
   const sent = await signOffer(wallet, carrier);
-  return {...sent, says, refused: !!ask.refuse};
+  return {...sent, says: says + splitNote, refused: !!ask.refuse};
 }
 
 /* --- finishing an offer somebody answered -------------------------------
