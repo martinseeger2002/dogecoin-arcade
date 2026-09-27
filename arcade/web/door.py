@@ -254,6 +254,14 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # holds an ask's tokens back when it indexes the order, and coins
                # cannot be reserved at all (D-048).
                "/account/order", "/account/order/cancel",
+               # and the read that says what those two did. Same queue
+               # arithmetic as the take, no transaction, nothing reserved: a
+               # program that can put a price on the book and take it off has to
+               # be able to ask what is still standing, or it is hoarding its own
+               # txids (a tester, 2026-09-27). A stranger gets the door's 403
+               # with the reason in it, not a 404 that leaves them guessing
+               # whether the route exists (S-work-3).
+               "/account/order/list",
                # and the one read that makes the book takeable by a tab: it
                # builds nothing and sends nothing, it only says which order the
                # queue chose, what it prices to, and which key the question has

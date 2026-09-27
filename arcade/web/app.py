@@ -9387,6 +9387,118 @@ def create_app(state: AppState) -> FastAPI:
             "swapv": swaplib.PROTOCOL, "buyer": address,
         })
 
+    @app.post("/account/order/list")
+    def account_order_list(request: Request, payload: Any = Body(None)):
+        """What this account has standing on the book, and where it stands in line.
+
+        A read, like `/account/take` -- nothing built, nothing signed, nothing
+        filed. It exists because a program can put an order on the book with
+        `/account/order`, take it off with `/account/order/cancel`, and could not
+        ask what it got back (a tester, 2026-09-27). What that leaves a maker
+        holding is its own txid or a guess: an order is a transaction and not a
+        row anybody keeps (D-042), so the size of it lives only in the transaction
+        that placed it and the amount left of it lives only in the engine.
+
+        Standing is not the same as not-cancelled. A filled order, a cancelled
+        one, and one whose block has not reached this node are all one absence
+        from here, and telling them apart needs the fills, which are the other
+        half of D-042 and not this route's business. So an order that is gone is
+        simply not listed, and `pending` marks the one case that is not gone:
+        broadcast and real, holding no reserve yet because its block has not
+        landed, which makes it an order that cannot yet be filled (D-061).
+
+        The amounts are the engine's remainder, not the size that was typed.
+        `sale_amount` is what is LEFT and the original amount is never stored, so
+        a half-filled ask says its remainder -- the same price, a different
+        number of coins. That is the truth about what it will do if someone fills
+        it now, and the number a maker needs if they meant to top it up.
+
+        `ahead` is D-083 put where the person it applies to can read it. At one
+        price the order that queued first is filled first, and a maker is told to
+        rely on that and cannot see it: this is how many orders at the same price
+        got there before theirs. Zero means first in line, which is the only
+        thing a queue behind somebody else can check.
+
+        A bid carries one thing more, and it is here because coins cannot be
+        reserved (D-048). A resting bid is a promise about coins this node never
+        held, and the address may have spent them since -- on a fee, or on a
+        second bid, or on a send. So a bid says what the address holds in coins
+        NOW beside what the bid would pay, and says `short` when they disagree.
+        Nothing else on a node can tell a maker that, and it is the difference
+        between a bid that fills and a bid that pays a fee to fail.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        index = state.token_index(chain)
+        from fractions import Fraction
+        rows: list[dict[str, Any]] = []
+        try:
+            only = int(said.get("property_id") or 0)
+            # The pool first and the cancelled rows out, which is `orders_of`'s
+            # rule and not this route's: an order placed forty seconds ago is
+            # yours whether or not a miner has got to it (D-061).
+            mine = index.orders_of([address])
+            if only:
+                mine = [r for r in mine if only in (r["sale_property"],
+                                                    r["want_property"])]
+            books: dict[int, dict] = {}
+            coins_held = None
+            for row in mine:
+                ask = row["want_property"] == 0
+                token = row["sale_property"] if ask else row["want_property"]
+                prop = index.property(token)
+                # Read the way `book` reads it, from the same two integers: what
+                # is for sale and what is wanted swap sides between an ask and a
+                # bid, and getting that backwards prices a bid at its own
+                # reciprocal.
+                tokens = row["sale_amount"] if ask else row["want_amount"]
+                coins = row["want_amount"] if ask else row["sale_amount"]
+                if token not in books:
+                    books[token] = index.book(token)
+                at = Fraction(coins, tokens) if tokens else Fraction(0)
+                same = [r["txid"] for r in
+                        books[token]["asks" if ask else "bids"]
+                        if r["price"] == at]
+                entry = {
+                    "order": row["txid"], "side": "ask" if ask else "bid",
+                    "property_id": token, "name": prop["name"],
+                    "tokens": tokens,
+                    "amount": format_amount(tokens, bool(prop["divisible"])),
+                    "coins": coins, "total": format_amount(coins, True),
+                    # Coins per whole token, the same figure the order form took
+                    # in -- exact through the Fraction, because a price printed
+                    # off a float is a price that drifts by an ulp and a maker
+                    # comparing two of their own orders would be told they are
+                    # two prices.
+                    "price": f"{(float(at) if prop['divisible'] else float(at) / COIN):.8f}",
+                    "pending": bool(row.get("pending")),
+                    "block": row["block_height"],
+                    "ahead": same.index(row["txid"]) if row["txid"] in same else 0,
+                }
+                if not ask:
+                    if coins_held is None:
+                        with contextlib.closing(index.open()) as db:
+                            coins_held = utxoslib.balance(db, address)
+                    entry["held"] = coins_held
+                    entry["held_amount"] = format_amount(coins_held, True)
+                    entry["short"] = coins_held < coins
+                rows.append(entry)
+        except (tokenlib.TokenError, AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"chain": chain.network, "address": address,
+                             "count": len(rows), "orders": rows})
+
     def _ask_payload(row: dict, take: inscriptionlib.Leg) -> bytes:
         """What a listing writes at output 0: the trade the finished swap IS.
 

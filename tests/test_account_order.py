@@ -799,3 +799,235 @@ def test_nobody_signed_in_is_told_to_sign_in_by_both_routes(node):
         seat["state"].public = False
     assert seat["rpc"].call("getrawmempool") == []
 
+
+# --- what is standing --------------------------------------------------------
+
+def _placed(seat, side: str, amount: str, price: str):
+    """An order on the book, signed and mined: the txid that placed it.
+
+    The three lines every test above repeats -- ask for it, sign it, let a block
+    carry it -- gathered once, so that the assertions below are about what the
+    list says and not about getting an order onto the book first.
+    """
+    answer = seat["client"].post("/account/order", json={
+        "property_id": seat["pid"], "side": side, "amount": amount,
+        "price": price})
+    assert answer.status_code == 200, answer.text
+    txid = _signed(seat["client"], seat["secret"], seat["pubkey"],
+                   answer).json()["txid"]
+    _settled(seat["state"], seat["rpc"])
+    return txid
+
+
+def _listed(who, pid: int):
+    """The whole answer, and the rows in it that are about this token.
+
+    Split because one chain carries every test in this session and an account is
+    the same address in all of them: a list of an address can hold a row that an
+    earlier test put there on a token named after a different seat. So `count` is
+    checked against the whole answer -- it is the field a program reads first --
+    while the rows below are about one token and say so.
+    """
+    answer = who.post("/account/order/list", json={})
+    assert answer.status_code == 200, answer.text
+    body = answer.json()
+    assert body["count"] == len(body["orders"]), body
+    return body, [o for o in body["orders"] if o["property_id"] == pid]
+
+
+def test_the_list_says_what_an_ask_came_to_and_touches_nothing(node):
+    """The read that was missing between placing an order and cancelling it.
+
+    An order is a transaction and not a row anybody keeps (D-042), so before this
+    a program that could put a price on the book had to hoard its own txids or
+    guess what was left of the amount (a tester, 2026-09-27). Everything the
+    answer says is therefore something the ENGINE already knows -- the amount it
+    is holding, the price its two integers come to, which block carried it -- and
+    the load-bearing assertion is the last one: that asking changed none of it.
+    """
+    seat = _bookcoin(node, 27)
+    order = _placed(seat, "ask", "10", "0.5")
+    before = _book(seat["state"], pid=seat["pid"])
+    pool = seat["rpc"].call("getrawmempool")
+    blocks = seat["rpc"].call("getblockcount")
+
+    body, rows = _listed(seat["client"], seat["pid"])
+    assert body["address"] == seat["address"], "whose orders these are"
+    assert body["chain"] == seat["state"].messaging.network
+    assert len(rows) == 1, rows
+    one = rows[0]
+    assert one["order"] == order
+    assert one["side"] == "ask" and one["property_id"] == seat["pid"]
+    assert one["name"] == seat["name"]
+    assert one["tokens"] == 10 * COIN and one["amount"] == "10"
+    assert one["coins"] == 5 * COIN and one["total"] == "5", \
+        "ten of the token for five coins, which is what the two integers say"
+    assert one["price"] == "0.50000000", \
+        "the price the pair comes to, worked out the way the book works it out, " \
+        "and not the string that happened to be typed into the box"
+    assert one["pending"] is False and one["block"] > 0
+    assert one["ahead"] == 0
+    assert "held" not in one, \
+        "the coins figure belongs to a bid, the one side that cannot be checked " \
+        "when it is placed (D-048)"
+
+    named = seat["client"].post("/account/order/list",
+                               json={"property_id": seat["pid"]})
+    assert named.status_code == 200, named.text
+    assert named.json()["orders"] == rows, \
+        "narrowing to the token this address has orders on answers the same: the " \
+        "filter is about which token, not about which order"
+
+    assert seat["rpc"].call("getrawmempool") == pool
+    assert seat["rpc"].call("getblockcount") == blocks
+    assert _book(seat["state"], pid=seat["pid"]) == before, \
+        "a read -- nothing broadcast, nothing reserved, nothing re-dated"
+
+
+def test_an_order_with_no_block_yet_lists_as_pending(node):
+    """D-061 from the maker's side: the state that lasts ten minutes.
+
+    The order is theirs the moment it is broadcast and fillable only once a block
+    carries it, because the engine reserves nothing before then. A list that said
+    "no orders" in that window is the bug D-061 exists to stop; a list that said
+    "standing" without saying WHERE it is would be the same bug wearing a smile.
+    """
+    seat = _bookcoin(node, 28)
+    answer = seat["client"].post("/account/order", json={
+        "property_id": seat["pid"], "side": "ask", "amount": "10", "price": "1"})
+    order = _signed(seat["client"], seat["secret"], seat["pubkey"], answer)
+    assert seat["rpc"].call("getrawmempool"), "out, and deliberately in no block"
+
+    body, rows = _listed(seat["client"], seat["pid"])
+    assert len(rows) == 1, "the order is theirs before the ledger's"
+    assert rows[0]["order"] == order.json()["txid"]
+    assert rows[0]["pending"] is True and rows[0]["block"] == 0
+    assert rows[0]["ahead"] == 0, "last by time, but nothing else stands at this " \
+        "price, so there is nobody in front of it either"
+
+    _settled(seat["state"], seat["rpc"])
+    body, rows = _listed(seat["client"], seat["pid"])
+    assert rows[0]["order"] == order.json()["txid"]
+    assert rows[0]["pending"] is False and rows[0]["block"] > 0, \
+        "the same order, and now a block says it is standing"
+
+
+def test_a_cancel_takes_the_rows_out_before_its_own_block_lands(node):
+    """Standing is not the same as not-cancelled, and the pool is the proof.
+
+    Two asks at two prices -- one cancel takes both, because a cancel names a
+    pair and a side and the chain has no order id to name (D-042). Then the
+    interesting half: the cancel is broadcast and unmined, and the list is
+    already empty. The row has not been deleted anywhere -- the ledger is built
+    out of blocks -- so this is the route repeating the book's own rule rather
+    than remembering it, which is the only way a withdrawn price stops being a
+    price in the ninety seconds before it is confirmed.
+    """
+    seat = _bookcoin(node, 29)
+    first = _placed(seat, "ask", "10", "0.5")
+    second = _placed(seat, "ask", "20", "1")
+    body, rows = _listed(seat["client"], seat["pid"])
+    assert {r["order"] for r in rows} == {first, second}
+    assert sorted(r["price"] for r in rows) == ["0.50000000", "1.00000000"]
+
+    answer = seat["client"].post("/account/order/cancel", json={
+        "property_id": seat["pid"], "side": "ask"})
+    assert answer.status_code == 200, answer.text
+    cancel = _signed(seat["client"], seat["secret"], seat["pubkey"], answer)
+    assert seat["rpc"].call("getrawmempool"), "the cancel is out, in no block"
+
+    body, rows = _listed(seat["client"], seat["pid"])
+    assert rows == [], "a price somebody has withdrawn is not a price, not even " \
+        "one whose cancel no miner has taken up yet"
+    _settled(seat["state"], seat["rpc"])
+    body, rows = _listed(seat["client"], seat["pid"])
+    assert rows == [], "and the block agrees"
+    assert _book(seat["state"], cancel.json()["txid"]) == [], \
+        "the cancel is not itself an order"
+
+
+def test_a_bid_says_whether_the_coins_behind_it_are_there(node):
+    """D-048 made readable: a resting bid is a promise about coins nobody held.
+
+    Both of these were accepted, and both SHOULD be -- an order to buy with coins
+    that are not there is legal, unfilled, and the bidder's own business, which is
+    why no check was put in the way of the second one. What no node could tell the
+    maker until now is that the two are different. A bid pays a fee to fail when
+    the address has spent its coins since, and this is the one place that answer
+    exists.
+    """
+    seat = _bookcoin(node, 30)
+    cheap = _placed(seat, "bid", "1", "1")
+    dear = _placed(seat, "bid", "1", "10")
+
+    body, rows = _listed(seat["client"], seat["pid"])
+    by = {r["order"]: r for r in rows}
+    assert set(by) == {cheap, dear}, rows
+    assert by[cheap]["side"] == "bid"
+    assert by[cheap]["tokens"] == COIN and by[cheap]["amount"] == "1"
+    assert by[cheap]["coins"] == COIN and by[cheap]["total"] == "1", \
+        "one token for one coin: the two integers, with the sides swapped the way " \
+        "a bid swaps them"
+    assert by[cheap]["price"] == "1.00000000"
+    assert by[dear]["coins"] == 10 * COIN
+    assert by[cheap]["short"] is False and by[dear]["short"] is True, \
+        "this seat holds about five test coins: under one bid, not under the other"
+    assert by[dear]["held"] < by[dear]["coins"], \
+        "what the row says the address holds, and what the bid would pay"
+    assert by[cheap]["held"] >= by[cheap]["coins"]
+    assert by[cheap]["held"] == by[dear]["held"], \
+        "one balance for the address, read once and said beside both rows"
+    assert float(by[dear]["held_amount"]) == by[dear]["held"] / COIN
+
+
+def test_the_list_says_who_queued_first_at_the_same_price(node):
+    """D-083 put where the person who has to rely on it can read it.
+
+    Two asks at one price, the other account's in an earlier block. A taker is
+    pointed at the one that queued first, and a maker who queues behind somebody
+    is told to expect that -- so the number that decides whether their order is
+    filled next was invisible to them. It is one row of their own list now.
+    """
+    seat = _bookcoin(node, 31)
+    other, osecret, opubkey, theirs = _seated(seat["app"], seat["state"],
+                                              seat["rpc"], 32)
+    _paid_out(seat, theirs, 100 * COIN)
+    them = dict(seat, client=other, secret=osecret, pubkey=opubkey,
+                address=theirs)
+
+    first = _placed(them, "ask", "10", "1")
+    mine = _placed(seat, "ask", "20", "1")
+
+    body, rows = _listed(seat["client"], seat["pid"])
+    assert len(rows) == 1 and rows[0]["order"] == mine, \
+        "their order is theirs -- this is a maker's list, not a market read"
+    assert rows[0]["ahead"] == 1, \
+        "one ask at this price was in an earlier block, and a taker is sent to " \
+        "it before this one"
+    body, theirs_rows = _listed(other, seat["pid"])
+    assert theirs_rows[0]["order"] == first
+    assert theirs_rows[0]["ahead"] == 0, "the same queue, read from the front"
+
+
+def test_the_list_answers_a_stranger_with_a_reason(node):
+    """Why this route is in the public list at all, and what that owes.
+
+    It is there because a program with a key is the maker this feature is for,
+    and such a program reaches this node over the internet, not from its own
+    machine. It is a read, so the only thing opening it discloses is what the
+    asker's own address already has standing. A stranger who is not signed in has
+    to be told to sign in -- a 403 with the reason in it, not a 404 that leaves
+    them wondering whether the route exists.
+    """
+    from arcade.web import door
+
+    seat = _bookcoin(node, 33)
+    assert "/account/order/list" in door.PUBLIC_POST
+    _publicly(seat["state"])
+    try:
+        refused = seat["app"].post("/account/order/list", json={})
+    finally:
+        seat["state"].public = False
+    assert refused.status_code == 403, refused.text
+    assert "sign in" in refused.json()["detail"], refused.text
+
