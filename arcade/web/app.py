@@ -15006,11 +15006,26 @@ def create_app(state: AppState) -> FastAPI:
             taking = index.pending_takes()
         except Exception:
             taking = {}
+
+        # Coins per whole token, which is NOT what `index.book`'s ratio holds for
+        # an indivisible token: its token count is never scaled by COIN, so the
+        # raw ratio of its two integers is already satoshis, and a page that
+        # prints it straight says `200000000` where the order said `2`. The same
+        # trap `_cancel_one_or_pair` names on the writing side -- "divide the
+        # wrong way and the cancel names a price a hundred million off" --
+        # arrived on the reading side instead, where the only cost is that every
+        # price on an indivisible pair page reads as nonsense. Rehearsing a
+        # cancel of one price on the live site (S18, 2026-09-27) is what showed
+        # it: the surviving row printed `200000000 2 4`.
+        def coins_each(order: dict) -> float:
+            return (float(order["price"]) if prop["divisible"]
+                    else float(order["price"]) / COIN)
+
         for side in ("asks", "bids"):
             for order in book[side]:
                 order["taking"] = taking.get(order["txid"], 0)
                 order["mine"] = order["address"] in owned
-                order["price_shown"] = f"{float(order['price']):.8f}".rstrip("0").rstrip(".")
+                order["price_shown"] = f"{coins_each(order):.8f}".rstrip("0").rstrip(".")
                 order["tokens_shown"] = format_amount(order["tokens"], prop["divisible"])
                 order["coins_shown"] = format_amount(order["coins"], True)
         # Depth behind each row of the book, as a share of the largest resting
@@ -15022,7 +15037,7 @@ def create_app(state: AppState) -> FastAPI:
                 order["depth"] = round(100 * order["tokens"] / biggest, 1) if biggest else 0
         spread = None
         if book["asks"] and book["bids"]:
-            spread = float(book["asks"][0]["price"]) - float(book["bids"][0]["price"])
+            spread = coins_each(book["asks"][0]) - coins_each(book["bids"][0])
         face = _faces_for(index, [prop])[property_id]
         mine = index.orders_of(sorted(owned))
         # Whether a taker's node could ask THIS reader about a resting order at
