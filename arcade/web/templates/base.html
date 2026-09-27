@@ -682,6 +682,63 @@ ol.words{column-gap:1.4em}
   <a class="btn small" href="/join?next={{ path|urlencode }}">Join or sign in</a>
 </div>
 {% endif %}
+{% if account_here and not embed %}
+<script type="module">
+// Accepted offers finish themselves (2026-09-26: "when it is accepted, it
+// should just automatically be signed and sent"). An offer is a message, so the
+// seller's answer is half a trade -- their signature over the piece -- and the
+// payment half needs this account's key. Whenever the wallet is open on any page,
+// this signs and sends every accepted offer, once. Guarded at both ends: the node
+// refuses an answer whose price is not the one this account offered (_leg_answered),
+// and wallet.fill re-reads the transaction's own bytes before signing
+// (coins.verifyOffer). At most once a minute, and one tab at a time.
+(async () => {
+  const LOCK = "arcade.autofill", DONE = "arcade.autofill.done";
+  const now = Date.now();
+  try {
+    if (now - Number(localStorage.getItem(LOCK) || 0) < 60e3) return;
+    localStorage.setItem(LOCK, String(now));
+  } catch (e) { return; }
+  const w = await import("/wallet.js");
+  const keys = await w.opened(ARCADE_CHAIN);
+  if (!keys) { try { localStorage.removeItem(LOCK); } catch (e) {} return; }
+  let done = {};
+  try { done = JSON.parse(localStorage.getItem(DONE) || "{}") || {}; } catch (e) {}
+  const answers = await w.answersToMe(keys);
+  const legs = {};
+  for (const [offer, a] of Object.entries(answers || {})) {
+    if (a && a.ok && a.leg && !done[offer]) legs[offer] = a.leg;
+  }
+  if (!Object.keys(legs).length) return;
+  // Only those that can still complete: not spent, not moved, not already sent.
+  let stale = {};
+  try {
+    const r = await fetch("/account/fill/check", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({chain: ARCADE_CHAIN.network, legs})});
+    if (r.ok) stale = (await r.json()).legs || {};
+  } catch (e) { return; }
+  for (const [offer, leg] of Object.entries(legs)) {
+    if (stale[offer]) { done[offer] = "gone"; continue; }
+    try {
+      const order = await w.offerFill(leg, ARCADE_CHAIN.network);
+      const out = await w.fill(keys, leg, order);
+      done[offer] = out.txid || "sent";
+      const who = order.seller_tag ? "@" + order.seller_tag : "the holder";
+      arcadeToast(`Your offer was accepted by ${who}. The trade is signed and sent: `
+        + "it's yours when its block lands.");
+    } catch (e) {
+      // A trade already on its way, or coins spent since: remembered, not retried
+      // every minute. Anything else is tried again next time.
+      if (/waiting for its block|already|no longer|spent/i.test(String(e.message || e))) {
+        done[offer] = "skipped";
+      }
+    }
+  }
+  try { localStorage.setItem(DONE, JSON.stringify(done)); } catch (e) {}
+})().catch(() => {});
+</script>
+{% endif %}
 {% if account_here and account_name and not embed and path not in ('/me', '/join', '/restore') %}
 {# Signed in, wallet locked in this browser: one bar, every page. #}
 <div id="unlockbar" class="unlockbar" hidden>
@@ -1138,6 +1195,18 @@ function arcadeUnlockSheet(why){
     pw.focus();
   });
 }
+function arcadeToast(text){
+  var t = document.createElement('div');
+  t.className = 'panel arcadetoast';
+  t.setAttribute('role', 'status');
+  t.textContent = text;
+  var x = document.createElement('button');
+  x.type = 'button'; x.className = 'ghost small'; x.textContent = 'OK';
+  x.onclick = function(){ t.remove(); };
+  t.append(x);
+  document.body.append(t);
+  setTimeout(function(){ t.remove(); }, 15000);
+}
 async function arcadeKeys(chain, why){
   var w = await import('/wallet.js');
   var keys = await w.opened(chain || ARCADE_CHAIN);
@@ -1506,6 +1575,9 @@ function arcadeFileCost(bytes){
   padding:8px 16px;background:color-mix(in srgb,var(--accent) 14%,var(--panel));
   border-bottom:1px solid var(--line);font-size:.9rem}
 .askcard input[type=password]{margin-top:6px}
+.arcadetoast{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:60;
+  max-width:min(92vw,480px);display:flex;gap:10px;align-items:center;
+  box-shadow:0 6px 24px rgba(0,0,0,.35)}
 a.mention{font-weight:600;text-decoration:none}a.mention:hover{text-decoration:underline}
 .bubble img.postmedia{display:block;max-width:100%;max-height:340px;height:auto;
   border-radius:10px;margin:6px 0;cursor:zoom-in}
