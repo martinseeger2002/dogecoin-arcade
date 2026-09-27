@@ -72,10 +72,16 @@
   <div class="lcomments">
     {% for c in it.comment_rows %}
     <div class="muted" style="font-size:.86rem;margin-top:6px">
-      <strong>{% if names.get(c.author) %}@{{ names[c.author] }}{% else %}{{ c.author[:10] }}…{% endif %}</strong>
+      <strong>{{ c.author|who }}</strong>
       {{ c.text }}</div>
     {% endfor %}
   </div>
+  {% endif %}
+  {% if it.txid %}
+  {# The whole discussion, replies and all, open to anyone (2026-09-27). #}
+  <a class="small" style="display:inline-block;margin-top:6px" href="/launches/{{ it.txid }}">
+    {%- if it.comments %}View all {{ it.comments }} comment{{ '' if it.comments == 1 else 's' }} and replies &rarr;
+    {%- else %}Discuss it &rarr;{% endif %}</a>
   {% endif %}
   {% if acts %}
   <form method="post" action="/feed/{{ it.txid }}/reply" id="c-{{ it.txid }}" hidden

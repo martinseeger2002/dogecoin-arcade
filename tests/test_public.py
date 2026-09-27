@@ -894,3 +894,25 @@ def test_a_price_only_ask_is_not_shown_to_buyers_as_for_sale():
     for page in ("market_collection.html", "exchange.html"):
         body = (root / "arcade/web/templates" / page).read_text()
         assert "data-buy-listing=" in body and '_buy_listing.html' in body, page
+
+
+def test_a_launch_thread_is_public_and_nests_replies(public, monkeypatch):
+    """2026-09-27: anyone can read a launch's comments and answer a
+    comment, as on the feed. A reply to a comment is a REPLY aimed at it."""
+    from arcade.messaging import feed as feedlib
+    from test_feed_web import an_act
+
+    app, state = public
+    launch = "1a" * 32
+    index = state.token_index(state.token_chain)
+    monkeypatch.setattr(type(index), "launches", lambda self, limit=300: [
+        {"kind": "token", "id": 7, "name": "Talk Token", "creator": KEEPER,
+         "txid": launch, "time": 0}])
+    an_act(state, "2b" * 32, feedlib.REPLY, launch, author=KEEPER, text="first comment")
+    an_act(state, "3c" * 32, feedlib.REPLY, "2b" * 32, author=KEEPER, text="a reply to it")
+    assert door.public_path(f"/launches/{launch}")
+    page = app.get(f"/launches/{launch}", headers=LOCAL)
+    assert page.status_code == 200, page.text[:300]
+    assert "first comment" in page.text and "a reply to it" in page.text
+    assert page.text.index("first comment") < page.text.index("a reply to it")
+    assert app.get(f"/launches/{'9' * 64}", headers=LOCAL).status_code == 404

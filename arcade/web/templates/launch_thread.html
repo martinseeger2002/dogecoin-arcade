@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}{{ wall_text(launch.name, 'A launch') }} · Launches · DogecoinArcade{% endblock %}
+{% block body %}
+{# One launch's whole discussion (2026-09-27): every comment, and the
+   replies to each, the way the feed shows a thread. Anyone can read it; an
+   account signs its own comments, replies and likes in its tab. #}
+<p class="back-link"><a href="/launches">&larr; all launches</a></p>
+<h1 style="margin-bottom:4px">{{ wall(launch.name, 'name') }}</h1>
+<p class="sub" style="margin-top:0">
+  {{ 'A token' if launch.kind == 'token' else 'A collection' }} by {{ launch.creator|who }}
+  &middot; <a href="{% if launch.kind == 'token' %}/tokens/{{ launch.id }}{% else %}/exchange/collection/{{ launch.creator }}/{{ launch.name|urlencode }}{% endif %}">open it</a>
+  &middot; {{ count }} comment{{ '' if count == 1 else 's' }}</p>
+
+<p class="msg" id="launch-news" hidden></p>
+
+{% if acts %}
+<form method="post" action="/feed/{{ root }}/reply" class="panel row" style="gap:8px">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <div style="flex:1"><input autocomplete="off" name="text" maxlength="2000"
+       aria-label="Your comment" placeholder="Say something about it"></div>
+  <button class="small" type="submit">Comment</button>
+</form>
+{% elif not mine.tag %}
+<p class="muted"><a href="/join?next=/launches/{{ root }}">Join or sign in</a> to comment.</p>
+{% endif %}
+
+{% macro thread(parent, depth) %}
+  {% for c in tree.get(parent, []) %}
+  <div class="panel lthread" style="margin-left:{{ [depth, 4]|min * 18 }}px">
+    <div class="muted" style="font-size:.8rem">
+      <strong>{{ c.author|who }}</strong>
+      &middot; {% if c.pending %}waiting for its block{% else %}{{ when(c.when) }}{% endif %}</div>
+    <div class="posttext" style="margin:4px 0 6px">{{ render_post(c.text, {}) }}</div>
+    {% if acts %}
+    <div class="row" style="gap:6px">
+      <form method="post" action="/feed/{{ c.txid }}/{{ 'unlike' if c.liked else 'like' }}" style="margin:0">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <button class="small {{ 'on' if c.liked else 'ghost' }}" type="submit">&#9829; {{ c.likes }}</button></form>
+      <button class="small ghost" type="button"
+              onclick="var f=document.getElementById('r-{{ c.txid }}');f.hidden=!f.hidden;if(!f.hidden)f.elements.text.focus()">Reply</button>
+    </div>
+    <form method="post" action="/feed/{{ c.txid }}/reply" id="r-{{ c.txid }}" hidden
+          class="row" style="gap:8px;margin-top:8px">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <div style="flex:1"><input autocomplete="off" name="text" maxlength="2000"
+           aria-label="Your reply" placeholder="Reply to {{ c.author|who_text }}"></div>
+      <button class="small" type="submit">Reply</button>
+    </form>
+    {% elif c.likes %}<span class="muted small">&#9829; {{ c.likes }}</span>{% endif %}
+  </div>
+  {{ thread(c.txid, depth + 1) }}
+  {% endfor %}
+{% endmacro %}
+
+{% if tree.get(root) %}
+  {{ thread(root, 0) }}
+{% else %}
+  <div class="panel empty"><p class="muted">No comments yet. Be the first.</p></div>
+{% endif %}
+
+<style>
+.lthread{margin-top:8px;padding:10px 12px}
+.lthread button.on{background:var(--accent,#c9a227);color:#fff}
+.posttext{overflow-wrap:anywhere;white-space:pre-wrap}
+</style>
+
+{% if acts %}
+<script type="module">
+/* The same signing as the launches list and the feed: the tab signs the reply
+   or like itself, aimed at the launch or at the comment being answered. */
+import * as wallet from "/wallet.js";
+const CHAIN = {network: "{{ state.messaging.network }}",
+               version: {{ state.messaging.params.pubkeyhash_version }}};
+const KINDS = {like: 1, unlike: 2, reply: 3};
+const news = document.getElementById("launch-news");
+const say = (t, bad) => { news.textContent = t; news.hidden = !t;
+                          news.className = "msg " + (bad ? "err" : "ok"); };
+const opening = wallet.opened(CHAIN);
+document.addEventListener("submit", async (event) => {
+  const form = event.target;
+  const one = (form.getAttribute("action") || "").match(
+    /^\/feed\/([0-9a-f]{64})\/(like|unlike|reply)$/);
+  if (!one) return;
+  event.preventDefault();
+  const [, txid, doing] = one;
+  const text = ((form.elements.text || {}).value || "").trim();
+  if (doing === "reply" && !text) { say("Write something first.", true); return; }
+  const held = (await opening) || await arcadeKeys(CHAIN).catch(() => null);
+  if (!held) { say("Unlock your wallet to do that.", true); return; }
+  const button = form.querySelector("button[type=submit]");
+  if (button && doing !== "reply") button.classList.toggle("on");
+  if (button) button.disabled = true;
+  try {
+    const out = await wallet.react(held, txid, KINDS[doing], text);
+    if (form.elements.text) { form.elements.text.value = ""; }
+    if (form.id && form.id.startsWith("r-")) form.hidden = true;
+    say(`Sent (${out.txid.slice(0, 12)}…). It shows here when its block lands.`);
+  } catch (e) {
+    if (button && doing !== "reply") button.classList.toggle("on");
+    say(String(e.message || e), true);
+  } finally { if (button) button.disabled = false; }
+});
+</script>
+{% endif %}
+{% endblock %}

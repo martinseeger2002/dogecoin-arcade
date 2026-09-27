@@ -6376,6 +6376,59 @@ def create_app(state: AppState) -> FastAPI:
                       names=_tags_for([i["creator"] for i in items]
                                       + [c["author"] for i in items for c in i["comment_rows"]]))
 
+    @app.get("/launches/{txid}", response_class=HTMLResponse)
+    def launch_thread(request: Request, txid: str):
+        """One launch's whole discussion (2026-09-27: "if somebody has
+        commented on one of the launches, anyone should be able to see it and
+        comment on the comment just like in the feed").
+
+        A comment is a feed REPLY aimed at the launch's creating transaction, and
+        a reply to a comment is a REPLY aimed at that comment -- the feed's own
+        shape -- so the thread is read out of `feed_act`, level by level, with the
+        mempool on top so a comment made a minute ago is already there.
+        """
+        txid = (txid or "").lower()
+        chain, index = _token_chain()
+        launch = next((i for i in index.launches(limit=1000) if i.get("txid") == txid), None)
+        if launch is None:
+            raise HTTPException(404, "no such launch")
+        mine = _tag_of_whoever_is_asking(request)
+        waiting = _pending_feed(state.messaging.network)
+        pool = [dict(a, height=a.get("height") or 0) for a in (waiting.acts or [])]
+        acts: list[dict] = []
+        level, seen = [txid], set()
+        for _depth in range(6):                    # six deep is deep enough
+            if not level:
+                break
+            try:
+                with state.store() as store:
+                    got = [dict(a) for a in store.feed_acts_on(state.messaging.network, level)]
+            except Exception:
+                got = []
+            known = {a["txid"] for a in got}
+            got += [a for a in pool if a.get("target") in set(level) and a["txid"] not in known]
+            acts += [a for a in got if a["txid"] not in seen]
+            seen |= {a["txid"] for a in got}
+            level = [a["txid"] for a in got if a["kind"] == feedlib.REPLY]
+        replies = [a for a in acts if a["kind"] == feedlib.REPLY]
+        likes: dict[str, set] = {}
+        for a in acts:
+            if a["kind"] == feedlib.LIKE:
+                likes.setdefault(a["target"], set()).add(a["author"])
+            elif a["kind"] == feedlib.UNLIKE:
+                likes.setdefault(a["target"], set()).discard(a["author"])
+        me = mine.get("address") or ""
+        by_parent: dict[str, list] = {}
+        for r in replies:
+            by_parent.setdefault(r["target"], []).append({
+                "txid": r["txid"], "author": r["author"], "text": r["text"] or "",
+                "when": r.get("block_time") or 0, "pending": not (r.get("height") or 0),
+                "likes": len(likes.get(r["txid"], ())), "liked": me in likes.get(r["txid"], ())})
+        return render(request, "launch_thread.html", chain=chain, launch=launch,
+                      tree=by_parent, root=txid, count=len(replies), mine=mine,
+                      public=_public_request(request), when=_when,
+                      acts=_public_request(request) and bool(mine.get("tag")))
+
     @app.get("/launch")
     def launchpad(request: Request):
         """Where the launch wizard was. The operator (2026-09-26) took it out -- making a
