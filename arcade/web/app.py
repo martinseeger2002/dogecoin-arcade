@@ -910,11 +910,12 @@ def create_app(state: AppState) -> FastAPI:
         # to be the one that is safe to serve, or the allowlist would be
         # handing out the Overview's balances, unread counts and identity.
         if _public_request(request):
-            # Somebody already signed in goes to their own arcade. Without
-            # this, signing up ends on the page that asks you to sign up.
-            if signed_in(request) is not None:
-                return RedirectResponse("/me", status_code=303)
-            return join_page(request)
+            # The arcade opens on the feed, signed in or not (the operator,
+            # 2026-09-27: "When the arcade app opens, it should be open to the
+            # feed tab"). Signing up and signing in land here when there is no
+            # ?next=, so they end on the feed too; the feed shows a stranger
+            # the Join bar, and /me is one tap away in the nav.
+            return RedirectResponse("/feed", status_code=303)
         stats = {}
         if state.store_path.exists():
             with state.store() as store:

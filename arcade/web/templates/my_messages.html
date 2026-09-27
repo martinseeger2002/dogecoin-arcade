@@ -36,7 +36,7 @@
       <label>What the group is called</label>
       <input autocomplete="off" id="group-name" maxlength="60" placeholder="Weekend crew">
       <label style="margin-top:8px">Who is in it</label>
-      <input autocomplete="off" id="group-who" class="mono" spellcheck="false"
+      <input type="search" autocomplete="off" data-lpignore="true" data-1p-ignore data-form-type="other" data-not-me id="group-who" class="mono" spellcheck="false"
              placeholder="@alice, @bob, @carol">
       <div class="row" style="margin-top:9px">
         <button type="button" class="small" id="group-make">Make the group</button>
@@ -52,7 +52,7 @@
 
     <form class="newconv" id="newconv" hidden onsubmit="return false">
       <label>Their @tag, or their address</label>
-      <input autocomplete="off" id="who-new" class="mono" spellcheck="false"
+      <input type="search" autocomplete="off" data-lpignore="true" data-1p-ignore data-form-type="other" data-not-me id="who-new" class="mono" spellcheck="false"
              placeholder="@tag or their address">
       <div class="row" style="margin-top:9px">
         <button type="button" class="small" id="start">Start</button>

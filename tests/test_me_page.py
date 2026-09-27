@@ -127,15 +127,17 @@ def public(client):
     state.set_setting("public_hosts", [])
 
 
-def test_signing_up_does_not_end_on_the_page_that_asks_you_to_sign_up(public):
-    """Somebody presses "take me in" and goes to `/`. Without this they
-    land back on the splash, signed in, being asked to sign up."""
+def test_the_arcade_opens_on_the_feed(public):
+    """2026-09-27: "When the arcade app opens, it should be open to
+    the feed tab". Signed in or not, and after signing up (which goes to `/`
+    when there is no ?next=), `/` is the feed. Before this a stranger got the
+    splash and an account got /me."""
     app, _ = public
-    assert app.get("/", headers=EDGE).status_code == 200, "a stranger: splash"
+    answer = app.get("/", headers=EDGE, follow_redirects=False)
+    assert answer.status_code == 303 and answer.headers["location"] == "/feed"
     _seat(app)
     answer = app.get("/", headers=EDGE, follow_redirects=False)
-    assert answer.status_code == 303
-    assert answer.headers["location"] == "/me"
+    assert answer.status_code == 303 and answer.headers["location"] == "/feed"
 
 
 def test_an_account_gets_its_own_tabs(public):

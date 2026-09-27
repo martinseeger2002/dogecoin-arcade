@@ -222,6 +222,8 @@ a.btn:hover{background:var(--code);text-decoration:none}
 textarea{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:7px;
   background:var(--panel);color:var(--fg);font:inherit;font-size:.92rem;resize:vertical}
 input.mono{font-family:var(--mono,ui-monospace,monospace);font-size:.85rem}
+/* A people-search box looks like every other box (iOS draws its own). */
+input[type=search]{-webkit-appearance:none;appearance:none}
 
 table.wallets{width:100%;border-collapse:collapse}
 table.wallets td{padding:9px 8px;border-top:1px solid var(--line);vertical-align:middle}
@@ -693,6 +695,32 @@ ol.words{column-gap:1.4em}
   <a class="btn small" href="/join?next={{ path|urlencode }}">Join or sign in</a>
 </div>
 {% endif %}
+<script>
+// A box for finding somebody else must never start with your own name in it
+// (2026-09-27: the address book's "add somebody" box came pre-filled
+// with his username). That is the browser's password AutoFill: every page has
+// the unlock form's password field, so Safari fills "the username" into the
+// first text box it finds. Marked boxes are cleared of your own name until
+// you type in them yourself.
+(function(){
+  function mine(v){
+    var me = (typeof ARCADE_ME === 'string' ? ARCADE_ME : '').toLowerCase();
+    v = String(v || '').trim().replace(/^@/, '').toLowerCase();
+    return !!me && v === me;
+  }
+  function sweep(){
+    document.querySelectorAll('input[data-not-me]').forEach(function(box){
+      if (!box.dataset.typed && mine(box.value)) box.value = '';
+    });
+  }
+  document.addEventListener('keydown', function(e){
+    if (e.target && e.target.matches && e.target.matches('input[data-not-me]'))
+      e.target.dataset.typed = '1';
+  }, true);
+  document.addEventListener('focusin', sweep);
+  window.addEventListener('pageshow', function(){ sweep(); setTimeout(sweep, 400); setTimeout(sweep, 1500); });
+})();
+</script>
 {% if not embed %}
 <script type="module">
 // Share a piece to the feed, with something said about it (2026-09-27).

@@ -71,8 +71,12 @@ def test_the_front_page_is_the_splash_not_the_wallet(public):
     route itself has to be the safe one, or the allowlist hands out the
     Overview's balances and unread counts."""
     app, _ = public
-    body = app.get("/", headers=LOCAL).text
-    assert "seats open" in body or "No open seats" in body
+    answer = app.get("/", headers=LOCAL)
+    # Since 2026-09-27 the public front page is the feed (the operator: "When the
+    # arcade app opens, it should be open to the feed tab"). The point of this
+    # test stands: whatever `/` shows a stranger, it is not the wallet.
+    assert str(answer.url).endswith("/feed")
+    body = answer.text
     assert "Spendable" not in body
     assert "Known contacts" not in body
 
@@ -448,8 +452,7 @@ def test_the_front_page_follows_the_request_too(named):
     mine = app.get("/", headers=LOCAL).text
     theirs = app.get("/", headers={"host": "node.dogecoinarcade.com"}).text
     assert "Known contacts" in mine, "the operator gets their overview"
-    assert "Known contacts" not in theirs, "a stranger gets the splash"
-    assert "seats open" in theirs or "No open seats" in theirs
+    assert "Known contacts" not in theirs, "a stranger gets the feed, not the overview"
 
 
 def test_the_navigation_follows_the_request_too(named):
