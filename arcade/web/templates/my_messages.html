@@ -119,9 +119,10 @@
         the wallet's own Messages page can. What somebody sends <em>you</em>
         arrives whole, pictures included, and is shown here.</p>
       <p class="muted composer-note" style="padding-bottom:2px">
-        Your own messages are kept in this browser only: each one is encrypted
-        to the person you sent it to, so it cannot be read back off the chain
-        &mdash; not by you either. They have their copy; this is yours.</p>
+        Each message you send is encrypted to the person you sent it to, so it
+        cannot be read back off the chain &mdash; not by you either. Your copy is
+        kept encrypted with your own key on this node, so it follows you to any
+        browser you sign in on; nobody else can read it.</p>
       <p class="muted composer-note" id="cost-note">
         Encrypted to them only. Costs a transaction fee and a little dust,
         which is paid to them and is how they know something arrived.
@@ -488,6 +489,18 @@ async function drawConversation() {
     $("convo-sub").textContent = thread.address || "";
     $("to-book").textContent = thread.inBook ? "Address book"
                                              : "Add to address book";
+    // Added straight from here (filming, 2026-09-26): the thread already knows
+    // their tag, and the book looks the rest up on the chain, as its search does.
+    $("to-book").onclick = async (event) => {
+      if (thread.inBook || !thread.tag) return;          // just go to the book
+      event.preventDefault();
+      try {
+        await mail.addToBook(thread.tag);
+        $("to-book").textContent = "In your address book \u2713";
+        thread.inBook = true;
+        await drawThreads();
+      } catch (e) { say(String(e.message || e)); }
+    };
     $("cost-note").textContent =
       `Encrypted to ${thread.tag ? "@" + thread.tag : "them"} only. Costs a `
       + "transaction fee and a little dust, which is paid to them and is how "
@@ -658,6 +671,13 @@ $("group-cancel").onclick = () => {
 $("group-make").onclick = async () => {
   const names = $("group-who").value.split(/[\s,]+/).map((w) => w.trim()).filter(Boolean);
   $("group-trouble").hidden = true;
+  // Asked first, like every other thing that costs (filming, 2026-09-26): each
+  // member is sent the group's key in a message of its own, one fee each.
+  if (names.length && !(await arcadeAsk("Make this group?",
+      `${$("group-name").value.trim() || "The group"} with ${names.length} `
+      + `${names.length === 1 ? "person" : "people"}. Each of them is sent the group's `
+      + `key in a message of its own, plus one to you for your other devices: `
+      + `${names.length + 1} small transactions, one fee each.`, "Make it"))) return;
   $("group-make").disabled = true;
   const was = $("group-make").textContent;
   $("group-make").textContent = "Making it\u2026";

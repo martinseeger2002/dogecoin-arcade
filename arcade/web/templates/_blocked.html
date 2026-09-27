@@ -15,7 +15,8 @@
   <p class="msg err" id="block-trouble" hidden></p>
 </details>
 <script>
-(function () {
+// After the page: base.html defines window.arcadeBlocked below the body block.
+document.addEventListener('DOMContentLoaded', function () {
   var B = window.arcadeBlocked;
   if (!B) return;
   var $ = function (id) { return document.getElementById(id); };
@@ -74,5 +75,5 @@
   };
   document.addEventListener('arcade:blocked', draw);
   draw();
-})();
+});
 </script>

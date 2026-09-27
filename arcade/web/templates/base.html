@@ -1381,6 +1381,7 @@ function arcadeFileCost(bytes){
 .screenlabel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2;
   padding:7px 12px;border-radius:999px;border:0;background:rgba(0,0,0,.72);color:#fff;
   font:600 .8rem/1.2 inherit;cursor:pointer;box-shadow:none;white-space:nowrap}
+a.mention{font-weight:600;text-decoration:none}a.mention:hover{text-decoration:underline}
 .bubble img.postmedia{display:block;max-width:100%;max-height:340px;height:auto;
   border-radius:10px;margin:6px 0;cursor:zoom-in}
 details.covered>summary{cursor:pointer;color:var(--muted);font-size:.9rem;padding:8px 12px;
@@ -1410,10 +1411,16 @@ window.arcadeBlocked = (function () {
     add: function (tag, address) {
       if (!address) return;
       var list = all().filter(function (b) { return b.address !== address; });
+      // A block after an unblock wins (the account's copy, messaging.js syncMailbox).
+      try { var g = JSON.parse(localStorage.getItem('arcade.blocked.gone') || '{}'); delete g[address];
+            localStorage.setItem('arcade.blocked.gone', JSON.stringify(g)); } catch (e) {}
       list.push({tag: String(tag || '').replace(/^@/, ''), address: address, at: Date.now()});
       save(list);
     },
     remove: function (address) {
+      // Remembered with a time, so another device's copy does not block them again.
+      try { var g = JSON.parse(localStorage.getItem('arcade.blocked.gone') || '{}'); g[address] = Date.now();
+            localStorage.setItem('arcade.blocked.gone', JSON.stringify(g)); } catch (e) {}
       save(all().filter(function (b) { return b.address !== address; }));
     }
   };

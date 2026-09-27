@@ -23,3 +23,19 @@ def test_the_messages_page_keeps_the_chats_in_step(public):
     _seat(app)
     page = app.get("/me/messages", headers=EDGE).text
     assert "mail.tendHolderChats(keys, me)" in page
+
+
+def test_the_collection_page_itself_carries_the_switch(client):
+    """/collections/<creator>/<set> as well as the market page (filming, 2026-09-26)."""
+    import sys, pathlib
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    from test_collection_web import index_with_a_collection
+    app, state = client
+    index_with_a_collection(state.home)
+    state.public = True
+    try:
+        page = app.get("/collections/nMe/Doge%20Punks").text
+    finally:
+        state.public = False
+    if "Doge Punks" in page:
+        assert 'id="hc-box"' in page, "the holders' chat switch is on the collection page"

@@ -116,8 +116,9 @@ python3 installer/install.py</pre>
     <li><b>Publish your revision</b> (the table above) where your users can see it, and keep
       it current: it is how they can tell your copy is the published code.</li>
     <li><b>Tell your people the one rule that protects them</b>: their twelve words are
-      typed once, when the wallet is made. After that the site unlocks with their password.
-      Any site that asks for the twelve words, for any reason, is stealing them &mdash; and
+      typed when the wallet is made, and after that only on Restore, reached from Sign in
+      when the password is gone, which checks them in the browser and never sends them.
+      Anything else that asks for the twelve words, for any reason, is stealing them &mdash; and
       they should only ever sign in on a domain they typed themselves.</li>
   </ol>
   <p class="muted" style="font-size:.86rem">Coming: an instance will be able to sign its

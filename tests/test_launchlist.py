@@ -54,3 +54,28 @@ def test_the_page_lists_a_collection_with_the_feeds_buttons(client):
     assert f'action="/feed/{1:064x}/like"' in page.text, "the like is aimed at #1"
     assert 'href="/launches?sort=new"' in page.text
     assert 'href="/launches"' in app.get("/exchange").text
+
+
+def test_a_visitor_sees_the_counts_and_how_to_join_in(client):
+    """Signed out, the reactions are counts and a way in, not nothing (filming,
+    2026-09-26: a signed-out phone saw no likes, dislikes or comments at all)."""
+    app, state = client
+    index_with_a_collection(state.home)
+    state.public = True
+    try:
+        page = app.get("/launches").text
+    finally:
+        state.public = False
+    if "Doge Punks" in page:
+        assert "Sign in to react" in page and "/like\"" not in page
+
+
+def test_the_launch_wizard_is_gone_and_its_address_goes_to_the_mintpad_wizard(client):
+    """2026-09-26: no wizard for making tokens or collections (that is
+    easy already); a mintpad wizard instead."""
+    app, _ = client
+    ex = app.get("/exchange").text
+    assert 'href="/launch"' not in ex and 'href="/launches"' in ex
+    moved = app.get("/launch", follow_redirects=False)
+    assert moved.status_code == 303 and moved.headers["location"] == "/mintpad/new"
+    assert 'href="/mintpad/new"' in app.get("/exchange?tab=mintpads").text

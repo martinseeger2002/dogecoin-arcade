@@ -46,6 +46,12 @@ const CHAIN = {network: {{ chain.network|tojson }},
   }
   $("hc-go").onclick = async () => {
     const news = $("hc-news");
+    // Asked first, like every paid action (filming, 2026-09-26): one invitation
+    // message per holder with a published key, each with its fee.
+    if (!(await arcadeAsk("Start the holders' chat?",
+        "Everybody who holds " + ASSET.label + " and has published a messaging key is "
+        + "invited, each by a message of its own with its own small fee. Later holders "
+        + "are let in whenever you have Messages open.", "Start it"))) return;
     $("hc-go").disabled = true;
     $("hc-go").textContent = "Starting…";
     try {

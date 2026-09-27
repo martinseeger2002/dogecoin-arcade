@@ -15,6 +15,10 @@
   {% if d.url %}<span class="mono" style="user-select:all" title="their link — copy it, do not click it">{{ d.url }}</span>{% endif %}</p>
 {% endif %}
 
+{# The holders' chat switch, here too (filming, 2026-09-26: it was only on the
+   collection's market page). Shown only to the signed-in account that made it. #}
+{% set hc_kind, hc_id, hc_name, hc_label, hc_creator = 'collection', 0, summary.collection, summary.collection, summary.creator %}
+{% include "_holders_chat.html" %}
 <div class="row" style="margin-bottom:14px">
   <a class="btn ghost small" href="/collections">All collections</a>
   <a class="btn ghost small" href="/r/collection/{{ summary.creator }}/{{ summary.collection|urlencode }}?traits=1">API</a>

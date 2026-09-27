@@ -293,17 +293,53 @@ async function _openFile(said, password, {network, version}) {
   return {...result, tag: (said && said.tag) || "", wallet};
 }
 
+/** Forgot the password: the twelve words open the account, and the wallet is
+ *  sealed again under a new password -- all in this tab.
+ *
+ *  The words never leave it. They make the login key, which signs in (without
+ *  taking a seat: words that are not an account here must not become a new,
+ *  empty one); the wallet is sealed with the new password here; the node is
+ *  handed only the new encrypted blob, in place of the old one, and the
+ *  account's @tag opens with the new password from then on, anywhere.
+ */
+export async function restore(phrase, password, options) {
+  return working(() => _restore(phrase, password, options));
+}
+
+async function _restore(phrase, password, {network, version}) {
+  const wrong = await signer.complaint(phrase);
+  if (wrong) throw new Error(wrong);
+  if (!(password || "")) throw new Error("a new password, please.");
+  const wallet = await walletFrom(signer.normalise(phrase), network, version);
+  await everyChain(wallet, await chains());
+  let result;
+  try {
+    result = await seatWith(wallet, {join: false});
+  } catch (e) {
+    throw new Error("those words are not an account on this node. Check each word; "
+      + "if you signed up on another node, restore there. Nothing was changed.");
+  }
+  const blob = await seal(wallet.phrase, password);
+  const stored = await fetch("/account/vault", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({blob}),
+  });
+  const said = await stored.json();
+  if (!stored.ok) throw new Error(said.detail || "the new password was not saved");
+  return {...result, wallet};
+}
+
 /** Prove a wallet to the node the only way a node believes, and open it
  *  from here -- the same two requests whichever way the words arrived.
  */
-async function seatWith(wallet) {
+async function seatWith(wallet, {join = true} = {}) {
   const challenge = await (await fetch("/auth/challenge")).json();
   const signature = await wallet.sign(
     signer.loginMessage(challenge.origin, challenge.nonce));
   const opened = await fetch("/auth/login", {
     method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({pubkey: wallet.pubkey, nonce: challenge.nonce,
-                          signature: hex(signature), join: true}),
+                          signature: hex(signature), join}),
   });
   const result = await opened.json();
   if (!opened.ok) throw new Error(result.detail || "that did not open anything");
@@ -502,11 +538,25 @@ export async function checkedListing(leg, wallet) {
  * not off `leg.price` -- the payload is what the signatures stand over, and a
  * row priced from anywhere else could carry a number no signature covers.
  */
-export async function list(wallet, leg) {
-  return working(() => _list(wallet, leg));
+export async function list(wallet, leg, {days = 0} = {}) {
+  return working(() => _list(wallet, leg, days));
 }
 
-async function _list(wallet, leg) {
+/** Offer one payment to this account's own address in `count` coins -- what a
+ *  mintpad needs to stand one listing per piece on (two coins each). */
+export async function offerSplit(count, chain) {
+  return working(async () => {
+    const asked = await fetch("/account/split", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({count, chain: chain || ""}),
+    });
+    const offer = await asked.json();
+    if (!asked.ok) throw new Error(offer.detail || "the coins could not be split");
+    return offer;
+  });
+}
+
+async function _list(wallet, leg, days = 0) {
   const keys = keysOn(wallet, leg.chain
                       || (wallet.on && Object.keys(wallet.on)[0]));
   const shown = await coins.verifyLeg(leg, keys);
@@ -519,7 +569,7 @@ async function _list(wallet, leg) {
     method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({raw: leg.raw, chain: leg.chain || "",
                           amount: shown.coinsOf(shown.listing.sats),
-                          pubkey: coinsHex(keys.pubkey), signatures}),
+                          pubkey: coinsHex(keys.pubkey), signatures, days}),
   });
   const said = await done.json();
   if (!done.ok) throw new Error(said.detail || "the node would not take it");

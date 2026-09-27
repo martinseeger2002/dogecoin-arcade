@@ -400,3 +400,106 @@ def test_a_file_and_a_password_open_a_wallet_this_node_never_held(
     assert state.accounts().free() == free - 1, "the words took a seat"
     assert state.vault().by_pubkey(pubkey) is None, \
         "this node was shown the wallet, not given it"
+
+
+def _restore(browser, phrase, password):
+    return browser.execute_async_script("""
+        const done = arguments[3];
+        import("/wallet.js").then((m) => m.restore(arguments[0], arguments[1],
+                                   {network: "regtest", version: arguments[2]}))
+          .then((r) => done({pubkey: r.pubkey}),
+                (e) => done({error: String(e.message || e)}));""",
+        phrase, password, REGTEST_VERSION)
+
+
+def test_forgot_password_the_words_set_a_new_one(loaded):
+    """Restore (2026-09-26): the twelve words open the account and
+    seal it under a new password, in the browser. The node is given a new
+    blob, never the words, and the old password stops opening it."""
+    from selenium.webdriver.common.by import By
+
+    browser, base, state, home = loaded
+    state.accounts().seats = max(state.accounts().seats, 40)
+    made = _sign_up(browser, "forgetful", password="the old password")
+    assert "error" not in made, made
+    old_blob = state.vault().get("forgetful")["blob"]
+
+    browser.delete_all_cookies()
+    browser.get(f"{base}/restore")
+    for _ in range(60):
+        if browser.execute_script("return document.body.dataset.restoreReady"):
+            break
+        time.sleep(0.25)
+    browser.find_element(By.ID, "phrase").send_keys(made["phrase"])
+    browser.find_element(By.ID, "new-pw").send_keys("a brand new password")
+    browser.find_element(By.ID, "new-pw2").send_keys("a brand new password")
+    browser.find_element(By.ID, "go").click()
+    for _ in range(240):
+        if browser.execute_script("return document.body.dataset.restored"):
+            break
+        time.sleep(0.25)
+    assert browser.execute_script("return document.body.dataset.restored") == "yes", \
+        browser.find_element(By.ID, "trouble").text
+
+    row = state.vault().get("forgetful")
+    assert row["blob"] != old_blob, "sealed again"
+    for word in made["phrase"].split():
+        assert word not in row["blob"]
+    assert made["phrase"].encode() not in (home / "accounts.sqlite").read_bytes()
+
+    browser.delete_all_cookies()
+    browser.get(f"{base}/join")
+    old = browser.execute_async_script("""
+        const done = arguments[3];
+        import("/wallet.js").then((m) => m.signIn(arguments[0], arguments[1],
+                                   {network: "regtest", version: arguments[2]}))
+          .then((r) => done({pubkey: r.pubkey}), (e) => done({error: String(e.message || e)}));""",
+        "forgetful", "the old password", REGTEST_VERSION)
+    assert "error" in old, "the old password no longer opens it"
+    new = browser.execute_async_script("""
+        const done = arguments[3];
+        import("/wallet.js").then((m) => m.signIn(arguments[0], arguments[1],
+                                   {network: "regtest", version: arguments[2]}))
+          .then((r) => done({pubkey: r.pubkey}), (e) => done({error: String(e.message || e)}));""",
+        "forgetful", "a brand new password", REGTEST_VERSION)
+    assert new.get("pubkey") == made["pubkey"], new
+
+
+def test_restore_with_words_that_are_not_an_account_takes_no_seat(loaded):
+    from arcade import seed
+
+    browser, base, state, home = loaded
+    browser.delete_all_cookies()
+    browser.get(f"{base}/join")
+    free = state.accounts().free()
+    said = _restore(browser, seed.generate(), "whatever it is")
+    assert "not an account on this node" in said.get("error", ""), said
+    assert state.accounts().free() == free, "a stranger's words make no account"
+
+    said = _restore(browser, "apple apple apple", "x")
+    assert "12, 15, 18, 21 or 24 words" in said.get("error", ""), said
+
+
+def test_the_vault_cannot_be_replaced_without_signing_in(served):
+    import urllib.error
+    import urllib.request
+
+    base, state, home = served
+    req = urllib.request.Request(f"{base}/account/vault", method="POST",
+                                 data=b'{"blob": {"sealed": "00"}}',
+                                 headers={"Content-Type": "application/json"})
+    with pytest.raises(urllib.error.HTTPError) as refused:
+        urllib.request.urlopen(req)
+    assert refused.value.code in (401, 403)
+
+
+def test_sign_in_links_to_restore_and_every_warning_names_it(loaded):
+    browser, base, state, home = loaded
+    page = browser.execute_async_script("""
+        const done = arguments[0];
+        fetch('/join').then((r) => r.text()).then(done);""")
+    assert 'href="/restore"' in page
+    assert "one page that ever asks for your twelve" in page
+    root = pathlib.Path(__file__).resolve().parents[1] / "arcade/web/templates"
+    for name in ("signup.html", "join.html", "clone.html", "my_backup.html"):
+        assert "Restore" in (root / name).read_text(), name

@@ -48,28 +48,20 @@
 </div>
 
 <div class="panel" id="listing" hidden>
-  <h3 style="margin:0 0 6px" id="listing-what">Sell it without you</h3>
+  {# One "Sell" (2026-09-26): a sale this tab signs now, at your price,
+     which anybody can complete while you are away. Nothing is broadcast to list
+     it; cancelling it is one small transaction that spends the coins it was
+     signed over, which is the only way a signature is taken back. #}
+  <h3 style="margin:0 0 6px" id="listing-what">Sell it</h3>
   <p class="muted" style="font-size:.86rem;margin:0 0 10px">
-    A price put on the chain says what you want for the piece. Getting paid
-    for it still needs your signature, and this node cannot supply one
-    &mdash; it has never seen your key. This is the other kind of promise:
-    this tab signs the bargain now, the piece against that price with your
-    change back to this address, and hands this node the signature. A buyer
-    then completes it without asking you, at the price the signature says,
-    and a signature sent to a server cannot be called back. Spending the
-    piece is the way out: any spend of it ends the listing, because there is
-    nothing left to give. Listing the same piece twice puts two prices up
-    beside each other and both stand until a block spends it.</p>
+    Name your price. Anybody can buy it at that price, even when you are
+    offline, for the next 30 days. Listing costs nothing. You can cancel it
+    any time before it sells, and sending the piece away cancels it too.</p>
   <div class="row">
     <div style="flex:1"><input autocomplete="off" id="list-price" class="mono"
-      spellcheck="false" inputmode="decimal" placeholder="how much"></div>
-    <button type="button" id="list-it">Read it back</button>
+      spellcheck="false" inputmode="decimal" placeholder="price in coins"></div>
+    <button type="button" id="list-it">Sell</button>
     <button type="button" class="ghost" id="list-cancel">Cancel</button>
-  </div>
-  <div class="confirm" id="list-confirm" hidden>
-    <p id="list-says"></p>
-    <button class="btn primary" id="list-sign">Sign it and list it</button>
-    <button class="btn" id="list-no">Not this time</button>
   </div>
 </div>
 
@@ -170,15 +162,21 @@ function card(piece, chain) {
   }
   box.appendChild(facts);
 
-  if (piece.sale) {
+  if (piece.listing || piece.ask) {
     const forSale = document.createElement("p");
     forSale.style.margin = "6px 0 0";
     const pill = document.createElement("span");
     pill.className = "pill ok";
-    pill.textContent = "for sale";
+    pill.textContent = piece.listing ? "for sale" : "asking";
     const price = document.createElement("strong");
-    price.textContent = " " + piece.sale.price;
-    forSale.append(pill, price);
+    price.textContent = " " + (piece.listing ? piece.listing.price + " coins"
+                                              : piece.ask);
+    const when = document.createElement("span");
+    when.className = "muted";
+    when.style.fontSize = ".8rem";
+    when.textContent = piece.listing ? ` · open ${piece.listing.left}`
+                                     : " · an older price on the chain; buyers make offers";
+    forSale.append(pill, price, when);
     box.appendChild(forSale);
   }
 
@@ -190,22 +188,24 @@ function card(piece, chain) {
   open.href = `/inscriptions/${piece.txid}/view`;
   open.textContent = "Open";
   const sell = document.createElement("button");
-  sell.className = "btn ghost small";
-  sell.textContent = piece.sale ? "Change the price" : "Sell it";
-  sell.onclick = () => pricing(piece, chain);
-  const apart = document.createElement("button");
-  apart.className = "btn ghost small";
-  apart.textContent = "Sell it without you";
-  apart.onclick = () => listing(piece, chain);
+  sell.className = "btn small";
+  sell.textContent = piece.listing ? "Change the price" : "Sell";
+  sell.onclick = () => listing(piece, chain);
   const send = document.createElement("button");
-  send.className = "btn small";
+  send.className = "btn ghost small";
   send.textContent = "Send";
   send.onclick = () => choose(piece, chain);
-  doing.append(open, sell, apart, send);
-  if (piece.sale) {
+  doing.append(open, sell, send);
+  if (piece.listing) {
     const off = document.createElement("button");
     off.className = "btn ghost small";
-    off.textContent = "Take it off";
+    off.textContent = "Cancel listing";
+    off.onclick = () => cancelListing(piece, chain);
+    doing.appendChild(off);
+  } else if (piece.ask) {
+    const off = document.createElement("button");
+    off.className = "btn ghost small";
+    off.textContent = "Take the old price off";
     off.onclick = () => unlist(piece, chain);
     doing.appendChild(off);
   }
@@ -266,9 +266,9 @@ function listing(piece, chain) {
   say(""); news("");
   waiting = null;
   chosen = {piece, chain};
-  $("listing-what").textContent =
-    `Sell #${commas(piece.number)} on ${chain.label} without you`;
-  $("list-confirm").hidden = true;
+  $("listing-what").textContent = piece.listing
+    ? `Change the price of ${pieceName(piece)}`
+    : `Sell ${pieceName(piece)}`;
   $("sending").hidden = true;
   $("pricing").hidden = true;
   $("listing").hidden = false;
@@ -280,38 +280,74 @@ $("list-cancel").onclick = () => {
   $("listing").hidden = true; chosen = null; waiting = null;
 };
 
-$("list-no").onclick = () => { $("list-confirm").hidden = true; };
 
 $("list-it").onclick = async () => {
   say(""); news("");
-  waiting = null;
   if (!chosen) return;
+  const amount = $("list-price").value.trim();
+  const {piece, chain} = chosen;
   try {
     if (!keys) throw new Error("your wallet is not open in this tab");
-    const leg = await wallet.offerListing(chosen.piece.txid,
-                                          $("list-price").value.trim(),
-                                          chosen.chain.network);
-    const shown = await wallet.checkedListing(leg, keys);
-    $("list-says").textContent = shown.says;
-    waiting = leg;
-    $("list-confirm").hidden = false;
-  } catch (e) { say(String(e.message || e)); }
+    if (!(Number(amount) > 0)) throw new Error("a price above zero, please");
+    const again = !!piece.listing;
+    const ok = await arcadeAsk(`Sell ${pieceName(piece)} for ${amount} coins?`,
+      "Anybody can buy it at that price, even when you're offline, for 30 days. "
+      + "Listing costs nothing: it is your signature, not a transaction. "
+      + (again ? `Your listing at ${piece.listing.price} coins is cancelled first, `
+                 + "which is one small transaction. "
+               : "Cancel the listing any time before it sells. "),
+      again ? "Change the price" : "Sell it");
+    if (!ok) return;
+    if (again) {
+      // The old signature stays good until its coins are spent: spend them first.
+      const offer = await cancelOffer(piece, chain);
+      await wallet.checked(offer, keys);
+      await wallet.confirm(keys, offer);
+    }
+    const leg = await wallet.offerListing(piece.txid, amount, chain.network);
+    await wallet.checkedListing(leg, keys);
+    await wallet.list(keys, leg, {days: 30});
+    $("listing").hidden = true;
+    news(`${pieceName(piece)} is for sale at ${amount} coins. Anybody can buy it `
+      + "from its page or its collection, even while you're away.");
+    await draw();
+  } catch (e) {
+    const why = String(e.message || e);
+    say(/coin to spend|Split it first|needs two/i.test(why)
+      ? "Selling needs two small coins to sign over, and this account has fewer "
+        + "free right now. If you just cancelled or sold something, try again "
+        + "once its block lands; otherwise send yourself 1 coin (Wallet → Send "
+        + "to your own @name) to split one, then sell."
+      : why);
+  }
 };
 
-$("list-sign").onclick = async () => {
+async function cancelOffer(piece, chain) {
+  const asked = await fetch("/account/list/cancel", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({piece: piece.txid, chain: chain.network})});
+  const offer = await asked.json();
+  if (!asked.ok) throw new Error(offer.detail || "that listing cannot be cancelled");
+  return offer;
+}
+
+async function cancelListing(piece, chain) {
   say(""); news("");
-  if (!waiting) return;
   try {
-    const out = await wallet.list(keys, waiting);
-    waiting = null;
-    $("list-confirm").hidden = true;
-    $("listing").hidden = true;
-    news(`Listed ${out.piece}: ${out.what}. It is on this node's `
-      + "listings page for whoever buys from it, and it stands until a block "
-      + "spends the piece. Nothing was broadcast, and nothing left this "
-      + "account's address.");
+    if (!keys) throw new Error("your wallet is not open in this tab");
+    const offer = await cancelOffer(piece, chain);
+    const shown = await wallet.checked(offer, keys);
+    const ok = await arcadeAsk(`Cancel the listing of ${pieceName(piece)}?`,
+      "Nobody can buy it after this. A listing is a signature, and the way to take "
+      + "one back is to spend the coins it was signed over, back to yourself: one "
+      + `small transaction, ${shown.coinsOf(shown.fee)} in fees.`, "Cancel listing");
+    if (!ok) return;
+    await wallet.confirm(keys, offer);
+    news(`The listing of ${pieceName(piece)} is cancelled. It drops off the `
+      + "exchange within a minute.");
+    await draw();
   } catch (e) { say(String(e.message || e)); }
-};
+}
 
 /** Ask for an offer, say what THIS BROWSER read off it, and sign it if
  *  they say yes.
@@ -331,7 +367,10 @@ async function offerAndConfirm(where, body, says, done) {
     });
     const offer = await asked.json();
     if (!asked.ok) throw new Error(offer.detail || "that cannot be done");
-    if (!confirm(says(await wallet.checked(offer, keys), offer))) return;
+    // The arcade's own card, naming the piece and the price (a tester,
+    // 2026-09-26: a native confirm() read "price inscription #53? It costs…").
+    const card = says(await wallet.checked(offer, keys), offer);
+    if (!(await arcadeAsk(card[0], card[1], card[2]))) return;
     const out = await wallet.confirm(keys, offer);
     news(done(out, offer));
     $("pricing").hidden = true;
@@ -344,18 +383,27 @@ $("price-it").onclick = async () => {
   await offerAndConfirm("/account/nft/sell",
     {piece: chosen.piece.txid, amount: $("price").value.trim(),
      kind: "coins", chain: chosen.chain.network},
-    shown => `${shown.what}? It costs ${shown.coinsOf(shown.fee)} in fees. `
-      + "That is what this browser worked out from the transaction itself.",
+    shown => [`Sell ${pieceName(chosen.piece)} for ${$("price").value.trim()} coins?`,
+      `Your price goes on the chain for everyone to see. Buyers offer it and you `
+      + `accept. Putting it there costs ${shown.coinsOf(shown.fee)} in fees, worked `
+      + "out in this browser from the transaction itself.", "Put it up"],
     (out) => `Priced: ${out.txid.slice(0, 16)}… It is for sale from the `
       + "block it lands in.");
 };
+
+function pieceName(piece) {
+  return piece.collection
+    ? `${piece.collection} #${piece.edition || "?"}`
+    : `#${commas(piece.number)}`;
+}
 
 async function unlist(piece, chain) {
   chosen = {piece, chain};
   await offerAndConfirm("/account/nft/sell",
     {piece: piece.txid, unlist: true, chain: chain.network},
-    shown => `${shown.what}? It costs ${shown.coinsOf(shown.fee)} in fees. `
-      + "That is what this browser worked out from the transaction itself.",
+    shown => [`Take ${pieceName(piece)} off sale?`,
+      `Your price comes off the chain. It costs ${shown.coinsOf(shown.fee)} in `
+      + "fees, worked out in this browser from the transaction itself.", "Take it off"],
     (out) => `Taken off: ${out.txid.slice(0, 16)}…`);
 }
 
