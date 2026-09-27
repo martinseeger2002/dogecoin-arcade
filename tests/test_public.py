@@ -782,3 +782,32 @@ def test_a_collection_market_offers_nothing_the_door_refuses(public, signed_in):
            if not door.public_path(t.rstrip("/") or "/", m)]
     assert bad == [], bad
     assert "/view#make-offer" in answer.text or not signed_in
+
+
+def test_a_viewer_frame_gets_the_ticket_shim_and_the_bytes_stay_the_bytes(client):
+    """A page written the documented way calls plain fetch('/r/wallet'); the
+    node adds a marked shim to the HTML it serves a viewer's frame (?v=) so
+    those calls carry the ticket (a tester, 2026-09-26). Without a ticket, or
+    for a download, the inscription's bytes are served exactly."""
+    app, state = client
+    index = state.token_index(state.token_chain)
+    txid = "5a" * 32
+    page = b"<!DOCTYPE html><html><body><script>fetch('/r/wallet')</script></body></html>"
+    with index.open() as db:
+        db.conn.execute(
+            "INSERT OR REPLACE INTO inscription(txid,number,creator,owner,block_height,"
+            "position,content_type,content_len,sha256,json,chunks,content) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (txid, 905, "nMe", "nSomebody", 100, 0, "text/html", len(page), "ab" * 32,
+             None, 1, page))
+        db.conn.commit()
+    plain = app.get(f"/content/{txid}")
+    assert plain.content == page
+    shown = app.get(f"/content/{txid}?v=tick3t")
+    assert shown.status_code == 200
+    assert shown.content.startswith(b"<!DOCTYPE html><script>/* DogecoinArcade viewer shim")
+    assert shown.content.endswith(page[len(b"<!DOCTYPE html>"):])
+    assert shown.headers["cache-control"] == "no-store"
+    assert "sandbox" in shown.headers["content-security-policy"]
+    assert app.get(f"/content/{txid}?v=tick3t&download=1").content == page
+
