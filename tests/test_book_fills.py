@@ -447,13 +447,70 @@ def test_a_take_that_underpays_is_refused_rather_than_partly_applied(world):
     assert held(db, BOB, pid) == (0, 0), "and nobody is out a token"
 
 
-def test_a_take_cannot_ask_for_more_than_the_order_holds(world):
+def test_a_take_of_more_than_the_order_holds_is_covered_by_the_maker(world):
+    """Claude's review of D-189 (2026-09-27): the take's payment reaches the
+    maker whatever this layer decides, so refusing a take that asks for more
+    than the order holds left the taker paid-out and empty-handed. Past
+    `cancels_last_from` (0 on regtest) it takes everything the order holds and
+    the rest from the maker's free balance of the token, which they were paid
+    for. Alice issued 1000 and asked 400, so 600 are free."""
     engine, state, db, pid = world
     feed(engine, state, [tx(2, ask(pid, 400 * COIN, 4 * COIN), ALICE)])
     feed(engine, state, [take(3, pid, 500 * COIN, 5 * COIN, f"{2:064x}")])
+    assert reason(db, 3) == "valid"
+    assert book(db) == [], "the order is emptied"
+    assert held(db, BOB, pid) == (500 * COIN, 0)
+    assert held(db, ALICE, pid) == (500 * COIN, 0), "100 came from her free 600"
+
+
+def test_before_the_height_a_take_of_more_than_held_is_refused(world):
+    """History keeps the rule it was indexed under."""
+    import dataclasses
+    engine, state, db, pid = world
+    engine.params = dataclasses.replace(engine.params, cancels_last_from=10_000)
+    feed(engine, state, [tx(2, ask(pid, 400 * COIN, 4 * COIN), ALICE)])
+    feed(engine, state, [take(3, pid, 500 * COIN, 5 * COIN, f"{2:064x}")])
     assert "holds 40000000000 of property" in reason(db, 3)
-    assert book(db)[0]["sale_amount"] == 400 * COIN
     assert held(db, BOB, pid) == (0, 0)
+
+
+def test_a_second_take_of_an_order_emptied_in_the_same_block_still_delivers(world):
+    """Two takers race for one order in one block. The first empties it; the
+    second has paid the maker too, so the maker's free balance covers it at
+    the order's price rather than the second taker losing the payment."""
+    engine, state, db, pid = world
+    CAROL = "n3RaCeRcArOlXXXXXXXXXXXXXXXXXXXXXX"
+    feed(engine, state, [tx(2, ask(pid, 400 * COIN, 4 * COIN), ALICE)])
+    with state.block_context(110, "h110", "p", 0, 2, 0):      # one block, two takes
+        for one in (take(3, pid, 400 * COIN, 4 * COIN, f"{2:064x}", height=110),
+                    take(4, pid, 200 * COIN, 2 * COIN, f"{2:064x}", height=110,
+                         sender=CAROL)):
+            engine.process(one)
+    assert reason(db, 3) == "valid" and reason(db, 4) == "valid", reason(db, 4)
+    assert held(db, BOB, pid) == (400 * COIN, 0)
+    assert held(db, CAROL, pid) == (200 * COIN, 0)
+    assert held(db, ALICE, pid) == (400 * COIN, 0), "600 free, 200 of them to Carol"
+
+
+def test_a_take_worth_less_than_a_satoshi_is_refused(world):
+    """The price rounds down, so a small enough take would cost nothing."""
+    engine, state, db, pid = world
+    feed(engine, state, [tx(2, ask(pid, 1000 * COIN, 8), ALICE)])
+    feed(engine, state, [take(3, pid, 10, 0, f"{2:064x}")])
+    assert "less than a satoshi" in reason(db, 3)
+    assert held(db, BOB, pid) == (0, 0)
+
+
+def test_cancels_are_recognised_for_the_end_of_their_block():
+    """The indexer applies a block's cancels last (config.cancels_last_from),
+    so a maker cannot cancel ahead of a take in the same block and keep both
+    the tokens and the coins. This is the test of what counts as a cancel."""
+    from arcade.indexer import is_cancel
+    cancel = tx(5, P.MetaDExCancelPair(property_id_for_sale=3,
+                                       property_id_desired=0), ALICE)
+    assert is_cancel(cancel)
+    assert not is_cancel(tx(6, ask(3, 10, 10), ALICE))
+    assert not is_cancel(take(7, 3, 10, 10, "ab" * 32))
 
 
 def test_a_take_of_an_order_that_is_not_there_is_refused(world):

@@ -1045,6 +1045,12 @@ class Engine:
         row = self.state.db.conn.execute(
             "SELECT * FROM book_order WHERE txid=?",
             (msg.order.hex(),)).fetchone()
+        if row is None and (self.params.cancels_last_from is not None
+                            and rtx.block_height >= self.params.cancels_last_from):
+            # Emptied earlier in this same block by another take: the race
+            # the route cannot see. Its maker was paid by this transaction
+            # too, so the shortfall comes from their free balance below.
+            row = getattr(self, "_emptied", {}).get(msg.order.hex())
         if row is None:
             raise InvalidTransaction(
                 "that order is not on the book -- filled, cancelled, or its "
@@ -1060,16 +1066,31 @@ class Engine:
                 f"that order sells {row['sale_property']} for "
                 f"{row['want_property']}, and holds nothing of property "
                 f"{msg.property_id}")
-        if row["reserved"] < msg.amount:
-            raise InvalidTransaction(
-                f"that order holds {row['reserved']} of property "
-                f"{msg.property_id}, not {msg.amount}")
+        # From `cancels_last_from`: a take that asks for more than the order
+        # still holds (two takes of one order in one block) is not refused
+        # outright while its payment stands. It takes all the order holds and
+        # the shortfall from the maker's free balance of the same token, which
+        # the maker was paid for (Claude's review of D-189, 2026-09-27).
+        graceful = (self.params.cancels_last_from is not None
+                    and rtx.block_height >= self.params.cancels_last_from)
+        from_book = min(msg.amount, row["reserved"])
+        from_free = 0
+        if from_book < msg.amount:
+            if not graceful:
+                raise InvalidTransaction(
+                    f"that order holds {row['reserved']} of property "
+                    f"{msg.property_id}, not {msg.amount}")
+            free = self.get_balance(row["address"], msg.property_id)["balance"]
+            from_free = max(0, min(msg.amount - from_book, free))
 
         # The order's price, applied to what this take moves, is what the
         # transaction has to have paid the maker -- floor, so a remainder of
         # the order is never dearer than the whole was. Rounded the other way
         # and a taker pays for tokens nobody sold.
         need = row["want_amount"] * msg.amount // row["sale_amount"]
+        if need < 1:
+            raise InvalidTransaction(
+                "that much of this order is worth less than a satoshi; take more")
         paid = rtx.paid_to(row["address"])
         if paid < need:
             raise InvalidTransaction(
@@ -1078,10 +1099,14 @@ class Engine:
 
         # Everything below is what a swap's fill already does, and it is the
         # same three moves so the two ways of filling an order cannot drift:
-        # out of the reserve, off the order, into the taker.
-        self._fill_order(row, msg.amount, need)
-        self.debit(row["address"], msg.property_id, msg.amount)
-        self.credit(rtx.sender, msg.property_id, msg.amount)
+        # out of the reserve, off the order, into the taker. `from_free` is
+        # the shortfall a race left, taken from the maker's own balance.
+        if from_book:
+            self._fill_order(row, from_book,
+                             row["want_amount"] * from_book // row["sale_amount"])
+        moved = from_book + from_free
+        self.debit(row["address"], msg.property_id, moved)
+        self.credit(rtx.sender, msg.property_id, moved)
 
     def _cancel_orders(self, rtx: ArcadeTransaction, sale: int, want: int,
                        price: tuple[int, int] | None) -> None:
@@ -1551,6 +1576,11 @@ class Engine:
         left = row["sale_amount"] - taken
         if left <= 0:
             self.state.delete("book_order", {"txid": row["txid"]})
+            # Remembered for the rest of this block (an Engine is made per
+            # block): a second take of it in the same block is a race, and it
+            # still knows the order's maker and price (`_take_order`).
+            self.__dict__.setdefault("_emptied", {})[row["txid"]] = dict(
+                row, sale_amount=row["sale_amount"], reserved=0)
             return
         self.state.update("book_order", {"txid": row["txid"]}, {
             "sale_amount": left,

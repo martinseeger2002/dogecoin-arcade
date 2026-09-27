@@ -107,6 +107,14 @@ class Params:
     #: route does, and no route goes out before both nodes run this, so the
     #: height is the paperwork and the release order is the safety.
     take_from: int | None = None
+    #: From this block, a block's cancels (types 26-28) are applied after
+    #: everything else in it. A take pays the maker in plain outputs that the
+    #: chain moves whatever this layer decides, so a maker who saw a take in
+    #: the mempool could otherwise cancel ahead of it in the same block, keep
+    #: the tokens AND the coins, and leave the taker with nothing (Claude's
+    #: review of D-189, 2026-09-27). Its own height because it reorders what
+    #: every node computes for a block.
+    cancels_last_from: int | None = None
 
     # base58 version bytes. Verified in source: pepecoin/src/chainparams.cpp
     # (mainnet :92-93, testnet, regtest).
@@ -272,6 +280,7 @@ TESTNET = Params(
     named_fills_from=1_496_133,
     bid_fills_from=1_496_133,
     take_from=1_496_133,
+    cancels_last_from=1_513_300,
     datadir_subdir="testnet3",
     pubkeyhash_version=113,
     scripthash_version=196,
@@ -289,6 +298,7 @@ REGTEST = Params(
     fills_from=0,
     named_fills_from=0,
     take_from=0,
+    cancels_last_from=0,
     datadir_subdir="regtest",
     pubkeyhash_version=111,
     scripthash_version=196,

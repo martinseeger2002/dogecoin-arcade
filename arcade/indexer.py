@@ -81,6 +81,17 @@ class PrevOutCache:
         return result
 
 
+def is_cancel(rtx) -> bool:
+    """Whether a transaction takes orders off the book (types 26-28)."""
+    from . import payload as P
+    try:
+        msg = P.decode(rtx.payload)
+    except Exception:
+        return False
+    return isinstance(msg, (P.MetaDExCancelPrice, P.MetaDExCancelPair,
+                            P.MetaDExCancelEcosystem))
+
+
 class ArcadeHandler:
     """BlockHandler that decodes and applies Arcade transactions."""
 
@@ -112,6 +123,11 @@ class ArcadeHandler:
             self.stats["coins_in"] = self.stats.get("coins_in", 0) + moved["added"]
             self.stats["coins_out"] = self.stats.get("coins_out", 0) + moved["spent"]
 
+        # From `cancels_last_from`, a block's cancels wait for the rest of it:
+        # see `later` below and config.Params.cancels_last_from.
+        cancels_last = (self.params.cancels_last_from is not None
+                        and height >= self.params.cancels_last_from)
+        later: list = []
         for position, tx in enumerate(block.get("tx", [])):
             try:
                 rtx = extract(tx, height, position, self.params, self.prevouts.lookup)
@@ -128,7 +144,15 @@ class ArcadeHandler:
                 continue
 
             self.stats["candidates"] += 1
-            result = engine.process(rtx)
-            self.stats["valid" if result.valid else "invalid"] += 1
-            if not result.valid:
-                log.info("invalid tx %s at height %d: %s", rtx.txid, height, result.reason)
+            if cancels_last and is_cancel(rtx):
+                later.append(rtx)
+                continue
+            self._process(engine, rtx, height)
+        for rtx in later:
+            self._process(engine, rtx, height)
+
+    def _process(self, engine, rtx, height: int) -> None:
+        result = engine.process(rtx)
+        self.stats["valid" if result.valid else "invalid"] += 1
+        if not result.valid:
+            log.info("invalid tx %s at height %d: %s", rtx.txid, height, result.reason)

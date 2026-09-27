@@ -1192,3 +1192,30 @@ def test_a_taker_buys_part_of_a_resting_ask_with_the_maker_away(node):
     (rest,) = _book(state, order)
     assert rest["sale_amount"] == 6 * COIN and rest["want_amount"] == 3 * COIN, \
         "the rest of the ask stands, at its own price"
+
+
+def test_a_maker_cannot_cancel_out_from_under_a_take_in_the_same_block(node):
+    """The front-run from Claude's review of D-189 (2026-09-27): the maker sees
+    a take in the mempool and cancels in the same block. The take's payment
+    reaches the maker whatever happens, so the cancel must not win. From
+    `cancels_last_from` the block's cancels are applied after everything else:
+    the take is honoured, and only what is left is cancelled."""
+    maker = _bookcoin(node, 42)
+    app, state, rpc = node
+    taker, t_secret, t_pubkey, t_address = _seated(app, state, rpc, 43)
+    order = _placed(maker, "ask", "10", "0.5")
+
+    asked = taker.post("/account/order/take", json={"order": order, "amount": "4"})
+    assert asked.status_code == 200, asked.text
+    _signed(taker, t_secret, t_pubkey, asked)                 # in the pool, not mined
+    cancel = maker["client"].post("/account/order/cancel", json={
+        "property_id": maker["pid"], "side": "ask"})
+    assert cancel.status_code == 200, cancel.text
+    _signed(maker["client"], maker["secret"], maker["pubkey"], cancel)
+    _settled(state, rpc)                                      # one block carries both
+
+    assert _held(state, t_address, maker["pid"]) == (4 * COIN, 0), \
+        "the taker got what they paid for"
+    assert _held(state, maker["address"], maker["pid"]) == (HELD - 4 * COIN, 0), \
+        "and the cancel gave the other 6 back to the maker"
+    assert _book(state, order) == [], "the rest is off the book"
