@@ -109,6 +109,8 @@ def test_create_confirm_broadcast_and_read_back(web):
     assert 'class="pill ok">you</span>' in detail, "the issuer is in this wallet"
     assert "create (fixed supply)" in detail
     assert "Issuer controls" in detail
+    assert f'href="/exchange/pair/{prop['property_id']}">Trade Web Token</a>' in detail, \
+        "a token's page is a way into its market (a tester, 2026-09-27)"
     assert app.get("/tokens/999").status_code == 404
 
     # Send: refused before it costs anything, then shown, then read back.

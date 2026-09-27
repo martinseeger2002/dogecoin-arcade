@@ -694,6 +694,17 @@ def test_the_page_api_wallet_is_whoever_is_looking(client):
     assert served.headers.get("referrer-policy") == "unsafe-url"
     assert "connect-src 'self'" in served.headers["content-security-policy"]
 
+    # Safari reads 'self' in a sandboxed (opaque-origin) page as nothing, so an
+    # iPhone refused every /r/ call and picture #59 asked for (the operator,
+    # 2026-09-27). The host the browser asked is named beside it.
+    edge = app.get(f"/content/{txid}", headers={
+        "host": "pages.example", "x-forwarded-proto": "https"})
+    policy = edge.headers["content-security-policy"]
+    assert "connect-src 'self' https://pages.example;" in policy, policy
+    assert "img-src 'self' https://pages.example data:" in policy, policy
+    odd = app.get(f"/content/{txid}", headers={"host": "bad host;script-src *"})
+    assert "script-src *" not in odd.headers.get("content-security-policy", "")
+
 
 def test_a_stranger_cannot_make_the_node_pay_to_ask_another(client, monkeypatch):
     """/r/ask for a piece held elsewhere is a node-to-node message this node's

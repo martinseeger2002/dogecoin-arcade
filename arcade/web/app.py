@@ -652,6 +652,18 @@ def create_app(state: AppState) -> FastAPI:
                   lifespan=_lifespan)
     app.middleware("http")(the_door(state))
 
+    @app.middleware("http")
+    async def _sandbox_names_its_host(request: Request, call_next):
+        """Every sandboxed response names the host it came from beside 'self'
+        (contentlib.own_origin says why: Safari reads 'self' as nothing)."""
+        answer = await call_next(request)
+        csp = answer.headers.get("content-security-policy", "")
+        if csp.startswith("sandbox"):
+            answer.headers["content-security-policy"] = contentlib.own_origin(
+                csp, request.headers.get("x-forwarded-proto") or request.url.scheme,
+                request.headers.get("host", ""))
+        return answer
+
 
     def _from_outside(request: Request) -> bool:
         return doorlib.from_outside(request.headers,
@@ -14726,6 +14738,10 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             trades = []
         points = chartlib.token_prices(trades, property_id)
+        asked = request.query_params.get("tf", "")
+        frame = chartlib.timeframe(
+            asked if asked in {t[0] for t in chartlib.TIMEFRAMES}
+            else chartlib.pick_timeframe(points))
         book = index.book(property_id)
         # Who is looking, settled before anything is read about a wallet. This
         # page stands in the door's public trees, and until now it had one
@@ -14809,7 +14825,8 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "pair.html", chain=chain, prop=prop, book=book,
                       face=face, spread=spread, day=chartlib.day(points),
                       stats=chartlib.last_and_change(points),
-                      slots=chartlib.candles(points),
+                      slots=chartlib.candles(points, buckets=frame[2], span=frame[1]),
+                      tf=frame[0], timeframes=[t[0] for t in chartlib.TIMEFRAMES],
                       recent=sorted(points, key=lambda p: -p["when"])[:12],
                       held=format_amount(held, prop["divisible"]), held_units=held,
                       coins=coins, mine=mine,

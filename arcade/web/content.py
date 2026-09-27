@@ -38,6 +38,7 @@ a cross-origin read because it says nothing about CORS at all.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from fastapi import Request
@@ -77,6 +78,26 @@ CONTENT_HEADERS = {
     "Referrer-Policy": "unsafe-url",
     "Cache-Control": "public, max-age=31536000, immutable",
 }
+
+_HOST = re.compile(r"^[A-Za-z0-9.-]+(:[0-9]{1,5})?$")
+
+
+def own_origin(csp: str, proto: str, host: str) -> str:
+    """A sandboxed page's policy, with this host named beside every 'self'.
+
+    `sandbox` gives the page an opaque origin, and browsers disagree about
+    what 'self' means then: Chrome still matches the URL's host, Safari
+    matches nothing -- so on an iPhone every fetch and every picture an
+    inscribed page asked of this node was refused (2026-09-27: the
+    Skull Squad board, #59, read "Block ?" with an empty grid). Naming the
+    origin the browser asked for says the same thing in a way both read alike,
+    and it is still this host and nowhere else.
+    """
+    if not csp.startswith("sandbox") or not _HOST.match(host or ""):
+        return csp
+    proto = "https" if proto == "https" else "http"
+    return csp.replace("'self'", f"'self' {proto}://{host.lower()}")
+
 
 #: Content types we will hand to a browser as-is. Anything else is served as a
 #: download rather than rendered: an inscription is arbitrary bytes, and

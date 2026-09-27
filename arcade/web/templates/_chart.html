@@ -2,7 +2,7 @@
    library from anywhere to say what two trades went for. Empty candles are
    drawn as empty: a day with no trade is a gap, never a line ruled to the
    next price (D-039). #}
-{% macro candles(slots, unit='', height=160) %}
+{% macro candles(slots, unit='', height=160, period='day') %}
 {% set traded = slots | selectattr('count') | list %}
 {% if not traded %}
   <p class="muted" style="margin:0">No trades yet on this chain.</p>
@@ -48,8 +48,8 @@
   </svg>
   </div>
   <p class="muted" style="font-size:.8rem;margin:6px 0 0">
-    {{ traded | length }} of {{ slots | length }} days traded &middot; high
-    {{ hi }} &middot; low {{ lo }}{% if unit %} {{ unit }}{% endif %}. A day with
+    {{ traded | length }} of {{ slots | length }} {{ period }}s traded &middot; high
+    {{ hi }} &middot; low {{ lo }}{% if unit %} {{ unit }}{% endif %}. A {{ period }} with
     no trade is a dot, not a price.</p>
 {% endif %}
 {% endmacro %}

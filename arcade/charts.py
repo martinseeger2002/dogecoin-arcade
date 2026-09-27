@@ -24,6 +24,30 @@ from .ledger import COIN
 DEFAULT_BUCKETS = 30
 DAY = 86_400
 
+#: The pair chart's timeframes (a tester, 2026-09-27): key, seconds per
+#: candle, candles shown. A young chain trades in bursts, and thirty daily
+#: candles put a whole week of trading in one or two bars.
+TIMEFRAMES = (("15m", 900, 48), ("1h", 3_600, 48), ("4h", 14_400, 42), ("1d", DAY, 30))
+
+
+def pick_timeframe(points, now: float | None = None) -> str:
+    """The coarsest timeframe whose history still spans eight candles or more,
+    so the chart shows the whole story in bars that each say something. A
+    history shorter than two hours is drawn in the finest timeframe."""
+    now = time.time() if now is None else now
+    whens = [int(p["when"] or 0) for p in points if p.get("when")]
+    if not whens:
+        return "1d"
+    age = max(0, now - min(whens))
+    for key, span, _ in reversed(TIMEFRAMES):
+        if age >= 8 * span:
+            return key
+    return TIMEFRAMES[0][0]
+
+
+def timeframe(key: str) -> tuple[str, int, int]:
+    return next((t for t in TIMEFRAMES if t[0] == key), TIMEFRAMES[-1])
+
 
 def _units(leg: Any) -> float:
     """A leg as a number, in whole coins or whole tokens."""
