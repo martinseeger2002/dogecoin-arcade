@@ -4718,8 +4718,51 @@ def create_app(state: AppState) -> FastAPI:
         _, index = _token_chain()
         return index
 
+    #: Prepended to an HTML inscription served to a signed-in viewer's frame, so
+    #: the page's own root-relative calls to the page API carry the viewer's
+    #: ticket (`?v=`) without the page knowing about it (a tester, 2026-09-26:
+    #: every page written the documented way, and every one already inscribed,
+    #: calls plain fetch('/r/wallet'), and a sandboxed frame's Referer does not
+    #: bring the ticket back). Served only when the frame URL has a ticket; the
+    #: inscription's own bytes, at /content/<id> without one, are untouched.
+    VIEWER_SHIM = (
+        "<script>/* DogecoinArcade viewer shim: added by the node that served this "
+        "page, not part of the inscription. It adds the viewer's ticket to this "
+        "page's own /r/ calls. */(function(){var m=/[?&]v=([A-Za-z0-9_-]+)/"
+        ".exec(location.search);if(!m)return;var v=m[1];function add(u){try{var "
+        "x=new URL(String(u),location.href);if(x.host===location.host&&x.pathname"
+        ".indexOf('/r/')===0&&!x.searchParams.has('v')){x.searchParams.set('v',v);"
+        "return x.href}}catch(e){}return u}var f=window.fetch;if(f)window.fetch="
+        "function(i,o){if(typeof i==='string'||(window.URL&&i instanceof URL))i=add(i);"
+        "else if(i&&i.url){var n=add(i.url);if(n!==i.url)i=new Request(n,i)}return "
+        "f.call(this,i,o)};var X=window.XMLHttpRequest&&XMLHttpRequest.prototype.open;"
+        "if(X)XMLHttpRequest.prototype.open=function(){if(arguments.length>1)arguments[1]"
+        "=add(arguments[1]);return X.apply(this,arguments)}})();</script>")
+
+    def _with_viewer_shim(answer, v: str):
+        if not v or getattr(answer, "status_code", 0) != 200:
+            return answer
+        kind = str(answer.headers.get("content-type", ""))
+        body = getattr(answer, "body", None)
+        if not kind.startswith("text/html") or not isinstance(body, (bytes, bytearray)):
+            return answer
+        text = bytes(body)
+        # After a doctype, never before it: before it the page drops to quirks mode.
+        found = re.match(rb"\s*<!doctype[^>]*>", text, re.I)
+        at = found.end() if found else 0
+        text = text[:at] + VIEWER_SHIM.encode() + text[at:]
+        headers = {k: val for k, val in answer.headers.items()
+                   if k.lower() not in ("content-length", "cache-control", "etag")}
+        headers["Cache-Control"] = "no-store"        # one viewer's ticket, not for a cache
+        return Response(text, status_code=200, media_type=kind.split(";")[0],
+                        headers=headers)
+
     @app.get("/content/{key}")
-    def inscription_content(key: str, download: int = 0, reveal: int = 0):
+    def inscription_content(key: str, download: int = 0, reveal: int = 0, v: str = ""):
+        return _with_viewer_shim(_inscription_content(key, download, reveal),
+                                 "" if download else v)
+
+    def _inscription_content(key: str, download: int = 0, reveal: int = 0):
         """An inscription's bytes -- screened first when this arcade screens
         (arcade/moderation.py): a sensitive picture comes back blurred unless the
         viewer asked to see it (`reveal=1`), an illegal one as a notice, and one not
