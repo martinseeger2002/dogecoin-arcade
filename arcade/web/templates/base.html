@@ -723,6 +723,49 @@ ol.words{column-gap:1.4em}
 </script>
 {% if not embed %}
 <script type="module">
+// A mintpad inscription asks the page it is framed in to buy one listing
+// (arcade/mintpad.py account_page): the sandbox holds no key and cannot reach
+// the wallet. Only a frame of an inscription on THIS page may ask, one at a
+// time, and nothing is bought without the ordinary Buy card, whose price and
+// seller are read off the transaction's own bytes, never off the page.
+let minting = false;
+window.addEventListener("message", async (e) => {
+  const m = e.data || {};
+  if (m.arcade !== "mint" || typeof m.seq !== "number") return;
+  const frame = [...document.querySelectorAll("iframe.inscription-frame")]
+    .find((f) => f.contentWindow === e.source);
+  if (!frame) return;
+  const answer = (body) => e.source.postMessage({arcade: "mint", seq: m.seq, ...body}, "*");
+  if (!ARCADE_ME) {
+    answer({error: "Sign in or join first, then mint."});
+    arcadeToast("Sign in or join, then mint from this page.");
+    return;
+  }
+  if (minting) { answer({error: "One mint at a time."}); return; }
+  minting = true;
+  try {
+    const wallet = await import("/wallet.js");
+    const held = (await wallet.opened(ARCADE_CHAIN)) || await arcadeKeys(ARCADE_CHAIN);
+    const offer = await wallet.offerBuy(String(m.listing || ""), ARCADE_CHAIN.network);
+    const shown = await wallet.checked(offer, held);
+    const coins = String(Number(offer.price) / 1e8);
+    const seller = offer.seller_tag ? "@" + offer.seller_tag : "the seller";
+    const ok = await arcadeAsk(`Mint for ${coins} coins?`,
+      `${coins} coins go to ${seller} for one piece from this mintpad`
+      + (m.name ? ` (it says: ${String(m.name).slice(0, 80)})` : "")
+      + `. Network fee ${shown.coinsOf(shown.fee)}. The piece and the coins move in `
+      + "one transaction, checked in this browser.", `Mint for ${coins} coins`);
+    if (!ok) { answer({error: "Cancelled."}); return; }
+    const out = await wallet.buy(held, offer);
+    answer({ok: true, txid: out.txid || ""});
+  } catch (err) {
+    answer({error: String(err.message || err)});
+  } finally { minting = false; }
+});
+</script>
+{% endif %}
+{% if not embed %}
+<script type="module">
 // Share a piece to the feed, with something said about it (2026-09-27).
 // Any [data-share-nft] button on any page: one sheet with the piece, an
 // optional note, and Post. The post is an ordinary one, signed in this tab,

@@ -13383,6 +13383,68 @@ def create_app(state: AppState) -> FastAPI:
                            "blurb": " ".join(str(said.get("blurb") or "").split())[:300]})
         return JSONResponse({"ok": True, **_mintpad_look(seller, name)})
 
+    @app.post("/account/mintpad/inscribe")
+    def account_mintpad_inscribe(request: Request, payload: Any = Body(None)):
+        """Offer the inscription that puts this account's mintpad on the chain
+        (2026-09-27: "Launchpad should also be a regular inscription so
+        that it can be easily shared to the feed with a /content/ command").
+
+        The page is `mintpadlib.account_page` in the look this account chose,
+        one transaction, and its JSON says what it is -- {"mintpad": {creator,
+        collection}} -- so any node can find the pad for a collection by
+        reading the chain. Signed in the tab like any inscription.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        name = str(said.get("collection") or "").strip()[:120]
+        if not address or not name:
+            return JSONResponse({"detail": "which collection?"}, status_code=400)
+        index = state.token_index(chain)
+        if index.collection(address, name) is None and not _mintpad_rows(chain, address, name):
+            return JSONResponse({"detail": "that is not one of your collections"},
+                                status_code=404)
+        look = _mintpad_look(address, name)
+        try:
+            content = mintpadlib.account_page(address, name, look["template"], look["blurb"])
+        except mintpadlib.MintpadError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        meta = json.dumps({"name": f"{name} mintpad",
+                           "mintpad": {"creator": address, "collection": name,
+                                       "look": look["template"]}})
+        try:
+            return _inscribe_start(account, chain, address,
+                                   {"name": f"{name} mintpad", "json": meta},
+                                   content, "text/html")
+        except (fundinglib.FundingError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    def _mintpad_inscription(chain, creator: str, name: str) -> str:
+        """The newest inscription that is this collection's mintpad, by its JSON,
+        inscribed by the seller: '' when there is none yet."""
+        try:
+            index = state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                rows = db.conn.execute(
+                    "SELECT txid, json, creator FROM inscription WHERE creator=? "
+                    "AND content_type LIKE 'text/html%' AND json LIKE '%\"mintpad\"%' "
+                    "ORDER BY block_height DESC, position DESC LIMIT 50",
+                    (creator,)).fetchall()
+            for r in rows:
+                try:
+                    pad = (json.loads(r["json"] or "{}") or {}).get("mintpad") or {}
+                except ValueError:
+                    continue
+                if pad.get("creator") == creator and pad.get("collection") == name:
+                    return r["txid"]
+        except Exception:
+            pass
+        return ""
+
     @app.get("/mintpad/new", response_class=HTMLResponse)
     def mintpad_new(request: Request):
         """The mintpad wizard: pick one of your collections, a price, done."""
@@ -13421,10 +13483,12 @@ def create_app(state: AppState) -> FastAPI:
         # is listed from the seller's tab, so a tab closed halfway leaves it
         # partial with nothing saying so (a tester, 2026-09-27).
         unlisted = 0
+        is_seller = False
         viewer = signed_in(request)
         if viewer is not None and rows is not None:
             try:
-                if _account_address(viewer.pubkey, chain) == creator:
+                is_seller = _account_address(viewer.pubkey, chain) == creator
+                if is_seller:
                     up = {r["piece"] for r in rows}
                     unlisted = sum(1 for r in index.collection_items(
                                        summary["creator"], name, limit=1000)
@@ -13432,7 +13496,8 @@ def create_app(state: AppState) -> FastAPI:
             except Exception:
                 unlisted = 0
         return render(request, "mintpad_view.html", chain=chain, summary=summary,
-                      look=look, art=art, unlisted=unlisted,
+                      look=look, art=art, unlisted=unlisted, is_seller=is_seller,
+                      pad_txid=_mintpad_inscription(chain, creator, name),
                       seller=creator, left=len(rows),
                       prices=sorted({r["price"] for r in rows}),
                       signed_in=signed_in(request) is not None)

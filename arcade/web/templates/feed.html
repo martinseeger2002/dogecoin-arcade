@@ -311,14 +311,10 @@
         has read.</p></div>
   {% endif %}
 {% else %}
-  <h1>Feed</h1>
-  <p class="sub">Everything anybody has posted. <b>Popular</b> puts what people
-    endorsed first, gives new posts a head start so they get seen, and lets
-    popularity wear off over time; <b>New</b> is simply newest first;
-    <b>Friends</b> is only the people in your address book. Every like,
-    dislike, tip and share is on the chain, so everybody sees the same numbers.</p>
+  {# No heading or explanation here (2026-09-27): the tab already says
+     Feed, and Popular / New / Friends say themselves. #}
   <nav class="row feedsort" aria-label="Order" style="gap:6px;margin:0 0 16px">
-    <a class="btn small {{ 'on' if sort != 'new' else 'ghost' }}" href="/feed">Popular</a>
+    <a class="btn small {{ 'on' if sort not in ('new', 'friends') else 'ghost' }}" href="/feed">Popular</a>
     <a class="btn small {{ 'on' if sort == 'new' else 'ghost' }}" href="/feed?sort=new">New</a>
     <a class="btn small {{ 'on' if sort == 'friends' else 'ghost' }}" href="/feed?sort=friends">Friends</a>
   </nav>

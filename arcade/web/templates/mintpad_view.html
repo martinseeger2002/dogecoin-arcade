@@ -53,6 +53,19 @@
     <p class="muted" style="margin-top:12px">Nothing left on this mintpad right now.</p>
   {% endif %}
   <p><a class="btn ghost small" href="/collections/{{ summary.creator }}/{{ summary.collection|urlencode }}">See the collection</a></p>
+  {# The pad as an inscription (2026-09-27): on the chain, so every node
+     running the arcade has it, and shareable to the feed as /content/<id>. #}
+  {% if pad_txid %}
+  <p class="muted" style="font-size:.86rem;margin:10px 0 0">This mintpad is on the chain:
+    <a href="/inscriptions/{{ pad_txid }}/view">open it</a> &middot;
+    <button type="button" class="ghost small" data-share-nft="{{ pad_txid }}"
+            data-piece="the {{ summary.collection }} mintpad" data-kind="text/html">Share to feed</button></p>
+  {% elif is_seller %}
+  <p style="margin:12px 0 0"><button type="button" class="small" id="pad-chain">Put this mintpad on the chain</button></p>
+  <p class="muted" style="font-size:.8rem;margin:4px 0 0">One small transaction. Then any
+    node running the arcade shows it, and you can share it to the feed.</p>
+  <p class="msg" id="pad-news" hidden></p>
+  {% endif %}
 </div>
 
 <style>
@@ -124,6 +137,35 @@
     tiles[Math.floor(Math.random() * tiles.length)].classList.toggle('over');
   }, 700);
 })();
+</script>
+{% endif %}
+{% if is_seller and not pad_txid %}
+<script type="module">
+import * as wallet from "/wallet.js";
+const CHAIN = {network: "{{ chain.network }}", version: {{ chain.params.pubkeyhash_version }}};
+const news = (t, ok) => { const n = document.getElementById("pad-news");
+  n.textContent = t; n.hidden = !t; n.className = "msg " + (ok ? "ok" : "err"); };
+document.getElementById("pad-chain").onclick = async () => {
+  news("");
+  const button = document.getElementById("pad-chain");
+  try {
+    const held = (await wallet.opened(CHAIN)) || await arcadeKeys(CHAIN);
+    const asked = await fetch("/account/mintpad/inscribe", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({collection: {{ summary.collection|tojson }}, chain: CHAIN.network})});
+    const offer = await asked.json();
+    if (!asked.ok) throw new Error(offer.detail || "the mintpad could not be put on the chain");
+    const shown = await wallet.checked(offer, held);
+    if (!(await arcadeAsk("Put this mintpad on the chain?",
+        `The mintpad page, in the look you chose, becomes an inscription: ${offer.bytes} bytes, `
+        + `one transaction, ${shown.coinsOf(shown.fee)} in fees. Every node running the arcade `
+        + "then has it, and it can be shared to the feed.", "Inscribe it"))) return;
+    button.disabled = true;
+    const out = await wallet.confirm(held, offer);
+    news(`Inscribed (${String(out.txid).slice(0, 12)}…). It shows here, with a Share button, `
+         + "when its block lands.", true);
+  } catch (e) { button.disabled = false; news(String(e.message || e), false); }
+};
 </script>
 {% endif %}
 {% if public and signed_in and left %}
