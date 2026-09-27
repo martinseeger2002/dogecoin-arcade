@@ -82,7 +82,7 @@
           <strong>{{ row.listing.price }}</strong>
           <a class="btn ghost small" href="/exchange/sell/{{ row.txid }}">Change the price</a>
         {% else %}
-          <a class="btn small" href="/exchange/sell/{{ row.txid }}">Sell it</a>
+          <a class="btn small" href="/exchange/sell/{{ row.txid }}">Sell</a>
         {% endif %}
         <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/send">Send</a></td>
     </tr>
@@ -120,7 +120,7 @@
           {# An account buys, offers and sells from the piece's own page, signed
              in its tab; the forms below are the operator's wallet's. #}
           {% if row.mine %}
-            <a class="btn small" href="/me/nfts">{{ 'Your listing' if row.listing else 'Sell it' }}</a>
+            <a class="btn small" href="/me/nfts">{{ 'Your listing' if row.listing else 'Sell' }}</a>
           {% elif not signed_in %}
             <a class="btn ghost small" href="/join">Sign in to buy</a>
           {% elif row.listing %}
@@ -135,7 +135,7 @@
           {% elif row.listing %}
             <a class="btn ghost small" href="/inscriptions/{{ row.listing.shop }}/view">Its listing</a>
           {% else %}
-            <a class="btn small" href="/exchange/sell/{{ row.txid }}">Sell it</a>
+            <a class="btn small" href="/exchange/sell/{{ row.txid }}">Sell</a>
           {% endif %}
         {% else %}
           {% if row.listing and row.listing.kind == 'ask' %}

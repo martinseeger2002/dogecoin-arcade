@@ -7189,10 +7189,15 @@ def create_app(state: AppState) -> FastAPI:
                                       if l.kind == inscriptionlib.LEG_COINS), None)
                         if coins is not None:
                             paid[trade["txid"]] = int(coins.amount or 0)
-            # A listing sale is already told by sale_events; do not say it twice.
-            listed = {e.extra.get("txid") for e in events if e.source == "sale"}
-            events += [e for e in notify.swap_events(rows, mine_there | owners, paid)
-                       if e.extra.get("txid") not in listed]
+            # One row per sale. The swap's row says which piece and to whom ("You
+            # sold #39 to @x for 5"); a listing sale's own row only knew "a piece"
+            # (a tester, 2026-09-26). So where both describe one transaction, the
+            # swap's row is kept and the listing's is dropped.
+            swaps = notify.swap_events(rows, mine_there | owners, paid)
+            swapped = {e.extra.get("txid") for e in swaps}
+            events = [e for e in events
+                      if not (e.source == "sale" and e.extra.get("txid") in swapped)]
+            events += swaps
         except Exception as exc:                          # noqa: BLE001
             log.info("notifications: swaps: %s", exc)
         return notify.merge(events, _notif_seen(account.pubkey))
@@ -8123,7 +8128,7 @@ def create_app(state: AppState) -> FastAPI:
                 held = index.inscriptions(owner=address, limit=200)
                 listed = _nft_listings(index, chain)
                 asked = _prices_for(index, chain)
-                _sweep_book(chain)
+                _sweep_book(chain, force=True)   # your own page: a cancel shows at once
                 book: dict[str, dict] = {}
                 for row in state.listings.open_listings(chain.network, limit=1000):
                     sold = _sold_piece(row) if row["owner"] == address else ""

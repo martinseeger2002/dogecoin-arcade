@@ -1266,8 +1266,9 @@ class LedgerIndex:
             return [dict(r) for r in db.conn.execute(
                 f"SELECT m.rowid AS seq, m.txid, m.inscription, m.from_address, "
                 f"       m.to_address, m.block_height, COALESCE(b.time, 0) AS time, "
-                f"       i.number "
+                f"       i.number, c.collection, c.edition "
                 f"FROM inscription_move m JOIN inscription i ON i.txid = m.inscription "
+                f"LEFT JOIN collection_item c ON c.txid = m.inscription "
                 f"LEFT JOIN block b ON b.height = m.block_height "
                 f"WHERE m.how = 'swap' AND (m.from_address IN ({marks}) "
                 f"      OR m.to_address IN ({marks})) "

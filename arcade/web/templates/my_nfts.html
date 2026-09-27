@@ -47,12 +47,17 @@
   </div>
 </div>
 
+<span id="listing-home" hidden></span>
 <div class="panel" id="listing" hidden>
   {# One "Sell" (2026-09-26): a sale this tab signs now, at your price,
      which anybody can complete while you are away. Nothing is broadcast to list
      it; cancelling it is one small transaction that spends the coins it was
      signed over, which is the only way a signature is taken back. #}
-  <h3 style="margin:0 0 6px" id="listing-what">Sell it</h3>
+  <div class="row" style="gap:10px;align-items:center;margin:0 0 6px">
+    <img id="listing-img" alt="" hidden
+         style="width:56px;height:56px;border-radius:8px;object-fit:cover;flex:none">
+    <h3 style="margin:0" id="listing-what">Sell it</h3>
+  </div>
   <p class="muted" style="font-size:.86rem;margin:0 0 10px">
     Name your price. Anybody can buy it at that price, even when you are
     offline, for the next 30 days. Listing costs nothing. You can cancel it
@@ -101,6 +106,9 @@ const CHAIN = {network: "{{ chain.network }}",
                version: {{ chain.params.pubkeyhash_version }}};
 
 let keys = null, chosen = null, waiting = null;
+const justListed = {};
+let cancelling = {};
+try { cancelling = JSON.parse(sessionStorage.getItem("arcade.cancelling") || "{}") || {}; } catch (e) {}
 
 const commas = (n) => Number(n || 0).toLocaleString();
 
@@ -162,7 +170,16 @@ function card(piece, chain) {
   }
   box.appendChild(facts);
 
-  if (piece.listing || piece.ask) {
+  const cancelled = piece.listing && cancelling[piece.txid]
+                    && Date.now() - cancelling[piece.txid] < 30 * 60e3;
+  if (!piece.listing && cancelling[piece.txid]) delete cancelling[piece.txid];
+  if (cancelled) {
+    const note = document.createElement("p");
+    note.className = "muted";
+    note.style.margin = "6px 0 0";
+    note.textContent = "Cancelling… it's gone from the market when the next block lands.";
+    box.appendChild(note);
+  } else if (piece.listing || piece.ask) {
     const forSale = document.createElement("p");
     forSale.style.margin = "6px 0 0";
     const pill = document.createElement("span");
@@ -190,13 +207,15 @@ function card(piece, chain) {
   const sell = document.createElement("button");
   sell.className = "btn small";
   sell.textContent = piece.listing ? "Change the price" : "Sell";
-  sell.onclick = () => listing(piece, chain);
+  sell.onclick = () => listing(piece, chain, box);
   const send = document.createElement("button");
   send.className = "btn ghost small";
   send.textContent = "Send";
   send.onclick = () => choose(piece, chain);
   doing.append(open, sell, send);
-  if (piece.listing) {
+  if (cancelled) {
+    sell.disabled = true;
+  } else if (piece.listing) {
     const off = document.createElement("button");
     off.className = "btn ghost small";
     off.textContent = "Cancel listing";
@@ -210,6 +229,13 @@ function card(piece, chain) {
     doing.appendChild(off);
   }
   box.appendChild(doing);
+  if (justListed[piece.txid] && piece.listing) {
+    const ok = document.createElement("p");
+    ok.className = "msg ok";
+    ok.style.margin = "6px 0 0";
+    ok.textContent = "Listed. Anybody can buy it now.";
+    box.appendChild(ok);
+  }
   return box;
 }
 
@@ -262,10 +288,16 @@ function pricing(piece, chain) {
  * signature.
  */
 
-function listing(piece, chain) {
+function listing(piece, chain, box) {
   say(""); news("");
   waiting = null;
   chosen = {piece, chain};
+  // Right under the piece being sold, with its picture (a tester, 2026-09-26:
+  // it opened at the foot of the page, below Inscribe, with nothing to show which).
+  if (box) box.after($("listing"));
+  const img = $("listing-img");
+  img.hidden = !String(piece.content_type || "").startsWith("image/");
+  if (!img.hidden) img.src = "/content/" + piece.txid;
   $("listing-what").textContent = piece.listing
     ? `Change the price of ${pieceName(piece)}`
     : `Sell ${pieceName(piece)}`;
@@ -310,6 +342,7 @@ $("list-it").onclick = async () => {
     $("listing").hidden = true;
     news(`${pieceName(piece)} is for sale at ${amount} coins. Anybody can buy it `
       + "from its page or its collection, even while you're away.");
+    justListed[piece.txid] = true;
     await draw();
   } catch (e) {
     const why = String(e.message || e);
@@ -345,6 +378,10 @@ async function cancelListing(piece, chain) {
     await wallet.confirm(keys, offer);
     news(`The listing of ${pieceName(piece)} is cancelled. It drops off the `
       + "exchange within a minute.");
+    // Until its block lands the card must not offer Cancel again: that is a
+    // second paid transaction (a tester, 2026-09-26).
+    cancelling[piece.txid] = Date.now();
+    try { sessionStorage.setItem("arcade.cancelling", JSON.stringify(cancelling)); } catch (e) {}
     await draw();
   } catch (e) { say(String(e.message || e)); }
 }
@@ -440,6 +477,9 @@ $("offer").onclick = async () => {
 };
 
 async function draw() {
+  // The Sell panel may be sitting inside a card; it goes home before the cards
+  // are cleared, or it would be cleared with them.
+  $("listing-home").after($("listing"));
   const said = await (await fetch("/account/nfts")).json();
   const chains = said.chains || [];
   $("chains").innerHTML = "";

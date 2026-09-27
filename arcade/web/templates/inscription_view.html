@@ -319,7 +319,7 @@
       {% elif sale %}
         <a class="btn ghost small" href="/inscriptions/{{ sale.shop }}/view">Its listing &mdash; {{ sale.price }}</a>
       {% else %}
-        <a class="btn ghost small" href="/exchange/sell/{{ row.txid }}">Sell it</a>
+        <a class="btn ghost small" href="/exchange/sell/{{ row.txid }}">Sell</a>
       {% endif %}
       <a class="btn small" href="/inscriptions/{{ row.txid }}/send">Send</a>
     {% endif %}
@@ -331,7 +331,7 @@
 <div class="panel row" style="align-items:center;gap:10px">
   {% if listed and listed.theirs %}
     <div style="flex:1 1 200px"><span class="pill ok">for sale</span>
-      <strong>{{ listed.price }} {{ chain.label|lower }}</strong>
+      <strong>{{ listed.price }} coins</strong>
       <span class="muted" style="font-size:.82rem">&middot; anybody can buy it, open for {{ listed.left }}</span></div>
     <a class="btn ghost small" href="/me/nfts">Change the price or cancel</a>
   {% else %}
@@ -496,7 +496,7 @@
 <div class="panel" id="buy-panel">
   <div class="row" style="align-items:center;gap:12px">
     <div style="flex:1 1 200px">
-      <strong style="font-size:1.25rem">{{ listed.price }} {{ chain.label|lower }}</strong>
+      <strong style="font-size:1.25rem">{{ listed.price }} coins</strong>
       <div class="muted" style="font-size:.82rem">listed by
         {% if listed.tag %}<strong>@{{ listed.tag }}</strong>{% else %}<span class="mono">{{ listed.seller[:12] }}…</span>{% endif %}
         &middot; open for {{ listed.left }}</div>
@@ -555,10 +555,17 @@
       const held = (await opening) || await arcadeKeys(CHAIN);
       const offer = await wallet.offerBuy(LISTING, CHAIN.network);
       const shown = await wallet.checked(offer, held);
-      const price = shown.coinsOf(Number(offer.price));
-      if (!(await arcadeAsk(`Buy #{{ row.number }} for ${price}?`,
-            shown.says + " One transaction moves the piece and the payment together.",
-            `Buy it for ${price}`))) {
+      // Said as the trade, by name (a tester, 2026-09-26: the old wording listed
+      // raw outputs, two of them to the seller's address -- the price, and the
+      // seller's own coin passing back to them -- which read like a scam).
+      const coins = String(Number(offer.price) / 1e8);
+      const seller = offer.seller_tag ? "@" + offer.seller_tag : "the seller";
+      const piece = {{ ((row.collection ~ ' #' ~ row.edition) if row.collection else ('#' ~ row.number))|tojson }};
+      if (!(await arcadeAsk(`Buy ${piece} for ${coins} coins?`,
+            `${coins} coins go to ${seller}, the network fee is `
+            + `${shown.coinsOf(shown.fee)}, and the rest comes back to you. The piece `
+            + "and the coins move in one transaction, checked in this browser.",
+            `Buy it for ${coins} coins`))) {
         button.disabled = false;
         button.textContent = "Buy it for {{ listed.price }}";
         return;
