@@ -9040,6 +9040,208 @@ def create_app(state: AppState) -> FastAPI:
                              "number": row["number"], "chain": chain.network,
                              **unsigned.as_json()})
 
+    @app.post("/account/order")
+    def account_order(request: Request, payload: Any = Body(None)):
+        """Put this account's order on the token book. Nothing is broadcast here.
+
+        The same `MetaDExTrade` the operator's `/exchange/order` writes, funded
+        from this account's own address and signed in its own tab -- and that is
+        the whole difference, because the operator's route ends in
+        `TokenSender.prepare`, which selects inputs, funds and signs with the
+        NODE's wallet. Two integers again and never a float: the amount of token
+        and the amount of coin are what go on the chain, and the price is only
+        the ratio between them.
+
+        What is reserved is the engine's doing and not this node's. A resting
+        ask holds its tokens in `metadex_reserve` when the block carrying it is
+        indexed; a bid holds nothing, because coins cannot be reserved (D-048).
+        So exactly one check belongs here, the ask's: that this address holds
+        the tokens. Not because an order with nothing behind it is illegal -- it
+        is a transaction like any other -- but because the engine will not
+        reserve it, and an order that fails in the block it lands in costs a fee
+        on the way. A bid is checked against nothing at all, on purpose: an
+        order to buy with coins that are not there is legal, unfilled, and the
+        account's own business. That is what the book is for.
+
+        No recipient output, and `wrap=False`, for the reason `_class_c_or_b`
+        gives: this IS the message the token engine reads an order out of.
+        Enveloped in `AnyData` it would sit in a block, cost a fee, and reserve
+        nobody.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        try:
+            index = state.token_index(chain)
+            side = str(said.get("side") or "")
+            if side not in ("ask", "bid"):
+                raise ValueError("an order is an ask or a bid, and says which")
+            prop = index.property(int(said.get("property_id") or 0))
+            if prop is None:
+                raise tokenlib.TokenError(
+                    f"there is no token {said.get('property_id')}.")
+            units = parse_amount(str(said.get("amount", "")), prop["divisible"])
+            each = parse_amount(str(said.get("price", "")), True)
+            if units <= 0 or each <= 0:
+                raise tokenlib.TokenError("an amount and a price, both above zero.")
+            # Two whole numbers, and the ratio between them is not allowed to be
+            # rounded. What the engine reserves, fills and cancels is the pair
+            # written here, so a price that comes out uneven at this line is a
+            # different price on the book than the one that was typed, and the
+            # box still says the one that was.
+            raw = units * each
+            if not prop["divisible"]:
+                # Whose scale this product is in. A divisible token's units carry
+                # eight decimals and its price is per WHOLE token, so their
+                # product has one COIN too many in it and the division below is
+                # what takes it out. An indivisible token's units already ARE
+                # whole tokens, so its product is satoshis plain and dividing it
+                # prices the order a hundred million times too cheap: four of a
+                # whole token at half a coin each came to two satoshis, and the
+                # box above it went on saying half a coin.
+                raw *= COIN
+            if raw < COIN:
+                raise tokenlib.TokenError(
+                    "that comes to less than a satoshi in coins; raise the "
+                    "price or the amount.")
+            if raw % COIN:
+                raise tokenlib.TokenError(
+                    "that price does not come out in whole satoshis. The chain "
+                    "takes two whole numbers and a price is only their ratio, so "
+                    "rounded here it is a price on the book that was not typed; "
+                    "raise the price or the amount until it divides even.")
+            coins = raw // COIN
+            shown = format_amount(units, prop["divisible"])
+            if side == "ask":
+                held = index.balance(address, prop["property_id"])
+                # Minus what this address has on the book that the ledger has not
+                # reserved YET. An ask broadcast minutes ago is an order while
+                # its tokens are still spendable, because the engine reserves
+                # when the block lands — those are `book`'s `pending` rows, and
+                # only those, since a mined ask is already out of `balance` and
+                # counting it twice would understate the address. Without this,
+                # two asks of everything the address holds both pass here and the
+                # second fails in the block it lands in, which is the fee this
+                # check exists to save.
+                resting = sum(o["tokens"] for o in
+                              index.book(prop["property_id"])["asks"]
+                              if o["address"] == address and o.get("pending"))
+                if held - resting < units:
+                    raise tokenlib.TokenError(
+                        f"this account holds "
+                        f"{format_amount(held, prop['divisible'])} of "
+                        f"{prop['name']}"
+                        + (f", of which {format_amount(resting, prop['divisible'])} "
+                           "is already on this book waiting for its block"
+                           if resting > 0 else "")
+                        + f", not {shown}. An ask is held back by the "
+                        "engine when its block lands, and an order it cannot "
+                        "hold back costs a fee to fail in its own block.")
+                message = P.MetaDExTrade(
+                    property_id_for_sale=prop["property_id"], amount_for_sale=units,
+                    property_id_desired=0, amount_desired=coins)
+            else:
+                message = P.MetaDExTrade(
+                    property_id_for_sale=0, amount_for_sale=coins,
+                    property_id_desired=prop["property_id"], amount_desired=units)
+            outputs = _class_c_or_b(chain, address, message.encode(),
+                                    _coin_pubkey(account.pubkey, chain),
+                                    wrap=False)
+            what = (f"{'sell' if side == 'ask' else 'buy'} {shown} "
+                    f"{prop['name']} for {format_amount(coins, True)} coins")
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address, outputs,
+                    rate=fees.MIN_FEE_PER_KB, what=what,
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "trade")
+        except (tokenlib.TokenError, fundinglib.FundingError, AmountError,
+                ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned, what)
+        return JSONResponse({"offer": offer.id, "what": what, "side": side,
+                             "property_id": prop["property_id"],
+                             "name": prop["name"], "chain": chain.network,
+                             "amount": shown,
+                             "price": format_amount(each, True),
+                             "total": format_amount(coins, True),
+                             **unsigned.as_json()})
+
+    @app.post("/account/order/cancel")
+    def account_order_cancel(request: Request, payload: Any = Body(None)):
+        """Take this account's orders off one side of one pair.
+
+        `MetaDExCancelPair` and nothing finer, which is the shape the protocol
+        has: a cancel names a pair and a side, not an order, because an order is
+        a transaction and not a row anybody keeps (D-042). It is also why this
+        cancels MORE than a person may have meant -- every resting order of
+        theirs on that side of that pair goes, including ones made from another
+        browser with another key. The page says so; this is the route that has
+        to be honest about it, because it is the one an account can reach.
+
+        What an ask was holding comes back when the cancel's block lands, which
+        is the engine releasing `metadex_reserve` rather than this node handing
+        anything back. There is nothing to unlock on the coin side because coins
+        were never locked (D-048) -- and unlike `/account/list`, no signature
+        needs recalling: a book order promised nothing over anybody's coins, it
+        only said a price.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        try:
+            index = state.token_index(chain)
+            pid = int(said.get("property_id") or 0)
+            prop = index.property(pid)
+            if prop is None:
+                raise tokenlib.TokenError(f"there is no token {pid}.")
+            side = str(said.get("side") or "")
+            if side not in ("ask", "bid"):
+                raise ValueError("an order is an ask or a bid, and says which")
+            sale, want = (pid, 0) if side == "ask" else (0, pid)
+            message = P.MetaDExCancelPair(property_id_for_sale=sale,
+                                          property_id_desired=want)
+            outputs = _class_c_or_b(chain, address, message.encode(),
+                                    _coin_pubkey(account.pubkey, chain),
+                                    wrap=False)
+            what = f"cancel this account's {side}s for {prop['name']}"
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address, outputs,
+                    rate=fees.MIN_FEE_PER_KB, what=what,
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "trade")
+        except (tokenlib.TokenError, fundinglib.FundingError, AmountError,
+                ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned, what)
+        return JSONResponse({"offer": offer.id, "what": what, "side": side,
+                             "property_id": pid, "name": prop["name"],
+                             "chain": chain.network,
+                             "every": True, **unsigned.as_json()})
+
     def _ask_payload(row: dict, take: inscriptionlib.Leg) -> bytes:
         """What a listing writes at output 0: the trade the finished swap IS.
 
@@ -13047,21 +13249,46 @@ def create_app(state: AppState) -> FastAPI:
             each = parse_amount(price, True)
             if units <= 0 or each <= 0:
                 raise tokenlib.TokenError("an amount and a price, both above zero.")
-            coins = units * each // COIN
-            if coins <= 0:
+            raw = units * each
+            if not prop["divisible"]:
+                # The same scale as `/account/order`'s, and the same bug that it
+                # fixed: this line came first, so an indivisible token's order
+                # was priced a hundred million times too cheap here before it was
+                # anywhere else, and nothing on this chain quotes a whole token,
+                # so no test noticed until one asked for it.
+                raw *= COIN
+            if raw < COIN:
                 raise tokenlib.TokenError(
                     "that comes to less than a satoshi in coins; raise the price "
                     "or the amount.")
+            # The same rule as `/account/order`, in the route that had this line
+            # first: the two whole numbers are what go on the chain and the price
+            # is only their ratio, so an uneven product is a price on the book
+            # that nobody typed. Rounded down here, silently, until now.
+            if raw % COIN:
+                raise tokenlib.TokenError(
+                    "that price does not come out in whole satoshis. The chain "
+                    "takes two whole numbers and a price is only their ratio, so "
+                    "rounded here it is a price on the book that was not typed; "
+                    "raise the price or the amount until it divides even.")
+            coins = raw // COIN
             with chain.rpc() as rpc:
                 own = _ledger_addresses(rpc)
                 home = state.home_address(chain)
                 if side == "ask":
                     held = index.balance(home, prop["property_id"])
-                    if held < units:
+                    resting = sum(o["tokens"] for o in
+                                  index.book(prop["property_id"])["asks"]
+                                  if o["address"] == home and o.get("pending"))
+                    if held - resting < units:
                         raise tokenlib.TokenError(
                             f"{home} holds "
                             f"{format_amount(held, prop['divisible'])} "
-                            f"{prop['name']}, not {format_amount(units, prop['divisible'])}.")
+                            f"{prop['name']}"
+                            + (f", of which {format_amount(resting, prop['divisible'])} "
+                               "is already on this book waiting for its block"
+                               if resting > 0 else "")
+                            + f", not {format_amount(units, prop['divisible'])}.")
                     message = P.MetaDExTrade(
                         property_id_for_sale=prop["property_id"], amount_for_sale=units,
                         property_id_desired=0, amount_desired=coins)

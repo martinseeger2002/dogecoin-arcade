@@ -236,6 +236,14 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # and the message is `/account/talk`'s, sealed in the tab that
                # holds the key this node was never given.
                "/account/accept", "/account/accept/sign",
+               # the token book, for an account: an order and a cancel, each one
+               # message and a fee, funded from the account's own address and
+               # signed in its tab. Nothing here spends the node's wallet, which
+               # is the only reason the operator's `/exchange/order` is not in
+               # this list. Nor does anything here reserve anything: the engine
+               # holds an ask's tokens back when it indexes the order, and coins
+               # cannot be reserved at all (D-048).
+               "/account/order", "/account/order/cancel",
                # a shop, bought by an account rather than by this wallet. The
                # door offers three transactions and broadcasts the two messages
                # out of them; the trade itself is not broadcast here at all,
