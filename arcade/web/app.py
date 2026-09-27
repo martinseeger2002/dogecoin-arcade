@@ -2593,13 +2593,31 @@ def create_app(state: AppState) -> FastAPI:
             chain.network, before=before,
             sort="new" if sort == "friends" else sort)
         # One post and its thread: where a notification points (2026-09-25).
+        # And where a release post's own LINK line points, which is how this came
+        # up: a link one hex character off arrived here and was served the plain
+        # feed, because the narrowing below replaced the rows with an empty list
+        # and the page has one sentence for an empty list -- "Nothing here yet",
+        # about a feed, when the true sentence is about the id in the URL
+        # (a tester, 2026-09-27). So what was asked for travels to the page
+        # and the page says which of the two empties this is.
         wanted = (post or "").strip().lower()
-        if len(wanted) == 64 and all(c in "0123456789abcdef" for c in wanted):
+        missing = named = ""
+        if wanted and not (len(wanted) == 64
+                           and all(c in "0123456789abcdef" for c in wanted)):
+            # Not a txid, so nothing was looked up -- and the whole feed is not
+            # shown either. Somebody followed a link to one post; answering with
+            # everybody's posts is how the wrong id stayed invisible, and a page
+            # of posts they did not ask for is a worse answer than the sentence
+            # that says the id cannot be one.
+            named, rows, cursor = wanted, [], None
+        elif wanted:
             with state.store() as store:
                 rows = list(store.conn.execute(
                     "SELECT * FROM group_post WHERE network = ? AND txid = ?",
                     (chain.network, wanted)))
             cursor = None
+            if not rows:
+                missing = wanted
         shown = _shown(rows, chain.network, waiting, me=mine["address"])
         # Looking at it is reading it. Marked BEFORE the page is rendered, so
         # the count beside Feed is gone by the time it is drawn rather than
@@ -2612,6 +2630,7 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "feed.html", chain=chain, posts=shown,
                       bylines=_bylines(shown, waiting),
                       drawable=_drawable_in(shown), cursor=cursor, whose=None,
+                      missing=missing, not_an_id=bool(named),
                       here="/feed" if sort == "popular" else f"/feed?sort={sort}",
                       sort=sort, mine=mine, kinds=feedlib.BY_NAME,
                       friends=_operator_friends(request) if sort == "friends" else [],
