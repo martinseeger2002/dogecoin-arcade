@@ -11,7 +11,7 @@
 {{ notord.pieces() }}
 
 <p class="muted" id="shut" hidden style="font-size:.86rem">
-  Your wallet is not open in this tab, so nothing here can be signed.
+  Your wallet is locked. Press Unlock at the top of the page, or just carry on: anything that needs your key asks for your password first.
   <a href="/me">Open it</a> and come back.</p>
 
 <div class="msg err" id="trouble" hidden></div>
@@ -287,7 +287,7 @@ $("list-it").onclick = async () => {
   const amount = $("list-price").value.trim();
   const {piece, chain} = chosen;
   try {
-    if (!keys) throw new Error("your wallet is not open in this tab");
+    if (!keys) keys = await arcadeKeys(CHAIN);
     if (!(Number(amount) > 0)) throw new Error("a price above zero, please");
     const again = !!piece.listing;
     const ok = await arcadeAsk(`Sell ${pieceName(piece)} for ${amount} coins?`,
@@ -334,7 +334,7 @@ async function cancelOffer(piece, chain) {
 async function cancelListing(piece, chain) {
   say(""); news("");
   try {
-    if (!keys) throw new Error("your wallet is not open in this tab");
+    if (!keys) keys = await arcadeKeys(CHAIN);
     const offer = await cancelOffer(piece, chain);
     const shown = await wallet.checked(offer, keys);
     const ok = await arcadeAsk(`Cancel the listing of ${pieceName(piece)}?`,
@@ -360,7 +360,7 @@ async function cancelListing(piece, chain) {
 async function offerAndConfirm(where, body, says, done) {
   say(""); news("");
   try {
-    if (!keys) throw new Error("your wallet is not open in this tab");
+    if (!keys) keys = await arcadeKeys(CHAIN);
     const asked = await fetch(where, {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify(body),
@@ -418,7 +418,7 @@ $("offer").onclick = async () => {
     });
     const offer = await asked.json();
     if (!asked.ok) throw new Error(offer.detail || "that cannot be sent");
-    if (!keys) throw new Error("your wallet is not open in this tab");
+    if (!keys) keys = await arcadeKeys(CHAIN);
     const shown = await wallet.checked(offer, keys);
     $("confirm-says").textContent =
       `#${commas(offer.number)} goes to ${offer.to}, and it cannot be taken `
@@ -428,7 +428,7 @@ $("offer").onclick = async () => {
     $("yes").onclick = async () => {
       $("confirm").hidden = true;
       try {
-        if (!keys) throw new Error("your wallet is not open in this tab");
+        if (!keys) keys = await arcadeKeys(CHAIN);
         const done = await wallet.confirm(keys, offer);
         news(`Sent: ${done.txid.slice(0, 16)}… It moves when its block does.`);
         $("sending").hidden = true;

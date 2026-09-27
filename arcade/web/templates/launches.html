@@ -112,8 +112,8 @@ document.addEventListener("submit", async (event) => {
     /^\/feed\/([0-9a-f]{64})\/(like|unlike|dislike|undislike|reply)$/);
   if (!one) return;
   event.preventDefault();
-  const held = await opening;
-  if (!held) { say("Open your wallet on Your arcade first.", true); return; }
+  const held = (await opening) || await arcadeKeys(CHAIN).catch(() => null);
+  if (!held) { say("Unlock your wallet to do that.", true); return; }
   const [, txid, doing] = one;
   const button = form.querySelector("button[type=submit]");
   // Pressed shows at once, before the block (2026-09-25).

@@ -210,7 +210,7 @@ async function offer() {
   trouble("");
   $("create-confirm").hidden = true;
   try {
-    if (!keys) throw new Error("your wallet is not open in this tab");
+    if (!keys) keys = await arcadeKeys(CHAIN);
     const body = {chain: CHAIN.network};
     for (const name of ["name", "kind", "supply", "units", "data",
                         "category", "subcategory", "url", "icon"]) {
@@ -250,7 +250,7 @@ form.onsubmit = (event) => { event.preventDefault(); offer(); };
 keys = await wallet.opened(CHAIN);
 $("create-offer").disabled = !keys;
 if (!keys) {
-  trouble("Your wallet is not open in this tab, so nothing here can be signed. "
+  trouble("Your wallet is locked. Press Unlock at the top of the page, or just carry on: anything that needs your key asks for your password first. "
           + "Open it and come back.");
 }
 document.body.dataset.tokenCreateReady = "yes";

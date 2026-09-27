@@ -22,12 +22,19 @@
   <h2 id="s{{ loop.index }}" style="text-transform:none;letter-spacing:0;font-size:1.05rem">
     {{ section.title }}</h2>
   {% endif %}
-  <div class="panel guide-doc">{{ section.html|safe }}</div>
+  {# email_off: Cloudflare rewrote an address in these docs into a
+     /cdn-cgi/l/email-protection link that 404s (a tester, 2026-09-26). #}
+  <div class="panel guide-doc"><!--email_off-->{{ section.html|safe }}<!--/email_off--></div>
 {% endfor %}
 
 <p class="muted" style="margin-top:18px"><a href="/docs">&larr; all docs</a></p>
 
 <style>
+  /* No sideways scroll on a phone (a tester, 2026-09-26: +254px): long words
+     and ids wrap, code blocks and wide tables scroll inside themselves. */
+  .guide-doc{overflow-wrap:anywhere;min-width:0}
+  .guide-doc pre{overflow-x:auto;max-width:100%;white-space:pre}
+  .guide-doc table{display:block;overflow-x:auto;max-width:100%}
   .guide-doc p:first-child{margin-top:0}
   .guide-doc p:last-child{margin-bottom:0}
   .guide-doc ul{margin:0 0 10px;padding-left:20px;line-height:1.7}

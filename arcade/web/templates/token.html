@@ -198,11 +198,7 @@ import * as wallet from "/wallet.js";
 const $ = (id) => document.getElementById(id);
 const CHAIN = {network: "{{ chain.network }}", version: {{ chain.params.pubkeyhash_version }}};
 const NAME = {{ prop.name|tojson }};
-const keys = await wallet.opened(CHAIN);
-if (!keys) {
-  $("iss-locked").hidden = false;
-  for (const b of document.querySelectorAll("#issuer-panel button")) b.disabled = true;
-}
+let keys = await wallet.opened(CHAIN);
 const say = (t) => { $("iss-trouble").textContent = t; $("iss-trouble").hidden = !t; };
 const news = (t) => { $("iss-news").textContent = t; $("iss-news").hidden = !t; };
 
@@ -216,6 +212,7 @@ async function act(button, body, title, warn, yes) {
     });
     const offer = await asked.json();
     if (!asked.ok) throw new Error(offer.detail || "that cannot be done");
+    keys = keys || await arcadeKeys(CHAIN);
     const shown = await wallet.checked(offer, keys);
     const ok = await arcadeAsk(title, `${warn}${shown.says}`, yes);
     if (!ok) return;

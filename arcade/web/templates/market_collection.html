@@ -98,6 +98,7 @@
   <div class="tile">
     <a class="art" href="/inscriptions/{{ row.txid }}/view"
        title="{{ summary.collection }} #{{ row.edition }}"
+       aria-label="{{ summary.collection }} #{{ row.edition }}"
        {% if row.held and row.content_type.startswith('image/') %}
        style="background-image:url(/content/{{ row.txid }})"{% endif %}></a>
     <div class="body">

@@ -1227,18 +1227,62 @@ async function settle(wantName, wantKey, tag, step, seconds = 300) {
 
 const OPEN_WALLET = "arcade-open-wallet";
 
+/* Unlocked once, unlocked everywhere (2026-09-26: "If you unlock on one
+ * page, it should stay unlocked on all pages"). The open wallet lives in THIS
+ * tab's sessionStorage, which a navigation keeps and a new tab does not have. So
+ * the tabs of this site tell each other, over a BroadcastChannel (same origin
+ * only: an inscribed page is on the pages host and cannot hear it): a tab that
+ * opens locked asks, and any unlocked tab answers. Nothing is written to disk --
+ * close the last tab and it is locked -- and locking one locks them all. */
+const TABS = (typeof BroadcastChannel !== "undefined")
+  ? new BroadcastChannel("arcade-open-wallet") : null;
+if (TABS) {
+  TABS.onmessage = (e) => {
+    const m = e.data || {};
+    if (m.ask === "phrase") {
+      let phrase = null;
+      try { phrase = sessionStorage.getItem(OPEN_WALLET); } catch (x) {}
+      if (phrase) TABS.postMessage({phrase});
+    } else if (m.phrase) {
+      try {
+        if (!sessionStorage.getItem(OPEN_WALLET)) sessionStorage.setItem(OPEN_WALLET, m.phrase);
+      } catch (x) {}
+    } else if (m.locked) {
+      try { sessionStorage.removeItem(OPEN_WALLET); } catch (x) {}
+    }
+  };
+}
+
+function fromAnotherTab(ms = 400) {
+  if (!TABS) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const other = new BroadcastChannel("arcade-open-wallet");
+    const done = (v) => { clearTimeout(t); other.close(); resolve(v); };
+    const t = setTimeout(() => done(null), ms);
+    other.onmessage = (e) => { if (e.data && e.data.phrase) done(e.data.phrase); };
+    other.postMessage({ask: "phrase"});
+  });
+}
+
 export function remember(phrase) {
   try { sessionStorage.setItem(OPEN_WALLET, phrase); } catch (e) {}
+  // Tabs already open and locked open now too.
+  try { if (TABS) TABS.postMessage({phrase}); } catch (e) {}
 }
 
 export function forgetOpen() {
   try { sessionStorage.removeItem(OPEN_WALLET); } catch (e) {}
+  try { if (TABS) TABS.postMessage({locked: true}); } catch (e) {}
 }
 
 /** The wallet unlocked in this tab, or null. */
 export async function opened(chain) {
   let phrase = null;
   try { phrase = sessionStorage.getItem(OPEN_WALLET); } catch (e) {}
+  if (!phrase) {
+    phrase = await fromAnotherTab();
+    if (phrase) { try { sessionStorage.setItem(OPEN_WALLET, phrase); } catch (e) {} }
+  }
   if (!phrase) return null;
   try {
     const wallet = await walletFrom(phrase, chain.network, chain.version);

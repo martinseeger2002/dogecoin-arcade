@@ -164,8 +164,7 @@
           other.disabled = true;
         }
         try {
-          const held = await opening;
-          if (!held) throw new Error("your wallet is not open in this tab");
+          const held = (await opening) || await arcadeKeys(CHAIN);
           const out = await wallet.answerOffer(held, ask);
           say((out.refused ? "Refused, and the offer stands. Nothing was spent "
                            : "Answered in " + String(out.txid).slice(0, 16)
@@ -353,7 +352,7 @@
     {% for c in popular %}
     {% set where = '/exchange/collection/' ~ c.creator ~ '/' ~ c.name|urlencode %}
     <div class="tile">
-      <a class="art" href="{{ where }}" title="{{ c.name }} #{{ c.cover_edition or 1 }}"
+      <a class="art" href="{{ where }}" title="{{ c.name }} #{{ c.cover_edition or 1 }}" aria-label="{{ c.name }}"
          {% if c.cover %}style="background-image:url(/content/{{ c.cover }})"{% endif %}></a>
       <div class="body">
         <div class="name"><a href="{{ where }}">{{ c.name }}</a></div>
@@ -506,7 +505,7 @@
     <div class="panel empty"><p>No shop on {{ chain.label|lower }} is selling a
       single NFT.</p>
       <p class="muted" style="font-size:.86rem">Put one up from
-        <a href="/wallet/nfts">your NFTs</a>, or from its card in a collection.</p></div>
+        <a href="{{ '/me/nfts' if viewer == 'account' else '/wallet/nfts' }}">your NFTs</a>, or from its card in a collection.</p></div>
   {% else %}
     <div class="cards">{% for s in market %}{{ shopcard(s, 'Buy') }}{% endfor %}</div>
   {% endif %}

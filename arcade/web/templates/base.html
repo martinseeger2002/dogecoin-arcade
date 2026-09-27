@@ -674,6 +674,34 @@ ol.words{column-gap:1.4em}
   {%- endfor %}
   </nav>
 </div></header>
+{% if stranger_here and not embed and path not in ('/', '/join', '/restore', '/join/keys') %}
+{# A visitor: everything here can be read, and nothing can be done until they
+   sign in (a tester, 2026-09-26: no sign-in hint on most public pages). #}
+<div class="unlockbar">
+  <span>You're looking around. Join free, or sign in, to post, trade, like and message.</span>
+  <a class="btn small" href="/join?next={{ path|urlencode }}">Join or sign in</a>
+</div>
+{% endif %}
+{% if account_here and account_name and not embed and path not in ('/me', '/join', '/restore') %}
+{# Signed in, wallet locked in this browser: one bar, every page. #}
+<div id="unlockbar" class="unlockbar" hidden>
+  <span>Your wallet is locked.</span>
+  <button type="button" class="small" id="unlockbar-go">Unlock</button>
+</div>
+<script type="module">
+  const w = await import("/wallet.js");
+  const keys = await w.opened(ARCADE_CHAIN);
+  const bar = document.getElementById("unlockbar");
+  if (!keys && bar) {
+    bar.hidden = false;
+    document.getElementById("unlockbar-go").onclick = async () => {
+      const opened = await arcadeUnlockSheet("");
+      // Drawn again, so everything on the page that needs the key has it.
+      if (opened) location.reload();
+    };
+  }
+</script>
+{% endif %}
 <script>
 (function () {
   var h = document.querySelector('header');
@@ -1046,6 +1074,99 @@ function arcadeAsk(title, detail, yes = "Yes"){
   });
 }
 
+// One unlock, on every page (a tester / 2026-09-26: "you should be able
+// to unlock your wallet from each page", and "if you unlock on one page, it
+// should stay unlocked on all pages"). arcadeKeys(chain) is what an action asks
+// for when it needs the key: the open wallet if there is one (in this tab or any
+// other tab of this site), otherwise this sheet, and the action carries on once
+// the password opens it -- instead of sending somebody to Your arcade.
+var ARCADE_ME = {{ (account_name or '')|tojson }};
+var ARCADE_CHAIN = {network: {{ state.messaging.network|tojson }},
+                    version: {{ state.messaging.params.pubkeyhash_version }}};
+function arcadeUnlockSheet(why){
+  return new Promise(function(answer){
+    var back = document.createElement('div');
+    back.className = 'askcard-back';
+    var card = document.createElement('form');
+    card.className = 'panel askcard';
+    card.setAttribute('role', 'dialog');
+    var h = document.createElement('h3');
+    h.textContent = 'Unlock your wallet';
+    var p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = (why ? why + ' ' : '') + 'Your password opens it in this browser; it '
+      + 'stays open on every page until you close your last arcade tab.';
+    var user = document.createElement('input');
+    user.type = 'text'; user.name = 'username'; user.autocomplete = 'username';
+    user.value = ARCADE_ME; user.hidden = true;
+    var pw = document.createElement('input');
+    pw.type = 'password'; pw.autocomplete = 'current-password';
+    pw.placeholder = 'password'; pw.setAttribute('aria-label', 'Password');
+    pw.style.width = '100%'; pw.style.boxSizing = 'border-box';
+    var err = document.createElement('p');
+    err.className = 'msg err'; err.hidden = true;
+    var row = document.createElement('div');
+    row.className = 'row'; row.style.marginTop = '10px';
+    var ok = document.createElement('button');
+    ok.type = 'submit'; ok.textContent = 'Unlock';
+    var no = document.createElement('button');
+    no.type = 'button'; no.className = 'ghost'; no.textContent = 'Cancel';
+    row.append(ok, no);
+    card.append(h, p, user, pw, err, row);
+    back.append(card);
+    document.body.append(back);
+    var done = function(v){ back.remove(); answer(v); };
+    no.onclick = function(){ done(null); };
+    back.onclick = function(e){ if (e.target === back) done(null); };
+    card.onsubmit = function(e){
+      e.preventDefault();
+      ok.disabled = true; ok.textContent = 'Unlocking\u2026'; err.hidden = true;
+      import('/wallet.js').then(function(w){
+        return w.unlockHere(ARCADE_ME, pw.value, ARCADE_CHAIN).then(function(){
+          return w.opened(ARCADE_CHAIN);
+        });
+      }).then(function(keys){
+        document.dispatchEvent(new CustomEvent('arcade:unlocked'));
+        var bar = document.getElementById('unlockbar'); if (bar) bar.hidden = true;
+        done(keys);
+      }, function(x){
+        ok.disabled = false; ok.textContent = 'Unlock';
+        err.textContent = String((x && x.message) || x || 'that did not open it');
+        err.hidden = false; pw.focus();
+      });
+    };
+    pw.focus();
+  });
+}
+async function arcadeKeys(chain, why){
+  var w = await import('/wallet.js');
+  var keys = await w.opened(chain || ARCADE_CHAIN);
+  if (keys) return keys;
+  if (!ARCADE_ME) throw new Error('Sign in first: this action needs your wallet.');
+  var opened = await arcadeUnlockSheet(why || 'This needs your key.');
+  if (!opened) throw new Error('Unlock your wallet to do that.');
+  return chain ? await w.opened(chain) : opened;
+}
+
+// Every field has a name a screen reader can say (a tester, 2026-09-26: 78
+// inputs across the site had only a placeholder). One pass after the page is
+// drawn and after each in-place redraw: a field with no <label>, no aria-label
+// and no aria-labelledby is named by its placeholder, or its name.
+function arcadeLabel(root){
+  (root || document).querySelectorAll('input:not([type=hidden]),textarea,select').forEach(function(el){
+    if (el.getAttribute('aria-label') || el.getAttribute('aria-labelledby')) return;
+    if (el.id && document.querySelector('label[for="' + el.id + '"]')) return;
+    if (el.closest('label')) return;
+    var name = el.getAttribute('placeholder') || el.getAttribute('title') || el.name;
+    if (name) el.setAttribute('aria-label', name);
+  });
+}
+document.addEventListener('DOMContentLoaded', function(){
+  arcadeLabel();
+  try { new MutationObserver(function(){ arcadeLabel(); })
+          .observe(document.body, {childList: true, subtree: true}); } catch (e) {}
+});
+
 // The whole picker, shared by both composers: remember what was chosen, offer
 // the three sizes, and swap the file in the input so the form carries whichever
 // one is selected. `drawText` is the one part each composer does its own way.
@@ -1381,6 +1502,10 @@ function arcadeFileCost(bytes){
 .screenlabel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2;
   padding:7px 12px;border-radius:999px;border:0;background:rgba(0,0,0,.72);color:#fff;
   font:600 .8rem/1.2 inherit;cursor:pointer;box-shadow:none;white-space:nowrap}
+.unlockbar{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;
+  padding:8px 16px;background:color-mix(in srgb,var(--accent) 14%,var(--panel));
+  border-bottom:1px solid var(--line);font-size:.9rem}
+.askcard input[type=password]{margin-top:6px}
 a.mention{font-weight:600;text-decoration:none}a.mention:hover{text-decoration:underline}
 .bubble img.postmedia{display:block;max-width:100%;max-height:340px;height:auto;
   border-radius:10px;margin:6px 0;cursor:zoom-in}

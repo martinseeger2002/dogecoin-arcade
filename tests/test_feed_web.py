@@ -582,3 +582,14 @@ def test_page_scripts_wait_for_what_base_defines_below_them():
             if "window.arcadeBlocked" in body and "DOMContentLoaded" not in body:
                 late.append(page.name)
     assert not late, late
+
+
+def test_a_post_you_shared_says_so_and_cannot_be_shared_again(client):
+    """A second share is a second paid transaction saying the same thing
+    (a tester, 2026-09-26)."""
+    from arcade import feedview
+    from arcade.messaging import feed as feedlib
+    assert "shared_by_me" in feedview.Shown.__dataclass_fields__
+    page = (pathlib.Path(__file__).resolve().parents[1]
+            / "arcade/web/templates/feed.html").read_text()
+    assert "Shared ✓" in page and "{{ 'disabled' if p.shared_by_me }}" in page

@@ -37,7 +37,7 @@ def test_a_stranger_is_sent_to_sign_up(client):
     app, _ = client
     answer = app.get("/me", follow_redirects=False)
     assert answer.status_code == 303
-    assert answer.headers["location"] == "/join"
+    assert answer.headers["location"].split("?")[0] == "/join"
 
 
 def test_an_account_gets_its_own_page(client):
@@ -233,7 +233,7 @@ def test_messages_needs_an_account(client):
     app, _ = client
     answer = app.get("/me/messages", follow_redirects=False)
     assert answer.status_code == 303
-    assert answer.headers["location"] == "/join"
+    assert answer.headers["location"].split("?")[0] == "/join"
 
 
 def test_the_messages_page_is_there_and_is_in_the_menu(public):

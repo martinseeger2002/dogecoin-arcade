@@ -14,7 +14,7 @@
   piece it stopped on.</p>
 
 <p class="muted" id="shut" hidden style="font-size:.86rem">
-  Your wallet is not open in this tab, so nothing here can be signed.
+  Your wallet is locked. Press Unlock at the top of the page, or just carry on: anything that needs your key asks for your password first.
   <a href="/me">Open it</a> and come back.</p>
 
 <div class="msg err" id="trouble" hidden></div>
@@ -127,8 +127,7 @@ const piece = () => $("run-piece") && ($("run-piece").onclick = async () => {
       setTimeout(() => location.reload(), 1500);
       return;
     }
-    const keys = await wallet.opened(CHAIN);
-    if (!keys) throw new Error("your wallet is not open in this tab");
+    const keys = (await wallet.opened(CHAIN)) || await arcadeKeys(CHAIN);
     const shown = await wallet.checked(offer, keys);
     if (!confirm(`${offer.name}: ${commas(offer.bytes)} bytes on the chain `
                  + `forever, for ${shown.coinsOf(shown.fee)} in fees. `

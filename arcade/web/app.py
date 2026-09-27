@@ -387,12 +387,13 @@ ACCOUNT_NAV = [
 
 LOCKED_PAGE = """<!doctype html><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>DogecoinArcade</title>
+<title>%(title)s · DogecoinArcade</title>
 <style>body{font:16px/1.5 system-ui,sans-serif;margin:0;display:grid;
 place-items:center;min-height:100vh;background:#12131a;color:#e8e8ea}
 div{max-width:26rem;padding:2rem;text-align:center}
-h1{font-size:1.2rem}p{color:#a0a0ab}</style>
-<div><h1>%s</h1><p>%s</p></div>
+h1{font-size:1.2rem}p{color:#a0a0ab}a{color:#f0c040}</style>
+<div><h1>%(title)s</h1><p>%(detail)s</p>
+<p><a href="/">Home</a> &middot; <a href="/feed">Feed</a> &middot; <a href="/me">Your arcade</a></p></div>
 """
 
 
@@ -471,7 +472,8 @@ def secure_context(request: Request) -> bool:
 def locked(title: str, detail: str, status: int = 403) -> HTMLResponse:
     """What a stranger sees. Deliberately plain: it names nothing about this
     wallet, because whoever is reading it has not shown they may see it."""
-    return HTMLResponse(LOCKED_PAGE % (title, detail), status_code=status)
+    return HTMLResponse(LOCKED_PAGE % {"title": title, "detail": detail},
+                        status_code=status)
 
 
 def the_door(state: AppState):
@@ -735,6 +737,12 @@ def create_app(state: AppState) -> FastAPI:
             # key-publishing check every page runs (base.html).
             "account_here": bool(_public_request(request)
                                  and signed_in(request) is not None),
+            # The name its wallet opens under, for the unlock sheet every page
+            # carries (a tester, 2026-09-26: "unlock your wallet from each page").
+            "account_name": _account_name(request),
+            # A stranger on the public site: a sign-in hint on every page.
+            "stranger_here": bool(_public_request(request)
+                                  and signed_in(request) is None),
             "unread_board": _unread_board(),
             # The operator's own badge: on a public page nobody sees it, and
             # working it out asks the node's wallet which addresses are its own.
@@ -4645,6 +4653,29 @@ def create_app(state: AppState) -> FastAPI:
     TEMPLATES.env.filters["who_text"] = _who_text
     TEMPLATES.env.globals["name_of"] = _name_of
 
+    def _to_join(request: Request):
+        """To sign in, and back to where they were going afterwards (a tester,
+        2026-09-26: after /me/wallet -> /join you landed on /me)."""
+        from urllib.parse import quote
+        path = request.url.path
+        if request.url.query:
+            path += "?" + request.url.query
+        return RedirectResponse("/join?next=" + quote(path, safe=""), status_code=303)
+
+    def _account_name(request: Request) -> str:
+        """The name the signed-in account's encrypted wallet is kept under here,
+        or "" (not signed in, or a wallet this node was only shown)."""
+        if not _public_request(request):
+            return ""
+        account = signed_in(request)
+        if account is None:
+            return ""
+        try:
+            row = state.vault().by_pubkey(account.pubkey) or {}
+            return str(row.get("tag") or "")
+        except Exception:
+            return ""
+
     def _tag_of_whoever_is_asking(request: Request) -> dict[str, Any]:
         """Whose name to show on a page: the reader's, not the node's.
 
@@ -7071,7 +7102,7 @@ def create_app(state: AppState) -> FastAPI:
     def my_notifications(request: Request):
         account = signed_in(request)
         if account is None:
-            return RedirectResponse("/join", status_code=303)
+            return _to_join(request)
         from .. import notify
         events = _notif_events(account)
         chain = _account_chain()
@@ -7887,7 +7918,7 @@ def create_app(state: AppState) -> FastAPI:
         """
         account = signed_in(request)
         if account is None:
-            return RedirectResponse("/join", status_code=303)
+            return _to_join(request)
         chain = _account_chain()
         register = state.accounts()
         return render(request, "me.html", chain=chain,
@@ -7900,7 +7931,7 @@ def create_app(state: AppState) -> FastAPI:
     def my_messages(request: Request):
         """An account's own messages, opened in its own browser."""
         if signed_in(request) is None:
-            return RedirectResponse("/join", status_code=303)
+            return _to_join(request)
         chain = _account_chain()
         page = render(request, "my_messages.html", chain=chain, when=_when)
         try:                     # opened: the red count on the Messages tab is read
@@ -7921,7 +7952,7 @@ def create_app(state: AppState) -> FastAPI:
     def my_contacts(request: Request):
         """An account's own address book, kept in its own browser."""
         if signed_in(request) is None:
-            return RedirectResponse("/join", status_code=303)
+            return _to_join(request)
         return render(request, "my_contacts.html", chain=_account_chain())
 
     @app.get("/account/find")
@@ -7933,11 +7964,21 @@ def create_app(state: AppState) -> FastAPI:
         that exists on the chain rather than one they typed.
         """
         _signed_in_account(request)
-        wanted = (q or "").strip().lstrip("@").lower()
+        raw = (q or "").strip()
+        wanted = raw.lstrip("@").lower()
         if not wanted:
             return JSONResponse({"matches": []})
         chain = _account_chain()
         out = []
+        # An address finds the name it holds (a tester, 2026-09-26: searching
+        # "nUpPb7…" said nothing was claimed). Addresses are case-sensitive, so
+        # this is asked before the text is lower-cased for the tag search.
+        if _looks_like_an_address(raw):
+            try:
+                tag = state.token_index(chain).tag_of(raw)
+            except Exception:
+                tag = None
+            return JSONResponse({"matches": [{"tag": tag, "address": raw}] if tag else []})
         try:
             index = state.token_index(chain)
             for row in index.search_tags(wanted, limit=20):
@@ -11027,7 +11068,7 @@ def create_app(state: AppState) -> FastAPI:
         words are the whole account, and what lives only in this browser."""
         account = signed_in(request)
         if account is None:
-            return RedirectResponse("/join", status_code=303)
+            return _to_join(request)
         mine = state.vault().by_pubkey(account.pubkey) or {}
         return render(request, "my_backup.html", chain=_account_chain(),
                       my_name=mine.get("tag", ""),
@@ -11052,7 +11093,7 @@ def create_app(state: AppState) -> FastAPI:
         the operator asked for it first -- the tab bar links all three.
         """
         if signed_in(request) is None:
-            return RedirectResponse("/join", status_code=303)
+            return _to_join(request)
         return render(request, "my_wallet.html", chain=_account_chain())
 
     @app.get("/me/wallet/tokens", response_class=HTMLResponse)
@@ -11061,14 +11102,14 @@ def create_app(state: AppState) -> FastAPI:
         to send some of it -- read the same way `/account/nfts` reads
         what an account holds in inscriptions."""
         if signed_in(request) is None:
-            return RedirectResponse("/join", status_code=303)
+            return _to_join(request)
         return render(request, "my_wallet_tokens.html", chain=_account_chain())
 
     @app.get("/me/nfts", response_class=HTMLResponse)
     def my_nfts(request: Request):
         """What an account holds, and the one button that sends one on."""
         if signed_in(request) is None:
-            return RedirectResponse("/join", status_code=303)
+            return _to_join(request)
         return render(request, "my_nfts.html", chain=_account_chain())
 
     @app.get("/me/runs", response_class=HTMLResponse)
@@ -11083,7 +11124,7 @@ def create_app(state: AppState) -> FastAPI:
         """
         account = signed_in(request)
         if account is None:
-            return RedirectResponse("/join", status_code=303)
+            return _to_join(request)
         mine = [run for run in _runs.list(account=account.pubkey)]
         mine.sort(key=lambda run: (run["status"] == "done", -run["created"]))
         # The book keeps the network, which is what a run has to be to find its
@@ -11119,7 +11160,7 @@ def create_app(state: AppState) -> FastAPI:
         """
         account = signed_in(request)
         if account is None:
-            return RedirectResponse("/join", status_code=303)
+            return _to_join(request)
         run = _runs.get(run_id)
         if run is None or run["account"] != account.pubkey.lower():
             state.flash("there is no run of that id", "err")

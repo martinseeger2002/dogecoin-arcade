@@ -175,11 +175,7 @@
     // its copy, whoever happens to be looking at it.
     function shopByKey(m){
       return import('/wallet.js').then(function(w){
-        return w.opened(CHAIN).then(function(wallet){
-          if (!wallet) {
-            throw new Error('this account is signed in, but its key is not open '
-              + 'in this tab. Unlock the wallet once and the shop will answer here.');
-          }
+        return arcadeKeys(CHAIN, 'This shop needs your wallet to trade.').then(function(wallet){
           return w.shopDoor(wallet, here, m);
         });
       });
@@ -198,12 +194,10 @@
       function byKey(doIt, needKey){
         import('/wallet.js').then(function(w){
           if (!needKey) return doIt(w, null);
-          return w.opened(CHAIN).then(function(wallet){
-            if (!wallet) throw new Error('this account is signed in, but its '
-              + 'key is not open in this tab. Unlock the wallet once and the '
-              + 'door will answer here.');
-            return doIt(w, wallet);
-          });
+          // The page asked for something only the key can do: open the unlock
+          // sheet in place if the wallet is locked, and carry on after.
+          return arcadeKeys(CHAIN, 'This page is asking your wallet to sign something.')
+            .then(function(wallet){ return doIt(w, wallet); });
         }).then(function(r){ answer(Object.assign({ok: true}, r)); })
           .catch(function(err){
             answer({ok: false, error: String((err && err.message) || err || 'refused')});
@@ -437,8 +431,7 @@
         other.disabled = true;
       }
       try {
-        const held = await opening;
-        if (!held) throw new Error("your wallet is not open in this tab");
+        const held = (await opening) || await arcadeKeys(CHAIN);
         const out = await wallet.answerOffer(held, {
           offer: button.dataset.offer, piece: button.dataset.piece,
           refuse, chain: CHAIN.network});
@@ -559,8 +552,7 @@
     // Pressed shows at once; the node's answer can take a second or two.
     button.textContent = "Buying…";
     try {
-      const held = await opening;
-      if (!held) throw new Error("your wallet is not open in this tab");
+      const held = (await opening) || await arcadeKeys(CHAIN);
       const offer = await wallet.offerBuy(LISTING, CHAIN.network);
       const shown = await wallet.checked(offer, held);
       const price = shown.coinsOf(Number(offer.price));
@@ -702,8 +694,7 @@
       say(""); news("");
       $("offer-it").disabled = true;
       try {
-        const held = await take();
-        if (!held) throw new Error("your wallet is not open in this tab");
+        const held = (await take()) || await arcadeKeys(CHAIN);
         const asked = await fetch("/account/offer", {
           method: "POST", headers: {"Content-Type": "application/json"},
           body: JSON.stringify({

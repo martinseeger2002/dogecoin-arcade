@@ -604,7 +604,8 @@ function grow(box) {
 
 async function send() {
   const text = $("body").value;
-  if (!here || !text.trim()) return;
+  if (!here) return;
+  if (!text.trim()) { say("Write something first."); $("body").focus(); return; }
   say("");
   $("send").disabled = true;
   const was = $("send").textContent;

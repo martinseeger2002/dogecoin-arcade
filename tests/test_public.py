@@ -811,3 +811,45 @@ def test_a_viewer_frame_gets_the_ticket_shim_and_the_bytes_stay_the_bytes(client
     assert "sandbox" in shown.headers["content-security-policy"]
     assert app.get(f"/content/{txid}?v=tick3t&download=1").content == page
 
+
+
+# --- site audit (a tester, 2026-09-26) ----------------------------------------
+
+def test_sign_in_brings_you_back_to_the_page_that_sent_you(public):
+    app, _ = public
+    answer = app.get("/me/wallet", headers=LOCAL, follow_redirects=False)
+    assert answer.status_code == 303
+    assert answer.headers["location"] == "/join?next=%2Fme%2Fwallet"
+    page = app.get("/join?next=%2Fme%2Fwallet", headers=LOCAL).text
+    assert "const NEXT" in page and "location.href = NEXT" in page
+
+
+def test_a_stranger_is_told_how_to_join_on_every_public_page(public):
+    app, _ = public
+    body = app.get("/feed", headers=LOCAL).text
+    assert "Join or sign in" in body and "/join?next=/feed" in body
+    assert "Join or sign in" not in app.get("/join", headers=LOCAL).text
+
+
+def test_the_not_here_page_has_a_way_home_and_a_title(public):
+    app, _ = public
+    answer = app.get("/wallet/nfts", headers=LOCAL)
+    assert answer.status_code in (403, 404)
+    assert '<a href="/">Home</a>' in answer.text
+    assert "<title>" in answer.text and "· DogecoinArcade</title>" in answer.text
+
+
+def test_the_address_book_finds_a_name_by_its_address(public):
+    from arcade.db import Database
+    from arcade.state import install_schema
+
+    app, state = public
+    _seat(app)
+    db = Database(state.home / f"{state.messaging.network}-ledger.sqlite")
+    install_schema(db)
+    db.conn.execute("INSERT OR REPLACE INTO tag(tag,address,claimed_txid,block_height,position) "
+                    "VALUES('findme',?,?,100,0)", (KEEPER, "f" * 64))
+    db.conn.commit()
+    db.close()
+    said = app.get(f"/account/find?q={KEEPER}", headers=LOCAL).json()
+    assert said["matches"] == [{"tag": "findme", "address": KEEPER}]

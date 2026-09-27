@@ -1961,7 +1961,7 @@ def parse_amount(text: str, divisible: bool) -> int:
     if divisible:
         scaled = value * COIN
         if scaled != scaled.to_integral_value():
-            raise AmountError("this token has eight decimal places at most.")
+            raise AmountError("at most eight decimal places: 0.00000001 is the smallest amount.")
         units = int(scaled)
     else:
         if value != value.to_integral_value():
