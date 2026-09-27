@@ -1135,7 +1135,7 @@ class LedgerIndex:
 
         orders, cancels = [], []
         for row in self._pool_orders.values():
-            if row is None:
+            if row is None or row.get("takes"):
                 continue
             (cancels if row.get("cancels") else orders).append(row)
         if not cancels:
@@ -1167,6 +1167,21 @@ class LedgerIndex:
                 gone.add(txid)
         return [o for o in orders if o["txid"] not in gone], gone
 
+    def pending_takes(self) -> dict[str, int]:
+        """Resting asks somebody is taking in the pool: order txid -> units.
+
+        A take pays the maker in the same transaction whatever the token layer
+        makes of it, so a second take of an order the first one emptied is
+        coins for nothing. The route refuses to file one while another is in
+        flight, and the book says so beside the order.
+        """
+        self.pending_orders()                    # refreshes the pool read
+        out: dict[str, int] = {}
+        for row in (getattr(self, "_pool_orders", {}) or {}).values():
+            if row and row.get("takes"):
+                out[row["takes"]] = out.get(row["takes"], 0) + int(row["amount"])
+        return out
+
     def _order_row(self, rtx) -> dict | None:
         """One mempool transaction as a book row, a cancel, or None."""
         if rtx is None or not rtx.payload:
@@ -1178,6 +1193,13 @@ class LedgerIndex:
 
         base = {"txid": rtx.txid, "block_height": 0, "position": 0,
                 "address": rtx.sender, "reserved": 0, "pending": True}
+        if isinstance(msg, P.MetaDExTake):
+            # Somebody settling a resting ask right now (type 29). Not an order
+            # and not a cancel: `pending_takes` counts it against the order it
+            # names, so nobody else pays for the same tokens in the same block.
+            return {**base, "takes": msg.order.hex(), "amount": msg.amount,
+                    "sale_property": msg.property_id, "want_property": 0,
+                    "sale_amount": 0, "want_amount": 0}
         if isinstance(msg, P.MetaDExCancelEcosystem):
             return {**base, "cancels": "ecosystem", "sale_property": 0,
                     "want_property": 0, "sale_amount": 0, "want_amount": 0}

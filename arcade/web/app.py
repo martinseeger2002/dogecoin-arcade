@@ -9630,6 +9630,103 @@ def create_app(state: AppState) -> FastAPI:
                              "total": format_amount(coins, True),
                              **unsigned.as_json()})
 
+    @app.post("/account/order/take")
+    def account_order_take(request: Request, payload: Any = Body(None)):
+        """Buy from somebody's resting ask with their tab closed (type 29, D-189).
+
+        One transaction, from this account's own coins: an output paying the
+        order's own address what the order's own price makes the amount, and
+        the take naming the order. The maker's consent is the reserve their ask
+        already holds, so nobody has to be online to answer (2026-09-27:
+        "a taker completes a trade with the maker offline, and partial fills are
+        automatic"). Nothing is broadcast here; the tab signs.
+
+        The coins go to the maker whatever the token layer makes of the take,
+        so everything that could make it fail is refused HERE first: an order
+        still in the pool, one somebody is already taking in the pool, more
+        than it holds, and a payment under the dust limit, which the network
+        would not relay anyway.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        try:
+            if chain.params.take_from is None:
+                raise tokenlib.TokenError("this chain does not settle takes yet")
+            index = state.token_index(chain)
+            txid = str(said.get("order") or "").strip().lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", txid):
+                raise ValueError("name the order by its transaction id")
+            with contextlib.closing(index.open()) as db:
+                row = db.conn.execute("SELECT * FROM book_order WHERE txid=?",
+                                      (txid,)).fetchone()
+            if row is None:
+                raise tokenlib.TokenError(
+                    "that order is not on the book any more: filled, cancelled, or "
+                    "still waiting for its block. Refresh the page.")
+            row = dict(row)
+            if row["want_property"] != 0 or not row["sale_property"]:
+                raise tokenlib.TokenError("only an ask, tokens for coins, can be taken")
+            if row["address"] == address:
+                raise tokenlib.TokenError(
+                    "that is your own order; cancel it instead of taking it")
+            prop = index.property(row["sale_property"])
+            units = parse_amount(str(said.get("amount", "")), prop["divisible"])
+            if units <= 0:
+                raise tokenlib.TokenError("take an amount above zero")
+            taking = index.pending_takes().get(txid, 0)
+            if taking:
+                raise tokenlib.TokenError(
+                    "somebody is taking this order right now. Wait for its block "
+                    "(a minute or two) and try again, so you never pay for tokens "
+                    "that are already gone.")
+            if units > row["reserved"]:
+                raise tokenlib.TokenError(
+                    f"that order holds {format_amount(row['reserved'], prop['divisible'])} "
+                    f"{prop['name']}; take that much or less")
+            # The engine's own arithmetic (state._take_order), so the payment
+            # here is exactly what it checks for.
+            need = row["want_amount"] * units // row["sale_amount"]
+            if need < fees.DUST_LIMIT:
+                raise tokenlib.TokenError(
+                    f"that comes to {format_amount(need, True)} coins, under the "
+                    f"{format_amount(fees.DUST_LIMIT, True)} the network will carry "
+                    "to one address; take more of it")
+            message = P.MetaDExTake(property_id=row["sale_property"],
+                                    amount=units, order=bytes.fromhex(txid))
+            outputs = [(need, txbuild.p2pkh_script(row["address"]))] + _class_c_or_b(
+                chain, address, message.encode(),
+                _coin_pubkey(account.pubkey, chain), wrap=False)
+            shown = format_amount(units, prop["divisible"])
+            what = (f"buy {shown} {prop['name']} for "
+                    f"{format_amount(need, True)} coins")
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address, outputs,
+                    rate=fees.MIN_FEE_PER_KB, what=what,
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "trade")
+        except (tokenlib.TokenError, fundinglib.FundingError, AmountError,
+                ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned, what)
+        return JSONResponse({"offer": offer.id, "what": what, "chain": chain.network,
+                             "name": prop["name"], "amount": shown,
+                             "coins": format_amount(need, True),
+                             "maker": row["address"],
+                             "maker_tag": _tags_for([row["address"]]).get(row["address"], ""),
+                             "left": format_amount(row["reserved"] - units, prop["divisible"]),
+                             **unsigned.as_json()})
+
     def _cancel_one_or_pair(index, address: str, prop: dict, side: str,
                             price: str, who: str) -> tuple:
         """The cancel to file for one side of one pair: one price, or all of them.
@@ -14881,8 +14978,13 @@ def create_app(state: AppState) -> FastAPI:
                         coins = utxoslib.balance(db, account_address) / 100_000_000
             except Exception:
                 owned, held, coins = set(), 0, 0.0
+        try:
+            taking = index.pending_takes()
+        except Exception:
+            taking = {}
         for side in ("asks", "bids"):
             for order in book[side]:
+                order["taking"] = taking.get(order["txid"], 0)
                 order["mine"] = order["address"] in owned
                 order["price_shown"] = f"{float(order['price']):.8f}".rstrip("0").rstrip(".")
                 order["tokens_shown"] = format_amount(order["tokens"], prop["divisible"])

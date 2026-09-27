@@ -260,7 +260,7 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # this list. Nor does anything here reserve anything: the engine
                # holds an ask's tokens back when it indexes the order, and coins
                # cannot be reserved at all (D-048).
-               "/account/order", "/account/order/cancel",
+               "/account/order", "/account/order/cancel", "/account/order/take",
                # and the read that says what those two did. Same queue
                # arithmetic as the take, no transaction, nothing reserved: a
                # program that can put a price on the book and take it off has to

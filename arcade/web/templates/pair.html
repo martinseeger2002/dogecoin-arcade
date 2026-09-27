@@ -212,7 +212,52 @@
          own, and the answer comes back sealed to this key: this node never
          holds it, so reading it happens in this browser and nowhere else.
       */
+      /* Taking a price with its maker away (2026-09-27; type 29, D-189):
+         one transaction of this account's own, paying the maker what their own
+         order says, and the tokens come out of the reserve their ask holds.
+         No question, no waiting for an answer. The route refuses anything that
+         could leave the payment stranded before this tab signs a thing. */
       for (const btn of document.querySelectorAll("button.take-price")) {
+        btn.onclick = async () => {
+          say(""); news("");
+          const order = btn.dataset.order;
+          const box = document.querySelector(`.take-amount[data-order="${order}"]`);
+          const amount = (box ? box.value : "").trim();
+          btn.disabled = true;
+          try {
+            const held = (await wallet.opened(CHAIN)) || await arcadeKeys(CHAIN);
+            const asked = await fetch("/account/order/take", {
+              method: "POST", headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({order, amount, chain: CHAIN.network}),
+            });
+            const terms = await asked.json();
+            if (!asked.ok) throw new Error(terms.detail || "that cannot be taken");
+            const shown = await wallet.checked(terms, held);
+            const who = terms.maker_tag ? "@" + terms.maker_tag : "the seller";
+            if (!(await arcadeAsk(`Buy ${terms.amount} ${terms.name} for ${terms.coins} coins?`,
+                  `${terms.coins} coins go to ${who} at the price on their order, and `
+                  + `the tokens come to you when the block lands. They don't need to be `
+                  + `online. Network fee ${shown.coinsOf(shown.fee)}. `
+                  + (Number(terms.left) > 0 ? `${terms.left} stays on the book at the same price.`
+                                            : "That is the whole order."),
+                  `Buy for ${terms.coins} coins`))) {
+              btn.disabled = false;
+              return;
+            }
+            await wallet.confirm(held, terms);
+            news(`Bought ${terms.amount} ${terms.name}. It's yours when its block lands, `
+                 + "usually within a minute or two.");
+            btn.textContent = "Bought ✓";
+          } catch (e) {
+            btn.disabled = false;
+            say(String(e.message || e));
+          }
+        };
+      }
+
+      /* The earlier way, kept for a node whose chain has no takes yet: ask the
+         maker's node, which answers with its half. Nothing binds to it here. */
+      for (const btn of document.querySelectorAll("button.take-price-asked")) {
         btn.onclick = async () => {
           say(""); news("");
           const order = btn.dataset.order;
@@ -364,14 +409,16 @@
             {%- if o.mine %}yours{%- else %} {{ o.address|who }}{% endif %}
             {%- if o.pending %}<span class="pill" title="broadcast, not yet in a block">pool</span>{% endif %}</td>
           <td style="text-align:right;white-space:nowrap">
-            {%- if not o.mine and not o.pending and fills_ready and viewer == 'account' %}
+            {%- if o.taking %}<span class="muted" style="font-size:.72rem"
+                  title="Somebody's take of this order is waiting for its block. Buying it now could pay for tokens that are already gone.">being bought right now</span>
+            {%- elif not o.mine and not o.pending and fills_ready and viewer == 'account' %}
             <input class="take-amount" data-order="{{ o.txid }}"
                    value="{{ o.tokens_shown }}" inputmode="decimal" autocomplete="off"
                    aria-label="how much of this price"
                    title="How much of this price to ask about. Their node prices it from their order, and the answer is checked against it."
                    style="width:6.5em;padding:3px 6px;font-size:.78rem">
             <button type="button" class="small take-price" data-order="{{ o.txid }}"
-                    title="Two transactions and a question: this asks their node, which answers with its half sealed to your key, and your tab signs the other. Nothing moves until both do.">Take</button>
+                    title="One transaction: you pay the seller what their order says, and the tokens come out of what their order holds. They don't need to be online.">Buy</button>
             {%- elif not o.mine and not o.pending and fills_ready and viewer == 'wallet' %}
             <form method="post" action="/exchange/fill" class="row"
                   style="gap:4px;margin:0;justify-content:flex-end">

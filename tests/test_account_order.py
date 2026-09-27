@@ -1154,3 +1154,41 @@ def test_the_timeframe_is_the_coarsest_that_still_draws_eight_candles():
     assert charts.pick_timeframe(at(9 * 3600), now) == "1h"
     assert charts.pick_timeframe(at(3 * 86_400), now) == "4h"
     assert charts.pick_timeframe(at(20 * 86_400), now) == "1d"
+
+
+def test_a_taker_buys_part_of_a_resting_ask_with_the_maker_away(node):
+    """The route and the engine together, on a real chain (type 29, D-189).
+
+    The maker lists and goes away; nothing of theirs signs again. The taker
+    buys 4 of 10 at 0.5 each: one transaction of the taker's own, paying the
+    maker 2 coins, and the engine moves 4 tokens out of the maker's reserve.
+    The other 6 stay on the book at the same price.
+    """
+    maker = _bookcoin(node, 40)
+    app, state, rpc = node
+    taker, t_secret, t_pubkey, t_address = _seated(app, state, rpc, 41)
+    order = _placed(maker, "ask", "10", "0.5")
+    assert _held(state, maker["address"], maker["pid"]) == (HELD - 10 * COIN, 10 * COIN)
+
+    own = maker["client"].post("/account/order/take", json={"order": order, "amount": "1"})
+    assert own.status_code == 400 and "your own order" in own.json()["detail"]
+    much = taker.post("/account/order/take", json={"order": order, "amount": "11"})
+    assert much.status_code == 400 and "holds" in much.json()["detail"]
+    tiny = taker.post("/account/order/take", json={"order": order, "amount": "0.00000001"})
+    assert tiny.status_code == 400 and "under the" in tiny.json()["detail"]
+
+    asked = taker.post("/account/order/take", json={"order": order, "amount": "4"})
+    assert asked.status_code == 200, asked.text
+    terms = asked.json()
+    assert terms["coins"] == "2" or terms["coins"].startswith("2"), terms
+    assert terms["left"].startswith("6"), terms
+    _signed(taker, t_secret, t_pubkey, asked)
+    _settled(state, rpc)
+
+    assert _held(state, t_address, maker["pid"]) == (4 * COIN, 0), \
+        "the taker holds what they paid for"
+    assert _held(state, maker["address"], maker["pid"]) == (HELD - 10 * COIN, 6 * COIN), \
+        "the maker's reserve gave exactly 4, and nothing came out of their free balance"
+    (rest,) = _book(state, order)
+    assert rest["sale_amount"] == 6 * COIN and rest["want_amount"] == 3 * COIN, \
+        "the rest of the ask stands, at its own price"
