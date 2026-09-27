@@ -736,7 +736,9 @@ def test_the_page_marks_what_is_yours_and_names_no_closed_route(node):
         "on is a transaction that costs a fee to cancel nothing"
     assert "/exchange/order/cancel" not in body
     assert 'action="/exchange/fill"' not in body
-    assert "not with your key yet" in body
+    assert 'class="small take-price"' in body, \
+        "and the row is takeable by an account now: the press asks the maker's " \
+        "node, and this node still signs nothing of the trade"
     seat["state"].public = False
 
 

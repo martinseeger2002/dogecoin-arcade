@@ -254,6 +254,13 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # holds an ask's tokens back when it indexes the order, and coins
                # cannot be reserved at all (D-048).
                "/account/order", "/account/order/cancel",
+               # and the one read that makes the book takeable by a tab: it
+               # builds nothing and sends nothing, it only says which order the
+               # queue chose, what it prices to, and which key the question has
+               # to be sealed to -- a key that lives in this node's address book
+               # and nowhere a browser can look. The message it is advice about
+               # goes out through `/account/talk`, which is already here.
+               "/account/take",
                # a shop, bought by an account rather than by this wallet. The
                # door offers three transactions and broadcasts the two messages
                # out of them; the trade itself is not broadcast here at all,

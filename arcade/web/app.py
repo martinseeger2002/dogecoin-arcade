@@ -9274,6 +9274,119 @@ def create_app(state: AppState) -> FastAPI:
                              "chain": chain.network,
                              "every": True, **unsigned.as_json()})
 
+    @app.post("/account/take")
+    def account_take(request: Request, payload: Any = Body(None)):
+        """What taking a price off the book would ask for, and of whom.
+
+        A read: no transaction, no message, nothing filed. It exists because of
+        one thing a tab cannot do for itself. The question that gets a maker's
+        node to answer is sealed to the messaging key that node announced for
+        the maker's address, and that key is in this node's address book
+        (`_key_at`), which a browser has no way to query. A tab pressing `Take`
+        knows an order id and an amount and nothing else, so one round trip has
+        to say the four things it cannot work out: which order the queue chose,
+        what that prices to, whose key the question goes to, and whose node is
+        being asked.
+
+        The arithmetic is `/exchange/fill`'s, carried over and not re-derived.
+        Price, then time, through `_earliest_at_or_better`: three asks at one
+        price are one price offered by three people, and the maker who queued
+        first is the one entitled to the trade (D-083) -- which is why the route
+        says which row it picked and why, rather than letting a tab aim at the
+        third row and quietly jump the two ahead of it. The coin figure is the
+        chosen row's own ratio rounded UP, because that is what the engine's
+        price guard refuses less of (D-062). And the refusals are the ones that
+        belong before anything costs a fee: a bid is not takeable, since filling
+        one means offering the tokens and this node has never seen the wallet
+        that holds them; an order with too little left; an order that is this
+        account's own; and an address whose coins are in one output, which is
+        the worst possible moment to discover it (D-051) -- so it is said here,
+        where it costs nothing, instead of after the question was paid for.
+
+        The leg itself still arrives by message and still comes back to
+        `/account/fill`, which is the route that builds a transaction. Nothing
+        is kept here in the meantime: the answer is sealed to a key this node
+        was never given, and the tab that asked is the only place it can be read
+        (D-169).
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        try:
+            index = state.token_index(chain)
+            clicked = index.order(str(said.get("order") or ""))
+            if clicked is None:
+                raise swaplib.SwapError(
+                    "that order is not on this node's book -- it may have been "
+                    "cancelled or filled, or its block may not have arrived here")
+            if clicked["want_property"] != 0:
+                raise swaplib.SwapError(
+                    "this fills an order that sells a token for coins. To fill a "
+                    "bid, the wallet holding the tokens has to offer them")
+            prop = index.property(clicked["sale_property"])
+            tokens = parse_amount(str(said.get("amount", "")),
+                                  bool(prop["divisible"]))
+            if not 0 < tokens <= clicked["sale_amount"]:
+                raise swaplib.SwapError(
+                    f"that order has {format_amount(clicked['sale_amount'], bool(prop['divisible']))} left")
+            row = _earliest_at_or_better(index, clicked, tokens) or clicked
+            prop = index.property(row["sale_property"])
+            coins = -(-row["want_amount"] * tokens // row["sale_amount"])
+            if row["address"] == address:
+                raise swaplib.SwapError("that order is your own")
+            # Two confirmed outputs, or the tab learns it after paying for the
+            # question: one output goes into the trade and one pays for the
+            # message that carries the answer, and `/account/fill/sign` would
+            # refuse to build the swap without both.
+            with contextlib.closing(index.open()) as db:
+                held = [c for c in utxoslib.unspent(db, address)
+                        if (c["txid"], c["vout"])
+                        not in _flights.spent_by(account.pubkey, chain.network)]
+            if len(held) < OUTPUTS_FOR_A_SWAP:
+                raise swaplib.SwapError(
+                    f"this account has its coins in {len(held)} confirmed "
+                    f"output{'' if len(held) == 1 else 's'}, and taking a price "
+                    "needs two: one goes into the trade and one pays for the "
+                    "message that asks about it. Split it first -- Wallet, "
+                    "Send, 1 coin to your own @name -- and take it again.")
+            to = _key_at(row["address"])
+        except swaplib.SwapError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except (tokenlib.TokenError, AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({
+            "chain": chain.network,
+            # The order the maker will actually be asked about. It names itself
+            # in the question, and the answer is checked against it, so a row
+            # that was only the row that happened to be clicked would price the
+            # taker's own trade off a different order.
+            "order": row["txid"], "clicked": clicked["txid"],
+            "moved": row["txid"] != clicked["txid"],
+            "property_id": row["sale_property"],
+            "name": prop["name"],
+            "tokens": tokens, "coins": coins,
+            "amount": format_amount(tokens, bool(prop["divisible"])),
+            "maker": row["address"],
+            "maker_tag": _tags_for([row["address"]]).get(row["address"], ""),
+            "to": to.hex(),
+            "price": f"{coins / COIN:.8f}",
+            # The two things the question has to carry that this node knows and
+            # the tab does not: the protocol the maker's shopkeeper expects to
+            # see (`_answer` answers a stranger's version with "update one of
+            # us" rather than guessing) and the address the leg is to pay.
+            "swapv": swaplib.PROTOCOL, "buyer": address,
+        })
+
     def _ask_payload(row: dict, take: inscriptionlib.Leg) -> bytes:
         """What a listing writes at output 0: the trade the finished swap IS.
 
@@ -13657,13 +13770,32 @@ def create_app(state: AppState) -> FastAPI:
         if book["asks"] and book["bids"]:
             spread = float(book["asks"][0]["price"]) - float(book["bids"][0]["price"])
         face = _faces_for(index, [prop])[property_id]
+        mine = index.orders_of(sorted(owned))
+        # Whether a taker's node could ask THIS reader about a resting order at
+        # all. The queue steps past a maker whose address has no published key
+        # rather than refusing the press -- one unreachable wallet must not
+        # block a price for everybody (D-042) -- so the pass-over has always
+        # been readable where the taker looked and nowhere the maker does. The
+        # same table and the same rule as `_key_at`, and a row is marked rather
+        # than hidden, because the order is real and still on the book
+        # (a tester S-work-2).
+        askable: dict[str, bool] = {}
+        if any(o["sale_property"] for o in mine):
+            with state.store() as store:
+                for order in mine:
+                    if order["sale_property"]:
+                        askable[order["address"]] = (
+                            store.key_for(order["address"]) is not None)
+        for order in mine:
+            order["askable"] = (not order["sale_property"]
+                                or askable.get(order["address"], True))
         return render(request, "pair.html", chain=chain, prop=prop, book=book,
                       face=face, spread=spread, day=chartlib.day(points),
                       stats=chartlib.last_and_change(points),
                       slots=chartlib.candles(points),
                       recent=sorted(points, key=lambda p: -p["when"])[:12],
                       held=format_amount(held, prop["divisible"]), held_units=held,
-                      coins=coins, mine=index.orders_of(sorted(owned)),
+                      coins=coins, mine=mine,
                       viewer=viewer, account_address=account_address,
                       # Whose fills these are: the list is of times THIS node
                       # went looking to take a price and whether it came off,
