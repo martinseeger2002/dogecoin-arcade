@@ -511,6 +511,22 @@ function listingPayload(data) {
  *     coins              other half of a trade, are left unsigned here, and
  *                        are not this key's to check or to sign.
  */
+/** Whether `script` is a bare 1-of-n multisig (OP_1 <keys> OP_n
+ *  OP_CHECKMULTISIG) with `pubkey` among its keys: a Class B payload output
+ *  this key alone can spend. */
+function ownMultisig(script, pubkey) {
+  const s = script, n = s.length;
+  if (n < 37 || s[0] !== 0x51 || s[n - 1] !== 0xae) return false;
+  let at = 1, found = false, keys = 0;
+  while (at < n - 2) {
+    const len = s[at];
+    if (len !== 33 && len !== 65) return false;
+    if (SAME(s.slice(at + 1, at + 1 + len), pubkey)) found = true;
+    at += 1 + len; keys++;
+  }
+  return found && at === n - 2 && s[n - 2] === 0x50 + keys;
+}
+
 export async function verifyOffer(offer, keys) {
   if (!offer || !offer.raw) {
     throw new Error("that offer has no transaction in it, so there is nothing "
@@ -546,7 +562,17 @@ export async function verifyOffer(offer, keys) {
       throw new Error(`that transaction spends a coin at input ${n} that this `
         + "key does not hold. Nothing was signed.");
     }
-    const derived = hex(await sighashAll(tx, n, mine));
+    // A Class B payload output being swept back (2026-09-28) is signed
+    // over its own bare 1-of-n multisig script -- and only if this key is in it.
+    let spent = mine;
+    if (named[n].script) {
+      spent = unhex(String(named[n].script));
+      if (!ownMultisig(spent, keys.pubkey)) {
+        throw new Error(`input ${n} is not a payload output this key can sweep. `
+          + "Nothing was signed.");
+      }
+    }
+    const derived = hex(await sighashAll(tx, n, spent));
     if (derived !== asked[n - from]) {
       throw new Error("those signatures were asked for over different bytes "
         + `than this transaction -- what this browser worked out for input ${n} `

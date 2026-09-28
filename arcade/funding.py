@@ -107,8 +107,12 @@ class Unsigned:
     def as_json(self) -> dict:
         return {
             "raw": self.raw,
+            # `script` only for a bare-multisig input (a Class B payload output,
+            # swept back by `build_dust_sweep`): the browser signs over it and
+            # checks its own key is in it (coins.js verifyOffer).
             "inputs": [{"txid": i["txid"], "vout": i["vout"],
-                        "value": i["value"], "address": i["address"]}
+                        "value": i["value"], "address": i["address"],
+                        **({"script": i["script"]} if i.get("multisig") else {})}
                        for i in self.inputs],
             "sighashes": self.sighashes,
             "signed_from": self.signed_from,
@@ -608,6 +612,38 @@ def build_partial(db, params: Params, address: str, foreign: list,
                     fee=fee, change=change, what=what, signed_from=len(given))
 
 
+#: Most payload outputs one sweep takes back: ~150 bytes each keeps a sweep
+#: well under the 100 kB a relayed transaction may be.
+DUST_SWEEP_MAX = 400
+
+
+def build_dust_sweep(address: str, coins: list[dict], rate: int, what: str = "") -> Unsigned:
+    """Spend an account's own Class B payload outputs back to its address.
+
+    2026-09-28 (a tester: 54.50 coins in 5,450 of them, invisible):
+    every Class B output an account writes is a bare 1-of-n multisig with the
+    account's own key in it (`encoding.encode_class_b`), so it is still the
+    account's money. Each input is signed over its own multisig script and
+    unlocked with OP_0 <sig> (`assemble`), in the account's own browser.
+    """
+    given = [{"txid": str(c["txid"]), "vout": int(c["vout"]), "value": int(c["value"]),
+              "address": address, "script": str(c["script"]), "multisig": True}
+             for c in coins[:DUST_SWEEP_MAX]]
+    if not given:
+        raise FundingError("there is nothing to sweep back")
+    total = sum(c["value"] for c in given)
+    fee = price(len(given), [], rate, change=True)
+    change = total - fee
+    if change < fees.DUST_LIMIT:
+        raise FundingError("these outputs are worth less than the fee to sweep them")
+    outputs = [(change, p2pkh_script(address))]
+    raw = build_raw_tx([(c["txid"], c["vout"]) for c in given], outputs)
+    return Unsigned(raw=raw, inputs=given, outputs=outputs,
+                    sighashes=[sighash(given, outputs, n, bytes.fromhex(c["script"])).hex()
+                               for n, c in enumerate(given)],
+                    fee=fee, change=change, what=what)
+
+
 def assemble(unsigned: Unsigned, signatures: list[str], pubkey: bytes) -> str:
     """Put the signatures in and hand back a transaction.
 
@@ -628,7 +664,10 @@ def assemble(unsigned: Unsigned, signatures: list[str], pubkey: bytes) -> str:
     raw = (1).to_bytes(4, "little") + varint(len(unsigned.inputs))
     for n, coin in enumerate(unsigned.inputs):
         script_sig = b""
-        if n >= first:
+        if n >= first and coin.get("multisig"):
+            # 1-of-n CHECKMULTISIG pops one item too many: the OP_0 is that item.
+            script_sig = b"\x00" + push(bytes.fromhex(signatures[n - first]))
+        elif n >= first:
             script_sig = push(bytes.fromhex(signatures[n - first])) + push(pubkey)
         raw += bytes.fromhex(coin["txid"])[::-1]
         raw += int(coin["vout"]).to_bytes(4, "little")

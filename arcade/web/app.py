@@ -9757,6 +9757,111 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         return JSONResponse({"ok": True, "offer": txid})
 
+    #: Per (network, address): the Class B transactions already read, and the
+    #: payload outputs among them still unspent, with when each was last asked.
+    _dust_memo: dict[tuple[str, str], dict] = {}
+
+    def _payload_dust(chain, address: str) -> list[dict]:
+        """This account's own Class B payload outputs that are still unspent.
+
+        2026-09-28: they are the account's money (its key is in every
+        one) and the balance never counted them, because `utxos.py` keeps only
+        PUBKEYHASH outputs. Found from the account's Class B transactions in
+        the index, read once each, and asked of the node whether still unspent
+        -- at most hourly per output, since only this account's key can spend
+        them and a sweep here drops them at once."""
+        from ..script import OutputType, parse_output
+        memo = _dust_memo.setdefault((chain.network, address), {"read": set(), "coins": {}})
+        index = state.token_index(chain)
+        with contextlib.closing(index.open()) as db:
+            txids = [r[0] for r in db.conn.execute(
+                "SELECT txid FROM arcade_tx WHERE sender=? AND encoding_class='B'", (address,))]
+        mine = b58check_decode(address)[1]
+        now = time.time()
+        with chain.rpc() as rpc:
+            for txid in txids:
+                if txid in memo["read"]:
+                    continue
+                try:
+                    tx = rpc.call("getrawtransaction", txid, 1)
+                except Exception:
+                    continue
+                for out in tx.get("vout", []):
+                    raw = bytes.fromhex((out.get("scriptPubKey") or {}).get("hex", "") or "")
+                    try:
+                        parsed = parse_output(raw.hex(), 0, chain.params)
+                    except Exception:
+                        continue
+                    if parsed.type is not OutputType.MULTISIG or parsed.required != 1:
+                        continue
+                    if not any(hash160(k) == mine for k in parsed.pubkeys):
+                        continue
+                    memo["coins"][(txid, int(out["n"]))] = {
+                        "txid": txid, "vout": int(out["n"]), "script": raw.hex(),
+                        "value": int(round(float(out.get("value", 0)) * 100_000_000)),
+                        "asked": 0.0}
+                memo["read"].add(txid)
+            for key, coin in list(memo["coins"].items()):
+                if now - coin["asked"] < 3600:
+                    continue
+                if rpc.call("gettxout", coin["txid"], coin["vout"], True) is None:
+                    memo["coins"].pop(key, None)
+                else:
+                    coin["asked"] = now
+        return sorted(memo["coins"].values(), key=lambda c: (c["txid"], c["vout"]))
+
+    @app.get("/account/dust")
+    def account_dust(request: Request):
+        """How much of this account's money sits in its own payload outputs."""
+        account = _signed_in_account(request)
+        out = []
+        for chain in _account_chains():
+            address = _account_address(account.pubkey, chain)
+            if not address:
+                continue
+            try:
+                coins = _payload_dust(chain, address)
+            except Exception as exc:                  # noqa: BLE001 -- a count, not a page
+                log.info("dust %s: %s", chain.network, exc)
+                continue
+            if coins:
+                out.append({"chain": chain.network, "label": chain.label,
+                            "count": len(coins), "value": sum(c["value"] for c in coins),
+                            "per_sweep": fundinglib.DUST_SWEEP_MAX,
+                            "version": chain.params.pubkeyhash_version})
+        return JSONResponse({"chains": out})
+
+    @app.post("/account/dust/sweep")
+    def account_dust_sweep(request: Request, payload: Any = Body(None)):
+        """Offer the transaction that takes up to DUST_SWEEP_MAX of them back."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse({"detail": "this account has no address on that chain"},
+                                status_code=400)
+        try:
+            coins = _payload_dust(chain, address)[:fundinglib.DUST_SWEEP_MAX]
+            unsigned = fundinglib.build_dust_sweep(
+                address, coins, rate=fees.MIN_FEE_PER_KB,
+                what=f"sweep {len(coins)} message and file outputs back to your wallet")
+            _quota(account, "send")
+        except (fundinglib.FundingError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        memo = _dust_memo.get((chain.network, address), {"coins": {}})
+
+        def swept(_txid: str) -> None:
+            for coin in coins:
+                memo["coins"].pop((coin["txid"], coin["vout"]), None)
+
+        offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what, done=swept)
+        return JSONResponse({"offer": offer.id, "chain": chain.network,
+                             "count": len(coins), **unsigned.as_json()})
+
     @app.post("/account/offer/withdraw")
     def account_offer_withdraw(request: Request, payload: Any = Body(None)):
         """Take a pre-signed offer back: spend the coins it was signed over, back

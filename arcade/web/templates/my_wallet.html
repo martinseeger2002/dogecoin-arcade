@@ -21,6 +21,9 @@
 
 {{ notord.receiving() }}
 <div class="grid" id="wallets" style="margin-bottom:18px"></div>
+{# Coins in the small outputs this account's messages, posts and files left on
+   the chain (2026-09-28): still yours, and one press brings them back. #}
+<div class="panel" id="dust-panel" hidden style="margin-bottom:18px"></div>
 
 <div class="panel" id="send-panel">
   <h2 style="margin-top:0">Send coins</h2>
@@ -46,6 +49,53 @@
 </div>
 
 <style>.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}</style>
+
+<script type="module">
+import * as wallet from "/wallet.js";
+const coinsOf = (n) => (n / 100000000).toLocaleString(undefined,
+  {minimumFractionDigits: 0, maximumFractionDigits: 8});
+async function drawDust() {
+  const box = document.getElementById("dust-panel");
+  let said = null;
+  try { said = await (await fetch("/account/dust", {cache: "no-store"})).json(); } catch (e) { return; }
+  const chains = (said && said.chains) || [];
+  box.innerHTML = "";
+  box.hidden = !chains.length;
+  for (const c of chains) {
+    const p = document.createElement("p");
+    p.style.margin = "0 0 8px";
+    p.innerHTML = `<strong>${coinsOf(c.value)} ${c.label} coins</strong> are sitting in the small `
+      + "outputs your messages, posts and files left on the chain. They're still yours.";
+    const go = document.createElement("button");
+    go.className = "btn small";
+    go.textContent = c.count > c.per_sweep ? `Sweep back ${c.per_sweep} of ${c.count}` : "Sweep them back";
+    const note = document.createElement("p");
+    note.className = "muted"; note.style.cssText = "font-size:.8rem;margin:6px 0 0";
+    note.textContent = "One small transaction, signed here. The fee comes out of what comes back.";
+    go.onclick = async () => {
+      go.disabled = true;
+      try {
+        const CHAIN = {network: c.chain, version: c.version};
+        const held = (await wallet.opened(CHAIN)) || await arcadeKeys(CHAIN);
+        const offer = await wallet.offerDustSweep(c.chain);
+        const shown = await wallet.checked(offer, held);
+        const ok = await arcadeAsk(`Sweep ${coinsOf(shown.change)} coins back?`,
+          `${offer.count} outputs come back to your wallet as one coin. The network fee is `
+          + `${shown.coinsOf(shown.fee)}.`, "Sweep them back");
+        if (!ok) { go.disabled = false; return; }
+        await wallet.confirm(held, offer);
+        arcadeToast(`Swept. ${coinsOf(shown.change)} coins are in your wallet when the block lands.`);
+        drawDust();
+      } catch (e) {
+        go.disabled = false;
+        note.textContent = String(e.message || e); note.style.color = "var(--bad)";
+      }
+    };
+    box.append(p, go, note);
+  }
+}
+drawDust();
+</script>
 
 <script type="module">
 import * as wallet from "/wallet.js";

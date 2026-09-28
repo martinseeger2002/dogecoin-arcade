@@ -639,6 +639,17 @@ export async function signBid(wallet, offer, sent, expect) {
 }
 
 /** Take a pre-signed offer back: one small transaction spending its coins. */
+/** Offer the sweep of this account's own payload outputs on `chain`. */
+export async function offerDustSweep(chain) {
+  const asked = await fetch("/account/dust/sweep", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({chain: chain || ""}),
+  });
+  const offer = await asked.json();
+  if (!asked.ok) throw new Error(offer.detail || "there is nothing to sweep");
+  return offer;
+}
+
 export async function withdrawOffer(wallet, txid) {
   const asked = await fetch("/account/offer/withdraw", {
     method: "POST", headers: {"Content-Type": "application/json"},
