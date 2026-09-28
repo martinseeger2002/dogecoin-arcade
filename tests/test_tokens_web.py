@@ -1236,6 +1236,34 @@ def test_the_mintpads_tab_carries_the_same_count(web):
     assert "mints left" not in gone, gone
     assert f'href="/inscriptions/{pad}/view"' in gone, \
         "sold out is what the tile says, not a reason to hide the pad"
+    named = app.get("/exchange?tab=mintpads").text
+    assert ">Collection mintpads<" in named and ">Token mintpads<" in named, \
+        "a token pad on the page does not retire the other half's heading"
+
+
+def test_the_mintpads_tab_names_its_collection_half_and_says_when_it_is_empty(web):
+    """The tab has two lists, so it has to offer two headings and two verdicts.
+
+    Collection pads come out of two reads -- an account's signed listings and the
+    node's own inscribed ones -- and neither carried a heading, while the token
+    list did. The page therefore read as one list of token pads under a paragraph
+    promising collections, and its only sentence about collections needed all
+    three lists empty at once: with a single token pad on the page, the collection
+    half said nothing whatsoever, which a reader cannot tell apart from a node that
+    has pads and is not showing them (a tester, 2026-09-28). His second pass
+    found the deeper half of it: the paragraph said a pad appears "because it is on
+    the chain, not because anybody listed it", while `/mintpad/new` -- the page
+    that makes one -- says a collection pad is signed listings held in the tab.
+    Both readings were already in the code, so the sentence now says which half is
+    which instead of describing only one of them.
+    """
+    app, state, node, alice, bob = web
+    body = app.get("/exchange?tab=mintpads").text
+    assert ">Collection mintpads<" in body, \
+        "an unnamed half is a half nobody can look for"
+    assert "No collection mintpads on this chain yet" in body, body[:400]
+    assert "your signature" in body, \
+        "and the empty note says what actually puts a collection pad on this list"
 
 
 def test_a_pair_that_was_never_issued_answers_404_like_the_token_page(web):

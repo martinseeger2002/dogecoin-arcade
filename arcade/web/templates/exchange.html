@@ -226,6 +226,7 @@
   <div class="row" style="gap:8px;margin:0 0 12px">
     <a class="btn" href="/mintpad/new">Open a mintpad for one of your collections</a>
   </div>
+  <h3 style="margin:6px 0 10px">Collection mintpads</h3>
   {% if account_pads %}
   <div class="cards" style="margin-bottom:18px">
     {% for pad in account_pads %}
@@ -238,13 +239,28 @@
     {% endfor %}
   </div>
   {% endif %}
-  <p class="sub">Every pad on {{ chain.label|lower }} &mdash; collections and
-    tokens both. A pad is an inscription: it appears here because it is on the
-    chain, not because anybody listed it, and a collection pad that has minted
-    out drops off while a token pad stays and says so here. The number on a tile
-    is what its seller has standing on this node's orders right now &mdash;
-    pieces for a collection, whole mints for a token &mdash; and not what is left
-    of a token's total supply, which a pad publishes nothing to count against.</p>
+  {% if mintpads %}
+  <div class="cards">{% for s in mintpads %}{{ shopcard(s, 'Mint') }}{% endfor %}</div>
+  {% endif %}
+  {% if not account_pads and not mintpads %}
+  <div class="panel empty"><p>No collection mintpads on this chain yet.</p>
+    <p class="muted" style="font-size:.86rem">Open one above from a collection you
+      hold: its pieces are offered by your signature and kept on this node until
+      one is taken, which is what puts the pad on this list. Or inscribe a
+      collection with the mintpad box ticked and it appears here by itself.</p></div>
+  {% endif %}
+  <p class="sub">Every pad on {{ chain.label|lower }}, in the two lists it
+    actually has. A token pad is one inscription saying what one mint costs, so it
+    appears here because it is on the chain. A collection pad is a set of listings
+    &mdash; pieces offered by a signature, inscribed on the chain or signed by
+    their owner and kept on this node &mdash; so it appears here because somebody
+    listed them. What a tile counts is the same in both halves: what stands on
+    this node's orders right now, pieces for a collection, whole mints for a
+    token. It is not what is left of a token's total supply, which a pad publishes
+    nothing to count against. The two halves end differently: when the last piece
+    of a collection pad sells there is nothing left standing to list, so the pad
+    leaves here and says sold out on its own page, while a token pad keeps its
+    inscription and stays on this page saying sold out.</p>
   {% if token_pads %}
   <h3 style="margin:6px 0 10px">Token mintpads</h3>
   <div class="cards" style="margin-bottom:18px">
@@ -255,13 +271,6 @@
     </a>
     {% endfor %}
   </div>
-  {% endif %}
-  {% if not mintpads and not account_pads and not token_pads %}
-    <div class="panel empty"><p>No collection mintpads on this chain yet.</p>
-      <p class="muted" style="font-size:.86rem">Inscribe a collection with the
-        mintpad box ticked and it appears here by itself.</p></div>
-  {% elif mintpads %}
-    <div class="cards">{% for s in mintpads %}{{ shopcard(s, 'Mint') }}{% endfor %}</div>
   {% endif %}
 
   {# Token pads sit beside collection pads rather than under the markets: a
