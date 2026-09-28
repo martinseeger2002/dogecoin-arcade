@@ -3105,3 +3105,14 @@ def test_the_installed_app_can_be_pulled_to_refresh(client):
     assert "Pull to refresh in the installed app" in page
     assert "display-mode: standalone" in page and "location.reload()" in page
     assert "d.working || d.trading || d.inscribing" in page
+
+
+def test_at_names_come_only_from_the_readers_own_book():
+    """2026-09-28: @-autocomplete suggests only the names in the
+    person's own address book -- read in their browser, never a node-wide
+    name search."""
+    body = (pathlib.Path(__file__).resolve().parents[1]
+            / "arcade/web/templates/feed.html").read_text()
+    block = body[body.index('id = "atnames"') - 2000:]
+    assert "mail.book()" in block
+    assert "/account/find" not in block and "/r/tag" not in block

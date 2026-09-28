@@ -1013,4 +1013,89 @@ new MutationObserver((changes) => {
   requestAnimationFrame(() => { queued = false; sift(); });
 }).observe(document.querySelector("main") || document.body, {childList: true, subtree: true});
 </script>
+{% if public and mine and mine.tag %}
+{# @-names as you type (2026-09-28): only the names in THIS person's
+   own address book, which lives in their browser (messaging.js book()), so
+   the node never sees the list and never suggests a stranger. Works in the
+   post box and every reply box, including ones that arrive by scrolling. #}
+<style>
+  #atnames{position:fixed;z-index:60;min-width:180px;max-width:280px;max-height:220px;
+    overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    box-shadow:0 6px 24px rgba(0,0,0,.18);padding:4px 0}
+  #atnames div{padding:8px 12px;cursor:pointer;font-size:.92rem}
+  #atnames div.on,#atnames div:hover{background:var(--code-bg, rgba(127,127,127,.12))}
+</style>
+<script type="module">
+let names = null;
+async function book() {
+  if (names) return names;
+  try {
+    const mail = await import("/messaging.js");
+    names = [...new Set((await mail.book()).map((e) => String(e.tag || "").toLowerCase())
+                                           .filter(Boolean))].sort();
+  } catch (e) { names = []; }
+  return names;
+}
+const menu = document.createElement("div");
+menu.id = "atnames"; menu.hidden = true; menu.setAttribute("role", "listbox");
+document.body.appendChild(menu);
+let field = null, at = -1, pick = 0;
+const composer = (el) => el && (el.id === "say" || el.id === "account-say" ||
+  (el.name === "text" && el.tagName === "INPUT" && el.form && /^reply-/.test(el.form.id)));
+function close() { menu.hidden = true; field = null; at = -1; }
+function typed(el) {
+  const upto = el.value.slice(0, el.selectionStart);
+  const m = upto.match(/(^|\s)@([a-z0-9_]{0,30})$/i);
+  return m ? {start: upto.length - m[2].length - 1, text: m[2].toLowerCase()} : null;
+}
+function choose(tag) {
+  const el = field, end = el.selectionStart;
+  el.value = el.value.slice(0, at) + "@" + tag + " " + el.value.slice(end);
+  const caret = at + tag.length + 2;
+  el.setSelectionRange(caret, caret); el.focus();
+  el.dispatchEvent(new Event("input", {bubbles: true}));
+  close();
+}
+function draw(list) {
+  menu.innerHTML = "";
+  list.forEach((tag, i) => {
+    const row = document.createElement("div");
+    row.textContent = "@" + tag; row.className = i === pick ? "on" : "";
+    row.setAttribute("role", "option");
+    row.addEventListener("mousedown", (e) => { e.preventDefault(); choose(tag); });
+    menu.appendChild(row);
+  });
+  const r = field.getBoundingClientRect();
+  menu.style.left = Math.max(8, Math.min(r.left, innerWidth - 290)) + "px";
+  const below = r.bottom + 4, room = innerHeight - below;
+  menu.style.top = (room > 160 ? below : Math.max(8, r.top - 4 - Math.min(220, list.length * 38))) + "px";
+  menu.hidden = false;
+}
+async function look(el) {
+  const t = typed(el);
+  if (!t) return close();
+  const all = await book();
+  const list = all.filter((n) => n.startsWith(t.text))
+    .concat(all.filter((n) => !n.startsWith(t.text) && n.includes(t.text))).slice(0, 8);
+  if (!list.length || (list.length === 1 && list[0] === t.text)) return close();
+  field = el; at = t.start; pick = Math.min(pick, list.length - 1);
+  draw(list);
+}
+document.addEventListener("input", (e) => { if (composer(e.target)) { pick = 0; look(e.target); } });
+document.addEventListener("keydown", (e) => {
+  if (menu.hidden || e.target !== field) return;
+  const rows = menu.children;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    pick = (pick + (e.key === "ArrowDown" ? 1 : rows.length - 1)) % rows.length;
+    [...rows].forEach((r, i) => r.className = i === pick ? "on" : "");
+  } else if (e.key === "Enter" || e.key === "Tab") {
+    e.preventDefault(); e.stopImmediatePropagation();   // pick a name, do not post
+    choose(rows[pick].textContent.slice(1));
+  } else if (e.key === "Escape") { close(); }
+}, true);
+document.addEventListener("focusout", (e) => { if (e.target === field) setTimeout(close, 120); });
+addEventListener("scroll", () => { if (!menu.hidden) close(); }, {passive: true});
+</script>
+{% endif %}
 {% endblock %}
