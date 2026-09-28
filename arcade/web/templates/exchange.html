@@ -251,10 +251,7 @@
     {% for tp in token_pads %}
     <a class="panel" href="/inscriptions/{{ tp.txid }}/view" style="display:block;color:inherit">
       <strong>{{ wall_text(tp.name, 'A token') }}</strong>
-      <div class="muted" style="font-size:.84rem">{{ tp.lot }} per mint &middot; by {{ tp.seller|who_text }}
-        {%- if tp.mints is not none %} &middot;
-          {%- if tp.mints %}{{ '{:,}'.format(tp.mints) }} mint{{ '' if tp.mints == 1 else 's' }} left
-          {%- else %}<span class="pill">sold out</span>{% endif %}{% endif %}</div>
+      <div class="muted" style="font-size:.84rem">{{ tp.lot }} per mint &middot; by {{ tp.seller|who_text }}{% if tp.mints is not none %} &middot; {% if tp.mints %}{{ '{:,}'.format(tp.mints) }} mint{{ '' if tp.mints == 1 else 's' }} left{% else %}<span class="pill">sold out</span>{% endif %}{% endif %}</div>
     </a>
     {% endfor %}
   </div>

@@ -1221,6 +1221,8 @@ def test_the_mintpads_tab_carries_the_same_count(web):
                  follow_redirects=False)
         mine_and_index(node, state)
     assert "5 per mint" in tab() and "2 mints left" in tab(), tab()
+    assert "&middot; 2 mints left" in app.get("/exchange?tab=mintpads").text, \
+        "the separator and the number have to be apart on the page, not just in here"
     assert "<strong>2</strong> mints left" in " ".join(
         app.get(f"/inscriptions/{pad}/view").text.split()), \
         "the tile and the page are counting different things"
