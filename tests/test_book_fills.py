@@ -447,6 +447,33 @@ def test_a_take_that_underpays_is_refused_rather_than_partly_applied(world):
     assert held(db, BOB, pid) == (0, 0), "and nobody is out a token"
 
 
+def test_a_take_that_rounds_down_to_nothing_is_refused_rather_than_free(world):
+    """Floor rounding has a floor, and it is one satoshi.
+
+    `need` is the order's own price applied to the amount taken, floored -- right
+    for the last slice of an order, wrong at the bottom, where a slice worth less
+    than a whole satoshi floors to nothing and `paid >= need` lets the tokens go
+    for free. This order sells 1000 tokens for 8 coins, so anything under 125
+    base units is worth no whole satoshi (Claude's review, 2026-09-27).
+
+    Refused rather than rounded up, because rounding up prices it dearer than the
+    order promised, and rounding down is the hole. The same block is the control:
+    125 units is worth exactly one satoshi, and that take is a trade like any
+    other -- the guard is about a price that cannot be paid, not about small ones.
+    """
+    engine, state, db, pid = world
+    feed(engine, state, [tx(2, ask(pid, 1000 * COIN, 8 * COIN), ALICE)])
+    feed(engine, state, [take(3, pid, 100, 1, f"{2:064x}")])
+    assert "worth less than a satoshi" in reason(db, 3)
+    assert book(db)[0]["reserved"] == 1000 * COIN, "the order did not move"
+    assert held(db, ALICE, pid) == (0, 1000 * COIN)
+    assert held(db, BOB, pid) == (0, 0), "and the tokens were not free"
+
+    feed(engine, state, [take(4, pid, 125, 1, f"{2:064x}")])
+    assert reason(db, 4) == "valid", "one satoshi is payable, so it is tradable"
+    assert held(db, BOB, pid) == (125, 0)
+
+
 def test_a_take_of_more_than_the_order_holds_is_covered_by_the_maker(world):
     """Claude's review of D-189 (2026-09-27): the take's payment reaches the
     maker whatever this layer decides, so refusing a take that asks for more
