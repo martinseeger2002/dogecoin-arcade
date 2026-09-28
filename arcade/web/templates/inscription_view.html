@@ -34,6 +34,22 @@
      code would share this wallet's origin and could read every page in it.
      Without it the frame gets an opaque origin -- no cookies, no reach into
      this page, and it can only load what CORS lets it. #}
+  {% if pad_facts %}
+  {# Drawn by the node, above the frame, because a token mintpad is the author's
+     own HTML: price, lot and "sold out" are inside their prose otherwise, and two
+     pads say those three things in two layouts that nothing can compare
+     (a tester). These are this node's orders, counted -- not what the page
+     claims, and nothing was pressed to find out. #}
+  <p style="margin:0 0 8px"><span class="pill ok">mintpad</span>
+    <strong>{{ pad_facts.lot }} {{ pad_facts.name }}</strong>
+    {% if pad_facts.price %}for <strong>{{ pad_facts.price }} coins</strong>{% endif %}
+    a mint &mdash;
+    {% if pad_facts.mints %}<strong>{{ "{:,}".format(pad_facts.mints) }}</strong>
+      mint{{ '' if pad_facts.mints == 1 else 's' }} left{% else %}<strong>sold out</strong>
+      &mdash; no lot of it left on the book{% endif %}.
+    <span class="muted">Counted by this node from its orders, not from what this
+      page says.</span></p>
+  {% endif %}
   <div class="panel" style="padding:0;overflow:hidden">
     <iframe class="inscription-frame" src="{{ pages }}/content/{{ row.txid }}{% if ticket %}?v={{ ticket }}{% endif %}"
             sandbox="allow-scripts allow-pointer-lock"

@@ -6239,6 +6239,46 @@ def create_app(state: AppState) -> FastAPI:
                       prepared=prepared, error=error, to=to,
                       tag=index.tag_of(row["owner"]))
 
+    def _pad_facts(index, row) -> dict[str, Any] | None:
+        """What a token mintpad sells, what a mint costs, and how many are left.
+
+        Read off this node's book, not off the author's page (a tester): both
+        live pads are somebody's own HTML, so without this the price, what a press
+        gives and whether anything is left are prose in two different layouts that
+        no reader can compare. The arithmetic is the one the inscribed page runs in
+        its own script -- the seller's open sell orders, less what a take already
+        in the pool is buying -- so the line above the frame and the page inside it
+        cannot disagree. Nothing is pressed to fill it in: a pad that is out of lots
+        is out of lots in the book, and that is said here rather than guessed from
+        the author's silence.
+        """
+        try:
+            pad = (json.loads(row["json"] or "{}") or {}).get("tokenpad") or {}
+            pid, lot = int(pad.get("property_id") or 0), int(pad.get("lot") or 0)
+            seller = str(pad.get("creator") or "")
+            if not pid or lot <= 0 or not seller:
+                return None
+            prop = index.property(pid)
+            if prop is None:
+                return None
+            book, taking = index.book(pid), index.pending_takes()
+        except Exception:
+            return None
+        left, per = 0, None
+        for order in book.get("asks", []):
+            if order["address"] != seller or order.get("pending"):
+                continue
+            free = int(order["tokens"]) - int(taking.get(order["txid"], 0))
+            if free <= 0:
+                continue
+            left += free
+            if per is None and free >= lot:
+                per = int(order["coins"]) * lot // int(order["tokens"])
+        return {"name": prop["name"],
+                "lot": format_amount(lot, bool(prop["divisible"])),
+                "price": None if per is None else format_amount(per, True),
+                "mints": left // lot}
+
     @app.get("/inscriptions/{key}/view", response_class=HTMLResponse)
     def inscription_view(request: Request, key: str):
         """Look at an inscription, including one that is a page of its own.
@@ -6418,6 +6458,7 @@ def create_app(state: AppState) -> FastAPI:
                       pages=pages, mine=mine, viewer=viewer,
                       mine_account=mine_account, asks=asks,
                       tokens=held, coins=coins, advice=advice,
+                      pad_facts=_pad_facts(index, row),
                       renders=row["content_type"].startswith(contentlib.RENDERABLE))
 
     @app.get("/launches", response_class=HTMLResponse)

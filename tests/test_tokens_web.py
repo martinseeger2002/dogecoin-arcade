@@ -1088,3 +1088,73 @@ def test_a_name_already_on_the_chain_is_refused_before_it_costs_anything(web):
 
     page = app.post("/tokens/create", data={**form, "name": "!!!"}).text
     assert "needs at least one letter or digit" in page
+
+
+def test_a_pad_page_carries_one_line_the_node_writes_above_the_frame(web):
+    """A mintpad that is somebody's HTML page still says what a mint costs (a tester).
+
+    Both live pads turned out to be the author's own inscribed HTML, shown in the
+    sandbox, so the price, what a press gives and any sold-out line are prose inside
+    two different layouts -- and the only thing the node itself drew on the pad page
+    was a Make offer button. The node has all three facts in its own book, so it
+    says them above the frame, in the site's voice, with the same arithmetic the
+    inscribed page runs in its own script: the seller's open sell orders, less what
+    a take already in the pool is buying. Nothing is pressed here to find out what
+    sold-out looks like -- it is read off the orders, which is also what a pad whose
+    author never wrote a sold-out line needs.
+    """
+    import json
+    import unittest.mock as mock
+
+    app, state, node, alice, bob = web
+    csrf = state.csrf_token
+    form = dict(csrf_token=csrf, sender=alice, name="Lot Token", supply="1000",
+                kind="fixed", units="divisible")
+    txid = shown(app.post("/tokens/create", data=form).text, "txid")
+    app.post("/tokens/create", data={**form, "confirmed": txid}, follow_redirects=False)
+    mine_and_index(node, state)
+    index = state.token_index(state.ledger)
+    (prop,) = index.properties()
+    pid = str(prop["property_id"])
+    home = index.balances([alice])[0]["address"]
+
+    # An ask of 10 Lot Tokens at 2 coins each, so a lot of 5 costs 10 coins and the
+    # book holds exactly two lots of it. The pad page works that out in its script
+    # from /r/book; the line below is asked to reach the same two numbers.
+    pad = "e7" * 32
+    with mock.patch.object(type(state), "home_address", lambda self, chain: home):
+        app.post("/exchange/order", data=dict(csrf_token=csrf, property_id=pid,
+                                             side="ask", amount="10", price="2"),
+                 follow_redirects=False)
+        mine_and_index(node, state)
+        with index.open() as db:
+            db.conn.execute(
+                "INSERT OR REPLACE INTO inscription(txid,number,creator,owner,"
+                "block_height,position,content_type,content_len,sha256,json,chunks,"
+                "content) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (pad, 771, home, home, 100, 0, "text/html", 48, "ab" * 32,
+                 json.dumps({"name": "Lot Token mintpad",
+                             "tokenpad": {"creator": home, "property_id": int(pid),
+                                          "lot": 5 * 10**8, "look": "counter"}}),
+                 1, b"<html><body>what a mint costs is written in here</body></html>"))
+            db.conn.commit()
+
+    def page() -> str:
+        return " ".join(app.get(f"/inscriptions/{pad}/view").text.split())
+
+    said = page()
+    assert '<span class="pill ok">mintpad</span>' in said, said
+    assert "<strong>5 Lot Token</strong> for <strong>10 coins</strong> a mint" in said, said
+    assert "<strong>2</strong> mints left" in said, said
+    assert "not from what this page says" in said, "and it says where it came from"
+
+    # The seller takes the ask away: the pad is out of lots, and that is news the
+    # node can tell without anybody pressing the pad to find out.
+    with mock.patch.object(type(state), "home_address", lambda self, chain: home):
+        app.post("/exchange/order/cancel", data=dict(csrf_token=csrf, property_id=pid,
+                                                     side="ask"),
+                 follow_redirects=False)
+        mine_and_index(node, state)
+    gone = page()
+    assert "<strong>sold out</strong> &mdash; no lot of it left on the book" in gone, gone
+    assert "coins</strong> a mint" not in gone, "no price claimed from an order that is gone"
