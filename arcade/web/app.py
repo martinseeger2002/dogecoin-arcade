@@ -2494,10 +2494,18 @@ def create_app(state: AppState) -> FastAPI:
         with state.store() as store:
             acts = list(store.feed_acts_on(network, targets))
             # Replies can be replied to, so their own actions are wanted too:
-            # one more query rather than one per reply (D-138's leanness).
-            replies = [a["txid"] for a in acts if a["kind"] == feedlib.REPLY]
-            if replies:
-                acts += list(store.feed_acts_on(network, replies))
+            # one query per level rather than one per reply (D-138's leanness),
+            # as deep as the conversation goes -- it stopped at two, so a reply
+            # to a reply to a reply was never drawn (2026-09-28).
+            replies: list[str] = []
+            level = [a["txid"] for a in acts if a["kind"] == feedlib.REPLY]
+            for _ in range(12):
+                if not level:
+                    break
+                replies += level
+                deeper = list(store.feed_acts_on(network, level))
+                acts += deeper
+                level = [a["txid"] for a in deeper if a["kind"] == feedlib.REPLY]
             # A tip is a payment, and payments may be made on either chain,
             # so a post's running total gathers them from every chain and
             # keeps them apart by chain (feed.py, 2026-09-23). The
@@ -2760,9 +2768,12 @@ def create_app(state: AppState) -> FastAPI:
             named, rows, cursor = wanted, [], None
         elif wanted:
             with state.store() as store:
+                # A reply's id finds the post its thread hangs from (a tester,
+                # 2026-09-28: a character answering one comment wherever it is).
+                root = _thread_root(store, chain.network, wanted)[0]
                 rows = list(store.conn.execute(
                     "SELECT * FROM group_post WHERE network = ? AND txid = ?",
-                    (chain.network, wanted)))
+                    (chain.network, root)))
             cursor = None
             if not rows:
                 missing = wanted
@@ -2784,6 +2795,101 @@ def create_app(state: AppState) -> FastAPI:
                       sort=sort, mine=mine, kinds=feedlib.BY_NAME,
                       friends=_operator_friends(request) if sort == "friends" else [],
                       when=_when, node=chain.status())
+
+    def _thread_root(store, network: str, txid: str) -> tuple[str, bool]:
+        """The txid a reply's thread hangs from, and whether that is a feed post
+        (False: a launch, a mintpad or another inscription)."""
+        at = txid
+        for _ in range(40):
+            if store.conn.execute("SELECT 1 FROM group_post WHERE network=? AND txid=?",
+                                  (network, at)).fetchone():
+                return at, True
+            up = store.conn.execute(
+                "SELECT target FROM feed_act WHERE network=? AND txid=? AND kind=?",
+                (network, at, feedlib.REPLY)).fetchone()
+            if not up:
+                return at, False
+            at = up[0]
+        return at, False
+
+    @app.get("/r/replies/{tag}")
+    def r_replies(tag: str, since: str = "", limit: int = 100):
+        """Every comment on something @tag wrote, and every mention of @tag,
+        newest first (a tester for the Ghost Devs characters, 2026-09-28: "all
+        the characters should reply to users if the users comment", the operator).
+
+        Public: these are posts on the chain. `since` is unix seconds or ISO;
+        two days back when absent. A comment still in the mempool has time 0 and
+        is always included. `url` is a page that draws the comment with its own
+        Reply form (id reply-<id>): the post's thread, or a launch's."""
+        name = (tag or "").strip().lstrip("@").lower()
+        address, _ = _address_of_tag(name)
+        if not address:
+            return contentlib._missing("no such name")
+        try:
+            cutoff = int(since) if since.strip().isdigit() else int(
+                dt.datetime.fromisoformat(since.strip().replace("Z", "+00:00")).timestamp())
+        except ValueError:
+            cutoff = int(time.time()) - 2 * 86400
+        network = state.messaging.network
+        chain, index = _token_chain()
+        made = set()
+        try:
+            with contextlib.closing(index.open()) as db:
+                made = {r[0] for r in db.conn.execute(
+                    "SELECT txid FROM inscription WHERE creator=?", (address,))}
+            made |= {i["txid"] for i in index.launches() if i.get("creator") == address}
+        except Exception:
+            pass
+        with state.store() as store:
+            theirs = {r[0] for r in store.conn.execute(
+                "SELECT txid FROM group_post WHERE network=? AND sender=?", (network, address))}
+            theirs |= {r[0] for r in store.conn.execute(
+                "SELECT txid FROM feed_act WHERE network=? AND kind=? AND author=?",
+                (network, feedlib.REPLY, address))}
+            rows = [dict(r) for r in store.conn.execute(
+                "SELECT txid, target, author, text, block_time FROM feed_act "
+                "WHERE network=? AND kind=? AND author!=? AND block_time>=? "
+                "ORDER BY block_time DESC LIMIT 2000",
+                (network, feedlib.REPLY, address, cutoff))]
+            known = {r["txid"] for r in rows}
+            for a in (_pending_feed(network).acts or []):
+                if int(a.get("kind") or 0) == feedlib.REPLY and a.get("author") != address \
+                        and a["txid"] not in known:
+                    rows.insert(0, {"txid": a["txid"], "target": a["target"],
+                                    "author": a["author"], "text": a.get("text") or "",
+                                    "block_time": 0})
+            mention = f"@{name}"
+            out = []
+            for r in rows:
+                aimed = r["target"] in theirs or r["target"] in made
+                if not aimed and mention not in (r["text"] or "").lower():
+                    continue
+                root, is_post = _thread_root(store, network, r["target"])
+                if is_post:
+                    kind, url = "post", f"/feed?post={root}"
+                else:
+                    kind, url = "inscription", f"/launches/{root}"
+                    try:
+                        got = index.inscription(root)
+                        said = (_fromjson(got.get("json")) or {}) if got else {}
+                        if isinstance(said, dict) and (said.get("mintpad") or said.get("tokenpad")
+                                                       or said.get("shop")):
+                            kind = "mintpad"
+                        elif root in made or not got:
+                            kind = "launch"
+                    except Exception:
+                        pass
+                out.append({"id": r["txid"], "parent_id": r["target"], "root_id": root,
+                            "author": r["author"], "text": r["text"],
+                            "time": int(r["block_time"] or 0), "root_kind": kind,
+                            "aimed": "reply" if aimed else "mention", "url": url})
+                if len(out) >= max(1, min(int(limit), 500)):
+                    break
+        tags = _tags_for([o["author"] for o in out])
+        for o in out:
+            o["author_tag"] = tags.get(o["author"], "")
+        return contentlib._json({"tag": name, "since": cutoff, "replies": out})
 
     @app.get("/u/{tag}", response_class=HTMLResponse)
     def profile_page(request: Request, tag: str, before: int | None = None):
