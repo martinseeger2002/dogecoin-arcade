@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from arcade.config import NETWORKS
 from arcade.rpc import RpcClient
-from arcade.script import b58check_encode
+from arcade.script import b58check_encode, hash160
 from arcade.web.app import create_app
 from arcade.web.state import AppState, ChainContext
 from arcade.web.watcher import BlockWatcher
@@ -553,6 +553,83 @@ def test_a_stranger_s_token_page_offers_no_issuer_controls(web):
     assert "Issuer controls" in mine and 'class="pill ok">you</span>' in mine, \
         "the operator's own page lost nothing"
     assert f'action="/tokens/{pid}/launchpad"' in mine
+
+
+def test_the_you_pill_on_a_holders_row_names_whoever_is_looking(web):
+    """The other half of the door census, which it left behind.
+
+    `owned` is what THIS MACHINE holds, so the pill in the Holders table has
+    always named the node rather than the reader. An account holding a lot of
+    its own was told the node's row was theirs, and given nothing beside the one
+    row that is about them -- the stranger's version of that was fixed at
+    `cb22835`; nobody had looked at the signed-in one.
+
+    So the account is asked first and the node answers only for a reader with no
+    key in the tab, which is the shape of the thing: a reader holding a key is
+    one person, and two lit rows says otherwise. Three readers, one page.
+    """
+    app, state, node, alice, bob = web
+    csrf = state.csrf_token
+    form = dict(csrf_token=csrf, sender=alice, name="Pill Token",
+                supply="1000", kind="fixed", units="divisible")
+    txid = shown(app.post("/tokens/create", data=form).text, "txid")
+    app.post("/tokens/create", data={**form, "confirmed": txid},
+             follow_redirects=False)
+    mine_and_index(node, state)
+    index = state.token_index(state.ledger)
+    # By name, not by "the only property": the chain outlives this test.
+    (prop,) = [p for p in index.properties() if p["name"] == "Pill Token"]
+    pid = prop["property_id"]
+    page = f"/tokens/{pid}"
+
+    from nacl.signing import SigningKey
+
+    from arcade import accounts
+
+    key = SigningKey.generate()
+    challenge = app.get("/auth/challenge").json()
+    signature = key.sign(accounts.login_message(
+        challenge["origin"], challenge["nonce"])).signature
+    assert app.post("/auth/login", json={
+        "pubkey": key.verify_key.encode().hex(), "nonce": challenge["nonce"],
+        "signature": signature.hex(), "join": True}).status_code == 200
+    theirs = b58check_encode(state.ledger.params.pubkeyhash_version,
+                             hash160(key.verify_key.encode()))
+    assert not node.rpc.call("validateaddress", theirs).get("ismine"), \
+        "the node has no key for this address, which is the whole point"
+    assert app.post("/account/address", json={"address": theirs}).status_code == 200
+
+    send = dict(csrf_token=csrf, sender=alice, property_id=str(pid))
+    txid = shown(app.post("/tokens/send", data={**send, "amount": "400",
+                                                "recipient": theirs}).text, "txid")
+    app.post("/tokens/send", data={**send, "amount": "400", "recipient": theirs,
+                                   "confirmed": txid}, follow_redirects=False)
+    mine_and_index(node, state)
+    assert index.balance(theirs, pid) == 400 * 10**8, "the account is a holder"
+
+    def yours(text: str) -> list[str]:
+        """The Holders rows that rendering says belong to whoever is looking."""
+        table = text.split("<h2>Holders</h2>")[1].split("</table>")[0]
+        return [row for row in re.findall(r"<tr><td>(.*?)</td>", table, re.S)
+                if 'class="pill ok">you</span>' in row]
+
+    was, state.public = state.public, True
+    try:
+        account_rows = yours(app.get(page).text)
+    finally:
+        state.public = was
+    assert len(account_rows) == 1, f"one reader, one row: {account_rows}"
+    assert theirs in account_rows[0], "the pill is on somebody else's row"
+    assert alice not in account_rows[0], "the node's lot is not this reader's"
+
+    app.cookies.clear()                      # a tab with no key in it
+    state.public = True
+    try:
+        assert yours(app.get(page).text) == [], "a stranger is told nothing is theirs"
+    finally:
+        state.public = was
+    (operator,) = yours(app.get(page).text)
+    assert alice in operator, "the operator's own page still names the node's row"
 
 
 def test_the_pair_page_tells_a_stranger_nothing_about_this_wallet(web):

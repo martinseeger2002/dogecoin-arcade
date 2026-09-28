@@ -307,8 +307,13 @@ $("issuer-go").onclick = () => {
     <tr><td>{{ h.address|who }}
           {# `owned` is this machine's addresses, so on the public side of the
              door the pill named the node's holding row "you" -- the same
-             confusion as the issuer row above, in a table nobody had checked. #}
-          {% if h.address in owned and not public %}<span class="pill ok">you</span>{% endif %}</td>
+             confusion as the issuer row above, in a table nobody had checked.
+             The account whose key is in this tab is the other half of "who is
+             looking", and it is asked first: a reader holding a key is one
+             person, so the node's row must not light beside their own. #}
+          {% if (mine_address and h.address == mine_address) or
+                (not mine_address and h.address in owned and not public)
+          %}<span class="pill ok">you</span>{% endif %}</td>
         <td style="text-align:right;font-variant-numeric:tabular-nums">{{ h.display }}</td></tr>
   {% endfor %}
   </table>

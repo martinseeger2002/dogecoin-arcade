@@ -6942,6 +6942,7 @@ def create_app(state: AppState) -> FastAPI:
         mine = _account_address(account.pubkey, detail["chain"]) if account else ""
         return render(request, "token.html", prepared=None,
                       account_issuer=bool(mine) and mine == detail["prop"]["issuer"],
+                      mine_address=mine,
                       token_pads=_token_pads(state.token_index(detail["chain"]), property_id),
                       **detail)
 
