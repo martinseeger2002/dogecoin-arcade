@@ -11104,6 +11104,20 @@ def create_app(state: AppState) -> FastAPI:
             raise ValueError("that is not this claim's phrase" if secret
                              else "this piece opens only with its claim phrase")
 
+    def _piece_called(chain, listing: dict) -> str:
+        """The piece a listing sells, as a card names it: "The Last Patch (#105)",
+        or "#105" when it has no name -- not the listing's own sentence, which
+        starts with "buy" (a tester, 2026-09-28: "Claim buy inscription #105")."""
+        try:
+            row = state.token_index(chain).inscription(_sold_piece(listing))
+        except Exception:
+            row = None
+        if not row:
+            return ""
+        data = _fromjson(row.get("json")) or {}
+        name = data.get("name") if isinstance(data, dict) else None
+        return f"{name} (#{row['number']})" if name else f"#{row['number']}"
+
     def _listing_to_fill(account, chain, address: str, listing_id: str,
                          secret: str = "") -> tuple:
         """A listing this node filed, and the transaction that completes it.
@@ -11237,8 +11251,7 @@ def create_app(state: AppState) -> FastAPI:
                              "seller_tag": _tags_for([listing["owner"]]).get(listing["owner"], ""),
                              "price": int(listing["price"]),
                              "claim": bool(listing.get("claim_hash")),
-                             "what": _listing_words(bytes.fromhex(listing["payload"]), chain)
-                                     if listing.get("payload") else "",
+                             "piece": _piece_called(chain, listing),
                              **unsigned.as_json()})
 
     @app.post("/account/buy/sign")

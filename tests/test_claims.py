@@ -53,6 +53,7 @@ def test_a_claim_is_hidden_and_opens_only_with_its_phrase(node):
     assert asked.status_code == 200, asked.text
     said = asked.json()
     assert said["claim"] and said["price"] == 10_000_000
+    assert said["piece"].startswith("#"), said["piece"]
     done = bidder.post("/account/buy/sign", json={
         "raw": said["raw"], "listing": claim, "secret": PHRASE, "pubkey": bpubkey.hex(),
         "signatures": [_sign(bsecret, bytes.fromhex(d)).hex() for d in said["sighashes"]]})

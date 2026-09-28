@@ -785,7 +785,7 @@ async function claimFor(source, m) {
     const coins = String(Number(offer.price) / 1e8);
     const unit = coins === "1" ? "coin" : "coins";
     const seller = offer.seller_tag ? "@" + offer.seller_tag : "its owner";
-    const what = offer.what || "this piece";
+    const what = offer.piece || "this piece";
     const ok = await arcadeAsk(`Claim ${what}?`,
       `${seller} set it aside for whoever got here. It costs ${coins} ${unit} to ${seller}`
       + ` and a network fee of ${shown.coinsOf(shown.fee)}. The piece and the coins move `
