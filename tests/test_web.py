@@ -3116,3 +3116,22 @@ def test_at_names_come_only_from_the_readers_own_book():
     block = body[body.index('id = "atnames"') - 2000:]
     assert "mail.book()" in block
     assert "/account/find" not in block and "/r/tag" not in block
+
+
+def test_a_market_table_always_says_the_day_s_move():
+    """2026-09-28: the Tokens list shows the price and the 24h change."""
+    from arcade import charts
+    now = 1_000_000
+    old = {"when": now - 2 * charts.DAY, "price": 1.0}
+    assert charts.table_move([old], None, now=now) == (0.0, False), "no trade today: flat"
+    young = [{"when": now - 600, "price": 1.0}, {"when": now - 60, "price": 1.3}]
+    move, new = charts.table_move(young, None, now=now)
+    assert new and abs(move - 30.0) < 1e-9, "a new market's move since its first trade"
+    assert charts.table_move(young, 5.0, now=now) == (5.0, False), "D-048's answer stands"
+
+
+def test_the_pair_page_puts_yours_then_the_book_then_the_trades():
+    body = (pathlib.Path(__file__).resolve().parents[1]
+            / "arcade/web/templates/pair.html").read_text()
+    assert (body.index(">Your orders<") < body.index(">Order book<")
+            < body.index(">Recent trades<")), "2026-09-28"

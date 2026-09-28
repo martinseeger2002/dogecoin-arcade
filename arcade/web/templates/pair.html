@@ -6,14 +6,15 @@
 <a class="back-link" href="/exchange?tab=tokens">&#8592; All markets</a>
 
 <div class="markethead">
-  <div class="row" style="gap:12px;align-items:center;flex:0 0 auto">
+  {# Shrinks and wraps: a long description used to run off a phone (2026-09-28). #}
+  <div class="row" style="gap:12px;align-items:center;flex:1 1 280px;min-width:0;flex-wrap:nowrap">
     {% if face.icon %}
       <img src="/content/{{ face.icon }}" alt="{{ wall_text(prop.name) }}" loading="lazy"
            style="width:42px;height:42px;object-fit:cover;border-radius:50%">
     {% else %}
       <span class="coinface" style="width:42px;height:42px"></span>
     {% endif %}
-    <div>
+    <div style="min-width:0;overflow-wrap:anywhere">
       <h1 style="margin:0;font-size:1.3rem">{{ wall(prop.name, 'token name') }}<span class="muted">/{{ chain.label|upper }}</span></h1>
       <div class="muted" style="font-size:.78rem">#{{ prop.property_id }}
         {%- if face.about %} &middot; {{ wall(face.about, 'description') }}{% endif %}
@@ -372,25 +373,84 @@
       {% endif %}
     </div>
 
-    {% if recent %}
+  </div>
+
+  <div>
+    {# Yours first, then the book, then what traded (2026-09-28). #}
+    {% if mine %}
     <div class="panel">
-      <h3 style="margin:0 0 8px">Recent trades</h3>
+      <h3 style="margin:0 0 8px">Your orders</h3>
       <table>
-        <tr class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.06em">
-          <td>Price</td><td style="text-align:right">Amount</td>
-          <td style="text-align:right">Coins</td><td style="text-align:right">Block</td></tr>
-        {% for t in recent %}
-        <tr><td class="mono">{{ "%.8f"|format(t.price) }}</td>
-            <td class="mono" style="text-align:right">{{ "{:,.8f}".format(t.size).rstrip('0').rstrip('.') }}</td>
-            <td class="mono muted" style="text-align:right">{{ "%.4f"|format(t.price * t.size) }}</td>
-            <td class="muted" style="text-align:right">{{ "{:,}".format(t.height) }}</td></tr>
+        {% for o in mine %}
+        <tr><td class="muted" style="font-size:.8rem">
+              {{ 'sell' if o.sale_property else 'buy' }}</td>
+            <td class="mono" style="font-size:.8rem">{{ o.txid[:12] }}…</td>
+            <td class="muted" style="font-size:.8rem">
+              {%- if o.pending %}in the mempool{% else %}block {{ "{:,}".format(o.block_height) }}{% endif %}
+              {%- if o.sale_property and not o.askable %}
+              <span class="pill bad" title="A taker's node asks the maker's node before it trades, and an address with no published key has nobody to answer.">cannot be asked</span>{% endif %}</td></tr>
+        {% endfor %}
+      </table>
+      {# The pass-over, said where the passed-over person is looking. A taker's
+         queue steps past an unreachable maker rather than refusing the press,
+         which is right for the market and invisible to the maker: their order
+         stands, looks exactly like everybody's, and never gets the question it
+         is waiting to answer. a tester S-work-2. #}
+      {% if mine | selectattr('sale_property') | rejectattr('askable') | list %}
+      <p class="muted" style="font-size:.78rem;margin:10px 0 0">These are on the
+        book, and a taker's node steps past them &mdash; before a trade it asks
+        the maker's node, and an address with no published key has nobody to
+        answer it. {% if viewer == 'account' %}Publish a key on your wallet page
+        and they become askable: the orders themselves do not change, and
+        nothing is placed again.{% else %}Publish one from the address book and
+        they become askable: the orders themselves do not change, and nothing is
+        placed again.{% endif %}</p>
+      {% endif %}
+      {# Which sides this account actually has resting, because a cancel is a
+         transaction and an empty one still costs its fee. `mine` is per order
+         and says nothing about the side, so the two are asked separately. #}
+      {% set resting = {'ask': mine | selectattr('sale_property') | list,
+                        'bid': mine | rejectattr('sale_property') | list} %}
+      {% if resting.ask or resting.bid %}
+      <div class="row" style="gap:6px;margin-top:10px">
+        {% for side, what in (('ask', 'sells'), ('bid', 'buys')) %}
+        {% if resting[side] %}
+        {% if viewer == 'account' %}
+        <button class="ghost small" type="button" id="pull-{{ side }}">Cancel my {{ what }}</button>
+        {% else %}
+        <form method="post" action="/exchange/order/cancel" style="margin:0">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <input type="hidden" name="property_id" value="{{ prop.property_id }}">
+          <input type="hidden" name="side" value="{{ side }}">
+          <button class="ghost small" type="submit">Cancel my {{ what }}</button>
+        </form>
+        {% endif %}
+        {% endif %}
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+    {% if fills %}
+    <div class="panel">
+      <h3 style="margin:0 0 8px">Prices you have taken</h3>
+      <table>
+        {% for f in fills %}
+        <tr><td class="mono" style="font-size:.8rem">{{ f.order[:10] }}…</td>
+            <td style="font-size:.8rem">{{ f.tokens_shown or f.tokens }}</td>
+            <td style="text-align:right">
+              {%- if f.status == 'asked' %}<span class="pill warn">waiting for their node</span>
+              {%- elif f.status == 'unanswered' %}<span class="pill bad">no answer</span>
+              {%- elif f.status == 'signed' %}<span class="pill ok">signed</span>
+              {%- elif f.status == 'sent' %}<span class="pill ok">sent</span>
+              {%- else %}<span class="pill bad">{{ f.status }}</span>{% endif %}
+              {%- if f.error %}<div class="muted" style="font-size:.74rem">{{ f.error }}</div>{% endif %}
+            </td></tr>
         {% endfor %}
       </table>
     </div>
     {% endif %}
-  </div>
 
-  <div>
     <div class="panel">
       <h3 style="margin:0 0 8px">Order book</h3>
       {% if not book.asks and not book.bids %}
@@ -516,78 +576,20 @@
       {% endif %}
     </div>
 
-    {% if fills %}
+    {% if recent %}
     <div class="panel">
-      <h3 style="margin:0 0 8px">Prices you have taken</h3>
+      <h3 style="margin:0 0 8px">Recent trades</h3>
       <table>
-        {% for f in fills %}
-        <tr><td class="mono" style="font-size:.8rem">{{ f.order[:10] }}…</td>
-            <td style="font-size:.8rem">{{ f.tokens_shown or f.tokens }}</td>
-            <td style="text-align:right">
-              {%- if f.status == 'asked' %}<span class="pill warn">waiting for their node</span>
-              {%- elif f.status == 'unanswered' %}<span class="pill bad">no answer</span>
-              {%- elif f.status == 'signed' %}<span class="pill ok">signed</span>
-              {%- elif f.status == 'sent' %}<span class="pill ok">sent</span>
-              {%- else %}<span class="pill bad">{{ f.status }}</span>{% endif %}
-              {%- if f.error %}<div class="muted" style="font-size:.74rem">{{ f.error }}</div>{% endif %}
-            </td></tr>
+        <tr class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.06em">
+          <td>Price</td><td style="text-align:right">Amount</td>
+          <td style="text-align:right">Coins</td><td style="text-align:right">Block</td></tr>
+        {% for t in recent %}
+        <tr><td class="mono">{{ "%.8f"|format(t.price) }}</td>
+            <td class="mono" style="text-align:right">{{ "{:,.8f}".format(t.size).rstrip('0').rstrip('.') }}</td>
+            <td class="mono muted" style="text-align:right">{{ "%.4f"|format(t.price * t.size) }}</td>
+            <td class="muted" style="text-align:right">{{ "{:,}".format(t.height) }}</td></tr>
         {% endfor %}
       </table>
-    </div>
-    {% endif %}
-
-    {% if mine %}
-    <div class="panel">
-      <h3 style="margin:0 0 8px">Your orders</h3>
-      <table>
-        {% for o in mine %}
-        <tr><td class="muted" style="font-size:.8rem">
-              {{ 'sell' if o.sale_property else 'buy' }}</td>
-            <td class="mono" style="font-size:.8rem">{{ o.txid[:12] }}…</td>
-            <td class="muted" style="font-size:.8rem">
-              {%- if o.pending %}in the mempool{% else %}block {{ "{:,}".format(o.block_height) }}{% endif %}
-              {%- if o.sale_property and not o.askable %}
-              <span class="pill bad" title="A taker's node asks the maker's node before it trades, and an address with no published key has nobody to answer.">cannot be asked</span>{% endif %}</td></tr>
-        {% endfor %}
-      </table>
-      {# The pass-over, said where the passed-over person is looking. A taker's
-         queue steps past an unreachable maker rather than refusing the press,
-         which is right for the market and invisible to the maker: their order
-         stands, looks exactly like everybody's, and never gets the question it
-         is waiting to answer. a tester S-work-2. #}
-      {% if mine | selectattr('sale_property') | rejectattr('askable') | list %}
-      <p class="muted" style="font-size:.78rem;margin:10px 0 0">These are on the
-        book, and a taker's node steps past them &mdash; before a trade it asks
-        the maker's node, and an address with no published key has nobody to
-        answer it. {% if viewer == 'account' %}Publish a key on your wallet page
-        and they become askable: the orders themselves do not change, and
-        nothing is placed again.{% else %}Publish one from the address book and
-        they become askable: the orders themselves do not change, and nothing is
-        placed again.{% endif %}</p>
-      {% endif %}
-      {# Which sides this account actually has resting, because a cancel is a
-         transaction and an empty one still costs its fee. `mine` is per order
-         and says nothing about the side, so the two are asked separately. #}
-      {% set resting = {'ask': mine | selectattr('sale_property') | list,
-                        'bid': mine | rejectattr('sale_property') | list} %}
-      {% if resting.ask or resting.bid %}
-      <div class="row" style="gap:6px;margin-top:10px">
-        {% for side, what in (('ask', 'sells'), ('bid', 'buys')) %}
-        {% if resting[side] %}
-        {% if viewer == 'account' %}
-        <button class="ghost small" type="button" id="pull-{{ side }}">Cancel my {{ what }}</button>
-        {% else %}
-        <form method="post" action="/exchange/order/cancel" style="margin:0">
-          <input type="hidden" name="csrf_token" value="{{ csrf }}">
-          <input type="hidden" name="property_id" value="{{ prop.property_id }}">
-          <input type="hidden" name="side" value="{{ side }}">
-          <button class="ghost small" type="submit">Cancel my {{ what }}</button>
-        </form>
-        {% endif %}
-        {% endif %}
-        {% endfor %}
-      </div>
-      {% endif %}
     </div>
     {% endif %}
   </div>

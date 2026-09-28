@@ -246,6 +246,32 @@ def last_and_change(points: list[dict], now: float | None = None,
             "volume": sum(float(p.get("size") or 0) for p in inside)}
 
 
+def table_move(points: list[dict], change: float | None,
+               now: float | None = None, window: int = DAY) -> tuple[float | None, bool]:
+    """What a market TABLE prints for the day's move, and whether it is "new".
+
+    `last_and_change` (D-048) needs a trade on both sides of the window and
+    says None otherwise. A table row always says something (the operator,
+    2026-09-28), and the two other cases are still facts: a market that traded
+    before the window and not inside it has not moved (0.0), and a market
+    younger than the window has moved since its own first trade, which the
+    row marks as new rather than passing it off as a day's move.
+    """
+    import time as _time
+
+    if change is not None or not points:
+        return change, False
+    now = _time.time() if now is None else now
+    ordered = sorted(points, key=lambda p: (p["when"], p.get("height", 0)))
+    inside = [p for p in ordered if p["when"] >= now - window]
+    if not inside:
+        return 0.0, False
+    if len(inside) == len(ordered) and inside[0]["price"]:
+        first, last = inside[0]["price"], inside[-1]["price"]
+        return (last - first) / first * 100, True
+    return None, False
+
+
 def day(points: list[dict], now: float | None = None,
         window: int = DAY) -> dict[str, Any]:
     """The numbers a market table quotes: last, move, high, low, what traded.

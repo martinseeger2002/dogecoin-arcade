@@ -26,7 +26,7 @@
   <img src="/content/{{ face.icon }}" alt="{{ wall_text(prop.name) }}" loading="lazy"
        style="width:56px;height:56px;object-fit:cover;border-radius:50%">
   {% endif %}
-  <div style="min-width:0">
+  <div style="min-width:0;flex:1 1 0;overflow-wrap:anywhere">
     {% if face.about %}<div>{{ wall(face.about, 'description') }}</div>{% endif %}
     {% if face.url %}<a href="{{ face.url }}" rel="noopener noreferrer nofollow"
        target="_blank" style="font-size:.86rem">{{ face.url }}</a>{% endif %}

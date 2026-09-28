@@ -14960,11 +14960,17 @@ def create_app(state: AppState) -> FastAPI:
             if not points and not (book["asks"] or book["bids"]):
                 continue
             stats = chartlib.day(points)
+            # The table always says something in the 24h column (the operator,
+            # 2026-09-28). D-048's move needs a trade on both sides of the
+            # window; the two other cases are still facts: nothing traded
+            # today is no move at all, and a market younger than a day has
+            # moved since its own first trade, which the cell marks "new".
+            change, new = chartlib.table_move(points, stats["change"])
             out.append({
                 "property_id": pid, "name": prop["name"],
                 "divisible": prop["divisible"],
                 "icon": faces[pid]["icon"], "about": faces[pid]["about"],
-                "last": stats["last"], "change": stats["change"],
+                "last": stats["last"], "change": change, "new": new,
                 "high": stats["high"], "low": stats["low"],
                 "trades": stats["trades"], "volume": stats["volume"],
                 "coins": stats["coins"],

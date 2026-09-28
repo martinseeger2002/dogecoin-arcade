@@ -300,16 +300,36 @@
       <span class="muted" id="marketcount" style="font-size:.82rem">{{ pairs|length }}
         market{{ '' if pairs|length == 1 else 's' }}</span>
     </div>
-    <div style="overflow-x:auto">
+    {# Price and the day's move are the two columns a phone keeps; the rest
+       fold away under 640px, and the volume moves under the name instead
+       (2026-09-28: the list should at least show the price and 24h). #}
+    <style>
+      table.markets td.px{white-space:nowrap}
+      table.markets .chg{display:inline-block;min-width:4.6em;padding:2px 7px;border-radius:6px;
+        font-size:.8rem;font-weight:600;text-align:center}
+      table.markets .up{color:var(--ok);background:color-mix(in srgb,var(--ok) 14%,transparent)}
+      table.markets .down{color:var(--bad);background:color-mix(in srgb,var(--bad) 14%,transparent)}
+      table.markets .flat{color:var(--muted);background:color-mix(in srgb,var(--muted) 12%,transparent)}
+      table.markets .narrow{display:none}
+      @media (max-width:640px){
+        table.markets .wide{display:none}
+        table.markets .narrow{display:block}
+        table.markets .about{max-width:18ch!important}
+      }
+    </style>
+    {% macro px(v) -%}
+      {%- set t = "%.8f"|format(v|float) -%}{%- set t = t.rstrip('0') -%}
+      {{- t ~ '0' if t.endswith('.') else t -}}
+    {%- endmacro %}
     <table class="wallets markets">
       <tr class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.06em">
         <td colspan="2">Market</td>
-        <td style="text-align:right">Last</td>
+        <td style="text-align:right">Price</td>
         <td style="text-align:right">24h</td>
-        <td style="text-align:right">24h high</td>
-        <td style="text-align:right">24h low</td>
-        <td style="text-align:right">24h volume</td>
-        <td style="text-align:right">Bid / Ask</td></tr>
+        <td class="wide" style="text-align:right">24h high</td>
+        <td class="wide" style="text-align:right">24h low</td>
+        <td class="wide" style="text-align:right">24h volume</td>
+        <td class="wide" style="text-align:right">Bid / Ask</td></tr>
       {% for p in pairs %}
       {# The row's own search key: the filter above this table matches what a
          person types against it. A judged name contributes nothing to it,
@@ -330,31 +350,36 @@
              about a different sentence than the one that was judged. The truncating
              is CSS, which is where a layout decision belongs anyway. #}
           <div class="muted" style="font-size:.76rem">#{{ p.property_id }}
-            {%- if p.about %} &middot; <span style="display:inline-block;max-width:36ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom">{{ wall(p.about, 'description') }}</span>{% endif %}</div></td>
-        <td class="mono" style="text-align:right">
-          {%- if p.last is not none %}<strong>{{ "%.8f"|format(p.last) }}</strong>
+            {%- if p.about %} &middot; <span class="about" style="display:inline-block;max-width:36ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom">{{ wall(p.about, 'description') }}</span>{% endif %}</div>
+          <div class="narrow muted" style="font-size:.74rem">
+            {%- if p.coins %}Vol {{ "%.2f"|format(p.coins) }} &middot; {{ p.trades }} trade{{ '' if p.trades == 1 else 's' }}{% endif %}
+            {%- if p.bid or p.ask %}{{ ' · ' if p.coins }}{% if p.bid %}bid {{ px(p.bid) }}{% endif %}{{ ' ' if p.bid and p.ask }}{% if p.ask %}ask {{ px(p.ask) }}{% endif %}{% endif %}</div></td>
+        <td class="mono px" style="text-align:right">
+          {%- if p.last is not none %}<strong>{{ px(p.last) }}</strong>
+          {%- elif p.ask %}<strong>{{ px(p.ask) }}</strong><div class="muted" style="font-size:.7rem">asking</div>
           {%- else %}<span class="muted">—</span>{% endif %}</td>
         <td style="text-align:right">
-          {%- if p.change is not none %}<span style="color:{{ 'var(--ok)' if p.change >= 0 else 'var(--bad)' }}">
-            {{ '+' if p.change >= 0 }}{{ "%.1f"|format(p.change) }}%</span>
+          {%- if p.change is not none %}<span class="chg {{ 'up' if p.change > 0 else ('down' if p.change < 0 else 'flat') }}"
+            {%- if p.new %} title="Traded for less than a day: the move since its first trade"{% endif %}>
+            {{ '+' if p.change > 0 }}{{ "%.1f"|format(p.change) }}%</span>
+            {%- if p.new %}<div class="muted" style="font-size:.68rem">new</div>{% endif %}
           {%- else %}<span class="muted">—</span>{% endif %}</td>
-        <td class="mono muted" style="text-align:right">
-          {%- if p.high is not none %}{{ "%.8f"|format(p.high) }}{% else %}—{% endif %}</td>
-        <td class="mono muted" style="text-align:right">
-          {%- if p.low is not none %}{{ "%.8f"|format(p.low) }}{% else %}—{% endif %}</td>
-        <td class="mono" style="text-align:right">
+        <td class="mono muted wide" style="text-align:right">
+          {%- if p.high is not none %}{{ px(p.high) }}{% else %}—{% endif %}</td>
+        <td class="mono muted wide" style="text-align:right">
+          {%- if p.low is not none %}{{ px(p.low) }}{% else %}—{% endif %}</td>
+        <td class="mono wide" style="text-align:right">
           {%- if p.coins %}{{ "%.4f"|format(p.coins) }}
             <div class="muted" style="font-size:.74rem">{{ p.trades }} trade{{ '' if p.trades == 1 else 's' }}</div>
           {%- else %}<span class="muted">—</span>{% endif %}</td>
-        <td class="mono muted" style="text-align:right;font-size:.82rem">
-          {%- if p.bid %}<span style="color:var(--ok)">{{ "%.8f"|format(p.bid|float) }}</span>
+        <td class="mono muted wide" style="text-align:right;font-size:.82rem">
+          {%- if p.bid %}<span style="color:var(--ok)">{{ px(p.bid) }}</span>
           {%- else %}—{% endif %} /
-          {%- if p.ask %} <span style="color:var(--bad)">{{ "%.8f"|format(p.ask|float) }}</span>
+          {%- if p.ask %} <span style="color:var(--bad)">{{ px(p.ask) }}</span>
           {%- else %} —{% endif %}</td>
       </tr>
       {% endfor %}
     </table>
-    </div>
   </div>
   <script>
   function findMarket(text) {
