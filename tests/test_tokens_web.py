@@ -506,6 +506,55 @@ def test_a_cancel_with_a_price_gives_back_one_price_and_not_the_pair(web):
             "the withdrawn price's tokens came back and the standing one's did not"
 
 
+def test_a_stranger_s_token_page_offers_no_issuer_controls(web):
+    """The issuer panel is drawn by `is_issuer`, which asks only whether the
+    issuer is one of this machine's addresses. For a token THIS node issued that
+    is true of every visitor, so a stranger got hand-over and launchpad buttons
+    whose POSTs the door answers "Not here", and a frame pointed at a page the
+    door keeps in NEVER_PUBLIC -- plus a "you" pill telling them they were the
+    operator (the door census, 2026-09-27).
+
+    What hid it is what reads this test: the guard looked like it was about the
+    reader and was about the machine. The account issuer's panel beside it is a
+    true guard -- `account_issuer` is set only when this tab holds the key -- so
+    that one keeps rendering for the account and never for a stranger.
+    """
+    app, state, node, alice, bob = web
+    csrf = state.csrf_token
+    form = dict(csrf_token=csrf, sender=alice, name="Door Token",
+                supply="1000", kind="fixed", units="divisible")
+    txid = shown(app.post("/tokens/create", data=form).text, "txid")
+    app.post("/tokens/create", data={**form, "confirmed": txid},
+             follow_redirects=False)
+    mine_and_index(node, state)
+    index = state.token_index(state.ledger)
+    # By name, not by "the only property": the chain outlives this test, so a
+    # second token issued somewhere else is not a contradiction here.
+    (prop,) = [p for p in index.properties() if p["name"] == "Door Token"]
+    pid = prop["property_id"]
+    page = f"/tokens/{pid}"
+
+    state.public = True
+    try:
+        out = app.get(page).text
+        assert "Issuer controls" not in out, \
+            "the panel acts from this machine's wallet, so it is not this reader's"
+        assert f'action="/tokens/{pid}/issuer"' not in out
+        assert f'action="/tokens/{pid}/launchpad"' not in out
+        assert "/tokens/launchpad/preview" not in out, \
+            "and no frame of a page the door keeps shut"
+        assert 'class="pill ok">you</span>' not in out, \
+            "'you' is a fact about who is looking, not about the token"
+        assert "Nothing is selling" in out, "the honest sentence is still there"
+    finally:
+        state.public = False
+
+    mine = app.get(page).text
+    assert "Issuer controls" in mine and 'class="pill ok">you</span>' in mine, \
+        "the operator's own page lost nothing"
+    assert f'action="/tokens/{pid}/launchpad"' in mine
+
+
 def test_the_pair_page_tells_a_stranger_nothing_about_this_wallet(web):
     """The hole that was on the public site, in a test, about a number.
 

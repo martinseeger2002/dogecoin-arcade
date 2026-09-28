@@ -774,6 +774,12 @@ def test_a_collection_market_offers_nothing_the_door_refuses(public, signed_in):
     app, state = public
     if signed_in:
         _seat(app)
+        # A seat that holds nothing draws no "Yours" table at all, and a census
+        # of a table that never rendered checks nothing. KEEPER owns both
+        # pieces below, so this makes them this account's -- the same call a
+        # tab makes when it first tells the node where its money is.
+        assert app.post("/account/address", json={"address": KEEPER},
+                        headers=LOCAL).status_code == 200
     index = state.token_index(state.token_chain)
     creator = "nCreatorCCCCCCCCCCCCCCCCCCCCCCCCC"
     with index.open() as db:
@@ -795,7 +801,21 @@ def test_a_collection_market_offers_nothing_the_door_refuses(public, signed_in):
     bad = [f"{m} -> {t}" for t, m in _offered(answer.text, page) + _asked(answer.text)
            if not door.public_path(t.rstrip("/") or "/", m)]
     assert bad == [], bad
-    assert "/view#make-offer" in answer.text or not signed_in
+    # And the LINKS, which the two scrapes above do not read. This table's own
+    # row carried `<a href="/exchange/sell/<txid>">` and
+    # `<a href="/inscriptions/<txid>/send">`, and neither is a route a request
+    # through the door can open -- so the page that answers "what can I sell"
+    # answered it with two doors that shut (the door census, 2026-09-27). The
+    # account's sell and send live on its own NFTs page, which is where the tile
+    # grid under this table already sent them; a census that follows only form
+    # actions walks straight past both halves of that.
+    if signed_in:
+        assert "Yours in this collection" in answer.text, \
+            "the table this half of the census is about has to have rendered"
+        assert 'href="/me/nfts"' in answer.text
+    assert "/exchange/sell/" not in answer.text, \
+        "your own piece, and a link to a route you cannot use"
+    assert f"/inscriptions/{'01' * 32}/send" not in answer.text
 
 
 def test_a_viewer_frame_gets_the_ticket_shim_and_the_bytes_stay_the_bytes(client):

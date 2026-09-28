@@ -81,11 +81,23 @@
         {% if row.listing %}
           <span class="pill {{ '' if row.listing.pending else 'ok' }}">{{ 'listing sent' if row.listing.pending else 'for sale' }}</span>
           <strong>{{ row.listing.price }}</strong>
-          <a class="btn ghost small" href="/exchange/sell/{{ row.txid }}">Change the price</a>
-        {% else %}
-          <a class="btn small" href="/exchange/sell/{{ row.txid }}">Sell</a>
         {% endif %}
-        <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/send">Send</a></td>
+        {% if account_view %}
+          {# The two links below belong to the node's wallet. An account session
+             is answered "No such page" by both, so its own row was two dead
+             doors; the account's sell and send are on its own NFTs page, which
+             is where the tile grid under this table already sends them. The pill
+             and the price stay -- those are facts about the piece, not about who
+             is looking. #}
+          <a class="btn small" href="/me/nfts">{{ 'Change the price' if row.listing else 'Sell it' }}</a>
+        {% else %}
+          {% if row.listing %}
+            <a class="btn ghost small" href="/exchange/sell/{{ row.txid }}">Change the price</a>
+          {% else %}
+            <a class="btn small" href="/exchange/sell/{{ row.txid }}">Sell it</a>
+          {% endif %}
+          <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/send">Send</a>
+        {% endif %}</td>
     </tr>
     {% endfor %}
   </table>

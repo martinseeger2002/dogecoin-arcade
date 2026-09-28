@@ -191,6 +191,11 @@ LINKED_FROM_PUBLIC = ("/content/", "/collections", "/feed", "/u/", "/docs",
 #: build an offer and take signatures over it, and what makes that safe is
 #: that each works only on the account making the request, and the node
 #: broadcasts what it OFFERED rather than what came back.
+#: `/auth/challenge` is the one entry here that is not a POST route at all --
+#: app.py serves it with `@app.get` alone, so a POST that clears this door is
+#: answered 405 by the router and nothing can come of it. Dropping it would be
+#: equally correct; it is named so that nobody reads that 405 as the door having
+#: opened something. (the door census, 2026-09-27)
 PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/admin/login",
                "/auth/password",

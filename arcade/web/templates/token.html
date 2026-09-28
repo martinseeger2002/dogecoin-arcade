@@ -50,7 +50,13 @@
       by being sent away, and runs out when the address behind it no longer holds
       a lot to sell. Inscribing another replaces nothing &mdash; both would be
       open.</p>
-  {% elif is_issuer %}
+  {% elif is_issuer and not public %}
+    {# The issuer's own launchpad form, and only on the side of the door that
+       can use it: this branch posts a route the door does not admit from
+       outside, and frames a preview page that is in NEVER_PUBLIC -- so a
+       stranger was handed a button that answers "Not here" and a 404 page
+       inside a frame. The open-launchpad branch above stays public: an open
+       launchpad is a fact about the token, not about who is looking. #}
     <p class="muted" style="margin:0 0 10px">A page that sells this token at a
       fixed price, for as long as you hold lots to sell &mdash; the mintpad's
       idea, without the wall. It is an inscription: anybody's node can read it,
@@ -113,7 +119,10 @@
   <table>
     <tr><td class="muted" style="width:130px">Issuer</td>
         <td>{{ prop.issuer|who }}
-          {% if is_issuer %}<span class="pill ok">you</span>{% endif %}</td></tr>
+          {# "you" is a fact about who is looking, and `is_issuer` alone only
+             says the issuer is one of this machine's addresses -- which is true
+             of a stranger, too, and told them they were the operator. #}
+          {% if is_issuer and not public %}<span class="pill ok">you</span>{% endif %}</td></tr>
     {% if prop.category or prop.subcategory %}
     <tr><td class="muted">Category</td><td>{{ prop.category }}{% if prop.subcategory %} / {{ prop.subcategory }}{% endif %}</td></tr>
     {% endif %}
@@ -124,7 +133,12 @@
   </table>
 </div>
 
-{% if is_issuer and node.wallet %}
+{% if is_issuer and node.wallet and not public %}
+{# Grant, revoke and hand-over spend from this machine's wallet, so the door
+   answers "Not here" to all three from outside -- and `node.wallet` cannot
+   save the branch either, because a token issued by this node's own address
+   passes that test for every visitor. The account issuer below is a different
+   guard and a true one: it is only set when this tab holds the key. #}
 <h2>Issuer controls</h2>
 <div class="panel">
   <p class="muted" style="font-size:.86rem;margin-top:0">These act from the issuer address
@@ -280,7 +294,10 @@ $("issuer-go").onclick = () => {
   <table class="wallets">
   {% for h in holders %}
     <tr><td>{{ h.address|who }}
-          {% if h.address in owned %}<span class="pill ok">you</span>{% endif %}</td>
+          {# `owned` is this machine's addresses, so on the public side of the
+             door the pill named the node's holding row "you" -- the same
+             confusion as the issuer row above, in a table nobody had checked. #}
+          {% if h.address in owned and not public %}<span class="pill ok">you</span>{% endif %}</td>
         <td style="text-align:right;font-variant-numeric:tabular-nums">{{ h.display }}</td></tr>
   {% endfor %}
   </table>
