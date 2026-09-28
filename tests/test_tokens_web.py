@@ -127,6 +127,12 @@ def test_two_prices_that_overlap_are_said_as_a_trade_and_not_a_sign(web):
         assert '<strong class="mono">0.00000000</strong>' not in page, \
             "a zero with both sides on the book is a crossed book, not a tight one"
         assert "<strong>Crossed</strong>" in page
+        named = " ".join(page.split())
+        assert ('Best ask <strong class="mono">1</strong> &middot; best bid '
+                '<strong class="mono">1</strong>') in named, \
+            "the two prices the crossed sentence is about, given as numbers too"
+        assert "you could buy at the best ask now" not in named, \
+            "and no second nudge when the line above already says what a press does"
 
         # And a bid ABOVE it, the shape that used to print a minus sign.
         withdraw("bid")
@@ -151,6 +157,13 @@ def test_two_prices_that_overlap_are_said_as_a_trade_and_not_a_sign(web):
         assert "Crossed" not in page
         assert '<strong class="mono">0.50000000</strong> <span class="muted">spread' in page, \
             "an honest spread between two prices that do not overlap"
+        named = " ".join(page.split())
+        assert ('Best ask <strong class="mono">1</strong> &middot; best bid '
+                '<strong class="mono">0.5</strong>') in named, \
+            "the spread is a difference; the two prices it subtracts are the news"
+        assert "if you have the coins it asks for, you could buy at the best ask now" \
+            in named, \
+            "the price, and the condition on spending it, as /exchange/order says it"
 
 
 def test_create_confirm_broadcast_and_read_back(web):
