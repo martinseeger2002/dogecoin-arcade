@@ -252,11 +252,11 @@
       <form method="post" action="/feed/{{ it.txid }}/{{ 'unlike' if it.liked else 'like' }}" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{ csrf }}">
         <input type="hidden" name="back" value="/exchange?tab=mintpads{{ '&sort=new' if sort == 'new' else '' }}">
-        <button class="small {{ 'on' if it.liked else 'ghost' }}" type="submit">&#9829; {{ it.likes }}</button></form>
+        <button class="small ghost likebtn{{ ' liked' if it.liked }}" type="submit" data-count="{{ it.likes }}">{{ '♥' if it.liked else '♡' }} {{ it.likes }}</button></form>
       <form method="post" action="/feed/{{ it.txid }}/{{ 'undislike' if it.disliked else 'dislike' }}" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{ csrf }}">
         <input type="hidden" name="back" value="/exchange?tab=mintpads{{ '&sort=new' if sort == 'new' else '' }}">
-        <button class="small {{ 'on' if it.disliked else 'ghost' }}" type="submit">&#128078; {{ it.dislikes }}</button></form>
+        <button class="small ghost dislikebtn{{ ' disliked' if it.disliked }}" type="submit" data-count="{{ it.dislikes }}">&#128078; {{ it.dislikes }}</button></form>
       <button class="small ghost" type="button" onclick="var f=document.getElementById('c-{{ it.txid }}');f.hidden=!f.hidden">&#128172; {{ it.comments }}</button>
       {% else %}
       <span class="pill">&#9829; {{ it.likes }}</span>
@@ -305,11 +305,11 @@
       /^\/feed\/([0-9a-f]{64})\/(like|unlike|dislike|undislike|reply)$/);
     if (!one) return;
     event.preventDefault();
+    const flip = window.arcadePress(form, one[2]);
     const held = (await opening) || await arcadeKeys(CHAIN).catch(() => null);
-    if (!held) { say("Unlock your wallet to do that.", true); return; }
+    if (!held) { if (flip) flip.undo(); say("Unlock your wallet to do that.", true); return; }
     const [, txid, doing] = one;
     const button = form.querySelector("button[type=submit]");
-    if (button && doing !== "reply") button.classList.toggle("on");
     if (button) button.disabled = true;
     try {
       const out = await wallet.react(held, txid, KINDS[doing],
@@ -317,7 +317,7 @@
       if (form.elements.text) { form.elements.text.value = ""; form.hidden = true; }
       say(`Sent (${out.txid.slice(0, 12)}…). It counts here when its block lands.`);
     } catch (e) {
-      if (button && doing !== "reply") button.classList.toggle("on");
+      if (flip) flip.undo();
       say(String(e.message || e), true);
     } finally { if (button) button.disabled = false; }
   });

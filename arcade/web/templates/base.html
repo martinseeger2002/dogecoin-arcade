@@ -66,6 +66,10 @@ nav{display:flex;gap:4px;flex-wrap:wrap;margin-left:auto}
 nav a{padding:6px 11px;border-radius:6px;font-size:.9rem;color:var(--muted)}
 nav a:hover{background:var(--code);text-decoration:none}
 nav a.on{background:var(--accent);color:var(--accent-fg)}
+/* A heart you gave is pink, and a dislike you gave is filled, on every page
+   that has them (2026-09-28: so nobody hearts twice by accident). */
+button.likebtn.liked{color:#e0457b;border-color:#e0457b;background:rgba(224,69,123,.14)}
+button.dislikebtn.disliked{color:#fff;border-color:#5b6b8c;background:#5b6b8c}
 nav a.off{opacity:.4;cursor:not-allowed}
 main{max-width:1000px;margin:0 auto;padding:26px 20px 60px}
 /* Drawn inside the pop-up under a running inscription: no chrome, and the
@@ -760,6 +764,33 @@ async function takeFor(source, m) {
     answer({error: String(err.message || err)});
   } finally { minting = false; }
 }
+// Pressing a heart or a dislike shows at once, before the unlock and the
+// signature (2026-09-28): the button flips to its pressed look, its
+// form now says the opposite (like -> unlike), and the button stays shut until
+// the page's own handler is done. undo() puts all of it back if that fails.
+window.arcadePress = function (form, doing) {
+  const pairs = {like: ["unlike", "liked"], unlike: ["like", "liked"],
+                 dislike: ["undislike", "disliked"], undislike: ["dislike", "disliked"]};
+  const pair = pairs[doing];
+  const button = form && form.querySelector("button[type=submit]");
+  if (!pair || !button) return null;
+  const was = {action: form.getAttribute("action"), html: button.innerHTML,
+               cls: button.className, pressed: button.getAttribute("aria-pressed")};
+  const on = doing === "like" || doing === "dislike";
+  const n = Math.max(0, Number(button.dataset.count || 0) + (on ? 1 : -1));
+  button.classList.toggle(pair[1], on);
+  button.setAttribute("aria-pressed", on ? "true" : "false");
+  if (pair[1] === "liked") button.textContent = (on ? "\u2665 " : "\u2661 ") + n;
+  else button.textContent = "\u{1F44E}" + (n ? " " + n : "");
+  form.setAttribute("action", was.action.replace(/\/[a-z]+$/, "/" + pair[0]));
+  button.dataset.count = String(n);
+  return {undo() {
+    form.setAttribute("action", was.action);
+    button.innerHTML = was.html; button.className = was.cls;
+    button.setAttribute("aria-pressed", was.pressed || "false");
+    button.dataset.count = String(n + (on ? -1 : 1));
+  }};
+};
 // A claim (2026-09-28): any inscribed page can hand over a hidden
 // listing's id and its phrase -- a puzzle's answer, a code it found, anything --
 // and the person looking gets the ordinary card for it. The page never signs

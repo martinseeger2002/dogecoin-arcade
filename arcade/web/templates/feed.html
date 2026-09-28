@@ -96,7 +96,9 @@
           style="margin:0">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="back" value="{{ here }}">
-      <button class="ghost small" type="submit"
+      <button class="ghost small likebtn{{ ' liked' if p.liked_by_me }}" type="submit"
+              data-count="{{ p.likes }}"
+              aria-pressed="{{ 'true' if p.liked_by_me else 'false' }}"
               title="Every like is a transaction, so everybody counts the same number">
         {{ '♥' if p.liked_by_me else '♡' }} {{ p.likes }}</button></form>
 
@@ -106,7 +108,9 @@
           style="margin:0">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="back" value="{{ here }}">
-      <button class="ghost small{{ ' on' if p.disliked_by_me }}" type="submit"
+      <button class="ghost small dislikebtn{{ ' disliked' if p.disliked_by_me }}" type="submit"
+              data-count="{{ p.dislikes }}"
+              aria-pressed="{{ 'true' if p.disliked_by_me else 'false' }}"
               aria-label="{{ 'Take back the dislike' if p.disliked_by_me else 'Dislike' }}"
               title="A dislike moves this post down the feed, as a like moves it up">
         &#128078;{% if p.dislikes %} {{ p.dislikes }}{% endif %}</button></form>
@@ -562,10 +566,12 @@
     if (!one) return;               // the composer, or a page with no door
     event.preventDefault();
     say("");
+    const flip = arcadePress(form, one[2]);     // pink at once (2026-09-28)
     // Locked: the unlock sheet opens right here, and the like, reply or tip
     // carries on after (a tester, 2026-09-26).
     const held = (await take()) || await arcadeKeys(CHAIN).catch(() => null);
     if (!held) {
+      if (flip) flip.undo();
       say("Unlock your wallet to do that.", true);
       return;
     }
@@ -637,6 +643,7 @@
           + `(${out.txid.slice(0, 12)}…).`);
       near(form, `${DONE[doing]}. It counts when its block lands, in a minute or so.`, true);
     } catch (e) {
+      if (flip) flip.undo();
       say(String(e.message || e), true);
       near(form, String(e.message || e));
     } finally { if (button) button.disabled = false; }
