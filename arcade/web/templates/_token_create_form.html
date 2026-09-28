@@ -239,6 +239,22 @@ async function offer() {
           `Created: ${done.txid.slice(0, 16)}… It is a token when its block `
           + "is indexed, and it is yours until you send it.";
         $("create-news").hidden = false;
+        // Start the next one clean. This is not the guard against issuing the
+        // same token twice -- the node refuses a name that is already on the
+        // chain, in a block or in its pool, and test_a_name_already_on_the_chain
+        // proves that costs nothing. It is so that the field saying so is not
+        // left hidden under a form that looks ready to press again. reset() puts
+        // the two selects back to their defaults; the icon keeps its pick,
+        // because a second token out of the same set of pictures is the common
+        // case and a picture costs nothing to repeat.
+        const icon = field("icon").value;
+        form.reset();
+        // Not the hidden ones: this form carries a csrf_token in a hidden
+        // input, and a blank one is a refused request on the next press.
+        for (const el of form.querySelectorAll("input")) {
+          if (el.type !== "hidden") el.value = "";
+        }
+        field("icon").value = icon;
       } catch (e) { trouble(String(e.message || e)); }
     };
     $("create-no").onclick = () => { $("create-confirm").hidden = true; };
