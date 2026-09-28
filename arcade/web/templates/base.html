@@ -791,6 +791,30 @@ window.arcadePress = function (form, doing) {
     button.dataset.count = String(n + (on ? -1 : 1));
   }};
 };
+// Buy orders that fill when their buyer is back (arcade/standing.py): the app,
+// once its wallet is open, takes what a sell order now offers them -- the buyer
+// asked for exactly this when they placed the order, so no second question.
+(async () => {
+  if (!ARCADE_ME) return;
+  try {
+    const wallet = await import("/wallet.js");
+    const said = await (await fetch("/account/standing/fillable", {cache: "no-store"})).json();
+    for (const f of (said.fills || [])) {
+      const CHAIN = {network: f.chain, version: f.version};
+      const held = await wallet.opened(CHAIN);
+      if (!held) return;                       // not unlocked: next time
+      const asked = await fetch("/account/order/take", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({order: f.order, units: String(f.units), standing: f.standing,
+                              chain: f.chain})});
+      const terms = await asked.json();
+      if (!asked.ok) continue;
+      await wallet.checked(terms, held);
+      await wallet.confirm(held, terms);
+      arcadeToast(`Your buy order filled: ${terms.amount} ${terms.name} for ${terms.coins} coins.`);
+    }
+  } catch (e) { /* a fill is a courtesy on page load; the order still stands */ }
+})();
 // A claim (2026-09-28): any inscribed page can hand over a hidden
 // listing's id and its phrase -- a puzzle's answer, a code it found, anything --
 // and the person looking gets the ordinary card for it. The page never signs

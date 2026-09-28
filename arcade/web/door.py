@@ -110,6 +110,7 @@ PUBLIC_PAGES = frozenset({
     "/account/tokens",
     "/account/inscribe/unfinished",
     "/account/dust",                  # coins in this account's own payload outputs
+    "/account/standing/fillable",     # this account's buy orders a sell order meets
 })
 
 #: Prefixes a stranger may read. Everything under them is public, so each
@@ -221,6 +222,9 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/dust/sweep",
                # paying the operator for extra room (the account's own coins)
                "/account/boost",
+               # buy orders this node holds (standing.py): place, lots, sign, cancel
+               "/account/standing", "/account/standing/lots",
+               "/account/standing/sign", "/account/standing/cancel",
                "/account/accept/complete",
                # the Restore page's new encrypted wallet, signed in by the words' key
                "/account/vault",

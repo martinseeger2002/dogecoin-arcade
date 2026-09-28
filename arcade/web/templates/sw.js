@@ -33,6 +33,14 @@ self.addEventListener('push', event => {
       const r = await fetch('/account/push/news', {credentials: 'include', cache: 'no-store'});
       if (r.ok) news = (await r.json()).news || [];
     } catch (e) { /* the node is away: say something anyway */ }
+    const fills = news.filter(n => n.kind === 'fill');
+    if (fills.length) {
+      return self.registration.showNotification('Your buy order can fill', {
+        body: `A sell order meets your price for ${fills[0].name}. Open the arcade to complete it.`,
+        tag: 'arcade-fills', renotify: true, icon: '/icon-192.png', badge: '/icon-192.png',
+        data: {url: fills[0].url || '/exchange?tab=tokens'}});
+    }
+    news = news.filter(n => n.kind !== 'fill');
     const who = [...new Set(news.map(n => n.from))];
     const title = who.length === 1 ? 'Message from ' + who[0]
                 : who.length > 1 ? who.length + ' people wrote to you'

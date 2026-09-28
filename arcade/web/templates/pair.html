@@ -77,6 +77,11 @@
                   style="flex:0 0 auto">Put it on the book</button>
         </div>
       </div>
+      <label id="book-away-row" class="muted" style="display:flex;gap:8px;align-items:flex-start;font-size:.84rem;margin:10px 0 0">
+        <input type="checkbox" id="book-away" checked style="width:auto;margin:3px 0 0">
+        <span>Let this server fill it while I'm away. It holds a signature for each small lot,
+          which can spend no more than that lot's price. Untick to fill it yourself: your phone
+          is told when it can fill, and the app does it the next time you open it.</span></label>
       <p class="msg err" id="book-trouble" hidden></p>
       <p class="msg ok" id="book-news" hidden></p>
       <p class="muted" style="font-size:.78rem;margin:10px 0 0">You hold {{ held }}
@@ -113,8 +118,79 @@
       const side = () => (document.querySelector(
         "input[name=book-side]:checked") || {value: "bid"}).value;
 
+      const awayRow = $("book-away-row");
+      const showAway = () => { if (awayRow) awayRow.hidden = side() !== "bid"; };
+      document.querySelectorAll("input[name=book-side]").forEach((r) => r.addEventListener("change", showAway));
+      showAway();
+
+      /* A buy order is held by this node (arcade/standing.py, 2026-09-28):
+         with the box ticked, one transaction sets its lots aside and each lot is
+         signed SINGLE|ANYONECANPAY over the buyer's own change; unticked, it just
+         stands, and fills when the buyer is back. */
+      async function placeBuy(amount, price) {
+        const held = await wallet.opened(CHAIN);
+        if (!held) throw new Error("your wallet is not open in this tab");
+        const away = !!($("book-away") && $("book-away").checked);
+        const asked = await fetch("/account/standing", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({property_id: TOKEN, amount, price, away, chain: CHAIN.network})});
+        const said = await asked.json();
+        if (!asked.ok) throw new Error(said.detail || "that buy order cannot be placed");
+        if (!away) {
+          news(`Your buy order for ${said.standing.amount} ${said.standing.name} at ${said.standing.price} `
+               + "stands. When a sell order meets it, your phone is told, and it fills the next "
+               + "time you open the app.");
+          setTimeout(() => location.reload(), 1500);
+          return;
+        }
+        const shown = await wallet.checked(said, held);
+        if (!(await arcadeAsk(`Buy ${said.standing.amount} ${said.standing.name} at ${said.standing.price} while you're away?`,
+            "One transaction sets your coins aside in small lots; then you sign each lot, and "
+            + "this server fills them from sell orders at or under your price. A lot can spend "
+            + `no more than its own price. ${shown.says}`, "Set it up"))) return;
+        await wallet.confirm(held, said);
+        const lots = await (await fetch("/account/standing/lots", {method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({standing: said.standing.id})})).json();
+        const signatures = await wallet.signLots(held, lots.lots || []);
+        const done = await fetch("/account/standing/sign", {method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({standing: said.standing.id, signatures})});
+        if (!done.ok) throw new Error((await done.json()).detail || "the lots could not be kept");
+        news(`Your buy order stands. It fills from sell orders at or under ${said.standing.price}, `
+             + "even while you're away.");
+        setTimeout(() => location.reload(), 1500);
+      }
+
+      for (const b of document.querySelectorAll("[data-standing-cancel]")) {
+        b.onclick = async () => {
+          b.disabled = true;
+          const r = await fetch("/account/standing/cancel", {method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({standing: b.dataset.standingCancel})});
+          if (r.ok) location.reload(); else { b.disabled = false; say((await r.json()).detail); }
+        };
+      }
+      for (const b of document.querySelectorAll("[data-sell-into]")) {
+        b.onclick = () => {
+          const ask = document.querySelector("input[name=book-side][value=ask]");
+          if (ask) { ask.checked = true; showAway(); }
+          $("book-price").value = b.dataset.sellInto;
+          $("book-amount").value = b.dataset.units;
+          $("book-amount").scrollIntoView({block: "center"});
+          news("A sell order at their price fills their buy order.");
+        };
+      }
+
       $("book-order").onclick = async () => {
         say(""); news("");
+        if (side() === "bid") {
+          $("book-order").disabled = true;
+          try { await placeBuy($("book-amount").value.trim(), $("book-price").value.trim()); }
+          catch (e) { say(String(e.message || e)); }
+          finally { $("book-order").disabled = false; }
+          return;
+        }
         $("book-order").disabled = true;
         // Read once, here: the offer is built from these two, and the card that
         // asks about it opens a moment later. What is signed has to be what the
@@ -527,9 +603,14 @@
         <span class="obprice mono">{{ o.price_shown }}</span>
         <span class="obamt"><span class="mono">{{ o.tokens_shown }}</span>
           <small class="muted">{% if o.mine %}yours{% else %}{{ o.address|who }}{% endif %}
-            {%- if o.pending %} &middot; waiting for its block{% endif %}</small></span>
-        <span class="obdo">{%- if o.mine and o.clears_now %}<span class="muted"
-              style="font-size:.74rem">your bid reaches the ask</span>{% endif %}</span>
+            {%- if o.pending %} &middot; waiting for its block{% endif %}
+            {%- if o.standing %} &middot; {{ 'fills while they are away' if o.away else 'fills when they are back' }}{% endif %}</small></span>
+        <span class="obdo">{%- if o.mine and o.standing %}<button type="button" class="ghost small"
+              data-standing-cancel="{{ o.standing }}">Cancel</button>
+          {%- elif o.mine and o.clears_now %}<span class="muted"
+              style="font-size:.74rem">your bid reaches the ask</span>
+          {%- elif not o.mine and viewer == 'account' %}<button type="button" class="ghost small"
+              data-sell-into="{{ o.price_shown }}" data-units="{{ o.tokens_shown }}">Sell</button>{% endif %}</span>
       </div>
       {% endfor %}
       {% endif %}

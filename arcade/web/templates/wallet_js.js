@@ -639,6 +639,23 @@ export async function signBid(wallet, offer, sent, expect) {
 }
 
 /** Take a pre-signed offer back: one small transaction spending its coins. */
+/** Sign a buy order's lots (arcade/standing.py): for each, read back the one-input
+ *  one-output transaction, check the coin is ours and the output is our own change
+ *  of exactly what was said, work the SINGLE|ANYONECANPAY digest out here, and only
+ *  then sign it. The node never gets anything it did not show. */
+export async function signLots(wallet, lots) {
+  return working(async () => {
+    const keys = keysOn(wallet, (wallet.on && Object.keys(wallet.on)[0]));
+    const mine = coins.p2pkhOf ? await coins.p2pkhOf(keys) : null;
+    const out = [];
+    for (const lot of lots) {
+      const digest = await coins.checkLot(lot, keys);
+      out.push(coinsHex(await coins.signInput(keys.key, digest, coins.SINGLE_ANYONECANPAY)));
+    }
+    return out;
+  });
+}
+
 /** Offer the sweep of this account's own payload outputs on `chain`. */
 export async function offerDustSweep(chain) {
   const asked = await fetch("/account/dust/sweep", {

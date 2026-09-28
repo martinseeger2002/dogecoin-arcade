@@ -527,6 +527,28 @@ function ownMultisig(script, pubkey) {
   return found && at === n - 2 && s[n - 2] === 0x50 + keys;
 }
 
+/** One buy-order lot (arcade/standing.py): a transaction of one input, this key's
+ *  coin, and one output, this key's own change. The digest is worked out here;
+ *  what comes back is what to sign. */
+export async function checkLot(lot, keys) {
+  const tx = parseTx(lot.raw);
+  if (tx.inputs.length !== 1 || tx.outputs.length !== 1) {
+    throw new Error("a lot is one coin and one output. Nothing was signed.");
+  }
+  if (tx.inputs[0].txid !== String(lot.txid).toLowerCase() || tx.inputs[0].vout !== Number(lot.vout)) {
+    throw new Error("that lot is not the coin it says. Nothing was signed.");
+  }
+  const mine = p2pkh(await hash160(keys.pubkey));
+  if (!SAME(tx.outputs[0].script, mine) || tx.outputs[0].value !== BigInt(lot.change)) {
+    throw new Error("a lot's only output must be your own change. Nothing was signed.");
+  }
+  const digest = await sighashLeg(tx, 0, mine);
+  if (hex(digest) !== String(lot.digest).toLowerCase()) {
+    throw new Error("that lot asks for a signature over different bytes. Nothing was signed.");
+  }
+  return digest;
+}
+
 export async function verifyOffer(offer, keys) {
   if (!offer || !offer.raw) {
     throw new Error("that offer has no transaction in it, so there is nothing "

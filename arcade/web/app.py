@@ -43,6 +43,7 @@ from ..ledger import COIN, AmountError, format_amount, parse_amount
 from ..config import NETWORKS, MainnetRefused, WrongChain
 from .. import inscribe as inscribelib
 from .. import bids as bidslib
+from .. import standing as standinglib
 from .. import collections as collectionlib
 from .. import approvals as approvalslib
 from .. import payload as P
@@ -650,6 +651,10 @@ def create_app(state: AppState) -> FastAPI:
         needs it once shutdown has begun. Written without `await` so the guard
         that keeps the routes synchronous still reads cleanly.
         """
+        try:                                  # buy orders this node fills (standing.py)
+            _start_filler()
+        except Exception as exc:              # noqa: BLE001 -- never block startup
+            log.info("filler not started: %s", exc)
         try:                                  # mail for phones already subscribed
             push = state.push()
             if push is not None:              # notes every account's mail
@@ -7527,6 +7532,16 @@ def create_app(state: AppState) -> FastAPI:
         rows = push.news(account.pubkey) if push is not None else []
         out = []
         for row in rows:
+            if str(row["txid"]).startswith("fill:"):
+                pid = str(row["sender"]).split(":", 1)[-1]
+                try:
+                    prop = state.token_index(_token_chain()[0]).property(int(pid))
+                except Exception:
+                    prop = None
+                out.append({"kind": "fill", "at": row["at"],
+                            "name": prop["name"] if prop else "a token",
+                            "url": f"/exchange/pair/{pid}"})
+                continue
             name = ""
             try:
                 name = state.token_index(_account_chain()).tag_of(row["sender"]) or ""
@@ -7941,11 +7956,14 @@ def create_app(state: AppState) -> FastAPI:
     #: Pre-signed offers (arcade/bids.py): the buyer's half of a swap, signed
     #: when the offer was made, so the seller's Accept completes the trade.
     _bids = bidslib.Bids(state.home / "bids.sqlite")
+    #: Buy orders this node holds and fills (arcade/standing.py, 2026-09-28).
+    _standing = standinglib.Standing(state.home / "standing.sqlite")
     # The coins a standing offer is signed over are spent on nothing else: every
     # funding choice reads `spent_by`, so the reservation lives in one place.
     _flights_spent_by = _flights.spent_by
     _flights.spent_by = lambda pubkey, network="": (
         _flights_spent_by(pubkey, network) | _bids.reserved(pubkey, network)
+        | _standing.reserved(pubkey, network)
         | _answered_coins(network) | _listed_coins(network))
 
     def _listed_coins(network: str) -> frozenset:
@@ -10236,6 +10254,291 @@ def create_app(state: AppState) -> FastAPI:
                              "total": format_amount(coins, True),
                              **unsigned.as_json()})
 
+    # --- buy orders this node holds (arcade/standing.py) -------------------------
+
+    #: A lot pays its own fee and keeps this much back as change the buyer's
+    #: signature fixes; what is left over after the price goes back to the buyer.
+    LOT_FEE = fees.DUST_LIMIT
+    LOT_CHANGE = fees.DUST_LIMIT
+
+    def _crossing(index, s: dict, taking: dict) -> list[dict]:
+        """Sell orders a standing buy order may take from: this token, not the
+        buyer's own, mined, at or under its price, with something left free."""
+        from fractions import Fraction
+        limit = Fraction(s["coins"], s["units"])
+        out = []
+        for ask in index.book(s["property_id"])["asks"]:
+            if ask.get("pending") or ask["address"] == s["buyer"] or ask["want_property"] != 0:
+                continue
+            if Fraction(ask["want_amount"], ask["sale_amount"]) > limit:
+                break                                  # cheapest first: the rest are dearer
+            free = int(ask.get("reserved") or 0) - taking.get(ask["txid"], 0)
+            if free > 0:
+                out.append(dict(ask, free=free))
+        return out
+
+    def _fill_away(chain, index, s: dict, taking: dict) -> str:
+        """Spend one pre-signed lot as the buyer: a take of the best crossing sell
+        order. The txid, or "" when nothing was done."""
+        lots = _standing.lots(s["id"], standinglib.LOT_OPEN)
+        if not lots:
+            return ""
+        lot = lots[0]
+        with chain.rpc() as rpc:
+            if rpc.call("gettxout", lot["txid"], lot["vout"], True) is None:
+                _standing.lot_done(lot["txid"], lot["vout"], standinglib.LOT_GONE)
+                return ""                              # the buyer spent it elsewhere
+        for ask in _crossing(index, s, taking):
+            units = min(lot["units"], ask["free"], s["left_units"])
+            need = ask["want_amount"] * units // ask["sale_amount"]
+            if units <= 0 or need < fees.DUST_LIMIT:
+                continue
+            spare = lot["value"] - lot["change"] - need
+            if spare < LOT_FEE // 2:
+                continue
+            outputs = [(lot["change"], txbuild.p2pkh_script(s["buyer"]))]
+            outputs += _class_c_or_b(chain, s["buyer"], P.MetaDExTake(
+                property_id=s["property_id"], amount=units,
+                order=bytes.fromhex(ask["txid"])).encode(), wrap=False)
+            outputs.append((need, txbuild.p2pkh_script(ask["address"])))
+            back = spare - LOT_FEE // 2
+            if back >= fees.DUST_LIMIT:
+                outputs.append((back, txbuild.p2pkh_script(s["buyer"])))
+            raw = "01000000" + "01" + bytes.fromhex(lot["txid"])[::-1].hex()
+            raw += int(lot["vout"]).to_bytes(4, "little").hex()
+            script_sig = (fundinglib.push(bytes.fromhex(lot["signature"]))
+                          + fundinglib.push(bytes.fromhex(s["buyer_key"])))
+            raw += fundinglib.varint(len(script_sig)).hex() + script_sig.hex() + "ffffffff"
+            raw += fundinglib.varint(len(outputs)).hex()
+            for value, script in outputs:
+                raw += int(value).to_bytes(8, "little").hex()
+                raw += fundinglib.varint(len(script)).hex() + script.hex()
+            raw += "00000000"
+            with _premise_lock:
+                if index.pending_takes().get(ask["txid"], 0) != taking.get(ask["txid"], 0):
+                    return ""                          # somebody got there first; next pass
+                with chain.rpc() as rpc:
+                    txid = rpc.call("sendrawtransaction", raw)
+            _standing.lot_done(lot["txid"], lot["vout"], standinglib.LOT_USED, txid)
+            _standing.took(s["id"], units)
+            log.info("standing %s filled %s from %s: %s", s["id"], units, ask["txid"][:12], txid)
+            return txid
+        return ""
+
+    def _tell_back(s: dict, ask: dict) -> None:
+        """A buy order waiting for its buyer can fill: wake their phone, once per
+        sell order (2026-09-28: "a push notification for buyers who don't
+        want to trust the operator")."""
+        if s.get("told") == ask["txid"]:
+            return
+        _standing.set(s["id"], told=ask["txid"])
+        push = state.push()
+        if push is not None:
+            try:
+                push.tell(s["account"], f"fill:{s['id']}:{ask['txid']}", f"fill:{s['property_id']}")
+            except Exception as exc:                   # noqa: BLE001 -- a push is a courtesy
+                log.info("fill push: %s", exc)
+
+    def _fill_standing(chain) -> int:
+        """One pass over this node's buy orders: fill what may be filled while its
+        buyer is away, tell the others. How many fills went out."""
+        index = state.token_index(chain)
+        try:
+            taking = index.pending_takes()
+        except Exception:
+            return 0
+        done = 0
+        for s in _standing.open_on(chain.network):
+            try:
+                if s["away"]:
+                    if _fill_away(chain, index, s, taking):
+                        done += 1
+                        taking = index.pending_takes()
+                else:
+                    crossing = _crossing(index, s, taking)
+                    if crossing:
+                        _tell_back(s, crossing[0])
+            except Exception as exc:                   # noqa: BLE001 -- the next order still gets its turn
+                log.info("standing %s: %s", s["id"], exc)
+        return done
+
+    _filler: dict = {}
+
+    def _start_filler() -> None:
+        if _filler.get("thread") is not None:
+            return
+
+        def loop():
+            while not getattr(state, "shutting_down", False):
+                for chain in list(state.token_chains):
+                    try:
+                        _fill_standing(chain)
+                    except Exception as exc:           # noqa: BLE001 -- keep filling
+                        log.info("filler: %s", exc)
+                time.sleep(30)
+
+        _filler["thread"] = threading.Thread(target=loop, name="arcade-filler", daemon=True)
+        _filler["thread"].start()
+
+    def _standing_shape(s: dict, prop: dict) -> dict:
+        return {"id": s["id"], "property_id": s["property_id"], "name": prop["name"],
+                "left": format_amount(s["left_units"], prop["divisible"]),
+                "amount": format_amount(s["units"], prop["divisible"]),
+                "price": f"{_coins_each(__import__('fractions').Fraction(s['coins'], s['units']), prop['divisible']):.8f}".rstrip("0").rstrip("."),
+                "away": bool(s["away"]), "status": s["status"]}
+
+    @app.post("/account/standing")
+    def account_standing(request: Request, payload: Any = Body(None)):
+        """Place a buy order this node holds (arcade/standing.py). `away` true:
+        answer with the one transaction that makes its lots (coins of the buyer's
+        own, each the price of a lot plus its fee and change); then /lots and
+        /sign. `away` false: it stands now, and the buyer's phone is told when it
+        can fill."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse({"detail": "this account has no address on that chain"},
+                                status_code=400)
+        away = bool(said.get("away"))
+        try:
+            index = state.token_index(chain)
+            prop = index.property(int(said.get("property_id") or 0))
+            if prop is None:
+                raise ValueError("there is no such token")
+            units = parse_amount(str(said.get("amount", "")), prop["divisible"])
+            each = parse_amount(str(said.get("price", "")), True)
+            if units <= 0 or each <= 0:
+                raise ValueError("an amount and a price above zero, please")
+            whole = 100_000_000 if prop["divisible"] else 1
+            coins = -(-units * each // whole)
+            if coins < fees.DUST_LIMIT:
+                raise ValueError("that comes to less than the smallest payment the "
+                                 "network carries; buy more, or at a higher price")
+            key = _coin_pubkey(account.pubkey, chain).hex()
+            if away and not key:
+                raise ValueError("this account has not told the node its public key. Sign in again.")
+            row = _standing.add(network=chain.network, account=account.pubkey, buyer=address,
+                                buyer_key=key, property_id=prop["property_id"], units=units,
+                                coins=coins, away=away)
+            if not away:
+                _quota(account, "trade")
+                return JSONResponse({"standing": _standing_shape(row, prop)})
+            # Lots: as many as asked (10 by default), none worth less than the
+            # network's smallest payment.
+            count = max(1, min(int(said.get("lots") or 10), 25, units))
+            size = -(-units // count)
+            while size < units and -(-size * coins // units) < fees.DUST_LIMIT:
+                size += -(-units // 50) or 1
+            plan, left = [], units
+            while left > 0:
+                u = min(size, left)
+                plan.append(u)
+                left -= u
+            values = [-(-u * coins // units) + LOT_FEE + LOT_CHANGE for u in plan]
+            outputs = [(v, txbuild.p2pkh_script(address)) for v in values]
+            what = (f"set aside {len(plan)} lot{'' if len(plan) == 1 else 's'} to buy "
+                    f"{format_amount(units, prop['divisible'])} {prop['name']} while you are away")
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address, outputs, rate=fees.MIN_FEE_PER_KB, what=what,
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "trade")
+        except (tokenlib.TokenError, fundinglib.FundingError, AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+
+        def made(txid: str, sid=row["id"], sizes=plan, worth=values) -> None:
+            _standing.add_lots(sid, [{"txid": txid, "vout": n, "value": worth[n],
+                                      "units": sizes[n], "change": LOT_CHANGE}
+                                     for n in range(len(sizes))])
+
+        offer = _offers.add(account.pubkey, chain.network, unsigned, what, done=made)
+        return JSONResponse({"standing": _standing_shape(row, prop), "offer": offer.id,
+                             "chain": chain.network, **unsigned.as_json()})
+
+    @app.post("/account/standing/lots")
+    def account_standing_lots(request: Request, payload: Any = Body(None)):
+        """What the buyer signs for each lot: SINGLE|ANYONECANPAY over the lot's
+        coin and one output, their own change -- a minimal transaction per lot for
+        the browser to read back and check before it signs anything."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        s = _standing.get(str(said.get("standing") or ""))
+        if not s or s["account"] != account.pubkey:
+            return JSONResponse({"detail": "no buy order of yours by that id"}, status_code=404)
+        out = []
+        change_script = txbuild.p2pkh_script(s["buyer"])
+        for lot in _standing.lots(s["id"], standinglib.LOT_UNSIGNED):
+            coin = [{"txid": lot["txid"], "vout": lot["vout"], "value": lot["value"],
+                     "address": s["buyer"]}]
+            outs = [(lot["change"], change_script)]
+            out.append({"txid": lot["txid"], "vout": lot["vout"], "value": lot["value"],
+                        "units": lot["units"], "change": lot["change"],
+                        "raw": fundinglib.build_raw_tx([(lot["txid"], lot["vout"])], outs),
+                        "digest": fundinglib.sighash(
+                            coin, outs, 0, change_script,
+                            sighash_type=fundinglib.SINGLE_ANYONECANPAY).hex()})
+        return JSONResponse({"standing": s["id"], "lots": out})
+
+    @app.post("/account/standing/sign")
+    def account_standing_sign(request: Request, payload: Any = Body(None)):
+        """Keep the lots' signatures. Nothing is broadcast."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        s = _standing.get(str(said.get("standing") or ""))
+        if not s or s["account"] != account.pubkey:
+            return JSONResponse({"detail": "no buy order of yours by that id"}, status_code=404)
+        try:
+            _standing.sign_lots(s["id"], [str(x) for x in (said.get("signatures") or [])])
+        except standinglib.StandingError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"standing": s["id"], "status": "open"})
+
+    @app.post("/account/standing/cancel")
+    def account_standing_cancel(request: Request, payload: Any = Body(None)):
+        """Stop a buy order and forget its signatures; its lots are plain coins again."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        s = _standing.get(str(said.get("standing") or ""))
+        if not s or s["account"] != account.pubkey:
+            return JSONResponse({"detail": "no buy order of yours by that id"}, status_code=404)
+        _standing.cancel(s["id"])
+        return JSONResponse({"standing": s["id"], "status": "cancelled"})
+
+    @app.get("/account/standing/fillable")
+    def account_standing_fillable(request: Request):
+        """This account's fill-when-back buy orders that a sell order now crosses:
+        what its app signs the next time it is open."""
+        account = _signed_in_account(request)
+        out = []
+        for chain in _account_chains():
+            try:
+                index = state.token_index(chain)
+                taking = index.pending_takes()
+            except Exception:
+                continue
+            for s in _standing.mine(account.pubkey, chain.network):
+                if s["away"] or s["status"] != standinglib.OPEN:
+                    continue
+                left = s["left_units"]
+                for ask in _crossing(index, s, taking):
+                    units = min(left, ask["free"])
+                    if units <= 0:
+                        break
+                    if ask["want_amount"] * units // ask["sale_amount"] < fees.DUST_LIMIT:
+                        continue
+                    prop = index.property(s["property_id"])
+                    out.append({"standing": s["id"], "chain": chain.network, "order": ask["txid"],
+                                "units": units, "name": prop["name"] if prop else "",
+                                "version": chain.params.pubkeyhash_version})
+                    left -= units
+        return JSONResponse({"fills": out})
+
     @app.post("/account/order/take")
     def account_order_take(request: Request, payload: Any = Body(None)):
         """Buy from somebody's resting ask with their tab closed (type 29, D-189).
@@ -10317,6 +10620,10 @@ def create_app(state: AppState) -> FastAPI:
                     "to one address; take more of it")
             message = P.MetaDExTake(property_id=row["sale_property"],
                                     amount=units, order=bytes.fromhex(txid))
+            filling = _standing.get(str(said.get("standing") or ""))
+            if filling and (filling["account"] != account.pubkey
+                            or filling["property_id"] != row["sale_property"]):
+                filling = None
             outputs = [(need, txbuild.p2pkh_script(row["address"]))] + _class_c_or_b(
                 chain, address, message.encode(),
                 _coin_pubkey(account.pubkey, chain), wrap=False)
@@ -10350,8 +10657,12 @@ def create_app(state: AppState) -> FastAPI:
                     f"{token['name']} left. Nothing was sent and nothing was spent; "
                     "press Buy again for what is left.")
 
+        def took(_txid: str, which=filling, n=units) -> None:
+            if which:
+                _standing.took(which["id"], n)
+
         offer = _offers.add(account.pubkey, chain.network, unsigned, what,
-                            check=still_free)
+                            check=still_free, done=took)
         return JSONResponse({"offer": offer.id, "what": what, "chain": chain.network,
                              "name": prop["name"], "amount": shown,
                              "coins": format_amount(need, True),
@@ -15971,6 +16282,22 @@ def create_app(state: AppState) -> FastAPI:
             asked if asked in {t[0] for t in chartlib.TIMEFRAMES}
             else chartlib.pick_timeframe(points))
         book = index.book(property_id)
+        # Buy orders this node holds (standing.py) stand in the same list as the
+        # chain's bids, marked with how they fill.
+        try:
+            from fractions import Fraction
+            _fill_standing(chain)          # a page view is also a chance to fill
+            for s in _standing.open_on(chain.network, property_id):
+                book["bids"].append({
+                    "txid": f"standing-{s['id']}", "standing": s["id"], "away": bool(s["away"]),
+                    "address": s["buyer"], "tokens": s["left_units"],
+                    "coins": -(-s["left_units"] * s["coins"] // s["units"]),
+                    "price": Fraction(s["coins"], s["units"]), "pending": False,
+                    "block_height": 0, "position": 0, "sale_property": 0,
+                    "want_property": property_id})
+            book["bids"].sort(key=lambda r: -r["price"])
+        except Exception as exc:                          # noqa: BLE001 -- the chain's book stands alone
+            log.info("standing in book: %s", exc)
         # Who is looking, settled before anything is read about a wallet. This
         # page stands in the door's public trees, and until now it had one
         # reading of itself and that reading was the operator's: the node was
