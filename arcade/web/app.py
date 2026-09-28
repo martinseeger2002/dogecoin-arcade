@@ -9967,16 +9967,24 @@ def create_app(state: AppState) -> FastAPI:
                      else parse_amount(str(said.get("amount", "")), prop["divisible"]))
             if units <= 0:
                 raise tokenlib.TokenError("take an amount above zero")
+            # What other takes in the pool are already buying comes off the
+            # top, and the rest of the order stays buyable now rather than
+            # after their block (2026-09-28: a partial fill must not
+            # lock the remainder). Only an order the pool has emptied is shut.
             taking = index.pending_takes().get(txid, 0)
-            if taking:
+            free = row["reserved"] - taking
+            if free <= 0:
                 raise tokenlib.TokenError(
-                    "somebody is taking this order right now. Wait for its block "
-                    "(a minute or two) and try again, so you never pay for tokens "
-                    "that are already gone.")
-            if units > row["reserved"]:
+                    "somebody is buying all of this order right now. Wait for its "
+                    "block (a minute or two), so you never pay for tokens that are "
+                    "already gone.")
+            if units > free:
                 raise tokenlib.TokenError(
-                    f"that order holds {format_amount(row['reserved'], prop['divisible'])} "
-                    f"{prop['name']}; take that much or less")
+                    f"that order has {format_amount(free, prop['divisible'])} "
+                    f"{prop['name']} left to buy"
+                    + (f" ({format_amount(taking, prop['divisible'])} is being bought "
+                       "right now)" if taking else "")
+                    + "; take that much or less")
             # The engine's own arithmetic (state._take_order), so the payment
             # here is exactly what it checks for.
             need = row["want_amount"] * units // row["sale_amount"]
@@ -15498,6 +15506,10 @@ def create_app(state: AppState) -> FastAPI:
         for side in ("asks", "bids"):
             for order in book[side]:
                 order["taking"] = taking.get(order["txid"], 0)
+                # What is left once the pool's takes land: still buyable now.
+                order["free"] = max(0, order["tokens"] - order["taking"])
+                order["free_shown"] = format_amount(order["free"], prop["divisible"])
+                order["taking_shown"] = format_amount(order["taking"], prop["divisible"])
                 order["mine"] = order["address"] in owned
                 order["price_shown"] = f"{coins_each(order):.8f}".rstrip("0").rstrip(".")
                 order["tokens_shown"] = format_amount(order["tokens"], prop["divisible"])

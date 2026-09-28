@@ -475,11 +475,13 @@
             {%- if o.mine %}yours{%- else %} {{ o.address|who }}{% endif %}
             {%- if o.pending %}<span class="pill" title="broadcast, not yet in a block">pool</span>{% endif %}</td>
           <td style="text-align:right;white-space:nowrap">
-            {%- if o.taking %}<span class="muted" style="font-size:.72rem"
-                  title="Somebody's take of this order is waiting for its block. Buying it now could pay for tokens that are already gone.">being bought right now</span>
+            {%- if o.taking and not o.free %}<span class="muted" style="font-size:.72rem"
+                  title="Somebody's take of this whole order is waiting for its block. Buying it now could pay for tokens that are already gone.">being bought right now</span>
             {%- elif not o.mine and not o.pending and fills_ready and viewer == 'account' %}
+            {%- if o.taking %}<div class="muted" style="font-size:.7rem"
+                  title="Another buyer's take is waiting for its block; the rest of this order can be bought now.">{{ o.taking_shown }} being bought &middot; {{ o.free_shown }} left</div>{% endif %}
             <input class="take-amount" data-order="{{ o.txid }}"
-                   value="{{ o.tokens_shown }}" inputmode="decimal" autocomplete="off"
+                   value="{{ o.free_shown }}" inputmode="decimal" autocomplete="off"
                    aria-label="how much of this price"
                    title="How much of this price to ask about. Their node prices it from their order, and the answer is checked against it."
                    style="width:6.5em;padding:3px 6px;font-size:.78rem">

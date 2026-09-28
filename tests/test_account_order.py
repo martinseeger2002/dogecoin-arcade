@@ -1173,7 +1173,7 @@ def test_a_taker_buys_part_of_a_resting_ask_with_the_maker_away(node):
     own = maker["client"].post("/account/order/take", json={"order": order, "amount": "1"})
     assert own.status_code == 400 and "your own order" in own.json()["detail"]
     much = taker.post("/account/order/take", json={"order": order, "amount": "11"})
-    assert much.status_code == 400 and "holds" in much.json()["detail"]
+    assert much.status_code == 400 and "left to buy" in much.json()["detail"]
     tiny = taker.post("/account/order/take", json={"order": order, "amount": "0.00000001"})
     assert tiny.status_code == 400 and "under the" in tiny.json()["detail"]
 
@@ -1234,3 +1234,35 @@ def test_a_maker_cannot_cancel_out_from_under_a_take_in_the_same_block(node):
     assert _held(state, maker["address"], maker["pid"]) == (HELD - 4 * COIN, 0), \
         "and the cancel gave the other 6 back to the maker"
     assert _book(state, order) == [], "the rest is off the book"
+
+
+def test_the_rest_of_an_order_is_buyable_while_a_take_waits_for_its_block(node):
+    """2026-09-28: a partial fill must not lock the remainder until the
+    block. Taker A's 4 of 10 sits in the pool; taker B can buy the other 6 at
+    once, not 7; and with all 10 in flight a third buyer is told to wait."""
+    maker = _bookcoin(node, 44)
+    app, state, rpc = node
+    a, a_secret, a_pubkey, a_address = _seated(app, state, rpc, 45)
+    b, b_secret, b_pubkey, b_address = _seated(app, state, rpc, 46)
+    c, _c_secret, _c_pubkey, _c_address = _seated(app, state, rpc, 47)
+    order = _placed(maker, "ask", "10", "0.5")
+
+    first = a.post("/account/order/take", json={"order": order, "amount": "4"})
+    assert first.status_code == 200, first.text
+    _signed(a, a_secret, a_pubkey, first)                    # in the pool, not mined
+
+    over = b.post("/account/order/take", json={"order": order, "amount": "7"})
+    assert over.status_code == 400 and "6 " in over.json()["detail"] \
+        and "being bought" in over.json()["detail"], over.text
+    rest = b.post("/account/order/take", json={"order": order, "amount": "6"})
+    assert rest.status_code == 200, rest.text
+    _signed(b, b_secret, b_pubkey, rest)
+
+    shut = c.post("/account/order/take", json={"order": order, "amount": "1"})
+    assert shut.status_code == 400 and "all of this order" in shut.json()["detail"], shut.text
+
+    _settled(state, rpc)                                     # one block carries both
+    assert _held(state, a_address, maker["pid"]) == (4 * COIN, 0)
+    assert _held(state, b_address, maker["pid"]) == (6 * COIN, 0)
+    assert _held(state, maker["address"], maker["pid"]) == (HELD - 10 * COIN, 0), \
+        "all ten came out of the order's reserve, none out of the maker's free balance"
