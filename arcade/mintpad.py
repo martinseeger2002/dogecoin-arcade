@@ -229,3 +229,96 @@ def account_page(creator: str, collection: str, look: str = "spotlight",
         f"<script type=application/json id=pad>{data}</script>"
         f"<script>{_PAD_JS}</script>")
     return text.encode("utf-8")
+
+
+# --- a token mintpad: an account's own token, sold a lot at a time ------------
+#
+# 2026-09-27: "we need token mint pads as well in the mint pad wizard".
+# The seller puts one resting ask on the token's book (type 25) for the whole
+# supply they want to sell; this page sells it a LOT at a time by asking the
+# page around it to take that much of the ask (type 29, D-189) -- the buyer
+# signs, the seller can be away, and every node that serves the page reads the
+# same book through /r/book. One transaction, like the NFT pad.
+
+TOKEN_LOOKS = ("counter", "vending", "progress")
+
+_TOKEN_CSS = {
+    "counter": "",
+    "vending": """body{background:#1a1030}.card{background:#2a1850;border:6px solid #ff4fa3;border-radius:22px;
+box-shadow:0 0 0 6px #1a1030,0 0 40px #ff4fa366}h1{font-family:monospace;color:#ffe45e;letter-spacing:.06em}
+.slot{margin:14px auto;width:140px;height:90px;border-radius:12px;background:#0d0820;border:3px solid #ff4fa3;
+display:grid;place-items:center;font:700 1.6rem monospace;color:#7dffb0}
+button{background:#7dffb0;color:#0d0820;font-family:monospace}""",
+    "progress": """.bar{height:18px;border-radius:999px;background:#2e2b25;overflow:hidden;margin:12px 0 4px}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#d9a520,#ffe45e);transition:width 1s}
+.sold{font-size:.85rem;color:#9b948a}""",
+}
+
+_TOKEN_JS = r"""const P=JSON.parse(document.getElementById('pad').textContent),$=i=>document.getElementById(i);
+const say=(t,k)=>{$('say').textContent=t;$('say').className=k||''};
+const j=u=>fetch(u).then(r=>r.ok?r.json():null).catch(()=>null);
+const fmt=(u,d)=>d?(u/1e8).toLocaleString(undefined,{maximumFractionDigits:8}):u.toLocaleString();
+let pick=null;
+async function load(){const b=await j('/r/book/'+P.property+'?address='+encodeURIComponent(P.creator));
+ if(!b){say('This token is not on this node yet.','bad');return}
+ const lot=P.lot,asks=(b.asks||[]).filter(a=>!a.pending);
+ const left=asks.reduce((n,a)=>n+Math.max(0,a.tokens-a.taking),0);
+ pick=asks.find(a=>a.tokens-a.taking>=lot)||null;
+ const lots=Math.floor(left/lot);
+ $('left').innerHTML=lots?'<b>'+lots.toLocaleString()+'</b> left':'Nothing left on this mintpad right now.';
+ if(pick){const per=Math.floor(pick.coins*lot/pick.tokens)/1e8;$('price').textContent=per+' '+(per===1?'coin':'coins')+' for '+fmt(lot,b.divisible)+' '+b.name}
+ $('go').hidden=!pick;
+ const bar=document.querySelector('.bar i');if(bar&&P.total){const sold=Math.max(0,P.total-left);bar.style.width=Math.min(100,100*sold/P.total)+'%';
+  $('sold').textContent=fmt(sold,b.divisible)+' of '+fmt(P.total,b.divisible)+' '+b.name+' sold'}
+ const slot=$('slot');if(slot)slot.textContent=lots?String(lots).padStart(3,'0'):'000';
+ return b}
+let seq=0;const wait={},heard={};
+addEventListener('message',e=>{const m=e.data||{};if(m.arcade!=='take')return;if(m.heard){heard[m.seq]=1;return}
+ if(wait[m.seq]){wait[m.seq](m);delete wait[m.seq]}});
+const tall=()=>parent.postMessage({arcade:'size',height:document.documentElement.scrollHeight},'*');
+addEventListener('load',tall);setTimeout(tall,800);if(window.ResizeObserver)new ResizeObserver(tall).observe(document.body);
+$('go').onclick=async()=>{say('');await load();if(!pick)return;const n=++seq;$('go').disabled=true;
+ const got=await new Promise(ok=>{wait[n]=ok;parent.postMessage({arcade:'take',seq:n,order:pick.order,units:P.lot},'*');
+  setTimeout(()=>{if(wait[n]&&!heard[n]){delete wait[n];ok({error:'Open this mintpad on DogecoinArcade to mint from it.'})}},4000)});
+ $('go').disabled=false;
+ if(got.error)say(got.error,'bad');else if(got.ok){say('Minted! Yours when its block lands.','ok');setTimeout(load,4000)}};
+load();"""
+
+
+def account_token_page(creator: str, property_id: int, name: str, lot_units: int,
+                       total_units: int = 0, look: str = "counter",
+                       blurb: str = "", icon: str = "") -> bytes:
+    """A token mintpad: `lot_units` of token `property_id` per mint, from the
+    resting ask(s) of `creator`, in one of TOKEN_LOOKS. Everything shown is read
+    live from /r/book; the seller, the token and the lot are fixed in JSON."""
+    import html as _html
+    if not creator or not property_id or lot_units <= 0:
+        raise MintpadError("a token mintpad needs the seller, the token and a lot")
+    look = look if look in TOKEN_LOOKS else "counter"
+    data = json.dumps({"creator": creator, "property": int(property_id),
+                       "lot": int(lot_units), "total": int(total_units or 0),
+                       "look": look}).replace("</", "<\\/")
+    top = ""
+    if look == "vending":
+        top = '<div class="slot" id="slot">000</div>'
+    elif icon:
+        top = f'<img class="cover" src="/content/{_html.escape(icon)}" alt="">'
+    bar = ('<div class="bar"><i></i></div><div class="sold" id="sold"></div>'
+           if look == "progress" else "")
+    words = _html.escape(" ".join((blurb or "").split())[:300])
+    button = {"vending": "INSERT COIN"}.get(look, "Mint")
+    text = (
+        "<!doctype html><meta charset=utf-8>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        f"<title>{_html.escape(name)} mintpad</title>"
+        f"<style>{_BASE_CSS}{_TOKEN_CSS[look]}</style>"
+        f"<div class=card>{top}<h1>{_html.escape(name)}</h1>"
+        + (f"<p>{words}</p>" if words else "")
+        + f"{bar}<p class=left id=left>…</p><p class='m' id=price></p>"
+        f"<button id=go hidden>{button}</button><p id=say></p>"
+        "<p class='m note'>Each mint is one transaction you sign: the tokens come out of "
+        "the seller's standing order at its own price, and the seller does not need to "
+        "be online.</p></div>"
+        f"<script type=application/json id=pad>{data}</script>"
+        f"<script>{_TOKEN_JS}</script>")
+    return text.encode("utf-8")

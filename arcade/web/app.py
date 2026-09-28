@@ -9826,7 +9826,8 @@ def create_app(state: AppState) -> FastAPI:
                 raise tokenlib.TokenError(
                     "that is your own order; cancel it instead of taking it")
             prop = index.property(row["sale_property"])
-            units = parse_amount(str(said.get("amount", "")), prop["divisible"])
+            units = (int(said["units"]) if str(said.get("units") or "").isdigit()
+                     else parse_amount(str(said.get("amount", "")), prop["divisible"]))
             if units <= 0:
                 raise tokenlib.TokenError("take an amount above zero")
             taking = index.pending_takes().get(txid, 0)
@@ -13484,6 +13485,33 @@ def create_app(state: AppState) -> FastAPI:
                         "maker": got["creator"]})
         return out
 
+    @app.get("/r/book/{property_id}")
+    def r_book(property_id: int, address: str = ""):
+        """A token's resting sell orders, for a page to read (the token mintpad:
+        arcade/mintpad.py account_token_page). Public, like the order book on
+        the pair page: every order is on the chain. `taking` is what a take in
+        the pool is already buying of an order, so a page never offers what is
+        already on its way to somebody else."""
+        chain, index = _token_chain()
+        prop = index.property(property_id)
+        if prop is None:
+            return contentlib._missing("no such token")
+        try:
+            book = index.book(property_id)
+            taking = index.pending_takes()
+        except Exception:
+            book, taking = {"asks": []}, {}
+        asks = []
+        for o in book.get("asks", []):
+            if address and o["address"] != address:
+                continue
+            asks.append({"order": o["txid"], "address": o["address"],
+                         "tokens": int(o["tokens"]), "coins": int(o["coins"]),
+                         "pending": bool(o.get("pending")),
+                         "taking": int(taking.get(o["txid"], 0))})
+        return contentlib._json({"property_id": property_id, "name": prop["name"],
+                                 "divisible": bool(prop["divisible"]), "asks": asks})
+
     @app.get("/r/mintpad/{creator}/{name}")
     def r_mintpad(creator: str, name: str):
         """What a collection's mintpad has left, and one open listing chosen at
@@ -13580,6 +13608,48 @@ def create_app(state: AppState) -> FastAPI:
             if row and row.get("status", "open") == "open" and row["id"] not in done:
                 out.append(row)
         return out
+
+    @app.post("/account/tokenpad/inscribe")
+    def account_tokenpad_inscribe(request: Request, payload: Any = Body(None)):
+        """Offer the inscription of a token mintpad (2026-09-27: "we need
+        token mint pads as well in the mint pad wizard"): `lot` of the token per
+        mint, sold out of this account's own resting ask, in one of the token
+        looks. One transaction; its JSON says {tokenpad: {creator, property_id,
+        lot, look}} so any node can find it."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        index = state.token_index(chain)
+        try:
+            prop = index.property(int(said.get("property_id") or 0))
+            if prop is None:
+                raise ValueError("which token?")
+            lot = parse_amount(str(said.get("lot") or ""), bool(prop["divisible"]))
+            total = parse_amount(str(said.get("total") or "0") or "0", bool(prop["divisible"])) \
+                if str(said.get("total") or "").strip() else 0
+            if lot <= 0:
+                raise ValueError("how many tokens go in one mint?")
+            look = str(said.get("look") or "counter")
+            face = _faces_for(index, [prop]).get(prop["property_id"], {})
+            content = mintpadlib.account_token_page(
+                address, prop["property_id"], prop["name"], lot, total, look,
+                str(said.get("blurb") or ""), face.get("icon", ""))
+        except (ValueError, AmountError, mintpadlib.MintpadError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        meta = json.dumps({"name": f"{prop['name']} mintpad",
+                           "tokenpad": {"creator": address,
+                                        "property_id": prop["property_id"],
+                                        "lot": lot, "look": look}})
+        try:
+            return _inscribe_start(account, chain, address,
+                                   {"name": f"{prop['name']} mintpad", "json": meta},
+                                   content, "text/html")
+        except (fundinglib.FundingError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
 
     @app.post("/account/mintpad/announce")
     def account_mintpad_announce(request: Request, payload: Any = Body(None)):

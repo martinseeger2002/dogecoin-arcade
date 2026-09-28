@@ -1187,17 +1187,24 @@ def test_a_taker_buys_part_of_a_resting_ask_with_the_maker_away(node):
 
     assert _held(state, t_address, maker["pid"]) == (4 * COIN, 0), \
         "the taker holds what they paid for"
-    assert _held(state, maker["address"], maker["pid"]) == (HELD - 10 * COIN, 6 * COIN), \
-        "the maker's reserve gave exactly 4, and nothing came out of their free balance"
+
+    # A token mintpad asks in raw units rather than typed words (mintpad.py).
+    by_units = taker.post("/account/order/take", json={"order": order, "units": str(1 * COIN)})
+    assert by_units.status_code == 200, by_units.text
+    _signed(taker, t_secret, t_pubkey, by_units)
+    _settled(state, rpc)
+    assert _held(state, t_address, maker["pid"]) == (5 * COIN, 0), "one more, by units"
+    assert _held(state, maker["address"], maker["pid"]) == (HELD - 10 * COIN, 5 * COIN), \
+        "the maker's reserve gave exactly 4 and then 1, and nothing came out of their free balance"
     (rest,) = _book(state, order)
-    assert rest["sale_amount"] == 6 * COIN and rest["want_amount"] == 3 * COIN, \
+    assert rest["sale_amount"] == 5 * COIN and rest["want_amount"] == int(2.5 * COIN), \
         "the rest of the ask stands, at its own price"
 
     # And it is a trade: the chart, LAST and the 24h numbers read it (a tester,
     # 2026-09-27: Buy fills never reached the pair page).
     index = state.token_index(state.messaging)
     mine = [t for t in index.trades() if t["give"].property_id == maker["pid"]]
-    assert mine and mine[0]["give"].amount == 4 * COIN and mine[0]["take"].amount == 2 * COIN
+    assert any(t["give"].amount == 4 * COIN and t["take"].amount == 2 * COIN for t in mine), mine
     page = " ".join(maker["client"].get(f"/exchange/pair/{maker['pid']}").text.split())
     assert "No trades yet" not in page
 

@@ -48,3 +48,29 @@ def test_only_a_seller_can_put_a_pad_on_the_chain(client):
     _seat(app)
     answer = app.post("/account/mintpad/inscribe", json={"collection": "Not Mine"})
     assert answer.status_code in (400, 404), answer.text
+
+
+def test_a_token_mintpad_is_one_transaction_in_every_look():
+    """2026-09-27: token mintpads in the wizard. The page sells a lot at
+    a time out of the seller's standing ask, reading /r/book live."""
+    for look in mintpad.TOKEN_LOOKS:
+        page = mintpad.account_token_page(SELLER, 14, "Ghost Credits", 100 * 10**8,
+                                          10_000 * 10**8, look, "spend them", "ab" * 32)
+        assert len(page) < 7000, look
+        text = page.decode()
+        data = json.loads(re.search(r'<script type=application/json id=pad>(.*?)</script>',
+                                    text).group(1))
+        assert data["property"] == 14 and data["lot"] == 100 * 10**8 and data["look"] == look
+        assert "/r/book/" in text and "arcade:'take'" in text
+    odd = mintpad.account_token_page(SELLER, 14, "<b>x</b>", 5, 0, "counter",
+                                     "<img src=x onerror=1>").decode()
+    assert "<b>x</b>" not in odd and "<img src=x" not in odd
+
+
+def test_the_book_is_readable_by_a_page_and_a_bad_token_pad_is_refused(client):
+    from test_me_page import _seat
+    app, state = client
+    assert app.get("/r/book/99999").status_code == 404
+    _seat(app)
+    answer = app.post("/account/tokenpad/inscribe", json={"property_id": 99999, "lot": "1"})
+    assert answer.status_code == 400, answer.text

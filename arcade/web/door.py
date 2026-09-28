@@ -221,7 +221,7 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # the Restore page's new encrypted wallet, signed in by the words' key
                "/account/vault",
                # how the account's own mintpad page looks (presentation only)
-               "/account/mintpad", "/account/mintpad/inscribe", "/account/mintpad/announce", "/account/mintpad/announced",
+               "/account/mintpad", "/account/mintpad/inscribe", "/account/tokenpad/inscribe", "/account/mintpad/announce", "/account/mintpad/announced",
                "/account/claim", "/account/send", "/account/inscribe", "/account/inscribe/abandon",
                "/account/run/start", "/account/run", "/account/run/piece",
                "/account/run/stop",
