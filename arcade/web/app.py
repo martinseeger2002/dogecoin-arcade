@@ -1068,7 +1068,9 @@ def create_app(state: AppState) -> FastAPI:
                    message: str = Form(""), send: str = Form(""),
                    listings: str = Form(""), trade: str = Form(""),
                    claims: str = Form(""), inscribe: str = Form(""),
-                   issue: str = Form(""), payload: str = Form("")):
+                   issue: str = Form(""), payload: str = Form(""),
+                   boost_bytes: str = Form(""), boost_days: str = Form(""),
+                   boost_price: str = Form(""), boost_asset: str = Form("")):
         """How much of this node one account may take.
 
         The defaults (arcade/accounts.py) are sized for a node that seats
@@ -1110,8 +1112,28 @@ def create_app(state: AppState) -> FastAPI:
             except ValueError as exc:
                 state.flash(str(exc), "err")
                 return RedirectResponse("/", status_code=303)
+        # What extra room costs (2026-09-28): empty price = none sold.
+        price = boost_price.strip()
+        try:
+            asset = int(boost_asset or 0)
+            if asset < 0:
+                raise ValueError
+            if price:
+                parse_amount(price, True)
+        except (ValueError, AmountError):
+            state.flash("A boost's price is an amount, and its asset is 0 for coins "
+                        "or a token's number.", "err")
+            return RedirectResponse("/", status_code=303)
         for kind, value in numbers.items():
             state.set_setting(f"quota:{kind}", value)
+        state.set_setting("boost:price", price)
+        state.set_setting("boost:asset", asset)
+        for key, said, default in (("boost:bytes", boost_bytes, accountslib.BYTES_PER_DAY),
+                                   ("boost:days", boost_days, 30)):
+            try:
+                state.set_setting(key, max(1, int(said or default)))
+            except ValueError:
+                state.set_setting(key, default)
         state.flash("Those are the allowances accounts have here now. Each "
                     "one is measured again from the next thing they ask for.",
                     "ok")
@@ -8119,6 +8141,23 @@ def create_app(state: AppState) -> FastAPI:
         except accountslib.AccountError as exc:
             raise ValueError(str(exc))
 
+    def _boost_on_sale() -> dict | None:
+        """What the operator sells extra room for, as a page says it."""
+        terms = accountslib.boost_terms(state.settings())
+        if not terms or not state.operator:
+            return None
+        chain, index = _token_chain()
+        name = chain.label + " coins"
+        if terms["asset"]:
+            try:
+                prop = index.property(terms["asset"])
+            except Exception:
+                prop = None
+            if prop is None:
+                return None
+            name = prop["name"]
+        return {**terms, "asset_name": name, "chain": chain.network}
+
     def _note_payment(txid: str, pubkey: str, address: str,
                       network: str = "") -> None:
         """Record an output this node just paid to an account.
@@ -8523,6 +8562,7 @@ def create_app(state: AppState) -> FastAPI:
         # reading looks broken rather than limited.
         said["quota"] = state.accounts().room(
             account.pubkey, caps=accountslib.limits(state.settings()))
+        said["boost"] = _boost_on_sale()
         return JSONResponse(said)
 
     @app.get("/me", response_class=HTMLResponse)
@@ -9936,6 +9976,64 @@ def create_app(state: AppState) -> FastAPI:
                             "per_sweep": fundinglib.DUST_SWEEP_MAX,
                             "version": chain.params.pubkeyhash_version})
         return JSONResponse({"chains": out})
+
+    @app.post("/account/boost")
+    def account_boost(request: Request, payload: Any = Body(None)):
+        """Offer the payment that buys extra room from this node's operator.
+
+        2026-09-28: "users should be able to pay the operator for extra
+        usage ... in whatever the operator decides, coins [or] tokens". One
+        transaction from the account's own coins, signed in its tab: coins to
+        the operator's address, or a token sent there. The boost counts from
+        the moment the payment is broadcast (Offer.done)."""
+        account = _signed_in_account(request)
+        terms = _boost_on_sale()
+        if not terms:
+            return JSONResponse({"detail": "this node does not sell extra room"},
+                                status_code=400)
+        chain, index = _token_chain()
+        address = _account_address(account.pubkey, chain)
+        pay_to = _account_address(state.operator, chain)
+        if not address or not pay_to:
+            return JSONResponse({"detail": "there is no address to pay from or to"},
+                                status_code=400)
+        if pay_to == address:
+            return JSONResponse({"detail": "that is the operator's own account"},
+                                status_code=400)
+        try:
+            if terms["asset"]:
+                prop = index.property(terms["asset"])
+                amount = parse_amount(terms["price"], prop["divisible"])
+                held = index.balance(address, terms["asset"])
+                if amount > held:
+                    raise tokenlib.TokenError(
+                        f"a boost costs {terms['price']} {prop['name']} and this "
+                        f"account holds {format_amount(held, prop['divisible'])}.")
+                outputs = _class_c_or_b(chain, address,
+                                        tokenlib.send_payload(terms["asset"], amount),
+                                        _coin_pubkey(account.pubkey, chain), wrap=False)
+                outputs.append((sendermod.OUTPUT_VALUE, txbuild.p2pkh_script(pay_to)))
+            else:
+                amount = parse_amount(terms["price"], True)
+                _above_dust(amount, "price")
+                outputs = [(amount, txbuild.p2pkh_script(pay_to))]
+            what = (f"pay {terms['price']} {terms['asset_name']} for "
+                    f"{terms['bytes']:,} more bytes a day for {terms['days']} days")
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address, outputs, rate=fees.MIN_FEE_PER_KB,
+                    what=what, exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+        except (tokenlib.TokenError, fundinglib.FundingError, AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+
+        def paid(txid: str) -> None:
+            state.accounts().add_boost(account.pubkey, txid, terms["bytes"], terms["days"],
+                                       paid=f"{terms['price']} {terms['asset_name']}")
+
+        offer = _offers.add(account.pubkey, chain.network, unsigned, what, done=paid)
+        return JSONResponse({"offer": offer.id, "chain": chain.network, "boost": terms,
+                             **unsigned.as_json()})
 
     @app.post("/account/dust/sweep")
     def account_dust_sweep(request: Request, payload: Any = Body(None)):

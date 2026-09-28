@@ -313,6 +313,53 @@ function drawWallets(said) {
   $("wallets").appendChild(open);
 }
 
+// Extra room, bought from this node's operator (2026-09-28).
+function drawBoost(boost) {
+  let box = document.getElementById("boost-box");
+  if (!boost) { if (box) box.remove(); return; }
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "boost-box";
+    box.className = "row";
+    box.style.cssText = "gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px";
+    $("room-grid").after(box);
+  }
+  box.replaceChildren();
+  const say = document.createElement("span");
+  say.className = "muted";
+  say.textContent = `Need more room? ${kilos(boost.bytes)} more a day for ${boost.days} days, `
+    + `for ${boost.price} ${boost.asset_name}, paid to this node's operator.`;
+  const buy = document.createElement("button");
+  buy.className = "btn small";
+  buy.textContent = "Buy a boost";
+  buy.onclick = async () => {
+    buy.disabled = true;
+    try {
+      const wallet = await import("/wallet.js");
+      const asked = await fetch("/account/boost", {method: "POST",
+        headers: {"Content-Type": "application/json"}, body: "{}"});
+      const offer = await asked.json();
+      if (!asked.ok) throw new Error(offer.detail || "no boost for sale here");
+      const CHAIN = {network: offer.chain, version: ARCADE_CHAIN.version};
+      const held = (await wallet.opened(CHAIN)) || await arcadeKeys(CHAIN);
+      const shown = await wallet.checked(offer, held);
+      const ok = await arcadeAsk(`Buy a boost for ${boost.price} ${boost.asset_name}?`,
+        `${kilos(boost.bytes)} more a day for ${boost.days} days, from the moment it is sent. `
+        + `Network fee ${shown.coinsOf(shown.fee)}. It is a payment: it cannot be taken back.`,
+        "Buy the boost");
+      if (!ok) { buy.disabled = false; return; }
+      await wallet.confirm(held, offer);
+      arcadeToast("Boost bought. The extra room is yours now.");
+      location.reload();
+    } catch (e) {
+      buy.disabled = false;
+      say.textContent = String(e.message || e);
+      say.style.color = "var(--bad)";
+    }
+  };
+  box.append(say, buy);
+}
+
 // The node's numbers for one account, and what of them is used. Read from
 // the node rather than copied from a page: an allowance the browser
 // remembered would be a number that a second tab makes wrong.
@@ -329,8 +376,10 @@ function drawRoom(said) {
   }
   if (quota.bytes) {
     rows.push([`${kilos(quota.bytes.used)} of ${kilos(quota.bytes.limit)}`,
-               "bytes a day on the chain"]);
+               "bytes a day on the chain"
+               + (quota.bytes.boost ? ` (with ${kilos(quota.bytes.boost)} from a boost)` : "")]);
   }
+  drawBoost(said.boost);
   // The same bytes, by the thing that carried them. The row above says a
   // person has run out of room and says nothing about what spent it, which is
   // the one question they have when they run out (a tester). Counted by

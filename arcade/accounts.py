@@ -175,7 +175,36 @@ def limits(overrides: dict | None = None) -> dict:
             "bytes": _number(said, "quota:bytes", BYTES_PER_DAY, BYTE_CEILING)}
 
 
+def boost_terms(overrides: dict | None = None) -> dict | None:
+    """What this node sells extra room for, or None when it sells none.
+
+    2026-09-28: "users should be able to pay the operator for extra
+    usage ... paid in whatever the operator decides, coins [or] tokens". A
+    boost is `bytes` more a day for `days` days, for `price` of `asset` (0 =
+    the chain's coin, otherwise a token's property id), paid to the operator.
+    No price set means nothing is for sale."""
+    said = overrides or {}
+    price = str(said.get("boost:price") or "").strip()
+    if not price:
+        return None
+    try:
+        asset = max(0, int(said.get("boost:asset") or 0))
+    except (TypeError, ValueError):
+        asset = 0
+    return {"bytes": _number(said, "boost:bytes", BYTES_PER_DAY, BYTE_CEILING) or BYTES_PER_DAY,
+            "days": _number(said, "boost:days", 30, 366) or 30,
+            "price": price, "asset": asset}
+
+
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS boost (
+    txid   TEXT PRIMARY KEY,
+    pubkey TEXT NOT NULL,
+    bytes  INTEGER NOT NULL,
+    at     INTEGER NOT NULL,
+    until  INTEGER NOT NULL,
+    paid   TEXT NOT NULL DEFAULT ''
+);
 -- One row per account ever seated here. `released` is when the seat was
 -- given back (idle sweep, or the person asked); a released row is kept
 -- rather than deleted so that coming back restores the name and the join
@@ -472,6 +501,22 @@ class Accounts:
             "SELECT COALESCE(SUM(bytes), 0) FROM deed WHERE pubkey = ? AND at > ?",
             (pubkey, now - DAY)).fetchone()[0]
 
+    def boosted(self, pubkey: str, *, now: int | None = None) -> int:
+        """Extra bytes a day this account has paid the operator for, still running."""
+        now = int(now if now is not None else time.time())
+        return int(self.conn.execute(
+            "SELECT COALESCE(SUM(bytes), 0) FROM boost WHERE pubkey = ? AND until > ?",
+            (pubkey, now)).fetchone()[0])
+
+    def add_boost(self, pubkey: str, txid: str, nbytes: int, days: int, paid: str = "",
+                  *, now: int | None = None) -> None:
+        """Count a paid boost from the moment its payment went out."""
+        now = int(now if now is not None else time.time())
+        self.conn.execute(
+            "INSERT OR IGNORE INTO boost (txid, pubkey, bytes, at, until, paid) "
+            "VALUES (?,?,?,?,?,?)", (txid, pubkey, int(nbytes), now,
+                                     now + int(days) * DAY, paid))
+
     def pushed_by_kind(self, pubkey: str, *,
                        now: int | None = None) -> list[dict]:
         """Which of this account's writes carried the bytes of the last day.
@@ -534,10 +579,11 @@ class Accounts:
                     f"{max(1, round(((oldest or now) + HOUR - now) / 60))} "
                     f"minutes.")
         if nbytes:
-            room = caps["bytes"] - self.pushed(pubkey, now=now)
+            allowed = int(caps["bytes"]) + self.boosted(pubkey, now=now)
+            room = allowed - self.pushed(pubkey, now=now)
             if int(nbytes) > room:
                 raise AccountError(
-                    f"that is more than the {caps['bytes']:,} bytes a day one "
+                    f"that is more than the {allowed:,} bytes a day this "
                     f"account may put on the chain here, and "
                     f"{max(room, 0):,} of them are left.")
         self.conn.execute(
@@ -561,8 +607,10 @@ class Accounts:
                          "limit": int(cap),
                          "used": self.used(pubkey, kind, now=now)}
                         for kind, cap in caps["hour"].items()],
-            "bytes": {"limit": int(caps["bytes"]),
-                      "used": self.pushed(pubkey, now=now)},
+            "bytes": {"limit": int(caps["bytes"]) + self.boosted(pubkey, now=now),
+                      "used": self.pushed(pubkey, now=now),
+                      **({"boost": self.boosted(pubkey, now=now)}
+                         if self.boosted(pubkey, now=now) else {})},
             "by_kind": self.pushed_by_kind(pubkey, now=now),
         }
 

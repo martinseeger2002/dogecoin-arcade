@@ -94,6 +94,23 @@
         <input id="q-bytes" autocomplete="off" type="number" min="0" step="1000"
                name="payload" value="{{ quota.bytes }}"></div>
     </div>
+    {# Extra room for sale (2026-09-28): accounts pay you, in coins or a
+       token you choose. An empty price sells nothing. #}
+    <h3 style="margin:14px 0 6px">Sell extra room</h3>
+    <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">
+      <div><label for="b-bytes">Extra bytes a day</label>
+        <input id="b-bytes" autocomplete="off" type="number" min="1000" step="1000"
+               name="boost_bytes" value="{{ state.setting('boost:bytes', 250000) }}"></div>
+      <div><label for="b-days">For how many days</label>
+        <input id="b-days" autocomplete="off" type="number" min="1" step="1"
+               name="boost_days" value="{{ state.setting('boost:days', 30) }}"></div>
+      <div><label for="b-price">Price (empty = not for sale)</label>
+        <input id="b-price" autocomplete="off" inputmode="decimal"
+               name="boost_price" value="{{ state.setting('boost:price', '') }}"></div>
+      <div><label for="b-asset">Paid in (0 = coins, or a token's number)</label>
+        <input id="b-asset" autocomplete="off" type="number" min="0" step="1"
+               name="boost_asset" value="{{ state.setting('boost:asset', 0) }}"></div>
+    </div>
     <button class="btn primary" type="submit">Save</button>
     <p class="muted" style="margin:10px 0 0;font-size:.86rem">
       A post, a reaction, a message and a send are each one transaction. A
