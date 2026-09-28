@@ -135,13 +135,20 @@ def sold(home, piece, sats=250000000, seller="nSeller", height=400,
 
 
 def tag(home, address, name):
+    """A claimed @tag, filed where the interface files one: the messaging
+    chain's index, which is what `who` reads (D-032: tags are per-chain and
+    only claimed there). The ledger copy is what a pre-D-032 fixture wrote,
+    and nothing on these pages reads it any more."""
     from arcade.db import Database
+    from arcade.state import install_schema
 
-    db = Database(home / "main-ledger.sqlite")
-    db.conn.execute("INSERT INTO tag(tag,address,claimed_txid,block_height,position) "
-                    "VALUES(?,?,?,?,?)", (name, address, "e" * 64, 320, 0))
-    db.conn.commit()
-    db.close()
+    for path in (home / "regtest-ledger.sqlite", home / "main-ledger.sqlite"):
+        db = Database(path)
+        install_schema(db)
+        db.conn.execute("INSERT INTO tag(tag,address,claimed_txid,block_height,position) "
+                        "VALUES(?,?,?,?,?)", (name, address, "e" * 64, 320, 0))
+        db.conn.commit()
+        db.close()
 
 
 def order_of(body, *needles):
@@ -205,7 +212,8 @@ def test_an_icon_this_node_cannot_draw_is_not_shown_as_one(client):
     body = app.get("/tokens").text
     assert "/content/" + "9" * 64 not in body
     assert "Ghostcoin" in body, "the token is still listed, with a plain mark"
-    assert "GH" not in body, "two letters of a name read as a ticker; nothing here has one"
+    table = body[body.index("All tokens"):]
+    assert "GH" not in table, "two letters of a name read as a ticker; nothing here has one"
 
 
 def test_an_icon_that_is_not_an_inscription_is_refused_before_it_is_paid_for(
@@ -318,7 +326,9 @@ def test_every_card_names_both_ends_and_offers_for_it(client):
 
     body = app.get("/exchange/collection/nMe/Doge%20Punks").text
     tiles = grid(body)
-    assert tiles.count("by @punkmaker") >= 5, "who made each one"
+    # `who` renders a person as a link, so this counts the links, not the
+    # words: between "by" and the name there is only the template's newline.
+    assert tiles.count('href="/u/punkmaker"') >= 5, "who made each one"
     assert tiles.count("held by") >= 5, "and who holds it now"
     assert tiles.count("Make offer") >= 5, "every card offers for it"
     assert 'action="/exchange/offer"' in tiles
@@ -393,8 +403,10 @@ def test_a_set_describes_itself_on_its_first_piece(client):
 
     body = app.get("/exchange/collection/nMe/Doge%20Punks").text
     assert "Five hand drawn punks" in body, "the description, whitespace tidied"
-    assert 'href="https://punks.example"' in body
-    assert "https://x.com/dogepunks" in body, "a handle becomes a link"
+    assert 'href="https://punks.example"' in body, "the set's own site, the only link"
+    # No other platforms' links (2026-09-25): a Twitter handle or a
+    # Discord address written onto the #1 is data the page does not show.
+    assert "x.com" not in body and "discord.com" not in body
     assert "javascript:alert(1)" not in body, "a link that is not http(s) is not a link"
     # And it is still filed by its name: an object where a string was
     # expected must not move a piece out of its own collection.
@@ -566,7 +578,8 @@ def test_the_sell_page_says_a_chain_that_reads_no_asks_yet(client, monkeypatch):
     wallet_holding(state, monkeypatch, CREATOR)
 
     body = app.get(f"/exchange/sell/{PIECES[0]}").text
-    assert "Doge Punks #1" in body and "held by nMe" in body
+    assert "Doge Punks #1" in body
+    assert 'title="nMe"' in body, "the holder named by the who filter, as everywhere"
     assert 'name="amount"' in body, "it asks a price"
     assert "Prices are read on mainnet from block" in body
 

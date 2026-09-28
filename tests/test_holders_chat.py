@@ -25,17 +25,18 @@ def test_the_messages_page_keeps_the_chats_in_step(public):
     assert "mail.tendHolderChats(keys, me)" in page
 
 
-def test_the_collection_page_itself_carries_the_switch(client):
-    """/collections/<creator>/<set> as well as the market page (filming, 2026-09-26)."""
-    import sys, pathlib
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+def test_the_collection_page_itself_carries_the_switch(public):
+    """/collections/<creator>/<set> as well as the market page (filming, 2026-09-26).
+
+    The switch is drawn on the PUBLIC copy (2026-09-28: it is drawn from the
+    public door, not from a state flag a test can wave), so this asks as an
+    edge request and the set is indexed where the pages look -- mainnet.
+    """
+    app, state = public
+    (state.home / "tokens-chain").write_text("main\n")
+    state._token_chain = None
     from test_collection_web import index_with_a_collection
-    app, state = client
     index_with_a_collection(state.home)
-    state.public = True
-    try:
-        page = app.get("/collections/nMe/Doge%20Punks").text
-    finally:
-        state.public = False
-    if "Doge Punks" in page:
-        assert 'id="hc-box"' in page, "the holders' chat switch is on the collection page"
+    page = app.get("/collections/nMe/Doge%20Punks", headers=EDGE).text
+    assert "Doge Punks" in page
+    assert 'id="hc-box"' in page, "the holders' chat switch is on the collection page"
