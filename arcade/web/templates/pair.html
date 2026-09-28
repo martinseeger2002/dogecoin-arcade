@@ -29,7 +29,7 @@
     <div class="tick"><b>
       {%- if day.change is not none %}<span class="{{ 'up' if day.change >= 0 else 'down' }}">
         {{ '+' if day.change >= 0 }}{{ "%.1f"|format(day.change) }}%</span>
-      {%- else %}&mdash;{% endif %}</b><span>24h change</span></div>
+      {%- else %}&mdash;{% endif %}</b><span>24h change{% if day.new %} &middot; new{% endif %}</span></div>
     <div class="tick"><b>{% if day.high is not none %}{{ "%.8f"|format(day.high) }}{% else %}&mdash;{% endif %}</b>
       <span>24h high</span></div>
     <div class="tick"><b>{% if day.low is not none %}{{ "%.8f"|format(day.low) }}{% else %}&mdash;{% endif %}</b>
