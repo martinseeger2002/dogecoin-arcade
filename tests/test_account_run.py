@@ -19,6 +19,8 @@ seat, same address the node cannot sign for, same four coins.
 import pathlib
 import sys
 
+import pytest
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_account_claim import _catch_up, _sign_in                   # noqa: E402
 from test_account_inscribe import arcade, seated                    # noqa: E402,F401
@@ -63,6 +65,21 @@ def _next(app, pubkey, run_id):
     done = _sign_and_send(app, pubkey, offer)
     assert done.status_code == 200, done.text
     return offer, done.json()["txid"]
+
+
+@pytest.fixture(autouse=True)
+def _faucet_off(seated):
+    """The daily top-off is switched off for this file, as it is for the one
+    test in `test_account_order` that noticed it first (app.py:8074, wired in
+    `884db08`): any page that reads a balance pays the shortfall to that account
+    in a background thread, so the `getrawmempool == []` and `balance == held`
+    lines below stopped being a fact about the refusal and became a race with a
+    gift. Reading `/account` to prove an account holds nothing is the very act
+    that hands it a coin. The feature is what the operator asked for; what had to go
+    is the assumption that an account stays as it was left. `faucet: 0` is the
+    operator's own switch, so no rule is invented here."""
+    app, state, rpc, pubkey, mine = seated
+    state.set_setting("faucet", 0)
 
 
 def test_an_account_runs_a_collection_one_piece_at_a_time(seated, tmp_path):
