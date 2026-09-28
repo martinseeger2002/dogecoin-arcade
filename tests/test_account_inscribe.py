@@ -427,8 +427,14 @@ def test_a_confirmation_that_was_never_signed_costs_the_hour_once(seated):
     assert "offer" in again.json(), \
         "the second ask still has to hand something over to sign"
     assert _spent(app) == 1, "the same file asked twice is one gesture"
-    assert rpc.call("getrawmempool") == [], \
-        "and nothing went out while they were deciding"
+    # Not "is the mempool empty" -- it is a shared regtest node and another
+    # test's funding transaction can be in it, mined nothing in between. What
+    # has to be true is that none of THIS offer's coins has gone out.
+    named = {(one["txid"], one["vout"]) for one in again.json()["inputs"]}
+    gone = [txid for txid in rpc.call("getrawmempool")
+            if any((vin["txid"], vin["vout"]) in named
+                   for vin in rpc.call("getrawtransaction", txid, True)["vin"])]
+    assert gone == [], "and nothing went out while they were deciding"
 
     other = _ask(app, b"a different file, a different gesture", name="b")
     assert other.status_code == 200, other.text

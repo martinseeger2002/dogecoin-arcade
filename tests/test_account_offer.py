@@ -31,7 +31,7 @@ from test_account_claim import _catch_up, _sign_in                   # noqa: E40
 from test_funding import _pubkey, _sign                              # noqa: E402
 from test_web import app_state, client                               # noqa: F401,E402
 
-from arcade import encoding, inscriptions as I                       # noqa: E402
+from arcade import encoding, funding, inscriptions as I                 # noqa: E402
 from arcade import payload as P                                      # noqa: E402
 from arcade.messaging.scanner import Scanner                         # noqa: E402
 from arcade.script import b58check_encode, hash160                   # noqa: E402
@@ -152,6 +152,27 @@ def _signed(who, secret, pubkey, offer):
         "offer": offer["offer"], "pubkey": pubkey.hex(),
         "signatures": [_sign(secret, bytes.fromhex(d)).hex()
                        for d in offer["sighashes"]]})
+
+
+def _listed(who, secret, pubkey, piece: str, amount: str = "2") -> None:
+    """File the signed leg that makes a piece buyable in one press.
+
+    An ask -- one OP_RETURN saying "this piece, this price" -- is not something
+    a stranger can take. It needs the holder to accept, so since the one-press
+    rule (2026-09-27) the grid a buyer looks at shows it as sold-out
+    scenery rather than as for sale. What puts a row there is the pre-signed
+    leg filed in this node's book: two digests, one standing over the bytes
+    naming the piece and one over the price, each signed SINGLE_ANYONECANPAY
+    and never broadcast. Nothing is mined, so nothing needs settling.
+    """
+    said = who.post("/account/list", json={"piece": piece,
+                                           "amount": amount}).json()
+    filed = who.post("/account/list/sign", json={
+        "raw": said["raw"], "amount": amount, "pubkey": pubkey.hex(),
+        "signatures": [_sign(secret, bytes.fromhex(dig),
+                             funding.SINGLE_ANYONECANPAY).hex()
+                       for dig in said["sighashes"]]})
+    assert filed.status_code == 200, filed.text
 
 
 def _payload(txid: str, price: int) -> bytes:
@@ -478,17 +499,21 @@ def test_the_offers_page_shows_an_account_only_offers_of_theirs(node):
 def test_the_market_page_prices_for_whoever_is_looking(node):
     """The same table, three sentences, and none of them a refused route.
 
-    A listing row offers one of two things: a form to make an offer, or the
-    way to change a price that is already yours. Both of those used to be the
-    operator's -- the form spends this node's wallet, and the price page lives
-    under `/exchange/sell/`, which a public instance does not open -- so an
-    account saw two controls it could not use. Here the first becomes the piece
-    page, which is where an account's own offer form already lives, and the
-    second becomes the account's NFTs page, which is where listing lives.
+    A listing row used to offer an account one of two things: the operator's
+    form to make an offer, or the operator's page to change a price -- the form
+    spends this node's wallet, and the price page lives under `/exchange/sell/`,
+    which a public instance does not open -- so an account saw two controls it
+    could not use. The first became the one press: a listed piece hands an
+    account a Buy button that fills the seller's resting order, which is the
+    same thing whether or not the seller is awake. The second became the
+    account's NFTs page, which is where listing lives.
 
-    The operator's copy is in this test for the same reason the piece page is:
-    the branch has to be a per-viewer read and not a swap, and the way to know
-    it stayed a read is to ask the same page as the person it was always for.
+    Both prices are said twice, and that is the point rather than clutter. The
+    ask on the chain is what the operator's copy still reads, so the branch has
+    to be a per-viewer read and not a swap -- the way to know it stayed a read
+    is to ask the same page as the person it was always for. The filed leg is
+    the only thing a public copy shows as for sale at all, because a price that
+    needs its holder to wake up cannot be bought with one press.
     """
     app, state, rpc = node
     state.public = True
@@ -508,12 +533,17 @@ def test_the_market_page_prices_for_whoever_is_looking(node):
         assert _signed(who, secret, pubkey,
                        priced.json()).status_code == 200
         _settled(state, rpc)
+        _listed(who, secret, pubkey, piece)
 
     page = holder_client.get("/exchange?tab=market").text
     assert 'action="/exchange/offer"' not in page, \
         "a public page never offers the form this instance refuses"
-    assert f'href="/inscriptions/{theirs}/view">Make offer' in page, \
-        "an offer comes from the piece, where the account's own form is"
+    assert "/exchange/sell/" not in page, \
+        "nor the price page it does not open"
+    assert f'href="/inscriptions/{theirs}/view"' in page, \
+        "the piece is still the thing you go and look at"
+    assert "data-buy-listing=" in page, \
+        "and what a listed piece hands an account is the one press"
     assert 'href="/me/nfts"' in page and "Yours" in page, \
         "and a price of yours is changed where an account prices"
 
