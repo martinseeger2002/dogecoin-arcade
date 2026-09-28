@@ -338,7 +338,7 @@
   </script>
   {% endif %}
 
-  {% if account_pads or mintpads %}
+  {% if account_pads %}
   <h3 style="margin:22px 0 10px">Collection mintpads not inscribed yet</h3>
 
   {% if account_pads %}
@@ -353,24 +353,6 @@
     {% endfor %}
   </div>
   {% endif %}
-  {% if mintpads %}
-  <div class="cards">{% for s in mintpads %}{{ shopcard(s, 'Mint') }}{% endfor %}</div>
-  {% endif %}
-  {% endif %}
-
-  {# Token pads sit beside collection pads rather than under the markets: a
-     pad is a shop selling something at a price it set, and which of the two
-     it hands over is a detail of the shop, not a different kind of place.
-     Under Tokens they were below the order books, where everything else is a
-     market with two sides (D-136). #}
-  <h2 style="margin-top:22px">Shops selling tokens</h2>
-  {% if not tokens %}
-    <div class="panel empty"><p>Nothing on {{ chain.label|lower }} is selling
-      tokens from a pad.</p>
-      <p class="muted" style="font-size:.86rem">Create a token with a launchpad
-        and it appears here by itself.</p></div>
-  {% else %}
-    <div class="cards">{% for s in tokens %}{{ shopcard(s, 'Buy') }}{% endfor %}</div>
   {% endif %}
 
 {% elif tab == 'tokens' %}

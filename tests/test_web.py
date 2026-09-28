@@ -189,9 +189,6 @@ def test_the_exchange_reads_the_chain_rather_than_a_list(client):
     every tab still draws (D-037)."""
     app, _ = client
     for tab, empty in (("mintpads", "No mintpads are on"),
-                       # Token pads live beside collection pads now: a pad is
-                       # a shop, whichever thing it hands over (D-136).
-                       ("mintpads", "is selling\n      tokens from a pad"),
                        ("tokens", "No market has an order or a trade yet"),
                        # The marketplace is the list of collections, and an
                        # empty chain has none -- nor a shop selling a single

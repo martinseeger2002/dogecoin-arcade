@@ -13946,7 +13946,8 @@ def create_app(state: AppState) -> FastAPI:
         state.set_setting(key, done[-5000:])
         return JSONResponse({"ok": True, "left": len(_unannounced(chain, address, name))})
 
-    def _pads_ranked(request: Request, index, chain, sort: str) -> list[dict]:
+    def _pads_ranked(request: Request, index, chain, sort: str,
+                     shops: list | None = None) -> list[dict]:
         """Every mintpad on the chain, NFT and token alike, ranked the way
         /launches ranks (2026-09-28: "a list of both token and NFT mint
         pads in the same way they show up on the feed ... sorted by popularity
@@ -14026,6 +14027,30 @@ def create_app(state: AppState) -> FastAPI:
                           "mints": mints, "lot": lot_shown,
                           "kind": key[0], "name": name, "time": int(r["time"] or 0),
                           "height": r["block_height"], "trades": sold, "volume": 0.0})
+        # The older shops (an inscribed page whose JSON says {shop}) are pads
+        # too, and are listed the same way (2026-09-28: "It should be
+        # the same as any other mint pad. Even though it is legacy"). One whose
+        # listings are all gone is finished, like any other pad.
+        for shop in shops or []:
+            standing = [l for l in shop.get("listings") or [] if not l.get("available")]
+            if not standing:
+                continue
+            kinds = {l["give"].get("kind") for l in standing}
+            try:
+                with contextlib.closing(index.open()) as db:
+                    when = db.conn.execute(
+                        "SELECT i.block_height, COALESCE(b.time, 0) AS time FROM inscription i "
+                        "LEFT JOIN block b ON b.height = i.block_height WHERE i.txid=?",
+                        (shop["txid"],)).fetchone()
+            except Exception:
+                when = None
+            items.append({"txid": shop["txid"], "number": shop["number"],
+                          "creator": shop["seller"], "mints": None, "lot": "",
+                          "kind": "token" if kinds == {"token"} else "nft",
+                          "name": shop.get("name") or f"Shop #{shop['number']}",
+                          "time": int(when["time"] or 0) if when else 0,
+                          "height": when["block_height"] if when else 0,
+                          "trades": 0, "volume": 0.0})
         acts: list = []
         try:
             with state.store() as store:
@@ -16561,7 +16586,9 @@ def create_app(state: AppState) -> FastAPI:
         data["sort"] = "new" if sort == "new" else "popular"
         data["pads"], data["pad_frames"] = [], {}
         if tab == "mintpads":
-            data["pads"] = _pads_ranked(request, index, chain, data["sort"])
+            data["pads"] = _pads_ranked(request, index, chain, data["sort"],
+                                        shops=[s for s in data["shops"]
+                                               if s["txid"] not in {p["txid"] for p in data["pads"]}])
             data["pad_frames"] = _frames_for(
                 request, {p["txid"]: "text/html" for p in data["pads"]})
             data["tags"].update(_tags_for([p["creator"] for p in data["pads"]]))
