@@ -109,6 +109,7 @@ PUBLIC_PAGES = frozenset({
     "/account/nfts",
     "/account/tokens",
     "/account/inscribe/unfinished",
+    "/account/dust",                  # coins in this account's own payload outputs
 })
 
 #: Prefixes a stranger may read. Everything under them is public, so each
@@ -217,6 +218,7 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/answer/withdrawn",
                # pre-signed offers: the buyer's signatures, withdrawing, completing
                "/account/offer/bid", "/account/offer/bid-build", "/account/offer/withdraw",
+               "/account/dust/sweep",
                "/account/accept/complete",
                # the Restore page's new encrypted wallet, signed in by the words' key
                "/account/vault",
