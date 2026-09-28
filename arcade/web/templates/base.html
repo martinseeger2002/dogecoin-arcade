@@ -750,7 +750,7 @@ async function takeFor(source, m) {
     const who = terms.maker_tag ? "@" + terms.maker_tag : "the seller";
     const unit = terms.coins === "1" ? "coin" : "coins";
     const ok = await arcadeAsk(`Mint ${terms.amount} ${terms.name} for ${terms.coins} ${unit}?`,
-      `${terms.coins} ${unit} go to ${who} at the price on their order, and the tokens come to `
+      `${terms.coins} ${unit} ${terms.coins === "1" ? "goes" : "go"} to ${who} at the price on their order, and the tokens come to `
       + `you when the block lands. Network fee ${shown.coinsOf(shown.fee)}.`,
       `Mint for ${terms.coins} ${unit}`);
     if (!ok) { answer({error: "Cancelled."}); return; }
@@ -847,7 +847,8 @@ document.addEventListener("click", async (event) => {
   const note = document.createElement("p");
   note.className = "muted"; note.style.fontSize = ".82rem";
   note.textContent = "A post is one small transaction, signed in this browser. "
-    + "The piece is shown under your words.";
+    + ((button.dataset.kind || "") === "text/html" ? "The page is shown under your words."
+                                                  : "The piece is shown under your words.");
   const row = document.createElement("div");
   row.className = "row";
   const post = document.createElement("button");

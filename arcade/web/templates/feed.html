@@ -80,7 +80,9 @@
       <summary>Sensitive post &mdash; tap to show</summary>
       <div class="posttext" style="margin:8px 0 0;white-space:pre-wrap"
         >{{ render_post(p.text, drawable, frames) }}</div></details>
-    {% elif seen is none %}
+    {# Your own post, still being checked, shows your own words (a tester):
+       the check is about what OTHER people are shown. #}
+    {% elif seen is none and p.author != (mine.address or '') %}
     <p class="muted posttext" style="margin:10px 0 0">Checking this post&hellip;</p>
     {% else %}
     <div class="posttext" style="margin:10px 0 0;white-space:pre-wrap"

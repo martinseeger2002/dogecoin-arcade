@@ -178,7 +178,7 @@ function spin(id){const r=$('reel'),s=$('strip');
 let seq=0;const wait={},heard={};
 addEventListener('message',e=>{const m=e.data||{};if(m.arcade!=='mint')return;if(m.heard){heard[m.seq]=1;return}
  if(wait[m.seq]){wait[m.seq](m);delete wait[m.seq]}});
-const tall=()=>parent.postMessage({arcade:'size',height:document.documentElement.scrollHeight},'*');
+const tall=()=>{const c=document.querySelector('.card');parent.postMessage({arcade:'size',height:Math.ceil((c?c.getBoundingClientRect().bottom+scrollY:document.body.scrollHeight)+24)},'*')};
 addEventListener('load',tall);setTimeout(tall,800);setTimeout(tall,2500);
 if(window.ResizeObserver)new ResizeObserver(tall).observe(document.body);
 $('go').onclick=async()=>{say('');const p=await load();if(!p||!p.next)return;
@@ -275,7 +275,7 @@ async function load(){const b=await j('/r/book/'+P.property+'?address='+encodeUR
 let seq=0;const wait={},heard={};
 addEventListener('message',e=>{const m=e.data||{};if(m.arcade!=='take')return;if(m.heard){heard[m.seq]=1;return}
  if(wait[m.seq]){wait[m.seq](m);delete wait[m.seq]}});
-const tall=()=>parent.postMessage({arcade:'size',height:document.documentElement.scrollHeight},'*');
+const tall=()=>{const c=document.querySelector('.card');parent.postMessage({arcade:'size',height:Math.ceil((c?c.getBoundingClientRect().bottom+scrollY:document.body.scrollHeight)+24)},'*')};
 addEventListener('load',tall);setTimeout(tall,800);if(window.ResizeObserver)new ResizeObserver(tall).observe(document.body);
 $('go').onclick=async()=>{say('');await load();if(!pick)return;const n=++seq;$('go').disabled=true;
  const got=await new Promise(ok=>{wait[n]=ok;parent.postMessage({arcade:'take',seq:n,order:pick.order,units:P.lot},'*');
