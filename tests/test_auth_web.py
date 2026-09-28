@@ -101,8 +101,9 @@ def test_the_page_a_newcomer_lands_on_offers_no_box_for_a_phrase(client):
     body = app.get("/join", headers=LOCAL).text
     assert 'id="backup-file"' in body and 'id="open-file"' in body
     assert "<textarea" not in body, "no box for a seed on the front door"
-    assert "asking for the twelve words is stealing them" in \
-        " ".join(body.split())
+    # Worded since the Restore page (2026-09-26): Restore is the one page that
+    # asks for the words, and anything else asking for them is stealing them.
+    assert "Anything else asking for them is stealing them" in " ".join(body.split())
 
 
 def test_the_rule_is_said_where_the_words_are_shown(client):
@@ -111,7 +112,7 @@ def test_the_rule_is_said_where_the_words_are_shown(client):
     app, _ = client
     body = app.get("/join", headers=LOCAL).text
     written = " ".join(body.split("id=\"written\"", 1)[1].split())
-    assert "typed once" in written
+    assert "the only time they are shown" in written
     assert "this site unlocks with your password" in written
     assert "never one you followed a link to" in written
 
@@ -145,7 +146,7 @@ def test_the_phrase_page_says_the_rule_and_asks_first(client):
     assert 'id="words-in" hidden' in body, "shut until they say they must"
     assert 'href="/join"' in body, "and the file is the way it points at first"
     said = " ".join(body.split())
-    assert "Any site asking for your twelve words" in said
+    assert "Anything else asking for your twelve words" in said
     assert "twenty-four" not in said, "twelve is what the page actually shows"
 
 

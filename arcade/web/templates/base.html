@@ -1742,6 +1742,11 @@ function arcadeFileCost(bytes){
         return page().then(function (doc) {
           if (base && version(doc) !== version(base)) {
             offer('The site was updated — tap to refresh');
+          } else if (base && document.body.dataset.selfRefreshing) {
+            // A page that draws itself from the browser (/me, messages, the
+            // wallet) redraws on arcade:changed below; patching its server HTML
+            // by position under it moved and dropped what it had drawn.
+            if (document.title !== doc.title) document.title = doc.title;
           } else if (base) {
             if (document.title !== doc.title) document.title = doc.title;
             apply(document.body, base.body, doc.body);

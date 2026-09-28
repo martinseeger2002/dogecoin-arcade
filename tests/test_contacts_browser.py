@@ -309,6 +309,14 @@ def test_removing_somebody_removes_them(browser, served):
                if b.text == "Remove"]
     assert buttons
     buttons[0].click()
+    # The page asks with its own card now (arcadeAsk), not window.confirm:
+    # press the card's first button, which is the yes.
+    for _ in range(40):
+        yes = browser.find_elements(By.CSS_SELECTOR, ".askcard button")
+        if yes:
+            yes[0].click()
+            break
+        time.sleep(0.25)
     for _ in range(40):
         if browser.find_element(By.ID, "nobody").is_displayed():
             break

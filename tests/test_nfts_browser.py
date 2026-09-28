@@ -46,7 +46,20 @@ PRICE_SATS = COIN
 #: Read the way `execute_script` wants it: a script with no `return` hands back
 #: None, which is not False, and a panel that opened reads as one that never
 #: did. Every other read in this file says `return` for the same reason.
-CONFIRM = "return document.getElementById('list-confirm').hidden"
+# The one Sell (2026-09-26): the page asks with its own card now.
+ASKING = "return !!document.querySelector('.askcard')"
+
+
+def _card_text(browser):
+    return browser.execute_script(
+        "const c = document.querySelector('.askcard'); return c ? c.textContent : ''")
+
+
+def _answer_card(browser, yes: bool):
+    """Press the card's Sell it (its first button) or its Cancel."""
+    assert browser.execute_script(
+        "const b = document.querySelectorAll('.askcard button');"
+        "if (!b.length) return false; b[arguments[0] ? 0 : 1].click(); return true;", yes)
 
 
 def _free_port() -> int:
@@ -432,24 +445,26 @@ def seller(browser, served):
 
 
 def _panel(browser):
-    """Press the card's listing button, and check the panel that opens."""
-    _press_on_the_card(browser, "Sell it without you")
+    """Press the card's Sell (Change the price, once an earlier test listed
+    it), and check the panel that opens under it."""
+    listed = browser.execute_script(
+        "return [...document.querySelectorAll('button')]"
+        ".some((b) => b.textContent.trim() === 'Change the price')")
+    _press_on_the_card(browser, "Change the price" if listed else "Sell")
     assert _show(browser, "listing", "hidden") is False
-    assert _show(browser, "list-confirm", "hidden") is True
     return _show(browser, "listing-what")
 
 
 def test_the_card_offers_to_sell_the_piece_without_the_seller(browser, seller):
     browser, base, state, node, made, piece = seller
     heading = _panel(browser)
-    assert "#" in heading and "without you" in heading, heading
-    # The words on this panel are the whole disclosure of what a listing is,
-    # so the two things a seller could be sorry about afterwards are both
-    # said: it cannot be unsent, and spending the piece is what ends it.
+    assert heading.startswith(("Sell ", "Change the price")), heading
+    # The words on this panel are the whole disclosure of what a listing is:
+    # anybody can buy it while you are away, and how it ends.
     body = browser.execute_script(
         "return document.getElementById('listing').textContent")
-    assert "cannot be called back" in body, body
-    assert "spends it" in body, body
+    assert "even when you are" in body and "offline" in body, body
+    assert "sending the piece away cancels it" in body, body
 
 
 def test_reading_it_back_shows_this_tabs_own_sentence(browser, seller):
@@ -463,14 +478,13 @@ def test_reading_it_back_shows_this_tabs_own_sentence(browser, seller):
     _panel(browser)
     _type(browser, "list-price", PRICE)
     _click(browser, "list-it")
-    _wait(browser, lambda d: d.execute_script(CONFIRM) is False)
-    says = _show(browser, "list-says")
-    assert f"{PRICE}.00000000" in says, says
-    assert piece[:16] in says, says
-    assert "comes back to you" in says, says
-    assert "reserved for the fee" in says, says
-    assert _rows(state) == [], "reading signs nothing, so nothing was filed"
+    _wait(browser, lambda d: d.execute_script(ASKING))
+    says = _card_text(browser)
+    assert f"for {PRICE} coin" in says, says
+    assert "not a transaction" in says, says
+    assert _rows(state) == [], "asking signs nothing, so nothing was filed"
     assert node.rpc.call("getrawmempool") == [], "and nothing was broadcast"
+    _answer_card(browser, False)
 
 
 def test_the_button_signs_over_the_digests_the_page_showed(browser, seller):
@@ -507,10 +521,10 @@ def test_the_button_signs_over_the_digests_the_page_showed(browser, seller):
     _panel(browser)
     _type(browser, "list-price", PRICE)
     _click(browser, "list-it")
-    _wait(browser, lambda d: d.execute_script(CONFIRM) is False)
+    _wait(browser, lambda d: d.execute_script(ASKING))
     shown = _shown(browser, piece)
     assert "error" not in shown, shown
-    _click(browser, "list-sign")
+    _answer_card(browser, True)
     _wait(browser, lambda d: len(_rows(state)) == 1)
     # Wait for the sentence, do not read it once. The row is in the node's book
     # a moment before this tab's fetch comes back and writes what it did, so a
@@ -518,10 +532,10 @@ def test_the_button_signs_over_the_digests_the_page_showed(browser, seller):
     # this assertion printed for a while. `_wait` watches #trouble on the way,
     # so a signing that threw arrives as the page's own words rather than as a
     # blank.
-    _wait(browser, lambda d: "Listed" in _show(d, "news"))
+    _wait(browser, lambda d: "for sale" in _show(d, "news"))
 
     news = _show(browser, "news")
-    assert "Listed" in news and "Nothing was broadcast" in news, news
+    assert "is for sale at" in news, news
     assert node.rpc.call("getrawmempool") == [], "a listing is not a broadcast"
 
     row = _rows(state)[0]
@@ -568,9 +582,9 @@ def test_pressing_no_signs_nothing_and_files_nothing(browser, seller):
     _panel(browser)
     _type(browser, "list-price", PRICE)
     _click(browser, "list-it")
-    _wait(browser, lambda d: d.execute_script(CONFIRM) is False)
-    _click(browser, "list-no")
-    assert _show(browser, "list-confirm", "hidden") is True
+    _wait(browser, lambda d: d.execute_script(ASKING))
+    _answer_card(browser, False)
+    _wait(browser, lambda d: not d.execute_script(ASKING))
     assert len(_rows(state)) == before, "the panel filed a listing nobody signed"
     assert node.rpc.call("getrawmempool") == []
 
@@ -581,13 +595,11 @@ def test_no_price_is_refused_on_the_page_not_by_a_dead_button(browser, seller):
     _panel(browser)
     _type(browser, "list-price", "")
     _click(browser, "list-it")
-    # Said by the node, which is the first place a blank can be noticed for
-    # certain: the page has no price to read until the leg comes back, and a
-    # leg is exactly what a blank must not be allowed to build.
+    # Refused by the page before anything is built or asked.
     said = _refused(browser)
-    assert "enter an amount" in said, said
-    assert _show(browser, "list-confirm", "hidden") is True, \
-        "a refusal that still offers the signing button is a trap"
+    assert "price above zero" in said, said
+    assert not browser.execute_script(ASKING), \
+        "a refusal that still offers to sign is a trap"
     assert len(_rows(state)) == before
     assert node.rpc.call("getrawmempool") == []
 

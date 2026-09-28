@@ -144,13 +144,18 @@ def test_the_overview_says_when_the_key_is_not_yet_published(
         browser, served, signed_in):
     base, _ = served
     _page(browser, base, "/me", "meReady")
+    # /me became a profile (41e72fb) and the address panel this sits in is
+    # tucked away on purpose, and a new account publishes its key at signup.
+    # What still matters is that the page knows: the note is armed (not hidden
+    # itself) while the key is unpublished, and says why.
     for _ in range(40):
-        if not browser.find_element(By.ID, "not-announced").text == "":
+        if browser.execute_script("return document.getElementById('not-announced').hidden") is False:
             break
         time.sleep(0.25)
-    banner = browser.find_element(By.ID, "not-announced")
-    assert banner.is_displayed()
-    assert "nothing to encrypt to" in banner.text
+    assert browser.execute_script(
+        "return document.getElementById('not-announced').hidden") is False
+    assert "nothing to encrypt to" in browser.execute_script(
+        "return document.getElementById('not-announced').textContent")
 
 
 def test_overview_links_to_wallet_and_backup(browser, served, signed_in):

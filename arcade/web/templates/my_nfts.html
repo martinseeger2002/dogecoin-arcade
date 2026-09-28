@@ -17,7 +17,7 @@
 <div class="msg err" id="trouble" hidden></div>
 <div class="msg ok" id="news" hidden></div>
 
-<div id="chains"></div>
+<div id="chains" data-client></div>
 
 <div class="panel empty" id="nothing" hidden>
   <p>Nothing yet.</p>
@@ -27,7 +27,7 @@
 
 {% include "_account_inscribe.html" %}
 
-<div class="panel" id="pricing" hidden>
+<div class="panel" id="pricing" data-client hidden>
   <h3 style="margin:0 0 6px" id="pricing-what">Put a price on it</h3>
   <p class="muted" style="font-size:.86rem;margin:0 0 10px">
     Nothing moves and nothing is held: the piece stays where it is and the
@@ -48,7 +48,7 @@
 </div>
 
 <span id="listing-home" hidden></span>
-<div class="panel" id="listing" hidden>
+<div class="panel" id="listing" data-client hidden>
   {# One "Sell" (2026-09-26): a sale this tab signs now, at your price,
      which anybody can complete while you are away. Nothing is broadcast to list
      it; cancelling it is one small transaction that spends the coins it was
@@ -70,7 +70,7 @@
   </div>
 </div>
 
-<div class="panel" id="sending" hidden>
+<div class="panel" id="sending" data-client hidden>
   <h3 style="margin:0 0 6px" id="sending-what">Send it</h3>
   <p class="muted" style="font-size:.86rem;margin:0 0 10px">
     This cannot be undone by sending it back unless whoever receives it
@@ -329,7 +329,7 @@ $("list-it").onclick = async () => {
     if (!keys) keys = await arcadeKeys(CHAIN);
     if (!(Number(amount) > 0)) throw new Error("a price above zero, please");
     const again = !!piece.listing;
-    const ok = await arcadeAsk(`Sell ${pieceName(piece)} for ${amount} coins?`,
+    const ok = await arcadeAsk(`Sell ${pieceName(piece)} for ${amount} ${Number(amount) === 1 ? "coin" : "coins"}?`,
       "Anybody can buy it at that price, even when you're offline, for 30 days. "
       + "Listing costs nothing: it is your signature, not a transaction. "
       + (again ? `Your listing at ${piece.listing.price} coins is cancelled first, `
@@ -486,9 +486,12 @@ $("offer").onclick = async () => {
 async function draw() {
   // The Sell panel may be sitting inside a card; it goes home before the cards
   // are cleared, or it would be cleared with them.
-  $("listing-home").after($("listing"));
   const said = await (await fetch("/account/nfts")).json();
   const chains = said.chains || [];
+  // Home at the moment the cards are cleared, not before the fetch: a Sell
+  // pressed while the fetch was out moved the panel back into a card, and the
+  // clearing then took it with it (the page lost its Sell panel for good).
+  $("listing-home").after($("listing"));
   $("chains").innerHTML = "";
   let any = 0;
   for (const chain of chains) {
