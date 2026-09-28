@@ -443,7 +443,16 @@
       {% endif %}
 
       <div class="spread">
-        {% if spread is not none %}
+        {% if crossed %}
+        {# Both sides rest and they overlap, so a trade is sitting here for the
+           taking. The difference of the two prices would come out at or below
+           zero, and a number like -8.00000000 reads as arithmetic gone wrong
+           rather than as a ready market (a tester, live pair 9 on
+           2026-09-28) -- so the page says what it is instead. #}
+          <strong>Crossed</strong> <span class="muted">&mdash; a bid is at or
+            above the best ask, {% if viewer != 'nobody' and fills_ready %}so one press of
+              Buy on that ask makes the trade now{% else %}so it is ready to trade{% endif %}</span>
+        {% elif spread is not none %}
           <strong class="mono">{{ "%.8f"|format(spread) }}</strong> <span class="muted">spread</span>
         {% elif day.last is not none %}
           <strong class="mono">{{ "%.8f"|format(day.last) }}</strong> <span class="muted">last traded</span>
@@ -462,9 +471,17 @@
           <td class="muted" style="font-size:.74rem">
             {%- if o.mine %}yours{%- else %} {{ o.address|who }}{% endif %}
             {%- if o.pending %}<span class="pill" title="broadcast, not yet in a block">pool</span>{% endif %}</td>
-          <td></td></tr>
+          <td style="text-align:right">{%- if o.mine and o.clears_now %}<span class="muted"
+                style="font-size:.72rem" title="This bid reaches the best ask, so it can be closed with one press of Buy on that ask.">your bid reaches the ask</span>{% endif %}</td></tr>
         {% endfor %}
       </table>
+      {% endif %}
+
+      {% if crossed %}
+      <p class="muted" style="font-size:.76rem;margin:10px 0 0">A bid is an offer
+        and not yet a trade: nothing on this node matches two orders, and a bid
+        moves only when somebody buys into it (D-048). So two prices that overlap
+        wait here until one side is pressed.</p>
       {% endif %}
 
       {% if not fills_ready %}

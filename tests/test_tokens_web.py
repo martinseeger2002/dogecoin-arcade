@@ -64,6 +64,95 @@ def shown(page: str, label: str) -> str:
     return match.group(1).strip()
 
 
+def test_two_prices_that_overlap_are_said_as_a_trade_and_not_a_sign(web):
+    """A crossed book is the most actionable state a pair page can be in (a tester).
+
+    `/exchange/pair/9` printed `-8.00000000 spread` and `/exchange/pair/14` printed
+    `0.00000000`, which reads as a perfectly tight market. Neither page was wrong
+    about the arithmetic; both were wrong about what it means. This node never
+    matches two orders -- a fill is a swap both sides sign (D-048) -- so two prices
+    that overlap sit there waiting for somebody to press, which is news a reader
+    can act on and a decimal is not. Both shapes are asked here: the bid ABOVE the
+    ask, and the bid exactly AT it, which is the one a check for a minus sign alone
+    would have walked straight past.
+    """
+    app, state, node, alice, bob = web
+    csrf = state.csrf_token
+    form = dict(csrf_token=csrf, sender=alice, name="Cross Token", supply="1000",
+                kind="fixed", units="divisible")
+    txid = shown(app.post("/tokens/create", data=form).text, "txid")
+    app.post("/tokens/create", data={**form, "confirmed": txid}, follow_redirects=False)
+    mine_and_index(node, state)
+    index = state.token_index(state.ledger)
+    (prop,) = index.properties()
+    pid = str(prop["property_id"])
+    home = index.balances([alice])[0]["address"]
+
+    import unittest.mock as mock
+
+    def pair() -> str:
+        # The page with its line breaks folded away. What is being asked below is
+        # a sentence, and the template wraps sentences over several lines.
+        return " ".join(app.get(f"/exchange/pair/{pid}").text.split())
+
+    def file(side: str, price: str) -> str:
+        """Put an order on the book and hand back what the node said about it.
+
+        The notice is read-once -- the next page render clears it -- so it is
+        caught here, at the moment the order goes in. That is also the moment the
+        plan asks this route to speak (a tester).
+        """
+        app.post("/exchange/order", data=dict(csrf_token=csrf, property_id=pid,
+                                             side=side, amount="10", price=price),
+                 follow_redirects=False)
+        said = state.notice or ""
+        mine_and_index(node, state)
+        return said
+
+    def withdraw(side: str) -> None:
+        app.post("/exchange/order/cancel", data=dict(csrf_token=csrf, property_id=pid,
+                                                    side=side),
+                 follow_redirects=False)
+        mine_and_index(node, state)
+
+    with mock.patch.object(type(state), "home_address", lambda self, chain: home):
+        file("ask", "1")
+
+        # A bid AT the ask. One-sided, a spread of zero would be the honest
+        # figure; with both sides resting it is a market with a trade in it.
+        said = file("bid", "1")
+        assert "It is at or above the best ask" in said, said
+        assert "you could buy what is on the book now" in said, said
+        page = pair()
+        assert '<strong class="mono">0.00000000</strong>' not in page, \
+            "a zero with both sides on the book is a crossed book, not a tight one"
+        assert "<strong>Crossed</strong>" in page
+
+        # And a bid ABOVE it, the shape that used to print a minus sign.
+        withdraw("bid")
+        said = file("bid", "2")
+        assert "It is at or above the best ask, 1 coins" in said, said
+        page = pair()
+        assert "-1.00000000" not in page, "the sign on a decimal is not the news"
+        assert "Crossed" in page
+        assert "your bid reaches the ask" in page, \
+            "and which of the reader's own bids is the one that clears right now"
+        assert ("A bid is an offer and not yet a trade: nothing on this node "
+                "matches two orders, and a bid moves only when somebody buys "
+                "into it (D-048).") in page, "bids do not fill themselves"
+
+        # Withdraw it and put one back BELOW the ask: the figure comes back, and
+        # so does the silence, so the page is not saying "Crossed" -- or offering
+        # a trade -- wherever two prices happen to sit.
+        withdraw("bid")
+        said = file("bid", "0.5")
+        assert "at or above the best ask" not in said, said
+        page = pair()
+        assert "Crossed" not in page
+        assert '<strong class="mono">0.50000000</strong> <span class="muted">spread' in page, \
+            "an honest spread between two prices that do not overlap"
+
+
 def test_create_confirm_broadcast_and_read_back(web):
     app, state, node, alice, bob = web
     csrf = state.csrf_token

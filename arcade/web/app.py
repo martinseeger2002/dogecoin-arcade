@@ -15454,8 +15454,24 @@ def create_app(state: AppState) -> FastAPI:
             for order in book[side]:
                 order["depth"] = round(100 * order["tokens"] / biggest, 1) if biggest else 0
         spread = None
+        crossed = False
         if book["asks"] and book["bids"]:
             spread = coins_each(book["asks"][0]) - coins_each(book["bids"][0])
+            # Both sides, and the best bid at or above the best ask. That is a
+            # trade waiting for one press, not a negative number: this node
+            # never matches two orders -- a fill is a swap both sides sign
+            # (D-048) -- so a crossed book just sits there. Printing the
+            # difference alone made a ready market read as a broken page, and
+            # bid -8 coins of spread at the reader (a tester, live pair 9
+            # on 2026-09-28). Which bids clear is said row by row as well,
+            # because the one bid that reaches the ask is the reader's business.
+            crossed = spread <= 0
+        # Set on every bid, crossed or not: the row asks the template no
+        # questions and an absent key is a quieter thing to read than an
+        # undefined one.
+        best_ask = coins_each(book["asks"][0]) if crossed else None
+        for order in book["bids"]:
+            order["clears_now"] = crossed and coins_each(order) >= best_ask
         face = _faces_for(index, [prop])[property_id]
         mine = index.orders_of(sorted(owned))
         # Whether a taker's node could ask THIS reader about a resting order at
@@ -15478,7 +15494,8 @@ def create_app(state: AppState) -> FastAPI:
                                 or askable.get(order["address"], True))
         return render(request, "pair.html", chain=chain, prop=prop, book=book,
                       token_pads=_token_pads(index, property_id, limit=3),
-                      face=face, spread=spread, day=chartlib.day(points),
+                      face=face, spread=spread, crossed=crossed,
+                      day=chartlib.day(points),
                       stats=chartlib.last_and_change(points),
                       slots=chartlib.candles(points, buckets=frame[2], span=frame[1]),
                       tf=frame[0], timeframes=[t[0] for t in chartlib.TIMEFRAMES],
@@ -15571,13 +15588,34 @@ def create_app(state: AppState) -> FastAPI:
                 sender = tokenlib.TokenSender(rpc, chain.params)
                 prepared = sender.prepare(home, message.encode())
                 txid = sender.broadcast(prepared)
+            # A bid that reaches the best ask is the one moment this route can
+            # tell the reader a trade is available to them RIGHT NOW, and the
+            # line they are looking at is this one (a tester). Nothing on
+            # this node matches two orders -- a fill is a swap both sides sign
+            # (D-048) -- so the bid waits until somebody presses, and the pair
+            # page says that in its own words. Here it is said as a choice.
+            reaches = ""
+            if side == "bid":
+                from fractions import Fraction
+                asks = index.book(prop["property_id"])["asks"]
+                # Coins per whole token, read the way the pair page reads a row:
+                # the two integers are what went on the chain and the price is
+                # only their ratio, which for an indivisible token is satoshis.
+                here = _coins_each(Fraction(coins, units), prop["divisible"])
+                if asks and here >= _coins_each(asks[0]["price"], prop["divisible"]):
+                    each_ask = (f"{_coins_each(asks[0]['price'], prop['divisible']):.8f}"
+                                .rstrip("0").rstrip("."))
+                    reaches = (f" It is at or above the best ask, {each_ask} coins for "
+                               f"{wall_plain(prop['name'], 'this token')}, so you could "
+                               f"buy what is on the book now instead of waiting for "
+                               f"somebody to come to your price.")
             state.flash(
                 f"Order on the book in {txid}: "
                 f"{'sell' if side == 'ask' else 'buy'} "
                 f"{format_amount(units, prop['divisible'])} "
                 f"{wall_plain(prop['name'], 'this token')} for "
                 f"{format_amount(coins, True)} coins. It stands until you cancel "
-                f"it.", "ok")
+                f"it.{reaches}", "ok")
         except HTTPException:
             raise
         except Exception as exc:
