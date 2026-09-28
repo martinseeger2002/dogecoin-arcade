@@ -241,7 +241,18 @@
   <p class="sub">Every pad on {{ chain.label|lower }} with something left to
     sell &mdash; collections and tokens both. A pad is an inscription: it
     appears here because it is on the chain, not because anybody listed it.</p>
-  {% if not mintpads and not account_pads %}
+  {% if token_pads %}
+  <h3 style="margin:6px 0 10px">Token mintpads</h3>
+  <div class="cards" style="margin-bottom:18px">
+    {% for tp in token_pads %}
+    <a class="panel" href="/inscriptions/{{ tp.txid }}/view" style="display:block;color:inherit">
+      <strong>{{ wall_text(tp.name, 'A token') }}</strong>
+      <div class="muted" style="font-size:.84rem">{{ tp.lot }} per mint &middot; by {{ tp.seller|who_text }}</div>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if not mintpads and not account_pads and not token_pads %}
     <div class="panel empty"><p>No collection mintpads on this chain yet.</p>
       <p class="muted" style="font-size:.86rem">Inscribe a collection with the
         mintpad box ticked and it appears here by itself.</p></div>

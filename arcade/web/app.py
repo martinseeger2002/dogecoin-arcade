@@ -6942,7 +6942,44 @@ def create_app(state: AppState) -> FastAPI:
         mine = _account_address(account.pubkey, detail["chain"]) if account else ""
         return render(request, "token.html", prepared=None,
                       account_issuer=bool(mine) and mine == detail["prop"]["issuer"],
+                      token_pads=_token_pads(state.token_index(detail["chain"]), property_id),
                       **detail)
+
+    def _token_pads(index, property_id: int | None = None, limit: int = 50) -> list[dict]:
+        """Token mintpads on the chain, newest first (a tester, 2026-09-28: one
+        could not be found again once its wizard screen was left). An account's
+        pad is an inscription whose JSON says {tokenpad: {creator, property_id,
+        lot, look}} and whose creator is that seller; anything else claiming to
+        be one is not listed."""
+        out: list[dict] = []
+        try:
+            with contextlib.closing(index.open()) as db:
+                rows = db.conn.execute(
+                    "SELECT txid, number, creator, json FROM inscription "
+                    "WHERE content_type LIKE 'text/html%' AND json LIKE '%\"tokenpad\"%' "
+                    "ORDER BY block_height DESC, position DESC LIMIT 500").fetchall()
+        except Exception:
+            return out
+        for r in rows:
+            try:
+                pad = (json.loads(r["json"] or "{}") or {}).get("tokenpad") or {}
+            except ValueError:
+                continue
+            if pad.get("creator") != r["creator"]:
+                continue
+            pid = int(pad.get("property_id") or 0)
+            if property_id is not None and pid != property_id:
+                continue
+            prop = index.property(pid)
+            if prop is None:
+                continue
+            out.append({"txid": r["txid"], "number": r["number"], "seller": r["creator"],
+                        "property_id": pid, "name": prop["name"],
+                        "lot": format_amount(int(pad.get("lot") or 0), bool(prop["divisible"])),
+                        "look": str(pad.get("look") or "counter")})
+            if len(out) >= limit:
+                break
+        return out
 
     def _token_detail(property_id: int) -> dict[str, Any]:
         chain, index = _token_chain()
@@ -15427,6 +15464,7 @@ def create_app(state: AppState) -> FastAPI:
             order["askable"] = (not order["sale_property"]
                                 or askable.get(order["address"], True))
         return render(request, "pair.html", chain=chain, prop=prop, book=book,
+                      token_pads=_token_pads(index, property_id, limit=3),
                       face=face, spread=spread, day=chartlib.day(points),
                       stats=chartlib.last_and_change(points),
                       slots=chartlib.candles(points, buckets=frame[2], span=frame[1]),
@@ -16205,6 +16243,8 @@ def create_app(state: AppState) -> FastAPI:
             data["account_pads"] = [p for p in pads.values() if p["left"] >= 2]
         except Exception:
             data["account_pads"] = []
+        # And accounts' TOKEN mintpads, found by their inscriptions (a tester).
+        data["token_pads"] = _token_pads(index, limit=24)
         data["market"] = [s for s in data["shops"] if selling(s, "inscription")]
         data["tokens"] = [s for s in data["shops"] if selling(s, "token")]
         data["pairs"] = data.get("pairs", [])

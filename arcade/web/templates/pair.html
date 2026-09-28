@@ -397,6 +397,10 @@
         <p class="muted" style="margin:0">Nothing on either side yet.</p>
       {% endif %}
 
+      {% if token_pads %}
+      <p class="muted" style="font-size:.86rem;margin:0 0 8px">Also sold a lot at a time from a
+        mintpad: {% for tp in token_pads %}<a href="/inscriptions/{{ tp.txid }}/view">{{ tp.lot }} per mint from {{ tp.seller|who_text }}</a>{% if not loop.last %} &middot; {% endif %}{% endfor %}.</p>
+      {% endif %}
       {% if book.asks %}
       <table class="book">
         <tr class="muted" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.06em">

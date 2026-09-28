@@ -74,3 +74,29 @@ def test_the_book_is_readable_by_a_page_and_a_bad_token_pad_is_refused(client):
     _seat(app)
     answer = app.post("/account/tokenpad/inscribe", json={"property_id": 99999, "lot": "1"})
     assert answer.status_code == 400, answer.text
+
+
+def test_a_token_mintpad_is_found_from_its_token_page(client):
+    """a tester, 2026-09-28: once the wizard's screen was left, nothing linked
+    to a token mintpad. The token page, the pair page and the Exchange list it,
+    found by its inscription's JSON and only when its creator is the seller."""
+    app, state = client
+    from test_account_tokens import _token
+    pid = _token(state, property_id=103, name="Padcoin")
+    index = state.token_index(state.messaging)
+    real, fake = "e1" * 32, "e2" * 32
+    with index.open() as db:
+        for txid, creator, n in ((real, SELLER, 501), (fake, "nSomebodyElseAAAAAAAAAAAAAAAAAAAAA", 502)):
+            db.conn.execute(
+                "INSERT OR REPLACE INTO inscription(txid,number,creator,owner,block_height,"
+                "position,content_type,content_len,sha256,json,chunks,content) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (txid, n, creator, creator, 100, 0, "text/html", 2, "ab" * 32,
+                 json.dumps({"tokenpad": {"creator": SELLER, "property_id": pid,
+                                          "lot": 100, "look": "vending"}}), 1, b"hi"))
+        db.conn.commit()
+    page = app.get(f"/tokens/{pid}").text
+    assert f"/inscriptions/{real}/view" in page and "Open the mintpad" in page
+    assert f"/inscriptions/{fake}/view" not in page, "a pad claiming someone else's order is not listed"
+    assert f"/inscriptions/{real}/view" in app.get(f"/exchange/pair/{pid}").text
+    assert f"/inscriptions/{real}/view" in app.get("/exchange?tab=mintpads").text

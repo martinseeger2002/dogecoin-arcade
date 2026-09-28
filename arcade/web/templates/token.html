@@ -39,6 +39,17 @@
 
 <h2>Launchpad</h2>
 <div class="panel" style="margin-bottom:16px">
+  {# Accounts' token mintpads for this token (a tester, 2026-09-28: once the
+     wizard's screen was left, nothing linked to one). #}
+  {% for tp in token_pads or [] %}
+    <div class="row" style="gap:8px;align-items:center;margin:0 0 10px;flex-wrap:wrap">
+      <span class="pill ok">mintpad</span>
+      <span>{{ tp.lot }} {{ wall_text(prop.name, 'this token') }} per mint, from {{ tp.seller|who }}</span>
+      <a class="btn small" href="/inscriptions/{{ tp.txid }}/view">Open the mintpad</a>
+      <button type="button" class="ghost small" data-share-nft="{{ tp.txid }}"
+              data-piece="the {{ wall_text(prop.name, 'token') }} mintpad" data-kind="text/html">Share to feed</button>
+    </div>
+  {% endfor %}
   {% if pad %}
     <p style="margin:0 0 6px"><span class="pill ok">open</span> {{ pad.text }}</p>
     {% if pad.available %}<p class="muted" style="margin:0 0 8px">{{ pad.available }}</p>{% endif %}
@@ -100,7 +111,7 @@
     <iframe src="/tokens/launchpad/preview?name={{ prop.name|urlencode }}&amp;lot={{ (pad_lot or '100')|urlencode }}&amp;price={{ (pad_price or '2 coins')|urlencode }}&amp;icon={{ face.icon }}&amp;about={{ face.about|urlencode }}"
             sandbox="allow-scripts" loading="lazy" title="launchpad preview"
             style="width:100%;height:420px;border:1px solid var(--line);border-radius:10px;background:#07060c;margin-top:10px"></iframe>
-  {% else %}
+  {% elif not token_pads %}
     <p class="muted" style="margin:0">Nothing is selling {{ wall_text(prop.name, 'this token') }} from a
       launchpad &mdash; its issuer can open one. What is for sale is on the
       <a href="/exchange/pair/{{ prop.property_id }}">order book</a>, at whatever

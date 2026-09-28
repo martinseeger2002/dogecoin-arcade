@@ -9,9 +9,9 @@
    Listing costs nothing -- signatures, not transactions; the one fee is a split, if
    the account needs more coins to stand the listings on (two each). #}
 <h1>New mintpad</h1>
-<p class="sub">Sell one of your collections piece by piece at one price. Buyers get a
-  random piece. Listing is free &mdash; it is your signature, not a transaction &mdash;
-  and it stays open for 30 days.</p>
+<p class="sub" id="mp-intro">Sell one of your collections piece by piece at one price
+  (buyers get a random piece; listing is free, your signature rather than a transaction,
+  and it stays open for 30 days), or one of your tokens a few at a time.</p>
 
 <div class="msg info" id="mp-locked" hidden>Your wallet is locked: press Unlock at the
   top of the page, and your collections appear here. The listings are signed with your
@@ -279,13 +279,22 @@ async function drawTokens() {
     const n = document.createElement("span"); n.className = "muted"; n.textContent = `${t.display} you hold`;
     b.append(name, n);
     b.onclick = () => { tokenChosen = t; $("tp-which").textContent = `Sell ${t.name}`;
+                        $("mp-intro").textContent = `Sell ${t.name} a few at a time from a mintpad. `
+                          + "It takes two small transactions: one sell order on the token's book for "
+                          + "the whole amount, and the mintpad page. Buyers take straight from your "
+                          + "order, even while you're away.";
                         $("tp-total").value = ""; $("tp-trouble").hidden = true; show("mp-tok"); };
     box.appendChild(b);
   }
   $("mp-notokens").hidden = held.length > 0;
 }
 drawTokens();
-$("tp-back").onclick = () => show("mp-pick");
+$("tp-back").onclick = () => {
+  $("mp-intro").textContent = "Sell one of your collections piece by piece at one price "
+    + "(buyers get a random piece; listing is free, your signature rather than a transaction, "
+    + "and it stays open for 30 days), or one of your tokens a few at a time.";
+  show("mp-pick");
+};
 
 // Exact arithmetic: the book takes a price per WHOLE token and refuses one that
 // does not come out in whole satoshis, so it is worked out in integers here.
@@ -328,7 +337,7 @@ $("tp-go").onclick = async () => {
     const mints = total / lot;
     if (!(await arcadeAsk(`Open a ${t.name} mintpad?`,
         `${$("tp-total").value.trim()} ${t.name} go on the book as one sell order, sold ${$("tp-lot").value.trim()} `
-        + `at a time for ${$("tp-price").value.trim()} coins each (${mints} mints). Then the mintpad page `
+        + `at a time for ${$("tp-price").value.trim()} ${Number($("tp-price").value) === 1 ? "coin" : "coins"} each (${mints} mints). Then the mintpad page `
         + `is put on the chain. Two small transactions, network fee about ${shown.coinsOf(shown.fee)} each. `
         + "Buyers take straight from your order, even while you're away.", "Open it"))) return;
     show("mp-doing");
