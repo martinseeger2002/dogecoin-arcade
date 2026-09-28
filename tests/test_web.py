@@ -188,7 +188,7 @@ def test_the_exchange_reads_the_chain_rather_than_a_list(client):
     closes by being sent away. So an empty chain is an empty exchange, and
     every tab still draws (D-037)."""
     app, _ = client
-    for tab, empty in (("mintpads", "No collection mintpads on this chain yet"),
+    for tab, empty in (("mintpads", "No mintpads are on"),
                        # Token pads live beside collection pads now: a pad is
                        # a shop, whichever thing it hands over (D-136).
                        ("mintpads", "is selling\n      tokens from a pad"),

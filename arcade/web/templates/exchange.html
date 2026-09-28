@@ -10,8 +10,6 @@
   <a class="btn {{ 'on' if current == 'mintpads' else 'ghost' }} small" href="/exchange?tab=mintpads">Mintpads</a>
   <a class="btn {{ 'on' if current == 'tokens' else 'ghost' }} small" href="/exchange?tab=tokens">Tokens</a>
   <a class="btn {{ 'on' if current == 'market' else 'ghost' }} small" href="/exchange?tab=market">NFTs</a>
-  {# The launchpad sits beside the markets it feeds (2026-09-25). #}
-  <a class="btn ghost small" style="margin-left:auto" href="/launches">Launches</a>
 </nav>
 {% endmacro %}
 
@@ -223,10 +221,112 @@
   {% endif %}
 
 {% elif tab == 'mintpads' %}
-  <div class="row" style="gap:8px;margin:0 0 12px">
-    <a class="btn" href="/mintpad/new">Open a mintpad for one of your collections</a>
+  {# Every mintpad, NFT and token alike, drawn as the feed draws it and ranked
+     like the old Launches list (2026-09-28). The buttons are the feed's
+     forms aimed at the pad's txid; an account's tab signs them (script below). #}
+  {% set acts = viewer == 'wallet' or (mine_tag) %}
+  <div class="row" style="gap:8px;margin:0 0 12px;flex-wrap:wrap;align-items:center">
+    <a class="btn small {{ 'on' if sort != 'new' else 'ghost' }}" href="/exchange?tab=mintpads">Popular</a>
+    <a class="btn small {{ 'on' if sort == 'new' else 'ghost' }}" href="/exchange?tab=mintpads&amp;sort=new">Latest</a>
+    <a class="btn small" style="margin-left:auto" href="/mintpad/new">Open a mintpad</a>
   </div>
-  <h3 style="margin:6px 0 10px">Collection mintpads</h3>
+  <p class="msg" id="pad-news" hidden></p>
+  {% if not pads %}
+  <div class="panel empty"><p>No mintpads are on {{ chain.label|lower }} yet.</p>
+    <p class="muted" style="font-size:.86rem"><a href="/mintpad/new">Open one</a> for a
+      collection or a token you made.</p></div>
+  {% endif %}
+  {% for it in pads %}
+  <div class="panel padcard">
+    <div class="muted" style="font-size:.84rem;margin:0 0 6px">
+      <strong style="color:var(--fg)">{{ wall(it.name) }}</strong>
+      <span class="pill">{{ 'token mintpad' if it.kind == 'token' else 'NFT mintpad' }}</span>
+      by {{ it.creator|who }} &middot; {{ when(it.time) if it.time else 'just now' }}
+      {%- if it.lot %} &middot; {{ it.lot }} per mint{% endif %}
+      &middot; {{ it.trades }} sold
+      {%- if it.kind == 'token' and it.mints is not none %} &middot; {% if it.mints %}{{ '{:,}'.format(it.mints) }} mint{{ '' if it.mints == 1 else 's' }} left{% else %}<span class="pill">sold out</span>{% endif %}{% endif %}</div>
+    <iframe class="inscription-frame postmedia padframe" src="{{ pad_frames.get(it.txid) or ('/content/' ~ it.txid) }}"
+            loading="lazy" sandbox="allow-scripts allow-pointer-lock"></iframe>
+    <div class="row lacts" style="gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
+      {% if acts %}
+      <form method="post" action="/feed/{{ it.txid }}/{{ 'unlike' if it.liked else 'like' }}" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <input type="hidden" name="back" value="/exchange?tab=mintpads{{ '&sort=new' if sort == 'new' else '' }}">
+        <button class="small {{ 'on' if it.liked else 'ghost' }}" type="submit">&#9829; {{ it.likes }}</button></form>
+      <form method="post" action="/feed/{{ it.txid }}/{{ 'undislike' if it.disliked else 'dislike' }}" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <input type="hidden" name="back" value="/exchange?tab=mintpads{{ '&sort=new' if sort == 'new' else '' }}">
+        <button class="small {{ 'on' if it.disliked else 'ghost' }}" type="submit">&#128078; {{ it.dislikes }}</button></form>
+      <button class="small ghost" type="button" onclick="var f=document.getElementById('c-{{ it.txid }}');f.hidden=!f.hidden">&#128172; {{ it.comments }}</button>
+      {% else %}
+      <span class="pill">&#9829; {{ it.likes }}</span>
+      <span class="pill">&#128078; {{ it.dislikes }}</span>
+      <span class="pill">&#128172; {{ it.comments }}</span>
+      <a class="muted" style="font-size:.84rem" href="/me">Sign in to react</a>
+      {% endif %}
+      <a class="small" style="margin-left:auto" href="/inscriptions/{{ it.txid }}/view">Open</a>
+    </div>
+    {% for c in it.comment_rows %}
+    <div class="muted" style="font-size:.86rem;margin-top:6px"><strong>{{ c.author|who }}</strong> {{ c.text }}</div>
+    {% endfor %}
+    <a class="small" style="display:inline-block;margin-top:6px" href="/launches/{{ it.txid }}">
+      {%- if it.comments %}All {{ it.comments }} comment{{ '' if it.comments == 1 else 's' }} and replies &rarr;
+      {%- else %}Discuss it &rarr;{% endif %}</a>
+    {% if acts %}
+    <form method="post" action="/feed/{{ it.txid }}/reply" id="c-{{ it.txid }}" hidden
+          class="row" style="gap:8px;margin-top:8px">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="back" value="/exchange?tab=mintpads{{ '&sort=new' if sort == 'new' else '' }}">
+      <div style="flex:1"><input autocomplete="off" name="text" maxlength="200" placeholder="say something about it"></div>
+      <button class="small" type="submit">Comment</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+  <style>
+    .padcard{margin:0 0 14px;min-width:0}
+    .padframe{display:block;width:100%;max-width:100%;border:0;border-radius:10px;height:min(78vh,640px)}
+    .lacts button.on{background:var(--accent,#c9a227);color:#fff}
+  </style>
+  {% if viewer == 'account' and mine_tag %}
+  <script type="module">
+  /* An account's tab signs the like, dislike or comment itself, as on the feed. */
+  import * as wallet from "/wallet.js";
+  const CHAIN = {network: "{{ state.messaging.network }}",
+                 version: {{ state.messaging.params.pubkeyhash_version }}};
+  const KINDS = {like: 1, unlike: 2, reply: 3, dislike: 8, undislike: 9};
+  const news = document.getElementById("pad-news");
+  const say = (t, bad) => { news.textContent = t; news.hidden = !t;
+                            news.className = "msg " + (bad ? "err" : "ok"); };
+  const opening = wallet.opened(CHAIN);
+  document.addEventListener("submit", async (event) => {
+    const form = event.target;
+    const one = (form.getAttribute("action") || "").match(
+      /^\/feed\/([0-9a-f]{64})\/(like|unlike|dislike|undislike|reply)$/);
+    if (!one) return;
+    event.preventDefault();
+    const held = (await opening) || await arcadeKeys(CHAIN).catch(() => null);
+    if (!held) { say("Unlock your wallet to do that.", true); return; }
+    const [, txid, doing] = one;
+    const button = form.querySelector("button[type=submit]");
+    if (button && doing !== "reply") button.classList.toggle("on");
+    if (button) button.disabled = true;
+    try {
+      const out = await wallet.react(held, txid, KINDS[doing],
+                                     (form.elements.text || {}).value || "");
+      if (form.elements.text) { form.elements.text.value = ""; form.hidden = true; }
+      say(`Sent (${out.txid.slice(0, 12)}…). It counts here when its block lands.`);
+    } catch (e) {
+      if (button && doing !== "reply") button.classList.toggle("on");
+      say(String(e.message || e), true);
+    } finally { if (button) button.disabled = false; }
+  });
+  </script>
+  {% endif %}
+
+  {% if account_pads or mintpads %}
+  <h3 style="margin:22px 0 10px">Collection mintpads not inscribed yet</h3>
+
   {% if account_pads %}
   <div class="cards" style="margin-bottom:18px">
     {% for pad in account_pads %}
@@ -242,35 +342,6 @@
   {% if mintpads %}
   <div class="cards">{% for s in mintpads %}{{ shopcard(s, 'Mint') }}{% endfor %}</div>
   {% endif %}
-  {% if not account_pads and not mintpads %}
-  <div class="panel empty"><p>No collection mintpads on this chain yet.</p>
-    <p class="muted" style="font-size:.86rem">Open one above from a collection you
-      hold: its pieces are offered by your signature and kept on this node until
-      one is taken, which is what puts the pad on this list. Or inscribe a
-      collection with the mintpad box ticked and it appears here by itself.</p></div>
-  {% endif %}
-  <p class="sub">Every pad on {{ chain.label|lower }}, in the two lists it
-    actually has. A token pad is one inscription saying what one mint costs, so it
-    appears here because it is on the chain. A collection pad is a set of listings
-    &mdash; pieces offered by a signature, inscribed on the chain or signed by
-    their owner and kept on this node &mdash; so it appears here because somebody
-    listed them. What a tile counts is the same in both halves: what stands on
-    this node's orders right now, pieces for a collection, whole mints for a
-    token. It is not what is left of a token's total supply, which a pad publishes
-    nothing to count against. The two halves end differently: when the last piece
-    of a collection pad sells there is nothing left standing to list, so the pad
-    leaves here and says sold out on its own page, while a token pad keeps its
-    inscription and stays on this page saying sold out.</p>
-  {% if token_pads %}
-  <h3 style="margin:6px 0 10px">Token mintpads</h3>
-  <div class="cards" style="margin-bottom:18px">
-    {% for tp in token_pads %}
-    <a class="panel" href="/inscriptions/{{ tp.txid }}/view" style="display:block;color:inherit">
-      <strong>{{ wall_text(tp.name, 'A token') }}</strong>
-      <div class="muted" style="font-size:.84rem">{{ tp.lot }} per mint &middot; by {{ tp.seller|who_text }}{% if tp.mints is not none %} &middot; {% if tp.mints %}{{ '{:,}'.format(tp.mints) }} mint{{ '' if tp.mints == 1 else 's' }} left{% else %}<span class="pill">sold out</span>{% endif %}{% endif %}</div>
-    </a>
-    {% endfor %}
-  </div>
   {% endif %}
 
   {# Token pads sit beside collection pads rather than under the markets: a

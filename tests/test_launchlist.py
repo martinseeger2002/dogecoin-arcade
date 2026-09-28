@@ -45,15 +45,39 @@ def test_popular_and_new_order_differently():
     assert popular[0]["n"] == "old" and new[0]["n"] == "fresh"
 
 
-def test_the_page_lists_a_collection_with_the_feeds_buttons(client):
+PAD = "d" * 63 + "1"
+
+
+def _a_pad(home):
+    """A collection's mintpad, inscribed: a page whose JSON names it."""
+    import json
+    from arcade.db import Database
+    db = Database(home / "main-ledger.sqlite")
+    db.conn.execute(
+        "INSERT INTO inscription(txid,number,creator,owner,block_height,position,"
+        "content_type,content_len,sha256,json,chunks,content) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        (PAD, 90, "nMe", "nMe", 450, 0, "text/html", 10, "ee" * 32,
+         json.dumps({"mintpad": {"creator": "nMe", "collection": "Doge Punks"}}), 1,
+         b"<p>pad</p>"))
+    db.conn.commit()
+    db.close()
+
+
+def test_launches_is_folded_into_the_mintpads_tab(client):
+    """2026-09-28: Exchange opens on Mintpads, which lists every pad drawn
+    as the feed draws it and ranked like Launches was; Launches goes."""
     app, state = client
     index_with_a_collection(state.home)
-    page = app.get("/launches")
-    assert page.status_code == 200, page.text[:400]
-    assert "Doge Punks" in page.text and "collection" in page.text
-    assert f'action="/feed/{1:064x}/like"' in page.text, "the like is aimed at #1"
-    assert 'href="/launches?sort=new"' in page.text
-    assert 'href="/launches"' in app.get("/exchange").text
+    _a_pad(state.home)
+    moved = app.get("/launches?sort=new", follow_redirects=False)
+    assert moved.status_code == 303
+    assert moved.headers["location"] == "/exchange?tab=mintpads&sort=new"
+    page = app.get("/exchange").text
+    assert 'href="/launches"' not in page, "no Launches button"
+    assert f'class="inscription-frame postmedia padframe" src="/content/{PAD}"' in page
+    assert "NFT mintpad" in page and "Doge Punks" in page
+    assert f'action="/feed/{PAD}/like"' in page, "the like is aimed at the pad"
+    assert 'href="/exchange?tab=mintpads&amp;sort=new"' in page
 
 
 def test_a_visitor_sees_the_counts_and_how_to_join_in(client):
@@ -61,9 +85,10 @@ def test_a_visitor_sees_the_counts_and_how_to_join_in(client):
     2026-09-26: a signed-out phone saw no likes, dislikes or comments at all)."""
     app, state = client
     index_with_a_collection(state.home)
+    _a_pad(state.home)
     state.public = True
     try:
-        page = app.get("/launches").text
+        page = app.get("/exchange?tab=mintpads").text
     finally:
         state.public = False
     if "Doge Punks" in page:
@@ -75,7 +100,7 @@ def test_the_launch_wizard_is_gone_and_its_address_goes_to_the_mintpad_wizard(cl
     easy already); a mintpad wizard instead."""
     app, _ = client
     ex = app.get("/exchange").text
-    assert 'href="/launch"' not in ex and 'href="/launches"' in ex
+    assert 'href="/launch"' not in ex
     moved = app.get("/launch", follow_redirects=False)
     assert moved.status_code == 303 and moved.headers["location"] == "/mintpad/new"
     assert 'href="/mintpad/new"' in app.get("/exchange?tab=mintpads").text

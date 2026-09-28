@@ -1224,8 +1224,6 @@ def test_the_mintpads_tab_carries_the_same_count(web):
     listed = tab()
     assert f'href="/inscriptions/{pad}/view"' in listed, listed
     assert "sold out" in listed, "nothing on the book yet, and it says so rather than lie"
-    assert "pieces for a collection, whole mints for a token" in listed, \
-        "and it says which of its two lists counts what"
 
     # Two lots of the lot size on the book, so the tile says two -- the same two
     # the pad page prints above its frame, because it is the same read.
@@ -1250,9 +1248,9 @@ def test_the_mintpads_tab_carries_the_same_count(web):
     assert "mints left" not in gone, gone
     assert f'href="/inscriptions/{pad}/view"' in gone, \
         "sold out is what the tile says, not a reason to hide the pad"
+    # One list since 2026-09-28: every pad drawn as the feed draws it.
     named = app.get("/exchange?tab=mintpads").text
-    assert ">Collection mintpads<" in named and ">Token mintpads<" in named, \
-        "a token pad on the page does not retire the other half's heading"
+    assert "token mintpad" in named and f"/content/{pad}" in named
 
 
 def test_the_mintpads_tab_names_its_collection_half_and_says_when_it_is_empty(web):
@@ -1272,12 +1270,11 @@ def test_the_mintpads_tab_names_its_collection_half_and_says_when_it_is_empty(we
     which instead of describing only one of them.
     """
     app, state, node, alice, bob = web
+    # One list since 2026-09-28: NFT and token pads together, so one
+    # empty note, and it says how to make one.
     body = app.get("/exchange?tab=mintpads").text
-    assert ">Collection mintpads<" in body, \
-        "an unnamed half is a half nobody can look for"
-    assert "No collection mintpads on this chain yet" in body, body[:400]
-    assert "your signature" in body, \
-        "and the empty note says what actually puts a collection pad on this list"
+    assert "No mintpads are on" in body, body[:400]
+    assert 'href="/mintpad/new"' in body
 
 
 def test_a_pair_that_was_never_issued_answers_404_like_the_token_page(web):

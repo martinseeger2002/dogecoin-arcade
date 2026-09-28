@@ -6490,6 +6490,14 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/launches", response_class=HTMLResponse)
     def launches_page(request: Request, sort: str = "popular"):
+        """Folded into Exchange > Mintpads (2026-09-28: "we can remove
+        the launches section altogether, since it pretty much does the same
+        thing"). Old links land on the ranked pads; each launch's own thread,
+        /launches/<txid>, still answers."""
+        return RedirectResponse("/exchange?tab=mintpads"
+                                + ("&sort=new" if sort == "new" else ""), status_code=303)
+
+    def _old_launches_page(request: Request, sort: str = "popular"):
         """Everything launched -- tokens and collections -- ranked like the feed.
 
         Popular is feed.hot over likes, dislikes, comments AND trades
@@ -13934,6 +13942,96 @@ def create_app(state: AppState) -> FastAPI:
         state.set_setting(key, done[-5000:])
         return JSONResponse({"ok": True, "left": len(_unannounced(chain, address, name))})
 
+    def _pads_ranked(request: Request, index, chain, sort: str) -> list[dict]:
+        """Every mintpad on the chain, NFT and token alike, ranked the way
+        /launches ranks (2026-09-28: "a list of both token and NFT mint
+        pads in the same way they show up on the feed ... sorted by popularity
+        or latest"). A pad is an inscribed page whose JSON says {mintpad} or
+        {tokenpad} and whose creator is the pad's own seller; the newest one per
+        pad counts, so a re-inscribed pad replaces its older self.
+
+        Popular is launchlist's endorsement over the feed's likes, dislikes and
+        comments aimed at the pad, plus what it sold (mints). Latest is newest
+        block first."""
+        from .. import launchlist
+        try:
+            with contextlib.closing(index.open()) as db:
+                rows = db.conn.execute(
+                    "SELECT i.txid, i.number, i.creator, i.json, i.block_height, "
+                    "COALESCE(b.time, 0) AS time FROM inscription i "
+                    "LEFT JOIN block b ON b.height = i.block_height "
+                    "WHERE i.content_type LIKE 'text/html%' AND (i.json LIKE '%\"mintpad\"%' "
+                    "OR i.json LIKE '%\"tokenpad\"%') "
+                    "ORDER BY i.block_height DESC, i.position DESC LIMIT 300").fetchall()
+        except Exception:
+            return []
+        try:
+            trades = index.trades()
+        except Exception:
+            trades = []
+        nft = _nft_points(index, trades) if trades else {}
+        whole = {p["property_id"]: p["divisible"] for p in _token_props(index)}
+        try:
+            taking = index.pending_takes()
+        except Exception:
+            taking = None
+        seen, items = set(), []
+        for r in rows:
+            try:
+                said = json.loads(r["json"] or "{}") or {}
+            except ValueError:
+                continue
+            nftpad, tokpad = said.get("mintpad") or {}, said.get("tokenpad") or {}
+            mints, lot_shown = None, ""
+            pad = nftpad or tokpad
+            if not isinstance(pad, dict) or pad.get("creator") != r["creator"]:
+                continue
+            if nftpad:
+                name, key = str(pad.get("collection") or ""), ("nft", r["creator"], pad.get("collection"))
+                sold = len(nft.get((r["creator"], name), []))
+            else:
+                pid = int(pad.get("property_id") or 0)
+                prop = index.property(pid) if pid else None
+                if prop is None:
+                    continue
+                name, key = prop["name"], ("token", r["creator"], pid)
+                sold = len(chartlib.token_prices(trades, pid, whole.get(pid, True)))
+                # What is left, as the pad's own page counts it (a tester).
+                lot, mints = int(pad.get("lot") or 0), None
+                lot_shown = format_amount(lot, prop["divisible"]) if lot > 0 else ""
+                if taking is not None and lot > 0:
+                    try:
+                        mints = _pad_supply(index, pid, lot, r["creator"], taking)[0]
+                    except Exception:
+                        mints = None
+            if not name or key in seen:
+                continue
+            seen.add(key)
+            items.append({"txid": r["txid"], "number": r["number"], "creator": r["creator"],
+                          "mints": mints if not nftpad else None, "lot": lot_shown,
+                          "kind": key[0], "name": name, "time": int(r["time"] or 0),
+                          "height": r["block_height"], "trades": sold, "volume": 0.0})
+        acts: list = []
+        try:
+            with state.store() as store:
+                acts = [dict(a) for a in store.feed_acts_on(
+                    state.messaging.network, [i["txid"] for i in items])]
+        except Exception:
+            acts = []
+        waiting = _pending_feed(state.messaging.network)
+        known, targets = {a["txid"] for a in acts}, {i["txid"] for i in items}
+        acts += [dict(a, height=a.get("height") or 0) for a in (waiting.acts or [])
+                 if a.get("target") in targets and a["txid"] not in known]
+        said = launchlist.tally(acts)
+        me = _tag_of_whoever_is_asking(request).get("address") or ""
+        for item in items:
+            got = said.get(item["txid"], {"likes": set(), "dislikes": set(), "comments": []})
+            item["likes"], item["dislikes"] = len(got["likes"]), len(got["dislikes"])
+            item["liked"], item["disliked"] = me in got["likes"], me in got["dislikes"]
+            item["comment_rows"] = got["comments"][-3:]
+            item["comments"] = len(got["comments"])
+        return launchlist.rank(items, sort, int(time.time()))
+
     def _mintpad_inscription(chain, creator: str, name: str) -> str:
         """The newest inscription that is this collection's mintpad, by its JSON,
         inscribed by the seller: '' when there is none yet."""
@@ -16372,14 +16470,16 @@ def create_app(state: AppState) -> FastAPI:
                       book_error=book_error)
 
     @app.get("/exchange", response_class=HTMLResponse)
-    def exchange(request: Request, tab: str = "offers"):
+    def exchange(request: Request, tab: str = "mintpads", sort: str = "popular"):
         """Everything for sale on this chain, and what has been offered to you.
 
         Four questions, four tabs: what somebody has offered for something of
         yours, which mintpads still have pieces, what tokens are being sold
         for, and which single NFTs are for sale.
         """
-        tab = tab if tab in EXCHANGE_TABS else "offers"
+        # Mintpads first (2026-09-28: Exchange "should open to the
+        # launchpads section"), and anything unknown lands there too.
+        tab = tab if tab in EXCHANGE_TABS else "mintpads"
         chain, index = _token_chain()
         data: dict[str, Any] = {"tab": tab, "chain": chain, "node": chain.status(),
                                 "other_chains": [c for c in state.token_chains
@@ -16443,6 +16543,18 @@ def create_app(state: AppState) -> FastAPI:
             data["account_pads"] = []
         # And accounts' TOKEN mintpads, found by their inscriptions (a tester).
         data["token_pads"] = _token_pads(index, limit=24)
+        data["sort"] = "new" if sort == "new" else "popular"
+        data["pads"], data["pad_frames"] = [], {}
+        if tab == "mintpads":
+            data["pads"] = _pads_ranked(request, index, chain, data["sort"])
+            data["pad_frames"] = _frames_for(
+                request, {p["txid"]: "text/html" for p in data["pads"]})
+            data["tags"].update(_tags_for([p["creator"] for p in data["pads"]]))
+            # A collection pad that is only listings (never inscribed) has no
+            # page to draw; it stays below the list, as it was.
+            drawn = {(p["creator"], p["name"]) for p in data["pads"] if p["kind"] == "nft"}
+            data["account_pads"] = [p for p in data["account_pads"]
+                                    if (p["seller"], p["name"]) not in drawn]
         data["market"] = [s for s in data["shops"] if selling(s, "inscription")]
         data["tokens"] = [s for s in data["shops"] if selling(s, "token")]
         data["pairs"] = data.get("pairs", [])
@@ -16563,7 +16675,9 @@ def create_app(state: AppState) -> FastAPI:
                     entry["swap_txid"] = (held or {}).get("txid", "")
         except Exception as exc:
             data["node_error"] = data["node_error"] or str(exc)
-        return render(request, "exchange.html", **data)
+        return render(request, "exchange.html", when=_when,
+                      mine_tag=(_tag_of_whoever_is_asking(request) or {}).get("tag") or "",
+                      **data)
 
 
 
