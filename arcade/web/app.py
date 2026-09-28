@@ -13768,6 +13768,10 @@ def create_app(state: AppState) -> FastAPI:
         "gallery": "Gallery: a scrolling strip of the pieces above the button",
         "arcade": "Arcade: a pixel-font cabinet with an INSERT COIN button",
         "lottery": "Lottery: a flipping wall of the set and a reel that spins to the piece you win",
+        "neon": "Neon: glowing pink and cyan on black",
+        "polaroid": "Polaroid: the cover as an instant photo on warm paper",
+        "terminal": "Terminal: green-screen console, scanlines and all",
+        "minimal": "Minimal: clean white card, nothing but the piece and the button",
     }
 
     def _mintpad_look(seller: str, name: str) -> dict:

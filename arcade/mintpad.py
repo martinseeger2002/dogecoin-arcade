@@ -111,7 +111,8 @@ def shop_json(node: str, collection: str, take: dict[str, Any]) -> str:
 # signed in the reader's own tab. Only the chosen look's styling goes in, so
 # the page is one transaction.
 
-LOOKS = ("spotlight", "wall", "gallery", "arcade", "lottery")
+LOOKS = ("spotlight", "wall", "gallery", "arcade", "lottery",
+         "neon", "polaroid", "terminal", "minimal")
 
 _BASE_CSS = """*{box-sizing:border-box}html,body{margin:0;min-height:100%}
 body{background:#141310;color:#ece8e0;font:16px/1.45 system-ui,sans-serif;padding:18px;text-align:center}
@@ -147,7 +148,32 @@ box-shadow:0 0 0 3px #ffc83d,0 0 40px #ffc83d59}#strip{position:absolute;left:0;
 button{background:linear-gradient(90deg,#ffc83d,#ff5fa2);color:#1a1024}""",
 }
 
-_BUTTON = {"arcade": "INSERT COIN", "lottery": "Spin to mint"}
+# More looks (2026-09-28: "add the multiple styles of mint pads for both
+# tokens and [NFTs]"). Shared with the token pad, which draws the same card.
+_SHARED_CSS = {
+    "neon": """body{background:#05010f}.card{background:#0b0418;border:2px solid #ff2bd6;border-radius:18px;
+box-shadow:0 0 24px #ff2bd6aa,inset 0 0 24px #22e1ff33}h1{color:#22e1ff;text-shadow:0 0 10px #22e1ff}
+.cover{border:2px solid #22e1ff;box-shadow:0 0 18px #22e1ffaa}.m{color:#b9a8d9}
+button{background:#ff2bd6;color:#fff;box-shadow:0 0 16px #ff2bd6}""",
+    "terminal": """body{background:#000;color:#39ff6a;font-family:ui-monospace,Menlo,monospace}
+body:after{content:'';position:fixed;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,#0000 0 2px,#0006 2px 3px)}
+.card{background:#000;border:1px solid #39ff6a;border-radius:4px;text-align:left}.m{color:#1f9a3f}
+h1{font-family:inherit;font-size:1.3rem}h1:before{content:'> '}
+.cover{border-radius:0;border:1px solid #39ff6a;filter:grayscale(1) sepia(1) hue-rotate(70deg) saturate(3)}
+button{background:#000;color:#39ff6a;border:1px solid #39ff6a;border-radius:0;font-family:inherit}
+button:hover{background:#39ff6a;color:#000}""",
+    "minimal": """body{background:#fafaf7;color:#111}.card{background:#fff;border:1px solid #e7e5df;box-shadow:0 1px 3px #0001}
+.m{color:#777}.cover{width:260px;height:260px;border-radius:4px}button{background:#111;color:#fff;border-radius:999px}
+#say.ok{color:#1c7a45}#say.bad{color:#b3261e}""",
+}
+_LOOK_CSS.update(_SHARED_CSS)
+_LOOK_CSS["polaroid"] = """body{background:#efe6d6;color:#2b2620}.card{background:transparent;border:0}
+.cover{width:250px;height:280px;padding:12px 12px 48px;border-radius:2px;background:#fff;box-shadow:0 12px 30px #0003;
+transform:rotate(-3deg);object-fit:cover}h1{font-family:'Brush Script MT','Segoe Script',cursive;font-size:2.1rem}
+.m{color:#6b6257}button{background:#2b2620;color:#efe6d6;border-radius:4px}#say.ok{color:#1c7a45}#say.bad{color:#b3261e}"""
+
+_BUTTON = {"arcade": "INSERT COIN", "lottery": "Spin to mint", "terminal": "run mint",
+           "polaroid": "Develop one"}
 
 _PAD_JS = r"""const P=JSON.parse(document.getElementById('pad').textContent),$=i=>document.getElementById(i);
 const E=encodeURIComponent,C='/content/',W='/r/mintpad/'+E(P.creator)+'/'+E(P.collection);
@@ -240,7 +266,8 @@ def account_page(creator: str, collection: str, look: str = "spotlight",
 # signs, the seller can be away, and every node that serves the page reads the
 # same book through /r/book. One transaction, like the NFT pad.
 
-TOKEN_LOOKS = ("counter", "vending", "progress")
+TOKEN_LOOKS = ("counter", "vending", "progress", "coin", "ticker",
+               "neon", "terminal", "minimal")
 
 _TOKEN_CSS = {
     "counter": "",
@@ -252,7 +279,16 @@ button{background:#7dffb0;color:#0d0820;font-family:monospace}""",
     "progress": """.bar{height:18px;border-radius:999px;background:#2e2b25;overflow:hidden;margin:12px 0 4px}
 .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#d9a520,#ffe45e);transition:width 1s}
 .sold{font-size:.85rem;color:#9b948a}""",
+    "coin": """.coin{width:150px;height:150px;margin:6px auto 14px;border-radius:50%;background:#d9a520 center/cover;
+border:6px solid #f5c542;box-shadow:0 0 0 4px #8a6410,0 10px 30px #0008;display:grid;place-items:center;
+font:800 3rem system-ui;color:#5a3e05;animation:c 6s linear infinite}@keyframes c{to{transform:rotateY(360deg)}}
+body.won .coin{animation:c .5s linear 5}button{background:#f5c542}""",
+    "ticker": """.tick{overflow:hidden;white-space:nowrap;background:#000;color:#7dffb0;font:600 .9rem ui-monospace,monospace;
+padding:7px 0;margin:-20px -20px 16px;border-radius:16px 16px 0 0}
+#tape{display:inline-block;padding-left:100%;animation:t 16s linear infinite}@keyframes t{to{transform:translateX(-100%)}}
+.card{border-color:#7dffb055}button{background:#7dffb0;color:#04160b}""",
 }
+_TOKEN_CSS.update(_SHARED_CSS)
 
 _TOKEN_JS = r"""const P=JSON.parse(document.getElementById('pad').textContent),$=i=>document.getElementById(i);
 const say=(t,k)=>{$('say').textContent=t;$('say').className=k||''};
@@ -271,6 +307,7 @@ async function load(){const b=await j('/r/book/'+P.property+'?address='+encodeUR
  const bar=document.querySelector('.bar i');if(bar&&P.total){const sold=Math.max(0,P.total-left);bar.style.width=Math.min(100,100*sold/P.total)+'%';
   $('sold').textContent=fmt(sold,b.divisible)+' of '+fmt(P.total,b.divisible)+' '+b.name+' sold'}
  const slot=$('slot');if(slot)slot.textContent=lots?String(lots).padStart(3,'0'):'000';
+ const tp=$('tape');if(tp)tp.textContent=(b.name+'  ·  '+($('price').textContent||'')+'  ·  '+lots.toLocaleString()+' left  ·  ').repeat(3);
  return b}
 let seq=0;const wait={},heard={};
 addEventListener('message',e=>{const m=e.data||{};if(m.arcade!=='take')return;if(m.heard){heard[m.seq]=1;return}
@@ -281,7 +318,8 @@ $('go').onclick=async()=>{say('');await load();if(!pick)return;const n=++seq;$('
  const got=await new Promise(ok=>{wait[n]=ok;parent.postMessage({arcade:'take',seq:n,order:pick.order,units:P.lot},'*');
   setTimeout(()=>{if(wait[n]&&!heard[n]){delete wait[n];ok({error:'Open this mintpad on DogecoinArcade to mint from it.'})}},4000)});
  $('go').disabled=false;
- if(got.error)say(got.error,'bad');else if(got.ok){say('Minted! Yours when its block lands.','ok');setTimeout(load,4000)}};
+ if(got.error)say(got.error,'bad');else if(got.ok){say('Minted! Yours when its block lands.','ok');
+  const d=document.body;d.classList.remove('won');void d.offsetWidth;d.classList.add('won');setTimeout(load,4000)}};
 load();"""
 
 
@@ -299,14 +337,20 @@ def account_token_page(creator: str, property_id: int, name: str, lot_units: int
                        "lot": int(lot_units), "total": int(total_units or 0),
                        "look": look}).replace("</", "<\\/")
     top = ""
+    face = f'<img class="cover" src="/content/{_html.escape(icon)}" alt="">' if icon else ""
     if look == "vending":
         top = '<div class="slot" id="slot">000</div>'
-    elif icon:
-        top = f'<img class="cover" src="/content/{_html.escape(icon)}" alt="">'
+    elif look == "coin":
+        top = (f'<div class="coin" style="background-image:url(/content/{_html.escape(icon)})"></div>'
+               if icon else f'<div class="coin">{_html.escape((name or "?")[:1].upper())}</div>')
+    elif look == "ticker":
+        top = '<div class="tick"><span id="tape"></span></div>' + face
+    else:
+        top = face
     bar = ('<div class="bar"><i></i></div><div class="sold" id="sold"></div>'
            if look == "progress" else "")
     words = _html.escape(" ".join((blurb or "").split())[:300])
-    button = {"vending": "INSERT COIN"}.get(look, "Mint")
+    button = {"vending": "INSERT COIN", "terminal": "run mint", "coin": "Mint a stack"}.get(look, "Mint")
     text = (
         "<!doctype html><meta charset=utf-8>"
         "<meta name=viewport content='width=device-width,initial-scale=1'>"

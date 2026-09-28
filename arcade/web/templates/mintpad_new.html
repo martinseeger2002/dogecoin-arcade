@@ -49,6 +49,21 @@
     <label class="mplook"><input type="radio" name="tlook" value="progress">
       <span class="mpprev mpprev-gallery" aria-hidden="true"><i></i><b></b></span>
       <strong>Supply bar</strong><span class="muted">A bar filling as the supply sells</span></label>
+    <label class="mplook"><input type="radio" name="tlook" value="coin">
+      <span class="mpprev mpprev-coin" aria-hidden="true"><i></i><b></b></span>
+      <strong>Coin</strong><span class="muted">A big spinning coin with the token's face</span></label>
+    <label class="mplook"><input type="radio" name="tlook" value="ticker">
+      <span class="mpprev mpprev-ticker" aria-hidden="true"><i></i><b></b></span>
+      <strong>Ticker</strong><span class="muted">A market tape scrolling the price and what is left</span></label>
+    <label class="mplook"><input type="radio" name="tlook" value="neon">
+      <span class="mpprev mpprev-neon" aria-hidden="true"><i></i><b></b></span>
+      <strong>Neon</strong><span class="muted">Glowing pink and cyan on black</span></label>
+    <label class="mplook"><input type="radio" name="tlook" value="terminal">
+      <span class="mpprev mpprev-terminal" aria-hidden="true"><i></i><b></b></span>
+      <strong>Terminal</strong><span class="muted">Green-screen console</span></label>
+    <label class="mplook"><input type="radio" name="tlook" value="minimal">
+      <span class="mpprev mpprev-minimal" aria-hidden="true"><i></i><b></b></span>
+      <strong>Minimal</strong><span class="muted">Clean white card</span></label>
   </div>
   <label for="tp-blurb" style="display:block;margin-top:12px">A line for the page (optional)</label>
   <input id="tp-blurb" type="text" maxlength="300" autocomplete="off" placeholder="what buyers should know" style="width:100%">
@@ -117,6 +132,19 @@
 .mpprev-lottery{background:radial-gradient(#3a2b5c,#07060c)}
 .mpprev-lottery i{box-shadow:0 0 0 2px #ffc83d,0 0 12px #ffc83d;background:#43e8ff}
 .mpprev-lottery b{background:linear-gradient(90deg,#ffc83d,#ff5fa2)}
+.mpprev-neon{background:#0b0418;box-shadow:inset 0 0 0 2px #ff2bd6,inset 0 0 14px #ff2bd6}
+.mpprev-neon i{box-shadow:0 0 10px #22e1ff;background:#22e1ff}.mpprev-neon b{background:#ff2bd6;box-shadow:0 0 8px #ff2bd6}
+.mpprev-polaroid{background:#efe6d6}.mpprev-polaroid i{background:#fff;border:3px solid #fff;border-bottom-width:8px;
+  box-shadow:0 2px 6px #0003;transform:rotate(-4deg);background-clip:content-box;background-color:#c9a227}
+.mpprev-polaroid b{background:#2b2620}
+.mpprev-terminal{background:#000;box-shadow:inset 0 0 0 1px #39ff6a}.mpprev-terminal i{background:#39ff6a;border-radius:0}
+.mpprev-terminal b{background:#000;border:1px solid #39ff6a;border-radius:0}
+.mpprev-minimal{background:#fff;box-shadow:inset 0 0 0 1px #e7e5df}.mpprev-minimal i{background:#ccc;border-radius:2px}
+.mpprev-minimal b{background:#111}
+.mpprev-coin i{width:34px;height:34px;margin-left:-17px;top:10px;border-radius:50%;background:#d9a520;box-shadow:0 0 0 3px #f5c542}
+.mpprev-coin b{background:#f5c542}
+.mpprev-ticker{background:linear-gradient(#000 0 14px,var(--code) 14px)}.mpprev-ticker i{top:24px}
+.mpprev-ticker b{background:#7dffb0}
 </style>
 
 <script type="module">
