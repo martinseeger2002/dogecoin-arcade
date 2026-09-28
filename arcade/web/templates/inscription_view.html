@@ -42,7 +42,7 @@
      claims, and nothing was pressed to find out. #}
   <p style="margin:0 0 8px"><span class="pill ok">mintpad</span>
     <strong>{{ pad_facts.lot }} {{ pad_facts.name }}</strong>
-    {% if pad_facts.price %}for <strong>{{ pad_facts.price }} coins</strong>{% endif %}
+    {% if pad_facts.price %}for <strong>{{ pad_facts.price }} {{ pad_facts.coin }}</strong>{% endif %}
     a mint &mdash;
     {% if pad_facts.mints %}<strong>{{ "{:,}".format(pad_facts.mints) }}</strong>
       mint{{ '' if pad_facts.mints == 1 else 's' }} left{% else %}<strong>sold out</strong>

@@ -6277,6 +6277,7 @@ def create_app(state: AppState) -> FastAPI:
         return {"name": prop["name"],
                 "lot": format_amount(lot, bool(prop["divisible"])),
                 "price": None if per is None else format_amount(per, True),
+                "coin": "" if per is None else ("coin" if per == 100_000_000 else "coins"),
                 "mints": left // lot}
 
     @app.get("/inscriptions/{key}/view", response_class=HTMLResponse)

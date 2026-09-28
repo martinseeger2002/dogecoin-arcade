@@ -1118,13 +1118,14 @@ def test_a_pad_page_carries_one_line_the_node_writes_above_the_frame(web):
     pid = str(prop["property_id"])
     home = index.balances([alice])[0]["address"]
 
-    # An ask of 10 Lot Tokens at 2 coins each, so a lot of 5 costs 10 coins and the
-    # book holds exactly two lots of it. The pad page works that out in its script
-    # from /r/book; the line below is asked to reach the same two numbers.
+    # An ask of 10 Lot Tokens at 0.2 coins each, so a lot of 5 costs exactly one
+    # coin and the book holds two lots of it. The pad page works those out in its
+    # script from /r/book; the line above the frame is asked to reach the same
+    # numbers, and to say "1 coin" rather than "1 coins" while doing it.
     pad = "e7" * 32
     with mock.patch.object(type(state), "home_address", lambda self, chain: home):
         app.post("/exchange/order", data=dict(csrf_token=csrf, property_id=pid,
-                                             side="ask", amount="10", price="2"),
+                                             side="ask", amount="10", price="0.2"),
                  follow_redirects=False)
         mine_and_index(node, state)
         with index.open() as db:
@@ -1144,7 +1145,7 @@ def test_a_pad_page_carries_one_line_the_node_writes_above_the_frame(web):
 
     said = page()
     assert '<span class="pill ok">mintpad</span>' in said, said
-    assert "<strong>5 Lot Token</strong> for <strong>10 coins</strong> a mint" in said, said
+    assert "<strong>5 Lot Token</strong> for <strong>1 coin</strong> a mint" in said, said
     assert "<strong>2</strong> mints left" in said, said
     assert "not from what this page says" in said, "and it says where it came from"
 
