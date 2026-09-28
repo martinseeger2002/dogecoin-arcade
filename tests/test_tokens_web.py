@@ -1159,3 +1159,78 @@ def test_a_pad_page_carries_one_line_the_node_writes_above_the_frame(web):
     gone = page()
     assert "<strong>sold out</strong> &mdash; no lot of it left on the book" in gone, gone
     assert "coins</strong> a mint" not in gone, "no price claimed from an order that is gone"
+
+
+def test_the_mintpads_tab_carries_the_same_count(web):
+    """What is left is one fact, so the tiles say it too (a tester addendum 2).
+
+    The tab's token tiles carried lot and creator only, so it could be read as a
+    list of what is on the chain and not as a what-is-left list -- while the number
+    sat one click away on the pad's own page. It is drawn here from the same
+    arithmetic with the pending pool read once for the whole list, so a tile and
+    the page it links to cannot tell two stories about the same book.
+
+    The tile count is pieces or mints and never supply: a token pad publishes no
+    cap to count against (the fixed/managed split in S48's addendum), which is why
+    the tab says which of the two lists is which instead of filling a column it
+    cannot answer. And a pad with nothing left stays on the list -- dropping it
+    would undo the a tester findability the list exists for.
+    """
+    import json
+    import unittest.mock as mock
+
+    app, state, node, alice, bob = web
+    csrf = state.csrf_token
+    form = dict(csrf_token=csrf, sender=alice, name="Tab Token", supply="1000",
+                kind="fixed", units="divisible")
+    txid = shown(app.post("/tokens/create", data=form).text, "txid")
+    app.post("/tokens/create", data={**form, "confirmed": txid}, follow_redirects=False)
+    mine_and_index(node, state)
+    index = state.token_index(state.ledger)
+    prop = next(p for p in index.properties() if p["name"] == "Tab Token")
+    pid = str(prop["property_id"])
+    home = index.balances([alice])[0]["address"]
+
+    pad = "e9" * 32
+    with index.open() as db:
+        db.conn.execute(
+            "INSERT OR REPLACE INTO inscription(txid,number,creator,owner,"
+            "block_height,position,content_type,content_len,sha256,json,chunks,"
+            "content) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (pad, 772, home, home, 100, 0, "text/html", 48, "ad" * 32,
+             json.dumps({"name": "Tab Token mintpad",
+                         "tokenpad": {"creator": home, "property_id": int(pid),
+                                      "lot": 5 * 10**8, "look": "counter"}}),
+             1, b"<html><body>the pad, on the tab</body></html>"))
+        db.conn.commit()
+
+    def tab() -> str:
+        return " ".join(app.get("/exchange?tab=mintpads").text.split())
+
+    listed = tab()
+    assert f'href="/inscriptions/{pad}/view"' in listed, listed
+    assert "sold out" in listed, "nothing on the book yet, and it says so rather than lie"
+    assert "pieces for a collection, whole mints for a token" in listed, \
+        "and it says which of its two lists counts what"
+
+    # Two lots of the lot size on the book, so the tile says two -- the same two
+    # the pad page prints above its frame, because it is the same read.
+    with mock.patch.object(type(state), "home_address", lambda self, chain: home):
+        app.post("/exchange/order", data=dict(csrf_token=csrf, property_id=pid,
+                                             side="ask", amount="10", price="0.2"),
+                 follow_redirects=False)
+        mine_and_index(node, state)
+    assert "5 per mint" in tab() and "2 mints left" in tab(), tab()
+    assert "<strong>2</strong> mints left" in " ".join(
+        app.get(f"/inscriptions/{pad}/view").text.split()), \
+        "the tile and the page are counting different things"
+
+    with mock.patch.object(type(state), "home_address", lambda self, chain: home):
+        app.post("/exchange/order/cancel", data=dict(csrf_token=csrf, property_id=pid,
+                                                     side="ask"),
+                 follow_redirects=False)
+        mine_and_index(node, state)
+    gone = tab()
+    assert "mints left" not in gone, gone
+    assert f'href="/inscriptions/{pad}/view"' in gone, \
+        "sold out is what the tile says, not a reason to hide the pad"

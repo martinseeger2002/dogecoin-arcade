@@ -232,7 +232,7 @@
     <a class="panel" href="/mintpad/{{ pad.seller }}/{{ pad.name|urlencode }}" style="display:block;color:inherit">
       <img src="/content/{{ pad.cover }}" alt="" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px">
       <strong>{{ pad.name }}</strong>
-      <div class="muted" style="font-size:.84rem">by {{ pad.seller|who_text }} &middot; {{ pad.left }} left
+      <div class="muted" style="font-size:.84rem">by {{ pad.seller|who_text }} &middot; {{ pad.left }} pieces left
         &middot; {{ '%g' % (pad.price / 100000000) }} coins</div>
     </a>
     {% endfor %}
@@ -241,14 +241,20 @@
   <p class="sub">Every pad on {{ chain.label|lower }} &mdash; collections and
     tokens both. A pad is an inscription: it appears here because it is on the
     chain, not because anybody listed it, and a collection pad that has minted
-    out drops off while a token pad stays and says so on its own page.</p>
+    out drops off while a token pad stays and says so here. The number on a tile
+    is what its seller has standing on this node's orders right now &mdash;
+    pieces for a collection, whole mints for a token &mdash; and not what is left
+    of a token's total supply, which a pad publishes nothing to count against.</p>
   {% if token_pads %}
   <h3 style="margin:6px 0 10px">Token mintpads</h3>
   <div class="cards" style="margin-bottom:18px">
     {% for tp in token_pads %}
     <a class="panel" href="/inscriptions/{{ tp.txid }}/view" style="display:block;color:inherit">
       <strong>{{ wall_text(tp.name, 'A token') }}</strong>
-      <div class="muted" style="font-size:.84rem">{{ tp.lot }} per mint &middot; by {{ tp.seller|who_text }}</div>
+      <div class="muted" style="font-size:.84rem">{{ tp.lot }} per mint &middot; by {{ tp.seller|who_text }}
+        {%- if tp.mints is not none %} &middot;
+          {%- if tp.mints %}{{ '{:,}'.format(tp.mints) }} mint{{ '' if tp.mints == 1 else 's' }} left
+          {%- else %}<span class="pill">sold out</span>{% endif %}{% endif %}</div>
     </a>
     {% endfor %}
   </div>

@@ -6239,6 +6239,30 @@ def create_app(state: AppState) -> FastAPI:
                       prepared=prepared, error=error, to=to,
                       tag=index.tag_of(row["owner"]))
 
+    def _pad_supply(index, pid: int, lot: int, seller: str,
+                    taking: dict) -> tuple[int, int | None]:
+        """How many mints a token pad can still sell, and what one mint costs.
+
+        The seller's open sell orders for the token, less what a take already in
+        the pool is buying -- the arithmetic the inscribed pad page runs in its own
+        script against `/r/book`, so the tile on the mintpads tab, the line above
+        the frame, and the page inside the frame are one read of one book rather
+        than three numbers that can drift apart (a tester and its addendum 2).
+        `taking` is `index.pending_takes()`: it says nothing about the pad in
+        question, so a page listing pads reads it once for all of them.
+        """
+        left, per = 0, None
+        for order in index.book(pid).get("asks", []):
+            if order["address"] != seller or order.get("pending"):
+                continue
+            free = int(order["tokens"]) - int(taking.get(order["txid"], 0))
+            if free <= 0:
+                continue
+            left += free
+            if per is None and free >= lot:
+                per = int(order["coins"]) * lot // int(order["tokens"])
+        return left // lot, per
+
     def _pad_facts(index, row) -> dict[str, Any] | None:
         """What a token mintpad sells, what a mint costs, and how many are left.
 
@@ -6261,24 +6285,15 @@ def create_app(state: AppState) -> FastAPI:
             prop = index.property(pid)
             if prop is None:
                 return None
-            book, taking = index.book(pid), index.pending_takes()
+            taking = index.pending_takes()
         except Exception:
             return None
-        left, per = 0, None
-        for order in book.get("asks", []):
-            if order["address"] != seller or order.get("pending"):
-                continue
-            free = int(order["tokens"]) - int(taking.get(order["txid"], 0))
-            if free <= 0:
-                continue
-            left += free
-            if per is None and free >= lot:
-                per = int(order["coins"]) * lot // int(order["tokens"])
+        mints, per = _pad_supply(index, pid, lot, seller, taking)
         return {"name": prop["name"],
                 "lot": format_amount(lot, bool(prop["divisible"])),
                 "price": None if per is None else format_amount(per, True),
                 "coin": "" if per is None else ("coin" if per == 100_000_000 else "coins"),
-                "mints": left // lot}
+                "mints": mints}
 
     @app.get("/inscriptions/{key}/view", response_class=HTMLResponse)
     def inscription_view(request: Request, key: str):
@@ -7005,7 +7020,12 @@ def create_app(state: AppState) -> FastAPI:
         could not be found again once its wizard screen was left). An account's
         pad is an inscription whose JSON says {tokenpad: {creator, property_id,
         lot, look}} and whose creator is that seller; anything else claiming to
-        be one is not listed."""
+        be one is not listed.
+
+        Each says how many mints it has left (`mints`), so the mintpads tab can be
+        read as a what-is-left list instead of only a what-is-here one (a tester
+        S48 addendum 2). None means this node could not tell, and a tile with None
+        draws no number rather than one that is too high."""
         out: list[dict] = []
         try:
             with contextlib.closing(index.open()) as db:
@@ -7015,6 +7035,12 @@ def create_app(state: AppState) -> FastAPI:
                     "ORDER BY block_height DESC, position DESC LIMIT 500").fetchall()
         except Exception:
             return out
+        # Read once, for however many pads are listed: what the pool is already
+        # buying has nothing to do with which pad is being counted.
+        try:
+            taking = index.pending_takes()
+        except Exception:
+            taking = None
         for r in rows:
             try:
                 pad = (json.loads(r["json"] or "{}") or {}).get("tokenpad") or {}
@@ -7028,9 +7054,17 @@ def create_app(state: AppState) -> FastAPI:
             prop = index.property(pid)
             if prop is None:
                 continue
+            lot = int(pad.get("lot") or 0)
+            mints = None
+            if taking is not None and lot > 0:
+                try:
+                    mints = _pad_supply(index, pid, lot, r["creator"], taking)[0]
+                except Exception:
+                    mints = None
             out.append({"txid": r["txid"], "number": r["number"], "seller": r["creator"],
                         "property_id": pid, "name": prop["name"],
-                        "lot": format_amount(int(pad.get("lot") or 0), bool(prop["divisible"])),
+                        "lot": format_amount(lot, bool(prop["divisible"])),
+                        "mints": mints,
                         "look": str(pad.get("look") or "counter")})
             if len(out) >= limit:
                 break
