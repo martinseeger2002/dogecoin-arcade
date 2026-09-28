@@ -186,7 +186,7 @@ function card(piece, chain) {
     pill.className = "pill ok";
     pill.textContent = piece.listing ? "for sale" : "asking";
     const price = document.createElement("strong");
-    price.textContent = " " + (piece.listing ? piece.listing.price + " coins"
+    price.textContent = " " + (piece.listing ? piece.listing.price + (String(piece.listing.price) === "1" ? " coin" : " coins")
                                               : piece.ask);
     const when = document.createElement("span");
     when.className = "muted";

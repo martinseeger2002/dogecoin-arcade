@@ -37,10 +37,11 @@ document.addEventListener("click", async (event) => {
     const coins = String(Number(offer.price) / 1e8);
     const seller = offer.seller_tag ? "@" + offer.seller_tag : "the seller";
     const piece = button.dataset.piece || "this piece";
-    const ok = await arcadeAsk(`Buy ${piece} for ${coins} coins?`,
-      `${coins} coins go to ${seller}, the network fee is ${shown.coinsOf(shown.fee)}, `
-      + "and the rest comes back to you. The piece and the coins move in one "
-      + "transaction, checked in this browser.", `Buy it for ${coins} coins`);
+    const unit = coins === "1" ? "coin" : "coins";          // "1 coin" (a tester)
+    const ok = await arcadeAsk(`Buy ${piece} for ${coins} ${unit}?`,
+      `${coins} ${unit} ${coins === "1" ? "goes" : "go"} to ${seller}, the network fee is `
+      + `${shown.coinsOf(shown.fee)}, and the rest comes back to you. The piece and the `
+      + "coins move in one transaction, checked in this browser.", `Buy it for ${coins} ${unit}`);
     if (!ok) { button.disabled = false; button.textContent = was; return; }
     await wallet.buy(held, offer);
     // No mark left on the tile itself: the page redraws in place when the sale

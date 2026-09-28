@@ -80,10 +80,23 @@ def loaded(browser, served):
     return browser, base, state, home
 
 
+def _w(browser):
+    """`window.w` again if the page moved on since the fixture put it there:
+    a restore now goes on to /me by itself, and every navigation drops it."""
+    ok = browser.execute_async_script("""
+        const done = arguments[arguments.length - 1];
+        if (window.w) { done(true); return; }
+        import("/wallet.js").then((m) => { window.w = m; done(true); },
+                                  (e) => done(String(e)));""")
+    assert ok is True, ok
+
+
+
 REGTEST_VERSION = 111          # regtest addresses start with m or n
 
 
 def _sign_up(browser, tag, password="correct horse battery"):
+    _w(browser)
     return browser.execute_async_script("""
         const done = arguments[3];
         window.w.signUp(arguments[0], arguments[1],
@@ -138,6 +151,7 @@ def test_the_same_name_and_password_open_it_again(loaded):
     assert "error" not in made, made
 
     browser.delete_all_cookies()
+    _w(browser)
     back = browser.execute_async_script("""
         const done = arguments[3];
         window.w.signIn(arguments[0], arguments[1],
@@ -156,6 +170,7 @@ def test_a_wrong_password_opens_nothing_and_says_so(loaded):
     browser, base, state, home = loaded
     _sign_up(browser, "guarded")
     browser.delete_all_cookies()
+    _w(browser)
     said = browser.execute_async_script("""
         const done = arguments[3];
         window.w.signIn(arguments[0], arguments[1],
@@ -183,6 +198,7 @@ def test_a_short_password_is_allowed_and_the_page_says_what_it_costs(loaded):
     assert "error" not in said, said
     assert state.vault().get("brief") is not None, "the account exists"
 
+    _w(browser)
     told = browser.execute_async_script("""
         const done = arguments[0];
         done({weak: window.w.strength("1234"),
@@ -205,6 +221,7 @@ def test_no_password_at_all_is_still_refused(loaded):
 def test_a_free_name_can_be_checked_before_typing_a_password(loaded):
     browser, base, state, home = loaded
     _sign_up(browser, "spoken")
+    _w(browser)
     said = browser.execute_async_script("""
         const done = arguments[0];
         Promise.all([window.w.available("spoken"),
@@ -491,6 +508,9 @@ def test_the_vault_cannot_be_replaced_without_signing_in(served):
     with pytest.raises(urllib.error.HTTPError) as refused:
         urllib.request.urlopen(req)
     assert refused.value.code in (401, 403)
+    # An error response still holds its socket: left open, it surfaced as an
+    # unraisable ResourceWarning in whichever test ran next.
+    refused.value.close()
 
 
 def test_sign_in_links_to_restore_and_every_warning_names_it(loaded):

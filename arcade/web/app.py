@@ -173,7 +173,8 @@ def _ask_price(amount: Any, kind: Any) -> str:
     except (TypeError, ValueError):
         return "?"
     if kind == 3:                     # inscriptions.LEG_COINS
-        return f"{amount / COIN:.8f}".rstrip("0").rstrip(".") + " coins"
+        said = f"{amount / COIN:.8f}".rstrip("0").rstrip(".")
+        return said + (" coin" if said == "1" else " coins")
     return f"{amount:,} units"
 
 
@@ -14794,7 +14795,7 @@ def create_app(state: AppState) -> FastAPI:
                 shown = f"{sats / listingslib.COIN:.8f}".rstrip("0").rstrip(".")
                 out[piece] = {
                     "kind": "listing", "shop": piece, "seller": row["owner"],
-                    "price": f"{shown} coins",
+                    "price": f"{shown} {'coin' if shown == '1' else 'coins'}",
                     "take": {"kind": "coins", "sats": sats, "amount": shown},
                     "sats": sats, "number": got["number"],
                     "collection": got.get("collection"), "edition": got.get("edition"),
