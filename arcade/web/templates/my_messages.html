@@ -7,13 +7,11 @@
 
 <div class="panel" id="locked" hidden>
   <h2 style="margin-top:0">Welcome back</h2>
-  <p class="muted" style="margin:0 0 10px">This is a new tab, so your
-    wallet needs your password to open here.</p>
-  <input type="password" id="pw" autocomplete="current-password"
-         placeholder="password" style="width:100%;padding:10px 12px;margin:4px 0;
-         border:1px solid var(--line);border-radius:8px;background:var(--panel);
-         color:var(--fg);font:inherit">
-  <button class="btn primary" id="open">Open</button>
+  <p class="muted" style="margin:0 0 10px">Your messages are sealed to your
+    key, so your wallet has to be unlocked in this browser to read them.</p>
+  {# The unlock pop-up asks for the password (2026-09-27): no second
+     password box on the page. #}
+  <button class="btn primary" id="open">Unlock to read your messages</button>
   <p class="msg err" id="locked-trouble" hidden></p>
 </div>
 
@@ -834,10 +832,7 @@ async function ready(w) {
 $("open").onclick = async () => {
   $("locked-trouble").hidden = true;
   try {
-    const said = await wallet.state();
-    const out = await wallet.unlockHere(said.name || said.tag,
-                                        $("pw").value, CHAIN);
-    await ready(out.wallet);
+    await ready(await arcadeKeys(CHAIN));
   } catch (e) {
     $("locked-trouble").textContent = String(e.message || e);
     $("locked-trouble").hidden = false;

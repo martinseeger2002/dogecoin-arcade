@@ -454,8 +454,9 @@ def test_the_page_is_listening_before_a_press_arrives():
     assert "await wallet.opened(" not in source, \
         "the key must be started and taken up by the press, not waited for"
     assert "wallet.opened(CHAIN)" in source, "the tab's key is still picked up"
-    for wiring in ('$("account-post").onclick', "$(\"account-open\").onclick",
-                   "$(\"acts-open\").onclick",
+    # The inline Unlock buttons are gone (2026-09-27: the unlock pop-up
+    # asks when something needs the key), so only these answer a press.
+    for wiring in ('$("account-post").onclick',
                    'document.addEventListener("submit"'):
         assert wiring in source, f"{wiring} is gone, so nothing answers a press"
     # The refusal to submit comes before anything is awaited, so a press that

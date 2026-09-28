@@ -55,14 +55,9 @@
   {# A username beside the password (2026-09-26): without one, the browser's
      saved login put the @name into the nearest text box on the page -- the picture's
      inscription id. It is the account's own name, read-only, and only for autofill. #}
-  <form id="unlock-form" onsubmit="return false" style="margin:0">
-    <input type="text" name="username" autocomplete="username" value="{{ me_tag }}"
-           readonly tabindex="-1" aria-hidden="true"
-           style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
-    <input type="password" id="pw" autocomplete="current-password"
-           placeholder="password">
-    <button class="btn primary" id="open" type="submit">Open my wallet</button>
-  </form>
+  {# The unlock pop-up asks for the password (2026-09-27): no second
+     password box on the page. #}
+  <button class="btn primary" id="open" type="button">Open my wallet</button>
 </div>
 
 <div id="doing" hidden>
@@ -566,12 +561,8 @@ async function withWallet(what, done) {
 $("open").onclick = async () => {
   say("");
   try {
-    const said = await wallet.state();
-    const name = said.name || said.tag;
-    if (!name) throw new Error("this browser is not signed in");
-    // Kept for this tab, so the feed and every other page can sign too.
-    const out = await wallet.unlockHere(name, $("pw").value, CHAIN);
-    keys = out.wallet;
+    // The pop-up opens it for every tab of this site (base.html arcadeKeys).
+    keys = await arcadeKeys(CHAIN);
     me = await mail.identity(keys.phrase);
     $("unlock").hidden = true;
     $("doing").hidden = false;

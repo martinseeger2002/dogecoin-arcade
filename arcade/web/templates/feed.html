@@ -388,16 +388,8 @@
   })();
   </script>
   <div class="muted small" id="account-said" style="margin-top:6px"></div>
-  <div id="account-unlock" hidden style="margin-top:8px">
-    <p class="muted small" style="margin:0 0 6px">Your wallet is locked in
-      this tab. Your password opens it here and nowhere else.</p>
-    <div class="feedcomposer">
-      <div class="saybox">
-        <input type="password" id="account-pw" autocomplete="current-password"
-               placeholder="password"></div>
-      <button type="button" id="account-open">Unlock</button>
-    </div>
-  </div>
+  {# No password box here (2026-09-27): the unlock pop-up opens the
+     wallet the moment something needs it (arcadeKeys, base.html). #}
   <style>
     .feedcomposer{display:flex;align-items:flex-end;gap:8px}
     .feedcomposer .saybox{flex:1 1 auto;min-width:0}
@@ -429,20 +421,8 @@
        how it stayed unfound for as long as it did. #}
     const opening = wallet.opened(CHAIN);
     let keys = null;
-    opening.then((found) => { keys = found; $("account-unlock").hidden = !!keys; });
+    opening.then((found) => { keys = keys || found; });
     const take = async () => keys || (keys = await opening);
-
-    $("account-open").onclick = async () => {
-      say("");
-      try {
-        const out = await wallet.unlockHere("{{ mine.tag }}",
-                                            $("account-pw").value, CHAIN);
-        keys = out.wallet;
-        $("account-unlock").hidden = true;
-        $("account-pw").value = "";
-        say("Unlocked for this tab.");
-      } catch (e) { say(String(e.message || e), true); }
-    };
 
     $("account-post").onclick = async () => {
       say("");
@@ -494,15 +474,6 @@
    script above — that block is drawn on /feed only, and a profile page is the
    page you are most likely to be standing on when you decide to answer
    somebody. #}
-<div id="acts-unlock" hidden style="margin:0 0 14px">
-  <p class="muted small" style="margin:0 0 6px">Your wallet is locked in this
-    tab. Your password opens it here and nowhere else.</p>
-  <div style="display:flex;gap:8px;align-items:flex-end">
-    <div style="flex:1"><input type="password" id="acts-pw"
-      autocomplete="current-password" placeholder="password"></div>
-    <button type="button" id="acts-open">Unlock</button>
-  </div>
-</div>
 <div class="muted small" id="acts-said" style="margin:0 0 14px"></div>
 <script type="module">
   import * as wallet from "/wallet.js";
@@ -538,17 +509,6 @@
   const opening = wallet.opened(CHAIN);
   let keys = null;
   const take = async () => keys || (keys = await opening);
-
-  $("acts-open").onclick = async () => {
-    say("");
-    try {
-      keys = (await wallet.unlockHere("{{ mine.tag }}", $("acts-pw").value,
-                                      CHAIN)).wallet;
-      $("acts-unlock").hidden = true;
-      $("acts-pw").value = "";
-      say("Unlocked for this tab.");
-    } catch (e) { say(String(e.message || e), true); }
-  };
 
   document.addEventListener("submit", async (event) => {
     const form = event.target;
