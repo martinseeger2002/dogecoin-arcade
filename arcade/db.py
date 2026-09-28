@@ -116,6 +116,39 @@ class StateError(Exception):
     """A misuse of the state layer, such as mutating outside a block context."""
 
 
+def without_comment(line: str) -> str:
+    """A schema line with its `--` comment taken off and its comma off the end.
+
+    The comment has to go before the declaration is cut out of the line, and it
+    has to be found with the quotes respected. Left where it was written it
+    rides into the `ALTER TABLE`, and the comma that was behind the column stays
+    in front of it -- `ADD COLUMN "coins" INTEGER NOT NULL,` -- which SQLite
+    answers "incomplete input". It did exactly that to every live swaps.sqlite
+    on 2026-09-27, because `fill` and `bid` write their comments behind their
+    columns rather than above them, and the sweep runs at startup.
+
+    A comment only line has nothing left and comes back empty, which is how the
+    caller skips it. A `--` inside a quoted default (`DEFAULT 'a--b'`) is part of
+    the value and stays.
+    """
+    quote = None
+    i = 0
+    while i < len(line):
+        char = line[i]
+        if quote:
+            if char == quote and line[i + 1:i + 2] == quote:
+                i += 2                    # '' is one quote escaped, not the end of the literal
+                continue
+            if char == quote:
+                quote = None
+        elif char in "'\"`":
+            quote = char
+        elif char == "-" and line[i + 1:i + 2] == "-":
+            return line[:i].strip().rstrip(",").strip()
+        i += 1
+    return line.strip().rstrip(",").strip()
+
+
 def add_missing_columns(conn, schema_sql: str) -> list[str]:
     """Bring an existing database up to the columns its schema declares.
 
@@ -134,9 +167,11 @@ def add_missing_columns(conn, schema_sql: str) -> list[str]:
 
     So it is done by reading the schema rather than by remembering: every
     declared column that a present table lacks is added with its own
-    declaration. Columns carrying PRIMARY KEY, UNIQUE or REFERENCES are
-    skipped -- SQLite cannot ALTER those in, and a table that needs one needs
-    rebuilding rather than patching. Returns what it added, for the log.
+    declaration -- the line with its comment taken off, which is what
+    `without_comment` is for. Columns carrying PRIMARY KEY, UNIQUE or
+    REFERENCES are skipped -- SQLite cannot ALTER those in, and a table that
+    needs one needs rebuilding rather than patching. Returns what it added, for
+    the log.
     """
     import re
 
@@ -150,8 +185,8 @@ def add_missing_columns(conn, schema_sql: str) -> list[str]:
             continue                      # CREATE made it in full; nothing to do
         present = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
         for line in body.splitlines():
-            line = line.strip().rstrip(",").strip()
-            if not line or line.startswith("--"):
+            line = without_comment(line)
+            if not line:
                 continue
             upper = line.upper()
             if upper.startswith(("PRIMARY KEY", "UNIQUE", "FOREIGN KEY", "CHECK")):
