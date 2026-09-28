@@ -340,7 +340,8 @@ def describe_leg(data: dict) -> str:
         return what
     if data.get("kind") == "token":
         return f"{data.get('amount')} {data.get('name') or 'token ' + str(data.get('propertyid'))}"
-    return f"{_tidy(data.get('amount'))} coins"
+    amount = _tidy(data.get('amount'))
+    return f"{amount} {'coin' if amount == '1' else 'coins'}"
 
 
 def listings_json(shop_row: dict, index: Any) -> list[dict]:

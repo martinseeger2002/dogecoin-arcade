@@ -236,7 +236,7 @@ async function act(button, body, card, yes, after) {
     if (after) after(offer);
   } catch (e) {
     say(String(e.message || e));
-  } finally { button.disabled = false; }
+  } finally { if (!button.dataset.locked) button.disabled = false; }
 }
 
 if ($("grant-go")) $("grant-go").onclick = () => {
@@ -261,7 +261,8 @@ $("issuer-go").onclick = () => {
       (offer) => {
         // Until its block lands the controls must not invite a second, doomed
         // transaction (a tester, 2026-09-27).
-        for (const b of document.querySelectorAll("#issuer-panel button")) b.disabled = true;
+        // Locked, so act()'s cleanup does not re-enable the button just pressed.
+        for (const b of document.querySelectorAll("#issuer-panel button")) { b.disabled = true; b.dataset.locked = "1"; }
         for (const i of document.querySelectorAll("#issuer-panel input")) i.disabled = true;
         news(`Handing ${NAME} over to ${who(offer, to)}… final when the next block lands.`);
       });

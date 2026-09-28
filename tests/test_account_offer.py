@@ -200,7 +200,7 @@ def test_an_offer_is_one_transaction_saying_what_it_would_pay(node):
     assert {coin["address"] for coin in offer["inputs"]} == {bid}, \
         "every coin is the offerer's own; this node funds itself out of nothing"
     assert offer["fee"] > 0, "an offer is a transaction and a fee is its cost"
-    assert f"#{offer['number']}" in offer["what"] and "1 coins" in offer["what"]
+    assert f"#{offer['number']}" in offer["what"] and "1 coin" in offer["what"]
     assert pair["rpc"].call("getrawmempool") == [], "asking spends nothing"
 
 

@@ -152,7 +152,7 @@ def test_answering_shows_the_leg_at_the_price_that_was_offered(node):
         "the bytes it shows are the bytes the swap will be, at THEIR price"
     assert {coin["address"] for coin in said["inputs"]} == {hold}, \
         "both inputs are the seller's -- a leg is its seller's coins in"
-    assert int(said["price"]) == COIN and "1 coins" in said["what"]
+    assert int(said["price"]) == COIN and "1 coin" in said["what"]
     assert said["offer"] == offer
     assert said["seal_to"] == (bytes([0x77, 42]) + bytes(30)).hex(), \
         "sealed to the key the bidder announced, not to its address"

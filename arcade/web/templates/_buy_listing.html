@@ -43,7 +43,12 @@ document.addEventListener("click", async (event) => {
       + "transaction, checked in this browser.", `Buy it for ${coins} coins`);
     if (!ok) { button.disabled = false; button.textContent = was; return; }
     await wallet.buy(held, offer);
-    button.textContent = "Bought ✓";
+    // No mark left on the tile itself: the page redraws in place when the sale
+    // lands, by position, and a changed button stayed where it was while the
+    // tiles moved -- "Bought ✓" on the wrong piece (a tester, 2026-09-27).
+    // The notice below says it instead; the redraw then shows the piece as sold.
+    button.textContent = was;
+    button.disabled = false;
     // Said in a notice of its own, not under the tile: the page re-sorts itself
     // when the sale lands, and a note tied to a position ended up under another
     // piece (a tester, 2026-09-27).

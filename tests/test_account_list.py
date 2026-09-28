@@ -163,7 +163,7 @@ def test_listing_a_piece_asks_for_two_signatures_and_says_what_they_promise(shop
     assert said["payload"] == _names(piece, COIN).hex(), \
         "the bytes it shows are the bytes the swap will be"
     assert f"inscription #{said['number']}" in said["what"], said["what"]
-    assert "1 coins" in said["what"], said["what"]
+    assert "1 coin" in said["what"], said["what"]
     assert rpc.call("getrawmempool") == [], "showing a listing spends nothing"
 
 

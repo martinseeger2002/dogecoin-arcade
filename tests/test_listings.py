@@ -1179,7 +1179,7 @@ def test_the_page_says_spending_the_piece_is_the_only_cancel(client):
     assert "a block spends the piece" in words
     assert "no lock time in a leg" in words, \
         "the expiry is not a deadline; the page has to say which is which"
-    assert "1 coins" in words, "the price a signature commits to"
+    assert "1 coin" in words, "the price a signature commits to"
 
 
 def test_a_page_that_could_not_ask_says_so_rather_than_that_a_piece_sold(client):
