@@ -57,6 +57,20 @@ def arcade(tmp_path, regtest):
     return TestClient(create_app(state)), state, regtest.rpc
 
 
+@pytest.fixture(autouse=True)
+def _faucet_off(arcade):
+    """The daily top-off is switched off for this file, as it is for
+    `test_account_run` (app.py:8074, wired in `884db08`): a page that reads a
+    balance pays the shortfall up to the gift in a background thread, so the
+    `getrawmempool == []` below and the `incoming == change` one at the end
+    stopped being facts about the chain and became a race with a gift. Reading
+    `/account` to prove an account holds 4 coins is the very act that can hand
+    it more. `faucet: 0` is the operator's own switch, so no rule is invented
+    here; what had to go is the assumption that an account stays as it was left."""
+    app, state, rpc = arcade
+    state.set_setting("faucet", 0)
+
+
 def _sign_in(app):
     """A seat, the ordinary way, with an Ed25519 key made here."""
     from nacl.signing import SigningKey

@@ -213,8 +213,12 @@ def test_an_issuance_is_counted_apart_from_inscriptions(seated):
     first = app.post("/account/inscribe", json={
         "content": "aGk=", "content_type": "text/plain"})
     assert first.status_code == 200, first.text
+    # A different file, not the same one asked twice. `7d0034e` made a repeat
+    # of an offer nobody signed one gesture asked again rather than a second
+    # one -- right for a dismissed confirmation, and it means asking with the
+    # same bytes is no longer a way to knock on the closed door.
     twice = app.post("/account/inscribe", json={
-        "content": "aGk=", "content_type": "text/plain"})
+        "content": "aGkgdGhlcmU=", "content_type": "text/plain"})
     assert twice.status_code == 400, twice.text
     assert "inscriptions" in twice.json()["detail"], twice.json()
     answer = _ask(app, name="After Inscribing Token", supply="5")
