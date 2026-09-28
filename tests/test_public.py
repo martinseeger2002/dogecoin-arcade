@@ -916,6 +916,137 @@ def test_a_sensitive_name_is_walled_wherever_it_is_shown(public, monkeypatch):
     assert "<title>Sensitive" in page or "<title>A profile" in page
 
 
+#: Somebody's own words, each one judged before a single page is drawn. The
+#: four kinds are the four routes user-chosen text takes onto a public page: a
+#: token's name; its description, which reaches some tables only through
+#: `_pairs` and so is not proven by a wall on the token page; a collection's
+#: name, filed by `collection_item` rather than `property`; and an `@tag`, the
+#: `who` filter that appears on nearly every page. The tag is seeded twice
+#: because a verdict is about one exact string, and the filter asks about
+#: `nudeship` while a page's title asks about `@nudeship`.
+JUDGED = ["Nude Yacht Club", "A description written for this token by its maker",
+          "Nude Whales", "nudeship", "@nudeship"]
+
+#: Whose they are: one address, so the `who` filter resolves and the pieces
+#: have an owner.
+OWNER = "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg"
+MAKER = "nMakerCCCCCCCCCCCCCCCCCCCCCCCCCC"
+PIECE = ("b1" * 32, "b2" * 32)
+
+
+def _words_on_the_chain(state):
+    """One token, one set of two pieces, one claimed name.
+
+    Written straight into the index, because this fixture has no node and no
+    wallet, and a sweep that began by mining would be testing the chain rather
+    than the pages. Every row below is what a synced node would have written
+    for itself."""
+    from urllib.parse import quote
+
+    index = state.token_index(state.token_chain)
+    with index.open() as db:
+        db.conn.execute(
+            "INSERT OR REPLACE INTO property(property_id,ecosystem,property_type,"
+            "issuer,name,data,total_tokens,creation_txid,creation_block) "
+            "VALUES(104,2,2,?,?,?,?,?,1)",
+            (MAKER, JUDGED[0], JUDGED[1], 100000000000, "cd" * 32))
+        db.conn.execute("INSERT OR REPLACE INTO balance(address,property_id,balance) "
+                        "VALUES(?,104,100000000000)", (OWNER,))
+        for n, txid in enumerate(PIECE, start=1):
+            db.conn.execute(
+                "INSERT OR REPLACE INTO inscription(txid,number,creator,owner,"
+                "block_height,position,content_type,content_len,sha256,json,"
+                "chunks,content) VALUES(?,?,?,?,?,?,?,?,?,?,1,?)",
+                (txid, 1200 + n, MAKER, OWNER, 100, n, "image/png", 8,
+                 "ab" * 32, None, b"\x89PNG\r\n"))
+            db.conn.execute(
+                "INSERT OR REPLACE INTO collection_item(txid,creator,collection,"
+                "edition,name) VALUES(?,?,?,?,?)", (txid, MAKER, JUDGED[2], n, ""))
+        db.conn.execute(
+            "INSERT OR REPLACE INTO tag(tag,address,claimed_txid,block_height,"
+            "position) VALUES(?,?,?,100,0)", (JUDGED[3], OWNER, "ef" * 32))
+        db.conn.commit()
+    return ["/tokens/104", "/exchange/pair/104",
+            f"/collections/{MAKER}/{quote(JUDGED[2])}",
+            f"/exchange/collection/{MAKER}/{quote(JUDGED[2])}",
+            f"/inscriptions/{PIECE[0]}/view", f"/u/{JUDGED[3]}"]
+
+
+#: Attributes that may carry a judged name in the clear, named one by one with
+#: the reason -- the same shape as `ANSWERED_IN_THE_TAB` above, because an
+#: allowance has to be a pair rather than a rule about attributes. The line
+#: against `data-market` on the market table, which holds a COPY of the name to
+#: match a search against and was emptied: an attribute may keep the words only
+#: where blanking them would break the thing the page does, not merely narrow
+#: it.
+CARRIED_WHOLE = ["data-tag"]
+
+
+def test_no_public_page_draws_judged_words_at_a_stranger(public, monkeypatch):
+    """The check behind the wall: not one page in particular, every page.
+
+    Every fix in this class has been found by a person, which means the next
+    one is a template nobody thought to look at. So this asks the general
+    question instead: with the screening holding a verdict against four things
+    somebody chose, does ANY page a stranger can open draw any of them? The
+    words may be in the HTML -- that is the design, a cover is not a delete --
+    but a browser must not draw them until the reader taps, which means every
+    copy sits inside a `<template>`, or inside a script no browser draws at all.
+
+    A page that 404s is skipped rather than failed: which pages a stranger may
+    open is the census above, and this one is about what a page says once it
+    answers. The last line is the one that keeps this honest -- if the seeding
+    ever stops rendering, a sweep with nothing to catch passes, and a test that
+    passes because it saw nothing is worse than no test."""
+    import re
+
+    from arcade import moderation as mod
+
+    app, state = public
+    monkeypatch.setattr(mod.Screen, "_ask",
+                        lambda self, content: ("ok", "answered in this test"))
+    state.set_setting("moderation", {"url": "http://127.0.0.1:9/v1",
+                                     "model": "test-model"})
+    screen = state.screen()
+    for said in JUDGED:
+        screen._keep(mod.digest_of(said), "text", mod.SENSITIVE, "seeded here")
+        assert screen.check_text(said) == mod.SENSITIVE, said
+    pages = ["/", "/feed", "/tokens", "/nfts", "/inscriptions", "/collections",
+             "/exchange", "/exchange?tab=tokens", "/exchange?tab=nfts",
+             "/listings"] + _words_on_the_chain(state)
+
+    def undraw(page: str) -> str:
+        """The page as a browser draws it before anybody taps: no script, no
+        `<template>`, and no link target.
+
+        A destination is not a drawing. The operator's rule for this class of fix is
+        that the links keep working (2026-09-26) -- the way to a hidden name's
+        page has to stay on the page or the cover would be a deleted thing
+        rather than a covered one -- so `href` and `src` go, while `alt` and
+        `title` stay in the text: a tooltip and the words beside a broken image
+        are both drawn. `CARRIED_WHOLE` goes too, on the same grounds and named
+        one by one there.
+        """
+        names = "|".join(CARRIED_WHOLE + ["href", "src", "action"])
+        page = re.sub(rf"""\b(?:{names})\s*=\s*("[^"]*"|'[^']*')""", "", page,
+                      flags=re.I)
+        return re.sub(r"<(script|template)[^>]*>.*?</\1>", "", page, flags=re.S)
+
+    shown, covered = [], set()
+    for path in pages:
+        answer = app.get(path, headers=LOCAL, follow_redirects=False)
+        if answer.status_code != 200:
+            continue
+        for said in JUDGED:
+            if said in undraw(answer.text):
+                shown.append(f"{path}: {said!r}")
+            elif said in answer.text:
+                covered.add(said)
+    assert shown == [], shown
+    assert set(JUDGED) <= covered, \
+        f"nothing walled these, so the sweep saw nothing: {sorted(set(JUDGED) - covered)}"
+
+
 def test_a_price_only_ask_is_not_shown_to_buyers_as_for_sale():
     """2026-09-27: a listed NFT is bought with the Buy button, no offer.
     A price put on the chain alone cannot be bought, so the pages buyers read

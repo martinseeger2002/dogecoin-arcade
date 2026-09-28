@@ -70,12 +70,13 @@
     <tr>
       <td style="width:52px">
         {% if row.held and row.content_type.startswith('image/') %}
-        <img src="/content/{{ row.txid }}" alt="{{ summary.collection }} #{{ row.edition }}"
+        <img src="/content/{{ row.txid }}" alt="{{ wall_text(summary.collection, 'A collection') }} #{{ row.edition }}"
              loading="lazy" style="width:44px;height:44px;object-fit:cover;border-radius:8px;display:block">
         {% endif %}</td>
       <td><a href="/inscriptions/{{ row.txid }}/view">
             {%- set data = row.json|fromjson -%}
-            {{ data.name if data and data.name else (summary.collection ~ ' #' ~ row.edition) }}</a>
+            {{ wall(data.name, 'name') if data and data.name
+               else (wall(summary.collection, 'collection name') ~ ' #' ~ row.edition) }}</a>
         <div class="muted" style="font-size:.78rem">#{{ "{:,}".format(row.number) }}</div></td>
       <td style="text-align:right;white-space:nowrap">
         {% if row.listing %}
@@ -110,13 +111,14 @@
   {% set data = row.json|fromjson %}
   <div class="tile">
     <a class="art" href="/inscriptions/{{ row.txid }}/view"
-       title="{{ summary.collection }} #{{ row.edition }}"
-       aria-label="{{ summary.collection }} #{{ row.edition }}"
+       title="{{ wall_text(summary.collection, 'A collection') }} #{{ row.edition }}"
+       aria-label="{{ wall_text(summary.collection, 'A collection') }} #{{ row.edition }}"
        {% if row.held and row.content_type.startswith('image/') %}
        style="background-image:url(/content/{{ row.txid }})"{% endif %}></a>
     <div class="body">
-      <div class="name" title="{{ data.name if data and data.name else row.txid }}">
-        {{ data.name if data and data.name else (summary.collection ~ ' #' ~ row.edition) }}</div>
+      <div class="name" title="{{ wall_text(data.name, 'A piece') if data and data.name else row.txid }}">
+        {{ wall(data.name, 'name') if data and data.name
+           else (wall(summary.collection, 'collection name') ~ ' #' ~ row.edition) }}</div>
       <div class="who">#{{ "{:,}".format(row.number) }} &middot; by
          {{ row.creator|who }}</div>
       <div class="who">held by

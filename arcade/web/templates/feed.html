@@ -264,7 +264,7 @@
       <div class="row" style="gap:10px;margin-top:2px;flex-wrap:wrap;min-width:0">
         {% if whose.address %}
           <a class="muted" style="font-size:.86rem"
-             href="/u/{{ whose.tag }}/wallet">@{{ whose.tag }}'s wallet</a>
+             href="/u/{{ whose.tag }}/wallet">{{ wall('@' ~ whose.tag) }}'s wallet</a>
         {% endif %}
         {# Their link, as words. NOT an anchor, and that is a decision rather
            than a loose end (2026-09-22): a stranger's clickable link
@@ -286,12 +286,15 @@
     {# Straight to your conversation with them (2026-09-26). #}
     <a class="btn small" style="margin-left:auto"
        href="{% if not public %}/compose?to=@{{ whose.tag }}{% elif mine.address %}/me/messages?to=@{{ whose.tag }}{% else %}/me{% endif %}"
-       {% if public and not mine.address %}title="Sign in to message @{{ whose.tag }}"{% endif %}>Message</a>
+       {% if public and not mine.address %}title="Sign in to message {{ wall_text('@' ~ whose.tag, 'someone') }}"{% endif %}>Message</a>
     <button type="button" class="ghost small" id="block-them"
+            {# The name stays whole here, where the drawn text above it is covered:
+               this is the address of the thing the button acts on, not a copy of
+               it for a person to read. Blank it and Block would block nobody. #}
             data-tag="{{ whose.tag }}" data-address="{{ whose.address }}">Block</button>
     {% endif %}
   </div>
-  <p class="msg info" id="blocked-says" hidden>You blocked @{{ whose.tag }}: their
+  <p class="msg info" id="blocked-says" hidden>You blocked {{ wall('@' ~ whose.tag) }}: their
     posts and messages are hidden from you. Undo it here or
     under Blocked in your <a href="{{ '/me/contacts' if public else '/contacts' }}">address book</a>.</p>
   <script>
@@ -325,7 +328,7 @@
   </script>
   {% if not whose.address %}
     <div class="panel empty" style="margin-top:16px">
-      <p>Nobody holds <strong>@{{ whose.tag }}</strong> on this chain.</p>
+      <p>Nobody holds <strong>{{ wall('@' ~ whose.tag) }}</strong> on this chain.</p>
       <p class="muted">A tag exists here once its claim is in a block this node
         has read.</p></div>
   {% endif %}
@@ -688,7 +691,7 @@
     <p><a class="ghost btn" href="/feed">Everybody's posts</a></p>
     {% else %}
     <p>Nothing here yet.</p>
-    <p class="muted">{% if whose %}@{{ whose.tag }} has not posted on this
+    <p class="muted">{% if whose %}{{ wall('@' ~ whose.tag) }} has not posted on this
       chain.{% else %}Be the first: say something above.{% endif %}</p>
     {% endif %}
   </div>

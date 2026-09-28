@@ -31,7 +31,7 @@
         <td>{{ "{:,}".format(row.block_height) }}</td></tr>
     {% if row.collection %}
     <tr><td class="muted">Collection</td>
-        <td><a href="/collections/{{ row.creator }}/{{ row.collection|urlencode }}">{{ row.collection }}</a>
+        <td><a href="/collections/{{ row.creator }}/{{ row.collection|urlencode }}">{{ wall(row.collection, 'collection name') }}</a>
           {% if row.edition is not none %}<span class="muted">#{{ row.edition }}</span>{% endif %}</td></tr>
     {% endif %}
   </table>

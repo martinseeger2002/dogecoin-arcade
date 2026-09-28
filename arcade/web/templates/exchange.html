@@ -298,7 +298,13 @@
         <td style="text-align:right">24h volume</td>
         <td style="text-align:right">Bid / Ask</td></tr>
       {% for p in pairs %}
-      <tr data-market="{{ p.name|lower }}/{{ chain.label|lower }} #{{ p.property_id }}">
+      {# The row's own search key: the filter above this table matches what a
+         person types against it. A judged name contributes nothing to it,
+         because the name is exactly what the cover hides -- leaving it here
+         would keep the words in the clear in an attribute while the drawn text
+         says "Sensitive". Such a token is then found by its number rather than
+         its name until the reader taps the cover. #}
+      <tr data-market="{{ wall_text(p.name, '')|lower }}/{{ chain.label|lower }} #{{ p.property_id }}">
         <td style="width:40px">
           <a href="/exchange/pair/{{ p.property_id }}">
             {%- if p.icon %}<img src="/content/{{ p.icon }}" alt="{{ wall_text(p.name, 'A token') }}" loading="lazy"

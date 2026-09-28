@@ -28,11 +28,12 @@
   <div class="card">
     {% if c.cover_txid and c.cover_type and c.cover_type.startswith('image/') %}
       <a href="/collections/{{ c.creator }}/{{ c.collection|urlencode }}">
-        <img src="/content/{{ c.cover_txid }}" alt="{{ c.collection }}" loading="lazy"
+        <img src="/content/{{ c.cover_txid }}" alt="{{ wall_text(c.collection, 'A collection') }}"
+             loading="lazy"
              style="max-width:100%;border-radius:8px;margin-bottom:8px"></a>
     {% endif %}
     <div class="row" style="align-items:baseline">
-      <strong>{{ c.collection }}</strong>
+      <strong>{{ wall(c.collection, 'collection name') }}</strong>
       <span class="muted" style="margin-left:auto">{{ "{:,}".format(c.count) }} of {{ "{:,}".format(c.supply) if c.supply else "∞" }}</span>
     </div>
     <table>
