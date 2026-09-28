@@ -131,7 +131,7 @@
     <button class="ghost small" type="button" data-tip-for="{{ p.txid }}" onclick="toggle('tip-{{ p.txid }}')"
             title="Coins to the author, in the same transaction that says which post{{ ' — tipped %d time%s so far' % (p.tips, '' if p.tips == 1 else 's') if p.tips }}">Tip</button>
     <form method="post" action="/feed/{{ p.txid }}/tip" id="tip-{{ p.txid }}"
-          data-author="{{ p.author }}" hidden style="margin:6px 0 0;width:100%">
+          data-author="{{ p.author }}" data-author-name="{{ p.author|who_text }}" hidden style="margin:6px 0 0;width:100%">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="back" value="{{ here }}">
       <div class="row" style="flex-wrap:wrap">
@@ -188,7 +188,9 @@
       {% if p.dislikes %}&middot; {{ p.dislikes }} dislike{{ '' if p.dislikes == 1 else 's' }}{% endif %}
       {% if p.tips %}&middot; {{ p.tips }} tip{{ '' if p.tips == 1 else 's' }}{% endif %}
       {% if p.shares %}&middot; {{ p.shares }} share{{ '' if p.shares == 1 else 's' }}{% endif %}
-      {% if p.tipped %}&middot; {% for net, sats in p.tipped|dictsort %}&#9921; {{ sats|coins }} {{ net }} tipped{% if not loop.last %} &middot;{% endif %}{% endfor %}{% endif %}</span>
+      {% if p.tipped %}&middot; {% for net, sats in p.tipped|dictsort %}&#9921; {{ sats|coins }} {{ net }} tipped{% if not loop.last %} &middot;{% endif %}{% endfor %}{% endif %}
+      {# Token tips for visitors too (a tester, 2026-09-27). #}
+      {% if p.token_tipped %}&middot; {% for name, amount in p.token_tipped|dictsort %}&#9670; {{ amount }} {{ wall_text(name, 'a token') }}{% if not loop.last %} &middot;{% endif %}{% endfor %}{% endif %}</span>
     <a class="muted" style="font-size:.82rem" href="/join">Make an account</a>
   </div>
   {% endif %}
@@ -586,7 +588,7 @@
         if (!asked.ok) throw new Error(offer.detail || "that token cannot be sent");
         const shown = await wallet.checked(offer, held);
         const ok = await arcadeAsk(`Tip ${amount} ${pick.dataset.name}?`,
-          `${amount} ${pick.dataset.name} go to whoever wrote this post, and then a small note `
+          `${amount} ${pick.dataset.name} go to ${form.dataset.authorName || "whoever wrote this post"}, and then a small note `
           + "on the post says it was a tip: two small transactions, network fee "
           + `${shown.coinsOf(shown.fee)} for the send. It is a payment: it cannot be taken back.`,
           "Send the tip");
@@ -606,7 +608,7 @@
         // Asked first and marked after (filming, 2026-09-26: a tip changed
         // nothing on screen, so a person would press it again and tip twice).
         const ok = await arcadeAsk("Send this tip?",
-          `Tip ${amount} coins to whoever wrote this post. The network fee is `
+          `Tip ${amount} coins to ${form.dataset.authorName || "whoever wrote this post"}. The network fee is `
           + `${shown.coinsOf(shown.fee)}. It is a payment: it cannot be taken back.`,
           "Send the tip");
         if (!ok) { if (button) button.disabled = false; return; }

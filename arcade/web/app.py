@@ -20,6 +20,7 @@ import threading
 import time
 import html
 import secrets
+import sqlite3
 import urllib.parse
 import shutil
 import sys
@@ -7669,7 +7670,28 @@ def create_app(state: AppState) -> FastAPI:
     _flights_spent_by = _flights.spent_by
     _flights.spent_by = lambda pubkey, network="": (
         _flights_spent_by(pubkey, network) | _bids.reserved(pubkey, network)
-        | _answered_coins(network))
+        | _answered_coins(network) | _listed_coins(network))
+
+    def _listed_coins(network: str) -> frozenset:
+        """The coins every open listing is signed over, read from the listings
+        book itself (2026-09-27: listings on @arcade_demo's mintpad went "spent"
+        because the only reservation lived in `_flights`, in memory, and every
+        restart forgot it; the seller's next send or tip then spent the coins
+        under the listing and the sale died without a word). Cancelling a
+        listing still spends them: `build_sweep` is handed them by name."""
+        try:
+            with sqlite3.connect(state.listings.path, timeout=10) as conn:
+                sql = ("SELECT in_txid, in_vout, coin_txid, coin_vout FROM listing "
+                       "WHERE status = 'open'" + (" AND network = ?" if network else ""))
+                rows = conn.execute(sql, (network,) if network else ()).fetchall()
+        except Exception:
+            return frozenset()
+        out = set()
+        for in_txid, in_vout, coin_txid, coin_vout in rows:
+            out.add((in_txid, int(in_vout)))
+            if coin_txid:
+                out.add((coin_txid, int(coin_vout)))
+        return frozenset(out)
 
     def _answered_coins(network: str) -> frozenset:
         """The coins every standing answer is signed over. An answer binds until
@@ -8570,6 +8592,23 @@ def create_app(state: AppState) -> FastAPI:
         account = _signed_in_account(request)
         out = []
         for row in _parts.list(account.pubkey):
+            if row.get("status") == "done" and time.time() - float(row.get("created") or 0) < 2 * 86400:
+                # Every piece is out and its block has not landed yet: a new
+                # tab showed "Nothing yet" and it looked lost (a tester). Said
+                # as on its way until the inscription is in the index.
+                root = next((c["txid"] for c in _parts.chunks(row["id"])
+                             if int(c["n"]) == 0 and c.get("txid")), "")
+                try:
+                    chain = next(c for c in _account_chains() if c.network == row.get("network"))
+                    landed = bool(root) and state.token_index(chain).inscription(root) is not None
+                except Exception:
+                    landed = True
+                if root and not landed:
+                    out.append({"part": row["id"], "name": row.get("name") or "a file",
+                                "chunks": int(row.get("chunks") or 0),
+                                "sent": int(row.get("sent") or 0), "pending": True,
+                                "network": row.get("network") or ""})
+                continue
             if row.get("status") not in ("open", "running", "failed"):
                 continue
             out.append({"part": row["id"], "name": row.get("name") or "a file",

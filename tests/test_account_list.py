@@ -437,3 +437,35 @@ def test_a_listing_put_on_the_chain_is_filed_by_a_node_that_never_saw_it(shop):
              if r["leg"] == row["leg"]]
     assert len(again) == 1 and int(again[0]["price"]) == COIN and again[0]["owner"] == mine
     assert la.import_announced(state, state.messaging) == 0, "read once, filed once"
+
+
+def test_a_listing_keeps_its_coins_after_a_restart(shop):
+    """2026-09-27: listings on a mintpad went "spent" because the only thing
+    keeping the seller's own sends off a listing's coins lived in memory, and
+    every restart forgot it. The listings book keeps them reserved now."""
+    from fastapi.testclient import TestClient
+    from arcade.web.app import create_app
+
+    app, state, rpc = shop
+    secret, pubkey, mine = _seated(app, state, rpc, 8, coins=(4.0, 1.0, 2.0))
+    piece = _inscribed(app, state, rpc, secret, pubkey, "a piece that stays for sale")
+    said = app.post("/account/list", json={"piece": piece, "amount": "1"}).json()
+    listed = _signed(app, secret, pubkey, said)
+    assert listed.status_code == 200, listed.text
+    row = state.listings.get(listed.json()["listed"])
+    held = {(row["input"]["txid"], int(row["input"]["vout"]))}
+    if row.get("coin"):
+        held.add((row["coin"]["txid"], int(row["coin"]["vout"])))
+
+    fresh = TestClient(create_app(state))          # a restart: nothing in memory
+    _sign_in(fresh)
+    assert fresh.post("/account/address", json={
+        "address": mine, "coin_pubkey": pubkey.hex()}).status_code == 200
+    # More than the one big coin holds, so a send that could reach the
+    # listing's coins would: it must either leave them alone or be refused.
+    offer = fresh.post("/account/send", json={"to": mine, "amount": "4.5"})
+    if offer.status_code == 200:
+        used = {(c["txid"], int(c["vout"])) for c in offer.json()["inputs"]}
+        assert not (used & held), "a send must not spend the coins a listing stands on"
+    else:
+        assert "not enough" in offer.text or "enough" in offer.text, offer.text

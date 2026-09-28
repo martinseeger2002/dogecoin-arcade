@@ -466,6 +466,15 @@ async function drawUnfinished() {
     const words = document.createElement("div");
     words.innerHTML = "";
     const strong = document.createElement("strong");
+    if (job.pending) {
+      strong.textContent = `Inscribing ${job.name}: all ${commas(job.chunks)} pieces are sent.`;
+      const note = document.createElement("span");
+      note.textContent = " It shows here when its block lands, usually within a few minutes.";
+      words.append(strong, note);
+      card.append(words);
+      box.append(card);
+      continue;
+    }
     strong.textContent = `${job.name}: ${commas(job.sent)} of ${commas(job.chunks)} pieces are on the chain.`;
     const more = document.createElement("span");
     const copy = job.sha256 ? await kept(job.sha256) : null;
