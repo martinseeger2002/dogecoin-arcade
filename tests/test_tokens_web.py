@@ -942,7 +942,8 @@ def test_the_pair_page_says_one_price_for_an_indivisible_trade(web, monkeypatch)
 
     table = app.get("/exchange?tab=tokens").text
     assert "200000000" not in table, "no market row says eight zeros for two"
-    assert "2.00000000" in table, "its last price and its best ask, both in coins"
+    # The list prints prices without trailing zeros (2026-09-28).
+    assert "<strong>2.0</strong>" in table, "its last price and its best ask, both in coins"
 
 
 def test_a_sensitive_name_is_walled_on_the_pair_page_as_it_is_on_the_token_page(web,
