@@ -224,4 +224,7 @@ def test_an_operator_is_told_what_to_do_and_what_not_to(client):
     page = app.get("/clone").text
     assert "domain of your own" in page and "numbered" in page
     assert "public_hosts" in page
-    assert "typed once" in page and "is stealing them" in page
+    assert ("typed when the wallet is made" in page and "never sends them" in page
+            and "is stealing them" in page), \
+        "the twelve-words rule as /clone says it since dc30507: typed at making, then " \
+        "checked only on Restore, in the browser, and anything else that asks is stealing"
