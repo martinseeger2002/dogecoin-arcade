@@ -16,7 +16,7 @@
     <div>
       <h1 style="margin:0;font-size:1.3rem">{{ wall(prop.name, 'token name') }}<span class="muted">/{{ chain.label|upper }}</span></h1>
       <div class="muted" style="font-size:.78rem">#{{ prop.property_id }}
-        {%- if face.about %} &middot; {{ face.about }}{% endif %}
+        {%- if face.about %} &middot; {{ wall(face.about, 'description') }}{% endif %}
         {%- if face.url %} &middot; <a href="{{ face.url }}" rel="noopener noreferrer nofollow"
           target="_blank">link</a>{% endif %}</div>
     </div>

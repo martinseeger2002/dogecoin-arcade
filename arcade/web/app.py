@@ -1966,7 +1966,7 @@ def create_app(state: AppState) -> FastAPI:
                 contact_id=int(contact_id) if contact_id.strip().isdigit() else None,
                 pubkey=pubkey, name=name, testnet_address=testnet_address,
                 mainnet_address=mainnet_address, notes=notes.strip())
-        state.flash(f"Saved {name}.", "ok")
+        state.flash(f"Saved {wall_plain(name, 'that contact')}.", "ok")
         return RedirectResponse("/contacts", status_code=303)
 
     @app.post("/contacts/{contact_id}/delete")
@@ -3946,7 +3946,8 @@ def create_app(state: AppState) -> FastAPI:
                     sender = (_check_own_address(rpc, fromaddress) if fromaddress
                               else funded_address(rpc, mainnet=chain.is_mainnet))
                     sent = _inscribe_in_background(chain, sender, plan, name)
-                state.flash(f"Inscribing {name} in {plan.chunks} transactions.", "ok")
+                state.flash(f"Inscribing {wall_plain(name, 'your file')} in "
+                            f"{plan.chunks} transactions.", "ok")
                 return RedirectResponse("/inscriptions", status_code=303)
             return _again("/inscriptions", plan=plan,
                           attached_b64=base64.b64encode(content).decode(),
@@ -4836,9 +4837,20 @@ def create_app(state: AppState) -> FastAPI:
 
     TEMPLATES.env.globals["wall"] = lambda text, label="name": _walled(
         str(text or ""), None, label)
+
+    def wall_plain(text: Any, instead: str = "Sensitive") -> str:
+        """`wall` for text that is put into a SENTENCE rather than onto a page:
+        a flash, a subject line, a log. It cannot use the cover markup, so the
+        covered word is replaced by a whole phrase and the sentence still reads.
+
+        This matters beyond tidiness. `state.notice` is ONE slot on the shared
+        state, not one per visitor, so a sentence quoting somebody's token name
+        is served to whoever's page happens to pick it up next -- possibly
+        through the public door. Ask the screening before quoting."""
+        return instead if _verdict_of(str(text or "")) else str(text or "")
+
     # For places no markup can go -- a <title>, an alt, an attribute.
-    TEMPLATES.env.globals["wall_text"] = lambda text, instead="Sensitive": (
-        instead if _verdict_of(str(text or "")) else str(text or ""))
+    TEMPLATES.env.globals["wall_text"] = wall_plain
 
     def _who(address: Any, short: int = 12) -> Markup:
         """A template filter: another person, as their @tag linked to their page,
@@ -15562,7 +15574,8 @@ def create_app(state: AppState) -> FastAPI:
             state.flash(
                 f"Order on the book in {txid}: "
                 f"{'sell' if side == 'ask' else 'buy'} "
-                f"{format_amount(units, prop['divisible'])} {prop['name']} for "
+                f"{format_amount(units, prop['divisible'])} "
+                f"{wall_plain(prop['name'], 'this token')} for "
                 f"{format_amount(coins, True)} coins. It stands until you cancel "
                 f"it.", "ok")
         except HTTPException:

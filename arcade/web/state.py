@@ -648,6 +648,13 @@ class AppState:
         return origin.split("://", 1)[-1].split("/")[0].rsplit(":", 1)[0].lower()
 
     def flash(self, message: str, kind: str = "info") -> None:
+        """The one sentence the next page renders in its banner.
+
+        It is ONE slot on shared state, not one per visitor: whoever asks for a
+        page next is the one that reads it, through the public door included. So
+        quote nothing in here that has not been through `wall_plain` -- a name is
+        only safe to say out loud once the screening has said it is.
+        """
         self.notice, self.notice_kind = message, kind
 
     def take_notice(self) -> tuple[str | None, str]:

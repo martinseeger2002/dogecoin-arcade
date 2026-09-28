@@ -866,13 +866,25 @@ def test_a_sensitive_name_is_walled_on_the_pair_page_as_it_is_on_the_token_page(
     browser never draws and which holds the working copies the panels need. A
     page that passed this by deleting the name would fail the token page's own
     tests; a page that passed it by blanking the panel fails the last line.
+
+    The description is in here too, because S36 named it and left it (`face.about`
+    is the longest piece of words a person chooses about a token, and it reached
+    three pages by two different routes). It is seeded as a second verdict rather
+    than as a second token, which is how a verdict actually works -- one text, one
+    judgement, read out wherever that text appears -- and the market table is in
+    the loop because it prints the description out of `_pairs`, not out of the
+    token page's own context, so a wall added to one template proves nothing about
+    it. The row is only on that table once the token has a price on the book, so
+    one ask is filed first: an assertion that never saw a row is the failure this
+    file has already been taught once (a test machine, S20).
     """
     from arcade import moderation as mod
     app, state, node, alice, bob = web
     csrf = state.csrf_token
     name = "Nude Yacht Club"          # a name, not a verdict: the screening decides
+    about = "A description written for this token by the person who made it"
     form = dict(csrf_token=csrf, sender=alice, name=name, supply="1000",
-                kind="fixed", units="divisible")
+                kind="fixed", units="divisible", data=about)
     txid = shown(app.post("/tokens/create", data=form).text, "txid")
     app.post("/tokens/create", data={**form, "confirmed": txid},
              follow_redirects=False)
@@ -891,7 +903,23 @@ def test_a_sensitive_name_is_walled_on_the_pair_page_as_it_is_on_the_token_page(
                                      "model": "test-model"})
     screen = state.screen()
     screen._keep(mod.digest_of(name), "text", mod.SENSITIVE, "seeded here")
+    screen._keep(mod.digest_of(about), "text", mod.SENSITIVE, "seeded here")
     assert screen.check_text(name) == mod.SENSITIVE
+    assert screen.check_text(about) == mod.SENSITIVE
+
+    # One ask, so the token is a market rather than a fact: `_pairs` skips what
+    # has neither price points nor a book, and the market table is one of the
+    # three pages this test is about. AFTER the verdicts, which matters: placing
+    # an order says the token's name out loud in a flash, and a flash is one slot
+    # on shared state that the next page rendered -- by anyone -- gets to show.
+    home = index.balances([alice])[0]["address"]
+    import unittest.mock as mock
+    with mock.patch.object(type(state), "home_address", lambda self, chain: home):
+        app.post("/exchange/order",
+                 data=dict(csrf_token=csrf, property_id=pid, side="ask",
+                           amount="100", price="0.5"), follow_redirects=False)
+    mine_and_index(node, state)
+    assert index.book(prop["property_id"])["asks"], "the market needs a price"
 
     def drawn(page: str) -> str:
         """The page as a browser draws it before anybody taps."""
@@ -901,17 +929,24 @@ def test_a_sensitive_name_is_walled_on_the_pair_page_as_it_is_on_the_token_page(
     try:
         pair = app.get(f"/exchange/pair/{pid}").text
         token = app.get(f"/tokens/{pid}").text
+        market = app.get("/exchange?tab=tokens").text
     finally:
         state.public = False
 
-    for label, page in (("the pair page", pair), ("the token page", token)):
-        assert "sens-wall" in page, f"{label} shows a name this node judged " \
-                                    "sensitive with nothing over it"
-        assert name in page, f"{label} has removed the name rather than walling it"
-        assert name not in drawn(page), \
-            f"{label} draws {name!r} at a stranger who did not ask for it"
+    assert f">{name}<" in market or "Sensitive token name" in market, \
+        "the row this test is about did not render, so prove nothing"
+
+    for label, page in (("the pair page", pair), ("the token page", token),
+                        ("the market table", market)):
+        for said, cover in ((name, "Sensitive token name"),
+                            (about, "Sensitive description")):
+            assert said in page, f"{label} removed {cover.lower()} instead of walling it"
+            assert said not in drawn(page), \
+                f"{label} draws {said!r} at a stranger who did not ask for it"
+            assert cover in page, f"{label} hides it without saying what is behind"
         title = _r.search(r"<title>(.*?)</title>", page, _r.S).group(1)
-        assert name not in title, f"{label} puts it in a tab and a history entry"
+        assert name not in title and about not in title, \
+            f"{label} puts it in a tab and a history entry"
 
     # The two spots the finding named, asserted on their own: the heading and
     # the title. A wall anywhere else on the page would satisfy the loop above

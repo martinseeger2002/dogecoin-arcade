@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}@{{ tag }}'s wallet · DogecoinArcade{% endblock %}
+{% block title %}@{{ wall_text(tag, 'someone') }}'s wallet · DogecoinArcade{% endblock %}
 {% block body %}
 
 <div class="row" style="align-items:center;gap:12px">
@@ -8,14 +8,14 @@
          style="width:56px;height:56px;border-radius:50%;object-fit:cover">
   {% endif %}
   <div>
-    <h1 style="margin:0">@{{ tag }}'s wallet</h1>
+    <h1 style="margin:0">{{ wall('@' ~ tag ~ "'s wallet") }}</h1>
     <a class="muted" style="font-size:.86rem" href="/u/{{ tag }}">&larr; their feed</a>
   </div>
 </div>
 
 {% if not address %}
 <div class="panel empty" style="margin-top:16px">
-  <p>Nobody holds <strong>@{{ tag }}</strong> on this chain.</p>
+  <p>Nobody holds <strong>{{ wall('@' ~ tag) }}</strong> on this chain.</p>
   <p class="muted">A tag exists here once its claim is in a block this node
     has read.</p>
 </div>
@@ -41,7 +41,7 @@
     <tr><td class="muted">Tokens</td>
         <td>{% if held.tokens %}
           {% for row in held.tokens %}
-            <a href="/tokens/{{ row['property_id'] }}">{{ row['name'] or ('#' ~ row['property_id']) }}</a>
+            <a href="/tokens/{{ row['property_id'] }}">{% if row['name'] %}{{ wall(row['name']) }}{% else %}#{{ row['property_id'] }}{% endif %}</a>
             <span class="muted">{{ row['display'] }}</span>{{ "," if not loop.last }}
           {% endfor %}
         {% else %}<span class="muted">none</span>{% endif %}</td></tr>
@@ -66,7 +66,7 @@
 </div>
 {% else %}
 <div class="panel empty">
-  <p>@{{ tag }} has published no address on any chain this node follows.</p>
+  <p>{{ wall('@' ~ tag) }} has published no address on any chain this node follows.</p>
   <p class="muted">Publishing a tag puts both addresses on the chain; until
     somebody does that, there is nothing here to look up.</p>
 </div>

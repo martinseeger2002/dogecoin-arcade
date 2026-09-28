@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% import "_token_confirm.html" as tk %}
-{% block title %}Price {{ name }} · DogecoinArcade{% endblock %}
+{% block title %}Price {{ wall_text(name, 'a piece') }} · DogecoinArcade{% endblock %}
 {% block body %}
 <h1>Put a price on it</h1>
 <p class="sub">An ask: one transaction saying what you want for this piece.
@@ -20,14 +20,14 @@
 <div class="panel" style="margin-bottom:14px">
   <div class="row" style="gap:14px;align-items:flex-start">
     {% if row.held and row.content_type.startswith('image/') %}
-    <img src="/content/{{ row.txid }}" alt="{{ name }}" loading="lazy"
+    <img src="/content/{{ row.txid }}" alt="{{ wall_text(name, 'A piece') }}" loading="lazy"
          style="width:120px;border-radius:10px">
     {% endif %}
     <div style="flex:1;min-width:0">
-      <h2 style="margin:0 0 4px">{{ name }}</h2>
+      <h2 style="margin:0 0 4px">{{ wall(name) }}</h2>
       <p class="muted" style="margin:0">
         Inscription #{{ "{:,}".format(row.number) }}
-        {%- if row.collection %} · <a href="/exchange/collection/{{ row.creator }}/{{ row.collection|urlencode }}">{{ row.collection }}</a>
+        {%- if row.collection %} · <a href="/exchange/collection/{{ row.creator }}/{{ row.collection|urlencode }}">{{ wall(row.collection, 'collection name') }}</a>
           {%- if row.edition is not none %} #{{ row.edition }}{% endif %}{% endif %}</p>
       <p class="mono muted" style="margin:6px 0 0;font-size:.8rem;word-break:break-all">
         held by {{ row.owner|who }}</p>

@@ -9,7 +9,7 @@
 
 <div class="collhero">
   {% if cover %}
-    <img src="/content/{{ cover }}" alt="{{ summary.collection }} #1" loading="lazy">
+    <img src="/content/{{ cover }}" alt="{{ wall_text(summary.collection, 'A collection') }} #1" loading="lazy">
   {% endif %}
   <div class="who">
     <h1>{{ wall(summary.collection, 'collection name') }}</h1>
@@ -18,9 +18,9 @@
       &middot; {{ chain.label }}
       &middot; inscriptions #{{ "{:,}".format(summary.first_number) }}&ndash;#{{ "{:,}".format(summary.last_number) }}</p>
     {% if about.description %}
-      <p style="margin:0 0 6px;max-width:60ch">{{ about.description }}</p>
+      <p style="margin:0 0 6px;max-width:60ch">{{ wall(about.description, 'description') }}</p>
     {% endif %}
-    {% if about.artist %}<p class="muted" style="margin:0 0 6px">Art by {{ about.artist }}</p>{% endif %}
+    {% if about.artist %}<p class="muted" style="margin:0 0 6px">Art by {{ wall(about.artist, 'name') }}</p>{% endif %}
     {# No links to other platforms (2026-09-25): the collection's own
        website, and nothing that sends people to Twitter, Discord or Telegram. #}
     <div class="row" style="gap:8px">

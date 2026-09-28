@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ summary.collection }} mintpad · DogecoinArcade{% endblock %}
+{% block title %}{{ wall_text(summary.collection, 'A collection') }} mintpad · DogecoinArcade{% endblock %}
 {% block body %}
 {# An account's mintpad (2026-09-26): pieces its creator listed at one price,
    bought one at a time as a random piece of the set. Each buy is an ordinary
@@ -32,11 +32,11 @@
   {% elif t != 'wall' and summary.cover_txid and (summary.cover_type or '').startswith('image/') %}
   <img class="mpcover" src="/content/{{ summary.cover_txid }}" alt="">
   {% endif %}
-  <h1>{{ summary.collection }}</h1>
+  <h1>{{ wall(summary.collection, 'collection name') }}</h1>
   <p class="muted mpby">by {{ summary.creator|who }}
     &middot; {{ "{:,}".format(summary.count) }} of {{ "{:,}".format(summary.supply) if summary.supply else "∞" }}</p>
   {% if look.blurb %}<p class="mpblurb">{{ look.blurb }}</p>
-  {% elif d.description %}<p class="mpblurb">{{ d.description }}</p>{% endif %}
+  {% elif d.description %}<p class="mpblurb">{{ wall(d.description, 'description') }}</p>{% endif %}
   {% if left %}
     <p class="mpleft"><strong>{{ left }}</strong> left
       &middot; {% for p in prices %}{{ '%g' % (p / 100000000) }}{% if not loop.last %} / {% endif %}{% endfor %}

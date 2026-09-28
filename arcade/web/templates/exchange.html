@@ -301,13 +301,17 @@
       <tr data-market="{{ p.name|lower }}/{{ chain.label|lower }} #{{ p.property_id }}">
         <td style="width:40px">
           <a href="/exchange/pair/{{ p.property_id }}">
-            {%- if p.icon %}<img src="/content/{{ p.icon }}" alt="{{ p.name }}" loading="lazy"
+            {%- if p.icon %}<img src="/content/{{ p.icon }}" alt="{{ wall_text(p.name, 'A token') }}" loading="lazy"
               style="width:32px;height:32px;object-fit:cover;border-radius:50%;display:block">
             {%- else %}<span class="coinface"></span>{% endif %}</a></td>
         <td><a href="/exchange/pair/{{ p.property_id }}"><strong>{{ wall(p.name, 'token name') }}</strong></a><span
              class="muted">/{{ chain.label|upper }}</span>
+          {# The whole description goes behind the wall, not the first 40 characters
+             of it: a verdict is kept per text, so asking about a cut-off prefix asks
+             about a different sentence than the one that was judged. The truncating
+             is CSS, which is where a layout decision belongs anyway. #}
           <div class="muted" style="font-size:.76rem">#{{ p.property_id }}
-            {%- if p.about %} &middot; {{ p.about[:40] }}{% endif %}</div></td>
+            {%- if p.about %} &middot; <span style="display:inline-block;max-width:36ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom">{{ wall(p.about, 'description') }}</span>{% endif %}</div></td>
         <td class="mono" style="text-align:right">
           {%- if p.last is not none %}<strong>{{ "%.8f"|format(p.last) }}</strong>
           {%- else %}<span class="muted">—</span>{% endif %}</td>
