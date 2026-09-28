@@ -510,7 +510,7 @@ def test_the_newest_price_is_the_one_that_counts(client):
     price(state.home, PIECES[1], sats=500000000, height=500)
     price(state.home, PIECES[1], sats=200000000, height=501)
 
-    body = app.get("/exchange?tab=market").text
+    body = app.get("/exchange/collection/nMe/Doge%20Punks").text
     assert "2 coins" in body
     assert "5 coins" not in body, "a new ask replaces the old one"
 
@@ -543,21 +543,46 @@ def test_a_piece_that_has_moved_takes_its_price_with_it(client):
     assert "5 coins" not in app.get("/exchange?tab=market").text
 
 
-def test_the_marketplace_indexes_what_is_for_sale(client):
+def test_the_marketplace_sends_a_buyer_to_the_collection(client):
+    """2026-09-28: the NFTs tab is popular collections, the last eight
+    sales and then every collection -- not a list of every piece for sale. A
+    piece is bought on its collection's page, where its price and Buy are."""
     app, state = client
     index_with_a_collection(state.home)
     tag(state.home, CREATOR, "punkmaker")
     price(state.home, PIECES[2], sats=125000000)
+    sold(state.home, PIECES[0], sats=250000000, when=int(time.time()) - 600)
 
     body = app.get("/exchange?tab=market").text
-    assert "For sale now" in body, "the book of asks, on the marketplace itself"
-    book = body[body.index("For sale now"):body.index("Recently sold")
-                if "Recently sold" in body else len(body)]
-    assert "Doge Punks #3" in book and "1.25 coins" in book
-    assert "@punkmaker" in book, "who is asking"
-    # Buying is offering exactly what was asked, in one press.
-    assert 'action="/exchange/offer"' in book
-    assert 'value="1.25000000"' in book
+    assert "For sale now" not in body and "Shops selling single NFTs" not in body
+    assert 'action="/exchange/offer"' not in body and "data-buy-listing=" not in body
+    assert (body.index("Popular collections") < body.index("Recently sold")
+            < body.index("All collections")), "popular, then sold, then all"
+    row = body[body.index("All collections"):]
+    assert "/exchange/collection/nMe/Doge%20Punks" in row and "1.2500" in row, \
+        "the collection's row carries the floor, and the way to it"
+
+    page = app.get("/exchange/collection/nMe/Doge%20Punks").text
+    assert "1.25 coins" in page, "the piece is for sale where its collection is"
+
+
+def test_the_last_eight_sales_and_no_more(client):
+    app, state = client
+    index_with_a_collection(state.home)
+    for n in range(10):
+        sold(state.home, PIECES[n % len(PIECES)], sats=100000000 + n, height=400 + n,
+             when=int(time.time()) - 60 * (n + 1), txid=f"{0xa0 + n:064x}")
+    body = app.get("/exchange?tab=market").text
+    feed = body[body.index("Recently sold"):body.index("All collections")]
+    assert feed.count("<tr>") == 8
+
+
+def test_all_collections_load_as_you_scroll(client):
+    app, state = client
+    index_with_a_collection(state.home)
+    body = app.get("/exchange?tab=market").text
+    assert 'class="collrow"' in body
+    assert 'id="collmore"' not in body, "one collection needs no Show more"
 
 
 def test_only_the_holder_can_put_a_price_on_a_piece(client, monkeypatch):

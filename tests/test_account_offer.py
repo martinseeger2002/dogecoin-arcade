@@ -535,20 +535,13 @@ def test_the_market_page_prices_for_whoever_is_looking(node):
         _settled(state, rpc)
         _listed(who, secret, pubkey, piece)
 
+    # 2026-09-28: the NFTs tab lists collections, not pieces for
+    # sale; a piece is bought on its own collection's page.
     page = holder_client.get("/exchange?tab=market").text
     assert 'action="/exchange/offer"' not in page, \
         "a public page never offers the form this instance refuses"
     assert "/exchange/sell/" not in page, \
         "nor the price page it does not open"
-    assert f'href="/inscriptions/{theirs}/view"' in page, \
-        "the piece is still the thing you go and look at"
-    assert "data-buy-listing=" in page, \
-        "and what a listed piece hands an account is the one press"
-    assert 'href="/me/nfts"' in page and "Yours" in page, \
-        "and a price of yours is changed where an account prices"
-
-    state.public = False
-    page = holder_client.get("/exchange?tab=market").text
-    assert 'action="/exchange/offer"' in page, \
-        "the operator's own copy still offers its own form"
+    assert "data-buy-listing=" not in page, \
+        "and no piece is bought from the tab itself"
 

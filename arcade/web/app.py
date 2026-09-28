@@ -15200,62 +15200,6 @@ def create_app(state: AppState) -> FastAPI:
                 "txid": trade["txid"]})
         return points
 
-    def _buyable_listings(index, chain, limit: int = 12) -> list[dict[str, Any]]:
-        """What a buyer can Buy with one press right now: the book's signed
-        listings, newest first, in the shape `_just_listed` draws (the operator,
-        2026-09-27: a listed NFT is bought with the Buy button, no offer)."""
-        out = []
-        for txid, entry in _prices_for(index, chain, asks=False).items():
-            if entry.get("kind") != "listing":
-                continue
-            row = index.inscription(txid)
-            if row is None:
-                continue
-            out.append({
-                "txid": txid, "number": row["number"], "name": _piece_name(row),
-                "collection": row.get("collection"), "edition": row.get("edition"),
-                "creator": row["creator"], "seller": entry["seller"],
-                "held": row.get("held", True), "content_type": row["content_type"],
-                "price": entry["price"], "take": entry["take"], "when": None,
-                "height": row.get("block_height", 0), "pending": False,
-                "listing": entry.get("listing"), "sats": entry.get("sats")})
-        out.sort(key=lambda l: -(l["height"] or 0))
-        return out[:limit]
-
-    def _just_listed(index, limit: int = 12) -> list[dict[str, Any]]:
-        """The prices most recently put on a piece, newest first.
-
-        The book of asks, as a marketplace shows one: what somebody can buy
-        right now, whether or not it belongs to a collection (D-099). The
-        mempool first, so a price that has just been made is here rather than
-        in ten minutes' time (D-117).
-        """
-        out = []
-        try:
-            fresh = index.pending_asks()
-        except Exception:
-            fresh = []
-        in_pool = {row["inscription"] for row in fresh}
-        standing = fresh + [a for a in index.asks(limit=limit * 3)
-                            if a["inscription"] not in in_pool]
-        for ask in standing:
-            row = index.inscription(ask["inscription"])
-            if row is None:
-                continue
-            take = _take_json(ask, index)
-            out.append({
-                "txid": ask["inscription"], "number": ask["number"],
-                "name": _piece_name(row), "collection": ask["collection"],
-                "edition": ask["edition"], "creator": ask["creator"],
-                "seller": ask["seller"], "held": ask["held"],
-                "content_type": ask["content_type"],
-                "price": swaplib.describe_leg(take), "take": take,
-                "when": ask.get("when_"), "height": ask["block_height"],
-                "pending": bool(ask.get("pending"))})
-            if len(out) >= limit:
-                break
-        return out
-
     def _recent_sales(index, trades, limit: int = 12) -> list[dict[str, Any]]:
         """The last NFTs to change hands, newest first.
 
@@ -16438,14 +16382,15 @@ def create_app(state: AppState) -> FastAPI:
                     key=lambda c: (-c["day_coins"], -c["day_trades"],
                                    -c["volume"], -c["for_sale"],
                                    c["name"].lower()))[:6]
-                data["sales"] = _recent_sales(index, trades)
-                data["listings"] = (_buyable_listings(index, chain)
-                                    if _public_request(request) else _just_listed(index))
+                # Popular, then the last eight sales, then every collection
+                # (2026-09-28). No piece-by-piece list of what is for
+                # sale: a piece is bought on its collection's own page, which
+                # is where its price, its neighbours and its Buy button are.
+                data["sales"] = _recent_sales(index, trades, limit=8)
                 data["tags"].update(_names_for(
                     index, [c["creator"] for c in data["collections"]]
                     + [s["seller"] for s in data["sales"]]
-                    + [s["owner"] for s in data["sales"]]
-                    + [l["seller"] for l in data["listings"]]))
+                    + [s["owner"] for s in data["sales"]]))
             except Exception as exc:
                 data["node_error"] = data["node_error"] or \
                     f"the collections could not be read: {exc}"

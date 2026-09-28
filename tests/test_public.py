@@ -1055,10 +1055,10 @@ def test_a_price_only_ask_is_not_shown_to_buyers_as_for_sale():
     app_src = (root / "arcade/web/app.py").read_text()
     assert "def _prices_for(index, chain, asks: bool = True)" in app_src
     assert "asks=not _public_request(request)" in app_src
-    assert "_buyable_listings(index, chain)" in app_src
-    for page in ("market_collection.html", "exchange.html"):
-        body = (root / "arcade/web/templates" / page).read_text()
-        assert "data-buy-listing=" in body and '_buy_listing.html' in body, page
+    body = (root / "arcade/web/templates/market_collection.html").read_text()
+    assert "data-buy-listing=" in body and '_buy_listing.html' in body
+    # The Exchange tab lists collections only (2026-09-28).
+    assert "data-buy-listing=" not in (root / "arcade/web/templates/exchange.html").read_text()
 
 
 def test_a_launch_thread_is_public_and_nests_replies(public, monkeypatch):
