@@ -7757,6 +7757,9 @@ def create_app(state: AppState) -> FastAPI:
     # shape for everything an account ever does (docs/multi-user.md §5).
 
     _offers = accountlib.Offers()
+    #: One broadcast at a time among offers with a premise (Offer.check), so
+    #: a re-check and its broadcast cannot interleave with another's.
+    _premise_lock = threading.Lock()
     #: Collection runs an account owns. Its own book, not `collections.Jobs`,
     #: for the reason in `accountruns`: the operator's Runner resumes every row
     #: it finds with the node's own wallet as the signer, and an account's run
@@ -10011,7 +10014,25 @@ def create_app(state: AppState) -> FastAPI:
         except (tokenlib.TokenError, fundinglib.FundingError, AmountError,
                 ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
-        offer = _offers.add(account.pubkey, chain.network, unsigned, what)
+        def still_free(order=txid, want=units, token=prop):
+            """Asked again at the broadcast, under `_premise_lock`: between
+            this build and the signature another buyer's take can reach the
+            pool. Two takes that both passed here would short-deliver the
+            second (the coins go to the maker whatever the tokens do), so the
+            second is refused before anything leaves this node."""
+            with contextlib.closing(index.open()) as db:
+                now = db.conn.execute("SELECT reserved FROM book_order WHERE txid=?",
+                                      (order,)).fetchone()
+            left = (int(now["reserved"]) if now else 0) - index.pending_takes().get(order, 0)
+            if want > left:
+                raise ValueError(
+                    "somebody else bought from this order while you were signing, "
+                    f"and it has {format_amount(max(0, left), token['divisible'])} "
+                    f"{token['name']} left. Nothing was sent and nothing was spent; "
+                    "press Buy again for what is left.")
+
+        offer = _offers.add(account.pubkey, chain.network, unsigned, what,
+                            check=still_free)
         return JSONResponse({"offer": offer.id, "what": what, "chain": chain.network,
                              "name": prop["name"], "amount": shown,
                              "coins": format_amount(need, True),
@@ -14118,13 +14139,16 @@ def create_app(state: AppState) -> FastAPI:
 
             chain = _chain_on(offer.network)
             try:
-                with chain.rpc() as rpc:
+                with (_premise_lock if offer.check else contextlib.nullcontext()), \
+                        chain.rpc() as rpc:
                     # What the node offered is what the node checks. The
                     # decoded transaction has to spend the coins it chose and
                     # pay the outputs it built -- a browser cannot talk it into
                     # broadcasting anything else.
                     decoded = rpc.call("decoderawtransaction", signed)
                     _same_as_offered(decoded, offer.unsigned)
+                    if offer.check:
+                        offer.check()          # the premise, re-read under the lock
                     txid = rpc.call("sendrawtransaction", signed)
             except ValueError as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=400)

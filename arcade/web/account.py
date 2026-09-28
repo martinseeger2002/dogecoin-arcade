@@ -57,6 +57,12 @@ class Offer:
     #: In memory with the rest of it -- a fact about WHICH file, kept no
     #: longer than the offer that is about it.
     digest: str = ""
+    #: Asked just before the broadcast, under one lock for every offer that
+    #: has one, and raises ValueError to refuse. For a transaction whose
+    #: premise can go stale between the build and the signature -- a take of
+    #: a book order somebody else may have bought meanwhile (the operator,
+    #: 2026-09-28). The lock is what stops two of them both passing.
+    check: Any = None
 
     @property
     def stale(self) -> bool:
@@ -75,11 +81,11 @@ class Offers:
         self._by_id: dict[str, Offer] = {}
 
     def add(self, pubkey: str, network: str, unsigned, what: str,
-            done: Any = None, digest: str = "") -> Offer:
+            done: Any = None, digest: str = "", check: Any = None) -> Offer:
         self.sweep()
         offer = Offer(id=secrets.token_urlsafe(18), pubkey=pubkey.lower(),
                       network=network, unsigned=unsigned, what=what, done=done,
-                      digest=digest)
+                      digest=digest, check=check)
         self._by_id[offer.id] = offer
         return offer
 

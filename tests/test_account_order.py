@@ -1266,3 +1266,35 @@ def test_the_rest_of_an_order_is_buyable_while_a_take_waits_for_its_block(node):
     assert _held(state, b_address, maker["pid"]) == (6 * COIN, 0)
     assert _held(state, maker["address"], maker["pid"]) == (HELD - 10 * COIN, 0), \
         "all ten came out of the order's reserve, none out of the maker's free balance"
+
+
+def test_two_buyers_offered_the_same_rest_cannot_both_send(node):
+    """2026-09-28: close the race. A and B are both offered 6 of 10
+    before either signs; A sends first. B's signature must be refused before
+    the broadcast -- paying the maker for tokens the order no longer holds
+    is the short delivery -- and B's coins must stay where they were."""
+    maker = _bookcoin(node, 48)
+    app, state, rpc = node
+    a, a_secret, a_pubkey, a_address = _seated(app, state, rpc, 49)
+    b, b_secret, b_pubkey, b_address = _seated(app, state, rpc, 50)
+    order = _placed(maker, "ask", "10", "0.5")
+
+    offer_a = a.post("/account/order/take", json={"order": order, "amount": "6"})
+    offer_b = b.post("/account/order/take", json={"order": order, "amount": "6"})
+    assert offer_a.status_code == 200 and offer_b.status_code == 200, "both were fine when built"
+    assert _signed(a, a_secret, a_pubkey, offer_a).status_code == 200
+    pool = set(rpc.call("getrawmempool"))
+    said = offer_b.json()
+    late = b.post("/account/sign", json={
+        "offer": said["offer"], "pubkey": b_pubkey.hex(),
+        "signatures": [_sign(b_secret, bytes.fromhex(d)).hex() for d in said["sighashes"]]})
+    assert late.status_code == 400 and "while you were signing" in late.json()["detail"], late.text
+    assert "4 " in late.json()["detail"], "and it says what is left"
+    assert set(rpc.call("getrawmempool")) == pool, "nothing of B's went out"
+
+    again = b.post("/account/order/take", json={"order": order, "amount": "4"})
+    assert again.status_code == 200, again.text
+    assert _signed(b, b_secret, b_pubkey, again).status_code == 200
+    _settled(state, rpc)
+    assert _held(state, a_address, maker["pid"]) == (6 * COIN, 0)
+    assert _held(state, b_address, maker["pid"]) == (4 * COIN, 0)
