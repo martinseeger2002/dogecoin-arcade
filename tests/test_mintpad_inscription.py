@@ -99,4 +99,6 @@ def test_a_token_mintpad_is_found_from_its_token_page(client):
     assert f"/inscriptions/{real}/view" in page and "Open the mintpad" in page
     assert f"/inscriptions/{fake}/view" not in page, "a pad claiming someone else's order is not listed"
     assert f"/inscriptions/{real}/view" in app.get(f"/exchange/pair/{pid}").text
-    assert f"/inscriptions/{real}/view" in app.get("/exchange?tab=mintpads").text
+    # Nothing on its book, so it is finished and off the Mintpads list (the operator,
+    # 2026-09-28) -- still found from its token and its pair, as above.
+    assert f"/content/{real}" not in app.get("/exchange?tab=mintpads").text
