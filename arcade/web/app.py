@@ -8561,6 +8561,42 @@ def create_app(state: AppState) -> FastAPI:
                              "manifest_len": at, "sent": 0, "next": 0,
                              "chain": chain.network, **unsigned.as_json()})
 
+    @app.get("/account/inscribe/unfinished")
+    def account_inscribe_unfinished(request: Request):
+        """This account's inscriptions that still owe pieces (a tester,
+        2026-09-27: a 14-piece picture stopped at 5 when the tab closed, and
+        nothing said so on return). Name, how many, how many are on the chain,
+        and the file's hash, so the tab can find its own copy to finish with."""
+        account = _signed_in_account(request)
+        out = []
+        for row in _parts.list(account.pubkey):
+            if row.get("status") not in ("open", "running", "failed"):
+                continue
+            out.append({"part": row["id"], "name": row.get("name") or "a file",
+                        "chunks": int(row.get("chunks") or 0),
+                        "sent": int(row.get("sent") or 0),
+                        "bytes": int(row.get("size") or 0),
+                        "sha256": row.get("sha256") or "",
+                        "split": bool(row.get("split_txid")),
+                        "network": row.get("network") or ""})
+        return JSONResponse({"unfinished": out})
+
+    @app.post("/account/inscribe/abandon")
+    def account_inscribe_abandon(request: Request, payload: Any = Body(None)):
+        """Give up on an unfinished inscription. The pieces already sent stay on
+        the chain (nothing can take them back); nothing more is offered, and the
+        coins its split set aside are ordinary outputs of this account's, so
+        they are balance again once the split's block lands."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        row = _parts.get(str(said.get("part") or ""))
+        if not row or row.get("account") != account.pubkey:
+            return JSONResponse({"detail": "that is not an inscription of yours"},
+                                status_code=404)
+        _parts.set_status(row["id"], "stopped", note="given up by its owner")
+        state.bump_generation()
+        return JSONResponse({"ok": True})
+
     def _inscribe_again(account, chain, address: str, row: dict):
         """The same file, asked again while its inscription is unfinished.
 

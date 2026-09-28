@@ -341,3 +341,26 @@ def test_one_create_tab_and_backup_on_the_wallet_page(public):
         assert where in create, where
     assert 'class="on" href="/create"' in app.get("/tokens", headers=EDGE).text, \
         "the Create tab stays lit on the pages behind it"
+
+
+def test_an_unfinished_inscription_is_listed_and_can_be_given_up(public):
+    """a tester, 2026-09-27: a 14-piece picture stopped at 5 when its tab
+    closed, and on return nothing said so. The page lists what still owes
+    pieces; giving up stops it for good (the pieces sent stay on the chain)."""
+    from arcade.accountparts import Parts
+    app, state = public
+    pubkey = _seat(app)
+    parts = Parts(state.home / "accountparts.sqlite")
+    job = parts.create(pubkey, "nAddr", state.messaging.network, "silas.jpg",
+                       "image/jpeg", "", 1000, "ab" * 32, "cd" * 8,
+                       [b"x" * 10] * 3, 5000, 10, b"", 0.1, 0.01)
+    said = app.get("/account/inscribe/unfinished", headers=EDGE).json()["unfinished"]
+    mine = [j for j in said if j["part"] == job]
+    assert mine and mine[0]["name"] == "silas.jpg" and mine[0]["chunks"] == 3
+    assert mine[0]["sha256"] == "ab" * 32, "so the tab can find its own copy"
+    assert app.post("/account/inscribe/abandon", json={"part": job},
+                    headers=EDGE).status_code == 200
+    said = app.get("/account/inscribe/unfinished", headers=EDGE).json()["unfinished"]
+    assert not [j for j in said if j["part"] == job], "given up is not unfinished"
+    assert app.post("/account/inscribe/abandon", json={"part": "nope"},
+                    headers=EDGE).status_code == 404

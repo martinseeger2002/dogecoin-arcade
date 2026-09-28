@@ -108,6 +108,7 @@ PUBLIC_PAGES = frozenset({
     "/account/find",
     "/account/nfts",
     "/account/tokens",
+    "/account/inscribe/unfinished",
 })
 
 #: Prefixes a stranger may read. Everything under them is public, so each
@@ -216,7 +217,7 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/vault",
                # how the account's own mintpad page looks (presentation only)
                "/account/mintpad", "/account/mintpad/inscribe", "/account/mintpad/announce", "/account/mintpad/announced",
-               "/account/claim", "/account/send", "/account/inscribe",
+               "/account/claim", "/account/send", "/account/inscribe", "/account/inscribe/abandon",
                "/account/run/start", "/account/run", "/account/run/piece",
                "/account/run/stop",
                # the two ends of a run that stopped by itself: the refused

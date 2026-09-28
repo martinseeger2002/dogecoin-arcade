@@ -14,6 +14,9 @@
    page is drawn for. Nothing here spends anything the tab has not been shown
    and agreed to: every transaction is offered unsigned by this node, read back
    by `wallet.checked` out of the transaction's own bytes, and signed here. #}
+{# Inscriptions of this account's that still owe pieces, with Finish and Give
+   up (a tester, 2026-09-27). Drawn by drawUnfinished(), below. #}
+<div id="unfinished" data-client></div>
 <div class="panel" id="inscribing">
   <h3 style="margin:0 0 6px">Inscribe one thing</h3>
   <p class="muted" style="font-size:.86rem;margin:0 0 10px">
@@ -310,6 +313,45 @@ async function inscribeTheFile() {
   let bytes;
   try { bytes = new Uint8Array(await file.arrayBuffer()); }
   catch (e) { say(String(e.message || e)); return; }
+  await inscribeBytes(bytes, file.name, file.type);
+}
+
+/* A copy of a many-piece file, kept in this browser until its last piece is
+ * out (a tester, 2026-09-27: a 14-piece picture stopped at 5 when the tab
+ * closed, and finishing it meant finding the same file again). The node keeps
+ * no copy by design (accountparts.py), so this browser does, keyed by the
+ * file's hash, and "Finish" uses it. */
+const KEPT = "arcade-inscribe-files";
+function keptDb() {
+  return new Promise((ok, no) => {
+    const open = indexedDB.open(KEPT, 1);
+    open.onupgradeneeded = () => open.result.createObjectStore("files");
+    open.onsuccess = () => ok(open.result);
+    open.onerror = () => no(open.error);
+  });
+}
+async function keep(sha, value) {
+  try {
+    const db = await keptDb();
+    await new Promise((ok) => { const tx = db.transaction("files", "readwrite");
+      value ? tx.objectStore("files").put(value, sha) : tx.objectStore("files").delete(sha);
+      tx.oncomplete = ok; tx.onerror = ok; });
+  } catch (e) { /* a private window: finishing means choosing the file again */ }
+}
+async function kept(sha) {
+  try {
+    const db = await keptDb();
+    return await new Promise((ok) => { const r = db.transaction("files").objectStore("files").get(sha);
+      r.onsuccess = () => ok(r.result || null); r.onerror = () => ok(null); });
+  } catch (e) { return null; }
+}
+async function shaOf(bytes) {
+  const h = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return [...h].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function inscribeBytes(bytes, name, type) {
+  const file = {name, type};
   const held = (await take()) || await arcadeKeys(CHAIN);
   try {
     const start = await ask("/account/inscribe", {
@@ -346,8 +388,13 @@ async function inscribeTheFile() {
         + (start.offer ? "First one transaction splits your coins into the pieces; "
                          + "after its block (about a minute) the rest go out together. "
            : "")
-        + "You sign them all here, without being asked again.")))
+        + "You sign them all here, without being asked again. "
+        + `Keep this tab open until all ${commas(pieces - already)} are sent (about `
+        + `${Math.max(2, Math.ceil((pieces - already) / 6) + 1)} minutes). If it closes, `
+        + "come back here and press Finish.")))
       return;
+    const sha = await shaOf(bytes);
+    if (bytes.length <= 25 * 1024 * 1024) await keep(sha, {name, type, bytes});
     let sent = already;
     // The transaction the file is read back from: piece 0 carries the
     // manifest, and it is the key `/content` answers on. Blank when an
@@ -363,6 +410,10 @@ async function inscribeTheFile() {
     // The split costs a fee either way, so what was left was a file somebody
     // paid for and did not get, with only re-choosing it to finish it.
     document.body.dataset.inscribing = String(pieces);
+    // Leaving mid-run is asked about, not just allowed: the rest of the
+    // pieces are signed in this tab and nowhere else.
+    const stay = (e) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", stay);
     try {
       if (start.offer) {
         await wallet.confirm(held, start);
@@ -371,7 +422,7 @@ async function inscribeTheFile() {
       }
       const giveUp = Date.now() + 15 * 60 * 1000;
       for (let n = Number(start.next ?? 0); n < pieces; n++) {
-        news(`Piece ${commas(n + 1)} of ${commas(pieces)}…`);
+        news(`Piece ${commas(n + 1)} of ${commas(pieces)}… keep this tab open until the last one.`);
         const piece = await pieceOffer(bytes, start, n, giveUp);
         const out = await wallet.confirm(held, piece);
         if (n === 0) root = out.txid;
@@ -391,11 +442,63 @@ async function inscribeTheFile() {
       remember({says, root, bytes: bytes.length, chain: CHAIN.network,
                 at: Date.now()});
       news(says);
+      await keep(sha, null);
     } finally {
       delete document.body.dataset.inscribing;
+      window.removeEventListener("beforeunload", stay);
+      drawUnfinished();
     }
   } catch (e) { say(String(e.message || e)); }
 }
+
+/* -- inscriptions left half-done: say so, and finish or give up -- */
+async function drawUnfinished() {
+  const box = $("unfinished");
+  if (!box) return;
+  let list = [];
+  try { list = (await (await fetch("/account/inscribe/unfinished", {cache: "no-store"})).json()).unfinished || []; }
+  catch (e) { return; }
+  box.replaceChildren();
+  for (const job of list.filter((j) => !j.network || j.network === CHAIN.network)) {
+    const card = document.createElement("div");
+    card.className = "msg info";
+    card.style.margin = "0 0 12px";
+    const words = document.createElement("div");
+    words.innerHTML = "";
+    const strong = document.createElement("strong");
+    strong.textContent = `${job.name}: ${commas(job.sent)} of ${commas(job.chunks)} pieces are on the chain.`;
+    const more = document.createElement("span");
+    const copy = job.sha256 ? await kept(job.sha256) : null;
+    more.textContent = copy
+      ? " Finish sends the rest from this browser; keep the tab open until it's done."
+      : " To finish, choose the same file below and inscribe it again: it carries on where it stopped.";
+    words.append(strong, more);
+    const row = document.createElement("div");
+    row.className = "row"; row.style.cssText = "gap:8px;margin-top:8px";
+    if (copy) {
+      const go = document.createElement("button");
+      go.type = "button"; go.className = "small"; go.textContent = `Finish ${job.name}`;
+      go.onclick = () => { go.disabled = true; inscribeBytes(new Uint8Array(copy.bytes), copy.name, copy.type); };
+      row.append(go);
+    }
+    const drop = document.createElement("button");
+    drop.type = "button"; drop.className = "small ghost"; drop.textContent = "Give up on it";
+    drop.onclick = async () => {
+      if (!(await arcadeAsk(`Give up on ${job.name}?`,
+          `The ${commas(job.sent)} pieces already sent stay on the chain; nothing more is sent. `
+          + "The coins set aside for the rest are ordinary balance again once their "
+          + "transaction's block lands.", "Give up on it"))) return;
+      await fetch("/account/inscribe/abandon", {method: "POST",
+        headers: {"Content-Type": "application/json"}, body: JSON.stringify({part: job.part})});
+      if (job.sha256) await keep(job.sha256, null);
+      drawUnfinished();
+    };
+    row.append(drop);
+    card.append(words, row);
+    box.append(card);
+  }
+}
+drawUnfinished();
 
 /* -- the set's rules: new, or added to one of yours (2026-09-25) -- */
 
