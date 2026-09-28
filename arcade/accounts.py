@@ -472,6 +472,26 @@ class Accounts:
             "SELECT COALESCE(SUM(bytes), 0) FROM deed WHERE pubkey = ? AND at > ?",
             (pubkey, now - DAY)).fetchone()[0]
 
+    def pushed_by_kind(self, pubkey: str, *,
+                       now: int | None = None) -> list[dict]:
+        """Which of this account's writes carried the bytes of the last day.
+
+        The same rows and the same window as `pushed`, grouped -- so the parts
+        cannot disagree with the total the cap is checked against, and there is
+        nowhere else for the two to drift apart. A kind that carried nothing is
+        left out rather than drawn as a zero: nine rows of which eight say 0
+        tell a person nothing about the one that is the reason they asked.
+        """
+        now = int(now if now is not None else time.time())
+        return [{"kind": row["kind"],
+                 "label": LABELS.get(row["kind"], row["kind"]),
+                 "bytes": int(row["bytes"])}
+                for row in self.conn.execute(
+                    "SELECT kind, SUM(bytes) AS bytes FROM deed "
+                    "WHERE pubkey = ? AND at > ? AND bytes > 0 "
+                    "GROUP BY kind ORDER BY bytes DESC, kind",
+                    (pubkey, now - DAY))]
+
     def charge(self, pubkey: str, kind: str, nbytes: int = 0, *,
                caps: dict | None = None, now: int | None = None) -> dict:
         """Count one thing an account did, or refuse it and count nothing.
@@ -543,6 +563,7 @@ class Accounts:
                         for kind, cap in caps["hour"].items()],
             "bytes": {"limit": int(caps["bytes"]),
                       "used": self.pushed(pubkey, now=now)},
+            "by_kind": self.pushed_by_kind(pubkey, now=now),
         }
 
     # --- proving who you are --------------------------------------------------

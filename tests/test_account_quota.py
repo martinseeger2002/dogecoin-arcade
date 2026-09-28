@@ -200,6 +200,32 @@ def test_the_bytes_a_day_are_counted_and_a_big_one_is_refused_honestly(client):
     assert _quota(app)["bytes"] == {"limit": 400, "used": 100}
 
 
+def test_the_bytes_name_the_writes_that_carried_them(client):
+    """One number says a person is out of bytes, and nine kinds of thing could
+    have spent them -- so the block says which. The parts are read off the same
+    rows the total is, so they cannot tell a different story than the cap does
+    (a tester)."""
+    app, state = client
+    _open(app)
+    assert _quota(app)["by_kind"] == [], "nothing spent, nothing to name"
+    assert 'id="room-kinds"' in app.get("/me").text
+
+    _coin(app, state, TEST, "test")
+    state.set_setting("quota:bytes", 400)
+    small = app.post("/account/write", json={"to": THEIRS_TEST,
+                                            "sealed": "bb" * 100})
+    assert small.status_code == 200, small.text
+    assert _quota(app)["by_kind"] == [{"kind": "message",
+                                       "label": "messages", "bytes": 100}]
+
+    over = app.post("/account/write", json={"to": THEIRS_TEST,
+                                           "sealed": "cc" * 450})
+    assert over.status_code == 400, over.text
+    assert _quota(app)["by_kind"] == [{"kind": "message",
+                                       "label": "messages", "bytes": 100}], \
+        "a refusal charged bytes that never went near the chain"
+
+
 def test_the_pile_of_unsigned_offers_is_bounded(client):
     """Building is free to ask for and costs a read of the index plus a thing
     held in memory naming coins, so an account cannot have an unlimited
@@ -270,6 +296,34 @@ def test_the_settings_page_is_not_the_public_ones(client):
 @pytest.fixture
 def register(tmp_path):
     return accountslib.Accounts(tmp_path / "accounts.sqlite", seats=3)
+
+
+def test_the_parts_of_the_byte_bucket_add_up_to_the_whole(register):
+    """The breakdown is one GROUP BY away from the number the cap is checked
+    against, so the page can name what spent the bytes without a second place
+    the fact lives -- and a kind that carried nothing stays off the line rather
+    than filling it with zeroes."""
+    now = 1_800_000_000
+    caps = accountslib.limits({})
+    who = "cd" * 32
+    register.charge(who, "inscribe", 1_400, caps=caps, now=now)
+    register.charge(who, "inscribe", 100, caps=caps, now=now + 5)
+    register.charge(who, "message", 60, caps=caps, now=now + 6)
+    register.charge(who, "send", caps=caps, now=now + 7)
+
+    said = register.room(who, caps=caps, now=now + 8)
+    assert said["by_kind"] == [
+        {"kind": "inscribe", "label": "inscriptions", "bytes": 1_500},
+        {"kind": "message", "label": "messages", "bytes": 60}]
+    assert sum(one["bytes"] for one in said["by_kind"]) == said["bytes"]["used"], \
+        "the parts and the total are counting different days"
+
+    # A day on, past the last of them, the rows say nothing that is still
+    # counted -- so the line goes empty rather than keeping an old story on the
+    # page. Seven seconds inside the window is not a day: at `DAY + 1` these
+    # writes are still 23h59m old and belong on the page.
+    assert register.room(who, caps=caps,
+                         now=now + accountslib.DAY + 8)["by_kind"] == []
 
 
 def test_the_window_rolls_and_the_rows_go_away(register):

@@ -190,6 +190,7 @@
 <div id="room" hidden>
   <p class="muted" style="margin:0 0 12px;font-size:.88rem">What this node lets one account do, and how much of it you have used. It opens again as the hour goes on.</p>
   <div class="statbar" id="room-grid"></div>
+  <p class="muted" id="room-kinds" style="margin:10px 0 0;font-size:.88rem" hidden></p>
   </div></div>
 
 <style>
@@ -330,6 +331,17 @@ function drawRoom(said) {
     rows.push([`${kilos(quota.bytes.used)} of ${kilos(quota.bytes.limit)}`,
                "bytes a day on the chain"]);
   }
+  // The same bytes, by the thing that carried them. The row above says a
+  // person has run out of room and says nothing about what spent it, which is
+  // the one question they have when they run out (a tester). Counted by
+  // the node off its own rows, not from what any page claims to have written.
+  const spent = (quota.by_kind || []).filter((one) => one.bytes > 0);
+  const kinds = $("room-kinds");
+  kinds.hidden = !spent.length;
+  kinds.textContent = spent.length
+    ? "Of those bytes, from the last day: "
+      + spent.map((one) => `${one.label} ${kilos(one.bytes)}`).join(" · ")
+    : "";
   const cells = [];
   for (const [value, what] of rows) {
     const cell = document.createElement("div");
