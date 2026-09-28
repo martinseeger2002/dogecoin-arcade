@@ -1945,5 +1945,65 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
   {% endif %}
 </footer>
 {% endif %}
+{% if not embed %}
+<script>
+// Pull to refresh in the installed app (2026-09-27: "When I'm in the
+// PWA on my iPhone, if I scroll all the way to the top and I pull down ... it
+// would refresh the page. I would like it to have the same behavior in the
+// PWA"). Safari gives a tab this and gives a home-screen app nothing, so the
+// page does it: only when installed, only from the very top, and never while
+// something under the finger can still scroll up, a card is open, or a box
+// is being typed in.
+(function(){
+  var standalone = window.navigator.standalone === true ||
+    (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+  if (!standalone || !('ontouchstart' in window)) return;
+  var PULL = 80, startY = null, dist = 0, pill = null;
+  function show(d){
+    if (!pill){
+      pill = document.createElement('div');
+      pill.style.cssText = 'position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 6px);' +
+        'transform:translateX(-50%);z-index:60;padding:6px 14px;border-radius:999px;font-size:.85rem;' +
+        'background:var(--panel);color:var(--fg);border:1px solid var(--line);' +
+        'box-shadow:0 4px 14px rgba(0,0,0,.25);transition:opacity .15s';
+      document.body.appendChild(pill);
+    }
+    pill.style.opacity = Math.min(1, d / PULL);
+    pill.textContent = d >= PULL ? 'Release to refresh' : 'Pull to refresh';
+  }
+  function hide(){ if (pill){ pill.remove(); pill = null; } }
+  function canScrollUp(el){
+    for (; el && el !== document.body && el !== document.documentElement; el = el.parentElement){
+      if (el.scrollTop > 0) return true;
+    }
+    return false;
+  }
+  document.addEventListener('touchstart', function(e){
+    startY = null; dist = 0;
+    if (e.touches.length !== 1 || window.scrollY > 0) return;
+    if (document.querySelector('.askcard-back')) return;
+    // Never mid-signature, mid-trade or mid-upload: the same moments the live
+    // redraw holds off for (frozen(), above).
+    var d = document.body.dataset;
+    if (d.working || d.trading || d.inscribing || document.querySelector('.confirm')) return;
+    var t = e.target;
+    if (t && t.closest && t.closest('input,textarea,select,[contenteditable]')) return;
+    if (canScrollUp(t)) return;
+    startY = e.touches[0].clientY;
+  }, {passive: true});
+  document.addEventListener('touchmove', function(e){
+    if (startY === null) return;
+    dist = e.touches[0].clientY - startY;
+    if (dist > 10 && window.scrollY <= 0) show(dist); else hide();
+  }, {passive: true});
+  document.addEventListener('touchend', function(){
+    var go = startY !== null && dist >= PULL && window.scrollY <= 0;
+    startY = null; dist = 0;
+    if (go){ if (pill) pill.textContent = 'Refreshing…'; location.reload(); }
+    else hide();
+  }, {passive: true});
+})();
+</script>
+{% endif %}
 </body>
 </html>

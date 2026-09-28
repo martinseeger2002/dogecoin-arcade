@@ -3094,3 +3094,14 @@ def test_a_timestamp_goes_out_in_utc_for_the_reader_to_make_local():
     base = (pathlib.Path(__file__).resolve().parents[1]
             / "arcade/web/templates/base.html").read_text()
     assert "function arcadeLocalTimes" in base
+
+
+def test_the_installed_app_can_be_pulled_to_refresh(client):
+    """2026-09-27: Safari's tab refreshes when pulled down at the top;
+    the installed app did nothing. base.html does it, only when installed, and
+    never while something is being signed, traded or uploaded."""
+    app, _ = client
+    page = app.get("/feed").text
+    assert "Pull to refresh in the installed app" in page
+    assert "display-mode: standalone" in page and "location.reload()" in page
+    assert "d.working || d.trading || d.inscribing" in page
