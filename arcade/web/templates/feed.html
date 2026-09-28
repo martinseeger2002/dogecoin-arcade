@@ -693,12 +693,32 @@
 {% endif %}
 
 <script>
-function toggle(id){ var el = document.getElementById(id); if (el) el.hidden = !el.hidden; }
+// The element with this id INSIDE the card that was pressed, before any other
+// on the page (2026-09-27: "if I scroll down far enough on a feed
+// comments quit opening"). Scrolling adds older pages, and a post can come
+// back on one of them -- the order moves, a share shows its original -- so an
+// id can be on the page twice, and the page-wide lookup found the first copy,
+// far up the page, and opened that one.
+function inCard(from, id){
+  var card = from && from.closest && from.closest('.feedpost');
+  if (card) {
+    var mine = card.querySelector('[id="' + id + '"]');
+    if (mine) return mine;
+    // A post's thread is the element right after its card, not inside it.
+    var next = card.nextElementSibling;
+    if (next && next.id === id) return next;
+  }
+  return document.getElementById(id);
+}
+function toggle(id){
+  var el = inCard(window.event && window.event.target, id);
+  if (el) el.hidden = !el.hidden;
+}
 
 // Comments fold both ways: a count that only opens is a count you can press
 // once (the operator).
 function foldComments(button, id){
-  var thread = document.getElementById(id);
+  var thread = inCard(button, id);
   if (!thread) return;
   thread.hidden = !thread.hidden;
   button.textContent = thread.hidden ? button.dataset.shut : button.dataset.open;
@@ -854,7 +874,10 @@ document.addEventListener('click', function (event) {
   var asking = false;
   // A post is known by its reply form's id (reply-<txid>), not its markup: its
   // counts can change between two pages -- a dislike moves it down past the cut.
-  var idOf = function (c) { var f = c.querySelector('[id^="reply-"]'); return f ? f.id : c.outerHTML; };
+  // By the card's own key first (data-key, the post it is), then its reply form.
+  var idOf = function (c) {
+    if (c.dataset && c.dataset.key) return 'key-' + c.dataset.key;
+    var f = c.querySelector('[id^="reply-"]'); return f ? f.id : c.outerHTML; };
   var seen = new Set();
   document.querySelectorAll('.feedpost').forEach(function (c) { seen.add(idOf(c)); });
   var watch = new IntersectionObserver(function(entries){
@@ -874,6 +897,13 @@ document.addEventListener('click', function (event) {
           if (seen.has(idOf(c))) return;           // the order moved under us: shown already
           seen.add(idOf(c));
           more.parentNode.insertBefore(document.importNode(c, true), more);
+          // Its comments too: the thread is the element AFTER the card, and
+          // taking the cards alone left every older post's "N comments" with
+          // nothing to open (2026-09-27: "if I scroll down far enough
+          // on a feed comments quit opening").
+          var thread = c.nextElementSibling;
+          if (thread && thread.id && thread.id.indexOf('thread-') === 0)
+            more.parentNode.insertBefore(document.importNode(thread, true), more);
         });
         document.body.dataset.reading = '1';
         if (next && next.querySelector('a')) {
