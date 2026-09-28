@@ -140,11 +140,19 @@ def _wipe(browser):
         open.onerror = () => done("open: " + open.error);
         open.onsuccess = () => {
           const db = open.result;
-          const tx = db.transaction(["mail", "marks", "book"], "readwrite");
+          const tx = db.transaction(["mail", "marks", "book", "parts"], "readwrite");
           tx.objectStore("mail").clear();
           tx.objectStore("marks").clear();
           tx.objectStore("book").clear();
-          tx.oncomplete = () => done("ok");
+          tx.objectStore("parts").clear();   // a message in pieces outlived the wipe
+          // The history also follows the account (the sealed mailbox on the
+          // node), and the page puts it back from there: empty that too, or
+          // an earlier test's conversation comes back after the wipe.
+          tx.oncomplete = () => fetch("/account/mailbox").then((r) => r.ok ? r.json() : null)
+            .then((have) => have === null ? null : fetch("/account/mailbox", {
+              method: "POST", headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({blob: "", base: have.updated || 0})}))
+            .then(() => done("ok"), () => done("ok"));
           tx.onerror = () => done("clear: " + tx.error);
         };""")
 
@@ -657,7 +665,14 @@ def test_the_first_message_to_a_stranger_reaches_the_chain(browser, served,
     else:
         raise AssertionError("nobody new could be opened: "
                              + browser.find_element(By.ID, "new-trouble").text)
-    assert browser.find_element(By.ID, "convo-name").text == address
+    # The header shortens a bare address; the line under it says it in full.
+    # It is filled in a moment after the pane opens ("—" until then).
+    for _ in range(40):
+        if browser.find_element(By.ID, "convo-name").text not in ("", "—"):
+            break
+        time.sleep(0.25)
+    assert browser.find_element(By.ID, "convo-name").text.rstrip("…") in address
+    assert browser.find_element(By.ID, "convo-sub").text == address
     said = _press_send_and_wait(browser, "first contact")
     assert DEAD_END not in said, said
 
