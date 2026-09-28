@@ -1026,9 +1026,13 @@ new MutationObserver((changes) => {
    the node never sees the list and never suggests a stranger. Works in the
    post box and every reply box, including ones that arrive by scrolling. #}
 <style>
-  #atnames{position:fixed;z-index:60;min-width:180px;max-width:280px;max-height:220px;
+  /* In the page, right under the field it belongs to -- not floating (the operator,
+     2026-09-28: fixed positioning flipped it above the field over the post
+     being answered, and on a phone it drifted when the keyboard moved things). */
+  #atnames{display:block;position:relative;z-index:5;margin:4px 0 0;max-width:280px;max-height:220px;
     overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;
-    box-shadow:0 6px 24px rgba(0,0,0,.18);padding:4px 0}
+    box-shadow:0 6px 24px rgba(0,0,0,.18);padding:4px 0;text-align:left}
+  #atnames[hidden]{display:none}
   #atnames div{padding:8px 12px;cursor:pointer;font-size:.92rem}
   #atnames div.on,#atnames div:hover{background:var(--code-bg, rgba(127,127,127,.12))}
 </style>
@@ -1072,11 +1076,10 @@ function draw(list) {
     row.addEventListener("mousedown", (e) => { e.preventDefault(); choose(tag); });
     menu.appendChild(row);
   });
-  const r = field.getBoundingClientRect();
-  menu.style.left = Math.max(8, Math.min(r.left, innerWidth - 290)) + "px";
-  const below = r.bottom + 4, room = innerHeight - below;
-  menu.style.top = (room > 160 ? below : Math.max(8, r.top - 4 - Math.min(220, list.length * 38))) + "px";
+  if (menu.previousElementSibling !== field) field.after(menu);
   menu.hidden = false;
+  // Behind the keyboard? Bring it up, without jumping the page otherwise.
+  try { menu.scrollIntoView({block: "nearest"}); } catch (e) {}
 }
 async function look(el) {
   const t = typed(el);
@@ -1102,7 +1105,6 @@ document.addEventListener("keydown", (e) => {
   } else if (e.key === "Escape") { close(); }
 }, true);
 document.addEventListener("focusout", (e) => { if (e.target === field) setTimeout(close, 120); });
-addEventListener("scroll", () => { if (!menu.hidden) close(); }, {passive: true});
 </script>
 {% endif %}
 {% endblock %}
