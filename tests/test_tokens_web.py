@@ -1222,8 +1222,8 @@ def test_the_mintpads_tab_carries_the_same_count(web):
         return " ".join(app.get("/exchange?tab=mintpads").text.split())
 
     listed = tab()
-    assert f'href="/inscriptions/{pad}/view"' in listed, listed
-    assert "sold out" in listed, "nothing on the book yet, and it says so rather than lie"
+    assert f"/content/{pad}" not in listed, \
+        "nothing on the book: a finished pad is off the list (2026-09-28)"
 
     # Two lots of the lot size on the book, so the tile says two -- the same two
     # the pad page prints above its frame, because it is the same read.
@@ -1245,12 +1245,8 @@ def test_the_mintpads_tab_carries_the_same_count(web):
                  follow_redirects=False)
         mine_and_index(node, state)
     gone = tab()
-    assert "mints left" not in gone, gone
-    assert f'href="/inscriptions/{pad}/view"' in gone, \
-        "sold out is what the tile says, not a reason to hide the pad"
-    # One list since 2026-09-28: every pad drawn as the feed draws it.
-    named = app.get("/exchange?tab=mintpads").text
-    assert "token mintpad" in named and f"/content/{pad}" in named
+    assert "mints left" not in gone and f"/content/{pad}" not in gone, \
+        "sold out, so it leaves the list (2026-09-28)"
 
 
 def test_the_mintpads_tab_names_its_collection_half_and_says_when_it_is_empty(web):

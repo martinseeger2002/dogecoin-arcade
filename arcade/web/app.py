@@ -13989,6 +13989,11 @@ def create_app(state: AppState) -> FastAPI:
             if nftpad:
                 name, key = str(pad.get("collection") or ""), ("nft", r["creator"], pad.get("collection"))
                 sold = len(nft.get((r["creator"], name), []))
+                # Pieces still listed on the pad: what is left to mint.
+                try:
+                    mints = len(_mintpad_rows(chain, r["creator"], name))
+                except Exception:
+                    mints = None
             else:
                 pid = int(pad.get("property_id") or 0)
                 prop = index.property(pid) if pid else None
@@ -14007,8 +14012,14 @@ def create_app(state: AppState) -> FastAPI:
             if not name or key in seen:
                 continue
             seen.add(key)
+            # A finished pad leaves the list (2026-09-28: "Mintpads should
+            # be removed from the mintpads page once they are completed"). Only a
+            # count that says zero removes it; one this node could not read keeps
+            # the pad, since hiding a live pad is the worse mistake.
+            if mints == 0:
+                continue
             items.append({"txid": r["txid"], "number": r["number"], "creator": r["creator"],
-                          "mints": mints if not nftpad else None, "lot": lot_shown,
+                          "mints": mints, "lot": lot_shown,
                           "kind": key[0], "name": name, "time": int(r["time"] or 0),
                           "height": r["block_height"], "trades": sold, "volume": 0.0})
         acts: list = []

@@ -258,7 +258,7 @@
       by {{ it.creator|who }} &middot; {{ when(it.time) if it.time else 'just now' }}
       {%- if it.lot %} &middot; {{ it.lot }} per mint{% endif %}
       &middot; {{ it.trades }} sold
-      {%- if it.kind == 'token' and it.mints is not none %} &middot; {% if it.mints %}{{ '{:,}'.format(it.mints) }} mint{{ '' if it.mints == 1 else 's' }} left{% else %}<span class="pill">sold out</span>{% endif %}{% endif %}</div>
+      {%- if it.mints %} &middot; {{ '{:,}'.format(it.mints) }} {{ ('mint' if it.kind == 'token' else 'piece') ~ ('' if it.mints == 1 else 's') }} left{% endif %}</div>
     <iframe class="inscription-frame postmedia padframe" src="{{ pad_frames.get(it.txid) or ('/content/' ~ it.txid) }}"
             loading="lazy" sandbox="allow-scripts allow-pointer-lock"></iframe>
     <div class="row lacts" style="gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">

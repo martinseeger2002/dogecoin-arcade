@@ -63,12 +63,31 @@ def _a_pad(home):
     db.close()
 
 
+def _a_piece_on_the_pad(state, piece):
+    """One piece still listed on the pad, so the pad is not finished."""
+    import time
+    from arcade import inscriptions as I, payload as P
+    from arcade.encoding import encode_class_c
+    body = I.Swap(give=I.Leg(I.LEG_INSCRIPTION, txid=bytes.fromhex(piece)),
+                  take=I.Leg(I.LEG_COINS, amount=100000000)).encode()
+    state.listings.add({
+        "id": "padpiece", "network": state.ledger.network, "owner": "nMe", "leg": "00",
+        "input": {"txid": "a" * 64, "vout": 0, "value": 1000}, "coin": None,
+        "payload": encode_class_c(P.AnyData(data=body).encode()).hex(),
+        "output": {"value": 1000, "script": "00"}, "fee": 0, "price": 100000000,
+        "what": "", "status": "open", "created": time.time(),
+        "expires": time.time() + 3600})
+
+
 def test_launches_is_folded_into_the_mintpads_tab(client):
     """2026-09-28: Exchange opens on Mintpads, which lists every pad drawn
     as the feed draws it and ranked like Launches was; Launches goes."""
     app, state = client
     index_with_a_collection(state.home)
     _a_pad(state.home)
+    assert f"/content/{PAD}" not in app.get("/exchange").text, \
+        "nothing listed on it: a finished pad is off the list (2026-09-28)"
+    _a_piece_on_the_pad(state, f"{1:064x}")
     moved = app.get("/launches?sort=new", follow_redirects=False)
     assert moved.status_code == 303
     assert moved.headers["location"] == "/exchange?tab=mintpads&sort=new"
@@ -86,6 +105,7 @@ def test_a_visitor_sees_the_counts_and_how_to_join_in(client):
     app, state = client
     index_with_a_collection(state.home)
     _a_pad(state.home)
+    _a_piece_on_the_pad(state, f"{1:064x}")
     state.public = True
     try:
         page = app.get("/exchange?tab=mintpads").text
