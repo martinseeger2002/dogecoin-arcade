@@ -861,7 +861,7 @@ def test_an_order_still_in_the_pool_says_so_on_the_page(node):
     finally:
         seat["state"].public = False
     assert "yours" in body, "the row is the reader's before the ledger's"
-    assert ">pool<" in body, "and the page says where the order is"
+    assert "waiting for its block" in body, "and the page says where the order is"
     assert "in the mempool" in body, "the same in the list of their own orders"
     assert "when its block lands" in body, \
         "it is an ask that cannot be taken yet, and saying when it can be is " \

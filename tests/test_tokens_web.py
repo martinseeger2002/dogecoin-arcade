@@ -143,9 +143,7 @@ def test_two_prices_that_overlap_are_said_as_a_trade_and_not_a_sign(web):
         assert "Crossed" in page
         assert "your bid reaches the ask" in page, \
             "and which of the reader's own bids is the one that clears right now"
-        assert ("A bid is an offer and not yet a trade: nothing on this node "
-                "matches two orders, and a bid moves only when somebody buys "
-                "into it (D-048).") in page, "bids do not fill themselves"
+        assert "ready to trade" in page, "the book says a trade is waiting, simply"
 
         # Withdraw it and put one back BELOW the ask: the figure comes back, and
         # so does the silence, so the page is not saying "Crossed" -- or offering
@@ -155,15 +153,10 @@ def test_two_prices_that_overlap_are_said_as_a_trade_and_not_a_sign(web):
         assert "at or above the best ask" not in said, said
         page = pair()
         assert "Crossed" not in page
-        assert '<strong class="mono">0.50000000</strong> <span class="muted">spread' in page, \
-            "an honest spread between two prices that do not overlap"
         named = " ".join(page.split())
         assert ('Best ask <strong class="mono">1</strong> &middot; best bid '
                 '<strong class="mono">0.5</strong>') in named, \
             "the spread is a difference; the two prices it subtracts are the news"
-        assert "if you have the coins it asks for, you could buy at the best ask now" \
-            in named, \
-            "the price, and the condition on spending it, as /exchange/order says it"
 
 
 def test_create_confirm_broadcast_and_read_back(web):
@@ -861,12 +854,12 @@ def test_an_indivisible_price_is_read_in_coins_and_not_in_satoshis(web):
         mine_and_index(node, state)
     body = app.get(f"/exchange/pair/{pid}").text
     prices = [_re.sub(r"<[^>]+>", "", c) for c in _re.findall(
-        r'<tr class="(?:ask|bid)[^>]*>\s*<td[^>]*>([^<]*)</td>', body)]
+        r'<div class="obrow (?:ask|bid)[^>]*>\s*<span class="obprice mono">([^<]*)</span>', body)]
     assert prices == ["2", "1"], \
         f"each row priced in the coins somebody typed, and the page said {prices}"
     assert "200000000" not in body and "100000000" not in body, \
         "the satoshi figure appears nowhere, neither in a row nor in the spread"
-    assert ">1.00000000<" in body, "and the spread says one coin"
+    assert 'Best ask <strong class="mono">2</strong>' in body, "and the best prices, in coins"
 
 
 def test_the_pair_page_says_one_price_for_an_indivisible_trade(web, monkeypatch):
@@ -931,7 +924,7 @@ def test_the_pair_page_says_one_price_for_an_indivisible_trade(web, monkeypatch)
     assert tick(body, "Last") == "2.00000000", \
         "the last price is coins per token, and this said satoshis per token"
     assert tick(body, "24h volume") == "4.0000", "and four coins changed hands"
-    row = _r.search(r'<tr class="ask[^>]*>\s*<td[^>]*>([^<]*)</td>', body)
+    row = _r.search(r'<div class="obrow ask[^>]*>\s*<span class="obprice mono">([^<]*)</span>', body)
     assert row and float(row.group(1)) == float(tick(body, "Last")), \
         "one page, one price, two readings of it"
     # The sale itself, in the trade table: two tokens, not 0.00000002 of one.

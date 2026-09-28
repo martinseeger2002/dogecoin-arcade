@@ -21,6 +21,10 @@
        aria-label="candles, {{ traded|length }} of {{ slots|length }} periods traded">
     <line x1="0" y1="{{ height - 1 }}" x2="{{ w }}" y2="{{ height - 1 }}"
           stroke="currentColor" opacity=".18"/>
+    {# A period with no trade is a flat green line at the market -- the last
+       price -- where its candle would be (2026-09-28); before the first
+       trade there is no market yet, so it stays a dot. #}
+    {% set market = namespace(last=none) %}
     {% for s in slots %}
       {% set x = loop.index0 * step + step / 2 %}
       {% if s.count %}
@@ -40,6 +44,12 @@
               fill="{{ colour }}"/>
         <title>{{ s.count }} trade{{ '' if s.count == 1 else 's' }} &middot;
           open {{ s.open }} high {{ s.high }} low {{ s.low }} close {{ s.close }}</title>
+        {% set market.last = s.close %}
+      {% elif market.last is not none %}
+        {% set ym = height - (market.last - bot) / range * (height - 8) - 4 %}
+        <line class="flat" x1="{{ '%.1f'|format(x - step * 0.3) }}" y1="{{ '%.1f'|format(ym) }}"
+              x2="{{ '%.1f'|format(x + step * 0.3) }}" y2="{{ '%.1f'|format(ym) }}"
+              stroke="var(--ok)" stroke-width="2"><title>no trade &middot; market {{ market.last }}</title></line>
       {% else %}
         <circle cx="{{ '%.1f'|format(x) }}" cy="{{ height - 4 }}" r="1"
                 fill="currentColor" opacity=".25"/>
@@ -50,7 +60,7 @@
   <p class="muted" style="font-size:.8rem;margin:6px 0 0">
     {{ traded | length }} of {{ slots | length }} {{ period }}s traded &middot; high
     {{ hi }} &middot; low {{ lo }}{% if unit %} {{ unit }}{% endif %}. A {{ period }} with
-    no trade is a dot, not a price.</p>
+    no trade is a flat green line at the last price.</p>
 {% endif %}
 {% endmacro %}
 

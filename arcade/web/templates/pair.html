@@ -223,6 +223,12 @@
           say(""); news("");
           const order = btn.dataset.order;
           const box = document.querySelector(`.take-amount[data-order="${order}"]`);
+          // First press: how many? (prefilled with all that is left). Second: buy.
+          if (box && box.hidden) {
+            box.hidden = false; box.focus(); box.select();
+            btn.textContent = "Buy now";
+            return;
+          }
           const amount = (box ? box.value : "").trim();
           btn.disabled = true;
           try {
@@ -461,113 +467,71 @@
       <p class="muted" style="font-size:.86rem;margin:0 0 8px">Also sold a lot at a time from a
         mintpad: {% for tp in token_pads %}<a href="/inscriptions/{{ tp.txid }}/view">{{ tp.lot }} per mint from {{ tp.seller|who_text }}</a>{% if not loop.last %} &middot; {% endif %}{% endfor %}.</p>
       {% endif %}
+      {# The book, as simple as a phone needs it (2026-09-28: "reformat
+         them so that they look better on a mobile and as simple as possible"):
+         two lists, best price first, one line each -- price, how much and
+         whose, and Buy, whose amount box opens only when Buy is pressed. #}
       {% if book.asks %}
-      <table class="book">
-        <tr class="muted" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.06em">
-          <td>Price</td><td style="text-align:right">Amount</td>
-          <td style="text-align:right">Coins</td><td></td><td></td></tr>
-        {% for o in book.asks|reverse %}
-        <tr class="ask{{ ' mine' if o.mine }}" style="--depth:{{ o.depth }}%">
-          <td class="mono" style="color:var(--bad)">{{ o.price_shown }}</td>
-          <td class="mono" style="text-align:right">{{ o.tokens_shown }}</td>
-          <td class="mono muted" style="text-align:right">{{ o.coins_shown }}</td>
-          <td class="muted" style="font-size:.74rem">
-            {%- if o.mine %}yours{%- else %} {{ o.address|who }}{% endif %}
-            {%- if o.pending %}<span class="pill" title="broadcast, not yet in a block">pool</span>{% endif %}</td>
-          <td style="text-align:right;white-space:nowrap">
-            {%- if o.taking and not o.free %}<span class="muted" style="font-size:.72rem"
-                  title="Somebody's take of this whole order is waiting for its block. Buying it now could pay for tokens that are already gone.">being bought right now</span>
-            {%- elif not o.mine and not o.pending and fills_ready and viewer == 'account' %}
-            {%- if o.taking %}<div class="muted" style="font-size:.7rem"
-                  title="Another buyer's take is waiting for its block; the rest of this order can be bought now.">{{ o.taking_shown }} being bought &middot; {{ o.free_shown }} left</div>{% endif %}
-            <input class="take-amount" data-order="{{ o.txid }}"
-                   value="{{ o.free_shown }}" inputmode="decimal" autocomplete="off"
-                   aria-label="how much of this price"
-                   title="How much of this price to ask about. Their node prices it from their order, and the answer is checked against it."
-                   style="width:6.5em;padding:3px 6px;font-size:.78rem">
-            <button type="button" class="small take-price" data-order="{{ o.txid }}"
-                    data-price="{{ o.price_shown }}"
-                    title="One transaction: you pay the seller what their order says, and the tokens come out of what their order holds. They don't need to be online.">Buy</button>
-            {%- elif not o.mine and not o.pending and fills_ready and viewer == 'wallet' %}
-            <form method="post" action="/exchange/fill" class="row"
-                  style="gap:4px;margin:0;justify-content:flex-end">
-              <input type="hidden" name="csrf_token" value="{{ csrf }}">
-              <input type="hidden" name="order" value="{{ o.txid }}">
-              <input type="hidden" name="property_id" value="{{ prop.property_id }}">
-              <input name="amount" value="{{ o.tokens_shown }}" inputmode="decimal"
-                     style="width:6.5em;padding:3px 6px;font-size:.78rem" autocomplete="off">
-              <button type="submit" class="small">Take</button>
-            </form>
-            {%- elif o.pending %}<span class="muted" style="font-size:.72rem">when its block lands</span>
-            {%- endif %}</td></tr>
-        {% endfor %}
-      </table>
+      <div class="obhead">Selling</div>
+      {% for o in book.asks %}
+      <div class="obrow ask{{ ' mine' if o.mine }}" style="--depth:{{ o.depth }}%"
+           title="{{ o.tokens_shown }} for {{ o.coins_shown }} coins">
+        <span class="obprice mono">{{ o.price_shown }}</span>
+        <span class="obamt"><span class="mono">{{ o.free_shown }}</span>
+          <small class="muted">{% if o.mine %}yours{% else %}{{ o.address|who }}{% endif %}
+            {%- if o.pending %} &middot; waiting for its block{% endif %}
+            {%- if o.taking %} &middot; {{ o.taking_shown }} being bought{% endif %}</small></span>
+        <span class="obdo">
+          {%- if o.taking and not o.free %}<span class="muted" style="font-size:.74rem">being bought</span>
+          {%- elif not o.mine and not o.pending and fills_ready and viewer == 'account' %}
+          <input class="take-amount" data-order="{{ o.txid }}" hidden
+                 value="{{ o.free_shown }}" inputmode="decimal" autocomplete="off"
+                 aria-label="how many to buy">
+          <button type="button" class="small take-price" data-order="{{ o.txid }}"
+                  data-price="{{ o.price_shown }}">Buy</button>
+          {%- elif not o.mine and not o.pending and fills_ready and viewer == 'wallet' %}
+          <form method="post" action="/exchange/fill" class="row" style="gap:4px;margin:0">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}">
+            <input type="hidden" name="order" value="{{ o.txid }}">
+            <input type="hidden" name="property_id" value="{{ prop.property_id }}">
+            <input name="amount" value="{{ o.tokens_shown }}" inputmode="decimal" autocomplete="off">
+            <button type="submit" class="small">Take</button>
+          </form>
+          {%- endif %}</span>
+      </div>
+      {% endfor %}
       {% endif %}
 
-      <div class="spread">
+      <div class="obmid">
         {% if crossed %}
-        {# Both sides rest and they overlap, so a trade is sitting here for the
-           taking. The difference of the two prices would come out at or below
-           zero, and a number like -8.00000000 reads as arithmetic gone wrong
-           rather than as a ready market (a tester, live pair 9 on
-           2026-09-28) -- so the page says what it is instead. The signed-in
-           clause names its condition: it is shown to any account, including
-           one holding no coins at all, so it must not promise that a press
-           trades (a tester, three viewers on e867584). #}
-          <strong>Crossed</strong> <span class="muted">&mdash; a bid is at or
-            above the best ask, {% if viewer != 'nobody' and fills_ready %}so if you
-              have the coins it asks for, one press of Buy on that ask makes the
-              trade now{% else %}so it is ready to trade{% endif %}</span>
-        {% elif spread is not none %}
-          <strong class="mono">{{ "%.8f"|format(spread) }}</strong> <span class="muted">spread</span>
+          <strong>Crossed</strong> <span class="muted">&mdash; ready to trade: a buy order
+            meets a sell order{% if viewer != 'nobody' and fills_ready %}. Press Buy on the
+            sell order if you have the coins{% endif %}.</span><br>
+          Best ask <strong class="mono">{{ book.asks[0].price_shown }}</strong> &middot;
+          best bid <strong class="mono">{{ book.bids[0].price_shown }}</strong>
+        {% elif book.asks and book.bids %}
+          Best ask <strong class="mono">{{ book.asks[0].price_shown }}</strong> &middot;
+          best bid <strong class="mono">{{ book.bids[0].price_shown }}</strong>
         {% elif day.last is not none %}
-          <strong class="mono">{{ "%.8f"|format(day.last) }}</strong> <span class="muted">last traded</span>
-        {% else %}
-          <span class="muted">no spread &mdash; one side of the book is empty</span>
+          Last traded at <strong class="mono">{{ "%.8f"|format(day.last) }}</strong>
+        {% elif book.asks or book.bids %}
+          <span class="muted">Only one side has orders so far.</span>
         {% endif %}
       </div>
-      {% if book.asks and book.bids %}
-      {# The two prices the line above subtracts, said out loud (a tester: "a
-         best-price line on the pair page is the whole fix"). The book is sorted
-         price-then-time, so the first row of each side is the best price on it.
-         This also reaches the half of his S44 the crossed sentence cannot: a
-         person deciding what bid to place has no bid of their own on the book
-         yet, so "your bid reaches the ask" has nothing to point at. They get the
-         number and what it is worth. Nothing on this node matches two orders --
-         a fill is a swap both sides sign (D-048) -- so a bid at or above the ask
-         does not become a buy, it is the price they could pay instead of
-         waiting, and it names its condition because this line, like the one
-         above it, is shown to accounts holding nothing (a tester, three viewers
-         on e867584; the wording is the operator's, 215758d). #}
-      <p class="muted" style="font-size:.78rem;margin:8px 0 0;text-align:center">
-        Best ask <strong class="mono">{{ book.asks[0].price_shown }}</strong> &middot;
-        best bid <strong class="mono">{{ book.bids[0].price_shown }}</strong>
-        {% if not crossed %}&mdash; if you have the coins it asks for, you could buy
-        at the best ask now instead of waiting for somebody to come to your
-        price{% endif %}</p>
-      {% endif %}
 
       {% if book.bids %}
-      <table class="book">
-        {% for o in book.bids %}
-        <tr class="bid{{ ' mine' if o.mine }}" style="--depth:{{ o.depth }}%">
-          <td class="mono" style="color:var(--ok)">{{ o.price_shown }}</td>
-          <td class="mono" style="text-align:right">{{ o.tokens_shown }}</td>
-          <td class="mono muted" style="text-align:right">{{ o.coins_shown }}</td>
-          <td class="muted" style="font-size:.74rem">
-            {%- if o.mine %}yours{%- else %} {{ o.address|who }}{% endif %}
-            {%- if o.pending %}<span class="pill" title="broadcast, not yet in a block">pool</span>{% endif %}</td>
-          <td style="text-align:right">{%- if o.mine and o.clears_now %}<span class="muted"
-                style="font-size:.72rem" title="This bid reaches the best ask, so it can be closed with one press of Buy on that ask.">your bid reaches the ask</span>{% endif %}</td></tr>
-        {% endfor %}
-      </table>
-      {% endif %}
-
-      {% if crossed %}
-      <p class="muted" style="font-size:.76rem;margin:10px 0 0">A bid is an offer
-        and not yet a trade: nothing on this node matches two orders, and a bid
-        moves only when somebody buys into it (D-048). So two prices that overlap
-        wait here until one side is pressed.</p>
+      <div class="obhead">Buying</div>
+      {% for o in book.bids %}
+      <div class="obrow bid{{ ' mine' if o.mine }}" style="--depth:{{ o.depth }}%"
+           title="{{ o.tokens_shown }} for {{ o.coins_shown }} coins">
+        <span class="obprice mono">{{ o.price_shown }}</span>
+        <span class="obamt"><span class="mono">{{ o.tokens_shown }}</span>
+          <small class="muted">{% if o.mine %}yours{% else %}{{ o.address|who }}{% endif %}
+            {%- if o.pending %} &middot; waiting for its block{% endif %}</small></span>
+        <span class="obdo">{%- if o.mine and o.clears_now %}<span class="muted"
+              style="font-size:.74rem">your bid reaches the ask</span>{% endif %}</span>
+      </div>
+      {% endfor %}
       {% endif %}
 
       {% if not fills_ready %}
@@ -608,6 +572,19 @@
   .up{color:var(--ok)} .down{color:var(--bad)}
   .pairgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,360px);gap:16px}
   @media (max-width:880px){.pairgrid{grid-template-columns:minmax(0,1fr)}}
+  .obhead{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:10px 0 4px}
+  .obrow{position:relative;display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;min-width:0}
+  .obrow::before{content:"";position:absolute;inset:0 auto 0 0;width:var(--depth);border-radius:8px}
+  .obrow.ask::before{background:rgba(224,112,112,.12)}.obrow.bid::before{background:rgba(91,189,133,.12)}
+  .obrow>*{position:relative}
+  .obrow.mine{box-shadow:inset 0 0 0 1px var(--line)}
+  .obprice{font-weight:700;min-width:5em}.obrow.ask .obprice{color:var(--bad)}.obrow.bid .obprice{color:var(--ok)}
+  .obamt{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}.obamt small{display:block;font-size:.72rem}
+  .obdo{flex:none;display:flex;gap:6px;align-items:center;justify-content:flex-end}
+  .obdo input{width:5.5em;padding:4px 6px;font-size:.84rem}
+  .obmid{text-align:center;padding:8px 4px;margin:6px 0;border-top:1px solid var(--line);
+    border-bottom:1px solid var(--line);font-size:.86rem}
+  .obmid:empty{display:none}
   .book{width:100%}
   .book td{padding:3px 6px 3px 0;font-size:.84rem;position:relative}
   /* The depth bar is behind the row, not a column of its own: the numbers
