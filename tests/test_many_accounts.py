@@ -951,9 +951,27 @@ def _a_shop_on_the_node(*node, name: str, price: str) -> tuple[str, str, str]:
     # an output, and one per answer a buy costs -- the change of the first may
     # land elsewhere, so the second is not left hunting.
     answerer = funded_address(daemon.rpc, prefer=state.derived_address)
-    for _ in range(2):
-        daemon.rpc.call("sendtoaddress", answerer, 3.0)
-        _settle(*node, blocks=2)
+    # Keeper's coin is the shop's, not this wallet's spare change, and the two
+    # sends below leave the choice of input to the wallet -- which on this chain
+    # picks keeper. Measured on the failure: one 11.810712 output there before
+    # the first send, none after it, the change parked on a fresh address of the
+    # wallet's own that never comes back, and the test below then asking keeper
+    # to fund a transfer of its own shop from an address holding nothing. It
+    # stayed green wherever the rest of the suite left a coin the wallet
+    # preferred instead, which is the inherited shape this file keeps being
+    # reminded of. `lockunspent` is the same reservation a shop's own offer makes
+    # on its seller's wallet (D-172), held here only while these two sends are
+    # out.
+    held = [{"txid": u["txid"], "vout": u["vout"]} for u in
+            daemon.rpc.call("listunspent", 0, 9999999, [keeper])]
+    assert held, "the shop's address has to hold a coin to be the shop's"
+    assert daemon.rpc.call("lockunspent", False, held), "keeper's coins are spoken for"
+    try:
+        for _ in range(2):
+            daemon.rpc.call("sendtoaddress", answerer, 3.0)
+            _settle(*node, blocks=2)
+    finally:
+        daemon.rpc.call("lockunspent", True, held)
     assert funded_address(daemon.rpc, prefer=state.derived_address) == answerer, \
         "the address that answers has to stay the one that can pay"
 
