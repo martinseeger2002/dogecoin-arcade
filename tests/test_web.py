@@ -200,7 +200,8 @@ def test_the_exchange_reads_the_chain_rather_than_a_list(client):
         body = app.get(f"/exchange?tab={tab}").text
         assert empty in body, tab
     offers = app.get("/exchange?tab=offers").text
-    assert "Offered to you" in offers and "Yours, outstanding" in offers
+    assert "Offers for your NFTs" in offers and "Your offers" in offers
+    assert "No offers yet." in offers, "said simply (2026-09-28)"
 
 
 # --- address book -------------------------------------------------------------

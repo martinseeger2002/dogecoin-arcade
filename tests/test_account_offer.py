@@ -492,7 +492,7 @@ def test_the_offers_page_shows_an_account_only_offers_of_theirs(node):
 
     other, _secret, _pubkey, _address = _seated(app, state, rpc, 23)
     page = other.get("/exchange?tab=offers").text
-    assert "Nothing yet." in page and bid not in page, \
+    assert "No offers yet." in page and bid not in page, \
         "another person's post is not this account's mail"
 
 
