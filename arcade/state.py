@@ -1032,9 +1032,16 @@ class Engine:
         and no `if` downstream can undo that after the block. So there is no
         "named and unusable, the swap still stands" here (the rule at
         `_fills_for`, which is right there only because a swap's coin leg
-        cannot be refused without cheating somebody): here it is refused, and
-        a taker whose order went away in the last block loses a fee and tries
-        again.
+        cannot be refused without cheating somebody): here it is refused. And
+        a refusal costs the taker the payment, not only the fee -- the coins
+        went to the maker as ordinary outputs, which the chain moves whatever
+        this layer decides. So the two ways that loss could fall on somebody
+        are built out rather than left as a risk: a block applies its cancels
+        after its takes (`cancels_last_from`, deferred by `indexer.on_connect`),
+        and a take that outran what the order still holds is covered from the
+        maker's free balance. What is left is an order that died in an earlier
+        block, and there the honest words are: the coins are with the maker,
+        no token moved, and the taker tries again.
 
         A partial fill is the ordinary case, not a special one: take less than
         the order holds and what is left keeps its price, exactly as a swap's
