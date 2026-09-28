@@ -690,6 +690,10 @@ def create_app(state: AppState) -> FastAPI:
         return bool(account is not None and state.operator
                     and account.pubkey.lower() == state.operator)
 
+    def _reads_the_plans(request: Request) -> bool:
+        """The operator's own machine, or the operator signed in from outside."""
+        return not _public_request(request) or _is_operator(request)
+
     def _admin_remote(request: Request) -> bool:
         """The operator, from outside, with the admin password's session open."""
         return _is_operator(request) and state.admin_sessions().valid(
@@ -6157,13 +6161,20 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/docs", response_class=HTMLResponse)
     def docs_index(request: Request):
-        """Every document that ships, which is all of them (D-152)."""
-        return render(request, "docs.html", pages=guidelib.pages(),
+        """Every document that ships (D-152), less the plans for anybody but
+        the operator (guide.PRIVATE)."""
+        return render(request, "docs.html",
+                      pages=guidelib.pages(private=_reads_the_plans(request)),
                       bugs_url=guidelib.BUGS_URL)
 
     @app.get("/docs/{name:path}", response_class=HTMLResponse)
     def docs_page(request: Request, name: str):
-        text = guidelib.page(name)
+        if name in guidelib.PRIVATE and not _reads_the_plans(request):
+            # The same answer as a document that does not exist: a stranger
+            # learns nothing from the difference.
+            text = None
+        else:
+            text = guidelib.page(name)
         if text is None:
             state.flash("there is no such document", "err")
             return RedirectResponse("/docs", status_code=303)
@@ -11246,7 +11257,11 @@ def create_app(state: AppState) -> FastAPI:
                 with chain.rpc() as rpc:
                     raw = listingslib.paste_leg(rpc, listing, unsigned,
                                                 signatures, pubkey)
-                _quota(account, "send", nbytes=len(bytes.fromhex(raw)))
+                # A send is charged as a count, like every other route that
+                # broadcasts: the byte day is what this node stores for good
+                # (D-167), and a broadcast transaction is not stored here.
+                # Two routes once charged its length and five did not (a tester).
+                _quota(account, "send")
                 with chain.rpc() as rpc:
                     txid = rpc.call("sendrawtransaction", raw)
             except (listingslib.ListingError, fundinglib.FundingError,
@@ -11517,7 +11532,11 @@ def create_app(state: AppState) -> FastAPI:
                 with chain.rpc() as rpc:
                     raw = listingslib.paste_leg(rpc, listing, unsigned,
                                                 signatures, pubkey)
-                _quota(account, "send", nbytes=len(bytes.fromhex(raw)))
+                # A send is charged as a count, like every other route that
+                # broadcasts: the byte day is what this node stores for good
+                # (D-167), and a broadcast transaction is not stored here.
+                # Two routes once charged its length and five did not (a tester).
+                _quota(account, "send")
                 with chain.rpc() as rpc:
                     txid = rpc.call("sendrawtransaction", raw)
             except (listingslib.ListingError, fundinglib.FundingError,

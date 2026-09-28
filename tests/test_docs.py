@@ -113,3 +113,28 @@ def test_nothing_written_is_left_behind():
         if not (guide.DOCS / name).exists():
             missing.append(str(name))
     assert missing == [], f"written but not shipped: {missing}"
+
+
+@pytest.mark.parametrize("name", guide.PRIVATE)
+def test_the_plans_are_for_the_operator_only(client, name):
+    """2026-09-28: the plan goes private. The operator's own machine
+    still reads it; a stranger gets what a missing document gets."""
+    app, state = client
+    assert app.get(f"/docs/{name}").status_code == 200
+    state.public = True
+    try:
+        body = app.get("/docs").text
+        assert f"/docs/{name}" not in body
+        assert "Every decision, and why" in body, "the rest is still offered"
+        answer = app.get(f"/docs/{name}", follow_redirects=False)
+        assert answer.status_code == 303 and answer.headers["location"] == "/docs"
+    finally:
+        state.public = False
+
+
+def test_the_source_archive_leaves_the_plans_out(tmp_path):
+    from arcade import bootstrap
+    assert set(bootstrap.NOT_PUBLISHED) == {f"arcade/web/docs/{n}" for n in guide.PRIVATE}
+    for name in bootstrap.NOT_PUBLISHED:
+        assert not bootstrap._is_source(name)
+    assert bootstrap._is_source("arcade/web/docs/DECISIONS.md")

@@ -26,6 +26,14 @@ from pathlib import Path
 
 GUIDE = Path(__file__).parent / "templates" / "guide.md"
 
+#: The working plans: who builds what next, and the notes the agents building
+#: it follow. They ship with the program for its operator and are served to
+#: nobody else -- not on /docs to a stranger, and not in the source archive a
+#: clone downloads (2026-09-28: "make the plan private"). A plan read
+#: by the public is a plan whose agent instructions are public too.
+#: arcade/bootstrap.py keeps the same list; a test holds them together.
+PRIVATE = ("multi-user.md", "voice-plan.md")
+
 #: Everything else, as shipped. One directory, read at request time like the
 #: templates are, so a document can be corrected without a restart.
 DOCS = Path(__file__).parent / "docs"
@@ -63,16 +71,21 @@ ORDER = (
 )
 
 
-def pages() -> list[dict]:
-    """Every document that ships, in the order above and then the rest."""
+def pages(private: bool = True) -> list[dict]:
+    """Every document that ships, in the order above and then the rest.
+
+    `private=False` leaves out the plans (PRIVATE), for anybody who is not
+    the operator."""
     named = {name for name, _, _ in ORDER}
     found = []
     for name, title, blurb in ORDER:
+        if not private and name in PRIVATE:
+            continue
         if (DOCS / name).exists() or name == "features.md":
             found.append({"name": name, "title": title, "blurb": blurb})
     for path in sorted(DOCS.rglob("*.md")):
         name = str(path.relative_to(DOCS))
-        if name not in named:
+        if name not in named and (private or name not in PRIVATE):
             found.append({"name": name, "title": path.stem.replace("-", " "),
                           "blurb": ""})
     return found

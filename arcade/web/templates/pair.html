@@ -448,10 +448,14 @@
            taking. The difference of the two prices would come out at or below
            zero, and a number like -8.00000000 reads as arithmetic gone wrong
            rather than as a ready market (a tester, live pair 9 on
-           2026-09-28) -- so the page says what it is instead. #}
+           2026-09-28) -- so the page says what it is instead. The signed-in
+           clause names its condition: it is shown to any account, including
+           one holding no coins at all, so it must not promise that a press
+           trades (a tester, three viewers on e867584). #}
           <strong>Crossed</strong> <span class="muted">&mdash; a bid is at or
-            above the best ask, {% if viewer != 'nobody' and fills_ready %}so one press of
-              Buy on that ask makes the trade now{% else %}so it is ready to trade{% endif %}</span>
+            above the best ask, {% if viewer != 'nobody' and fills_ready %}so if you
+              have the coins it asks for, one press of Buy on that ask makes the
+              trade now{% else %}so it is ready to trade{% endif %}</span>
         {% elif spread is not none %}
           <strong class="mono">{{ "%.8f"|format(spread) }}</strong> <span class="muted">spread</span>
         {% elif day.last is not none %}

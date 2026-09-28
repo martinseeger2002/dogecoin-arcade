@@ -297,7 +297,14 @@ NOT_SOURCE = (".venv", ".git", "__pycache__", "build", "dist", "bootstrap",
               ".pytest_cache", ".mypy_cache")
 
 
+#: The working plans, which a clone does not get (arcade/web/guide.py PRIVATE:
+#: the program ships them to its operator and to nobody else).
+NOT_PUBLISHED = ("arcade/web/docs/multi-user.md", "arcade/web/docs/voice-plan.md")
+
+
 def _is_source(name: str) -> bool:
+    if name in NOT_PUBLISHED:
+        return False
     parts = Path(name).parts
     return not any(part in NOT_SOURCE or part.endswith(".egg-info")
                    or part.endswith(".pyc") for part in parts)
