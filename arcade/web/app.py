@@ -15447,8 +15447,19 @@ def create_app(state: AppState) -> FastAPI:
         chain, index = _token_chain()
         prop = index.property(property_id)
         if prop is None:
-            state.flash(f"there is no token {property_id}", "err")
-            return RedirectResponse("/exchange?tab=tokens", status_code=303)
+            # 404, the same answer `/tokens/<id>` gives for the same missing
+            # token (a tester's class, the pair-page half). This used to
+            # flash and redirect to the tokens tab, which told a person the
+            # truth and told every machine a lie: a 303 says the thing you asked
+            # for now lives elsewhere, so a dead pair page stayed permanently
+            # worth fetching, and the two pages of one token disagreed about
+            # whether it exists -- one says 404, the other said "come over
+            # here". One fact gets one answer; the sentence says where to go
+            # instead, which is all the redirect was ever adding.
+            raise HTTPException(
+                status_code=404,
+                detail=f"there is no token {property_id} on this node. Every "
+                       "token it knows is on the Exchange's Tokens tab.")
         try:
             trades = index.trades()
         except Exception:

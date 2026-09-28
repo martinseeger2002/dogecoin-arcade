@@ -1236,3 +1236,37 @@ def test_the_mintpads_tab_carries_the_same_count(web):
     assert "mints left" not in gone, gone
     assert f'href="/inscriptions/{pad}/view"' in gone, \
         "sold out is what the tile says, not a reason to hide the pad"
+
+
+def test_a_pair_that_was_never_issued_answers_404_like_the_token_page(web):
+    """One fact, one answer: the two pages of a token agree about whether it exists.
+
+    `/exchange/pair/16` used to flash "there is no token 16" and 303 to the tokens
+    tab. A person read that correctly. Everything else read a redirect as "this
+    moved, ask me again", so a dead pair page stayed permanently worth fetching --
+    and `/tokens/16` answered the same nothing with a 404, so one node held two
+    answers to one question (a tester, the pair-page half of his refusal items).
+    The sentence about where the list is stays, because that is what the redirect
+    was actually worth; it is said at 404 now.
+    """
+    app, state, node, alice, bob = web
+    csrf = state.csrf_token
+    form = dict(csrf_token=csrf, sender=alice, name="Issued Token", supply="100",
+                kind="fixed", units="divisible")
+    txid = shown(app.post("/tokens/create", data=form).text, "txid")
+    app.post("/tokens/create", data={**form, "confirmed": txid}, follow_redirects=False)
+    mine_and_index(node, state)
+    index = state.token_index(state.ledger)
+    (prop,) = index.properties()
+    pid = int(prop["property_id"])
+
+    assert app.get(f"/exchange/pair/{pid}").status_code == 200, \
+        "the id that was issued still answers -- the half a fix like this breaks"
+
+    for missing in (0, pid + 1000):
+        said = app.get(f"/exchange/pair/{missing}", headers={"accept": "text/html"})
+        assert said.status_code == 404, f"token {missing} answered {said.status_code}"
+        assert app.get(f"/tokens/{missing}").status_code == 404, \
+            "the two pages of one token cannot answer it two ways"
+        assert f"there is no token {missing}" in said.text, said.text
+        assert "Tokens tab" in said.text, "and it still says where to go"
