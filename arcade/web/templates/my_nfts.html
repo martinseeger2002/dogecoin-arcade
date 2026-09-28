@@ -68,6 +68,19 @@
     <button type="button" id="list-it">Sell</button>
     <button type="button" class="ghost" id="list-cancel">Cancel</button>
   </div>
+  {# A claim (2026-09-28): the same signed sale, hidden, and completed
+     only by whoever says the phrase -- for an interactive NFT to hand out. #}
+  <label class="muted" style="display:flex;gap:8px;align-items:center;font-size:.86rem;margin:10px 0 0">
+    <input type="checkbox" id="claim-on" style="width:auto;margin:0"> Hide it behind a phrase (a claim)</label>
+  <div id="claim-box" hidden style="margin-top:8px">
+    <input autocomplete="off" id="claim-phrase" spellcheck="false"
+           placeholder="the phrase that claims it" style="width:100%;box-sizing:border-box">
+    <p class="muted" style="font-size:.8rem;margin:6px 0 0">Nobody sees it for sale. Whoever
+      has the phrase can buy it at your price, usually from an interactive NFT
+      that gives the phrase out: a puzzle's answer, a secret, a prize. Keep the
+      price small, and the phrase long enough not to guess.</p>
+  </div>
+  <div id="claim-made" hidden class="msg ok" style="margin-top:10px;font-size:.86rem"></div>
 </div>
 
 <div class="panel" id="sending" data-client hidden>
@@ -184,7 +197,7 @@ function card(piece, chain) {
     forSale.style.margin = "6px 0 0";
     const pill = document.createElement("span");
     pill.className = "pill ok";
-    pill.textContent = piece.listing ? "for sale" : "asking";
+    pill.textContent = piece.listing ? (piece.listing.claim ? "claim" : "for sale") : "asking";
     const price = document.createElement("strong");
     price.textContent = " " + (piece.listing ? piece.listing.price + (String(piece.listing.price) === "1" ? " coin" : " coins")
                                               : piece.ask);
@@ -192,6 +205,7 @@ function card(piece, chain) {
     when.className = "muted";
     when.style.fontSize = ".8rem";
     when.textContent = piece.listing ? ` · open ${piece.listing.left}`
+                                       + (piece.listing.claim ? ` · id ${piece.listing.id}` : "")
                                      : " · an older price on the chain, which nobody can Buy. Press Sell to list it for Buy.";
     forSale.append(pill, price, when);
     box.appendChild(forSale);
@@ -240,7 +254,8 @@ function card(piece, chain) {
     const ok = document.createElement("p");
     ok.className = "msg ok";
     ok.style.margin = "6px 0 0";
-    ok.textContent = "Listed. Anybody can buy it now.";
+    ok.textContent = piece.listing.claim ? "Hidden. Whoever has the phrase can claim it now."
+                                         : "Listed. Anybody can buy it now.";
     box.appendChild(ok);
   }
   return box;
@@ -312,6 +327,7 @@ function listing(piece, chain, box) {
   $("pricing").hidden = true;
   $("listing").hidden = false;
   $("list-price").value = "";
+  $("claim-made").hidden = true;
   $("list-price").focus();
 }
 
@@ -320,17 +336,32 @@ $("list-cancel").onclick = () => {
 };
 
 
+$("claim-on").onchange = () => { $("claim-box").hidden = !$("claim-on").checked; };
+
+/** What an interactive NFT sends to hand this claim to whoever is looking. */
+function claimSnippet(id, phrase) {
+  return `parent.postMessage({arcade: "claim", seq: 1, listing: ${JSON.stringify(id)}, `
+    + `secret: ${JSON.stringify(phrase)}}, "*")`;
+}
+
 $("list-it").onclick = async () => {
   say(""); news("");
   if (!chosen) return;
   const amount = $("list-price").value.trim();
   const {piece, chain} = chosen;
+  const phrase = $("claim-on").checked ? $("claim-phrase").value.trim() : "";
   try {
     if (!keys) keys = await arcadeKeys(CHAIN);
     if (!(Number(amount) > 0)) throw new Error("a price above zero, please");
+    if ($("claim-on").checked && phrase.length < 8)
+      throw new Error("a claim phrase of at least 8 characters, please");
     const again = !!piece.listing;
-    const ok = await arcadeAsk(`Sell ${pieceName(piece)} for ${amount} ${Number(amount) === 1 ? "coin" : "coins"}?`,
-      "Anybody can buy it at that price, even when you're offline, for 30 days. "
+    const ok = await arcadeAsk(phrase
+      ? `Hide ${pieceName(piece)} behind a phrase, for ${amount} ${Number(amount) === 1 ? "coin" : "coins"}?`
+      : `Sell ${pieceName(piece)} for ${amount} ${Number(amount) === 1 ? "coin" : "coins"}?`,
+      (phrase ? "Nobody sees it for sale. Whoever has the phrase can buy it at that price, "
+                + "even when you're offline, for 30 days. "
+              : "Anybody can buy it at that price, even when you're offline, for 30 days. ")
       + "Listing costs nothing: it is your signature, not a transaction. "
       + (again ? `Your listing at ${piece.listing.price} coins is cancelled first, `
                  + "which is one small transaction. "
@@ -345,7 +376,26 @@ $("list-it").onclick = async () => {
     }
     const leg = await wallet.offerListing(piece.txid, amount, chain.network);
     await wallet.checkedListing(leg, keys);
-    await wallet.list(keys, leg, {days: 30});
+    const filed = await wallet.list(keys, leg, {days: 30, claim: phrase});
+    if (phrase) {
+      // Said once, here: the node keeps only the phrase's hash, so this is the
+      // one place the id and the phrase are shown together.
+      const made = $("claim-made");
+      made.hidden = false;
+      made.textContent = "";
+      made.append(`${pieceName(piece)} is hidden behind your phrase. Claim id: `);
+      const code = document.createElement("code");
+      code.textContent = filed.listed;
+      made.append(code, ". In an interactive NFT, this line hands it to whoever is looking:");
+      const pre = document.createElement("pre");
+      pre.style.cssText = "white-space:pre-wrap;overflow-wrap:anywhere;font-size:.78rem;margin:6px 0 0";
+      pre.textContent = claimSnippet(filed.listed, phrase);
+      made.append(pre);
+      $("claim-on").checked = false; $("claim-box").hidden = true; $("claim-phrase").value = "";
+      justListed[piece.txid] = true;
+      await draw();
+      return;
+    }
     $("listing").hidden = true;
     news(`${pieceName(piece)} is for sale at ${amount} coins. Anybody can buy it `
       + "from its page or its collection, even while you're away.");

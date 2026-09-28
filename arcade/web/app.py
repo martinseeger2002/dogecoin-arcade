@@ -8519,10 +8519,12 @@ def create_app(state: AppState) -> FastAPI:
                 asked = _prices_for(index, chain)
                 _sweep_book(chain, force=True)   # your own page: a cancel shows at once
                 book: dict[str, dict] = {}
-                for row in state.listings.open_listings(chain.network, limit=1000):
+                for row in state.listings.open_listings(chain.network, limit=1000,
+                                                        claims=True):
                     sold = _sold_piece(row) if row["owner"] == address else ""
                     if sold and sold not in book:
                         book[sold] = {"id": row["id"],
+                                      "claim": bool(row.get("claim_hash")),
                                       "price": f"{int(row['price']) / listingslib.COIN:.8f}"
                                                .rstrip("0").rstrip("."),
                                       "left": describe_duration(
@@ -10720,7 +10722,7 @@ def create_app(state: AppState) -> FastAPI:
         if not force and now - _book_swept.get(chain.network, 0) < 20:
             return
         _book_swept[chain.network] = now
-        rows = state.listings.open_listings(chain.network, limit=1000)
+        rows = state.listings.open_listings(chain.network, limit=1000, claims=True)
         if not rows:
             return
         try:
@@ -10903,7 +10905,8 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         address = _account_address(account.pubkey, chain)
         piece = str(said.get("piece") or "").strip().lower()
-        rows = [r for r in state.listings.open_listings(chain.network, limit=1000)
+        rows = [r for r in state.listings.open_listings(chain.network, limit=1000,
+                                                        claims=True)
                 if r["owner"] == address and _sold_piece(r) == piece]
         if not address or not rows:
             return JSONResponse({"detail": "this account has no open listing of that piece"},
@@ -11038,6 +11041,12 @@ def create_app(state: AppState) -> FastAPI:
                            f"address yet"}, status_code=400)
         raw = str(said.get("raw") or "")
         try:
+            # A claim: sha256 of its phrase, worked out in the browser, so the
+            # phrase itself never reaches this node until somebody claims.
+            claim_hash = str(said.get("claim_hash") or "").strip().lower()
+            if claim_hash and not re.fullmatch(r"[0-9a-f]{64}", claim_hash):
+                raise ValueError("a claim is named by the sha256 of its phrase, "
+                                 "64 hex characters")
             _quota(account, "list", nbytes=len(bytes.fromhex(raw)))
             price = parse_amount(str(said.get("amount", "")), True)
             with chain.rpc() as rpc:
@@ -11048,7 +11057,8 @@ def create_app(state: AppState) -> FastAPI:
                     network=chain.network, owner=address, price=price,
                     # A mintpad lists a whole set for weeks, not a day
                     # (2026-09-26); anything else keeps LISTED_FOR.
-                    seconds=_listing_days(said) * 86400 or listingslib.LISTED_FOR)
+                    seconds=_listing_days(said) * 86400 or listingslib.LISTED_FOR,
+                    claim_hash=claim_hash)
         except (listingslib.ListingError, fundinglib.FundingError,
                 swaplib.SwapError, AmountError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
@@ -11065,6 +11075,7 @@ def create_app(state: AppState) -> FastAPI:
         _flights.note_committed(account.pubkey, tuple(committed),
                                network=chain.network)
         return JSONResponse({"listed": listing["id"],
+                             "claim": bool(listing.get("claim_hash")),
                              "what": _listing_words(
                                  bytes.fromhex(listing["payload"]), chain),
                              "chain": chain.network,
@@ -11072,18 +11083,42 @@ def create_app(state: AppState) -> FastAPI:
                              "piece": f"{listing['input']['txid'][:16]}…"
                                       f":{listing['input']['vout']}"})
 
-    def _listing_to_fill(account, chain, address: str, listing_id: str) -> tuple:
+    #: Wrong claim phrases per account, as times: a phrase is only as strong as
+    #: its guessing is slow, so ten wrong ones an hour and then a wait.
+    _claim_misses: dict[str, list[float]] = {}
+
+    def _claim_opens(account, listing: dict, secret: str) -> None:
+        """Refuse a claim unless `secret` is its phrase (sha256 of it, trimmed)."""
+        want = listing.get("claim_hash") or ""
+        if not want:
+            return
+        now = time.time()
+        misses = [t for t in _claim_misses.get(account.pubkey, []) if now - t < 3600]
+        _claim_misses[account.pubkey] = misses
+        if len(misses) >= 10:
+            raise ValueError("ten wrong phrases in the last hour from this account; "
+                             "try again later")
+        said = hashlib.sha256(str(secret or "").strip().encode("utf-8")).hexdigest()
+        if not secrets.compare_digest(said, want):
+            misses.append(now)
+            raise ValueError("that is not this claim's phrase" if secret
+                             else "this piece opens only with its claim phrase")
+
+    def _listing_to_fill(account, chain, address: str, listing_id: str,
+                         secret: str = "") -> tuple:
         """A listing this node filed, and the transaction that completes it.
 
         The row out of the book, and then the whole of `_fill_terms`, which is
         where the trade is decided -- and which an answered leg that was never
-        filed reaches the same way.
+        filed reaches the same way. A claim is checked for its phrase first.
         """
         listing = state.listings.get(str(listing_id))
-        if listing is None or listing["network"] != chain.network:
+        if listing is None or listing["network"] != chain.network \
+                or listing.get("status", "open") != "open" and listing.get("claim_hash"):
             raise ValueError(
                 "no such listing on this chain -- it may have expired, been "
                 "filled, or been made over on the other one")
+        _claim_opens(account, listing, secret)
         return _fill_terms(account, chain, address, listing)
 
     def _fill_terms(account, chain, address: str, listing: dict) -> tuple:
@@ -11191,7 +11226,8 @@ def create_app(state: AppState) -> FastAPI:
                            f"address yet"}, status_code=400)
         try:
             listing, unsigned, _ = _listing_to_fill(
-                account, chain, address, str(said.get("listing", "")))
+                account, chain, address, str(said.get("listing", "")),
+                str(said.get("secret") or ""))
         except (fundinglib.FundingError, listingslib.ListingError,
                 swaplib.SwapError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
@@ -11200,6 +11236,9 @@ def create_app(state: AppState) -> FastAPI:
                              "seller": listing["owner"],
                              "seller_tag": _tags_for([listing["owner"]]).get(listing["owner"], ""),
                              "price": int(listing["price"]),
+                             "claim": bool(listing.get("claim_hash")),
+                             "what": _listing_words(bytes.fromhex(listing["payload"]), chain)
+                                     if listing.get("payload") else "",
                              **unsigned.as_json()})
 
     @app.post("/account/buy/sign")
@@ -11248,7 +11287,8 @@ def create_app(state: AppState) -> FastAPI:
         try:
             try:
                 listing, unsigned, what = _listing_to_fill(
-                    account, chain, address, str(said.get("listing", "")))
+                    account, chain, address, str(said.get("listing", "")),
+                    str(said.get("secret") or ""))
             except (fundinglib.FundingError, listingslib.ListingError,
                     swaplib.SwapError, ValueError) as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=400)

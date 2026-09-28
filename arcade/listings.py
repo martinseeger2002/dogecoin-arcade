@@ -123,7 +123,8 @@ CREATE TABLE IF NOT EXISTS listing (
     expires     REAL NOT NULL,
     -- The transaction that spent the listed piece: the swap that filled this,
     -- or the spend that cancelled it. Which one is `status`'s business.
-    spent_by    TEXT NOT NULL DEFAULT ''
+    spent_by    TEXT NOT NULL DEFAULT '',
+    claim_hash  TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS listing_open ON listing(status, network);
 CREATE INDEX IF NOT EXISTS listing_piece ON listing(in_txid, in_vout);
@@ -211,6 +212,15 @@ def listing_row(network: str, owner: str, raw: str, piece: dict,
     }
 
 
+#: A CLAIM (2026-09-28) is a listing with `claim_hash` set: sha256 of a
+#: phrase, hex. It is never on a public page, never announced on the chain, and
+#: `/account/buy` completes it only for whoever says the phrase -- which is what
+#: lets any interactive inscription give a piece to whoever solves it, finds
+#: it, or is told it. The leg itself is never served to anybody who has not
+#: said the phrase, because a signed leg is all a stranger needs to finish it.
+#: (No SQL comment beside the column: add_missing_columns reads the lines.)
+
+
 class Listings:
     """Every leg this node is holding, open or closed, in one file.
 
@@ -248,7 +258,8 @@ class Listings:
                 "INSERT INTO listing(id, network, owner, leg, in_txid, in_vout, "
                 "in_value, payload, coin_txid, coin_vout, coin_value, "
                 "out_value, out_script, fee, price, what, status, "
-                "created, expires) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "created, expires, claim_hash) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (listing["id"], listing["network"], listing["owner"],
                  listing["leg"], listing["input"]["txid"],
                  int(listing["input"]["vout"]), int(listing["input"]["value"]),
@@ -260,7 +271,8 @@ class Listings:
                  int(listing["fee"]), int(listing["price"]),
                  str(listing.get("what") or ""),
                  str(listing.get("status") or "open"),
-                 float(listing["created"]), float(listing["expires"])))
+                 float(listing["created"]), float(listing["expires"]),
+                 str(listing.get("claim_hash") or "")))
         return listing
 
     def from_leg(self, rpc: Any, leg: Leg, signatures: list[str],
@@ -284,7 +296,7 @@ class Listings:
     def register(self, rpc: Any, *, raw: str, signatures: list[str],
                  pubkey: bytes, network: str, owner: str, price: int,
                  seconds: float = LISTED_FOR, what: str = "",
-                 record: bool = True) -> dict:
+                 record: bool = True, claim_hash: str = "") -> dict:
         """File a leg a browser signed, with nothing remembered from before.
 
         A listing is two requests: this node builds a leg and shows it, the tab
@@ -401,6 +413,7 @@ class Listings:
                               (out_value, script), fee, int(price), what,
                               seconds, coin=coin, payload=payload)
         check_leg(rpc, listing)
+        listing["claim_hash"] = str(claim_hash or "")
         if not record:
             return listing
         return self.add(listing)
@@ -432,11 +445,15 @@ class Listings:
             return conn.execute("SELECT 1 FROM listing WHERE network=? AND leg=? LIMIT 1",
                                 (network, str(leg))).fetchone() is not None
 
-    def open_listings(self, network: str, limit: int = 200) -> list[dict]:
+    def open_listings(self, network: str, limit: int = 200,
+                      claims: bool = False) -> list[dict]:
+        """Open listings, newest first. Claims only when asked for: every
+        public reader leaves `claims` False, so a claim is on no page."""
         with self._open() as conn:
             rows = conn.execute(
                 "SELECT * FROM listing WHERE network=? AND status='open' "
-                "ORDER BY created DESC LIMIT ?",
+                + ("" if claims else "AND claim_hash='' ")
+                + "ORDER BY created DESC LIMIT ?",
                 (network, int(limit))).fetchall()
         return [row_listing(dict(r)) for r in rows]
 
@@ -503,6 +520,7 @@ def row_listing(row: dict) -> dict:
         "what": row["what"], "status": row["status"],
         "created": float(row["created"]), "expires": float(row["expires"]),
         "spent_by": row["spent_by"] or None,
+        "claim_hash": row.get("claim_hash") or "",
     }
 
 

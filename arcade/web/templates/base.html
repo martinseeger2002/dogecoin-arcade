@@ -760,6 +760,44 @@ async function takeFor(source, m) {
     answer({error: String(err.message || err)});
   } finally { minting = false; }
 }
+// A claim (2026-09-28): any inscribed page can hand over a hidden
+// listing's id and its phrase -- a puzzle's answer, a code it found, anything --
+// and the person looking gets the ordinary card for it. The page never signs
+// and never sees a key; the phrase only opens the listing on the node.
+//   parent.postMessage({arcade: "claim", seq, listing, secret}, "*")
+//   answers {arcade: "claim", seq, heard} then {ok, txid} or {error}
+async function claimFor(source, m) {
+  const answer = (body) => source.postMessage({arcade: "claim", seq: m.seq, ...body}, "*");
+  answer({heard: true});
+  if (!ARCADE_ME) {
+    answer({error: "Sign in or join first, then claim."});
+    arcadeToast("Sign in or join, then claim it from this page.");
+    return;
+  }
+  if (minting) { answer({error: "One at a time."}); return; }
+  minting = true;
+  try {
+    const wallet = await import("/wallet.js");
+    const held = (await wallet.opened(ARCADE_CHAIN)) || await arcadeKeys(ARCADE_CHAIN);
+    const offer = await wallet.offerBuy(String(m.listing || ""), ARCADE_CHAIN.network,
+                                        String(m.secret || ""));
+    const shown = await wallet.checked(offer, held);
+    const coins = String(Number(offer.price) / 1e8);
+    const unit = coins === "1" ? "coin" : "coins";
+    const seller = offer.seller_tag ? "@" + offer.seller_tag : "its owner";
+    const what = offer.what || "this piece";
+    const ok = await arcadeAsk(`Claim ${what}?`,
+      `${seller} set it aside for whoever got here. It costs ${coins} ${unit} to ${seller}`
+      + ` and a network fee of ${shown.coinsOf(shown.fee)}. The piece and the coins move `
+      + "in one transaction, checked in this browser.", `Claim it for ${coins} ${unit}`);
+    if (!ok) { answer({error: "Cancelled."}); return; }
+    const out = await wallet.buy(held, offer);
+    answer({ok: true, txid: out.txid || ""});
+    arcadeToast(`You claimed ${what}. It's yours when its block lands.`);
+  } catch (err) {
+    answer({error: String(err.message || err)});
+  } finally { minting = false; }
+}
 window.addEventListener("message", async (e) => {
   const m = e.data || {};
   const frame = [...document.querySelectorAll("iframe.inscription-frame")]
@@ -772,6 +810,7 @@ window.addEventListener("message", async (e) => {
     return;
   }
   if (m.arcade === "take" && typeof m.seq === "number") { takeFor(e.source, m); return; }
+  if (m.arcade === "claim" && typeof m.seq === "number") { claimFor(e.source, m); return; }
   if (m.arcade !== "mint" || typeof m.seq !== "number") return;
   const answer = (body) => e.source.postMessage({arcade: "mint", seq: m.seq, ...body}, "*");
   // Heard at once: the card below waits for a person, and a pad that heard

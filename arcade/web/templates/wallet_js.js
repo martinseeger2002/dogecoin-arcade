@@ -538,8 +538,8 @@ export async function checkedListing(leg, wallet) {
  * not off `leg.price` -- the payload is what the signatures stand over, and a
  * row priced from anywhere else could carry a number no signature covers.
  */
-export async function list(wallet, leg, {days = 0} = {}) {
-  return working(() => _list(wallet, leg, days));
+export async function list(wallet, leg, {days = 0, claim = ""} = {}) {
+  return working(() => _list(wallet, leg, days, claim));
 }
 
 /** Offer one payment to this account's own address in `count` coins -- what a
@@ -556,7 +556,7 @@ export async function offerSplit(count, chain) {
   });
 }
 
-async function _list(wallet, leg, days = 0) {
+async function _list(wallet, leg, days = 0, claim = "") {
   const keys = keysOn(wallet, leg.chain
                       || (wallet.on && Object.keys(wallet.on)[0]));
   const shown = await coins.verifyLeg(leg, keys);
@@ -569,7 +569,8 @@ async function _list(wallet, leg, days = 0) {
     method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({raw: leg.raw, chain: leg.chain || "",
                           amount: shown.coinsOf(shown.listing.sats),
-                          pubkey: coinsHex(keys.pubkey), signatures, days}),
+                          pubkey: coinsHex(keys.pubkey), signatures, days,
+                          claim_hash: claim ? await claimHash(claim) : ""}),
   });
   const said = await done.json();
   if (!done.ok) throw new Error(said.detail || "the node would not take it");
@@ -925,16 +926,25 @@ export async function signTake(wallet, built) {
  * nothing of either side.
  */
 
-export async function offerBuy(listing, chain) {
+export async function offerBuy(listing, chain, secret = "") {
   return working(async () => {
     const asked = await fetch("/account/buy", {
       method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({listing, chain: chain || ""}),
+      body: JSON.stringify({listing, chain: chain || "", secret: secret || ""}),
     });
     const offer = await asked.json();
     if (!asked.ok) throw new Error(offer.detail || "that cannot be bought");
-    return offer;
+    // A claim's phrase goes with the signature too: the node decides the
+    // trade again from scratch there, phrase and all.
+    return {...offer, secret: secret || ""};
   });
+}
+
+/** sha256 of a claim phrase, as the node stores it: trimmed, UTF-8, hex. */
+export async function claimHash(phrase) {
+  const bytes = new TextEncoder().encode(String(phrase || "").trim());
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 export async function buy(wallet, offer) {
@@ -949,6 +959,7 @@ export async function buy(wallet, offer) {
     const done = await fetch("/account/buy/sign", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({listing: offer.listing, chain: offer.chain || "",
+                            secret: offer.secret || "",
                             raw: offer.raw, signatures,
                             pubkey: coinsHex(keys.pubkey)}),
     });
