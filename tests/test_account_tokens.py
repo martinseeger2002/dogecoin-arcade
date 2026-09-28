@@ -234,3 +234,41 @@ def test_the_issuer_sees_its_controls_on_the_token_page(client):
     assert "Hand over the issuer role" in page
     other = _token(state, property_id=106, issuer=SOMEBODY)
     assert 'id="issuer-panel"' not in app.get(f"/tokens/{other}").text
+
+
+def test_a_token_tip_counts_only_when_the_chain_shows_the_send(client):
+    """2026-09-27: "Tip a post with a token you hold, not only with
+    coins, and see it counted on the post". The tip is the token send plus an
+    act naming it (feed.TIP_TOKEN); the page counts it only when the token
+    index has that txid as a valid send from the act's author to the post's
+    author -- a claim naming somebody else's send counts for nothing."""
+    from test_feed_web import a_post, an_act
+    from arcade import payload as P
+    from arcade.messaging import feed
+
+    app, state = client
+    pid = _token(state, property_id=101, name="Tipcoin")
+    post, real, fake = "a1" * 32, "b1" * 32, "c1" * 32
+    a_post(state, post, text="tip me", sender=SOMEBODY)
+    index = state.token_index(state.messaging)
+    with index.open() as db:
+        for txid, to in ((real, SOMEBODY), (fake, TEST)):
+            db.conn.execute(
+                "INSERT OR REPLACE INTO arcade_tx(txid, block_height, position, "
+                "encoding_class, message_type, message_version, sender, reference, "
+                "payload_hex, valid) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (txid, 10, 0, "C", 0, 0, TEST, to,
+                 P.SimpleSend(property_id=pid, amount=5 * 100_000_000).encode().hex(), 1))
+        db.conn.commit()
+    an_act(state, "d1" * 32, feed.TIP_TOKEN, post, author=TEST, text=real)
+    an_act(state, "e1" * 32, feed.TIP_TOKEN, post, author=TEST, text=fake)
+    page = " ".join(app.get("/feed").text.split())
+    assert "&#9670; 5 Tipcoin" in page or "◆ 5 Tipcoin" in page, "the real send counts"
+    assert "10 Tipcoin" not in page, "the send to somebody else does not"
+
+
+def test_a_token_tip_act_carries_the_send_it_names():
+    from arcade.messaging import feed
+    note = feed.build(feed.TIP_TOKEN, "aa" * 32, "bb" * 32)
+    act = feed.parse(note)
+    assert act.kind == feed.TIP_TOKEN and act.text == "bb" * 32

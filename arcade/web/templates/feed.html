@@ -131,12 +131,18 @@
     <button class="ghost small" type="button" data-tip-for="{{ p.txid }}" onclick="toggle('tip-{{ p.txid }}')"
             title="Coins to the author, in the same transaction that says which post{{ ' — tipped %d time%s so far' % (p.tips, '' if p.tips == 1 else 's') if p.tips }}">Tip</button>
     <form method="post" action="/feed/{{ p.txid }}/tip" id="tip-{{ p.txid }}"
-          hidden style="margin:6px 0 0;width:100%">
+          data-author="{{ p.author }}" hidden style="margin:6px 0 0;width:100%">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="back" value="{{ here }}">
-      <div class="row">
-        <div style="flex:1"><input autocomplete="off" name="amount"
-          inputmode="decimal" placeholder="How many {{ chain.label|lower }} coins?" maxlength="18"></div>
+      <div class="row" style="flex-wrap:wrap">
+        {# Coins, or a token you hold (2026-09-27). #}
+        <select name="pay" aria-label="Tip in" style="flex:0 0 auto;width:auto">
+          <option value="coins">coins</option>
+          <option value="token">a token</option>
+        </select>
+        <select name="token" aria-label="Which token" hidden style="flex:1 1 140px;width:auto"></select>
+        <div style="flex:1 1 120px"><input autocomplete="off" name="amount"
+          inputmode="decimal" placeholder="How many?" maxlength="24"></div>
         <button class="small" type="submit">Send the tip</button>
       </div>
     </form>
@@ -153,6 +159,11 @@
     <span class="muted small"
           title="Tipped on this post — per chain, once confirmed, not counting the author's own"
           >{% for net, sats in p.tipped|dictsort %}&#9921; {{ sats|coins }} {{ net }}{% if not loop.last %} &middot;{% endif %}{% endfor %}</span>
+    {% endif %}
+    {% if p.token_tipped %}
+    {# Token tips, counted only once the chain shows the send (app._verify_token_tips). #}
+    <span class="muted small" title="Tipped in tokens on this post, once confirmed">
+      {%- for name, amount in p.token_tipped|dictsort %}&#9670; {{ amount }} {{ wall_text(name, 'a token') }}{% if not loop.last %} &middot; {% endif %}{% endfor %}</span>
     {% endif %}
 
     {% if not p.mine and not public %}
@@ -483,6 +494,33 @@
   // drift, and a wrong byte is a wrong transaction on the chain — not a page
   // that looks slightly wrong.
   const KINDS = {{ kinds|tojson }};
+  // Tip in coins or a token: the token list is this account's own holdings,
+  // asked once, the first time "a token" is picked.
+  let heldTokens = null;
+  document.addEventListener("change", async (e) => {
+    const pay = e.target;
+    if (pay.name !== "pay" || !pay.form) return;
+    const list = pay.form.elements.token;
+    list.hidden = pay.value !== "token";
+    if (pay.value !== "token" || list.options.length) return;
+    try {
+      if (!heldTokens) {
+        const said = await (await fetch("/account/tokens")).json();
+        heldTokens = ((said.chains || []).find((c) => c.network === CHAIN.network) || {}).tokens || [];
+      }
+      for (const t of heldTokens.filter((t) => Number(t.balance) > 0)) {
+        const o = document.createElement("option");
+        o.value = t.property_id; o.dataset.name = t.name;
+        o.textContent = `${t.name} (${t.display})`;
+        list.appendChild(o);
+      }
+      if (!list.options.length) {
+        const o = document.createElement("option");
+        o.value = ""; o.textContent = "you hold no tokens here";
+        list.appendChild(o);
+      }
+    } catch (err) { /* the send says why if it is tried */ }
+  });
   const CHAIN = {network: "{{ chain.network }}",
                  version: {{ chain.params.pubkeyhash_version }}};
   const $ = (id) => document.getElementById(id);
@@ -533,7 +571,33 @@
     if (button) button.disabled = true;
     try {
       let out;
-      if (doing === "tip") {
+      if (doing === "tip" && (form.elements.pay || {}).value === "token") {
+        // A token tip is two transactions: the token send to the author, then
+        // the note on the post that names it (feed.TIP_TOKEN). One question
+        // for both, asked with the send's own bytes already read here.
+        const amount = ((form.elements.amount || {}).value || "").trim();
+        const pick = form.elements.token.selectedOptions[0];
+        if (!pick || !pick.value) throw new Error("pick a token you hold");
+        const asked = await fetch("/account/token/send", {method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({property_id: Number(pick.value), amount,
+                                to: form.dataset.author, chain: CHAIN.network})});
+        const offer = await asked.json();
+        if (!asked.ok) throw new Error(offer.detail || "that token cannot be sent");
+        const shown = await wallet.checked(offer, held);
+        const ok = await arcadeAsk(`Tip ${amount} ${pick.dataset.name}?`,
+          `${amount} ${pick.dataset.name} go to whoever wrote this post, and then a small note `
+          + "on the post says it was a tip: two small transactions, network fee "
+          + `${shown.coinsOf(shown.fee)} for the send. It is a payment: it cannot be taken back.`,
+          "Send the tip");
+        if (!ok) { if (button) button.disabled = false; return; }
+        const sent = await wallet.confirm(held, offer);
+        out = await wallet.react(held, txid, KINDS.tiptoken, sent.txid);
+        form.reset();
+        form.hidden = true;
+        const opener = document.querySelector(`[data-tip-for="${txid}"]`);
+        if (opener) { opener.textContent = "Tipped \u2713 waiting for its block"; opener.disabled = true; }
+      } else if (doing === "tip") {
         // A tip is the one of these that moves coins, so it goes the way every
         // send goes: ask for the offer, let this browser read it, then sign.
         const amount = (form.elements.amount || {}).value || "";

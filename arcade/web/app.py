@@ -2505,9 +2505,68 @@ def create_app(state: AppState) -> FastAPI:
             known = {a["txid"] for a in acts}
             acts += [mempoollib.Row(act) for act in waiting.acts
                      if act["txid"] not in known]
-        return feedview.assemble(rows, acts,
-                                 me=state.derived_address if me is None
-                                 else me, muted=muted)
+        shown = feedview.assemble(rows, acts,
+                                  me=state.derived_address if me is None
+                                  else me, muted=muted)
+        _verify_token_tips(shown)
+        return shown
+
+    def _verify_token_tips(posts: list) -> None:
+        """Believe a token tip only when the chain says so (2026-09-27:
+        "Tip a post with a token you hold ... and see it counted on the post").
+
+        A TIP_TOKEN act names a transaction; it counts when the token index has
+        that transaction as a valid Simple Send (type 0) from the act's author
+        to the post's author. Totals are kept per token and said in its own
+        units. One query for every claim on the page."""
+        every, stack = [], list(posts)
+        while stack:
+            post = stack.pop()
+            stack.extend(getattr(post, "replies", []) or [])
+            every.append(post)
+        wanted = {c[0] for p in every for c in getattr(p, "token_claims", [])
+                  if re.fullmatch(r"[0-9a-f]{64}", c[0] or "")}
+        if not wanted:
+            return
+        try:
+            chain, index = _token_chain()
+            marks = ",".join("?" * len(wanted))
+            with contextlib.closing(index.open()) as db:
+                rows = {r["txid"]: r for r in db.conn.execute(
+                    f"SELECT txid, sender, reference, payload_hex FROM arcade_tx "
+                    f"WHERE valid = 1 AND message_type = 0 AND txid IN ({marks})",
+                    tuple(wanted))}
+        except Exception:
+            return
+        props: dict = {}
+        for post in every:
+            totals: dict = {}
+            seen = set()
+            for send, tipper in getattr(post, "token_claims", []):
+                row = rows.get(send)
+                if (row is None or send in seen or row["sender"] != tipper
+                        or row["reference"] != post.author):
+                    continue
+                seen.add(send)
+                try:
+                    msg = P.decode(bytes.fromhex(row["payload_hex"]))
+                except Exception:
+                    continue
+                pid = getattr(msg, "property_id", None)
+                if pid is None:
+                    continue
+                totals[pid] = totals.get(pid, 0) + int(getattr(msg, "amount", 0))
+            if totals:
+                said = {}
+                for pid, units in totals.items():
+                    if pid not in props:
+                        props[pid] = index.property(pid)
+                    prop = props[pid]
+                    if prop is None:
+                        continue
+                    said[prop["name"]] = format_amount(units, prop["divisible"])
+                post.token_tipped = said
+                post.tips += len(seen)
 
     def _frames_for(request: Request, drawable: dict[str, str]) -> dict[str, str]:
         """Where each HTML embed on a feed page loads from: the pages host, with
@@ -12930,6 +12989,8 @@ def create_app(state: AppState) -> FastAPI:
             if kind not in feedlib.KINDS:
                 raise ValueError("that is not something that can be done")
             text = str(said.get("text", ""))
+            if kind == feedlib.TIP_TOKEN and not re.fullmatch(r"[0-9a-f]{64}", text.strip().lower()):
+                raise ValueError("a token tip names the token send it was, by its txid")
             note = feedlib.build(kind, target, text)
 
             outputs = _class_c_or_b(chain, address, note,

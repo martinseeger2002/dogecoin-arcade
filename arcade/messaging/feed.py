@@ -63,14 +63,21 @@ TIP = 7
 DISLIKE = 8
 #: Taking a dislike back, the same way UNLIKE takes back a like.
 UNDISLIKE = 9
+#: A tip in a token (2026-09-27: "Tip a post with a token you hold, not
+#: only with coins"). A token moves by its own payload -- an Omni Simple Send --
+#: and a transaction carries one payload, so the tip is two transactions: the
+#: send to the post's author, then this act, whose text is that send's txid.
+#: Nothing here is believed: the page counts it only when the token index says
+#: that txid is a valid send, from this act's author, to the post's author.
+TIP_TOKEN = 10
 
 #: The kinds that carry text. Everything else is a bare target.
-WITH_TEXT = (REPLY, SHARE, EDIT)
+WITH_TEXT = (REPLY, SHARE, EDIT, TIP_TOKEN)
 
 #: The kinds only the post's own author may perform.
 AUTHOR_ONLY = (EDIT, DELETE)
 
-KINDS = (LIKE, UNLIKE, REPLY, SHARE, EDIT, DELETE, TIP, DISLIKE, UNDISLIKE)
+KINDS = (LIKE, UNLIKE, REPLY, SHARE, EDIT, DELETE, TIP, DISLIKE, UNDISLIKE, TIP_TOKEN)
 
 #: The kinds that are one person's opinion of a post; the latest of them stands.
 OPINIONS = (LIKE, UNLIKE, DISLIKE, UNDISLIKE)
@@ -78,7 +85,7 @@ OPINIONS = (LIKE, UNLIKE, DISLIKE, UNDISLIKE)
 #: Kind names, for pages and for the reasons the index records.
 NAMES = {LIKE: "like", UNLIKE: "unlike", REPLY: "reply", SHARE: "share",
          EDIT: "edit", DELETE: "delete", TIP: "tip",
-         DISLIKE: "dislike", UNDISLIKE: "undislike"}
+         DISLIKE: "dislike", UNDISLIKE: "undislike", TIP_TOKEN: "tiptoken"}
 
 #: The same map the other way, for a page that has the word and needs the
 #: byte. It lives here rather than in the page because a browser that sends a

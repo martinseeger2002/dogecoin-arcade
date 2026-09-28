@@ -56,6 +56,11 @@ class Shown:
     shares: int = 0
     tips: int = 0
     tipped: dict[str, int] = field(default_factory=dict)   # per chain, sats
+    # Token tips as CLAIMED: (send txid, tipper), confirmed acts only and never
+    # the author's own. The page believes one only once the token index says
+    # that txid sent a token from the tipper to this post's author.
+    token_claims: list = field(default_factory=list)
+    token_tipped: dict = field(default_factory=dict)       # token name -> amount said
     replies: list["Shown"] = field(default_factory=list)
     shared_from: str = ""            # the post this one is a share of
     is_reply: bool = False
@@ -160,7 +165,12 @@ def _one(txid: str, author: str, text: str, row: Any,
                 or (act["network"] if "network" in act.keys() else ""))
         tipped[paid] = tipped.get(paid, 0) + int(act["amount"])
 
+    claims = [(str(a["text"] or "").strip().lower(), a["author"]) for a in acts
+              if a["kind"] == feed.TIP_TOKEN and a["author"] != author
+              and (a["height"] or 0) > 0]
+
     return Shown(
+        token_claims=claims,
         txid=txid,
         author=author,
         # Muting hides the words and keeps the row: a gap where a post was is

@@ -23,7 +23,9 @@ from .messaging import feed
 
 #: What is worth telling somebody about, from the feed, done to THEIR post.
 ON_MINE = {feed.LIKE: "liked", feed.DISLIKE: "disliked", feed.REPLY: "replied to",
-           feed.SHARE: "shared", feed.TIP: "tipped"}
+           feed.SHARE: "shared", feed.TIP: "tipped",
+           # A claim until the post shows it counted (app._verify_token_tips).
+           feed.TIP_TOKEN: "says they tipped a token on"}
 #: Done to a post they liked or shared: only a reply is news.
 ON_FOLLOWED = {feed.REPLY: "replied to"}
 
