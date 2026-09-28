@@ -260,7 +260,12 @@ class OmniRpc:
     def omni_getallbalancesforid(self, propertyid: Any) -> list[dict[str, str]]:
         """omni_getallbalancesforid propertyid -- every holder of one token, largest first."""
         prop = self._property(propertyid)
-        return [{"address": h["address"], **self._balance(h["balance"], prop["divisible"])}
+        return [{"address": h["address"], **self._balance(h["balance"], prop["divisible"]),
+                 # What that person's own orders are holding. The row belongs
+                 # here even when the free half is empty -- the lot is in the
+                 # Supply -- and a client told "0.00000000, reserved 0" about it
+                 # reads a holder who holds nothing.
+                 "reserved": omni_amount(h["reserved"], prop["divisible"])}
                 for h in self.index.holders(prop["property_id"])]
 
     def omni_getallbalancesforaddress(self, address: Any) -> list[dict[str, Any]]:
@@ -707,8 +712,10 @@ class OmniRpc:
 
     @staticmethod
     def _balance(units: int, divisible: bool) -> dict[str, str]:
-        # `reserved` and `frozen` are Omni's exchange and freeze buckets; the
-        # arcade has neither yet, and a client that reads them gets zero.
+        # `frozen` is Omni's freeze bucket and the arcade has no such thing.
+        # `reserved` is its exchange bucket: the arcade's own shape of that is
+        # what an order is holding, which a caller with one to report fills in
+        # over this zero (`omni_getallbalancesforid`).
         zero = omni_amount(0, divisible)
         return {"balance": omni_amount(units, divisible), "reserved": zero, "frozen": zero}
 

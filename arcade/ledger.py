@@ -44,11 +44,22 @@ log = logging.getLogger(__name__)
 
 COIN = 100_000_000
 
+#: The token an address owns but has promised somewhere: behind an offer, a
+#: swap it agreed, or a standing order. It is not a different kind of money --
+#: it is the same token, held by the same person, only not free to spend -- and
+#: the consensus hash already counts it that way.
+RESERVED = "selloffer_reserve + accept_reserve + metadex_reserve"
+
 #: What the payload types are called on screen. Only the ones the engine
 #: applies; anything else stops the index before it could be shown.
 TYPE_NAMES = {
     0: "send",
     4: "send all",
+    25: "standing order",
+    26: "cancel (one price)",
+    27: "cancel (one pair)",
+    28: "cancel (all orders)",
+    29: "take",
     50: "create (fixed supply)",
     54: "create (managed supply)",
     55: "grant",
@@ -298,13 +309,22 @@ class LedgerIndex:
         prop["test_ecosystem"] = prop["ecosystem"] == ECOSYSTEM_TEST
         prop["total_display"] = format_amount(prop["total_tokens"], prop["divisible"])
         prop["holder_count"] = db.conn.execute(
-            "SELECT COUNT(*) AS n FROM balance WHERE property_id = ? AND balance > 0",
+            f"SELECT COUNT(*) AS n FROM balance WHERE property_id = ? AND "
+            f"(balance > 0 OR {RESERVED} > 0)",
             (prop["property_id"],),
         ).fetchone()["n"]
         return prop
 
     def holders(self, property_id: int) -> list[dict[str, Any]]:
-        """Who holds a token, largest first."""
+        """Who holds a token, largest first.
+
+        What a row holds includes the part an order is holding for its owner.
+        That is the same token, theirs, only promised -- and the supply on this
+        very page counts it -- so a person whose whole lot stands behind an ask
+        is a holder and is listed as one. `balance` stays the free half, which
+        is what `omni_getallbalancesforid` answers with; `display` is the whole,
+        which is what a person reading "who holds this" came for.
+        """
         with self.open() as db:
             prop = db.conn.execute(
                 "SELECT property_type FROM property WHERE property_id = ?", (property_id,)
@@ -313,13 +333,18 @@ class LedgerIndex:
                 return []
             divisible = prop["property_type"] == PROPERTY_DIVISIBLE
             rows = db.conn.execute(
-                "SELECT address, balance FROM balance WHERE property_id = ? AND balance > 0 "
-                "ORDER BY balance DESC, address",
+                f"SELECT address, balance, {RESERVED} AS reserved FROM balance "
+                f"WHERE property_id = ? AND (balance > 0 OR {RESERVED} > 0) "
+                f"ORDER BY balance + {RESERVED} DESC, address",
                 (property_id,),
             ).fetchall()
             return [
                 {"address": r["address"], "balance": r["balance"],
-                 "display": format_amount(r["balance"], divisible)}
+                 "reserved": r["reserved"],
+                 "held": r["balance"] + r["reserved"],
+                 "display": format_amount(r["balance"] + r["reserved"], divisible),
+                 "reserved_display": format_amount(r["reserved"], divisible)
+                                     if r["reserved"] else ""}
                 for r in rows
             ]
 
@@ -1964,10 +1989,22 @@ class LedgerIndex:
         entry["amount"] = None
         entry["amount_display"] = ""
         entry["name"] = ""
+        # Which way the TOKENS went, which the page draws as an arrow. For most
+        # of these the sender is the one giving them and the reference is the
+        # one receiving, but a take is the exception the type was built to be:
+        # its coins are ordinary outputs leaving the sender, and the tokens
+        # come the other way, out of the reserve the reference address filed
+        # when it made the order. Drawn from the sender, that row points at the
+        # wrong person (a token page said the taker had handed 400 to the
+        # maker; the maker handed 400 to the taker).
+        entry["gave"] = row["sender"]
+        entry["got"] = row["reference"]
         try:
             msg = P.decode(bytes.fromhex(row["payload_hex"]))
         except P.PayloadError:
             return entry
+        if isinstance(msg, P.MetaDExTake):
+            entry["gave"], entry["got"] = row["reference"], row["sender"]
         pid = getattr(msg, "property_id", None)
         if pid is not None:
             entry["property_id"] = pid

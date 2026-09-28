@@ -82,7 +82,8 @@ def test_sync_indexes_a_token_and_reports_where_it_stands(ledger):
     assert prop["total_display"] == "1,000"
     assert prop["holder_count"] == 1
     assert index.holders(prop["property_id"]) == [
-        {"address": alice, "balance": 1_000 * 10**8, "display": "1,000"}]
+        {"address": alice, "balance": 1_000 * 10**8, "reserved": 0,
+         "held": 1_000 * 10**8, "display": "1,000", "reserved_display": ""}]
     assert index.balance(alice, prop["property_id"]) == 1_000 * 10**8
 
     history = index.history(property_id=prop["property_id"])
@@ -112,6 +113,81 @@ def test_a_send_shows_up_for_both_addresses(ledger):
     assert entry["amount_display"] == "120" and entry["name"] == "Moving"
     assert entry["reference"] == bob
     assert index.transaction(txid)["property_id"] == pid
+
+
+def test_a_whole_lot_behind_a_standing_order_is_still_held_by_somebody(ledger):
+    """A token page whose Holders column does not add up to its own Supply.
+
+    Found on the live ledger (a tester, S56): a token with 1,000 in and 1,000
+    out, seven rows on the panel, and the eighth person's 200 sitting in
+    `metadex_reserve` where the ask they filed put it. That 200 is in the Supply
+    on the same page, so the page pointed at holders whose totals fell short of
+    its own number and named nobody for the difference -- the query had asked
+    for `balance > 0`, and a reserve is not spendable. It was never a different
+    kind of token, though: it is theirs, only promised.
+    """
+    node, alice, bob, params, index = ledger
+    create_fixed(node, alice, name="Reserved Ask")
+    node.generate(1)
+    index.sync()
+    (prop,) = [p for p in index.properties() if p["name"] == "Reserved Ask"]
+    pid = prop["property_id"]
+
+    send_class_c(node, alice, P.SimpleSend(property_id=pid, amount=200 * 10**8).encode(),
+                 recipient=bob, change_to=alice)
+    node.generate(1)
+    index.sync()
+    send_class_c(node, bob, P.MetaDExTrade(          # all of it on the book, 8 coins
+        property_id_for_sale=pid, amount_for_sale=200 * 10**8,
+        property_id_desired=0, amount_desired=8 * 10**8).encode(), change_to=bob)
+    node.generate(1)
+    index.sync()
+
+    assert index.balance(bob, pid) == 0, "nothing free: this is the row that used to vanish"
+    holders = {h["address"]: h for h in index.holders(pid)}
+    assert set(holders) == {alice, bob}, "the maker is a holder, and is listed as one"
+    assert holders[bob]["reserved"] == 200 * 10**8
+    assert holders[bob]["display"] == "200", "what they hold, not what they may spend"
+    assert holders[bob]["reserved_display"] == "200", "and the page says which half"
+    assert holders[alice]["display"] == "800"
+    assert holders[alice]["reserved_display"] == ""
+    prop = index.property(pid)
+    assert prop["holder_count"] == len(holders), "the stat and the table agree"
+    assert sum(h["balance"] + h["reserved"] for h in holders.values()) \
+        == prop["total_tokens"], "the column adds up to the Supply beside it"
+
+
+def _row(message, message_type, sender, reference):
+    """The columns `_history_entry` reads, with no chain to fill them."""
+    return {"txid": "00" * 32, "message_type": message_type,
+            "payload_hex": message.encode().hex(), "sender": sender,
+            "reference": reference}
+
+
+PROPS = {7: {"name": "Ghost Credits", "property_type": 1}}   # whole units
+
+
+def test_a_take_names_the_maker_as_the_one_who_gave():
+    """The arrow points at the tokens, not at the coins (a tester, S56).
+
+    A take is the one row on a token's page whose sender is the one who PAYS:
+    its coins are ordinary outputs going out, and the tokens come the other way,
+    out of the reserve the maker filed with its own order. Drawn from the
+    sender, as every other row is, it read "400 @mira -> @silas" over a row that
+    was Silas's 400 going to Mira.
+    """
+    took = LedgerIndex._history_entry(
+        _row(P.MetaDExTake(property_id=7, amount=400, order=bytes.fromhex("ab" * 32)),
+             29, sender="mira", reference="silas"), PROPS)
+    assert took["type_name"] == "take", "a number on the page is not a word"
+    assert took["property_id"] == 7 and took["amount_display"] == "400"
+    assert (took["gave"], took["got"]) == ("silas", "mira")
+
+    sent = LedgerIndex._history_entry(
+        _row(P.SimpleSend(property_id=7, amount=400), 0,
+             sender="silas", reference="mira"), PROPS)
+    assert (sent["gave"], sent["got"]) == ("silas", "mira"), \
+        "a send still points the way it did"
 
 
 def test_an_unimplemented_message_stops_the_index_and_says_so(alone, tmp_path):

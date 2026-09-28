@@ -314,7 +314,15 @@ $("issuer-go").onclick = () => {
           {% if (mine_address and h.address == mine_address) or
                 (not mine_address and h.address in owned and not public)
           %}<span class="pill ok">you</span>{% endif %}</td>
-        <td style="text-align:right;font-variant-numeric:tabular-nums">{{ h.display }}</td></tr>
+        <td style="text-align:right;font-variant-numeric:tabular-nums">
+          {{ h.display }}
+          {# What an order of theirs is holding, said where the number is. It is
+             in the row above and in the Supply, so a lot that stands behind a
+             standing order was never missing -- only invisible here, to the one
+             person who could tell why. #}
+          {%- if h.reserved_display %}
+          <div class="muted" style="font-size:.76rem">{{ h.reserved_display }} held by a standing order</div>
+          {%- endif %}</td></tr>
   {% endfor %}
   </table>
 {% else %}
@@ -332,8 +340,8 @@ $("issuer-go").onclick = () => {
         {% if not h.valid %}<span class="pill bad">did nothing</span>{% endif %}</td>
       <td style="font-variant-numeric:tabular-nums;text-align:right">{{ h.amount_display }}</td>
       <td style="font-size:.8rem">
-        <div>{{ h.sender|who }}
-          {%- if h.reference and h.reference != h.sender %} &rarr; {{ h.reference|who }}{% endif %}</div>
+        <div>{{ h.gave|who }}
+          {%- if h.got and h.got != h.gave %} &rarr; {{ h.got|who }}{% endif %}</div>
         {% if not h.valid %}<div class="muted">{{ h.invalid_reason }}</div>{% endif %}
         <div class="muted">block {{ "{:,}".format(h.block_height) }} &middot;
           <span class="mono">{{ h.txid[:16] }}&hellip;</span></div></td>
