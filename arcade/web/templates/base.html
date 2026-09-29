@@ -837,8 +837,13 @@ async function claimFor(source, m, page = "") {
     // A page may name no listing: its own bound pool is looked up by the
     // inscription it is (2026-09-29), which also tells the node who asked.
     let listing = String(m.listing || "");
-    if (!listing && page) {
-      const pool = await (await fetch("/r/claimpool/" + page, {cache: "no-store"})).json();
+    if (!listing && (page || m.pool)) {
+      // A page may name the pool it pays from (several per page, token or NFT);
+      // otherwise its token pool, as before (2026-09-29).
+      const pool = m.pool
+        ? await (await fetch("/r/prizepool/" + encodeURIComponent(m.pool), {cache: "no-store"})).json()
+        : await (await fetch("/r/claimpool/" + page, {cache: "no-store"})).json();
+      if (m.pool) { pool.kind = "chain"; pool.pool = pool.txid; }
       if (!pool.open) throw new Error("this page has nothing left to pay out");
       if (pool.kind === "chain") {
         // A pool on the chain (2026-09-29): its lots opened here with the
@@ -854,14 +859,16 @@ async function claimFor(source, m, page = "") {
         const coins = String(Number(offer.price) / 1e8);
         const unit = coins === "1" ? "coin" : "coins";
         const seller = offer.seller_tag ? "@" + offer.seller_tag : "its owner";
+        const one = offer.kind === "nft";
         const ok = await arcadeAsk(`Claim ${offer.piece}?`,
-          `${seller} set these aside for whoever got here. They cost ${coins} ${unit} to ${seller}`
-          + ` and a network fee of ${shown.coinsOf(shown.fee)}. The tokens and the coins move `
-          + "in one transaction, checked in this browser.", `Claim them for ${coins} ${unit}`);
+          `${seller} set ${one ? "it" : "these"} aside for whoever got here. `
+          + `${one ? "It costs" : "They cost"} ${coins} ${unit} to ${seller}`
+          + ` and a network fee of ${shown.coinsOf(shown.fee)}. The ${one ? "piece" : "tokens"} and the coins move `
+          + "in one transaction, or neither does.", `Claim ${one ? "it" : "them"} for ${coins} ${unit}`);
         if (!ok) { answer({error: "Cancelled."}); return; }
         const out = await wallet.claimPrize(held, offer);
-        answer({ok: true, txid: out.txid || ""});
-        arcadeToast(`You claimed ${offer.piece}. They're yours when the block lands.`);
+        answer({ok: true, txid: out.txid || "", piece: out.piece || offer.piece || ""});
+        arcadeToast(`You claimed ${offer.piece}. ${one ? "It's" : "They're"} yours when the block lands.`);
         return;
       }
       listing = pool.listing;

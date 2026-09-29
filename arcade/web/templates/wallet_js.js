@@ -706,18 +706,55 @@ export async function makeChainPool(wallet, spec, chain, onStep = () => {}) {
   return working(async () => {
     const phrase = String(spec.phrase || "").trim();
     if (!phrase) throw new Error("a prize pool needs a \"phrase\"");
+    const nft = spec.kind === "nft";
+    let pieces = [];
+    if (nft) {
+      // The pieces it hands out: named ("#12"), or every piece of a collection
+      // this wallet holds (2026-09-29, NFT prize pools).
+      const mine = keysOn(wallet, chain).address;
+      if (Array.isArray(spec.pieces) && spec.pieces.length) {
+        for (const key of spec.pieces) {
+          const r = await fetch("/r/inscription/" + encodeURIComponent(String(key).replace(/^#/, "")));
+          const row = await r.json().catch(() => ({}));
+          if (!r.ok || !row.id) throw new Error(`there is no inscription ${key}`);
+          pieces.push(row.id);
+        }
+      } else if (spec.collection) {
+        // A collection is its creator's: only the wallet that made it mints it,
+        // so a set that never seals (supply 0, "of \u221e") is pooled from the pieces
+        // its creator has minted so far, and topped up with another pool later.
+        // Two creators can use one name, so the maker is part of the match.
+        const maker = String(spec.creator || mine);
+        const held = await (await fetch(`/r/inscriptions/${mine}?limit=500`)).json();
+        pieces = (Array.isArray(held) ? held : [])
+          .filter((i) => i.collection === spec.collection && i.creator === maker)
+          .map((i) => i.id).slice(0, 25);
+        if (!pieces.length) throw new Error(`this wallet holds nothing of ${spec.collection}`
+          + (spec.creator ? ` made by ${spec.creator}` : " that it made itself: mint some first"));
+      } else throw new Error("an NFT pool names its \"pieces\" or its \"collection\"");
+    }
     const index = 1 + (crypto.getRandomValues(new Uint32Array(1))[0] % 0x7ffffffe);
     const keys = await poolKeys(wallet, chain, index);
     const opened = await askJson("/account/pools/open",
                                  {chain, index, pubkey: coinsHex(keys.pubkey)});
     if (!opened.ok) throw new Error(opened.said.detail || "the pool could not be opened");
-    const funding = await askJson("/account/pools/fund", {
+    const funding = await askJson("/account/pools/fund", nft ? {
+      chain, pool: keys.address, kind: "nft", pieces, price: String(spec.price),
+      days: spec.days || 0, bound: spec.game ? String(spec.game) : "", once: !!spec.once,
+      claim_hash: await claimHash(phrase)} : {
       chain, pool: keys.address, property_id: spec.token, lot: String(spec.lot),
       count: Number(spec.lots), price: String(spec.price), days: spec.days || 0,
+      once: !!spec.once,
       bound: spec.game ? String(spec.game) : "", claim_hash: await claimHash(phrase)});
     if (!funding.ok) throw new Error(funding.said.detail || "the pool could not be funded");
-    onStep("Moving the tokens and coins into the pool\u2026");
+    onStep(nft ? "Putting coins into the pool\u2026" : "Moving the tokens and coins into the pool\u2026");
     const sent = await signOffer(wallet, funding.said);
+    for (let n = 0; n < pieces.length; n++) {
+      onStep(`Moving piece ${n + 1} of ${pieces.length} into the pool\u2026`);
+      const moved = await askJson("/account/nft/send", {piece: pieces[n], to: keys.address, chain});
+      if (!moved.ok) throw new Error(moved.said.detail || "a piece could not be moved");
+      await signOffer(wallet, moved.said);
+    }
     const built = await askJson("/account/pools/legs", {chain, pool: keys.address, fund: sent.txid});
     if (!built.ok) throw new Error(built.said.detail || "the pool's lots could not be built");
     const lots = [];
@@ -770,6 +807,13 @@ export async function closeChainPool(wallet, key, chain) {
     const r = await askJson("/account/pools/close", {chain, prize: info.txid});
     if (!r.ok) throw new Error(r.said.detail || "that pool could not be closed");
     const keys = await poolKeys(wallet, chain, Number(info.index));
+    if (Array.isArray(r.said.offers)) {
+      const offers = [];
+      for (const offer of r.said.offers) offers.push({offer, shown: await coins.verifyOffer(offer, keys)});
+      const says = `${offers.length} transaction${offers.length === 1 ? "" : "s"}: `
+        + offers.map((o) => o.offer.what || "").filter(Boolean).join("; ") + ".";
+      return {offers, shown: {says}, keys, pool: info.txid};
+    }
     const shown = await coins.verifyOffer(r.said, keys);
     return {offer: r.said, shown, keys, pool: info.txid};
   });
@@ -789,7 +833,14 @@ export async function closePool(wallet, chain, address, index) {
 
 /** Send what closePool built, once the person has said yes. */
 export async function sendClose(wallet, closing) {
-  return working(() => signOffer(wallet, closing.offer, closing.keys));
+  return working(async () => {
+    if (closing.offers) {
+      let last = null;
+      for (const o of closing.offers) last = await signOffer(wallet, o.offer, closing.keys);
+      return last;
+    }
+    return signOffer(wallet, closing.offer, closing.keys);
+  });
 }
 
 /** Offer one payment to this account's own address in `count` coins -- what a

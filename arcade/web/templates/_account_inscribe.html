@@ -371,11 +371,17 @@ async function inscribePrizePool(spec) {
   say(""); news("");
   try {
     const held = (await take()) || await arcadeKeys(CHAIN);
+    const nft = spec.kind === "nft";
+    const what = nft
+      ? `${spec.pieces ? spec.pieces.length + " pieces" : "your pieces of " + spec.collection}, at ${spec.price} coins each`
+      : `${spec.lots} lots of ${spec.lot} of token #${spec.token}, at ${spec.price} coins each`;
     if (!(await arcadeAsk("Make this prize pool?",
-        `${spec.lots} lots of ${spec.lot} of token #${spec.token}, at ${spec.price} coins each`
-        + (spec.game ? `, paying out only while you hold ${spec.game}` : "")
-        + ". Next: one send moves the tokens and the coins the lots stand on to the pool's "
-        + "own address, then the pool is inscribed.", "Make it"))) return;
+        what + (spec.game ? `, paying out only while you hold ${spec.game}` : "")
+        + (spec.once ? ", one claim per wallet" : "")
+        + (nft ? ". Next: one send puts the coins the lots stand on at the pool's own address, "
+               + "one more moves each piece there, then the pool is inscribed."
+             : ". Next: one send moves the tokens and the coins the lots stand on to the pool's "
+               + "own address, then the pool is inscribed."), "Make it"))) return;
     const made = await wallet.makeChainPool(held, spec, CHAIN.network, (t) => news(t));
     await inscribeBytes(made.content, "prize-pool", made.type, made.json);
   } catch (e) { say(String(e.message || e)); }

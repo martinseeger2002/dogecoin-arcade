@@ -29,7 +29,10 @@ old one in that list.
 
 ## 1. Set up the sale
 
-**A collection:** run the *Launchpad wizard* for it once, with your price. It
+**A collection:** run the *Launchpad wizard* for it once, with your price.
+The price is in coins, or in any token: fill in *Paid in* with the token's
+number (`19` for PLASMA) and the price is that many of it. The piece and the
+token then move in one transaction, or neither does. It
 signs your pieces over, puts the sales on the chain and inscribes a
 standard page. Your own page, inscribed afterwards, replaces the standard
 one on the Exchange, and both keep working.
@@ -50,7 +53,7 @@ everything below is visible in them.
 `GET /r/mintpad/<creator>/<collection>`
 
 ```json
-{ "left": 12, "prices": [1000000],
+{ "left": 12, "prices": [1000000], "price_texts": ["0.01 coins"],
   "next": { "listing": "…", "piece": "…", "number": 57, "edition": 12,
             "price": 1000000, "maker": "…" },
   "listed": ["…", "…"] }
@@ -59,6 +62,8 @@ everything below is visible in them.
 * `left` is how many pieces can still be minted; `next` is one of them,
   picked at random each time you ask. A mint is always a random piece.
 * `prices` are in the chain's smallest unit (100,000,000 is one coin).
+  For a pad priced in a token they are 0: read `price_texts` instead, which
+  says every price in words ("200 PLASMA"), whatever it is paid in.
 * `GET /r/collection/<creator>/<collection>` gives the pictures and the
   count, for drawing the collection.
 

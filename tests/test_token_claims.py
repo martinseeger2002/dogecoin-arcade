@@ -433,3 +433,74 @@ def test_an_nft_sold_for_a_token_moves_both_in_one_transaction(node):
     assert index.inscription(piece)["owner"] == buyer_book["address"], "the buyer holds it"
     assert _held(state, s_address, buyer_book["pid"])[0] == 200 * COIN, "the seller was paid"
     assert _held(state, buyer_book["address"], buyer_book["pid"])[0] == HELD - 200 * COIN
+
+
+def test_an_nft_prize_pool_hands_out_pieces_once_per_wallet_and_closes(node):
+    """2026-09-29: a page airdrops pieces of a limited collection, once per
+    wallet, from a pool any node reads; closing sends what is left home.
+    Game-agnostic: any page, any pieces."""
+    import base64
+    from test_account_offer import _pubkey, _inscribed
+    app, state, rpc = node
+    who, secret, pubkey, me = _seated(app, state, rpc, 106)
+    game = _inscribed(who, state, rpc, secret, pubkey, "a game")
+    pieces = [_inscribed(who, state, rpc, secret, pubkey, f"weapon {n}") for n in range(3)]
+    pool_secret = int.from_bytes(bytes([0x64, 106]) + bytes(30), "big")
+    pool_pub = _pubkey(pool_secret)
+    pool = who.post("/account/pools/open", json={"index": 777, "pubkey": pool_pub.hex()}).json()["address"]
+    funding = who.post("/account/pools/fund", json={
+        "pool": pool, "kind": "nft", "pieces": pieces, "price": "0.01", "bound": game,
+        "once": True, "claim_hash": hashlib.sha256(PHRASE.encode()).hexdigest()})
+    assert funding.status_code == 200, funding.text
+    fund = _signed(who, secret, pubkey, funding).json()["txid"]
+    for piece in pieces:
+        moved = who.post("/account/nft/send", json={"piece": piece, "to": pool})
+        assert moved.status_code == 200, moved.text
+        assert _signed(who, secret, pubkey, moved).status_code == 200
+    legs = who.post("/account/pools/legs", json={"pool": pool, "fund": fund})
+    assert legs.status_code == 200, legs.text
+    sigs = [[_sign(pool_secret, bytes.fromhex(d), funding_mod.SINGLE_ANYONECANPAY).hex()
+             for d in leg["sighashes"]] for leg in legs.json()["legs"]]
+    made = who.post("/account/inscribe", json={
+        "content": base64.b64encode(b"sealed").decode(),
+        "content_type": "application/vnd.arcade.prizepool",
+        "json": json.dumps({"name": "Arsenal drops",
+                            "prizepool": {**legs.json()["prizepool"], "pubkey": pool_pub.hex()}})})
+    pool_txid = _signed(who, secret, pubkey, made).json()["txid"]
+    _settled(state, rpc)
+
+    listed = who.get(f"/r/claimpools/{game}").json()["pools"]
+    assert [(p["kind"], p["total"], p["free"], p["once"]) for p in listed] == \
+        [("nft", 3, [0, 1, 2], True)], listed
+
+    def claim(seat, n):
+        client, s, pk, _ = seat
+        asked = client.post("/account/prize", json={"pool": pool_txid, "lot": n, "page": game,
+                                                    "signatures": sigs[n], "secret": PHRASE})
+        if asked.status_code != 200:
+            return asked
+        return client.post("/account/prize/sign", json={
+            "pool": pool_txid, "lot": n, "page": game, "signatures": sigs[n], "secret": PHRASE,
+            "raw": asked.json()["raw"], "pubkey": pk.hex(),
+            "claimer": [_sign(s, bytes.fromhex(d)).hex() for d in asked.json()["sighashes"]]})
+
+    player = _seated(app, state, rpc, 107)
+    got = claim(player, 0)
+    assert got.status_code == 200, got.text
+    assert got.json()["piece"].startswith("#")
+    _settled(state, rpc)
+    index = state.token_index(state.messaging)
+    assert index.inscription(pieces[0])["owner"] == player[3], "the claimer holds the piece"
+    twice = claim(player, 1)
+    assert twice.status_code == 400 and "already claimed" in twice.json()["detail"]
+
+    closing = who.post("/account/pools/close", json={"prize": pool_txid})
+    assert closing.status_code == 200, closing.text
+    for offer in closing.json()["offers"]:
+        done = who.post("/account/sign", json={
+            "offer": offer["offer"], "pubkey": pool_pub.hex(),
+            "signatures": [_sign(pool_secret, bytes.fromhex(d)).hex() for d in offer["sighashes"]]})
+        assert done.status_code == 200, done.text
+    _settled(state, rpc)
+    assert [index.inscription(p)["owner"] for p in pieces[1:]] == [me, me], "home again"
+    assert who.get(f"/r/prizepool/{pool_txid}").json()["open"] is False

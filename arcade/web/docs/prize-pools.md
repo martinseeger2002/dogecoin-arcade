@@ -1,7 +1,7 @@
 # Prize pools
 
-A prize pool is how a game, a puzzle or any other page pays out tokens to
-whoever wins, without its owner being there. A pool is an inscription: you
+A prize pool is how a game, a puzzle or any other page pays out tokens, or
+NFTs, to whoever wins, without its owner being there. A pool is an inscription: you
 make one by inscribing a short piece of JSON, and delete it by inscribing
 another. Every DogecoinArcade node reads pools from the chain, so a pool pays
 out through any node, and all nodes agree on what is left.
@@ -48,6 +48,7 @@ Inscribe the game first, if the pool is for one. Then, on the NFTs page, open
 | `game` | optional: the inscription it pays out for, as `#number` or its id |
 | `phrase` | the secret the game hands over when somebody wins |
 | `name` | optional: what the pool is called on the chain |
+| `once` | optional: `true` lets each wallet claim from this pool only once |
 
 Press *Inscribe it*; there is no file to choose. Your wallet then:
 
@@ -59,6 +60,47 @@ Press *Inscribe it*; there is no file to choose. Your wallet then:
    content. **The phrase itself is never inscribed.**
 
 When the pool inscription is in a block, it pays out through any node.
+
+## A pool of NFTs
+
+A pool can hand out NFTs instead of a token: one piece per winner, whichever
+free piece the wallet picks. Write `"kind": "nft"` and name the pieces:
+
+```json
+{"name": "GHOST FLEET Arsenal drops",
+ "prizepool": {"kind": "nft", "pieces": ["#301", "#302", "#303"],
+               "price": "0.01", "game": "#201", "once": true,
+               "phrase": "<your phrase>"}}
+```
+
+or, instead of `pieces`, every piece of one of your collections that your
+wallet holds (up to 25):
+
+```json
+{"prizepool": {"kind": "nft", "collection": "GHOST FLEET Arsenal",
+               "price": "0.01", "game": "#201", "once": true,
+               "phrase": "<your phrase>"}}
+```
+
+| field | |
+|---|---|
+| `kind` | `"nft"` |
+| `pieces` | the pieces it hands out, as `#number` or id: 1 to 25, all held by your wallet |
+| `collection` | instead of `pieces`: a collection your wallet made. Only the pieces it made count, so a set of the same name by somebody else is never mixed in, and neither are pieces of it you bought back |
+| `creator` | optional, with `collection`: another maker's address, to pool pieces of their set that you hold |
+| `price`, `game`, `phrase`, `once`, `name` | as for a token pool |
+
+**A collection is minted only by the wallet that made it.** A pool cannot mint:
+it hands out pieces that already exist. For a collection that never seals
+(a supply of 0, shown as "of ∞"), mint a batch, pool it, and when it runs
+low mint more and inscribe another pool for the same game. A page can have
+several pools at once.
+
+Making an NFT pool is one send that puts the coins the lots stand on at the
+pool's address, then one send per piece to move it there, then the
+inscription. A piece can be claimed once its move is in a block; until then
+the page sees it as `waiting`. Deleting an NFT pool sends every unclaimed piece
+back to you, one transaction each, and then the coins.
 
 ## Deleting a pool
 
@@ -93,7 +135,17 @@ A page learns about its own pool from:
 * It never includes the phrase.
 
 `GET /r/prizepool/<pool inscription>` gives the same for a pool by its own
-id, with its terms.
+id, with its terms. Its `kind` is `"token"` or `"nft"`, `what` says what one
+lot is ("50 PLASMA", "a piece of GHOST FLEET Arsenal"), `waiting` counts lots
+not yet in a block, and `why` says why a closed pool is closed.
+
+A page with more than one pool (a token cash-out and a collection of drops,
+say) lists them all, newest first, with deleted ones left out:
+
+`GET /r/claimpools/<inscription>` → `{"inscription": "…", "pools": [ … ]}`
+
+Each entry is shaped like `/r/prizepool`, and `pool_id` is the one to claim
+from.
 
 When a player wins, the page asks the wallet it is framed in to claim:
 
@@ -101,14 +153,20 @@ When a player wins, the page asks the wallet it is framed in to claim:
 parent.postMessage({arcade: "claim", seq: 1, secret: "<phrase>"}, "*");
 ```
 
-The wallet finds the pool for the page that asked, opens the lots with the
-phrase, picks a free one and asks the player. The answers come back as
+The wallet finds the page's token pool, opens the lots with the phrase,
+picks a free one and asks the player. To claim from one pool in particular (an
+NFT pool, or one of several), name it:
+
+```js
+parent.postMessage({arcade: "claim", seq: 2, secret: "<phrase>",
+                    pool: "<pool_id>"}, "*");
+``` The answers come back as
 messages with the same `seq`:
 
 * `{arcade: "claim", seq, heard: true}`: the wallet has it and is asking the
   player.
-* `{arcade: "claim", seq, ok: true, txid}`: claimed. It arrives with the next
-  block.
+* `{arcade: "claim", seq, ok: true, txid, piece}`: claimed. It arrives with
+  the next block. `piece` says what they got, for an NFT pool the piece.
 * `{arcade: "claim", seq, error}`: not claimed. `"Cancelled."` means the player
   closed the card; anything else is a reason to show them.
 
@@ -116,7 +174,8 @@ If no `heard` arrives within a few seconds, the page is not open inside the
 arcade, and should say so.
 
 **The phrase is in your page's code, and anyone can read it.** Somebody
-determined can claim without playing, for the same price as a winner. Build
+determined can claim without playing, for the same price as a winner. `once`
+limits that to one lot per wallet, not per person. Build
 the phrase inside the page rather than writing it out plainly, and size a
 pool as a prize, not a vault.
 
