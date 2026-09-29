@@ -301,6 +301,14 @@ A request nobody answers within an hour expires. What is approved is priced
 against the wallet as it is when the person looks, not when you asked; a
 balance that was there and is not by then fails then, not silently.
 
+**On a public arcade,** the request goes to whoever is signed in and looking
+at your page, never to the node's own wallet. They see it on their own
+confirmation card (your `label` and `note`, the amount, who it pays, the fee),
+and their browser signs it; your polling of `/r/send/<id>` sees `sent`,
+`denied` or `failed` the same way. Nobody signed in means nobody to ask, and
+the request is refused with a sentence saying so. Coins and tokens can be
+asked for this way.
+
 **What this means for the person.** A request is a question, never an
 action: the page in the frame can file one, and so can any other site that
 knows the wallet's address — which is why filing needs no key, and why the
