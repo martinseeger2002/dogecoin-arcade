@@ -117,3 +117,10 @@ def test_a_token_lot_is_only_ever_a_claim(node):
         "signatures": [_sign(secret, bytes.fromhex(d), funding.SINGLE_ANYONECANPAY).hex()
                        for d in leg["sighashes"]]})
     assert public.status_code == 400 and "only ever a claim" in public.json()["detail"]
+
+
+def test_an_account_on_the_public_site_can_reach_the_pool_route():
+    """The first live try answered 404: the door refuses every POST it does
+    not name, and the tests above run as the node's own machine."""
+    from arcade.web import door
+    assert "/account/claimlots" in door.PUBLIC_POST

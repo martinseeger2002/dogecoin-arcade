@@ -554,8 +554,11 @@ export async function makeClaimLots(wallet, ask, phrase, onStep = () => {}) {
       const asked = await fetch("/account/claimlots", {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify(ask)});
-      const said = await asked.json();
-      if (!asked.ok) throw new Error(said.detail || "those lots cannot be made");
+      // Not every refusal is JSON: a route the door does not know answers with
+      // a page, and "JSON.parse: unexpected character" helps nobody.
+      const said = await asked.json().catch(() => ({}));
+      if (!asked.ok) throw new Error(said.detail
+        || `this node would not make those lots (it answered ${asked.status})`);
       return said;
     };
     let said = await build();

@@ -255,6 +255,10 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # broadcasts -- a listing is a signature the node holds, not
                # a transaction it makes.
                "/account/list", "/account/list/sign",
+               # a prize pool of token lots, each a leg like the pair above
+               # files; it builds legs (or the split they stand on) and
+               # broadcasts nothing.
+               "/account/claimlots",
                # the pair that fills one of those listings: the first shows a
                # buyer the transaction, the second pastes its signatures onto
                # the seller's leg and broadcasts. Neither reaches
