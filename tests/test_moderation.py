@@ -263,3 +263,95 @@ def test_a_table_from_before_the_prompt_column_still_opens(tmp_path):
     old.commit(); old.close()
     screen = mod.Screen(tmp_path, None)
     assert screen.known("ee") is None, "judged under no known prompt: asked again"
+
+
+# --- when the screening is wrong (2026-09-28) ---------------------------------
+
+
+def test_the_operator_can_clear_a_verdict_and_it_stays_cleared(tmp_path, model):
+    """"whoever comments on this post gets an ooh can do" came back "sexual
+    innuendo"; OOH CAN DO is a token. Cleared once, it stays cleared."""
+    model.says = '{"verdict": "sensitive", "reason": "sexual innuendo"}'
+    screen = mod.Screen(tmp_path, {"url": model.url, "model": "m"})
+    words = "whoever comments on this post gets an ooh can do"
+    assert screen.check_text(words, now=True) == mod.SENSITIVE
+    screen.overrule("  " + words + "\n")                  # the same words, however spaced
+    assert screen.check_text(words) == mod.OK
+    monkey = mod.PROMPT_VERSION
+    try:
+        mod.PROMPT_VERSION = "a-newer-prompt"
+        assert screen.known(mod.digest_of(words)) == mod.OK, "not asked again by a new prompt"
+    finally:
+        mod.PROMPT_VERSION = monkey
+    assert len(model.asked) == 1
+
+
+def test_an_illegal_verdict_cannot_be_cleared_from_the_feed(tmp_path):
+    screen = mod.Screen(tmp_path, None)
+    screen.conn.execute("INSERT INTO verdict (digest, kind, verdict, reason, model, checked_at,"
+                        " prompt) VALUES (?,?,?,?,?,?,?)",
+                        (mod.digest_of("x y z"), "text", "illegal", "x", "m", 0, mod.PROMPT_VERSION))
+    screen.conn.commit()
+    with pytest.raises(ValueError):
+        screen.overrule("x y z")
+    assert screen.known(mod.digest_of("x y z")) == mod.ILLEGAL
+
+
+def _a_ledger(path):
+    import sqlite3
+    conn = sqlite3.connect(path)
+    conn.executescript("CREATE TABLE property (name TEXT); CREATE TABLE tag (tag TEXT);"
+                       "CREATE TABLE collection_item (collection TEXT, name TEXT);")
+    conn.execute("INSERT INTO property VALUES ('OOH CAN DO')")
+    conn.execute("INSERT INTO property VALUES ('ok')")          # too short to mean anything
+    conn.execute("INSERT INTO tag VALUES ('silas')")
+    conn.execute("INSERT INTO collection_item VALUES ('Pixel Pals', 'Pal #7')")
+    conn.commit()
+    conn.close()
+
+
+def test_the_model_is_told_which_words_are_names_here(tmp_path, model):
+    _a_ledger(tmp_path / "test-ledger.sqlite")
+    screen = mod.Screen(tmp_path, {"url": model.url, "model": "m"})
+    screen.ledgers = [tmp_path / "test-ledger.sqlite", tmp_path / "not-there.sqlite"]
+    screen.check_text("whoever comments gets an ooh can do, ask @silas about Pixel Pals", now=True)
+    asked = model.asked[-1]["messages"][1]["content"]
+    assert '"OOH CAN DO" is a token' in asked
+    assert '"@silas" is a person' in asked
+    assert '"Pixel Pals" is an NFT collection' in asked
+    assert '"ok"' not in asked
+    screen.check_text("nothing named in this one", now=True)
+    assert "belong to this site" not in model.asked[-1]["messages"][1]["content"]
+
+
+def test_the_operator_clears_a_covered_post_from_the_feed(client, model):
+    app, state = client
+    model.says = '{"verdict": "sensitive", "reason": "sexual innuendo"}'
+    screen = _screened(state, model)
+    a_post(state, "ab" * 32, text="gets an ooh can do")
+    screen.check_text("gets an ooh can do", now=True)
+    body = app.get("/feed").text
+    assert "Sensitive post" in body and ">Not sensitive</button>" in body
+    assert app.post("/admin/api/unflag", json={"txid": "ab" * 32}).status_code == 403, \
+        "an admin write, from the admin script only"
+    said = app.post("/admin/api/unflag", json={"txid": "ab" * 32},
+                    headers={"x-arcade-admin": "1"})
+    assert said.status_code == 200, said.text
+    body = app.get("/feed").text
+    assert "Sensitive post" not in body and "gets an ooh can do" in body
+    assert app.post("/admin/api/unflag", json={"txid": "cd" * 32},
+                    headers={"x-arcade-admin": "1"}).status_code == 404
+
+
+def test_only_the_operator_is_offered_not_sensitive(client, model):
+    app, state = client
+    model.says = '{"verdict": "sensitive", "reason": "x"}'
+    screen = _screened(state, model)
+    a_post(state, "ef" * 32, text="a spicy post")
+    screen.check_text("a spicy post", now=True)
+    state.public = True
+    try:
+        body = app.get("/feed").text
+        assert "Sensitive post" in body and ">Not sensitive</button>" not in body
+    finally:
+        state.public = False

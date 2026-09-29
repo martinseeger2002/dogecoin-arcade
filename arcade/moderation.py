@@ -53,7 +53,10 @@ PROMPT = (
     'references to genitals, anuses or sex acts -- however short, vulgar or joking --, '
     'graphic violence or gore, and threats of violence against people; legal for adults but '
     'should be behind a click-to-show cover), or "illegal" (sexual content involving anyone '
-    'who may be a minor, or other content that is illegal to show). Answer only with JSON: '
+    'who may be a minor, or other content that is illegal to show). Judge what is actually '
+    'said: an ordinary phrase that could only be read as a double meaning is "ok", and so '
+    'is the name of a token, NFT, collection or person on this site, unless the name '
+    'itself is sexual. Answer only with JSON: '
     '{"verdict": "ok"|"sensitive"|"illegal", "reason": "<a few words>"}')
 
 #: Which question a stored verdict answered. A verdict is kept per CONTENT, so a
@@ -61,6 +64,13 @@ PROMPT = (
 #: asshole" stayed "ok -- profanity only" under the first prompt (the operator,
 #: 2026-09-25). A verdict from another prompt is asked again.
 PROMPT_VERSION = hashlib.sha256(PROMPT.encode()).hexdigest()[:12]
+#: The `prompt` a verdict carries when the operator made it rather than the model
+#: (2026-09-28: "whoever comments on this post gets an ooh can do" came
+#: back "sexual innuendo" -- OOH CAN DO is a token). It stands whatever the
+#: prompt becomes, because nobody should have to clear the same post twice.
+OPERATOR = "operator"
+#: How long the list of names on this arcade is kept before it is read again.
+NAMES_FOR = 300
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS verdict (
@@ -103,6 +113,10 @@ class Screen:
         self._lock = threading.Lock()
         self._queue: dict[str, str] = {}          # digest -> words waiting for a verdict
         self._worker: threading.Thread | None = None
+        #: The ledger indexes whose names the model is told about (state.screen()
+        #: fills this in); empty means no names, as before.
+        self.ledgers: list[Path] = []
+        self._names: tuple[float, list[tuple[str, str]]] = (0.0, [])
 
     # --- what is already known -------------------------------------------------
 
@@ -114,7 +128,7 @@ class Screen:
             return None
         # An "illegal" verdict stands whatever the prompt: it is never shown while
         # a newer question is being asked. Anything else is asked again.
-        if row["prompt"] != PROMPT_VERSION and row["verdict"] != ILLEGAL:
+        if row["prompt"] not in (PROMPT_VERSION, OPERATOR) and row["verdict"] != ILLEGAL:
             return None
         return row["verdict"]
 
@@ -134,6 +148,72 @@ class Screen:
                 pass
             log.warning("content %s judged illegal (%s): hidden, logged for the operator",
                         digest[:16], reason)
+
+    def overrule(self, words: str) -> None:
+        """The operator says these words are fine. Kept per content like any
+        verdict, and never asked about again. An "illegal" verdict is not the
+        operator's to lift from a feed button: it stays."""
+        words = (words or "").strip()
+        digest = digest_of(words)
+        with self._lock:
+            row = self.conn.execute("SELECT verdict FROM verdict WHERE digest = ?",
+                                    (digest,)).fetchone()
+            if row and row["verdict"] == ILLEGAL:
+                raise ValueError("an illegal verdict cannot be cleared here")
+            self.conn.execute(
+                "INSERT OR REPLACE INTO verdict (digest, kind, verdict, reason, model, checked_at,"
+                " prompt) VALUES (?,?,?,?,?,?,?)",
+                (digest, "text", OK, "cleared by the operator", OPERATOR, int(time.time()),
+                 OPERATOR))
+            self.conn.commit()
+            self._queue.pop(digest, None)
+
+    # --- the names on this arcade ----------------------------------------------
+
+    def _all_names(self) -> list[tuple[str, str]]:
+        """(name, what it is) for every token, collection, NFT and @tag indexed."""
+        at, names = self._names
+        if time.time() - at < NAMES_FOR:
+            return names
+        found: dict[str, str] = {}
+        for path in self.ledgers:
+            try:
+                conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2)
+                try:
+                    for (name,) in conn.execute("SELECT name FROM property"):
+                        found.setdefault(str(name or "").strip(), "a token")
+                    for collection, name in conn.execute(
+                            "SELECT collection, name FROM collection_item"):
+                        found.setdefault(str(collection or "").strip(), "an NFT collection")
+                        found.setdefault(str(name or "").strip(), "an NFT")
+                    for (tag,) in conn.execute("SELECT tag FROM tag"):
+                        found.setdefault("@" + str(tag or "").strip(), "a person's @tag")
+                finally:
+                    conn.close()
+            except sqlite3.Error:
+                continue                              # not indexed yet: no names from it
+        names = [(n, w) for n, w in found.items() if len(n.lstrip("@")) >= 3]
+        self._names = (time.time(), names)
+        return names
+
+    def names_in(self, words: str, most: int = 15) -> list[tuple[str, str]]:
+        """The names on this arcade that these words use, so the model reads a
+        token called OOH CAN DO as a token and not as slang."""
+        out = []
+        for name, what in self._all_names():
+            if re.search(r"(?<![\w@])" + re.escape(name) + r"(?!\w)", words, re.I):
+                out.append((name, what))
+                if len(out) >= most:
+                    break
+        return out
+
+    def _question(self, words: str) -> str:
+        said = "Text someone published:\n\n" + words[:8000]
+        named = self.names_in(words[:8000])
+        if named:
+            said += ("\n\nNames in it that belong to this site (not slang): "
+                     + "; ".join(f"\"{n}\" is {w}" for n, w in named) + ".")
+        return said
 
     # --- asking ------------------------------------------------------------------
 
@@ -199,7 +279,7 @@ class Screen:
         if known or not self.enabled:
             return known
         if now:
-            said = self._ask("Text someone published:\n\n" + words[:8000])
+            said = self._ask(self._question(words))
             if said is None:
                 return None
             self._keep(digest, "text", *said)
@@ -223,7 +303,7 @@ class Screen:
                 if not self._queue:
                     return
                 digest, words = next(iter(self._queue.items()))
-            said = self._ask("Text someone published:\n\n" + words[:8000])
+            said = self._ask(self._question(words))
             with self._lock:
                 self._queue.pop(digest, None)
             if said is not None:

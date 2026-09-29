@@ -756,6 +756,9 @@ def create_app(state: AppState) -> FastAPI:
             # beats a menu of eleven with seven missing.
             "nav": _nav_for(request),
             "public": _public_request(request),
+            # Whether the operator is looking: their machine, or signed in from
+            # outside. Offers "Not sensitive" on a screened post (feed.html).
+            "operator_here": _reads_the_plans(request),
             "path": request.url.path,
             "state": state,
             "csrf": state.csrf_token,
@@ -15368,6 +15371,21 @@ def create_app(state: AppState) -> FastAPI:
         state.set_setting("seats", seats)
         state.accounts().seats = seats           # the open register, not only the next one
         return JSONResponse({"ok": True, "seats": seats})
+
+    @app.post("/admin/api/unflag")
+    def admin_unflag(request: Request, payload: Any = Body(None)):
+        """The operator clears a post or comment the screening covered (the operator,
+        2026-09-28: a post offering the OOH CAN DO token read as innuendo)."""
+        _admin_check(request, write=True)
+        txid = str((payload or {}).get("txid", "")).strip().lower()
+        thing = _feed_thing(state.messaging.network, txid) if txid else None
+        if thing is None:
+            return JSONResponse({"detail": "no such post"}, status_code=404)
+        try:
+            state.screen().overrule(thing["text"])
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"ok": True})
 
     @app.post("/admin/api/release")
     def admin_release(request: Request, payload: Any = Body(None)):

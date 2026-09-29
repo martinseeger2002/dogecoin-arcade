@@ -546,7 +546,12 @@ class AppState:
         said = _json.dumps(config, sort_keys=True)
         held = getattr(self, "_screen", None)
         if held is None or held[0] != said:
-            self._screen = (said, Screen(self.home, config))
+            screen = Screen(self.home, config)
+            try:                                  # the names it tells the model about
+                screen.ledgers = [self.ledger_index_path(c) for c in self.token_chains]
+            except Exception:                     # noqa: BLE001 -- no chains yet: no names
+                pass
+            self._screen = (said, screen)
         return self._screen[1]
 
     def push(self):

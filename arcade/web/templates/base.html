@@ -1549,6 +1549,34 @@ document.addEventListener('click', function(e){
   e.preventDefault(); e.stopPropagation();
   arcadeReveal(wall);
 }, true);
+{% if operator_here %}
+// "Not sensitive": the operator clears a post the screening covered, for
+// everybody on this arcade (2026-09-28). An admin write, so from
+// outside it needs the admin password's session like the Admin page does.
+document.addEventListener('click', function(e){
+  var b = e.target.closest && e.target.closest('.sens-clear');
+  if (!b) return;
+  e.preventDefault();
+  b.disabled = true; b.textContent = 'Clearing…';
+  fetch('/admin/api/unflag', {method: 'POST', credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json', 'x-arcade-admin': '1'},
+    body: JSON.stringify({txid: b.dataset.txid})})
+  .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ return [r, j]; }); })
+  .then(function(rj){
+    var r = rj[0], j = rj[1];
+    if (r.ok) {
+      var cover = b.closest('details.covered'), text = cover && cover.querySelector('.posttext');
+      if (cover && text) { text.style.margin = '10px 0 0'; cover.replaceWith(text); }
+      arcadeToast('Cleared. Nobody on this arcade sees it covered now.');
+      return;
+    }
+    b.disabled = false; b.textContent = 'Not sensitive';
+    arcadeToast(r.status === 401 ? 'Enter the admin password on the Admin page first, then try again.'
+                                 : (j.detail || 'That did not work.'));
+  })
+  .catch(function(){ b.disabled = false; b.textContent = 'Not sensitive'; arcadeToast('That did not work.'); });
+});
+{% endif %}
 function arcadeShowSensitive(){
   try { return localStorage.getItem('arcade.showSensitive') === 'yes'; } catch (e) { return false; }
 }

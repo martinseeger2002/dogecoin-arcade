@@ -79,7 +79,10 @@
     <details class="covered" style="margin:10px 0 0">
       <summary>Sensitive post &mdash; tap to show</summary>
       <div class="posttext" style="margin:8px 0 0;white-space:pre-wrap"
-        >{{ render_post(p.text, drawable, frames) }}</div></details>
+        >{{ render_post(p.text, drawable, frames) }}</div>
+      {# The screening gets things wrong; the operator can say so (base.html). #}
+      {% if operator_here %}<button type="button" class="ghost small sens-clear"
+        data-txid="{{ p.txid }}" style="margin-top:8px">Not sensitive</button>{% endif %}</details>
     {# Your own post, still being checked, shows your own words (a tester):
        the check is about what OTHER people are shown. #}
     {% elif seen is none and p.author != (mine.address or '') %}
