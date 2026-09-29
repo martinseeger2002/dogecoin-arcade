@@ -144,6 +144,12 @@ class Screen:
                 "messages": [{"role": "system", "content": PROMPT},
                              {"role": "user", "content": content}],
                 "chat_template_kwargs": {"enable_thinking": False}}
+        # Screening goes ahead of everything else on a shared model (the operator,
+        # 2026-09-28: "checking posts should be given vLLM priority"): vLLM's
+        # `priority`, lower first. Only when the config says so, because a vLLM
+        # not started with --scheduling-policy priority refuses the field.
+        if cfg.get("priority") is not None:
+            body["priority"] = int(cfg["priority"])
         headers = {"Content-Type": "application/json"}
         if cfg.get("key"):
             headers["Authorization"] = f"Bearer {cfg['key']}"
