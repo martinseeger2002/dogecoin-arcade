@@ -376,6 +376,15 @@ function drawPieces(el) {
     link.textContent = "/content/" + m[1].slice(0, 12) + "\u2026";
     el.append(link);
     kindOf(m[1]).then((kind) => {
+      if (kind.startsWith("text/html") && link.isConnected) {
+        // A page: opened full screen inside the app, wallet and all (2026-09-29).
+        const full = document.createElement("a");
+        full.className = "fulllink";
+        full.href = "/inscriptions/" + m[1] + "/full";
+        full.textContent = "\u2922 Full screen";
+        link.after(" ", full);
+        return;
+      }
       if (!kind.startsWith("image/") || !link.isConnected) return;
       const img = document.createElement("img");
       img.className = "postmedia";

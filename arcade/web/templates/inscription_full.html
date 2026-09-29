@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · DogecoinArcade{% endblock %}
+{% block body %}
+{# Full screen (2026-09-29: "there should be a way to open the content link
+   itself so that it is full screen. Make sure the Wallet login carries into
+   the full screen content links"). An app page, not the bare /content URL:
+   the frame is the same sandboxed .inscription-frame every page uses, with
+   this reader's ticket on its address, so the wallet's bridges (mint, claim,
+   take, approvals) and the unlock sheet all work here as they do in the feed. #}
+<div class="fullbar">
+  <a class="btn ghost small" href="{{ back }}" id="full-back" aria-label="Back">&#8592; Back</a>
+  <span class="fulltitle">{{ title }}</span>
+  <button type="button" class="btn ghost small" id="full-go" hidden>&#x26F6; Fill the screen</button>
+</div>
+{% if kind == "page" %}
+<iframe class="inscription-frame fullframe" src="{{ src }}"
+        sandbox="allow-scripts allow-pointer-lock" referrerpolicy="no-referrer"
+        title="{{ title }}"></iframe>
+{% else %}
+<div class="fullframe fullpic"><img src="/content/{{ txid }}" alt=""></div>
+{% endif %}
+<style>
+header, footer.version, .notice, #appbar { display: none !important; }
+main { max-width: none !important; padding: 0 !important; margin: 0 !important; }
+.fullbar { position: fixed; top: 0; left: 0; right: 0; height: 44px; z-index: 5;
+  display: flex; align-items: center; gap: 10px; padding: 0 10px;
+  background: var(--panel); border-bottom: 1px solid var(--line); }
+.fulltitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-weight: 600; font-size: .92rem; }
+.fullframe { position: fixed; top: 44px; left: 0; width: 100vw;
+  height: calc(100dvh - 44px); border: 0; background: #000; }
+.fullpic { display: grid; place-items: center; }
+.fullpic img { max-width: 100%; max-height: 100%; object-fit: contain; }
+body.filled .fullbar { display: none; }
+body.filled .fullframe { top: 0; height: 100dvh; }
+</style>
+<script>
+(function () {
+  var back = document.getElementById("full-back");
+  back.addEventListener("click", function (e) {
+    if (history.length > 1 && document.referrer.indexOf(location.host) !== -1) {
+      e.preventDefault(); history.back();
+    }
+  });
+  // The browser's own full screen where it has one (not iPhone Safari, which
+  // keeps it for video); the page already fills the window either way.
+  var go = document.getElementById("full-go");
+  var root = document.documentElement;
+  if (root.requestFullscreen) {
+    go.hidden = false;
+    go.onclick = function () { root.requestFullscreen().catch(function () {}); };
+    document.addEventListener("fullscreenchange", function () {
+      document.body.classList.toggle("filled", !!document.fullscreenElement);
+    });
+  }
+})();
+</script>
+{% endblock %}

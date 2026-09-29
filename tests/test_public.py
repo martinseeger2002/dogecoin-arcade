@@ -1125,3 +1125,51 @@ def test_a_mintpad_link_may_name_its_seller_by_name(client):
     for who in ("@nobody_here", "nobody_here"):
         answer = app.get(f"/mintpad/{who}/Pixel%20Skull", follow_redirects=False)
         assert answer.status_code in (200, 303), answer.text[:200]
+
+
+def test_full_screen_carries_the_wallet_into_the_page(client):
+    """2026-09-29: "there should be a way to open the content link itself so
+    that it is full screen. Make sure the Wallet login carries into the full
+    screen content links." The full-screen page frames the piece in the same
+    bridge frame, with the signed-in reader's ticket on its address."""
+    import re
+
+    from test_me_page import _seat
+
+    app, state = client
+    viewer = "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg"
+    _seat(app)
+    app.post("/account/address", json={"address": viewer}, headers=LOCAL)
+    index = state.token_index(state.token_chain)
+    page_tx, pic_tx, file_tx = "a1" * 32, "b2" * 32, "c3" * 32
+    with index.open() as db:
+        for t, n, kind in ((page_tx, 911, "text/html"), (pic_tx, 912, "image/png"),
+                           (file_tx, 913, "application/zip")):
+            db.conn.execute(
+                "INSERT OR REPLACE INTO inscription(txid,number,creator,owner,block_height,"
+                "position,content_type,content_len,sha256,json,chunks,content) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (t, n, "nMe", "nSomebodyElse", 100, 0, kind, 2, "ab" * 32,
+                 '{"name": "Ghost Fleet"}' if kind == "text/html" else None, 1, b"hi"))
+        db.conn.commit()
+    state.set_setting("pages_host", "pages.example")
+    was, state.public = state.public, True
+    try:
+        full = app.get(f"/inscriptions/{page_tx}/full").text
+        assert 'class="inscription-frame fullframe"' in full, "the frame the bridge answers"
+        assert re.search(rf"pages\.example/content/{page_tx}\?v=[A-Za-z0-9_-]+", full), \
+            "the reader's ticket rides on it, so the wallet carries in"
+        assert "Ghost Fleet" in full
+        pic = app.get(f"/inscriptions/{pic_tx}/full").text
+        assert f'src="/content/{pic_tx}"' in pic
+        other = app.get(f"/inscriptions/{file_tx}/full", follow_redirects=False)
+        assert other.status_code == 303 and other.headers["location"].endswith("/view")
+        assert f"/inscriptions/{page_tx}/full" in app.get(f"/inscriptions/{page_tx}/view").text
+    finally:
+        state.public = was
+
+
+def test_a_page_in_a_post_offers_full_screen():
+    from arcade.web.app import post_html
+    drawn = post_html(f"look /content/{'a1' * 32}", {"a1" * 32: "text/html"})
+    assert f'href="/inscriptions/{"a1" * 32}/full"' in drawn

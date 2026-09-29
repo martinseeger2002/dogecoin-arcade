@@ -330,6 +330,9 @@ def post_html(text: str, drawable: dict[str, str] | None = None,
             out.append(f'<iframe class="inscription-frame postmedia" '
                        f'src="{src}" loading="lazy" '
                        f'sandbox="allow-scripts allow-pointer-lock"></iframe>')
+            # Full screen, inside the app so the wallet comes along (2026-09-29).
+            out.append(f'<a class="fulllink" href="/inscriptions/{piece}/full">'
+                       f'&#x2922; Full screen</a>')
         else:
             out.append(f'<a href="/inscriptions/{piece}/view">'
                        f'/content/{piece[:12]}…</a>')
@@ -6464,6 +6467,29 @@ def create_app(state: AppState) -> FastAPI:
                 "price": None if per is None else format_amount(per, True),
                 "coin": "" if per is None else ("coin" if per == 100_000_000 else "coins"),
                 "mints": mints}
+
+    @app.get("/inscriptions/{key}/full", response_class=HTMLResponse)
+    def inscription_full(request: Request, key: str):
+        """One inscription filling the screen, inside the app (2026-09-29): a
+        page runs in the same sandboxed frame as everywhere else, with the
+        reader's ticket, so the wallet carries in; a picture is shown whole."""
+        chain, index = _token_chain()
+        row = index.inscription(contentlib._key(key))
+        if row is None:
+            return RedirectResponse("/inscriptions", status_code=303)
+        ctype = str(row.get("content_type") or row.get("contenttype") or "")
+        data = _fromjson(row.get("json")) or {}
+        title = (data.get("name") if isinstance(data, dict) and data.get("name")
+                 else f"#{row['number']}")
+        if ctype.startswith("text/html"):
+            kind, src = "page", _frames_for(request, {row["txid"]: "text/html"})[row["txid"]]
+        elif ctype.startswith("image/"):
+            kind, src = "picture", ""
+        else:
+            return RedirectResponse(f"/inscriptions/{row['txid']}/view", status_code=303)
+        return render(request, "inscription_full.html", kind=kind, src=src,
+                      txid=row["txid"], title=str(title)[:80],
+                      back=f"/inscriptions/{row['txid']}/view")
 
     @app.get("/inscriptions/{key}/view", response_class=HTMLResponse)
     def inscription_view(request: Request, key: str):

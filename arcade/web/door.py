@@ -147,6 +147,9 @@ PUBLIC_TREES = (
 #: node's wallet only when it is the operator's own copy of the page.
 PUBLIC_SHAPES = (
     re.compile(r"^/inscriptions/(?:[0-9a-fA-F]{64}|[0-9]{1,12})/view$"),
+    # The same piece filling the screen (2026-09-29): read-only, and the
+    # frame in it is the same sandbox the piece page uses.
+    re.compile(r"^/inscriptions/(?:[0-9a-fA-F]{64}|[0-9]{1,12})/full$"),
     # An account's own collection run. A shape rather than a `/me/run/` tree
     # for the reason the tree above gives: a prefix says everything under it is
     # readable, and tomorrow's `/me/run/<id>/export` would arrive already
