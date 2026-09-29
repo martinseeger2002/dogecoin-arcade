@@ -117,3 +117,31 @@ def renderable(data: bytes) -> Media | None:
 #: is defence in depth for a file that should not have reached here at all.
 MEDIA_CSP = ("default-src 'none'; img-src 'self' data:; media-src 'self' data:; "
              "style-src 'unsafe-inline'; sandbox")
+
+
+# --- the names a type goes by ---------------------------------------------------------
+
+#: Other names browsers and tools give JavaScript. Linux browsers report a .js
+#: file as application/x-javascript, and an inscription indexed under that name
+#: was served as a download, so a page's <script src="/content/..."> of it never
+#: ran (a tester, 2026-09-28: #155, a shared library, and #156, the game that
+#: loads it). One name for serving and one for inscribing.
+JS_NAMES = ("application/x-javascript", "text/javascript", "application/ecmascript",
+            "text/ecmascript", "application/x-ecmascript", "text/x-javascript")
+
+#: What a file's extension says when the browser said nothing useful.
+BY_EXTENSION = {".js": "application/javascript", ".mjs": "application/javascript"}
+
+
+def standard_type(content_type: str, name: str = "") -> str:
+    """The one name for a content type: JavaScript under any of its aliases is
+    application/javascript, and a .js file the browser left untyped (or called
+    octet-stream) is too. Parameters such as a charset are kept."""
+    base, sep, rest = (content_type or "").partition(";")
+    kind = base.strip().lower()
+    if kind in JS_NAMES:
+        kind = "application/javascript"
+    if kind in ("", "application/octet-stream") and name:
+        dot = name.rfind(".")
+        kind = BY_EXTENSION.get(name[dot:].lower(), kind) if dot >= 0 else kind
+    return (kind + sep + rest) if kind else ""

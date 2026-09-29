@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from . import fees
+from . import media
 from . import inscriptions as I
 from .encoding import MAX_CLASS_B_PAYLOAD
 from .ledger import COIN
@@ -134,6 +135,9 @@ def plan(content: bytes, content_type: str, json_text: str = "",
     it wrote down, so a piece sent before a crash and a piece sent after it
     belong to the same inscription.
     """
+    # One name a type goes by, so a library inscribed from a browser that
+    # calls it x-javascript is served as JavaScript (media.standard_type).
+    content_type = media.standard_type(content_type)
     bodies = I.plan(content, content_type, json_text, capacity=CHUNK_CAPACITY,
                     inscription_id=inscription_id)
     return Plan(payloads=bodies,

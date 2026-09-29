@@ -44,6 +44,8 @@ from typing import Any
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 
+from .. import media
+
 #: Sent on every answer here, and nowhere else in the application: a sandboxed
 #: frame has an opaque origin, so without it an inscribed page cannot read its
 #: own metadata, let alone another inscription.
@@ -150,6 +152,7 @@ def content(index: Any, key: str, download: bool = False) -> Response:
         }, status=404)
 
     content_type, body = found
+    content_type = media.standard_type(content_type)   # x-javascript is JavaScript too
     safe = content_type if content_type.startswith(RENDERABLE) else None
     headers = dict(CONTENT_HEADERS)
     if download or safe is None:

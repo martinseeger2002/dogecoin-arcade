@@ -4073,7 +4073,8 @@ def create_app(state: AppState) -> FastAPI:
             if attachment is not None and attachment.filename:
                 content = attachment.file.read()
                 name = attachment.filename
-                kind = attachment.content_type or "application/octet-stream"
+                kind = media.standard_type(attachment.content_type or "",
+                                           name or "") or "application/octet-stream"
             elif attached_b64:
                 content = base64.b64decode(attached_b64)
             if not content:
@@ -6623,7 +6624,8 @@ def create_app(state: AppState) -> FastAPI:
                       mine_account=mine_account, asks=asks,
                       tokens=held, coins=coins, advice=advice,
                       pad_facts=_pad_facts(index, row),
-                      renders=row["content_type"].startswith(contentlib.RENDERABLE))
+                      renders=media.standard_type(row["content_type"]).startswith(
+                          contentlib.RENDERABLE))
 
     @app.get("/launches", response_class=HTMLResponse)
     def launches_page(request: Request, sort: str = "popular"):
@@ -8805,7 +8807,8 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError("there is nothing to inscribe")
             if str(said.get("part") or ""):
                 return _inscribe_piece(account, chain, address, said, content)
-            kind = str(said.get("content_type") or "application/octet-stream")
+            kind = media.standard_type(str(said.get("content_type") or ""),
+                                       str(said.get("name") or "")) or "application/octet-stream"
             return _inscribe_start(account, chain, address, said, content, kind)
         except (fundinglib.FundingError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)

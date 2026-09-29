@@ -335,3 +335,35 @@ def test_a_page_is_told_what_the_addresses_are_called(inscribed_rows):
     # A piece still held by the wallet that made it is one address, one name.
     own = contentlib.describe(inscribed_rows.inscription(0), {"nMe": "themaker"})
     assert own["creatortag"] == own["ownertag"] == "themaker"
+
+
+@pytest.mark.parametrize("declared", ["application/x-javascript", "text/javascript",
+                                      "application/ecmascript", "Application/X-JavaScript"])
+def test_javascript_under_any_of_its_names_is_served_as_javascript(declared):
+    """#155, a shared library inscribed from a Linux browser, was indexed as
+    application/x-javascript and handed over as a download, so the game that
+    loads it with <script src="/content/..."> (#156) never ran (a tester,
+    2026-09-28). Nothing is re-inscribed: the name is read as JavaScript."""
+    from arcade.web import content as contentlib
+
+    class Library:
+        def inscription_content(self, key):
+            return declared, b"window.ghostkit = {};"
+        def inscription(self, key):
+            return None
+
+    response = contentlib.content(Library(), "0")
+    assert response.media_type == "application/javascript"
+    assert "content-disposition" not in response.headers
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+def test_a_file_is_inscribed_under_the_standard_name_for_its_type():
+    from arcade import media, inscribe
+    assert media.standard_type("application/x-javascript") == "application/javascript"
+    assert media.standard_type("text/javascript; charset=utf-8") == "application/javascript; charset=utf-8"
+    assert media.standard_type("", "ghostkit.js") == "application/javascript"
+    assert media.standard_type("application/octet-stream", "lib.MJS") == "application/javascript"
+    assert media.standard_type("", "notes") == ""
+    assert media.standard_type("image/png", "odd.js") == "image/png", "a type the browser gave stands"
+    assert inscribe.plan(b"x=1", "application/x-javascript").content_type == "application/javascript"
