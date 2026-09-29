@@ -35,6 +35,13 @@
   </div>
   <p class="muted picked" id="picked-file" hidden><span id="picked-text"></span>
     <span id="picked-sizes" class="sizes" hidden></span></p>
+  <details style="margin-top:8px"><summary class="muted">JSON beside the file (optional)</summary>
+    <p class="muted" style="font-size:.84rem;margin:6px 0">Metadata that goes on the chain
+      with it: a name, or the <code>mintpad</code> / <code>tokenpad</code> object that makes
+      a page of your own design a mintpad (see the Mintpads guide).</p>
+    <textarea id="json-field" rows="4" class="mono" spellcheck="false" autocomplete="off"
+      placeholder='{"name": "My pad", "mintpad": {"creator": "…", "collection": "…"}}'
+      style="width:100%"></textarea></details>
 </div>
 
 <div class="panel" id="running">
@@ -352,12 +359,18 @@ async function shaOf(bytes) {
 
 async function inscribeBytes(bytes, name, type) {
   const file = {name, type};
+  const typed = ($("json-field") && $("json-field").value.trim()) || "";
+  if (typed) {
+    try { JSON.parse(typed); }
+    catch (e) { say("the JSON beside the file does not parse: " + e.message); return; }
+  }
   const held = (await take()) || await arcadeKeys(CHAIN);
   try {
     const start = await ask("/account/inscribe", {
       content: b64(bytes),
       content_type: file.type || "application/octet-stream",
-      name: file.name, chain: CHAIN.network});
+      name: file.name, chain: CHAIN.network,
+      json: ($("json-field") && $("json-field").value.trim()) || ""});
     // What this browser reads off the transaction's own bytes, not what this
     // node says it costs: a confirmation that repeats the node's number proves
     // nothing. For a file already half up, the split is not offered again, and
