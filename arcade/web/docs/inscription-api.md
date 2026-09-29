@@ -532,6 +532,51 @@ twice, then the swap. Say so in the page rather than spin.
 same JSON yourself and you have your own shop, selling from your wallet.
 Testnet only, because node-to-node messages are.
 
+### Claims: a prize a page hands over
+
+A **claim** is a sale hidden behind a phrase. It is on no public page and never
+announced; it completes only for someone who presents the phrase. That is how a
+game, a puzzle or any other page pays out: when the player wins, the page asks
+the wallet to claim, and the player sees an ordinary confirmation card.
+
+Two kinds, made from the owner's own wallet:
+
+* **An NFT.** *My NFTs → Sell → Hide it behind a phrase.* One claim, one piece.
+* **A prize pool of tokens.** *Wallet → Tokens → Prize lots.* Some number of
+  identical lots (say 25 tokens each) at a price of your choosing, as low as
+  0.01 coins. Each claim takes one lot, first come, first served, until the
+  pool runs out. The page gets **one** listing id for the whole pool and keeps
+  using it.
+
+When a player wins, the page sends:
+
+```js
+parent.postMessage({arcade: "claim", seq: 1, listing: "<listing id>",
+                    secret: "<phrase>"}, "*");
+```
+
+and listens for the answers, matched by `seq`:
+
+* `{arcade: "claim", seq, heard: true}` — the wallet has it and is asking the player.
+* `{arcade: "claim", seq, ok: true, txid}` — claimed. It arrives with the next block.
+* `{arcade: "claim", seq, error}` — not claimed: cancelled, a wrong phrase, the
+  pool is empty, or the player is not signed in.
+
+The claimer pays the price you set plus the network fee, and the item and the
+coins move in one transaction that their browser checks before signing. For
+tokens, the wallet also refuses any transaction that does not end on an output
+of the claimer's own, because that is where a token send delivers.
+
+**The phrase is not a secret from everyone.** A page's code is on the chain,
+so anyone who reads it can find the phrase and claim without playing. Derive
+it inside the page rather than showing it, and price and size a pool as a
+prize, not a vault. Ten wrong phrases an hour from one account are allowed,
+then it has to wait.
+
+**Keeping a pool honest.** A lot is only claimable while its seller still
+holds the tokens for it; a pool cannot promise more than the seller has.
+Lots are withdrawn the way any listing is: by spending the coins they stand on.
+
 ### A page that is its owner's own words
 
 A page asks with `arcade.send` and the person is asked. A page this wallet
