@@ -177,6 +177,18 @@
           if (r.ok) location.reload(); else { b.disabled = false; say((await r.json()).detail); }
         };
       }
+      // Arriving from Offers' "Sell to them": the sell form, filled in.
+      {
+        const q = new URLSearchParams(location.search);
+        if (q.get("sell") && $("book-price")) {
+          const ask = document.querySelector("input[name=book-side][value=ask]");
+          if (ask) { ask.checked = true; showAway(); }
+          $("book-price").value = q.get("sell");
+          $("book-amount").value = q.get("amount") || "";
+          setTimeout(() => $("book-amount").scrollIntoView({block: "center"}), 200);
+          news("A sell order at their price fills their buy order.");
+        }
+      }
       for (const b of document.querySelectorAll("[data-sell-into]")) {
         b.onclick = () => {
           const ask = document.querySelector("input[name=book-side][value=ask]");

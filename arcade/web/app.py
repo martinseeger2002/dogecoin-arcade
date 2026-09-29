@@ -17196,7 +17196,7 @@ def create_app(state: AppState) -> FastAPI:
                                                  if c is not chain],
                                 "shops": [], "node_error": None, "owned": set(),
                                 "offers_in": [], "offers_out": [], "tags": {},
-                                "offer_history": []}
+                                "offer_history": [], "token_bids": []}
         try:
             data["shops"] = _shop_listings(index, chain)
         except Exception as exc:
@@ -17338,6 +17338,29 @@ def create_app(state: AppState) -> FastAPI:
             data["offers_in"] = [o for o in data["offers_in"] if o["txid"] not in ended]
             data["offers_out"] = [o for o in data["offers_out"] if o["txid"] not in ended]
             data["offer_history"] = []
+            # Buy orders on the tokens this account made (2026-09-28:
+            # "where does the creator of a token see if someone puts in an order
+            # to buy? ... on exchange>offers"): the chain's bids and the ones this
+            # node holds, best price first.
+            if tab == "offers" and data["owned"]:
+                from fractions import Fraction
+                for prop in _token_props(index):
+                    if prop.get("issuer") not in data["owned"]:
+                        continue
+                    pid, whole = prop["property_id"], prop["divisible"]
+                    wants = [(Fraction(b["coins"], b["tokens"]), b["tokens"], b["address"], "")
+                             for b in index.book(pid)["bids"] if b.get("tokens")]
+                    wants += [(Fraction(s["coins"], s["units"]), s["left_units"], s["buyer"],
+                               "away" if s["away"] else "back")
+                              for s in _standing.open_on(chain.network, pid)]
+                    for price, units, buyer, mode in sorted(wants, key=lambda w: -w[0]):
+                        if buyer in data["owned"]:
+                            continue
+                        each = f"{_coins_each(price, whole):.8f}".rstrip("0").rstrip(".")
+                        data["token_bids"].append({
+                            "property_id": pid, "name": prop["name"], "price": each,
+                            "amount": format_amount(units, whole), "buyer": buyer, "mode": mode})
+                data["tags"].update(_tags_for([b["buyer"] for b in data["token_bids"]]))
             looking = signed_in(request) if data["viewer"] == "account" else None
             if looking is not None:
                 for b in _bids.history(looking.pubkey, sorted(data["owned"]), chain.network):

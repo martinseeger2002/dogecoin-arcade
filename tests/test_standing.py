@@ -89,3 +89,27 @@ def test_a_cancelled_buy_order_forgets_its_signatures(node):
     app.get(f"/exchange/pair/{maker['pid']}")
     _settled(state, rpc)
     assert _held(state, baddr, maker["pid"]) == (0, 0), "a cancelled order buys nothing"
+
+
+def test_a_token_creator_sees_buy_orders_on_offers(node):
+    """2026-09-28: the creator of a token sees who wants to buy it on
+    Exchange > Offers, with a way to sell to them."""
+    maker = _bookcoin(node, 77)
+    app, state, rpc = node
+    buyer, _s, _p, baddr = _seated(app, state, rpc, 78, coins=(8.0, 1.0))
+    pid = maker["pid"]
+    index = state.token_index(state.messaging)
+    with index.open() as db:
+        db.conn.execute("UPDATE property SET issuer=? WHERE property_id=?", (maker["address"], pid))
+        db.conn.commit()
+    assert buyer.post("/account/standing", json={
+        "property_id": pid, "amount": "7", "price": "0.25", "away": False}).status_code == 200
+    state.public = True
+    try:
+        page = maker["client"].get("/exchange?tab=offers").text
+        other = buyer.get("/exchange?tab=offers").text
+    finally:
+        state.public = False
+    assert "Buy orders on your tokens" in page
+    assert f"/exchange/pair/{pid}?sell=0.25&amp;amount=7" in page, "and a way to sell to them"
+    assert "Buy orders on your tokens" not in other, "only the token's creator sees it"
