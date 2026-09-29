@@ -506,7 +506,8 @@ def cmd_scan(args) -> int:
     with _rpc(args, params) as rpc:
         if args.from_height is not None:
             store.set_meta(f"identity_height:{params.name}", str(args.from_height))
-            store.rewind(params.name, args.from_height)
+            store.rewind(params.name, args.from_height,
+                         version=params.pubkeyhash_version)
             print(f"scanning from height {args.from_height:,}")
         scanner = Scanner(rpc, params, store, identity)
         def progress(height, end):

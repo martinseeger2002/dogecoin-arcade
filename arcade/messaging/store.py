@@ -649,17 +649,43 @@ class MessageStore:
         self.conn.execute("DELETE FROM scan_state WHERE network=?", (network,))
         return counts
 
-    def rewind(self, network: str, height: int) -> int:
+    def rewind(self, network: str, height: int, version: int | None = None) -> int:
         """Drop everything at or above `height`, for reorg handling.
 
         Testnet reorgs are common and can be deep. A scanner that does not unwind
         would keep messages from orphaned blocks forever, which is worse than
         missing them: they look real.
+
+        Only `network`'s rows. This store is shared by both chains' scanners and
+        its tables have no chain column, so a height means nothing on its own: a
+        one-block MAINNET reorg at 1,229,055 deleted every TESTNET announcement
+        (all above 1,500,000) and with them everybody's profile picture
+        (2026-09-29). A row's address carries its chain in its version byte, so
+        `version` picks this chain's rows; one whose address cannot be read is
+        kept, because a lost row is worse than an orphaned one. No `version`
+        keeps the old behaviour, for a store that only ever holds one chain.
         """
-        cur = self.conn.execute("DELETE FROM candidate WHERE height >= ?", (height,))
-        removed = cur.rowcount or 0
-        self.conn.execute("DELETE FROM message WHERE height >= ?", (height,))
-        self.conn.execute("DELETE FROM key_announcement WHERE height >= ?", (height,))
+        from ..script import b58check_decode
+
+        def ours(address: str) -> bool:
+            if version is None:
+                return True
+            try:
+                return b58check_decode(str(address or ""))[0] == version
+            except Exception:
+                return False
+
+        removed = 0
+        for table, column, key in (("candidate", "sender_addr", "txid"),
+                                   ("message", "sender_addr", "id"),
+                                   ("key_announcement", "address", "txid")):
+            rows = self.conn.execute(
+                f"SELECT {key}, {column} FROM {table} WHERE height >= ?",
+                (height,)).fetchall()
+            gone = [(row[0],) for row in rows if ours(row[1])]
+            self.conn.executemany(f"DELETE FROM {table} WHERE {key} = ?", gone)
+            if table == "candidate":
+                removed = len(gone)
         self.conn.execute(
             "UPDATE scan_state SET last_height=? WHERE network=? AND last_height >= ?",
             (height - 1, network, height),

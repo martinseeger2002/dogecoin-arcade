@@ -324,3 +324,29 @@ def test_a_transaction_that_looks_ours_is_named_in_the_log(caplog, store, params
 
     assert "marked" in caplog.text, caplog.text
     assert result.candidates == 0, "and it still keeps nothing it cannot read"
+
+
+def test_a_reorg_on_one_chain_leaves_the_other_chain_alone(tmp_path):
+    """The store is shared by both chains' scanners and its tables have no chain
+    column. A one-block MAINNET reorg at 1,229,055 rewound it "to 1,229,054" and
+    deleted every TESTNET announcement, all above 1,500,000 -- and with them
+    every profile picture on the feed (2026-09-29)."""
+    from arcade.config import NETWORKS
+    from arcade.script import b58check_encode
+
+    store = MessageStore(tmp_path / "m.sqlite")
+    test_address = b58check_encode(NETWORKS["test"].pubkeyhash_version, bytes(20))
+    main_address = b58check_encode(NETWORKS["main"].pubkeyhash_version, bytes(20))
+    store.add_key_announcement("aa" * 32, test_address, b"\x02" + bytes(32), "fp1",
+                               1_515_000, 0, pfp="bb" * 32)
+    store.add_key_announcement("cc" * 32, main_address, b"\x03" + bytes(32), "fp2",
+                               1_229_055, 0)
+    store.conn.commit()
+
+    store.rewind("main", 1_229_055, version=NETWORKS["main"].pubkeyhash_version)
+    left = {row[0] for row in store.conn.execute("SELECT txid FROM key_announcement")}
+    assert left == {"aa" * 32}, "the testnet profile survives a mainnet reorg"
+
+    store.rewind("test", 1_515_000, version=NETWORKS["test"].pubkeyhash_version)
+    assert store.conn.execute("SELECT COUNT(*) FROM key_announcement").fetchone()[0] == 0, \
+        "and a testnet reorg still unwinds testnet"

@@ -202,7 +202,8 @@ class Scanner:
             break
 
         result.reorg_depth = height - probe
-        self.store.rewind(self.params.name, probe + 1)
+        self.store.rewind(self.params.name, probe + 1,
+                          version=self.params.pubkeyhash_version)
         log.warning("reorg: rewound messaging store to height %d", probe)
         return max(probe + 1, floor)
 
