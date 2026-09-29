@@ -710,4 +710,24 @@ document.body.dataset.selfRefreshing = "yes";
 document.addEventListener("arcade:changed", () => { draw().catch(() => {}); });
 document.body.dataset.meReady = "yes";
 </script>
+{# At the very bottom, and nowhere else in the app but the sign-in page (the operator,
+   2026-09-28). #}
+<div style="text-align:center;margin:40px 0 10px">
+  <button type="button" class="small ghost" id="sign-out">Sign out</button>
+</div>
+  <script type="module">
+  // Sign out, so somebody can join or sign in as another account here (the operator,
+  // 2026-09-28). What this browser holds of the account is saved first, then
+  // forgotten; the account itself is on the chain and in its sealed copy.
+  document.getElementById("sign-out").onclick = async (e) => {
+    const button = e.currentTarget;
+    if (!(await arcadeAsk("Sign out?", "Your wallet locks and this browser forgets your "
+        + "messages and address book. They are kept safely, sealed, and come back when you "
+        + "sign in again with your name and password.", "Sign out"))) return;
+    button.disabled = true; button.textContent = "Signing out\u2026";
+    const wallet = await import("/wallet.js");
+    await wallet.signOut(typeof ARCADE_CHAIN !== "undefined" ? ARCADE_CHAIN : null);
+    location.href = "/join";
+  };
+  </script>
 {% endblock %}

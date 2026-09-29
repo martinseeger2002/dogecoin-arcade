@@ -341,7 +341,8 @@ function wire() {
   };
 
   $("signout").onclick = async () => {
-    await fetch("/auth/logout", {method: "POST"});
+    const wallet = await import("/wallet.js");
+    await wallet.signOut(typeof ARCADE_CHAIN !== "undefined" ? ARCADE_CHAIN : null);
     location.reload();
   };
 }

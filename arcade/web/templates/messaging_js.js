@@ -387,7 +387,39 @@ const PARTS = "parts";
 //: to finish. (The address book shares the same database, in `book`.)
 const SHELVES = 3;
 
-function shelf(mode) {
+//: Whose copy this browser holds. The address book, the block list and the read
+//: mail live in one database per browser, and follow the account through the
+//: node (syncMailbox, sealed). So when a DIFFERENT account signs in here, the
+//: old copy is cleared first -- otherwise the next sync would merge the first
+//: account's contacts and letters into the second's (2026-09-28: sign
+//: out so somebody can sign in with a different account). The first account
+//: seen after this change keeps what is here: it is whoever used this browser.
+const OWNER = "arcade.owner";
+const ready = (async () => {
+  const me = String(globalThis.ARCADE_ME || "").toLowerCase();
+  if (!me) return;
+  let owner = null;
+  try { owner = localStorage.getItem(OWNER); } catch (e) { return; }
+  if (owner && owner !== me) await wipeLocal();
+  try { localStorage.setItem(OWNER, me); } catch (e) {}
+})();
+
+/** Forget this browser's copy of the account's mail, address book and block
+ *  list. The node keeps the sealed copy; the next sign-in brings it back. */
+export async function wipeLocal() {
+  for (const key of ["arcade.book.gone", "arcade.blocked.gone", "arcade.blocked", OWNER]) {
+    try { localStorage.removeItem(key); } catch (e) {}
+  }
+  await new Promise((ok) => {
+    try {
+      const gone = indexedDB.deleteDatabase(READ);
+      gone.onsuccess = gone.onerror = gone.onblocked = () => ok();
+    } catch (e) { ok(); }
+  });
+}
+
+async function shelf(mode) {
+  await ready;
   return new Promise((ok, no) => {
     const open = indexedDB.open(READ, SHELVES);
     open.onupgradeneeded = () => make(open.result);
@@ -397,7 +429,8 @@ function shelf(mode) {
   });
 }
 
-function partShelf(mode) {
+async function partShelf(mode) {
+  await ready;
   return new Promise((ok, no) => {
     const open = indexedDB.open(READ, SHELVES);
     open.onupgradeneeded = () => make(open.result);
@@ -1091,6 +1124,7 @@ export async function programAnswers(me, after) {
  */
 
 async function bookShelf(mode) {
+  await ready;
   return new Promise((ok, no) => {
     const open = indexedDB.open(READ, SHELVES);
     open.onupgradeneeded = () => make(open.result);

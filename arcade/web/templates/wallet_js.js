@@ -1509,6 +1509,23 @@ export function remember(phrase) {
   try { if (TABS) TABS.postMessage({phrase}); } catch (e) {}
 }
 
+/** Sign out of this node on this browser (2026-09-28): save what is not
+ *  yet saved (the sealed mailbox), then forget this browser's copy, the unlocked
+ *  wallet in every tab, and the session. What the account owns stays on the
+ *  chain and in its sealed copy on the node; signing in again brings it back. */
+export async function signOut(chain) {
+  try {
+    const held = chain ? await opened(chain) : null;
+    if (held) {
+      const {mail, me} = await messenger(held);
+      await Promise.race([mail.syncMailbox(me), new Promise((ok) => setTimeout(ok, 6000))]);
+    }
+  } catch (e) { /* nothing unsaved is worth staying signed in for */ }
+  try { (await import("/messaging.js")).wipeLocal && await (await import("/messaging.js")).wipeLocal(); } catch (e) {}
+  forgetOpen();
+  await fetch("/auth/logout", {method: "POST"});
+}
+
 export function forgetOpen() {
   try { sessionStorage.removeItem(OPEN_WALLET); } catch (e) {}
   try { if (TABS) TABS.postMessage({locked: true}); } catch (e) {}
