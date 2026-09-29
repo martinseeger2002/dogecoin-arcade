@@ -194,7 +194,7 @@ let art=[];
  load();
 })();
 async function load(){const p=await j(W);const n=p?p.left:0;
- $('left').innerHTML=n?'<b>'+n+'</b> left · '+(p.prices||[]).map(x=>x/1e8).join(' / ')+' coins each':'Nothing left on this mintpad right now.';
+ $('left').innerHTML=n?'<b>'+n+'</b> left · '+((p.price_texts&&p.price_texts.length)?p.price_texts.join(' / '):(p.prices||[]).map(x=>x/1e8).join(' / ')+' coins')+' each':'Nothing left on this mintpad right now.';
  $('go').hidden=!n;return p}
 function spin(id){const r=$('reel'),s=$('strip');
  if(!r||!s){const cv=$('cover');if(cv){cv.src=C+id;cv.style.boxShadow='0 0 0 3px #43e8ff,0 0 40px #43e8ffb3'}return}const c=[...s.children];let a=c.findIndex(e=>e.dataset.id===id);if(a<0)a=0;

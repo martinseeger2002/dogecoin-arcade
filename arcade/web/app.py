@@ -11623,6 +11623,14 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             return
 
+    def _price_text(chain, listing: dict) -> str:
+        """What a listing costs, as a card says it: "0.5 coins" or "200 PLASMA"."""
+        swap = _listing_swap(bytes.fromhex(str(listing.get("payload") or "")))
+        if swap is not None and swap.take.kind == inscriptionlib.LEG_TOKEN:
+            return swaplib.describe_leg(swaplib.leg_json(swap.take, state.token_index(chain)))
+        coins = int(listing.get("price") or 0) / listingslib.COIN
+        return f"{coins:.8f}".rstrip("0").rstrip(".") + (" coin" if coins == 1 else " coins")
+
     def _open_listing_of(chain, piece: str) -> dict[str, Any] | None:
         """The newest open listing in the book that sells this inscription.
 
@@ -11638,9 +11646,12 @@ def create_app(state: AppState) -> FastAPI:
             if _sold_piece(row) != piece:
                 continue
             swap = _listing_swap(bytes.fromhex(row["payload"]))
-            if swap.take.kind != inscriptionlib.LEG_COINS:
+            if swap.take.kind not in (inscriptionlib.LEG_COINS, inscriptionlib.LEG_TOKEN):
                 continue
             return {"id": row["id"], "seller": row["owner"],
+                    "price_text": _price_text(chain, row),
+                    "token": swap.take.property_id
+                             if swap.take.kind == inscriptionlib.LEG_TOKEN else None,
                     "sats": int(row["price"]),
                     "price": f"{int(row['price']) / listingslib.COIN:.8f}"
                              .rstrip("0").rstrip("."),
@@ -11806,11 +11817,27 @@ def create_app(state: AppState) -> FastAPI:
                 {"detail": f"this account has no {chain.label.lower()} "
                            f"address yet"}, status_code=400)
         try:
-            price = parse_amount(str(said.get("amount", "")), True)
-            if price <= 0:
-                raise ValueError("a listing names a price, and that is nothing")
-            _above_dust(price, "price")
             index = state.token_index(chain)
+            token = int(said.get("token") or 0)
+            if token:
+                # Priced in a token (2026-09-29): the swap takes N of it, and the
+                # engine moves the token and the piece in the same block or
+                # neither. The leg pays out no coins; the payload is the price.
+                prop = index.property(token)
+                if prop is None:
+                    raise ValueError(f"there is no token {token}")
+                units = parse_amount(str(said.get("amount", "")), prop["divisible"])
+                if units <= 0:
+                    raise ValueError("a listing names a price, and that is nothing")
+                take = inscriptionlib.Leg(inscriptionlib.LEG_TOKEN, property_id=token,
+                                          amount=units)
+                price = 0
+            else:
+                price = parse_amount(str(said.get("amount", "")), True)
+                if price <= 0:
+                    raise ValueError("a listing names a price, and that is nothing")
+                _above_dust(price, "price")
+                take = inscriptionlib.Leg(inscriptionlib.LEG_COINS, amount=price)
             row = index.inscription(contentlib._key(str(said.get("piece", ""))))
             if row is None:
                 raise ValueError("no such inscription on this node")
@@ -11818,13 +11845,10 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError(
                     "only whoever holds a piece can price it, and this one "
                     f"is held by {row['owner']}")
-            naming = _ask_payload(
-                row, inscriptionlib.Leg(inscriptionlib.LEG_COINS, amount=price))
+            naming = _ask_payload(row, take)
             piece = swaplib.describe_leg(swaplib.leg_json(
                 swaplib.leg_of({"inscription": row["txid"]}, index), index))
-            cost = swaplib.describe_leg(swaplib.leg_json(
-                inscriptionlib.Leg(inscriptionlib.LEG_COINS, amount=price),
-                index))
+            cost = swaplib.describe_leg(swaplib.leg_json(take, index))
             what = f"list {piece} for {cost}"
             with contextlib.closing(index.open()) as db:
                 held = _smallest_two_first([c for c in utxoslib.unspent(db, address)
@@ -11846,6 +11870,8 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         return JSONResponse({"chain": chain.network,
                              "price": price, "number": row["number"],
+                             **({"take": swaplib.leg_json(take, index)}
+                                if take.kind == inscriptionlib.LEG_TOKEN else {}),
                              **leg.as_json()})
 
     @app.get("/account/claimpools")
@@ -12711,7 +12737,14 @@ def create_app(state: AppState) -> FastAPI:
                 if first[:1] == b"\x6a" and _token_lot(listingslib._payload_of(outs[0])):
                     raise ValueError("a token lot is only ever a claim: give it a phrase")
             _quota(account, "list", nbytes=len(bytes.fromhex(raw)))
-            price = parse_amount(str(said.get("amount", "")), True)
+            # Nothing in coins is a price only when the sale takes a token
+            # (2026-09-29): checked against the leg's own bytes below.
+            said_amount = str(said.get("amount", "")).strip()
+            try:
+                token_priced = float(said_amount or "x") == 0
+            except ValueError:
+                token_priced = False
+            price = 0 if token_priced else parse_amount(said_amount, True)
             with chain.rpc() as rpc:
                 listing = state.listings.register(
                     rpc, raw=raw,
@@ -12725,6 +12758,12 @@ def create_app(state: AppState) -> FastAPI:
         except (listingslib.ListingError, fundinglib.FundingError,
                 swaplib.SwapError, AmountError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
+        if token_priced:
+            swap = _listing_swap(bytes.fromhex(str(listing.get("payload") or "")))
+            if swap is None or swap.take.kind != inscriptionlib.LEG_TOKEN:
+                state.listings.close(listing["id"], "withdrawn")
+                return JSONResponse({"detail": "a listing names a price, and that is "
+                                     "nothing"}, status_code=400)
         # Both of the coins this leg spends are gone as far as this account is
         # concerned, from this moment and not from whenever a buyer turns up.
         # Nothing this account broadcasts retires them -- the transaction that
@@ -12908,9 +12947,23 @@ def create_app(state: AppState) -> FastAPI:
             # sent its own tokens, and the buyer would have paid for nothing.
             # So a lot always ends with an output of the buyer's own.
             outputs = list(outputs) + [(fees.DUST_LIMIT, txbuild.p2pkh_script(address))]
-        cost = swaplib.describe_leg(swaplib.leg_json(
-            inscriptionlib.Leg(inscriptionlib.LEG_COINS,
-                               amount=int(listing["price"])), index))
+        take = named.take if named is not None else None
+        if take is not None and take.kind == inscriptionlib.LEG_TOKEN:
+            # Paid in the engine's ledger, not in this transaction: the buyer has
+            # to hold it when the block lands, pool sends and asks counted, or the
+            # swap fails and only its fee is spent.
+            left = index.balance(address, take.property_id) - index.pending_out(
+                address, take.property_id)
+            if left < take.amount:
+                raise swaplib.SwapError(
+                    f"this costs {swaplib.describe_leg(swaplib.leg_json(take, index))}, "
+                    "and this account does not hold that much that is not already on "
+                    "its way somewhere. Nothing was spent.")
+            cost = swaplib.describe_leg(swaplib.leg_json(take, index))
+        else:
+            cost = swaplib.describe_leg(swaplib.leg_json(
+                inscriptionlib.Leg(inscriptionlib.LEG_COINS,
+                                   amount=int(listing["price"])), index))
         what = f"buy {piece} for {cost}"
         with contextlib.closing(index.open()) as db:
             unsigned = fundinglib.build_partial(
@@ -12961,6 +13014,7 @@ def create_app(state: AppState) -> FastAPI:
                              "seller": listing["owner"],
                              "seller_tag": _tags_for([listing["owner"]]).get(listing["owner"], ""),
                              "price": int(listing["price"]),
+                             "price_text": _price_text(chain, listing),
                              "claim": bool(listing.get("claim_hash")),
                              "piece": _piece_called(chain, listing),
                              "lot": bool(_token_lot(bytes.fromhex(
@@ -15439,6 +15493,7 @@ def create_app(state: AppState) -> FastAPI:
             if not got or got.get("collection") != name or got["owner"] != creator:
                 continue
             out.append({"listing": row["id"], "piece": piece, "price": int(row["price"]),
+                        "price_text": _price_text(chain, row),
                         "number": got["number"], "edition": got.get("edition"),
                         "maker": got["creator"]})
         return out
@@ -15516,6 +15571,7 @@ def create_app(state: AppState) -> FastAPI:
         pick = _random.choice(rows) if rows else None
         return contentlib._json({"left": len(rows), "next": pick,
                                  "prices": sorted({r["price"] for r in rows}),
+                                 "price_texts": sorted({r["price_text"] for r in rows}),
                                  "listed": sorted({r["piece"] for r in rows})})
 
     #: How an account's mintpad page looks (2026-09-26: "several different

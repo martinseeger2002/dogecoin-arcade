@@ -352,7 +352,7 @@
 <div class="panel row" style="align-items:center;gap:10px">
   {% if listed and listed.theirs %}
     <div style="flex:1 1 200px"><span class="pill ok">for sale</span>
-      <strong>{{ listed.price }} coins</strong>
+      <strong>{{ listed.price_text }}</strong>
       <span class="muted" style="font-size:.82rem">&middot; anybody can buy it, open for {{ listed.left }}</span></div>
     <a class="btn ghost small" href="/me/nfts">Change the price or cancel</a>
   {% else %}
@@ -549,14 +549,14 @@
 <div class="panel" id="buy-panel">
   <div class="row" style="align-items:center;gap:12px">
     <div style="flex:1 1 200px">
-      <strong style="font-size:1.25rem">{{ listed.price }} coins</strong>
+      <strong style="font-size:1.25rem">{{ listed.price_text }}</strong>
       <div class="muted" style="font-size:.82rem">listed by
         {% if listed.tag %}<strong>@{{ listed.tag }}</strong>{% else %}<span class="mono">{{ listed.seller[:12] }}…</span>{% endif %}
         &middot; open for {{ listed.left }}</div>
     </div>
     {% if viewer == 'account' %}
     <button type="button" id="buy-it"
-      {{ 'disabled' if coins * 100000000 < listed.sats }}>Buy it for {{ listed.price }}</button>
+      {{ 'disabled' if not listed.token and coins * 100000000 < listed.sats }}>Buy it for {{ listed.price_text }}</button>
     {% else %}
     <a class="btn" href="/me">Sign in to buy it</a>
     {% endif %}
@@ -565,7 +565,7 @@
   <p class="msg err" id="buy-trouble" hidden></p>
   <p class="msg ok" id="buy-news" hidden></p>
   <p class="muted" style="font-size:.82rem;margin:8px 0 0">
-    {%- if coins * 100000000 < listed.sats %}This account holds
+    {%- if not listed.token and coins * 100000000 < listed.sats %}This account holds
       {{ "%.4f"|format(coins) }} {{ chain.label|lower }} coins, which is less
       than the price.
     {%- else %}One transaction: the seller already signed the piece over at this
@@ -620,7 +620,7 @@
             + "and the coins move in one transaction, checked in this browser.",
             `Buy it for ${coins} coins`))) {
         button.disabled = false;
-        button.textContent = "Buy it for {{ listed.price }}";
+        button.textContent = "Buy it for {{ listed.price_text }}";
         return;
       }
       const out = await wallet.buy(held, offer);
@@ -633,7 +633,7 @@
     } catch (e) {
       say(String(e.message || e));
       button.disabled = false;
-      button.textContent = "Buy it for {{ listed.price }}";
+      button.textContent = "Buy it for {{ listed.price_text }}";
     }
   };
   </script>

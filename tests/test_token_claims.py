@@ -392,3 +392,44 @@ def test_tokens_on_their_way_out_cannot_be_sent_again(node):
     assert _held(state, book["address"], book["pid"])[0] == HELD - 300 * COIN
     after = who.post("/account/token/send", json={**ask, "amount": "200"})
     assert after.status_code == 200, "once mined, the rest is spendable again"
+
+
+def test_an_nft_sold_for_a_token_moves_both_in_one_transaction(node):
+    """2026-09-29: sell pieces "FOR PLASMA (token #19), not coins", game-agnostic:
+    any piece, any token. The swap takes the token; the engine moves the token
+    and the piece in the same block, or neither."""
+    from test_account_offer import _inscribed
+    buyer_book = _bookcoin(node, 103)
+    state, rpc = buyer_book["state"], buyer_book["rpc"]
+    seller, s_secret, s_pubkey, s_address = _seated(node[0], state, rpc, 104)
+    piece = _inscribed(seller, state, rpc, s_secret, s_pubkey, "a fighter")
+
+    leg = seller.post("/account/list", json={"piece": piece, "amount": "200",
+                                             "token": buyer_book["pid"]})
+    assert leg.status_code == 200, leg.text
+    assert leg.json()["price"] == 0 and leg.json()["take"]["kind"] == "token"
+    filed = seller.post("/account/list/sign", json={
+        "raw": leg.json()["raw"], "amount": "0", "pubkey": s_pubkey.hex(),
+        "signatures": [_sign(s_secret, bytes.fromhex(d), funding.SINGLE_ANYONECANPAY).hex()
+                       for d in leg.json()["sighashes"]]})
+    assert filed.status_code == 200, filed.text
+    listing = filed.json()["listed"]
+
+    poor = _seated(node[0], state, rpc, 105)
+    refused = poor[0].post("/account/buy", json={"listing": listing})
+    assert refused.status_code == 400 and "does not hold" in refused.json()["detail"]
+
+    who, b_secret, b_pubkey = buyer_book["client"], buyer_book["secret"], buyer_book["pubkey"]
+    asked = who.post("/account/buy", json={"listing": listing})
+    assert asked.status_code == 200, asked.text
+    assert asked.json()["price_text"].startswith("200 "), asked.json()["price_text"]
+    done = who.post("/account/buy/sign", json={
+        "raw": asked.json()["raw"], "listing": listing, "pubkey": b_pubkey.hex(),
+        "signatures": [_sign(b_secret, bytes.fromhex(d)).hex()
+                       for d in asked.json()["sighashes"]]})
+    assert done.status_code == 200, done.text
+    _settled(state, rpc)
+    index = state.token_index(state.messaging)
+    assert index.inscription(piece)["owner"] == buyer_book["address"], "the buyer holds it"
+    assert _held(state, s_address, buyer_book["pid"])[0] == 200 * COIN, "the seller was paid"
+    assert _held(state, buyer_book["address"], buyer_book["pid"])[0] == HELD - 200 * COIN

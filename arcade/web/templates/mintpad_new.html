@@ -79,6 +79,9 @@
   <p id="mp-which" class="muted" style="margin-top:0"></p>
   <label for="mp-amount">Price per piece, in {{ chain.label|lower }} coins</label>
   <input id="mp-amount" name="price" type="text" inputmode="decimal" autocomplete="off" placeholder="5">
+  <label class="muted" style="display:block;margin-top:8px;font-size:.86rem">Paid in
+    <input id="mp-token" type="text" inputmode="numeric" autocomplete="off"
+           placeholder="coins, or a token's number" style="width:190px"></label>
   <h3 style="margin:18px 0 8px">Look</h3>
   <div class="mplooks" role="radiogroup" aria-label="How your mintpad looks">
     {% for key, words in templates.items() %}
@@ -245,7 +248,8 @@ $("mp-go").onclick = async () => {
   for (const p of todo) {
     for (let tries = 0; tries < 40; tries++) {
       try {
-        const leg = await wallet.offerListing(p.txid, amount, CHAIN.network);
+        const leg = await wallet.offerListing(p.txid, amount, CHAIN.network,
+                                              Number(($("mp-token").value || "").replace(/^#/, "")) || 0);
         await wallet.list(keys, leg, {days: 30});
         done += 1; bar(done);
         say(`${done} of ${todo.length} up.`);

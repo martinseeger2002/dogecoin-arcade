@@ -64,7 +64,10 @@
     any time before it sells, and sending the piece away cancels it too.</p>
   <div class="row">
     <div style="flex:1"><input autocomplete="off" id="list-price" class="mono"
-      spellcheck="false" inputmode="decimal" placeholder="price in coins"></div>
+      spellcheck="false" inputmode="decimal" placeholder="price"></div>
+    <input autocomplete="off" id="list-token" class="mono" inputmode="numeric"
+      placeholder="token # (blank = coins)" style="flex:0 0 150px"
+      title="Leave blank to sell for coins, or give a token's number to sell for that token">
     <button type="button" id="list-it">Sell</button>
     <button type="button" class="ghost" id="list-cancel">Cancel</button>
   </div>
@@ -374,7 +377,8 @@ $("list-it").onclick = async () => {
       await wallet.checked(offer, keys);
       await wallet.confirm(keys, offer);
     }
-    const leg = await wallet.offerListing(piece.txid, amount, chain.network);
+    const leg = await wallet.offerListing(piece.txid, amount, chain.network,
+                                          Number(($("list-token").value || "").replace(/^#/, "")) || 0);
     await wallet.checkedListing(leg, keys);
     const filed = await wallet.list(keys, leg, {days: 30, claim: phrase});
     if (phrase) {

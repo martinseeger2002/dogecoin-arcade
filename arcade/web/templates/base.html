@@ -869,16 +869,15 @@ async function claimFor(source, m, page = "") {
     const offer = await wallet.offerBuy(listing, ARCADE_CHAIN.network,
                                         String(m.secret || ""), page);
     const shown = await wallet.checked(offer, held);
-    const coins = String(Number(offer.price) / 1e8);
-    const unit = coins === "1" ? "coin" : "coins";
+    const price = offer.price_text || `${Number(offer.price) / 1e8} coins`;
     const seller = offer.seller_tag ? "@" + offer.seller_tag : "its owner";
     const what = offer.piece || "this piece";
     const lot = !!offer.lot;                     // tokens, not a piece (token claims)
     const ok = await arcadeAsk(`Claim ${what}?`,
       `${seller} set ${lot ? "these" : "it"} aside for whoever got here. `
-      + `${lot ? "They cost" : "It costs"} ${coins} ${unit} to ${seller}`
-      + ` and a network fee of ${shown.coinsOf(shown.fee)}. The ${lot ? "tokens" : "piece"} and the coins move `
-      + "in one transaction, checked in this browser.", `Claim ${lot ? "them" : "it"} for ${coins} ${unit}`);
+      + `${lot ? "They cost" : "It costs"} ${price} to ${seller}`
+      + ` and a network fee of ${shown.coinsOf(shown.fee)}. The ${lot ? "tokens" : "piece"} and the payment move `
+      + "in one transaction, or neither does.", `Claim ${lot ? "them" : "it"} for ${price}`);
     if (!ok) { answer({error: "Cancelled."}); return; }
     const out = await wallet.buy(held, offer);
     answer({ok: true, txid: out.txid || ""});
@@ -968,13 +967,14 @@ window.addEventListener("message", async (e) => {
     const held = (await wallet.opened(ARCADE_CHAIN)) || await arcadeKeys(ARCADE_CHAIN);
     const offer = await wallet.offerBuy(String(m.listing || ""), ARCADE_CHAIN.network);
     const shown = await wallet.checked(offer, held);
-    const coins = String(Number(offer.price) / 1e8);
+    // Coins or a token (2026-09-29): said as the node reads it off the sale.
+    const price = offer.price_text || `${Number(offer.price) / 1e8} coins`;
     const seller = offer.seller_tag ? "@" + offer.seller_tag : "the seller";
-    const ok = await arcadeAsk(`Mint for ${coins} coins?`,
-      `${coins} coins go to ${seller} for one piece from this mintpad`
+    const ok = await arcadeAsk(`Mint for ${price}?`,
+      `${price} to ${seller} for one piece from this mintpad`
       + " (a random one: you see which when it lands)"
-      + `. Network fee ${shown.coinsOf(shown.fee)}. The piece and the coins move in `
-      + "one transaction, checked in this browser.", `Mint for ${coins} coins`);
+      + `. Network fee ${shown.coinsOf(shown.fee)}. The piece and the payment move in `
+      + "one transaction, or neither does.", `Mint for ${price}`);
     if (!ok) { answer({error: "Cancelled."}); return; }
     const out = await wallet.buy(held, offer);
     answer({ok: true, txid: out.txid || ""});

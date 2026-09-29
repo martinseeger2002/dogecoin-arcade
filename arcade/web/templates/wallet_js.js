@@ -513,11 +513,11 @@ export async function confirm(wallet, offer) {
  * the ones this browser worked out for itself.
  */
 
-export async function offerListing(piece, amount, chain) {
+export async function offerListing(piece, amount, chain, token = 0) {
   return working(async () => {
     const asked = await fetch("/account/list", {
       method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({piece, amount, chain: chain || ""}),
+      body: JSON.stringify({piece, amount, chain: chain || "", token: Number(token) || 0}),
     });
     const leg = await asked.json();
     if (!asked.ok) throw new Error(leg.detail || "that cannot be listed");
