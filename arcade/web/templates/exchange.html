@@ -260,6 +260,18 @@
 
   {% if token_bids %}
   <h2>Buy orders on your tokens</h2>
+  <script>
+  /* Decline hides it from this list only: the order stays on the book, and
+     anybody may still sell into it (2026-09-28). */
+  document.addEventListener("click", async function (e) {
+    var b = e.target.closest && e.target.closest("[data-bid-decline]");
+    if (!b) return;
+    b.disabled = true;
+    var r = await fetch("/account/token-bid/decline", {method: "POST",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify({key: b.dataset.bidDecline})});
+    if (r.ok) { var row = b.closest(".offerrow"); if (row) row.remove(); } else { b.disabled = false; }
+  });
+  </script>
   <div class="panel">
     {% for b in token_bids %}
     <div class="offerrow">
@@ -267,7 +279,8 @@
         {{ wall(b.name) }}</strong> at <strong>{{ b.price }}</strong> each
         {%- if b.mode %} <span class="muted" style="font-size:.8rem">&middot;
           {{ 'fills at once' if b.mode == 'away' else 'fills when they are back' }}</span>{% endif %}</div>
-      <div class="ofdo"><a class="btn small" href="/exchange/pair/{{ b.property_id }}?sell={{ b.price|urlencode }}&amp;amount={{ b.amount|urlencode }}">Sell to them</a></div>
+      <div class="ofdo"><a class="btn small" href="/exchange/pair/{{ b.property_id }}?sell={{ b.price|urlencode }}&amp;amount={{ b.amount|urlencode }}">Sell to them</a>
+        <button type="button" class="ghost small" data-bid-decline="{{ b.key }}">Decline</button></div>
     </div>
     {% endfor %}
   </div>

@@ -10091,6 +10091,21 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"offer": offer.id, "chain": chain.network,
                              "count": len(coins), **unsigned.as_json()})
 
+    @app.post("/account/token-bid/decline")
+    def account_token_bid_decline(request: Request, payload: Any = Body(None)):
+        """Take a buy order on one of your tokens off YOUR Offers list (the operator,
+        2026-09-28: decline it, "but the order remain on the books"). Nothing is
+        broadcast and the order is untouched: anybody may still sell into it."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        key = str(said.get("key") or "").strip()
+        if not re.fullmatch(r"[0-9a-f]{64}|standing-[0-9a-f]{8,64}", key):
+            return JSONResponse({"detail": "name the buy order"}, status_code=400)
+        name = f"declined_bids:{account.pubkey}"
+        kept = [k for k in (state.setting(name, []) or []) if k != key][-499:] + [key]
+        state.set_setting(name, kept)
+        return JSONResponse({"declined": key})
+
     @app.post("/account/offer/decline")
     def account_offer_decline(request: Request, payload: Any = Body(None)):
         """Decline an offer on a piece of yours: it leaves your offers and the
@@ -17342,22 +17357,27 @@ def create_app(state: AppState) -> FastAPI:
             # "where does the creator of a token see if someone puts in an order
             # to buy? ... on exchange>offers"): the chain's bids and the ones this
             # node holds, best price first.
+            looker = signed_in(request) if data["viewer"] == "account" else None
+            declined_bids = set(state.setting(f"declined_bids:{looker.pubkey}", []) or []) \
+                if looker is not None else set()
             if tab == "offers" and data["owned"]:
                 from fractions import Fraction
                 for prop in _token_props(index):
                     if prop.get("issuer") not in data["owned"]:
                         continue
                     pid, whole = prop["property_id"], prop["divisible"]
-                    wants = [(Fraction(b["coins"], b["tokens"]), b["tokens"], b["address"], "")
+                    wants = [(Fraction(b["coins"], b["tokens"]), b["tokens"], b["address"], "",
+                              b["txid"])
                              for b in index.book(pid)["bids"] if b.get("tokens")]
                     wants += [(Fraction(s["coins"], s["units"]), s["left_units"], s["buyer"],
-                               "away" if s["away"] else "back")
+                               "away" if s["away"] else "back", f"standing-{s['id']}")
                               for s in _standing.open_on(chain.network, pid)]
-                    for price, units, buyer, mode in sorted(wants, key=lambda w: -w[0]):
-                        if buyer in data["owned"]:
+                    for price, units, buyer, mode, key in sorted(wants, key=lambda w: -w[0]):
+                        if buyer in data["owned"] or key in declined_bids:
                             continue
                         each = f"{_coins_each(price, whole):.8f}".rstrip("0").rstrip(".")
                         data["token_bids"].append({
+                            "key": key,
                             "property_id": pid, "name": prop["name"], "price": each,
                             "amount": format_amount(units, whole), "buyer": buyer, "mode": mode})
                 data["tags"].update(_tags_for([b["buyer"] for b in data["token_bids"]]))

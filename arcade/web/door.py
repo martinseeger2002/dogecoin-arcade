@@ -221,6 +221,7 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/offer/bid", "/account/offer/bid-build", "/account/offer/withdraw",
                "/account/dust/sweep",
                "/account/offer/decline",
+               "/account/token-bid/decline",
                # paying the operator for extra room (the account's own coins)
                "/account/boost",
                # buy orders this node holds (standing.py): place, lots, sign, cancel

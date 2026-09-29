@@ -113,3 +113,16 @@ def test_a_token_creator_sees_buy_orders_on_offers(node):
     assert "Buy orders on your tokens" in page
     assert f"/exchange/pair/{pid}?sell=0.25&amp;amount=7" in page, "and a way to sell to them"
     assert "Buy orders on your tokens" not in other, "only the token's creator sees it"
+
+    # Declined: gone from the creator's list, still on the book (2026-09-28).
+    import re as _re
+    key = _re.search(r'data-bid-decline="([^"]+)"', page).group(1)
+    assert maker["client"].post("/account/token-bid/decline", json={"key": key}).status_code == 200
+    state.public = True
+    try:
+        page = maker["client"].get("/exchange?tab=offers").text
+        book = maker["client"].get(f"/exchange/pair/{pid}").text
+    finally:
+        state.public = False
+    assert f'data-bid-decline="{key}"' not in page
+    assert "fills when they are back" in book, "the order itself stays on the book"
