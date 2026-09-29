@@ -10441,6 +10441,8 @@ def create_app(state: AppState) -> FastAPI:
                 resting = sum(o["tokens"] for o in
                               index.book(prop["property_id"])["asks"]
                               if o["address"] == address and o.get("pending"))
+                # And sends in the pool: the same tokens cannot also be sold.
+                resting += index.pending_sends(address, prop["property_id"])
                 if held - resting < units:
                     raise tokenlib.TokenError(
                         f"this account holds "
@@ -14405,11 +14407,16 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError("that is this account's own address")
             amount = parse_amount(str(said.get("amount", "")),
                                        prop["divisible"])
-            held = index.balance(address, property_id)
+            # Read from the pool as well as the ledger (2026-09-29): what is
+            # already on its way out in a send or an ask is not here to send.
+            going = index.pending_out(address, property_id)
+            held = index.balance(address, property_id) - going
             if amount > held:
                 raise tokenlib.TokenError(
-                    f"only {format_amount(held, prop['divisible'])} "
-                    f"of {prop['name']} is here to send.")
+                    f"only {format_amount(max(0, held), prop['divisible'])} "
+                    f"of {prop['name']} is here to send"
+                    + (f" ({format_amount(going, prop['divisible'])} more is already "
+                       "on its way out, waiting for its block)" if going else "") + ".")
             body = tokenlib.send_payload(property_id, amount)
             outputs = _class_c_or_b(chain, address, body,
                                     _coin_pubkey(account.pubkey, chain),
@@ -14433,8 +14440,17 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         except Exception as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
+        def still_here(idx=index, addr=address, pid=property_id, want=amount, p=prop):
+            """Asked again under the lock at broadcast: two sends offered before
+            either went out must not both go (2026-09-29)."""
+            left = idx.balance(addr, pid) - idx.pending_out(addr, pid)
+            if want > left:
+                raise ValueError(
+                    f"only {format_amount(max(0, left), p['divisible'])} of {p['name']} "
+                    "is left to send: another send of it is already on its way out, "
+                    "waiting for its block. Nothing was sent.")
         offer = _offers.add(account.pubkey, chain.network, unsigned,
-                            unsigned.what)
+                            unsigned.what, check=still_here)
         return JSONResponse({"offer": offer.id, "to": to,
                              "property_id": property_id, "name": prop["name"],
                              "chain": chain.network, **unsigned.as_json()})

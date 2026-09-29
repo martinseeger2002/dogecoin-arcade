@@ -1217,7 +1217,7 @@ class LedgerIndex:
 
         orders, cancels = [], []
         for row in self._pool_orders.values():
-            if row is None or row.get("takes"):
+            if row is None or row.get("takes") or row.get("sends"):
                 continue
             (cancels if row.get("cancels") else orders).append(row)
         if not cancels:
@@ -1249,6 +1249,23 @@ class LedgerIndex:
                 gone.add(txid)
         return [o for o in orders if o["txid"] not in gone], gone
 
+    def pending_sends(self, address: str, property_id: int) -> int:
+        """Units of a token this address is sending in the pool right now."""
+        self.pending_orders()                    # refreshes the pool read
+        return sum(int(row["amount"])
+                   for row in (getattr(self, "_pool_orders", {}) or {}).values()
+                   if row and row.get("sends") == property_id
+                   and row["address"] == address)
+
+    def pending_out(self, address: str, property_id: int) -> int:
+        """Everything of a token leaving this address in the pool: its sends,
+        and its asks, which the engine holds back when their block lands."""
+        orders, _ = self.pending_orders()
+        asks = sum(int(o["sale_amount"]) for o in orders
+                   if o["address"] == address and o["sale_property"] == property_id
+                   and not o.get("want_property"))
+        return self.pending_sends(address, property_id) + asks
+
     def pending_takes(self) -> dict[str, int]:
         """Resting asks somebody is taking in the pool: order txid -> units.
 
@@ -1275,6 +1292,15 @@ class LedgerIndex:
 
         base = {"txid": rtx.txid, "block_height": 0, "position": 0,
                 "address": rtx.sender, "reserved": 0, "pending": True}
+        if isinstance(msg, P.SimpleSend):
+            # A plain send in the pool (2026-09-29: "a bug that allows me to
+            # transfer more plasma to the game than what I have in my wallet if
+            # I just keep pressing the button"). Not an order, but its tokens
+            # leave the sender when its block lands, so a second send of the
+            # same balance is a send of nothing: `pending_sends` counts them.
+            return {**base, "sends": msg.property_id, "amount": int(msg.amount),
+                    "sale_property": msg.property_id, "want_property": 0,
+                    "sale_amount": 0, "want_amount": 0}
         if isinstance(msg, P.MetaDExTake):
             # Somebody settling a resting ask right now (type 29). Not an order
             # and not a cancel: `pending_takes` counts it against the order it

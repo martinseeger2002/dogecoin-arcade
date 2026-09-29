@@ -356,3 +356,39 @@ def test_a_prize_pool_inscribed_on_the_chain_pays_and_is_deleted_by_another(node
     after = who.get(f"/r/prizepool/{pool_txid}").json()
     assert after["deleted"] and not after["open"]
     assert who.get(f"/r/claimpool/{game}").json()["open"] is False
+
+
+def test_tokens_on_their_way_out_cannot_be_sent_again(node):
+    """2026-09-29: "a bug that allows me to transfer more plasma to the game
+    than what I have in my wallet if I just keep pressing the button while the
+    transaction is being confirmed. We're gonna have to read this stuff from
+    the mempool." """
+    book = _bookcoin(node, 101)
+    state, rpc, who = book["state"], book["rpc"], book["client"]
+    to = rpc.call("getnewaddress")
+    ask = {"property_id": book["pid"], "to": to, "amount": "300"}
+
+    first = who.post("/account/token/send", json=ask)
+    assert first.status_code == 200, first.text
+    # Two offered before either goes out: the second is refused at broadcast.
+    racing = who.post("/account/token/send", json=ask)
+    assert racing.status_code == 200, "only the pool can tell, and nothing is in it yet"
+    assert _signed(who, book["secret"], book["pubkey"], first).status_code == 200
+    late = who.post("/account/sign", json={
+        "offer": racing.json()["offer"], "pubkey": book["pubkey"].hex(),
+        "signatures": [_sign(book["secret"], bytes.fromhex(d)).hex()
+                       for d in racing.json()["sighashes"]]})
+    assert late.status_code == 400 and "on its way out" in late.json()["detail"], late.text
+
+    again = who.post("/account/token/send", json=ask)
+    assert again.status_code == 400 and "on its way out" in again.json()["detail"]
+    small = who.post("/account/token/send", json={**ask, "amount": "200"})
+    assert small.status_code == 200, "what is really left can still go"
+    sell = who.post("/account/order", json={"side": "ask", "property_id": book["pid"],
+                                            "amount": "300", "price": "0.01"})
+    assert sell.status_code == 400, "the pool's send counts against a sell order too"
+
+    _settled(state, rpc)
+    assert _held(state, book["address"], book["pid"])[0] == HELD - 300 * COIN
+    after = who.post("/account/token/send", json={**ask, "amount": "200"})
+    assert after.status_code == 200, "once mined, the rest is spendable again"
