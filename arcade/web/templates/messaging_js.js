@@ -470,8 +470,16 @@ async function rememberCursor(pubkey, cursor) {
 }
 
 async function keep(message) {
+  // Merged into what this browser already holds for the same transaction,
+  // never put over it: a letter read a second time -- the node re-filed its
+  // envelopes after the 2026-09-29 reorg wiped them -- must not lose what was
+  // added to it here (hidden, read, a group) or go back to "not in a block".
   const tx = await shelf("readwrite");
-  await awaited(tx.objectStore("mail").put(message));
+  const store = tx.objectStore("mail");
+  const held = message && message.txid ? await awaited(store.get(message.txid)) : null;
+  const merged = held ? {...held, ...message, height: message.height || held.height || 0}
+                      : message;
+  await awaited(store.put(merged));
 }
 
 export async function inbox() {
