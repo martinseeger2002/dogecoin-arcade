@@ -355,6 +355,9 @@ PAGE_MESSAGES = 60
 log = logging.getLogger(__name__)
 
 PAGE_INSCRIPTIONS = 24
+#: Tokens a page of /tokens shows, newest first (2026-09-29: "there's gonna be
+#: thousands of them eventually").
+PAGE_TOKENS = 50
 
 NAV = [
     ("/",             "Overview",     None,        True),
@@ -3858,7 +3861,8 @@ def create_app(state: AppState) -> FastAPI:
             purse["largest"] = purse["pieces"][0]
         return [by_token[k] for k in sorted(by_token)]
 
-    def _token_page_data(addresses: list[str] | None = None) -> dict[str, Any]:
+    def _token_page_data(addresses: list[str] | None = None,
+                         page: int | None = None) -> dict[str, Any]:
         """Everything /tokens shows, with the node's absence explained, not hidden.
 
         `addresses` says whose wallet the page is about. Left alone it is the
@@ -3878,11 +3882,22 @@ def create_app(state: AppState) -> FastAPI:
             "funded": [], "owned": set(),
             "pending": [], "node_error": None, "faces": {}, "my_pictures": [],
         }
+        data.update({"page": 1, "pages": 1, "total": 0})
         try:
             data["tokens"] = index.properties()
         except Exception as exc:
             data["node_error"] = f"the token index could not be read: {exc}"
             return data
+        if page is not None:
+            # Newest first, a page at a time: the numbers only grow, so the
+            # highest is the newest, and page 1 is where a new token appears.
+            everything = sorted(data["tokens"], key=lambda t: int(t["property_id"]),
+                                reverse=True)
+            data["total"] = len(everything)
+            data["pages"] = max(1, -(-len(everything) // PAGE_TOKENS))
+            data["page"] = max(1, min(int(page), data["pages"]))
+            at = (data["page"] - 1) * PAGE_TOKENS
+            data["tokens"] = everything[at:at + PAGE_TOKENS]
         # And the ones created a minute ago. This wallet already showed its
         # OWN from what it remembered broadcasting; anybody else's simply did
         # not exist for a block (D-146). Marked pending, never stored, and
@@ -6761,7 +6776,7 @@ def create_app(state: AppState) -> FastAPI:
         return RedirectResponse("/mintpad/new", status_code=303)
 
     @app.get("/tokens", response_class=HTMLResponse)
-    def tokens(request: Request):
+    def tokens(request: Request, page: int = 1):
         """Every token on the chain, and the way to make one.
 
         Whose way that is belongs to the door, not to the page. `/tokens` is a
@@ -6787,8 +6802,9 @@ def create_app(state: AppState) -> FastAPI:
             return render(request, "tokens.html", prepared=None,
                           account_address=address,
                           account_signed=account is not None,
-                          **_token_page_data([address] if address else []))
-        return render(request, "tokens.html", prepared=None, **_token_page_data())
+                          **_token_page_data([address] if address else [], page=page))
+        return render(request, "tokens.html", prepared=None,
+                      **_token_page_data(page=page))
 
 
     @app.post("/tokens/chain")

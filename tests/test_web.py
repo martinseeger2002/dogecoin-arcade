@@ -3133,3 +3133,28 @@ def test_the_pair_page_puts_yours_then_the_book_then_the_trades():
             / "arcade/web/templates/pair.html").read_text()
     assert (body.index(">Your orders<") < body.index(">Order book<")
             < body.index(">Recent trades<")), "2026-09-28"
+
+
+def test_tokens_are_paged_newest_first(client, monkeypatch):
+    """2026-09-29: "Tokens need to be paginated in the same way that the
+    inscriptions are, with the most recent on top ... there's gonna be
+    thousands of them eventually." """
+    from arcade import ledger
+    from arcade.web import app as webapp
+    app, _state = client
+    made = [{"property_id": n, "name": f"Coin {n:03d}", "issuer": "nSomebody",
+             "total_display": "1", "holder_count": 1, "test_ecosystem": False,
+             "managed": False, "ecosystem": 1, "data": "", "category": "",
+             "subcategory": "", "url": "", "divisible": True}
+            for n in range(3, 123)]                       # 120 tokens
+    monkeypatch.setattr(ledger.LedgerIndex, "properties", lambda self: list(made))
+    first = app.get("/tokens").text
+    assert "Coin 122" in first and "Coin 073" in first and "Coin 072" not in first
+    assert first.index("Coin 122") < first.index("Coin 121"), "newest on top"
+    assert "120, newest first" in first
+    assert 'href="/tokens?page=2"' in first and 'href="/tokens?page=3"' in first
+    third = app.get("/tokens?page=3").text
+    assert "Coin 022" in third and "Coin 003" in third and "Coin 023" not in third
+    assert "Older" not in third.split('class="pager"')[1][:2000]
+    assert "Coin 003" in app.get("/tokens?page=99").text, "past the end is the last page"
+    assert webapp.PAGE_TOKENS == 50

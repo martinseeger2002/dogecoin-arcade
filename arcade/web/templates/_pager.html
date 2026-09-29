@@ -1,0 +1,37 @@
+{% macro pager(page, pages, base) %}
+{% if pages > 1 %}
+{# Shared by /nfts and /tokens (2026-09-29: "tokens need to be paginated in the
+   same way"). Numbered, because inscriptions are numbered: page 40 is a place you can mean
+   to go, and walking 39 pages of cursors to reach it is not paging. #}
+<nav class="pager">
+  {% if page > 1 %}
+    <a class="btn ghost small" href="{{ base }}?page={{ page - 1 }}">Newer</a>
+  {% endif %}
+  {% set window = 2 %}
+  {% if page - window > 1 %}
+    <a class="btn ghost small" href="{{ base }}?page=1">1</a>
+    {% if page - window > 2 %}<span class="muted">…</span>{% endif %}
+  {% endif %}
+  {% for n in range(page - window, page + window + 1) %}
+    {% if 1 <= n <= pages %}
+      {% if n == page %}<span class="btn small on">{{ n }}</span>
+      {%- else %}<a class="btn ghost small" href="{{ base }}?page={{ n }}">{{ n }}</a>
+      {%- endif %}
+    {% endif %}
+  {% endfor %}
+  {% if page + window < pages %}
+    {% if page + window < pages - 1 %}<span class="muted">…</span>{% endif %}
+    <a class="btn ghost small" href="{{ base }}?page={{ pages }}">{{ pages }}</a>
+  {% endif %}
+  {% if page < pages %}
+    <a class="btn ghost small" href="{{ base }}?page={{ page + 1 }}">Older</a>
+  {% endif %}
+  <form method="get" action="{{ base }}" class="row" style="gap:6px;margin-left:auto">
+    <label class="muted" for="jump" style="margin:0">Page</label>
+    <input autocomplete="off" type="number" name="page" id="jump" min="1"
+           max="{{ pages }}" value="{{ page }}" style="width:5.5rem">
+    <button class="ghost small" type="submit">Go</button>
+  </form>
+</nav>
+{% endif %}
+{% endmacro %}

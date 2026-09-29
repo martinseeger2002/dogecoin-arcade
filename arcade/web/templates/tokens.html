@@ -81,7 +81,9 @@
   {% include "_token_create_form.html" %}
 {% endif %}
 </div>
-<h2>All tokens</h2>
+{% from "_pager.html" import pager %}
+<h2>All tokens{% if total > 0 %} <span class="muted" style="font-size:.9rem;font-weight:400">
+  {{ "{:,}".format(total) }}, newest first</span>{% endif %}</h2>
 <div class="panel">
 {% if tokens or pending_tokens %}
   <table class="wallets">
@@ -89,7 +91,7 @@
       <td colspan="2">Token</td><td>Supply</td><td>Holders</td><td>Issuer</td></tr>
   {# Created a minute ago and not in a block yet: read from the pool, shown
      as what it is, and gone if the transaction is dropped (D-146). #}
-  {% for t in pending_tokens %}
+  {% for t in (pending_tokens if page == 1 else []) %}
     <tr>
       <td style="width:40px"><span class="coinface"></span></td>
       <td><strong>{{ wall(t.name, 'token name') }}</strong>
@@ -119,6 +121,7 @@
     </tr>
   {% endfor %}
   </table>
+  {{ pager(page, pages, "/tokens") }}
 {% else %}
   <p class="muted" style="margin:0">No tokens exist on {{ chain.label|lower }} yet
     {%- if index.activation_height %} (read from block {{ "{:,}".format(index.activation_height) }} on){% endif %}.</p>
