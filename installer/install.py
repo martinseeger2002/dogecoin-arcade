@@ -61,6 +61,11 @@ REPO_URL = "https://dogecoinarcade.com/repo"
 ARCHIVE_URL = "https://dogecoinarcade.com/source.tar.gz"
 ARCHIVE_SUMS_URL = "https://dogecoinarcade.com/source.tar.gz.sha256"
 REVISION_URL = "https://dogecoinarcade.com/source.rev"
+#: Where a new node gets its index (2026-09-28: "the installer installs
+#: the most current version ... with the most recent bootstrap"): the live
+#: node's own published copies, remade whenever they go stale (bootstrap.py).
+BOOTSTRAP_URL = "https://app.dogecoinarcade.com/bootstrap"
+BOOTSTRAP_NETWORKS = ("test", "main")
 
 #: Written into a checkout fetched as an archive, because it has no .git for
 #: `git rev-parse` to read and the updater still has to know what is installed.
@@ -1050,6 +1055,45 @@ def fetch_source_archive(checkout: Path, expect_sha256: str | None = None) -> st
     return revision
 
 
+def fetch_bootstraps(dry_run: bool) -> None:
+    """Start each chain's index from the latest bootstrap instead of block zero.
+
+    Only where there is no index yet: an existing one is this machine's own and
+    is never replaced. The copy is checked against its manifest (size and
+    sha256) before it is unpacked, and unpacked beside its final name, then
+    renamed, so a broken download leaves nothing half-written. A failure is a
+    warning, not an error: the node then builds its index itself, slowly."""
+    import gzip
+    import json as _json
+    home = Path.home() / ".dogecoinarcade"
+    for net in BOOTSTRAP_NETWORKS:
+        target = home / f"{net}-ledger.sqlite"
+        if target.exists() and target.stat().st_size > 0:
+            info(f"{net}: an index is already here; kept as it is")
+            continue
+        if dry_run:
+            info(f"would fetch {BOOTSTRAP_URL}/{net}.sqlite.gz into {target}")
+            continue
+        try:
+            said = _json.loads(read_url(f"{BOOTSTRAP_URL}/{net}.json", f"{net} bootstrap manifest"))
+            with tempfile.TemporaryDirectory(prefix="arcade-bootstrap-") as tmp:
+                packed = download(f"{BOOTSTRAP_URL}/{net}.sqlite.gz", Path(tmp) / f"{net}.sqlite.gz",
+                                  f"{net} bootstrap")
+                if said.get("bytes") and packed.stat().st_size != int(said["bytes"]):
+                    raise InstallError("its size is not what its manifest says")
+                if sha256_of(packed) != str(said.get("sha256", "")).lower():
+                    raise InstallError("its sha256 is not what its manifest says")
+                home.mkdir(parents=True, exist_ok=True)
+                partial = target.with_suffix(".sqlite.partial")
+                with gzip.open(packed, "rb") as src, open(partial, "wb") as out:
+                    shutil.copyfileobj(src, out, 1 << 20)
+                partial.replace(target)
+            info(f"{net}: index from block {int(said.get('height') or 0):,} "
+                 f"(the node carries on from there)")
+        except Exception as exc:                      # noqa: BLE001 -- the node can build its own
+            warn(f"{net}: no bootstrap ({exc}); the node will build its index itself")
+
+
 def read_url(url: str, label: str, quiet: bool = False) -> str:
     """Fetch a small text file. Returns "" when it is not there and quiet."""
     try:
@@ -1623,6 +1667,8 @@ def main(argv: list[str] | None = None) -> int:
                              "installed or running")
     parser.add_argument("--no-services", action="store_true", help="do not register services")
     parser.add_argument("--no-browser", action="store_true", help="do not open a browser")
+    parser.add_argument("--no-bootstrap", action="store_true",
+                        help="build the index from the chain instead of the latest bootstrap")
     parser.add_argument(
         "--coin", choices=["pepecoin", "dogecoin", "both"], default=None,
         help="which chain to install a node for. Omit it and the installer asks. "
@@ -1651,7 +1697,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         coins = choose_chain()
     per_coin = 0 if args.skip_core else 2
-    total = 3 + len(coins) * (per_coin + 2)
+    total = 4 + len(coins) * (per_coin + 2)
     n = 0
 
     try:
@@ -1747,6 +1793,13 @@ def main(argv: list[str] | None = None) -> int:
         n += 1
         step(n, total, "Installing the application")
         venv = install_app(args.dry_run)
+
+        n += 1
+        step(n, total, "Fetching the latest bootstrap")
+        if args.no_bootstrap:
+            info("skipped (--no-bootstrap)")
+        else:
+            fetch_bootstraps(args.dry_run)
 
         n += 1
         step(n, total, "Finishing up")
