@@ -249,6 +249,41 @@
          the protocol can, so what it owes is a sentence said before the press
          rather than a row that vanished quietly from the book.
       */
+      /* One order at a time (2026-09-28: "cancel individual bids and asks
+         instead of all of them at once"): a row's Cancel is MetaDExCancelPrice at
+         that row's price -- the finest the wire can name, so it also takes any
+         other order of yours at exactly that price, and says so. */
+      for (const btn of document.querySelectorAll("[data-cancel-price]")) {
+        btn.onclick = async () => {
+          say(""); news("");
+          btn.disabled = true;
+          const which = btn.dataset.cancelSide, price = btn.dataset.cancelPrice;
+          try {
+            const held = await wallet.opened(CHAIN) || await arcadeKeys(CHAIN);
+            const asked = await fetch("/account/order/cancel", {
+              method: "POST", headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({property_id: TOKEN, side: which, price, chain: CHAIN.network})});
+            const offer = await asked.json();
+            if (!asked.ok) throw new Error(offer.detail || "that cannot be cancelled");
+            const shown = await wallet.checked(offer, held);
+            if (!(await arcadeAsk(`Cancel your ${which === "ask" ? "sell" : "buy"} order at ${price}?`,
+                `Just this one${which === "ask" ? "; its tokens come back to you when the block lands" : ""}. `
+                + `(Any other ${which === "ask" ? "sell" : "buy"} order of yours at exactly ${price} goes too: `
+                + `the chain cancels by price.) Network fee ${shown.coinsOf(shown.fee)}.`, "Cancel it"))) {
+              btn.disabled = false; return;
+            }
+            await wallet.confirm(held, offer);
+            const row = btn.closest(".obrow"); if (row) row.style.opacity = ".4";
+            btn.replaceWith(Object.assign(document.createElement("span"),
+                            {className: "muted", textContent: "cancelling…"}));
+            news("Cancelled. It leaves the book when its block lands.");
+          } catch (e) {
+            btn.disabled = false;
+            say(String(e.message || e));
+          }
+        };
+      }
+
       for (const which of ["ask", "bid"]) {
         const btn = $("pull-" + which);
         if (!btn) continue;                 // no orders of yours on this pair
@@ -504,7 +539,7 @@
         {% for side, what in (('ask', 'sells'), ('bid', 'buys')) %}
         {% if resting[side] %}
         {% if viewer == 'account' %}
-        <button class="ghost small" type="button" id="pull-{{ side }}">Cancel my {{ what }}</button>
+        <button class="ghost small" type="button" id="pull-{{ side }}">Cancel all my {{ what }}</button>
         {% else %}
         <form method="post" action="/exchange/order/cancel" style="margin:0">
           <input type="hidden" name="csrf_token" value="{{ csrf }}">
@@ -564,7 +599,9 @@
             {%- if o.pending %} &middot; waiting for its block{% endif %}
             {%- if o.taking %} &middot; {{ o.taking_shown }} being bought{% endif %}</small></span>
         <span class="obdo">
-          {%- if o.taking and not o.free %}<span class="muted" style="font-size:.74rem">being bought</span>
+          {%- if o.mine and not o.pending and viewer == 'account' %}<button type="button" class="ghost small"
+              data-cancel-side="ask" data-cancel-price="{{ o.price_shown }}">Cancel</button>
+          {%- elif o.taking and not o.free %}<span class="muted" style="font-size:.74rem">being bought</span>
           {%- elif not o.mine and not o.pending and fills_ready and viewer == 'account' %}
           <input class="take-amount" data-order="{{ o.txid }}" hidden
                  value="{{ o.free_shown }}" inputmode="decimal" autocomplete="off"
@@ -613,6 +650,8 @@
             {%- if o.standing %} &middot; {{ 'fills while they are away' if o.away else 'fills when they are back' }}{% endif %}</small></span>
         <span class="obdo">{%- if o.mine and o.standing %}<button type="button" class="ghost small"
               data-standing-cancel="{{ o.standing }}">Cancel</button>
+          {%- elif o.mine and not o.pending and viewer == 'account' %}<button type="button" class="ghost small"
+              data-cancel-side="bid" data-cancel-price="{{ o.price_shown }}">Cancel</button>
           {%- elif o.mine and o.clears_now %}<span class="muted"
               style="font-size:.74rem">your bid reaches the ask</span>
           {%- elif not o.mine and viewer == 'account' %}<button type="button" class="ghost small"

@@ -1298,3 +1298,30 @@ def test_two_buyers_offered_the_same_rest_cannot_both_send(node):
     _settled(state, rpc)
     assert _held(state, a_address, maker["pid"]) == (6 * COIN, 0)
     assert _held(state, b_address, maker["pid"]) == (4 * COIN, 0)
+
+
+def test_each_of_your_orders_has_its_own_cancel(node):
+    """2026-09-28: cancel individual bids and asks, not all at once."""
+    maker = _bookcoin(node, 76)
+    app, state, rpc = node
+    _placed(maker, "ask", "5", "0.3")
+    _placed(maker, "ask", "5", "0.4")
+    state.public = True
+    try:
+        page = maker["client"].get(f"/exchange/pair/{maker['pid']}").text
+    finally:
+        state.public = False
+    assert 'data-cancel-side="ask" data-cancel-price="0.3"' in page
+    assert 'data-cancel-side="ask" data-cancel-price="0.4"' in page
+    said = maker["client"].post("/account/order/cancel", json={
+        "property_id": maker["pid"], "side": "ask", "price": "0.3"})
+    assert said.status_code == 200, said.text
+    _signed(maker["client"], maker["secret"], maker["pubkey"], said)
+    _settled(state, rpc)
+    state.public = True
+    try:
+        page = maker["client"].get(f"/exchange/pair/{maker['pid']}").text
+    finally:
+        state.public = False
+    assert 'data-cancel-price="0.3"' not in page and 'data-cancel-price="0.4"' in page, \
+        "one came off, the other stands"
