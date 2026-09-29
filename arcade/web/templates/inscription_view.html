@@ -406,12 +406,14 @@
   {% endif %}
   <p class="msg" id="answer-news" hidden></p>
   {% if asks %}
-  <p class="muted" style="font-size:.82rem;margin:8px 0 0">Accepting signs this
-    piece at the price in the offer &mdash; two signatures in this tab, over the
-    bytes naming it and over the payment, and neither is a transaction: the
-    answer goes to whoever offered as one message, which costs a fee, and their
-    wallet signs its half against the price it offered. Nothing moves unless
-    both halves do.</p>
+  {# Said as the card says it (a tester, 2026-09-28): an offer made today is
+     pre-signed, so Accept is the trade itself. #}
+  <p class="muted" style="font-size:.82rem;margin:8px 0 0">
+    {%- if asks | selectattr('presigned') | list %}Accepting completes the trade at once: the
+    buyer already signed their half, so one transaction moves this piece to them and the
+    price to you.{% else %}Accepting signs this piece at the price in the offer and sends
+    the buyer the answer; their wallet signs the payment, and nothing moves unless both
+    halves do.{% endif %}</p>
   <script type="module">
   /* The piece page from the side that holds the piece. On the other side of
      this page an offer is one transaction and one signature; here an answer

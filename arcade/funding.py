@@ -632,7 +632,10 @@ def build_dust_sweep(address: str, coins: list[dict], rate: int, what: str = "")
     if not given:
         raise FundingError("there is nothing to sweep back")
     total = sum(c["value"] for c in given)
-    fee = price(len(given), [], rate, change=True)
+    # Priced on the real size: an OP_0 <sig> input is ~115 bytes, not the 148 a
+    # key-and-signature input takes (a tester, 2026-09-28: 17% of the sweep).
+    size = 10 + len(given) * 115 + 34
+    fee = max(fees.fee_for(size, 1, rate), fees.MIN_FEE_PER_KB // 10)
     change = total - fee
     if change < fees.DUST_LIMIT:
         raise FundingError("these outputs are worth less than the fee to sweep them")

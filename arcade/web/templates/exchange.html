@@ -298,7 +298,7 @@
       <span class="pill">{{ 'token mintpad' if it.kind == 'token' else 'NFT mintpad' }}</span>
       by {{ it.creator|who }} &middot; {{ when(it.time) if it.time else 'just now' }}
       {%- if it.lot %} &middot; {{ it.lot }} per mint{% endif %}
-      &middot; {{ it.trades }} sold
+      {%- if it.kind != 'token' %} &middot; {{ it.trades }} sold{% endif %}
       {%- if it.mints %} &middot; {{ '{:,}'.format(it.mints) }} {{ ('mint' if it.kind == 'token' else 'piece') ~ ('' if it.mints == 1 else 's') }} left{% endif %}</div>
     <iframe class="inscription-frame postmedia padframe" src="{{ pad_frames.get(it.txid) or ('/content/' ~ it.txid) }}"
             loading="lazy" sandbox="allow-scripts allow-pointer-lock"></iframe>
