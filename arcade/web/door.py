@@ -112,6 +112,7 @@ PUBLIC_PAGES = frozenset({
     "/account/dust",                  # coins in this account's own payload outputs
     "/account/standing/fillable",     # this account's buy orders a sell order meets
     "/account/claimpools",            # this account's own prize pools, to withdraw
+    "/account/pagesends",             # what pages have asked this account to send
 })
 
 #: Prefixes a stranger may read. Everything under them is public, so each
@@ -267,6 +268,8 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # Each is built here and signed in the tab; none spends by itself.
                "/account/pools/open", "/account/pools/fund", "/account/pools/close",
                "/account/pools/legs",
+               # this account's yes or no to a page that asked it to send
+               "/account/pagesends/answer",
                # claiming one lot of a prize pool read off the chain: built here
                # from the pool's own inscription, signed in the claimer's tab.
                "/account/prize", "/account/prize/sign",

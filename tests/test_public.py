@@ -1173,3 +1173,57 @@ def test_a_page_in_a_post_offers_full_screen():
     from arcade.web.app import post_html
     drawn = post_html(f"look /content/{'a1' * 32}", {"a1" * 32: "text/html"})
     assert f'href="/inscriptions/{"a1" * 32}/full"' in drawn
+
+
+def test_a_page_asks_the_signed_in_reader_to_send(client):
+    """2026-09-29: "I'm trying to load some plasma from my wallet to the game,
+    but I get an error this Wallet does not tell inscriptions who is looking."
+    A frame carrying its reader's ticket files a question for that reader; the
+    reader's own app page answers it; the page's polling sees the answer."""
+    import re
+
+    from test_me_page import _seat
+
+    app, state = client
+    viewer = "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg"
+    _seat(app)
+    app.post("/account/address", json={"address": viewer}, headers=LOCAL)
+    index = state.token_index(state.token_chain)
+    txid = "d4" * 32
+    with index.open() as db:
+        db.conn.execute(
+            "INSERT OR REPLACE INTO inscription(txid,number,creator,owner,block_height,"
+            "position,content_type,content_len,sha256,json,chunks,content) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (txid, 931, "nMe", "nSomebodyElse", 100, 0, "text/html", 2, "ab" * 32,
+             None, 1, b"hi"))
+        db.conn.commit()
+    state.set_setting("pages_host", "pages.example")
+    was, state.public = state.public, True
+    try:
+        page = app.get(f"/inscriptions/{txid}/full").text
+        ticket = re.search(rf"/content/{txid}\?v=([A-Za-z0-9_-]+)", page).group(1)
+        edge = {"host": "pages.example", "cf-ray": "abc",
+                "referer": f"https://pages.example/content/{txid}?v={ticket}"}
+        asked = app.post("/r/send", json={"kind": "coins", "to": "@vex", "amount": "1",
+                                          "label": "GHOST FLEET", "note": "top up"},
+                         headers=edge)
+        assert asked.status_code == 202, asked.text
+        rid = asked.json()["id"]
+        assert asked.json()["status"] == "pending"
+
+        waiting = app.get("/account/pagesends").json()["requests"]
+        assert [(r["id"], r["label"], r["amount"]) for r in waiting] == [(rid, "GHOST FLEET", "1")]
+        lying = app.post("/account/pagesends/answer", json={"id": rid, "status": "sent",
+                                                            "txid": "00" * 32})
+        assert lying.status_code == 400, "a txid this node never saw is not an answer"
+        assert app.post("/account/pagesends/answer",
+                        json={"id": rid, "status": "denied"}).status_code == 200
+        assert app.get(f"/r/send/{rid}", headers=edge).json()["status"] == "denied"
+        assert app.get("/account/pagesends").json()["requests"] == []
+
+        stranger = {"host": "pages.example", "cf-ray": "abc"}
+        assert app.post("/r/send", json={"kind": "coins", "to": "x", "amount": "1"},
+                        headers=stranger).status_code == 403
+    finally:
+        state.public = was

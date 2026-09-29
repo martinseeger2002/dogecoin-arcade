@@ -540,7 +540,14 @@ def the_door(state: AppState):
             # frame (opaque origin, no cookie) cannot say which. It is told the
             # wallet is off -- the answer a page already handles -- rather than
             # whose it is (a tester, 2026-09-26).
+            # A page asking the signed-in reader to send (2026-09-29: "I'm trying
+            # to load some plasma from my wallet to the game"): let through when
+            # the frame carries that reader's ticket; the route files a question
+            # for THEM and never touches the operator's wallet.
+            asks_reader = (path.rstrip("/") == "/r/send" or path.startswith("/r/send/")) \
+                and bool(getattr(state, "viewer_of", lambda r: "")(request))
             if doorlib.speaks_for_the_operator(path) and path.rstrip("/") != "/r/wallet" \
+                    and not asks_reader \
                     and request.method != "OPTIONS" and (
                     state.public or doorlib.from_outside(
                         request.headers, request.headers.get("host", ""),
@@ -5867,6 +5874,10 @@ def create_app(state: AppState) -> FastAPI:
         """
         if not isinstance(body, dict):
             return contentlib._json({"error": "send a JSON object"}, status=400)
+        chain, _ = _token_chain()
+        if state.public or doorlib.from_outside(request.headers, request.headers.get("host", ""),
+                                                state.public_hosts):
+            return _ask_the_reader(request, chain, body)
         try:
             filed = _file_request("page", body)
         except approvalslib.RequestError as exc:
@@ -5875,6 +5886,111 @@ def create_app(state: AppState) -> FastAPI:
             return contentlib._json({"error": f"could not file the request: {exc}"},
                                     status=503)
         return contentlib._json(filed, status=202)
+
+    # The pages-host guard (the_door) sits outside this function and asks here.
+    state.viewer_of = lambda request: _viewer_of(request, _token_chain()[0])
+
+    # --- a page asks the ACCOUNT looking at it to send (2026-09-29) -----------
+    # On a public arcade /r/send answered only for the operator's wallet, so a
+    # game could not ask a signed-in player to pay it anything. Now a frame that
+    # carries its reader's ticket files a question for that reader; the app page
+    # around the frame shows it on the reader's own confirmation card, their
+    # browser signs, and the page's own polling of /r/send/<id> sees the answer.
+    # A question, never an action: nothing moves without that yes.
+    _page_sends: dict[str, dict] = {}
+    PAGE_SEND_FOR = 3600                     # an unanswered question expires
+
+    def _ask_the_reader(request: Request, chain, body: dict):
+        address = _viewer_of(request, chain)
+        if not address:
+            return contentlib._json({"error": "sign in to DogecoinArcade and open this "
+                                     "page there to be asked"}, status=403)
+        kind = str(body.get("kind") or "")
+        if kind not in ("token", "coins"):
+            return contentlib._json({"error": "a page may ask for coins or a token"},
+                                    status=400)
+        to = str(body.get("to") or "").strip()
+        amount = str(body.get("amount") or "").strip()
+        if not to or not amount:
+            return contentlib._json({"error": "say who to pay and how much"}, status=400)
+        now = time.time()
+        for rid, row in list(_page_sends.items()):
+            if row["status"] == "pending" and now - row["created"] > PAGE_SEND_FOR:
+                row["status"] = "expired"
+            if now - row["created"] > 6 * PAGE_SEND_FOR:
+                _page_sends.pop(rid, None)
+        waiting = [r for r in _page_sends.values()
+                   if r["address"] == address and r["status"] == "pending"]
+        if len(waiting) >= 20:
+            return contentlib._json({"error": "twenty requests are already waiting"},
+                                    status=429)
+        name = ""
+        if kind == "token":
+            try:
+                prop = state.token_index(chain).property(int(body.get("propertyid") or 0))
+            except (TypeError, ValueError):
+                prop = None
+            if prop is None:
+                return contentlib._json({"error": "there is no such token"}, status=400)
+            name = prop["name"]
+        rid = secrets.token_urlsafe(12)
+        _page_sends[rid] = {
+            "id": rid, "address": address, "network": chain.network, "kind": kind,
+            "to": to[:120], "amount": amount[:40],
+            "propertyid": int(body.get("propertyid") or 0) if kind == "token" else None,
+            "name": name, "label": str(body.get("label") or "")[:60],
+            "note": str(body.get("note") or "")[:140], "page": "",
+            "status": "pending", "txid": "", "error": "", "created": now}
+        return contentlib._json(_page_send_told(_page_sends[rid]), status=202)
+
+    def _page_send_told(row: dict) -> dict:
+        told = {k: row[k] for k in ("id", "kind", "to", "amount", "propertyid",
+                                    "status", "txid", "error")}
+        if row["status"] == "sent" and row["txid"]:
+            status = _tx_status(state.chain_named(row["network"]), row["txid"])
+            if status is not None:
+                told["confirmations"] = status["confirmations"]
+                told["confirmed"] = status["confirmed"]
+        return told
+
+    @app.get("/account/pagesends")
+    def account_pagesends(request: Request):
+        """What pages have asked this account to send and nobody has answered."""
+        account = _signed_in_account(request)
+        chain = _account_chain()
+        address = _account_address(account.pubkey, chain)
+        now = time.time()
+        rows = [r for r in _page_sends.values()
+                if r["address"] == address and r["status"] == "pending"
+                and now - r["created"] <= PAGE_SEND_FOR]
+        return JSONResponse({"chain": chain.network, "requests": [
+            {k: r[k] for k in ("id", "kind", "to", "amount", "propertyid", "name",
+                               "label", "note")} for r in rows]},
+            headers={"Cache-Control": "no-store"})
+
+    @app.post("/account/pagesends/answer")
+    def account_pagesends_answer(request: Request, payload: Any = Body(None)):
+        """The account's answer to a page's question: sent (with the txid this
+        node can see), or refused."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        chain = _account_chain()
+        address = _account_address(account.pubkey, chain)
+        row = _page_sends.get(str(said.get("id") or ""))
+        if row is None or row["address"] != address or row["status"] != "pending":
+            return JSONResponse({"detail": "no such question waiting"}, status_code=404)
+        status = str(said.get("status") or "")
+        if status == "sent":
+            txid = str(said.get("txid") or "").strip().lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", txid) or _tx_status(chain, txid) is None:
+                return JSONResponse({"detail": "this node has not seen that transaction"},
+                                    status_code=400)
+            row.update(status="sent", txid=txid)
+        elif status in ("denied", "failed"):
+            row.update(status=status, error=str(said.get("error") or "")[:200])
+        else:
+            return JSONResponse({"detail": "sent, denied or failed"}, status_code=400)
+        return JSONResponse({"ok": True})
 
     @app.options("/r/send")
     def r_send_preflight():
@@ -5932,6 +6048,8 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/r/send/{request_id}")
     def r_send_status(request_id: str):
+        if request_id in _page_sends:              # a question for a signed-in reader
+            return contentlib._json(_page_send_told(_page_sends[request_id]))
         row = state.approvals.get(request_id)
         if row is None:
             return contentlib._missing("no such request")

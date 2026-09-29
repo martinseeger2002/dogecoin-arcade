@@ -887,6 +887,54 @@ async function claimFor(source, m, page = "") {
     answer({error: String(err.message || err)});
   } finally { minting = false; }
 }
+// A page asked this account to send (2026-09-29: "load some plasma from my
+// wallet to the game"): the node holds the question, this page shows it on
+// the account's own card, the browser signs, and the page's polling of
+// /r/send/<id> sees the answer. Only on a page that frames one.
+let pageSendBusy = false;
+const pageSendSeen = new Set();
+async function pageSends() {
+  if (pageSendBusy || !ARCADE_ME || document.hidden
+      || !document.querySelector("iframe.inscription-frame")) return;
+  let said;
+  try { said = await (await fetch("/account/pagesends", {cache: "no-store"})).json(); }
+  catch (e) { return; }
+  const ask = (said.requests || []).find((r) => !pageSendSeen.has(r.id));
+  if (!ask) return;
+  pageSendSeen.add(ask.id);
+  pageSendBusy = true;
+  const answer = (body) => fetch("/account/pagesends/answer", {method: "POST",
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify({id: ask.id, ...body})});
+  try {
+    const wallet = await import("/wallet.js");
+    const held = (await wallet.opened(ARCADE_CHAIN)) || await arcadeKeys(ARCADE_CHAIN);
+    let offer;
+    if (ask.kind === "token") {
+      const r = await fetch("/account/token/send", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({property_id: ask.propertyid, to: ask.to, amount: ask.amount,
+                              chain: said.chain})});
+      offer = await r.json();
+      if (!r.ok) throw new Error(offer.detail || "that cannot be sent");
+    } else {
+      offer = await wallet.offerSend(ask.to, ask.amount, said.chain);
+    }
+    const shown = await wallet.checked(offer, held);
+    const what = ask.kind === "token" ? `${ask.amount} ${ask.name}` : `${ask.amount} coins`;
+    const who = ask.label ? `"${ask.label}"` : "This page";
+    const ok = await arcadeAsk(`${who} asks you to send ${what}`,
+      (ask.note ? `"${ask.note}" ` : "") + `To ${ask.to}. ${shown.says}`, "Yes, send it");
+    if (!ok) { await answer({status: "denied"}); return; }
+    const done = await wallet.confirm(held, offer);
+    await answer({status: "sent", txid: done.txid});
+    arcadeToast(`Sent ${what}. It counts when its block lands.`);
+  } catch (err) {
+    await answer({status: "failed", error: String(err.message || err)});
+    arcadeToast(String(err.message || err));
+  } finally { pageSendBusy = false; }
+}
+setInterval(pageSends, 2500);
+
 window.addEventListener("message", async (e) => {
   const m = e.data || {};
   const frame = [...document.querySelectorAll("iframe.inscription-frame")]
