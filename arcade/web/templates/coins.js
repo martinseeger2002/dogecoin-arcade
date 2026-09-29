@@ -444,8 +444,18 @@ function listingPayload(data) {
   if (!eq(field(MARKER.length, "shorter than its marker"), MARKER)) {
     refuse("no marker this repository writes");
   }
-  field(2, "shorter than its header");                  // AnyData's version
-  if (!eq(field(2, "shorter than its header"), [0x00, ANYDATA])) {
+  field(2, "shorter than its header");                  // the message's version
+  const type = field(2, "shorter than its header");
+  if (eq(type, [0x00, 0x00])) {
+    // A token send: a CLAIM LOT (2026-09-28), the tokens a game pays
+    // out. What it takes is coins, stated by the payment output alone.
+    const send = {propertyid: Number(toBig(field(4, "names no token"))),
+                  units: toBig(field(8, "names no amount"))};
+    if (at !== data.length) refuse("longer than the send it states");
+    if (send.units <= 0n) refuse("a send of nothing");
+    return {txid: null, sats: 0n, token: null, send};
+  }
+  if (!eq(type, [0x00, ANYDATA])) {
     refuse("not an inscription carrier");
   }
   if (!eq(field(INSC.length, "shorter than its magic"), INSC)) {
@@ -624,6 +634,16 @@ export async function verifyOffer(offer, keys) {
                  mine: false});
     }
   }
+  // A token lot's tokens go to the LAST output that is not the seller's, so a
+  // claim that did not end on an output of this key's would pay the seller and
+  // send the tokens back to them (2026-09-28: token claims).
+  const first = tx.outputs.length ? opreturnData(tx.outputs[0].script) : null;
+  if (from > 0 && first && first.length === 20
+      && MARKER.every((b, n) => first[n] === b) && first[6] === 0 && first[7] === 0
+      && !SAME(tx.outputs[tx.outputs.length - 1].script, mine)) {
+    throw new Error("that transaction sends tokens and does not end on an output "
+      + "of yours, so they would go to somebody else. Nothing was signed.");
+  }
   let taken = 0n;
   for (const coin of named) taken += BigInt(coin.value || 0);
   if (paid > taken) {
@@ -733,6 +753,23 @@ export async function verifyLeg(leg, keys) {
       + "signed.");
   }
   const listing = listingPayload(data);
+  if (listing.send) {
+    // A lot's price is in no payload: it is the coins the payment output adds.
+    // The node states it and register() re-derives it from these bytes, and the
+    // number that matters to the seller -- what comes back -- is read below.
+    const told = leg.send || {};
+    if (!/^\d+$/.test(String(leg.price || "")) || BigInt(String(leg.price)) <= 0n) {
+      throw new Error("that lot names no price in coins. Nothing was signed.");
+    }
+    if (Number(told.propertyid) !== listing.send.propertyid
+        || String(told.units) !== String(listing.send.units)) {
+      throw new Error("the lot says it gives one thing and its own bytes send "
+        + "another. Nothing was signed.");
+    }
+    listing.sats = BigInt(String(leg.price));
+    listing.send.name = String(told.name || "");
+    listing.send.text = String(told.amount || listing.send.units);
+  }
   if (!SAME(tx.outputs[1].script, mine)) {
     throw new Error("output 1 of that listing -- the output the signature over "
       + "the price stands over -- does not pay this address. The price would "
@@ -807,7 +844,10 @@ export async function verifyLeg(leg, keys) {
     ? `${listing.token.text || listing.token.units} `
       + `${listing.token.name || `token ${listing.token.propertyid}`}`
     : `${coinsOf(listing.sats)} coins`;
-  const says = `gives inscription ${listing.txid.slice(0, 16)}… and takes `
+  const gives = listing.send
+    ? `${listing.send.text} ${listing.send.name || `of token #${listing.send.propertyid}`}`
+    : `inscription ${listing.txid.slice(0, 16)}…`;
+  const says = `gives ${gives} and takes `
     + `${price}; ${coinsOf(back)} comes back to you when `
     + `it sells, ${coinsOf(reserved)} of it reserved for the fee`;
   return {tx, hashes, listing, reserved: Number(reserved), back: Number(back),

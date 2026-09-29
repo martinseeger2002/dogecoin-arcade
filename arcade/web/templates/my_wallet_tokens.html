@@ -41,7 +41,39 @@
   </div>
 </div>
 
+<div class="panel" id="lots" hidden>
+  <h3 style="margin:0 0 6px" id="lots-what">Prize lots</h3>
+  <p class="muted" style="font-size:.86rem;margin:0 0 10px">Tokens a game or any
+    inscribed page can pay out. You set aside some lots; whoever the page hands
+    the phrase to can claim one, for the price you set. The lots are on no public
+    page. Anyone who reads the page's code can find the phrase, so price and
+    size them as a prize, not a vault.</p>
+  <div class="row" style="flex-wrap:wrap;gap:8px">
+    <label class="lotf">Tokens per lot<input id="lot-size" inputmode="decimal" autocomplete="off"></label>
+    <label class="lotf">How many lots<input id="lot-count" inputmode="numeric" value="10" autocomplete="off"></label>
+    <label class="lotf">Price per lot, coins<input id="lot-price" inputmode="decimal" value="0.01" autocomplete="off"></label>
+    <label class="lotf">Days<input id="lot-days" inputmode="numeric" value="30" autocomplete="off"></label>
+  </div>
+  <label class="lotf" style="display:block;margin-top:8px">Phrase
+    <span class="row" style="gap:6px"><input id="lot-phrase" class="mono" autocomplete="off" spellcheck="false" style="flex:1">
+    <button type="button" class="ghost small" id="lot-new">Make one</button></span></label>
+  <div class="row" style="margin-top:10px;gap:6px">
+    <button type="button" id="lot-make">Set them aside</button>
+    <button type="button" class="ghost" id="lot-cancel">Cancel</button>
+  </div>
+  <div id="lot-done" hidden style="margin-top:12px">
+    <p style="margin:0 0 6px"><strong id="lot-done-what"></strong></p>
+    <p class="muted" style="font-size:.86rem;margin:0 0 6px">Give your page this
+      listing id and phrase. When a player wins, the page sends:</p>
+    <pre class="mono" id="lot-snippet" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:.8rem"></pre>
+  </div>
+</div>
+
 <style>
+.lotf{display:flex;flex-direction:column;gap:3px;font-size:.82rem;color:var(--muted)}
+.lotf input{padding:8px 10px;border:1px solid var(--line);border-radius:8px;
+  background:var(--panel);color:var(--fg);font:inherit;min-width:0;width:130px}
+#lot-phrase{width:auto}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 #to,#amount{padding:10px 12px;border:1px solid var(--line);
   border-radius:8px;background:var(--panel);color:var(--fg);font:inherit}
@@ -103,7 +135,13 @@ function row(token, chain) {
   trade.href = `/exchange/pair/${token.property_id}`;
   trade.textContent = "Trade";
   doing.append(open, trade);
-  if (Number(token.balance) > 0) doing.append(send);
+  if (Number(token.balance) > 0) {
+    const lots = document.createElement("button");
+    lots.className = "btn ghost small";
+    lots.textContent = "Prize lots";
+    lots.onclick = () => chooseLots(token, chain);
+    doing.append(send, lots);
+  }
 
   box.append(top, doing);
   return box;
@@ -122,6 +160,47 @@ function choose(token, chain) {
 }
 
 $("cancel").onclick = () => { $("sending").hidden = true; chosen = null; };
+
+// Prize lots (2026-09-28: games that let players earn a token).
+let lotsFor = null;
+function chooseLots(token, chain) {
+  say(""); news("");
+  lotsFor = {token, chain};
+  $("lots-what").textContent = `Prize lots of ${token.name}`;
+  $("lot-done").hidden = true;
+  $("lots").hidden = false;
+  if (!$("lot-phrase").value) $("lot-new").onclick();
+  $("lot-size").focus();
+  $("lots").scrollIntoView({behavior: "smooth", block: "nearest"});
+}
+$("lot-new").onclick = () => {
+  const words = new Uint8Array(12);
+  crypto.getRandomValues(words);
+  $("lot-phrase").value = [...words].map((b) => b.toString(36).padStart(2, "0")).join("").slice(0, 20);
+};
+$("lot-cancel").onclick = () => { $("lots").hidden = true; lotsFor = null; };
+$("lot-make").onclick = async () => {
+  say(""); news("");
+  if (!lotsFor) return;
+  const phrase = $("lot-phrase").value.trim();
+  const button = $("lot-make");
+  button.disabled = true;
+  try {
+    if (!keys) keys = await arcadeKeys(CHAIN);
+    const made = await wallet.makeClaimLots(keys, {
+      property_id: lotsFor.token.property_id, lot: $("lot-size").value.trim(),
+      count: parseInt($("lot-count").value, 10) || 0, price: $("lot-price").value.trim(),
+      days: parseInt($("lot-days").value, 10) || 0, chain: lotsFor.chain.network,
+    }, phrase, (step) => news(step));
+    news("");
+    $("lot-done-what").textContent = `${made.ids.length} lot${made.ids.length === 1 ? "" : "s"} set aside: ${made.what}.`;
+    $("lot-snippet").textContent = "parent.postMessage({arcade: \"claim\", seq: 1,\n"
+      + `  listing: ${JSON.stringify(made.ids[0] || "")},\n  secret: ${JSON.stringify(phrase)}}, "*");`;
+    $("lot-done").hidden = false;
+    await draw();
+  } catch (e) { news(""); say(String(e.message || e)); }
+  finally { button.disabled = false; }
+};
 
 $("offer").onclick = async () => {
   say(""); news("");

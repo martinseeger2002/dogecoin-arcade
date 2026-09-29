@@ -542,6 +542,39 @@ export async function list(wallet, leg, {days = 0, claim = ""} = {}) {
   return working(() => _list(wallet, leg, days, claim));
 }
 
+/** A prize pool of token lots, each claimed with `phrase` (2026-09-28:
+ *  games that pay out a token). `ask` is {property_id, lot, count, price, chain,
+ *  days}. Splits a coin first when there are too few to stand the lots on, then
+ *  signs and files every lot; returns {ids, what} -- the first id is the one a
+ *  page is given, and the node hands out whichever lot is still open. */
+export async function makeClaimLots(wallet, ask, phrase, onStep = () => {}) {
+  return working(async () => {
+    if (!String(phrase || "").trim()) throw new Error("a claim needs its phrase");
+    const build = async () => {
+      const asked = await fetch("/account/claimlots", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(ask)});
+      const said = await asked.json();
+      if (!asked.ok) throw new Error(said.detail || "those lots cannot be made");
+      return said;
+    };
+    let said = await build();
+    if (said.needs_split) {
+      onStep("Splitting a coin so every lot has two to stand on\u2026");
+      await signOffer(wallet, said);
+      said = await build();
+      if (said.needs_split) throw new Error("the split is still on its way; try again in a minute");
+    }
+    const ids = [];
+    for (const leg of said.legs || []) {
+      onStep(`Signing lot ${ids.length + 1} of ${said.legs.length}\u2026`);
+      const done = await _list(wallet, leg, Number(ask.days || 0), phrase);
+      ids.push(done.listed);
+    }
+    return {ids, what: said.what || ""};
+  });
+}
+
 /** Offer one payment to this account's own address in `count` coins -- what a
  *  mintpad needs to stand one listing per piece on (two coins each). */
 export async function offerSplit(count, chain) {

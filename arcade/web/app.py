@@ -11358,6 +11358,22 @@ def create_app(state: AppState) -> FastAPI:
         completion of a piece at a time on this node, and none while a swap of
         it is already waiting in the mempool.
         """
+        lot = _token_lot(bytes.fromhex(str(listing.get("payload") or "")))
+        if lot:
+            lane = f"lot {listing['network']} {listing['owner']} {lot[0]}"
+            if not state.begin_send(lane):
+                return "", ("another claim of this token is going through right "
+                            "now. Nothing was spent; try again in a moment.")
+            try:
+                short = _lot_room(state.chain_named(listing["network"]),
+                                  listing["owner"], lot[0]) < lot[1]
+            except Exception:                               # noqa: BLE001
+                short = True
+            if short:
+                state.end_send(lane)
+                return "", ("the seller no longer holds enough of that token for "
+                            "this lot. Nothing was spent.")
+            return lane, ""
         piece = _sold_piece(listing)
         if not piece:
             return "", ""
@@ -11472,6 +11488,82 @@ def create_app(state: AppState) -> FastAPI:
         """
         return listingslib.named_swap(naming)
 
+    def _token_lot(naming: bytes) -> tuple[int, int] | None:
+        """(property id, units) when a listing's bytes are a token send, else None.
+
+        A CLAIM LOT (2026-09-28: games that let players earn a token --
+        a tester's GHOST PROTOCOL pays 25 Ghost Credits to whoever cracks its
+        vault). The same leg a listed NFT is, with a Simple Send where the swap
+        was: the seller's coin at input 0 makes the seller its sender (Class C,
+        `tx.determine_sender`), and the tokens go to the transaction's
+        reference, which `_fill_terms` makes sure is the buyer. Only ever a
+        claim: `/account/list/sign` refuses one without a phrase.
+        """
+        from ..encoding import decode_class_c
+        try:
+            body = decode_class_c(bytes(naming)) if naming else None
+            message = P.decode(body) if body else None
+        except Exception:                                   # noqa: BLE001 -- not ours
+            return None
+        if isinstance(message, P.SimpleSend) and message.amount > 0:
+            return int(message.property_id), int(message.amount)
+        return None
+
+    def _lot_words(chain, lot: tuple[int, int]) -> str:
+        """A lot as a card says it: "25 Ghost Credits"."""
+        try:
+            prop = state.token_index(chain).property(lot[0])
+        except Exception:                                   # noqa: BLE001
+            prop = None
+        if prop is None:
+            return f"{lot[1]} of token #{lot[0]}"
+        return f"{format_amount(lot[1], prop['divisible'])} {prop['name']}"
+
+    #: Token lots on their way to their buyers, (network, seller, token) ->
+    #: {txid: units}. The ledger counts a lot's tokens as the seller's until its
+    #: block lands, so a claim built meanwhile would promise tokens already on
+    #: their way to somebody else, and its buyer would pay for a send the engine
+    #: then refuses. An entry goes when its transaction leaves the mempool.
+    _lots_flying: dict[tuple, dict[str, int]] = {}
+
+    def _lot_room(chain, owner: str, property_id: int) -> int:
+        """What of a token a seller holds that no lot in the mempool has promised."""
+        flying = _lots_flying.get((chain.network, owner, property_id), {})
+        if flying:
+            with chain.rpc() as rpc:
+                for txid in list(flying):
+                    try:
+                        rpc.call("getmempoolentry", txid)
+                    except Exception:                       # noqa: BLE001 -- landed
+                        flying.pop(txid, None)
+        held = state.token_index(chain).balance(owner, property_id)
+        return int(held) - sum(flying.values())
+
+    def _lots_listed(chain, owner: str, property_id: int) -> int:
+        """Units of a token a seller already has standing in open claim lots."""
+        total = 0
+        for row in state.listings.open_listings(chain.network, limit=1000, claims=True):
+            if row["owner"] != owner:
+                continue
+            lot = _token_lot(bytes.fromhex(row["payload"] or ""))
+            if lot and lot[0] == property_id:
+                total += lot[1]
+        return total
+
+    def _next_lot(listing: dict) -> dict | None:
+        """The oldest open lot beside a taken one: same seller, same phrase, same
+        lot. A page is given ONE listing id for a whole prize pool, and the lot
+        it names is only the first to go."""
+        found = None
+        for row in state.listings.open_listings(listing["network"], limit=1000,
+                                                claims=True):
+            if (row["owner"] == listing["owner"]
+                    and row.get("claim_hash") == listing.get("claim_hash")
+                    and row["payload"] == listing["payload"]):
+                if found is None or row["created"] < found["created"]:
+                    found = row
+        return found
+
     def _listing_words(naming: bytes, chain) -> str:
         """What a filed listing's own bytes say it sells, in words.
 
@@ -11487,6 +11579,9 @@ def create_app(state: AppState) -> FastAPI:
         read is a listing that sold anyway, and the price beside it is the
         truth a page has to carry.
         """
+        lot = _token_lot(naming)
+        if lot:
+            return f"gives {_lot_words(chain, lot)}"
         swap = _listing_swap(naming)
         if swap is None:
             return ""
@@ -11684,6 +11779,108 @@ def create_app(state: AppState) -> FastAPI:
         state.bump_generation()
         return JSONResponse({"done": True, "chain": chain.network})
 
+    #: Lots one request builds: two coins each, so at most fifty coins split,
+    #: and inside the thirty listings an hour an account may file.
+    LOTS_AT_ONCE = 25
+
+    @app.post("/account/claimlots")
+    def account_claimlots(request: Request, payload: Any = Body(None)):
+        """The legs for a prize pool: `count` lots of `lot` of one token, each
+        sold for `price` to whoever says the phrase (2026-09-28: games
+        that let players EARN a token; a tester's GHOST PROTOCOL pays 25 Ghost
+        Credits for cracking its vault).
+
+        A lot is a leg like a listed NFT's, two of the seller's coins signing
+        SINGLE|ANYONECANPAY: input 0 over a Simple Send of the lot, input 1 over
+        the price. The browser signs each and files it through
+        `/account/list/sign` with the same claim hash, and the page is given the
+        first lot's id -- `_next_lot` hands a claimer whichever is still open.
+        With too few coins this answers `needs_split` and the one send that
+        makes them, as `/account/accept` does. Nothing is signed or spent here.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        try:
+            from ..encoding import encode_class_c
+            index = state.token_index(chain)
+            prop = index.property(int(said.get("property_id") or 0))
+            if prop is None:
+                raise tokenlib.TokenError(f"there is no token {said.get('property_id')}.")
+            units = parse_amount(str(said.get("lot", "")), prop["divisible"])
+            if units <= 0:
+                raise tokenlib.TokenError("a lot is an amount above zero")
+            try:
+                count = int(said.get("count") or 0)
+            except (TypeError, ValueError):
+                count = 0
+            if not 1 <= count <= LOTS_AT_ONCE:
+                raise ValueError(f"make between 1 and {LOTS_AT_ONCE} lots at a time")
+            price = parse_amount(str(said.get("price", "")), True)
+            _above_dust(price, "price")
+            free = (_lot_room(chain, address, prop["property_id"])
+                    - _lots_listed(chain, address, prop["property_id"]))
+            if units * count > free:
+                raise tokenlib.TokenError(
+                    f"that is {format_amount(units * count, prop['divisible'])} "
+                    f"{prop['name']}, and this account has "
+                    f"{format_amount(max(0, free), prop['divisible'])} not already "
+                    f"standing in lots")
+            naming = encode_class_c(P.SimpleSend(property_id=prop["property_id"],
+                                                 amount=units).encode())
+            shown = format_amount(units, prop["divisible"])
+            what = (f"a lot of {shown} {prop['name']} for "
+                    f"{format_amount(price, True)} coins, claimed with a phrase")
+            with contextlib.closing(index.open()) as db:
+                spent = _flights.spent_by(account.pubkey, chain.network)
+                seen: set = set()
+                held = []
+                # Coins still in the mempool count: the split below is spent by
+                # these legs straight after it is broadcast.
+                for c in (list(utxoslib.unspent(db, address))
+                          + list(_flights.change_for(account.pubkey, chain.network))):
+                    key = (c["txid"], int(c["vout"]))
+                    if key in spent or key in seen or int(c["value"]) < fees.DUST_LIMIT:
+                        continue
+                    seen.add(key)
+                    held.append(c)
+                held.sort(key=lambda c: int(c["value"]))
+                if len(held) < 2 * count:
+                    need = 2 * count - len(held)
+                    split = fundinglib.build(
+                        db, chain.params, address,
+                        [(SPLIT_EACH, txbuild.p2pkh_script(address))] * need,
+                        rate=fees.MIN_FEE_PER_KB,
+                        what=f"split a coin into {need} so {count} lots have two each",
+                        exclude=spent,
+                        extra=_flights.change_for(account.pubkey, chain.network))
+                    offer = _offers.add(account.pubkey, chain.network, split, split.what)
+                    return JSONResponse({"needs_split": True, "offer": offer.id,
+                                         "chain": chain.network, **split.as_json()})
+                legs = []
+                for n in range(count):
+                    leg = fundinglib.build_leg(
+                        chain.params, address, held[2 * n], coins=price,
+                        rate=fees.MIN_FEE_PER_KB, what=what,
+                        payload=naming, coin=held[2 * n + 1])
+                    legs.append({**leg.as_json(), "chain": chain.network,
+                                 "price": price,
+                                 "send": {"propertyid": prop["property_id"],
+                                          "units": str(units), "amount": shown,
+                                          "name": prop["name"]}})
+        except (fundinglib.FundingError, tokenlib.TokenError, AmountError,
+                ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"chain": chain.network, "legs": legs, "what": what})
+
     @app.post("/account/list/sign")
     def account_list_sign(request: Request, payload: Any = Body(None)):
         """File the leg this browser signed, from its bytes and the chain alone.
@@ -11730,6 +11927,15 @@ def create_app(state: AppState) -> FastAPI:
             if claim_hash and not re.fullmatch(r"[0-9a-f]{64}", claim_hash):
                 raise ValueError("a claim is named by the sha256 of its phrase, "
                                  "64 hex characters")
+            if not claim_hash:
+                # A token lot on a public page would be the one listing in the
+                # book no page knows how to show; lots are for claims.
+                with chain.rpc() as rpc:
+                    outs = rpc.call("decoderawtransaction", raw).get("vout") or []
+                first = bytes.fromhex(str((outs[0].get("scriptPubKey") or {})
+                                          .get("hex") or "")) if outs else b""
+                if first[:1] == b"\x6a" and _token_lot(listingslib._payload_of(outs[0])):
+                    raise ValueError("a token lot is only ever a claim: give it a phrase")
             _quota(account, "list", nbytes=len(bytes.fromhex(raw)))
             price = parse_amount(str(said.get("amount", "")), True)
             with chain.rpc() as rpc:
@@ -11791,6 +11997,9 @@ def create_app(state: AppState) -> FastAPI:
         """The piece a listing sells, as a card names it: "The Last Patch (#105)",
         or "#105" when it has no name -- not the listing's own sentence, which
         starts with "buy" (a tester, 2026-09-28: "Claim buy inscription #105")."""
+        lot = _token_lot(bytes.fromhex(str(listing.get("payload") or "")))
+        if lot:
+            return _lot_words(chain, lot)
         try:
             row = state.token_index(chain).inscription(_sold_piece(listing))
         except Exception:
@@ -11810,6 +12019,11 @@ def create_app(state: AppState) -> FastAPI:
         filed reaches the same way. A claim is checked for its phrase first.
         """
         listing = state.listings.get(str(listing_id))
+        if listing is not None and listing.get("claim_hash") \
+                and listing.get("status", "open") != "open":
+            # A pool of lots under one phrase: the id a page holds names them
+            # all, and a taken lot hands over the next one still open.
+            listing = _next_lot(listing) or listing
         if listing is None or listing["network"] != chain.network \
                 or listing.get("status", "open") != "open" and listing.get("claim_hash"):
             raise ValueError(
@@ -11864,6 +12078,11 @@ def create_app(state: AppState) -> FastAPI:
                 "the seller no longer holds that piece, so this listing is over. "
                 "Nothing was spent.")
         naming = bytes.fromhex(str(listing["payload"] or ""))
+        lot = _token_lot(naming)
+        if lot and _lot_room(chain, listing["owner"], lot[0]) < lot[1]:
+            raise swaplib.SwapError(
+                "the seller no longer holds enough of that token for this lot, so "
+                "it cannot be claimed. Nothing was spent.")
         # What the seller's two signatures stand over -- its bytes at output 0,
         # its payment at the next, its own coins in front, and the fee it
         # reserved paid back -- is `listings.leg_terms`, and it is that precisely
@@ -11880,6 +12099,14 @@ def create_app(state: AppState) -> FastAPI:
         piece = (f"{listing['input']['txid'][:16]}…:{listing['input']['vout']}"
                  if named is None else
                  swaplib.describe_leg(swaplib.leg_json(named.give, index)))
+        if lot:
+            piece = _lot_words(chain, lot)
+            # The tokens go to the LAST output that is not the seller's
+            # (`tx.determine_reference`). A buyer whose change is too small to
+            # keep would leave only the seller's outputs, the seller would be
+            # sent its own tokens, and the buyer would have paid for nothing.
+            # So a lot always ends with an output of the buyer's own.
+            outputs = list(outputs) + [(fees.DUST_LIMIT, txbuild.p2pkh_script(address))]
         cost = swaplib.describe_leg(swaplib.leg_json(
             inscriptionlib.Leg(inscriptionlib.LEG_COINS,
                                amount=int(listing["price"])), index))
@@ -11935,6 +12162,8 @@ def create_app(state: AppState) -> FastAPI:
                              "price": int(listing["price"]),
                              "claim": bool(listing.get("claim_hash")),
                              "piece": _piece_called(chain, listing),
+                             "lot": bool(_token_lot(bytes.fromhex(
+                                 str(listing.get("payload") or "")))),
                              **unsigned.as_json()})
 
     @app.post("/account/buy/sign")
@@ -12041,6 +12270,10 @@ def create_app(state: AppState) -> FastAPI:
             # row left `open` would be offered to the next buyer as though it
             # were still for sale.
             state.listings.close(listing["id"], "filled", spent_by=txid)
+            sent_lot = _token_lot(bytes.fromhex(str(listing.get("payload") or "")))
+            if sent_lot:
+                _lots_flying.setdefault((chain.network, listing["owner"], sent_lot[0]),
+                                        {})[txid] = sent_lot[1]
             _flights.add(account.pubkey, txid, unsigned, address,
                          network=chain.network)
             state.bump_generation()

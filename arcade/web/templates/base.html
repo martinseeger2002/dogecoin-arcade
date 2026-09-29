@@ -841,14 +841,16 @@ async function claimFor(source, m) {
     const unit = coins === "1" ? "coin" : "coins";
     const seller = offer.seller_tag ? "@" + offer.seller_tag : "its owner";
     const what = offer.piece || "this piece";
+    const lot = !!offer.lot;                     // tokens, not a piece (token claims)
     const ok = await arcadeAsk(`Claim ${what}?`,
-      `${seller} set it aside for whoever got here. It costs ${coins} ${unit} to ${seller}`
-      + ` and a network fee of ${shown.coinsOf(shown.fee)}. The piece and the coins move `
-      + "in one transaction, checked in this browser.", `Claim it for ${coins} ${unit}`);
+      `${seller} set ${lot ? "these" : "it"} aside for whoever got here. `
+      + `${lot ? "They cost" : "It costs"} ${coins} ${unit} to ${seller}`
+      + ` and a network fee of ${shown.coinsOf(shown.fee)}. The ${lot ? "tokens" : "piece"} and the coins move `
+      + "in one transaction, checked in this browser.", `Claim ${lot ? "them" : "it"} for ${coins} ${unit}`);
     if (!ok) { answer({error: "Cancelled."}); return; }
     const out = await wallet.buy(held, offer);
     answer({ok: true, txid: out.txid || ""});
-    arcadeToast(`You claimed ${what}. It's yours when its block lands.`);
+    arcadeToast(`You claimed ${what}. ${lot ? "They're" : "It's"} yours when the block lands.`);
   } catch (err) {
     answer({error: String(err.message || err)});
   } finally { minting = false; }

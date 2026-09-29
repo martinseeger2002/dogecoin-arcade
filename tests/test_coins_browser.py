@@ -825,3 +825,74 @@ def test_a_leg_whose_payload_is_not_a_listing_is_refused(loaded):
     assert "hashes" not in refused, refused
     assert "not a swap" in refused["error"], refused
     assert "Nothing was signed" in refused["error"], refused
+
+
+# --- token claim lots (2026-09-28: games that pay out a token) ------------
+
+
+def _lot_payload(pid: int = 14, units: int = 25) -> bytes:
+    from arcade import payload as P
+    from arcade.encoding import encode_class_c
+    return encode_class_c(P.SimpleSend(property_id=pid, amount=units).encode())
+
+
+def test_a_lot_leg_says_the_tokens_it_gives_and_the_coins_it_takes(loaded):
+    """A lot's price is in no payload -- it is what the payment output adds --
+    so the node states it, and the browser says the send its bytes carry."""
+    from arcade import funding
+    from arcade.config import NETWORKS
+
+    browser, _, _ = loaded
+    mine = _key(browser)
+    held = _seller_coins(mine)
+    leg = funding.build_leg(NETWORKS["regtest"], mine, held[0], coins=COIN // 100,
+                            rate=RATE, payload=_lot_payload(), coin=held[1])
+    body = {**leg.as_json(), "price": COIN // 100,
+            "send": {"propertyid": 14, "units": "25", "amount": "25",
+                     "name": "Ghost Credits"}}
+    shown = browser.execute_async_script(CHECK_LEG, json.dumps(body))
+    assert "error" not in shown, shown
+    assert shown["hashes"] == leg.sighashes
+    assert shown["listing"] == [None, COIN // 100]
+    assert "gives 25 Ghost Credits and takes 0.01000000 coins" in shown["says"], shown["says"]
+    assert shown["reserved"] == leg.fee
+
+    lying = {**body, "send": {**body["send"], "units": "2500"}}
+    refused = browser.execute_async_script(CHECK_LEG, json.dumps(lying))
+    assert "its own bytes send another" in refused.get("error", ""), refused
+
+
+def test_a_claim_of_tokens_that_does_not_end_on_the_claimer_is_refused(loaded):
+    """The tokens go to the last output that is not the seller's; a claim that
+    ended on the seller would pay them and send the tokens back to them."""
+    from arcade import funding, txbuild
+
+    browser, _, _ = loaded
+    mine = _key(browser)
+    script = txbuild.p2pkh_script(mine)
+    inputs = [{"txid": "%064x" % 5, "vout": 0, "value": COIN, "address": SOMEWHERE_ELSE},
+              {"txid": "%064x" % 6, "vout": 1, "value": 2 * COIN, "address": mine}]
+
+    def offer(outputs):
+        raw = txbuild.build_raw_tx([(c["txid"], c["vout"]) for c in inputs], outputs)
+        return {"raw": raw, "inputs": inputs, "signed_from": 1,
+                "sighashes": [funding.sighash(inputs, outputs, 1, script).hex()]}
+
+    lot = (0, txbuild.op_return_script(_lot_payload()))
+    seller = (COIN + COIN // 100, txbuild.p2pkh_script(SOMEWHERE_ELSE))
+    check = """
+        const done = arguments[1];
+        (async () => {
+          try {
+            const c = window.coins;
+            const coin = await c.coinKey(c.unhex("000102030405060708090a0b0c0d0e0f"), "regtest", 0);
+            await c.verifyOffer(JSON.parse(arguments[0]), {
+              pubkey: coin.pubkey, address: await c.address(coin.pubkey, 111)});
+            done({ok: true});
+          } catch (e) { done({error: String(e && e.message || e)}); }
+        })();"""
+    bad = browser.execute_async_script(check, json.dumps(offer([lot, seller])))
+    assert "does not end on an output of yours" in bad.get("error", ""), bad
+    good = browser.execute_async_script(check, json.dumps(
+        offer([lot, seller, (COIN // 100, script), (COIN - 10_000, script)])))
+    assert good == {"ok": True}, good

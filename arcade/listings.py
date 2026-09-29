@@ -811,6 +811,17 @@ def leg_terms(listing: dict) -> tuple[list, list]:
     return foreign, outputs
 
 
+def _is_token_send(payload: bytes) -> bool:
+    """Whether a listing's bytes are a token Simple Send (a claim lot)."""
+    from . import payload as P
+    from .encoding import decode_class_c
+    try:
+        body = decode_class_c(bytes(payload)) if payload else None
+        return isinstance(P.decode(body), P.SimpleSend) if body else False
+    except Exception:                                           # noqa: BLE001
+        return False
+
+
 def named_swap(payload: bytes) -> Any:
     """The trade a listing's own bytes promise, or None when they promise none.
 
@@ -828,7 +839,10 @@ def named_swap(payload: bytes) -> Any:
     if body is None:
         return None
     try:
-        found = inscriptionlib.parse(P.decode(body).data)
+        message = P.decode(body)
+        if not isinstance(message, P.AnyData):          # a token lot sends, it swaps nothing
+            return None
+        found = inscriptionlib.parse(message.data)
     except (P.PayloadError, inscriptionlib.InscriptionError):
         return None
     return found if isinstance(found, inscriptionlib.Swap) else None
@@ -856,6 +870,11 @@ def wallet_completes(rpc: Any, db: Any, params: Any, listing: dict,
     the better one anyway, because it leaves out what the pool has already spent,
     which is the same reason `swap.build` asks the wallet and not the index.
     """
+    if _is_token_send(bytes.fromhex(str(listing.get("payload") or ""))):
+        # A token lot's tokens go to the last output that is not the seller's,
+        # and this completion ends on change it may not keep: claimed from an
+        # account (`/account/buy`), which always ends on the buyer.
+        raise ListingError("a token lot is claimed from an account, not by a node's wallet")
     foreign, outputs = leg_terms(listing)
     coins = [{"txid": str(u["txid"]), "vout": int(u["vout"]),
               "value": int(round(float(u["amount"]) * COIN)),
