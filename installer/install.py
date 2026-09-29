@@ -950,6 +950,8 @@ def find_source(dry_run: bool) -> Path:
         info(f"updating {checkout}")
         result = subprocess.run([git, "-C", str(checkout), "pull", "--ff-only", "--quiet"],
                                 capture_output=True, text=True)
+        if result.returncode != 0 and resync(git, checkout):
+            result = subprocess.CompletedProcess([], 0)
         if result.returncode != 0:
             fail(f"could not update {checkout}: {result.stderr.strip()}")
     else:
@@ -960,6 +962,24 @@ def find_source(dry_run: bool) -> Path:
         if result.returncode != 0:
             fail(f"could not fetch {REPO_URL}: {result.stderr.strip()}")
     return checkout
+
+
+def resync(git: str, checkout: Path) -> bool:
+    """Follow the published history when it was rewritten rather than extended.
+
+    The published copy is filtered before it goes out, and when the filter
+    changes, so does the history, and a fast-forward is impossible. A checkout
+    with no local edits takes the published one as it is; one with edits is
+    left alone and the error says so.
+    """
+    run = lambda *a: subprocess.run([git, "-C", str(checkout), *a],  # noqa: E731
+                                    capture_output=True, text=True)
+    dirty = run("status", "--porcelain", "--untracked-files=no")
+    if dirty.returncode != 0 or dirty.stdout.strip():
+        return False
+    if run("fetch", "--quiet", "origin", "master").returncode != 0:
+        return False
+    return run("reset", "--hard", "--quiet", "FETCH_HEAD").returncode == 0
 
 
 def find_git() -> str | None:
@@ -1583,6 +1603,8 @@ def do_update(dry_run: bool) -> int:
                                 capture_output=True, text=True).stdout.strip()
         result = subprocess.run([git, "-C", str(checkout), "pull", "--ff-only", "--quiet"],
                                 capture_output=True, text=True)
+        if result.returncode != 0 and resync(git, checkout):
+            result = subprocess.CompletedProcess([], 0)
         if result.returncode != 0:
             fail(f"could not update the checkout: {result.stderr.strip()}")
         after = subprocess.run([git, "-C", str(checkout), "rev-parse", "--short", "HEAD"],

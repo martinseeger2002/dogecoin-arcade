@@ -170,6 +170,24 @@ def check() -> tuple[str | None, str | None, bool]:
     return installed, published, not published.startswith(installed[:7])
 
 
+def _resync(git: str, checkout: Path) -> bool:
+    """Follow the published history when it was rewritten rather than extended.
+
+    The published copy is filtered before it goes out (private documents and
+    personal details taken out of every commit), and when that filter changes
+    the history does too, so a fast-forward is impossible. A checkout nobody
+    has edited has nothing to lose by taking the published one as it is; a
+    checkout with local edits is left alone and the refusal says why.
+    """
+    dirty = _run(git, "status", "--porcelain", "--untracked-files=no", cwd=checkout)
+    if dirty.returncode != 0 or dirty.stdout.strip():
+        return False
+    if _run(git, "fetch", "--quiet", "origin", "master", cwd=checkout).returncode != 0:
+        return False
+    return _run(git, "reset", "--hard", "--quiet", "FETCH_HEAD",
+                cwd=checkout).returncode == 0
+
+
 def update(dry_run: bool = False) -> int:
     venv, checkout, fetchable = _layout()
 
@@ -202,6 +220,8 @@ def update(dry_run: bool = False) -> int:
     elif (checkout / ".git").exists():
         before = current_revision(checkout)
         result = _run(git, "pull", "--ff-only", "--quiet", cwd=checkout)
+        if result.returncode != 0 and _resync(git, checkout):
+            result = subprocess.CompletedProcess([], 0)       # followed it
         if result.returncode != 0:
             raise UpdateError(
                 f"could not fast-forward the checkout:\n  {result.stderr.strip()}\n"

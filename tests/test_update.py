@@ -360,3 +360,48 @@ def test_the_archive_must_hash_to_what_was_signed(tmp_path, monkeypatch):
     manifest.clear(); manifest.update(older)
     with pytest.raises(update.UpdateError, match="downgrade"):
         update._signed_manifest()
+
+
+def _git(*args, cwd):
+    import subprocess
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True,
+                          check=True, env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                                           "GIT_COMMITTER_NAME": "t",
+                                           "GIT_COMMITTER_EMAIL": "t@t",
+                                           "PATH": "/usr/bin:/bin"}).stdout.strip()
+
+
+def _published(tmp_path, text):
+    """A published repository with one commit saying `text`, on master."""
+    src = tmp_path / f"src-{abs(hash(text))}"
+    src.mkdir()
+    _git("init", "-q", "-b", "master", cwd=src)
+    (src / "a.txt").write_text(text)
+    _git("add", "a.txt", cwd=src)
+    _git("commit", "-q", "-m", text, cwd=src)
+    return src
+
+
+def test_a_clean_checkout_follows_a_rewritten_history(tmp_path):
+    """The published copy is filtered before it goes out; when the filter
+    changes, the history is rewritten and a fast-forward cannot follow it."""
+    import shutil
+    pub = _published(tmp_path, "first, with a name in it")
+    mine = tmp_path / "checkout"
+    _git("clone", "-q", str(pub), str(mine), cwd=tmp_path)
+    shutil.rmtree(pub)
+    _published(tmp_path, "first, without").rename(pub)
+    assert update._resync("git", mine)
+    assert (mine / "a.txt").read_text() == "first, without"
+
+
+def test_a_checkout_with_local_edits_is_left_alone(tmp_path):
+    import shutil
+    pub = _published(tmp_path, "one")
+    mine = tmp_path / "checkout"
+    _git("clone", "-q", str(pub), str(mine), cwd=tmp_path)
+    (mine / "a.txt").write_text("my own change")
+    shutil.rmtree(pub)
+    _published(tmp_path, "two").rename(pub)
+    assert not update._resync("git", mine)
+    assert (mine / "a.txt").read_text() == "my own change"
