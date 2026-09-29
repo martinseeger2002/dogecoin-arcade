@@ -221,8 +221,11 @@ def test_an_unjudged_post_says_it_is_being_checked(client):
     state.set_setting("moderation", {"url": "http://127.0.0.1:9/v1", "model": "m", "timeout": 1})
     a_post(state, "11" * 32, text="not judged yet")
     body = app.get("/feed").text
-    assert "not judged yet" not in body and "Checking this post for sensitive material" in body
-    assert '<details class="covered checking"' in body, "its words can be shown before the check ends"
+    assert "Checking this post for sensitive material" in body
+    covered = body[body.index('<details class="covered checking"'):]
+    covered = covered[:covered.index("</details>")]
+    assert "not judged yet" in covered, "its words are behind the cover, shown on a tap (2026-09-28)"
+    assert body.count("not judged yet") == 1, "and nowhere else on the page"
 
 
 def test_a_better_prompt_asks_again_about_what_the_old_one_passed(tmp_path, model):
