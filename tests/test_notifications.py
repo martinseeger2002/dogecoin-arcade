@@ -246,3 +246,13 @@ def test_a_deleted_reply_or_post_is_no_longer_news(public):
         mentions = notify.mention_events(store.conn, state.messaging.network, ME, "maple")
     assert [e.extra["txid"] for e in events if e.kind == "replied to"] == ["d3" * 32]
     assert mentions == []
+
+
+def test_a_buy_order_that_can_fill_is_said_as_that_not_as_mail():
+    """a tester, 2026-09-28: it read "fill:14... sent you a message"."""
+    from arcade import notify
+    rows = [{"rowid": 7, "txid": "fill:abc:" + "d" * 64, "sender": "fill:14", "at": 5},
+            {"rowid": 8, "txid": "e" * 64, "sender": "nSomebody", "at": 6}]
+    fill, mail = notify.message_events(rows, lambda pid: "Ghost Credits" if pid == "14" else "")
+    assert (fill.source, fill.target, fill.text) == ("fill", "14", "Ghost Credits")
+    assert mail.source == "message" and mail.actor == "nSomebody"

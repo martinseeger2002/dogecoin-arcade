@@ -13,7 +13,7 @@
 {%- endmacro %}
 
 {% macro row(r) %}
-{% set link = ('/me/messages' if r.source == 'message'
+{% set link = ('/exchange/pair/' ~ r.target if r.source == 'fill' else '/me/messages' if r.source == 'message'
                else ('/feed?post=' ~ (r.comment or r.target) if r.source in ('feed', 'mention', 'mention_reply')
                else ('/inscriptions/' ~ r.target ~ '/view' if r.source == 'swap' else '/me/nfts'))) %}
 {% set who = r.actors[0] if r.actors else '' %}
@@ -36,6 +36,9 @@
         <b>You {{ 'sold' if r.kind == 'sold' else 'bought' }} {{ r.text }}</b>
         {{ 'to' if r.kind == 'sold' else 'from' }} {{ name(who) }}{% if r.amount %} for
         <span class="namt">{{ '%g' % (r.amount / 100000000) }}</span>{% endif %}
+      {% elif r.source == 'fill' %}
+        <b>Your buy order for {{ r.text }} can fill.</b> A sell order meets your price: open it
+        and it fills.
       {% elif r.source == 'message' %}
         <b>{{ name(who) }}</b> sent you {{ 'a message' if r.count == 1 else r.count ~ ' messages' }}
       {% elif r.source in ('mention', 'mention_reply') %}

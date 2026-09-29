@@ -7623,7 +7623,13 @@ def create_app(state: AppState) -> FastAPI:
             log.info("notifications: feed: %s", exc)
         push = state.push() if hasattr(state, "push") else None
         if push is not None:
-            events += notify.message_events(push.arrivals(account.pubkey))
+            def _token_name(pid: str) -> str:
+                try:
+                    prop = state.token_index(_token_chain()[0]).property(int(pid))
+                    return prop["name"] if prop else ""
+                except Exception:
+                    return ""
+            events += notify.message_events(push.arrivals(account.pubkey), _token_name)
         owners = {a for a in (_account_address(account.pubkey, c)
                               for c in _account_chains()) if a}
         try:
@@ -10460,7 +10466,8 @@ def create_app(state: AppState) -> FastAPI:
 
         offer = _offers.add(account.pubkey, chain.network, unsigned, what, done=made)
         return JSONResponse({"standing": _standing_shape(row, prop), "offer": offer.id,
-                             "chain": chain.network, **unsigned.as_json()})
+                             "chain": chain.network, "lots": len(plan),
+                             "lot_total": sum(values), **unsigned.as_json()})
 
     @app.post("/account/standing/lots")
     def account_standing_lots(request: Request, payload: Any = Body(None)):

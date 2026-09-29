@@ -144,10 +144,16 @@
           return;
         }
         const shown = await wallet.checked(said, held);
+        // One sentence for the lots, from the transaction as this browser read it:
+        // the outputs back to this address, less the change (a tester: "0.0312 to
+        // ... (back to you)" ten times over was unreadable).
+        const set = shown.pays.filter((p) => p.mine).slice(0, said.lots);
+        const aside = set.reduce((n, p) => n + p.value, 0);
         if (!(await arcadeAsk(`Buy ${said.standing.amount} ${said.standing.name} at ${said.standing.price} while you're away?`,
-            "One transaction sets your coins aside in small lots; then you sign each lot, and "
-            + "this server fills them from sell orders at or under your price. A lot can spend "
-            + `no more than its own price. ${shown.says}`, "Set it up"))) return;
+            `This sets aside ${shown.coinsOf(aside)} coins of yours in ${set.length} lot`
+            + `${set.length === 1 ? "" : "s"}, still at your own address. Only this server can use `
+            + "them, only to fill this order, and each lot can spend no more than its own price. "
+            + `Network fee ${shown.coinsOf(shown.fee)}.`, "Set it up"))) return;
         await wallet.confirm(held, said);
         const lots = await (await fetch("/account/standing/lots", {method: "POST",
           headers: {"Content-Type": "application/json"},

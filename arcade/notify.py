@@ -134,10 +134,22 @@ def mention_events(conn, network: str, me: str, tag: str) -> list[Event]:
     return out
 
 
-def message_events(arrivals: Iterable[Any]) -> list[Event]:
-    """Messages that paid this account's address (push.Push.arrivals)."""
-    return [Event(source="message", seq=int(r["rowid"]), kind="message", actor=r["sender"],
-                  target=r["txid"], at=int(r["at"])) for r in arrivals]
+def message_events(arrivals: Iterable[Any], name_of=None) -> list[Event]:
+    """Messages that paid this account's address (push.Push.arrivals), and the
+    "your buy order can fill" notices the same table carries (standing.py: txid
+    "fill:<order>:<sell order>", sender "fill:<property id>") -- said as what they
+    are, not as mail from somebody called "fill:14" (a tester, 2026-09-28)."""
+    out = []
+    for r in arrivals:
+        if str(r["txid"]).startswith("fill:"):
+            pid = str(r["sender"]).split(":", 1)[-1]
+            out.append(Event(source="fill", seq=int(r["rowid"]), kind="buy order can fill",
+                             actor="", target=pid, at=int(r["at"]),
+                             text=(name_of(pid) if name_of else "") or "a token"))
+            continue
+        out.append(Event(source="message", seq=int(r["rowid"]), kind="message",
+                         actor=r["sender"], target=r["txid"], at=int(r["at"])))
+    return out
 
 
 def sale_events(conn, owners: set[str]) -> list[Event]:
