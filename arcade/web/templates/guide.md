@@ -645,6 +645,41 @@ without you.
 
 ---
 
+## Prize pools
+
+How a game, a puzzle or any other page pays out tokens to whoever wins,
+without its owner being there.
+
+* **A prize pool is a set of identical lots** of one token, say 20 lots of 50,
+  each sold for a small price you choose (0.01 coins or more) to whoever gives
+  the right phrase. You make one on *Wallet → Tokens → Prize lots*, and your
+  browser signs every lot once, up front. Up to 25 lots at a time; make more
+  pools if you need more.
+* **It is tied to your game.** Name the game's inscription when you make the
+  pool, and the pool pays out only while you still hold that inscription.
+  Sending the game to somebody else, or selling it, closes its pool. A claim
+  from any other page is refused.
+* **The game finds its own pool.** A page asks `/r/claimpool/<its own id>`
+  how many lots are left, and when a player wins it asks the wallet to claim
+  with the phrase. The player sees an ordinary confirmation card ("Claim 50
+  PLASMA for 0.01 coins?"), pays the price plus the network fee, and the
+  tokens and coins move in one transaction. The details for page makers are
+  in the inscription API guide, under Claims.
+* **The lots are hidden.** A pool is on no public page and in no order book,
+  so nobody can buy it out from the Exchange.
+* **The phrase is inside the game's code**, which anyone can read. Somebody
+  determined can claim without playing, for the same price as a winner. Size a
+  pool as a prize, not a vault.
+* **Your tokens stay yours until claimed**, but a pool reserves them: the
+  lots standing in pools count against your balance when you make a new one,
+  and a lot is refused if you no longer hold its tokens.
+* **Withdrawing** is *Wallet → Tokens → Your prize pools → Withdraw*: one
+  transaction that spends the coins every lot stands on back to you. Once it
+  is in a block, nobody can claim from that pool, and its tokens are free for
+  a new one.
+
+---
+
 ## Approvals
 
 A page or a program can ask this wallet to send something. It cannot send.
