@@ -545,7 +545,7 @@ def test_one_broken_phase_does_not_end_the_pass(monkeypatch):
 
 def test_it_says_what_it_decided(monkeypatch):
     """A thing that runs on its own has to be able to say when it last ran.
-    The operator asked twice why updates were not automatic while they were running
+    Robin asked twice why updates were not automatic while they were running
     exactly as written, and neither of us could answer it from outside."""
     from arcade.web.watcher import BlockWatcher
 
@@ -625,7 +625,7 @@ def test_a_successful_update_is_not_read_from_the_exit_status(monkeypatch, tmp_p
     """The updater restarts arcade-web, systemd stops this process in the same
     cgroup, and the subprocess is killed mid-flight -- so a SUCCESSFUL update
     returns non-zero and its benign progress output is logged as the error.
-    A test machine caught it on the one run that actually worked.
+    The BOXA caught it on the one run that actually worked.
 
     What is on disk now is what happened (D-088).
     """

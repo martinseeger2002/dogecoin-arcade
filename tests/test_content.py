@@ -38,9 +38,9 @@ def test_a_file_with_no_text_round_trips():
 
 
 def test_a_profile_round_trips():
-    body = C.build("offer attached", profile=C.Profile("the operator", "nTest", "PMain"))
+    body = C.build("offer attached", profile=C.Profile("Robin", "nTest", "PMain"))
     got = C.parse(body)
-    assert got.profile.name == "the operator"
+    assert got.profile.name == "Robin"
     assert got.profile.testnet_address == "nTest"
     assert got.profile.mainnet_address == "PMain"
 
@@ -153,7 +153,7 @@ def test_a_profile_arriving_by_message_reaches_the_address_book(tmp_path):
     store = _store(tmp_path)
     key = b"\x0b" * 32
     body = C.build("Offer on your NFT",
-                   profile=C.Profile("the operator", "nTheirTest", "PTheirMain"))
+                   profile=C.Profile("Robin", "nTheirTest", "PTheirMain"))
     parsed = C.parse(body)
     store.add_message(None, "tx", "tx", 1, 0, "nTheirTest", key, "me",
                       parsed.text.encode())
@@ -161,12 +161,12 @@ def test_a_profile_arriving_by_message_reaches_the_address_book(tmp_path):
                         parsed.profile.mainnet_address)
 
     row = store.contact_by_key(key)
-    assert row["name"] == "the operator"
+    assert row["name"] == "Robin"
     assert row["mainnet_address"] == "PTheirMain"
 
 
 # --- every byte value survives every container --------------------------------
-# a test machine's check, and the right one: the wire is binary-clean, so the risk is not
+# BOXA's check, and the right one: the wire is binary-clean, so the risk is not
 # the chain but anywhere the bytes pass through a text-only container on the way
 # to disk or to a browser. A file is guaranteed to contain bytes that are not
 # valid UTF-8, and the resume path is the one nobody exercises twice.
@@ -262,7 +262,7 @@ def test_a_binary_attachment_round_trips_through_encryption_and_chunking():
 
 
 def test_a_declared_profile_address_beats_the_funding_address(tmp_path):
-    """Found across machines by a test machine: the address book showed the wrong address.
+    """Found across machines by BOXA: the address book showed the wrong address.
 
     `add_message` fills a blank address from the transaction, and that address is
     whichever one funded the send -- it changes with coin selection. A profile
@@ -347,7 +347,7 @@ def test_you_are_never_offered_as_someone_to_meet(tmp_path):
 
 
 # --- a fix must reach data already stored -------------------------------------
-# a test machine proved this on a copy of its live store: "Big Chief En" was unrepairable
+# BOXA proved this on a copy of its live store: "Big Chief En" was unrepairable
 # for ever. The precedence logic was right; the migration's default was not.
 
 
@@ -502,7 +502,7 @@ def test_the_repair_runs_once_per_generation(tmp_path):
 
 
 def test_the_repair_corrects_only_what_the_chain_supports(tmp_path):
-    """a test machine asked for this one specifically, and it is the right test to keep.
+    """BOXA asked for this one specifically, and it is the right test to keep.
 
     Its store held two announcements of the same key: one genuinely containing
     twelve bytes because it was published truncated, and one containing sixteen

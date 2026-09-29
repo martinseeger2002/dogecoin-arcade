@@ -1,6 +1,6 @@
 """An account's second wallet: the same words, on the chain that is money.
 
-The operator: "Add mainnet wallets to the accounts on Doge arcade Web."
+Robin: "Add mainnet wallets to the accounts on Doge arcade Web."
 
 One set of twelve words, a key on each chain at that chain's own coin type
 -- m/44'/1' on testnet, m/44'/3' on mainnet -- and nothing extra for

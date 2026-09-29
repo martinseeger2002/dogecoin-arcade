@@ -167,7 +167,7 @@ def _managed(state, property_id):
 
 def test_a_token_you_issue_is_listed_even_at_zero(client):
     """A managed token starts at nothing; its issuer has to find it to grant
-    any (a tester, 2026-09-26: "stuck at zero forever")."""
+    any (tester-e5, 2026-09-26: "stuck at zero forever")."""
     app, state = client
     _seat(app)
     app.post("/account/address", json={"address": TEST})

@@ -324,7 +324,7 @@ def test_lying_about_the_length_is_rejected(alice, bob):
 
 # --- the real chunking threshold ----------------------------------------------
 # The chunk tests above pass an explicit small capacity, so they exercise the
-# machinery but say nothing about where `plan_message` actually divides. a test machine
+# machinery but say nothing about where `plan_message` actually divides. BOXA
 # nearly ran a cross-machine chunk test against a size that does not chunk at
 # all, which would have reported the chunk path as working without ever entering
 # it. These pin the boundary itself.
@@ -360,7 +360,7 @@ def test_the_documented_ceiling_is_the_real_one(alice, bob):
 
 
 # --- chunked sends survive an interruption ------------------------------------
-# a test machine broadcast chunk 1 of 2, then chunk 2 failed to build, and the result was
+# BOXA broadcast chunk 1 of 2, then chunk 2 failed to build, and the result was
 # 0.148 PEP spent on a transaction that can never be read by anyone: a partial
 # message is permanently unreadable, and nothing recorded enough to finish it.
 # Re-sending is not a fix -- re-sealing produces a different message id, so a
@@ -384,7 +384,7 @@ def test_a_single_transaction_plan_has_no_message_id(alice, bob):
 def test_chunks_are_split_evenly_rather_than_greedily(alice, bob):
     """Filling each chunk in turn made the first transaction the largest possible.
 
-    a test machine measured 14,783 bytes then 796. The first is the one most likely to meet
+    BOXA measured 14,783 bytes then 796. The first is the one most likely to meet
     a relay or mempool limit, and dust tracks the total payload rather than the
     transaction count, so evening the split costs nothing.
     """
@@ -432,7 +432,7 @@ def test_a_finished_send_leaves_nothing_pending(alice, bob):
 
 # --- announcing who a key belongs to ------------------------------------------
 # A bare announcement is attributed to whichever address funded the transaction,
-# and that changes with coin selection -- a test machine measured an identity address, a
+# and that changes with coin selection -- BOXA measured an identity address, a
 # funding address and an announcement address all differing at once. Saying who
 # the key belongs to, in the announcement itself, is the stable answer.
 
@@ -491,7 +491,7 @@ def test_both_addresses_and_the_tag_round_trip():
 
     # Sections are optional and independent.
     assert parse_announced_extras(
-        build_key_announcement(key, here_hash, "the operator"))["tag"] == ""
+        build_key_announcement(key, here_hash, "Robin"))["tag"] == ""
     assert parse_announced_extras(
         build_key_announcement(key, here_hash, "", tag="robin"))["other_hash160"] == b""
     # Class B pads with NULs, which end the walk rather than inventing a section.
@@ -875,7 +875,7 @@ def test_a_single_transaction_message_never_splits_the_wallet():
 
 
 def test_the_split_is_sized_by_the_sending_address_not_the_wallet():
-    """a test machine, testnet: the wallet held 5,985 coins but the identity address 4.996.
+    """BOXA, testnet: the wallet held 5,985 coins but the identity address 4.996.
 
     `ensure_outputs` sized the split from getbalance (the whole wallet) and then
     funded it from the identity address alone, so it planned 8 pieces at 17
@@ -955,7 +955,7 @@ def test_the_short_of_coins_advice_says_to_fund_the_sending_address():
 
 
 def test_only_confirmed_outputs_count_towards_not_splitting():
-    """a test machine topped the identity up with 3,000 and pressed send twenty seconds
+    """BOXA topped the identity up with 3,000 and pressed send twenty seconds
     later. The unconfirmed output made four, so no split happened -- and
     send_all funds chunks two onwards from CONFIRMED outputs only, so they
     chained a block apart anyway. The count has to use the same rule."""

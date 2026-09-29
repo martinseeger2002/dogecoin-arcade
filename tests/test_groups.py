@@ -120,7 +120,7 @@ def test_the_budget_is_exact_and_one_byte_over_changes_the_carriage():
     It used to raise, from inside `build`, which runs before `plan` can choose a
     carriage. That made plan's own documented fallback ("three cases, cheapest
     first") unreachable: every text post over the Class C budget failed, with an
-    error ending "attaching a file lifts the limit, but costs far more". The operator
+    error ending "attaching a file lifts the limit, but costs far more". Robin
     hit it with no file attached and read it as a file-size error.
     """
     room = G.max_text_bytes("main", "robin")
@@ -202,7 +202,7 @@ def test_a_picture_needs_no_words():
     nothing typed; the board refused it and told the user to write something,
     for a post that was already complete. Reported from a phone."""
     jpeg = b"\xff\xd8\xff" + bytes(range(256)) * 6
-    post = G.GroupPost("main", "the operator", "", file_name="photo.jpg",
+    post = G.GroupPost("main", "Robin", "", file_name="photo.jpg",
                        file_type="image/jpeg", file_data=jpeg)
 
     plan = G.plan(post)
@@ -211,7 +211,7 @@ def test_a_picture_needs_no_words():
     assert back.file_name == "photo.jpg"
     assert back.file_type == "image/jpeg"
     assert back.file_data == jpeg, "the picture is the whole of the post"
-    assert back.channel == "main" and back.nickname == "the operator"
+    assert back.channel == "main" and back.nickname == "Robin"
 
 
 def test_nothing_at_all_is_still_refused():

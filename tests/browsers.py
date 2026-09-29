@@ -28,7 +28,7 @@ def launch(*arguments: str) -> webdriver.Firefox:
     """A headless browser, or a skip that says how to get one.
 
     Try ARCADE_GECKODRIVER alone first. On a snap install the driver knows where
-    its own Firefox lives, so it is the only variable needed; a test machine confirmed
+    its own Firefox lives, so it is the only variable needed; the BOXA confirmed
     that on Ubuntu with ARCADE_GECKODRIVER=/snap/bin/firefox.geckodriver and
     nothing else. ARCADE_FIREFOX_BINARY is for the other shape of odd install,
     where the driver is findable and the browser is not.

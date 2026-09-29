@@ -75,7 +75,7 @@ def _faucet_off(seated):
     in a background thread, so the `getrawmempool == []` and `balance == held`
     lines below stopped being a fact about the refusal and became a race with a
     gift. Reading `/account` to prove an account holds nothing is the very act
-    that hands it a coin. The feature is what the operator asked for; what had to go
+    that hands it a coin. The feature is what Robin asked for; what had to go
     is the assumption that an account stays as it was left. `faucet: 0` is the
     operator's own switch, so no rule is invented here."""
     app, state, rpc, pubkey, mine = seated

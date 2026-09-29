@@ -55,7 +55,7 @@ def showcased(tmp_path_factory):
     # default, every page below framed a JSON error instead of the inscription
     # -- which is how twenty browser tests, the sandbox guarantees among them,
     # went from testing something to testing nothing without going red in a
-    # way anybody read (a test machine pressed on it; D-121).
+    # way anybody read (BOXA pressed on it; D-121).
     engine = Engine(state_db, NETWORKS["regtest"], keep_content=lambda _: True)
 
     def inscribe(n, content, content_type, json_text=""):

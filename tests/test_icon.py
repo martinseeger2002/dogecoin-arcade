@@ -18,7 +18,7 @@ from test_web import app_state, client                          # noqa: F401,E40
 
 TEMPLATES = pathlib.Path("arcade/web/templates")
 
-#: The 180 as a test machine sent it, checked on arrival and pinned here so a
+#: The 180 as BOXA sent it, checked on arrival and pinned here so a
 #: re-encode, a resize or a truncated copy is a failing test rather than a
 #: favicon that quietly turns into something else.
 LOGO_180_SHA256 = "16a559a7ce714bdedfc38b46dbe4f9996fdb6d56c020c29d883bf5584734252c"
@@ -116,7 +116,7 @@ def test_a_clean_build_carries_every_data_file(tmp_path):
     """Every non-.py file under `arcade/` is in a wheel built from a clean
     copy of the tree. Not a list of names: the whole class.
 
-    It is written this way on a test machine's argument, and the argument is right.
+    It is written this way on BOXA's argument, and the argument is right.
     Naming the three files that were missing today protects those three;
     comparing the whole tree against the wheel means the next person to add
     a data file does not have to remember `pyproject.toml` at all, because

@@ -65,7 +65,7 @@ def shown(page: str, label: str) -> str:
 
 
 def test_two_prices_that_overlap_are_said_as_a_trade_and_not_a_sign(web):
-    """A crossed book is the most actionable state a pair page can be in (a tester).
+    """A crossed book is the most actionable state a pair page can be in (@tester S44).
 
     `/exchange/pair/9` printed `-8.00000000 spread` and `/exchange/pair/14` printed
     `0.00000000`, which reads as a perfectly tight market. Neither page was wrong
@@ -100,7 +100,7 @@ def test_two_prices_that_overlap_are_said_as_a_trade_and_not_a_sign(web):
 
         The notice is read-once -- the next page render clears it -- so it is
         caught here, at the moment the order goes in. That is also the moment the
-        plan asks this route to speak (a tester).
+        plan asks this route to speak (@tester S44).
         """
         app.post("/exchange/order", data=dict(csrf_token=csrf, property_id=pid,
                                              side=side, amount="10", price=price),
@@ -205,7 +205,7 @@ def test_create_confirm_broadcast_and_read_back(web):
     assert "create (fixed supply)" in detail
     assert "Issuer controls" in detail
     assert f'href="/exchange/pair/{prop['property_id']}">Trade Web Token</a>' in detail, \
-        "a token's page is a way into its market (a tester, 2026-09-27)"
+        "a token's page is a way into its market (tester-e5, 2026-09-27)"
     assert app.get("/tokens/999").status_code == 404
 
     # Send: refused before it costs anything, then shown, then read back.
@@ -518,7 +518,7 @@ def test_an_order_goes_on_the_book_and_can_be_taken_off(web):
         # re-laid-out around a spread (a87df0b) and these assertions went on
         # naming an "Asks" heading and a "Place an order" button that had
         # both been renamed, so the suite was red on a working feature and
-        # two releases went out over it (a test machine).
+        # two releases went out over it (BOXA).
         body = app.get(f"/exchange/pair/{pid}").text
         assert "Order book" in body and "0.5" in body
         assert 'action="/exchange/order"' in body, "and the form that adds to it"
@@ -553,7 +553,7 @@ def test_a_cancel_with_a_price_gives_back_one_price_and_not_the_pair(web):
 
     The account's route and this one used to file the identical message, so the
     finding is the same whichever door you come in at: two asks at two prices,
-    one press, both gone (a tester). `price` says which of the two shapes
+    one press, both gone (@tester S18). `price` says which of the two shapes
     the wire has is filed -- and here it is the flash line that carries the
     answer, because that is what this route can say at all. The control is the
     balance: an ask's tokens come back when the cancel's block lands, so the
@@ -818,7 +818,7 @@ def test_an_indivisible_price_is_read_in_coins_and_not_in_satoshis(web):
     and the reading side simply did not, so the row said what the engine means
     instead of what the person typed.
 
-    Found by rehearsing a cancel of ONE price on the live site for a tester
+    Found by rehearsing a cancel of ONE price on the live site for @tester
     (S18, 2026-09-27): two asks on an indivisible pair, one withdrawn, and the
     anonymous page read back showed the surviving row as `200000000 2 4`. The
     cancel was right and the price was not, which is why the test is about the
@@ -941,7 +941,7 @@ def test_the_pair_page_says_one_price_for_an_indivisible_trade(web, monkeypatch)
 
 def test_a_sensitive_name_is_walled_on_the_pair_page_as_it_is_on_the_token_page(web,
                                                                                monkeypatch):
-    """a tester, 2026-09-27: the wall stood on `/tokens/11` and not on
+    """@tester S36, 2026-09-27: the wall stood on `/tokens/11` and not on
     `/exchange/pair/11`, and what leaked was the name a stranger is least
     prepared for -- in the tab, in the history, in the `<h1>` a screen reader
     says first.
@@ -972,7 +972,7 @@ def test_a_sensitive_name_is_walled_on_the_pair_page_as_it_is_on_the_token_page(
     token page's own context, so a wall added to one template proves nothing about
     it. The row is only on that table once the token has a price on the book, so
     one ask is filed first: an assertion that never saw a row is the failure this
-    file has already been taught once (a test machine, S20).
+    file has already been taught once (BOXA, S20).
     """
     from arcade import moderation as mod
     app, state, node, alice, bob = web
@@ -1098,7 +1098,7 @@ def test_a_name_already_on_the_chain_is_refused_before_it_costs_anything(web):
 
 
 def test_a_pad_page_carries_one_line_the_node_writes_above_the_frame(web):
-    """A mintpad that is somebody's HTML page still says what a mint costs (a tester).
+    """A mintpad that is somebody's HTML page still says what a mint costs (@tester S48).
 
     Both live pads turned out to be the author's own inscribed HTML, shown in the
     sandbox, so the price, what a press gives and any sold-out line are prose inside
@@ -1169,7 +1169,7 @@ def test_a_pad_page_carries_one_line_the_node_writes_above_the_frame(web):
 
 
 def test_the_mintpads_tab_carries_the_same_count(web):
-    """What is left is one fact, so the tiles say it too (a tester addendum 2).
+    """What is left is one fact, so the tiles say it too (@tester S48 addendum 2).
 
     The tab's token tiles carried lot and creator only, so it could be read as a
     list of what is on the chain and not as a what-is-left list -- while the number
@@ -1181,7 +1181,7 @@ def test_the_mintpads_tab_carries_the_same_count(web):
     cap to count against (the fixed/managed split in S48's addendum), which is why
     the tab says which of the two lists is which instead of filling a column it
     cannot answer. And a pad with nothing left stays on the list -- dropping it
-    would undo the a tester findability the list exists for.
+    would undo the tester-e5 findability the list exists for.
     """
     import json
     import unittest.mock as mock
@@ -1251,7 +1251,7 @@ def test_the_mintpads_tab_names_its_collection_half_and_says_when_it_is_empty(we
     promising collections, and its only sentence about collections needed all
     three lists empty at once: with a single token pad on the page, the collection
     half said nothing whatsoever, which a reader cannot tell apart from a node that
-    has pads and is not showing them (a tester, 2026-09-28). His second pass
+    has pads and is not showing them (@tester S52, 2026-09-28). His second pass
     found the deeper half of it: the paragraph said a pad appears "because it is on
     the chain, not because anybody listed it", while `/mintpad/new` -- the page
     that makes one -- says a collection pad is signed listings held in the tab.
@@ -1273,7 +1273,7 @@ def test_a_pair_that_was_never_issued_answers_404_like_the_token_page(web):
     tab. A person read that correctly. Everything else read a redirect as "this
     moved, ask me again", so a dead pair page stayed permanently worth fetching --
     and `/tokens/16` answered the same nothing with a 404, so one node held two
-    answers to one question (a tester, the pair-page half of his refusal items).
+    answers to one question (@tester, the pair-page half of his refusal items).
     The sentence about where the list is stays, because that is what the redirect
     was actually worth; it is said at 404 now.
     """

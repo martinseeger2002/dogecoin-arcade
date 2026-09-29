@@ -1,4 +1,4 @@
-"""Comments aimed at a name, for the characters to answer (a tester and
+"""Comments aimed at a name, for the characters to answer (tester-e5 and
 2026-09-28)."""
 
 import pathlib

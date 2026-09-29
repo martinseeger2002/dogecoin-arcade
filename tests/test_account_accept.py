@@ -787,7 +787,7 @@ def test_an_account_s_answer_holds_the_piece_for_a_day(node):
 def test_an_accepted_offer_binds_until_it_is_taken_back(node):
     """Pixel Skull #2 (#28), 2026-09-27: the answer's hold lapsed after fifteen
     minutes, the Offers tab went back to Accept / Refuse, and the buyer's wallet
-    finished the trade a day later. The operator chose "Always binding": the row keeps
+    finished the trade a day later. Robin chose "Always binding": the row keeps
     saying it was accepted, with "Take it back", which spends the coins the
     answer was signed over back to the seller."""
     app, state, rpc = node

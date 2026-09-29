@@ -17,7 +17,7 @@ from test_web import app_state, client                          # noqa: F401,E40
 
 from arcade.web import guide                                    # noqa: E402
 
-FEATURES = pathlib.Path("/home/you/docs/features.md")
+FEATURES = pathlib.Path.home() / "docs" / "features.md"
 
 
 def test_the_guide_is_in_the_application(client):
@@ -105,7 +105,7 @@ def test_the_written_guide_covers_what_the_navigation_offers():
 
 # --- the inscription reference ------------------------------------------------
 
-API_DOC = pathlib.Path("/home/you/docs/inscription-api.md")
+API_DOC = pathlib.Path.home() / "docs" / "inscription-api.md"
 
 
 @pytest.mark.skipif(not API_DOC.exists(), reason="the written docs are not here")

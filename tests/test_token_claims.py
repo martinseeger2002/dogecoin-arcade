@@ -1,5 +1,5 @@
 """Token claims: a prize pool of token lots behind one phrase (2026-09-28:
-games that let players EARN a token; a tester's GHOST PROTOCOL pays 25 Ghost
+games that let players EARN a token; tester-e5's GHOST PROTOCOL pays 25 Ghost
 Credits to whoever cracks its vault).
 
 A lot is a leg like a listed NFT's with a Simple Send where the swap was: the

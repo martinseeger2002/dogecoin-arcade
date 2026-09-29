@@ -618,7 +618,7 @@ def test_an_inscription_this_node_has_never_seen_has_no_price(client):
 def test_two_sets_of_the_same_name_do_not_share_a_price(client):
     """A collection IS (creator, name). Keyed on the name alone, two people
     who both inscribe a set called Doge Punks get one price history, one
-    chart and one floor between them (a test machine)."""
+    chart and one floor between them (BOXA)."""
     from arcade.db import Database
 
     app, state = client

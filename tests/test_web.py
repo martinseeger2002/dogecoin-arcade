@@ -71,7 +71,7 @@ def test_offline_node_is_explained_not_hidden(client):
     Asserts the property rather than one lower layer's wording. It used to match
     the literal string "nothing listening", which only appears when a connection
     is actually refused -- so the test was pinned to the reason a node happened
-    to be unavailable on the machine running it. a test machine had it fail there and pass
+    to be unavailable on the machine running it. BOXA had it fail there and pass
     here for exactly that reason.
     """
     body = client[0].get("/").text
@@ -104,7 +104,7 @@ def test_state_changing_routes_require_a_csrf_token(client, path, data):
     The status code is part of the assertion now. It used to be 200 or 303,
     because every handler caught the rejection into its own error path -- so a
     refused request was indistinguishable from an accepted one to anything but a
-    human reading the page. a test machine audited `/publish-key`, saw 200 with no token,
+    human reading the page. BOXA audited `/publish-key`, saw 200 with no token,
     and had to check the chain and the wallet before concluding it was safe.
     """
     app, state = client
@@ -234,10 +234,10 @@ def test_address_book_starts_empty_and_says_so(client):
 
 def test_address_book_round_trip(client):
     app, state = client
-    assert _save(app, state, name="A test machine", testnet_address=TEST_ADDRESS,
+    assert _save(app, state, name="The BOXA", testnet_address=TEST_ADDRESS,
                  mainnet_address=MAIN_ADDRESS, notes="Other room.").status_code == 303
     body = app.get("/contacts").text
-    assert "A test machine" in body and TEST_ADDRESS in body
+    assert "The BOXA" in body and TEST_ADDRESS in body
     assert MAIN_ADDRESS in body and "Other room." in body
 
 
@@ -939,7 +939,7 @@ def test_enter_does_not_arm_the_guard_before_submitting(client):
     `onsubmit="return startSending(this)"` saw the flag already set, returned
     false, and CANCELLED the submission -- so Enter painted "Sending..." over a
     form that never posted, while the button worked because a click goes through
-    onsubmit exactly once. The operator reported it and it survived two wrong
+    onsubmit exactly once. Robin reported it and it survived two wrong
     diagnoses, partly because this test said the path was covered.
 
     Matching served JavaScript as a string cannot tell a working handler from a
@@ -1003,7 +1003,7 @@ def test_the_progress_is_the_operators_and_the_counter_is_everyones(client):
     """/events answers an anonymous caller on purpose -- an open page has to be
     able to ask whether anything moved -- but it carried all four fields to
     everybody, and `sending` is `send_progress`, whose `peer` is the messaging
-    key this node is sending to, with a count of how far in it is (a tester
+    key this node is sending to, with a count of how far in it is (@tester
     S23, 2026-09-27). The only page that draws that is the messenger, and the
     messenger is behind the door.
 
@@ -1154,7 +1154,7 @@ def test_an_interrupted_send_is_offered_for_finishing(client):
 
 
 def test_a_send_that_never_started_does_not_claim_the_chain_has_part_of_it(client):
-    """a test machine saw "0 of 4 transactions" under "what is on the chain cannot be
+    """BOXA saw "0 of 4 transactions" under "what is on the chain cannot be
     taken back" -- nothing was on the chain. The sentence is only true once
     something has gone out."""
     app, state = client
@@ -1242,8 +1242,8 @@ def test_marking_a_send_stale_does_not_rewrite_the_record(client):
 # --- an interface newer than the code it runs ---------------------------------
 # Jinja reads templates from disk every request; Python is whatever was imported
 # at startup. After an update without a restart the server renders the NEW page
-# against the OLD code, so it advertises buttons whose routes do not exist. a test machine
-# measured "Start fresh" posting into a 404, and the operator reasonably concluded the
+# against the OLD code, so it advertises buttons whose routes do not exist. BOXA
+# measured "Start fresh" posting into a 404, and Robin reasonably concluded the
 # feature was broken. That is worse than plain staleness: it looks like a bug in
 # the feature rather than a stale process.
 
@@ -1305,7 +1305,7 @@ def test_a_reset_keeps_your_own_published_key(tmp_path):
     """It is on the chain permanently, below the new starting point.
 
     Forgetting it meant the Keys page offered to publish again -- paying a second
-    fee for something already published and unreachable by any rescan. a test machine hit
+    fee for something already published and unreachable by any rescan. BOXA hit
     exactly that after clearing.
     """
     from arcade.messaging.store import MessageStore
@@ -1364,7 +1364,7 @@ def test_a_stale_send_does_not_render_as_working(client):
 # a dropped connection, a server restarted underneath the page, a back-button
 # restore -- the interface stayed convincingly frozen at "Sending…" with the
 # button disabled, while the server had no send at all and would not accept
-# another because the button was disabled. a test machine measured that state against an
+# another because the button was disabled. BOXA measured that state against an
 # idle server.
 
 
@@ -1463,7 +1463,7 @@ def test_media_may_still_be_cached(client):
 # on first paint of a brand-new page with no send in progress, and every
 # `row.hidden = true` in the JavaScript was a no-op that appeared to work.
 #
-# a test machine found it in a headless browser by asserting the computed style. That
+# BOXA found it in a headless browser by asserting the computed style. That
 # distinction is the lesson: checking for the attribute reports "hidden: 1" for
 # ever while the user stares at the element. These tests cannot render, so they
 # check the rule that makes the attribute trustworthy, and flag any new element
@@ -1564,7 +1564,7 @@ def test_no_element_relies_on_hidden_without_the_guard():
 
 # --- a refusal should suit whoever asked --------------------------------------
 # Making a rejected form answer 400 was right: it is what made the protection
-# legible to anything but a human, after a test machine audited an endpoint, saw 200 with
+# legible to anything but a human, after BOXA audited an endpoint, saw 200 with
 # no token, and had to check the chain before concluding it was safe. But it then
 # handed a browser raw JSON, which is a worse experience than the redirect it
 # replaced. The code is for machines; the page is for people.
@@ -1696,7 +1696,7 @@ def test_sending_no_longer_flashes_a_banner(client):
 # one that also rendered in the body, so the damage was a tab title 1,100
 # characters long. On /wallet it was the ONLY copy: the "Fast sending" panel and
 # its split form rendered inside <head>, so the feature was unreachable -- the
-# page looked as though the panel had never been written. a test machine found it by
+# page looked as though the panel had never been written. BOXA found it by
 # measuring the served <title>, and pressed on the difference between the two
 # cases rather than calling all three cosmetic.
 #
@@ -1742,7 +1742,7 @@ def test_the_wallet_split_form_is_in_the_body(client):
 # The composer's own submit button stayed live BEHIND the confirmation. On the
 # public board that put three buttons on screen, two of them saying Post ("New",
 # "Post it", "Post"), and a page reading "Post this? 1 transaction, fee ..."
-# would also accept a fresh submission of whatever was in the box. a test machine clicked
+# would also accept a fresh submission of whatever was in the box. BOXA clicked
 # the wrong one and re-submitted an empty composer. Nothing was spent, but a
 # live control contradicting a pending confirmation is a hazard for anyone in a
 # hurry, and the private messenger had the same shape with "Send it" beside a
@@ -1783,7 +1783,7 @@ def test_a_composer_offers_no_second_route_while_confirming():
 def test_the_confirm_screen_quotes_the_total_not_one_component():
     """Fee alone and dust alone are both true and neither is the cost.
 
-    a test machine posted for 0.04568 having been shown "fee 0.00568000" on the confirm
+    BOXA posted for 0.04568 having been shown "fee 0.00568000" on the confirm
     screen and "about 0.03 in dust" while typing.
     """
     root = pathlib.Path("arcade/web/templates")
@@ -1809,14 +1809,14 @@ def test_prepared_totals_reconcile():
                           size=567, outputs=5, dust_sats=4_000_000)
     assert prepared.total_sats == 4_568_000
     assert abs(prepared.total_coins - 0.04568) < 1e-9, (
-        "this is the transaction a test machine actually paid for; the numbers must agree"
+        "this is the transaction BOXA actually paid for; the numbers must agree"
     )
     assert prepared.dust_coins == 0.04
 
 
 # --- a public post is a chunked send too --------------------------------------
 #
-# a test machine read the group route and found three things the private path had and the
+# BOXA read the group route and found three things the private path had and the
 # public one did not, then measured each: no begin_pending_send, so an
 # interrupted post spent what it had broadcast and left no record; no
 # start_progress, so /events reported "sending": null throughout a 90-second
@@ -1832,13 +1832,13 @@ def test_a_public_post_records_itself_before_broadcasting(tmp_path):
     from arcade.messaging.store import MessageStore
 
     store = MessageStore(tmp_path / "s.sqlite")
-    store.begin_pending_post(b"\x11" * 8, "test", "main", "a test machine", "addr",
+    store.begin_pending_post(b"\x11" * 8, "test", "main", "BOXA", "addr",
                              b"a long post", [b"one", b"two", b"three"])
 
     posts = store.pending_posts()
     assert len(posts) == 1
     assert posts[0]["channel"] == "main"
-    assert posts[0]["nickname"] == "a test machine"
+    assert posts[0]["nickname"] == "BOXA"
     assert posts[0]["total"] == 3
     assert posts[0]["sent_count"] == 0
     assert posts[0]["chunks"] == [b"one", b"two", b"three"]
@@ -1854,7 +1854,7 @@ def test_a_post_never_appears_in_the_private_resume_path(tmp_path):
 
     store = MessageStore(tmp_path / "s.sqlite")
     store.begin_pending_send(b"\x01" * 8, b"\x02" * 32, "a1", b"msg", [b"x", b"y"])
-    store.begin_pending_post(b"\x03" * 8, "test", "main", "a test machine", "a2", b"post",
+    store.begin_pending_post(b"\x03" * 8, "test", "main", "BOXA", "a2", b"post",
                              [b"p", b"q"])
 
     assert [r["msg_id"] for r in store.pending_sends()] == [b"\x01" * 8]
@@ -1866,7 +1866,7 @@ def test_progress_on_a_post_is_recorded_per_chunk(tmp_path):
     from arcade.messaging.store import MessageStore
 
     store = MessageStore(tmp_path / "s.sqlite")
-    store.begin_pending_post(b"\x11" * 8, "test", "main", "a test machine", "addr",
+    store.begin_pending_post(b"\x11" * 8, "test", "main", "BOXA", "addr",
                              b"post", [b"one", b"two"])
     store.record_pending_progress(b"\x11" * 8, "txid-one")
 
@@ -1897,7 +1897,7 @@ def test_progress_on_a_post_is_recorded_per_chunk(tmp_path):
 
 # --- resuming a send that got part way ----------------------------------------
 #
-# a test machine proved resume end to end on regtest: killed a send with SIGKILL while it
+# BOXA proved resume end to end on regtest: killed a send with SIGKILL while it
 # waited for its wallet split, confirmed the sealed chunks survived on disk
 # byte-for-byte, then pressed Finish sending and watched all three transactions
 # go out under the ORIGINAL msg_id -- continuing the message rather than sealing
@@ -1905,7 +1905,7 @@ def test_progress_on_a_post_is_recorded_per_chunk(tmp_path):
 #
 # What that could NOT reach is resume with sent_count > 0. It needs an
 # interruption between two chunk broadcasts, and with a confirmed split those go
-# out back to back in under a second. a test machine said plainly that racing it is not
+# out back to back in under a second. BOXA said plainly that racing it is not
 # reliable even on regtest and that the honest way is a unit test. This is it.
 
 
@@ -1998,7 +1998,7 @@ def test_resuming_a_message_sends_only_what_is_left(client, _stubbed_chain, monk
 
 def test_a_resumed_send_keeps_the_readable_copy_and_the_file(client, _stubbed_chain,
                                                               monkeypatch):
-    """a test machine's own picture came back as `ARCB E{"file":...}` plus JPEG bytes as
+    """BOXA's own picture came back as `ARCB E{"file":...}` plus JPEG bytes as
     text, with no file to show: resume recorded the ENCODED body as the own
     copy. The copy must be what the direct path keeps -- the text, or
     "[sent name]", and the file in its columns."""
@@ -2088,7 +2088,7 @@ def test_a_chunked_send_keeps_its_file_too(client, _stubbed_chain, monkeypatch):
 
 
 def test_own_copies_written_encoded_are_repaired_on_open(tmp_path):
-    """The row a test machine already has: length 25746, ARCB header, no file columns."""
+    """The row BOXA already has: length 25746, ARCB header, no file columns."""
     from arcade.messaging import content
     from arcade.messaging.store import MessageStore
 
@@ -2156,7 +2156,7 @@ def test_the_timing_note_is_not_gated_on_an_attachment():
 
     The gate was `plan is not None and file_bytes`, so timing was built only for
     an attachment and a text message needing three transactions got timing=None
-    -- which silently skipped the readable-by note. a test machine's two captures were
+    -- which silently skipped the readable-by note. BOXA's two captures were
     both text-only three-transaction sends, the exact case its block-packing
     measurement was about, and neither could show it.
     """
@@ -2202,7 +2202,7 @@ def test_the_confirm_screen_quotes_dust_from_a_real_field(client):
 def test_publishing_asks_the_chain_before_it_spends(monkeypatch, client):
     """The store can be wrong in the one direction that costs money.
 
-    a test machine cleared its store and the Keys page went from three announcements to
+    BOXA cleared its store and the Keys page went from three announcements to
     "None seen yet", with a live Publish on chain form -- for a key already
     published in blocks below the new starting point, where no rescan on this
     version could ever find it again. The only routes left were paying a second
@@ -2237,7 +2237,7 @@ def test_no_dialog_can_promise_what_the_reset_could_not_keep():
     It is worth keeping the lesson: it said "your address book, your wallet and
     your own published key are left alone", and whether that announcement row
     survived depended on the identity being loadable. On a machine where it was
-    not, the reset took three announcements to none -- which is what a test machine
+    not, the reset took three announcements to none -- which is what BOXA
     measured, an hour after I promised otherwise. Copy that outruns the code is
     the failure this file has pinned more than once.
     """
@@ -2776,7 +2776,7 @@ def test_somebody_can_be_found_and_added_by_tag(client, monkeypatch):
 
     monkeypatch.setattr(type(state), "token_index", lambda self, chain: Index())
 
-    found = page.get("/contacts?find=mar").text
+    found = page.get("/contacts?find=rob").text
     assert "@robin" in found and "Add" in found
     # With or without the @, and in any case: the sigil is punctuation
     # (D-112).
@@ -2842,7 +2842,7 @@ def test_the_package_s_own_diagnostics_reach_the_journal():
     """Nothing configured logging, so the root logger sat at WARNING and every
     log.info in the package went nowhere -- two dozen deliberate diagnostics,
     silently. Worse than losing them: "check the journal for X" could not then
-    tell a fix that worked quietly from one that never ran (a test machine, D-110).
+    tell a fix that worked quietly from one that never ran (BOXA, D-110).
 
     Asserted against uvicorn's own dictConfig, because that runs after ours
     and is what would take it away again.
@@ -2900,12 +2900,12 @@ def test_a_tag_is_a_name(client):
 
     with state.store() as store:
         (row,) = store.contacts()
-        store.save_contact(contact_id=row["id"], name="A test machine",
+        store.save_contact(contact_id=row["id"], name="The BOXA",
                            testnet_address=TEST_ADDRESS)
         store.conn.commit()
     card = app.get("/contacts").text
     card = card[card.index('class="cards"'):]
-    assert "A test machine" in card and "@boxa" in card, \
+    assert "The BOXA" in card and "@boxa" in card, \
         "a name of your own wins, and the tag is shown beside it"
 
 
@@ -3055,7 +3055,7 @@ def test_no_post_answers_with_a_page():
     remembers the URL was reached by POST, so reloading it or going back to
     it asks "Firefox must send information that will repeat any action
     (such as a search or order confirmation) that was performed earlier" --
-    and the action offered for repeat is a send. The operator met that dialog
+    and the action offered for repeat is a send. Robin met that dialog
     often enough to report it.
 
     Checked in the source rather than by driving every form, because the

@@ -77,7 +77,7 @@ def test_the_book_is_readable_by_a_page_and_a_bad_token_pad_is_refused(client):
 
 
 def test_a_token_mintpad_is_found_from_its_token_page(client):
-    """a tester, 2026-09-28: once the wizard's screen was left, nothing linked
+    """tester-e5, 2026-09-28: once the wizard's screen was left, nothing linked
     to a token mintpad. The token page, the pair page and the Exchange list it,
     found by its inscription's JSON and only when its creator is the seller."""
     app, state = client
@@ -99,6 +99,6 @@ def test_a_token_mintpad_is_found_from_its_token_page(client):
     assert f"/inscriptions/{real}/view" in page and "Open the mintpad" in page
     assert f"/inscriptions/{fake}/view" not in page, "a pad claiming someone else's order is not listed"
     assert f"/inscriptions/{real}/view" in app.get(f"/exchange/pair/{pid}").text
-    # Nothing on its book, so it is finished and off the Mintpads list (the operator,
+    # Nothing on its book, so it is finished and off the Mintpads list (Robin,
     # 2026-09-28) -- still found from its token and its pair, as above.
     assert f"/content/{real}" not in app.get("/exchange?tab=mintpads").text

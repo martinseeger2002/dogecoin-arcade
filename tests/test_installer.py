@@ -2,7 +2,7 @@
 
 The published fix for `Restart=on-failure` named `/etc/systemd/system/...`, a
 path that does not exist on a normal install -- the installer writes *user*
-units. a test machine found it. The lesson is that the fix belongs in the updater, where
+units. BOXA found it. The lesson is that the fix belongs in the updater, where
 it can look at what is actually there, rather than in instructions that guess.
 """
 
@@ -96,7 +96,7 @@ def test_unrelated_units_are_not_touched(fake_home):
 # --- the second entry point ---------------------------------------------------
 # `dogecoinarcade-update` is arcade.update:main, a different code path from
 # `install.py --update`. The unit migration was added to one and not the other,
-# so the published command did nothing -- a test machine found it after updating. These
+# so the published command did nothing -- BOXA found it after updating. These
 # exist so the two cannot drift apart again unnoticed.
 
 
@@ -250,7 +250,7 @@ def test_both_installer_calls_go_through_one_loader(fake_home):
 # bind. Every existing installation has an arcade-web started by hand holding
 # the port, so the new unit starts, fails with "address already in use", and
 # enters a restart loop while the OLD code keeps answering -- and the update
-# reports success. a test machine hit exactly that on the first update after the unit was
+# reports success. BOXA hit exactly that on the first update after the unit was
 # registered, and got the out-of-date banner for its trouble.
 
 

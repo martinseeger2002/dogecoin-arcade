@@ -204,7 +204,7 @@ def test_the_bytes_name_the_writes_that_carried_them(client):
     """One number says a person is out of bytes, and nine kinds of thing could
     have spent them -- so the block says which. The parts are read off the same
     rows the total is, so they cannot tell a different story than the cap does
-    (a tester)."""
+    (@tester S49)."""
     app, state = client
     _open(app)
     assert _quota(app)["by_kind"] == [], "nothing spent, nothing to name"

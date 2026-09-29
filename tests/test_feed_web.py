@@ -193,7 +193,7 @@ def test_a_profile_picture_is_a_piece_you_hold(client):
 
     # One press: choosing a face publishes it, on the same tag. A picture
     # saved and not published does nothing for anybody, because it is the
-    # announcement that carries it (the operator).
+    # announcement that carries it (Robin).
     assert "publishes your tag again with the new picture" in \
         " ".join(app.get("/contacts").text.split())
 
@@ -329,7 +329,7 @@ def test_a_like_cannot_be_tipped(client):
 def test_a_new_picture_changes_every_post_that_person_ever_made(client):
     """The face comes from the newest announcement under that tag and is read
     on every draw, so nothing is copied beside a post and nothing goes stale.
-    Change it and yesterday's posts show the new one (the operator, D-138)."""
+    Change it and yesterday's posts show the new one (Robin, D-138)."""
     from arcade.db import Database
     from arcade.state import install_schema
 
@@ -393,7 +393,7 @@ def test_a_picture_of_a_piece_they_sold_is_not_shown(client):
 def test_a_profile_wallet_shows_what_they_hold_not_what_you_hold(client):
     """Clicking "@tag's wallet" from somebody's feed went to your own wallet
     page. It is their holdings, read from the chain for the addresses their
-    tag names (the operator, D-145)."""
+    tag names (Robin, D-145)."""
     from arcade.db import Database
     from arcade.state import install_schema
 
@@ -472,7 +472,7 @@ def test_a_bio_too_long_is_refused_rather_than_trimmed(client):
 
 def test_looking_at_the_feed_clears_its_badge(client):
     """A count beside Feed that survives looking at the feed is a count
-    nobody can clear (the operator)."""
+    nobody can clear (Robin)."""
     app, state = client
     a_post(state, "a" * 64, text="something new")
     with state.store() as store:
@@ -567,7 +567,7 @@ def test_a_profiles_message_button_lands_on_a_filled_in_letter(client):
 def test_page_scripts_wait_for_what_base_defines_below_them():
     """base.html defines window.arcadeBlocked and arcadeAsk AFTER the body block,
     so a page's classic inline script that reads them straight away finds
-    nothing: the profile's Block button did nothing at all (a tester,
+    nothing: the profile's Block button did nothing at all (tester-e5,
     2026-09-26). Module scripts run after parsing and are fine."""
     import re
 
@@ -587,7 +587,7 @@ def test_page_scripts_wait_for_what_base_defines_below_them():
 
 def test_a_post_you_shared_says_so_and_cannot_be_shared_again(client):
     """A second share is a second paid transaction saying the same thing
-    (a tester, 2026-09-26)."""
+    (tester-e5, 2026-09-26)."""
     from arcade import feedview
     from arcade.messaging import feed as feedlib
     assert "shared_by_me" in feedview.Shown.__dataclass_fields__
@@ -598,7 +598,7 @@ def test_a_post_you_shared_says_so_and_cannot_be_shared_again(client):
 
 
 def test_a_cursor_the_feed_cannot_read_is_refused_not_restarted(client):
-    """a tester/S14 (2026-09-26): a garbled or cross-stream cursor, or a
+    """@tester S12/S14 (2026-09-26): a garbled or cross-stream cursor, or a
     sort that does not exist, used to come back as page one with a 200."""
     app, state = client
     a_post(state, "ab" * 32, text="one post")

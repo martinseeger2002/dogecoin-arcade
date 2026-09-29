@@ -342,7 +342,7 @@ def test_a_page_is_told_what_the_addresses_are_called(inscribed_rows):
 def test_javascript_under_any_of_its_names_is_served_as_javascript(declared):
     """#155, a shared library inscribed from a Linux browser, was indexed as
     application/x-javascript and handed over as a download, so the game that
-    loads it with <script src="/content/..."> (#156) never ran (a tester,
+    loads it with <script src="/content/..."> (#156) never ran (tester-e5,
     2026-09-28). Nothing is re-inscribed: the name is read as JavaScript."""
     from arcade.web import content as contentlib
 

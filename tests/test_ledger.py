@@ -118,7 +118,7 @@ def test_a_send_shows_up_for_both_addresses(ledger):
 def test_a_whole_lot_behind_a_standing_order_is_still_held_by_somebody(ledger):
     """A token page whose Holders column does not add up to its own Supply.
 
-    Found on the live ledger (a tester, S56): a token with 1,000 in and 1,000
+    Found on the live ledger (@tester, S56): a token with 1,000 in and 1,000
     out, seven rows on the panel, and the eighth person's 200 sitting in
     `metadex_reserve` where the ask they filed put it. That 200 is in the Supply
     on the same page, so the page pointed at holders whose totals fell short of
@@ -168,7 +168,7 @@ PROPS = {7: {"name": "Ghost Credits", "property_type": 1}}   # whole units
 
 
 def test_a_take_names_the_maker_as_the_one_who_gave():
-    """The arrow points at the tokens, not at the coins (a tester, S56).
+    """The arrow points at the tokens, not at the coins (@tester, S56).
 
     A take is the one row on a token's page whose sender is the one who PAYS:
     its coins are ordinary outputs going out, and the tokens come the other way,

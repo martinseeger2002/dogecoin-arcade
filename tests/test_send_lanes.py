@@ -80,7 +80,7 @@ def test_a_page_can_say_who_is_busy(tmp_path):
 def test_shutdown_waits_for_an_account_not_just_the_node(tmp_path):
     """A graceful restart that missed an account's send is the old bug.
 
-    a test machine caught a send thread writing to the store after a restart had let go
+    BOXA caught a send thread writing to the store after a restart had let go
     of the port, so two processes shared a database for a few seconds. Lanes
     make that easy to reintroduce -- wait for the node's, ignore the rest.
     """

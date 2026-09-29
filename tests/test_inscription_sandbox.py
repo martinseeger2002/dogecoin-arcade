@@ -42,7 +42,7 @@ try { document.forms.length; say('script', 'ran'); } catch (e) {}
 // absent: the collector waited for seven of eight keys, 'wallet' was the one
 // missing, and the assertion read None and failed -- which looks exactly like
 // "the sandbox let it through" and is not. A probe that cannot say "no
-// answer" cannot tell a blocked read from a slow one. (A test machine found it.)
+// answer" cannot tell a blocked read from a slow one. (The BOXA found it.)
 say('wallet', 'pending'); say('outside', 'pending'); say('api', 'pending');
 // /guide rather than /tokens: a page that needs the node can hang waiting for
 // one that is not there, and a test must not confuse slow with refused.
@@ -85,7 +85,7 @@ def inscribed():
     # default, every page below framed a JSON error instead of the inscription
     # -- which is how twenty browser tests, the sandbox guarantees among them,
     # went from testing something to testing nothing without going red in a
-    # way anybody read (a test machine pressed on it; D-121).
+    # way anybody read (BOXA pressed on it; D-121).
     engine = Engine(state_db, NETWORKS["regtest"], keep_content=lambda _: True)
     txid = f"{1:064x}"
     with state_db.block_context(100, "h", "p", 0, 1, 0):

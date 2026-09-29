@@ -494,7 +494,7 @@ def test_an_order_that_cannot_pay_its_own_fee_is_refused(node):
     # just read, in a background thread, so the premise below used to arrange
     # itself and now does not: reading `/account` to PROVE the account holds
     # nothing is the very thing that gets it a coin, and the send landed before
-    # the request under it was built. That is the feature working as the operator asked,
+    # the request under it was built. That is the feature working as Robin asked,
     # not a bug to route around -- what has to go is the test's assumption that
     # an account can be left unfunded by doing nothing. `faucet: 0` is the
     # operator's own switch for the faucet, so nothing here invents a rule.
@@ -623,7 +623,7 @@ def test_a_cancel_for_a_token_that_does_not_exist_is_refused(node):
 
 
 def test_one_price_comes_off_the_book_and_the_other_price_stands(node):
-    """Cancel one price, and only that price goes (a tester).
+    """Cancel one price, and only that price goes (@tester S18).
 
     The same two asks the pair test above places -- 10 at half a coin, 20 at a
     whole one -- and the same one press. The difference is a `price` in the
@@ -937,7 +937,7 @@ def test_the_list_says_what_an_ask_came_to_and_touches_nothing(node):
 
     An order is a transaction and not a row anybody keeps (D-042), so before this
     a program that could put a price on the book had to hoard its own txids or
-    guess what was left of the amount (a tester, 2026-09-27). Everything the
+    guess what was left of the amount (@tester S20, 2026-09-27). Everything the
     answer says is therefore something the ENGINE already knows -- the amount it
     is holding, the price its two integers come to, which block carried it -- and
     the load-bearing assertion is the last one: that asking changed none of it.
@@ -1131,7 +1131,7 @@ def test_the_list_answers_a_stranger_with_a_reason(node):
 
 
 def test_the_pair_chart_picks_a_timeframe_and_offers_the_others(node):
-    """a tester, 2026-09-27: thirty daily candles put a young chain's whole
+    """tester-e5, 2026-09-27: thirty daily candles put a young chain's whole
     history in one or two bars. The page offers 15m/1h/4h/1d, keeps the one
     asked for, and says the period in its caption instead of "days"."""
     seat = _bookcoin(node, 45)
@@ -1200,7 +1200,7 @@ def test_a_taker_buys_part_of_a_resting_ask_with_the_maker_away(node):
     assert rest["sale_amount"] == 5 * COIN and rest["want_amount"] == int(2.5 * COIN), \
         "the rest of the ask stands, at its own price"
 
-    # And it is a trade: the chart, LAST and the 24h numbers read it (a tester,
+    # And it is a trade: the chart, LAST and the 24h numbers read it (tester-e5,
     # 2026-09-27: Buy fills never reached the pair page).
     index = state.token_index(state.messaging)
     mine = [t for t in index.trades() if t["give"].property_id == maker["pid"]]

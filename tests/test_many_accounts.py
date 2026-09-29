@@ -1663,7 +1663,7 @@ def test_an_account_with_one_output_splits_as_part_of_answering(node, crowd):
         held = utxos.unspent(db, wren.address)
     assert len(held) == 1, f"one output, by construction: {[h['value'] for h in held]}"
 
-    # Nobody is told to split coins by hand any more (a tester, 2026-09-27):
+    # Nobody is told to split coins by hand any more (tester-e5, 2026-09-27):
     # the first answer is a small send to herself, which her tab signs, and
     # the answer asked for again stands on its two outputs, unconfirmed.
     asked = wren.client.post(

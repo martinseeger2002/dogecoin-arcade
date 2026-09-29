@@ -277,7 +277,7 @@ def test_rebuilding_the_contact_table_is_idempotent(tmp_path):
 
 
 def test_a_plain_send_returns_change_to_the_address_that_paid(regtest):
-    """a test machine: one Wallet-page send of 5,000 spent the messaging identity's
+    """BOXA: one Wallet-page send of 5,000 spent the messaging identity's
     9,978-coin output, the node parked the 4,978 change on a fresh address of
     its own, and the identity was left with 5 coins and could not send a
     picture. Change now goes back to the address that put in the most."""

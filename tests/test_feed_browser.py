@@ -82,7 +82,7 @@ def feed_page(tmp_path_factory):
     # empty div. Two comments rather than one so a test can block whoever wrote
     # one of them and see whether the count above the thread notices -- the
     # block lives in this browser and the count is counted on the server, which
-    # is the whole of a tester. The composer tests look only at
+    # is the whole of @tester S25. The composer tests look only at
     # .feedcomposer, above the posts, so this cannot move the pixels they check.
     with state.store() as store:
         store.add_group_post(state.messaging.network, "", POST, 100, 1000,
@@ -175,7 +175,7 @@ def test_the_count_under_a_post_opens_on_the_paths_a_link_takes(feed_page):
     ever cleared `hidden`. So the promise held for a click and broke on a
     bookmark, a pasted link, and Back: the same URL carrying
     `#thread-<txid>` painted a div that stayed shut with no control on the page
-    that opened it (a tester, 2026-09-27). Measured here in painted pixels
+    that opened it (@tester S22, 2026-09-27). Measured here in painted pixels
     rather than in the served HTML, because `hidden` is the page's claim and
     whether the words are on screen is the reader's.
 
@@ -234,7 +234,7 @@ def test_a_count_says_what_a_block_took_away(feed_page):
     Both halves are correct on their own and they disagree on the page: the
     replies from somebody the reader blocked are drawn and then hidden by this
     browser's own filter, while the number above the thread still counts them.
-    So the thread opened, and there was nothing in it (a tester, the other
+    So the thread opened, and there was nothing in it (@tester S25, the other
     half of @yourfirstname's report in S22 -- which is the answer to whether
     the box showed nothing at all or a tap-to-show bar: nothing at all, and no
     reason). The fold has to say what is behind it now, and it has to still say

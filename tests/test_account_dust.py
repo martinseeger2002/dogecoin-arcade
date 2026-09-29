@@ -1,5 +1,5 @@
-"""An account's own Class B payload outputs, counted and swept back (the operator,
-2026-09-28, after a tester found 54.50 coins in 5,450 of them that no balance
+"""An account's own Class B payload outputs, counted and swept back (Robin,
+2026-09-28, after @tester found 54.50 coins in 5,450 of them that no balance
 counted and no button could move)."""
 
 import pathlib

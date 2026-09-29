@@ -8,18 +8,19 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/home/you/dogecoin-arcade/.venv/bin/arcade-web --port 8420
-WorkingDirectory=/home/you/dogecoin-arcade
+ExecStart=%h/dogecoin-arcade/.venv/bin/arcade-web --port 8420
+WorkingDirectory=%h/dogecoin-arcade
 
 Restart=always
 RestartSec=10
 
-User=robin
-Group=robin
+# The account the nodes run as; %h above is its home.
+User=YOUR_USER
+Group=YOUR_USER
 
 # --- Hardening ---
 # ProtectHome is OFF: the identity key, the message database and the testnet
-# node's cookie all live under /home/you.
+# node's cookie all live under your home directory.
 ProtectHome=false
 PrivateTmp=true
 ProtectSystem=full

@@ -340,7 +340,7 @@ def test_an_older_node_reads_an_ask_as_an_invalid_inscription(engine):
 
 def test_an_ask_before_its_height_is_read_by_nobody(tmp_path):
     """The refusal a chain gives before asks start, which cannot be tested on
-    a chain that has already passed the height (a test machine could not: testnet was
+    a chain that has already passed the height (BOXA could not: testnet was
     past 1,493,800 by the time both nodes were current)."""
     import dataclasses
 

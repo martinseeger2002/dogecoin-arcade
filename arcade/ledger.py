@@ -416,7 +416,7 @@ class LedgerIndex:
 
         What the address book searches. Prefixes rank above the middle of a
         word, because somebody typing "mar" is far more often looking for
-        @robin than for @postmaster, and exact wins outright.
+        @marvin than for @postmaster, and exact wins outright.
         """
         wanted = str(text or "").strip().lstrip("@").lower()
         if not wanted:

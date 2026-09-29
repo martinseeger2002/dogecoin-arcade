@@ -8,7 +8,7 @@ every `row.hidden = true` in the JavaScript was a silent no-op.
 
 Nothing in the rest of the suite could catch that. Every check either machine
 made looked for the attribute in the markup, which reports "hidden: 1" for ever
-while the user stares at the element. a test machine found it by asserting the COMPUTED
+while the user stares at the element. BOXA found it by asserting the COMPUTED
 STYLE in a headless browser, and that is the only kind of check that can.
 
 Skipped when selenium or a browser is unavailable, so the suite still runs
@@ -188,7 +188,7 @@ def test_the_poller_clears_a_leftover_paint_job(browser, served):
 def test_a_request_that_hangs_recovers_on_its_own(browser, served):
     """The only case the timeout can actually cover.
 
-    a test machine established the shape of this: a failure at the NETWORK level navigates
+    BOXA established the shape of this: a failure at the NETWORK level navigates
     the browser to its own error page, so the page that would freeze is already
     gone -- stopping the server and submitting gives about:neterror, not a stuck
     composer. What remains is a server that accepts the request and then never
@@ -346,7 +346,7 @@ def test_small_costs_and_sizes_do_not_round_away(browser, served):
 
     `toLocaleString(undefined, {maximumFractionDigits: 0})` rounded every cost
     under half a coin to "0", and `(bytes/1024).toFixed(0) + " KB"` showed a
-    102-byte file as "0 KB". a test machine met the 102-byte case; the rest of the range
+    102-byte file as "0 KB". BOXA met the 102-byte case; the rest of the range
     was the same bug wearing a less obvious face, which is why these are shared
     helpers in base.html rather than fixed twice.
     """

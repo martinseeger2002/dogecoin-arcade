@@ -101,7 +101,7 @@ def test_both_sides_ask_the_same_table_who_holds_the_tag(tmp_path, monkeypatch):
     before looking at a post.
 
     Invisible from the publishing machine, because the half that works is the
-    half it runs. A test machine found it by reporting that its node did nothing
+    half it runs. The BOXA found it by reporting that its node did nothing
     (D-086).
     """
     from arcade.web.state import AppState, ChainContext

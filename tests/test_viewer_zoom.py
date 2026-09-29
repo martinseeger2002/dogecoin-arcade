@@ -1,7 +1,7 @@
 """The picture viewer zooms on its own.
 
 A picture in a post used to open as a page of its own, where the phone's pinch
-zoomed it. Opened in the viewer, a pinch zoomed the page behind instead (the operator,
+zoomed it. Opened in the viewer, a pinch zoomed the page behind instead (Robin,
 2026-09-25). These pin the viewer's own zoom: buttons, wheel, a drag that pans,
 and a fresh picture always starting whole.
 

@@ -235,7 +235,7 @@ def test_invalid_transactions_are_recorded_not_discarded(engine):
 # --- a send must not outlive its own service ----------------------------------
 
 def test_shutdown_waits_for_a_send_and_then_refuses_more(tmp_path):
-    """a test machine caught a send thread writing to the store 17s after a restart.
+    """BOXA caught a send thread writing to the store 17s after a restart.
 
     Send threads are daemons, so nothing waits for them: the old process had
     released the port while its thread carried on, and two processes briefly

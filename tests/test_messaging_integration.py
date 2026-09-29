@@ -293,7 +293,7 @@ def test_readable_takes_a_block_per_chunk_even_when_broadcast_is_instant():
 # `assert s != before`, which proved that SOMETHING changed, not that the right
 # thing did.
 #
-# a test machine caught it on the live instance: a 9,000-byte post offered as "Costs
+# BOXA caught it on the live instance: a 9,000-byte post offered as "Costs
 # 0.08856 in total -- 0.08856 fee plus 0.00000 in dust" when the real dust was
 # about 1.63. It also made the point that decides how this is tested: a check
 # asserting the screen "shows a dust figure" passes on 0.00000. So these assert
@@ -346,7 +346,7 @@ def test_a_class_b_send_costs_more_than_its_fee():
     assert prepared.total_sats > prepared.fee_sats, (
         "the total must exceed the fee, or the screen is quoting the wrong thing"
     )
-    # And the case a test machine was actually shown: dust dominating the fee.
+    # And the case BOXA was actually shown: dust dominating the fee.
     assert prepared.dust_sats > prepared.fee_sats
 
 
@@ -366,13 +366,13 @@ def test_class_c_has_no_dust():
 # to be multiplied by the chunk count -- and the two composers did that
 # differently. messages.html scaled both figures in Jinja; groups.html rendered
 # the single prepared transaction unscaled, so a post was offered at exactly
-# 1/count of its price, the FEE understated as well as the dust. a test machine caught it
+# 1/count of its price, the FEE understated as well as the dust. BOXA caught it
 # against a transaction it had already paid for, which is stronger evidence than
 # posting another one and costs nothing.
 #
 # Cost is the fourth thing the two composers have disagreed about in a day,
 # after the identity pin, funded_address and chunk sequencing. Hence one
-# function, and a test shaped the way a test machine suggested: assert a two-chunk send
+# function, and a test shaped the way BOXA suggested: assert a two-chunk send
 # costs about twice a one-chunk one, because asserting "a positive dust figure"
 # passes on the understated number.
 
@@ -402,7 +402,7 @@ def test_a_chunked_send_costs_its_chunk_count():
 
 
 def test_the_quoted_cost_matches_a_post_actually_paid_for():
-    """Ground truth: a test machine's two-chunk public post on testnet.
+    """Ground truth: BOXA's two-chunk public post on testnet.
 
     It paid 1.71712 in total. The screen offered 0.85856.
     """
@@ -417,7 +417,7 @@ def test_a_single_transaction_send_is_not_scaled_away():
 
     cost = send_cost(_prepared(568_000, 4_000_000), 1)
     assert cost["total"] == pytest.approx(0.04568, abs=1e-9), (
-        "this is a test machine's test-1 transaction, which it paid 0.04568 for"
+        "this is BOXA's test-1 transaction, which it paid 0.04568 for"
     )
     # A count of zero must not zero the cost; something is always being sent.
     assert send_cost(_prepared(568_000, 4_000_000), 0)["total"] == cost["total"]

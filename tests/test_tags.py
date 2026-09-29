@@ -43,7 +43,7 @@ def reason(db, n):
 
 
 def test_a_tag_is_lower_case_and_has_no_at_sign():
-    assert T.validate("@the operator") == "robin"
+    assert T.validate("@Robin") == "robin"
     assert T.validate("  @BIG_chief_99 ") == "big_chief_99"
     assert T.normalise("") == ""
 
@@ -169,7 +169,7 @@ def test_the_index_answers_both_ways(tmp_path):
 
     index = LedgerIndex(path, NETWORKS["regtest"], rpc_factory=lambda: None)
     assert index.tag_of("nAlice") == "robin"
-    assert index.address_of("@the operator") == "nAlice", "a name is case-insensitive"
+    assert index.address_of("@Robin") == "nAlice", "a name is case-insensitive"
     assert index.address_of("nobody") is None
     assert index.tags_for(["nAlice", "nBob", "nNobody"]) == {
         "nAlice": "robin", "nBob": "boxa"}
@@ -187,7 +187,7 @@ def test_the_at_sign_is_punctuation_and_nothing_depends_on_it():
     string can be read as both (D-112)."""
     from arcade import tags as T
 
-    for written in ("@boxa", "boxa", " @boxa ", "@a test machine"):
+    for written in ("@boxa", "boxa", " @boxa ", "@BOXA"):
         assert T.looks_like_a_tag(written), written
         assert T.normalise(written) == "boxa"
 
@@ -195,9 +195,9 @@ def test_the_at_sign_is_punctuation_and_nothing_depends_on_it():
     # case is plainly a name; without it, "PoNotARealAddress" is somebody
     # mistyping base58 and deserves the checksum complaint, not "nobody holds
     # that name".
-    assert not T.looks_like_a_tag("a test machine")
+    assert not T.looks_like_a_tag("BOXA")
     assert not T.looks_like_a_tag("PoNotARealAddress")
-    assert T.normalise("a test machine") == "boxa", "and it is still the same name"
+    assert T.normalise("BOXA") == "boxa", "and it is still the same name"
 
     for other in ("nqW8nXSzigaSx1wTTTtUkMLYkbrYNJLRhz",
                   "PognhfhGxiSNPrYLQYUaT5bMsVbgumzc6i",
@@ -207,7 +207,7 @@ def test_the_at_sign_is_punctuation_and_nothing_depends_on_it():
 
 
 def test_a_search_puts_the_likelier_name_first(tmp_path):
-    """Somebody typing "mar" means @robin far more often than @postmarket,
+    """Somebody typing "mar" means @marvin far more often than @postmarket,
     so a prefix ranks above the middle of a word and an exact match wins
     outright. This is the ledger's rule; the address book only draws it."""
     from arcade.config import NETWORKS
@@ -218,7 +218,7 @@ def test_a_search_puts_the_likelier_name_first(tmp_path):
     path = tmp_path / "ledger.sqlite"
     db = Database(path)
     install_schema(db)
-    for n, tag in enumerate(("postmarket", "robin", "mar", "marigold")):
+    for n, tag in enumerate(("postmarket", "marvin", "mar", "marigold")):
         db.conn.execute("INSERT INTO tag(tag,address,claimed_txid,block_height,"
                         "position) VALUES(?,?,?,?,?)",
                         (tag, f"address{n}", f"{n:064x}", 100 + n, 0))
@@ -227,7 +227,7 @@ def test_a_search_puts_the_likelier_name_first(tmp_path):
 
     index = LedgerIndex(path, NETWORKS["regtest"], rpc_factory=lambda: None)
     assert [t["tag"] for t in index.search_tags("mar")] == [
-        "mar", "robin", "marigold", "postmarket"], \
+        "mar", "marvin", "marigold", "postmarket"], \
         "exact, then prefixes shortest first, then the middle of a word"
     # The @ changes nothing, and neither does case.
     assert index.search_tags("@MAR") == index.search_tags("mar")

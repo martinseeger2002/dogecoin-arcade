@@ -1,4 +1,4 @@
-"""Buy orders that fill without their buyer standing over them (the operator,
+"""Buy orders that fill without their buyer standing over them (Robin,
 2026-09-28): the server fills them from pre-signed lots, or -- for a buyer who
 trusts nobody -- the app fills them when the buyer is back."""
 

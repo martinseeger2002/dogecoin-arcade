@@ -308,7 +308,7 @@ def test_an_object_says_where_the_piece_belongs():
     somewhere else. Read as "not a string, use the item's name", the object
     split a collection in two -- the ninety-nine under their `collection`
     string, and #1, the piece carrying the description and the face, under
-    the prefix of its own name (a test machine, D-105)."""
+    the prefix of its own name (BOXA, D-105)."""
     import json
 
     one = json.dumps({"name": "Pixel Skull #1", "edition": 1,
@@ -335,7 +335,7 @@ def test_an_object_adds_to_what_a_piece_says_rather_than_replacing_it():
     shadow what the item already said. Read the other way, inscribing a
     thumbnail DELETED the set's description from every marketplace -- the
     words still on the chain, paid for a hundred times, shown nowhere. Found
-    by a test machine on its own set, hours after the feature shipped (D-114).
+    by the BOXA on its own set, hours after the feature shipped (D-114).
     """
     import json
 

@@ -1,6 +1,6 @@
 """Overview, Wallet and Backup, in a real browser.
 
-The operator: "I want the arcade Web to be pretty much identical to the arcade
+Robin: "I want the arcade Web to be pretty much identical to the arcade
 local... Do it page at a time... starting with overview." These drive the
 three pages that came out of that pass and check the parts that only a
 browser can prove: the contact code the page draws matches the one

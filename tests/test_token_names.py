@@ -128,7 +128,7 @@ def test_an_invalid_issuance_changes_nothing_else(engine):
 
     The last of those was asserted before it was established -- the survivor
     keeping the number it took says nothing about what the NEXT token gets,
-    which is the whole question (a test machine). It is the next id that has to be
+    which is the whole question (BOXA). It is the next id that has to be
     looked at, and nobody had looked.
     """
     eng, state, db = engine
@@ -157,7 +157,7 @@ def test_a_lookalike_from_another_alphabet_is_refused_not_folded(engine):
     page either machine draws. Folded, it passes whichever way the fold is
     written: drop the character and the key is "dgecoin", keep it and the key
     carries a Cyrillic o -- a new name both times. So the character is
-    refused instead, which cannot be gamed by adding more of them (a test machine,
+    refused instead, which cannot be gamed by adding more of them (BOXA,
     D-122).
     """
     eng, state, db = engine

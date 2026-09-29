@@ -235,7 +235,7 @@ def test_an_index_that_starts_above_a_lowered_floor_says_so(regtest, follower,
     A floor RAISED past everything the index holds makes it obviously
     useless. A floor LOWERED below where the index starts leaves an index
     that keeps up with the tip and is missing its bottom -- and an index only
-    ever extends forward, so nothing goes back for those blocks. The operator hit
+    ever extends forward, so nothing goes back for those blocks. Robin hit
     it the moment a piece turned out to be under the floor (D-130).
     """
     import dataclasses
@@ -249,7 +249,7 @@ def test_an_index_that_starts_above_a_lowered_floor_says_so(regtest, follower,
 
     # Raised past where it starts: it holds blocks nobody reads any more, and
     # keeps up with the tip while doing it. This is the shape that made every
-    # reset a manual instruction, and the one a test machine was sitting on while
+    # reset a manual instruction, and the one the BOXA was sitting on while
     # the two nodes disagreed about which tokens existed.
     follower.params = dataclasses.replace(regtest.params,
                                           activation_height=low + 3)

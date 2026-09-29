@@ -17,7 +17,7 @@ from arcade.web import guide                                     # noqa: E402
 
 #: Where the documents are written. The copy under the package is what
 #: ships; this is the one a person edits.
-SOURCE = pathlib.Path("/home/you/docs")
+SOURCE = pathlib.Path.home() / "docs"
 
 
 def test_every_document_is_offered(client):

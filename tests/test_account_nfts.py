@@ -1,6 +1,6 @@
 """What an account holds, and handing one on.
 
-The operator: "Then add NFT's to Doge arcade Web."
+Robin: "Then add NFT's to Doge arcade Web."
 
 The pieces themselves were always public -- `/nfts`, a collection's page,
 the Exchange -- and an account could look at all of it. What it could not
@@ -131,7 +131,7 @@ def test_the_page_is_there_and_in_the_account_menu(public):
 
 
 def test_the_public_nfts_page_offers_the_account_s_inscribe(public):
-    """The bug the operator met on test.dogecoinarcade.com on 2026-09-24, said as an
+    """The bug Robin met on test.dogecoinarcade.com on 2026-09-24, said as an
     assertion. `/nfts` carried the NODE's inscribe -- a link into the collection
     wizard and two forms that post to `/inscriptions/create` -- and the door
     shuts all three on a public instance, so an account that pressed "Inscribe"

@@ -26,7 +26,7 @@ def test_a_multisig_piece_weighs_its_sigops_not_its_bytes():
     raw = build_raw_tx([("aa" * 32, 0)], outputs)
     decoded = {"vin": [{"scriptSig": {"hex": ""}}],
                "vout": [{"scriptPubKey": {"hex": s.hex()}} for _, s in outputs]}
-    assert fees.sigops_of(decoded) == 98 * 20 + 2 == 1962, "what a test machine saw in its template"
+    assert fees.sigops_of(decoded) == 98 * 20 + 2 == 1962, "what the BOXA saw in its template"
     size = len(raw) // 2 + fees.SCRIPTSIG_BYTES
     assert 11_000 < size < 12_000
     assert fees.virtual_size(size, 1962) == 39_240

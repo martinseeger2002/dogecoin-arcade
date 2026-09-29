@@ -105,7 +105,7 @@ def test_a_link_to_a_post_that_is_not_here_says_which_it_is_not(public):
     panel, whose one sentence is "Nothing here yet", which is a sentence about a
     feed and not about the id in the URL). It is the same fault as a POST to a
     route this node is older than: two different facts, one indistinguishable
-    response, and the reader has to guess which (a tester, 2026-09-27).
+    response, and the reader has to guess which (@tester S27, 2026-09-27).
 
     So the page distinguishes the three things it can actually know -- the post
     is not here, the id cannot be an id, or there is nothing posted at all --
@@ -216,7 +216,7 @@ def test_a_mention_in_a_post_is_a_link_to_their_feed():
 
 
 def test_a_swap_names_the_piece_by_its_collection():
-    """a tester, 2026-09-26: "You sold a piece for 7" -- which piece, to whom."""
+    """tester-e5, 2026-09-26: "You sold a piece for 7" -- which piece, to whom."""
     rows = [{"seq": 5, "txid": "aa" * 32, "inscription": "bb" * 32,
              "from_address": ME, "to_address": THEM, "block_height": 10, "time": 100,
              "number": 44, "collection": "Skull Squad", "edition": 7},
@@ -230,7 +230,7 @@ def test_a_swap_names_the_piece_by_its_collection():
 
 
 def test_a_deleted_reply_or_post_is_no_longer_news(public):
-    """a tester, 2026-09-27: a reply its author deleted still showed on the
+    """tester-e5, 2026-09-27: a reply its author deleted still showed on the
     notifications of the post it answered. Deleted is deleted everywhere."""
     app, state = public
     _me(app, state)
@@ -249,7 +249,7 @@ def test_a_deleted_reply_or_post_is_no_longer_news(public):
 
 
 def test_a_buy_order_that_can_fill_is_said_as_that_not_as_mail():
-    """a tester, 2026-09-28: it read "fill:14... sent you a message"."""
+    """tester-e5, 2026-09-28: it read "fill:14... sent you a message"."""
     from arcade import notify
     rows = [{"rowid": 7, "txid": "fill:abc:" + "d" * 64, "sender": "fill:14", "at": 5},
             {"rowid": 8, "txid": "e" * 64, "sender": "nSomebody", "at": 6}]

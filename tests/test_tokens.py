@@ -170,7 +170,7 @@ def test_a_token_can_wear_an_inscription_as_its_icon():
     assert T.details({"data": piece, "url": ""}) == {
         "about": "", "icon": piece, "url": ""}
     # And the description is capped where somebody is about to pay for it,
-    # not only where it is read back (a test machine).
+    # not only where it is read back (BOXA).
     assert len(T.data_with_icon("x" * 900, "")) == T.MAX_ABOUT
 
     # No icon, no JSON: a token that does not want one pays for exactly what

@@ -72,7 +72,7 @@ def test_the_front_page_is_the_splash_not_the_wallet(public):
     Overview's balances and unread counts."""
     app, _ = public
     answer = app.get("/", headers=LOCAL)
-    # Since 2026-09-27 the public front page is the feed (the operator: "When the
+    # Since 2026-09-27 the public front page is the feed (Robin: "When the
     # arcade app opens, it should be open to the feed tab"). The point of this
     # test stands: whatever `/` shows a stranger, it is not the wallet.
     assert str(answer.url).endswith("/feed")
@@ -295,7 +295,7 @@ def test_every_public_page_links_only_where_a_stranger_may_go(public, page,
     """A public page pointing at a route a public instance refuses is a site
     broken for exactly the people it is for.
 
-    The operator met this on `/nfts` on 2026-09-24: the page carried the NODE's
+    Robin met this on `/nfts` on 2026-09-24: the page carried the NODE's
     inscribe controls, which spend the node's wallet, and every one of them
     answered "Not here". It is the shape of the bug rather than the page -- any
     public page can carry a control the door shuts -- so this walks every
@@ -382,7 +382,7 @@ def test_no_public_page_offers_a_chain(public):
     on (`state.switch_token_chain` writes the choice into a file and every page
     on the machine follows it), so the door shuts it -- and an inert button was
     then replaced by an inert tag whose tooltip said this node shows one chain
-    at a time. That is still a choice being pointed at, which is what the operator's
+    at a time. That is still a choice being pointed at, which is what Robin's
     call of 2026-09-24 rules out: a visitor and an account have one chain, the
     one their name and posts live on, and a page says the chain in a sentence
     when the sentence needs it rather than in a chip that hints at another.
@@ -420,7 +420,7 @@ def named(client):
 
 
 def test_the_operator_keeps_their_wallet_on_their_own_machine(named):
-    """A process-wide flag would either lock the operator out of his own wallet or
+    """A process-wide flag would either lock Robin out of his own wallet or
     serve it to the world. Two processes over one state directory is how a
     database gets two writers. So it is decided per request."""
     app, _ = named
@@ -622,7 +622,7 @@ def test_the_operator_still_sees_their_own_composer(named):
 def test_the_pages_host_never_speaks_for_the_operator_from_outside(client):
     """pages.<domain>/r/wallet handed every stranger the operator's addresses,
     tag and balances, and a page opened by any account greeted it as the
-    operator (a tester, 2026-09-26). From outside, the page API says the
+    operator (tester-e5, 2026-09-26). From outside, the page API says the
     wallet is off; the operator's own local pages still see their wallet."""
     app, state = client
     state.set_setting("pages_host", "pages.example")
@@ -698,7 +698,7 @@ def test_the_page_api_wallet_is_whoever_is_looking(client):
     assert "connect-src 'self'" in served.headers["content-security-policy"]
 
     # Safari reads 'self' in a sandboxed (opaque-origin) page as nothing, so an
-    # iPhone refused every /r/ call and picture #59 asked for (the operator,
+    # iPhone refused every /r/ call and picture #59 asked for (Robin,
     # 2026-09-27). The host the browser asked is named beside it.
     edge = app.get(f"/content/{txid}", headers={
         "host": "pages.example", "x-forwarded-proto": "https"})
@@ -769,7 +769,7 @@ def test_an_arena_asking_about_an_account_s_piece_is_answered_here(client):
 def test_a_collection_market_offers_nothing_the_door_refuses(public, signed_in):
     """/exchange/collection/<creator>/<name> drew the operator's Buy / Make offer
     forms (POST /exchange/offer) for every account, and each landed on "Not
-    here" (a tester, 2026-09-26). The census above never visited one, because
+    here" (tester-e5, 2026-09-26). The census above never visited one, because
     a market page needs a collection on the chain to draw anything."""
     app, state = public
     if signed_in:
@@ -821,7 +821,7 @@ def test_a_collection_market_offers_nothing_the_door_refuses(public, signed_in):
 def test_a_viewer_frame_gets_the_ticket_shim_and_the_bytes_stay_the_bytes(client):
     """A page written the documented way calls plain fetch('/r/wallet'); the
     node adds a marked shim to the HTML it serves a viewer's frame (?v=) so
-    those calls carry the ticket (a tester, 2026-09-26). Without a ticket, or
+    those calls carry the ticket (tester-e5, 2026-09-26). Without a ticket, or
     for a download, the inscription's bytes are served exactly."""
     app, state = client
     index = state.token_index(state.token_chain)
@@ -847,7 +847,7 @@ def test_a_viewer_frame_gets_the_ticket_shim_and_the_bytes_stay_the_bytes(client
 
 
 
-# --- site audit (a tester, 2026-09-26) ----------------------------------------
+# --- site audit (tester-e5, 2026-09-26) ----------------------------------------
 
 def test_sign_in_brings_you_back_to_the_page_that_sent_you(public):
     app, _ = public
@@ -1019,7 +1019,7 @@ def test_no_public_page_draws_judged_words_at_a_stranger(public, monkeypatch):
         """The page as a browser draws it before anybody taps: no script, no
         `<template>`, and no link target.
 
-        A destination is not a drawing. The operator's rule for this class of fix is
+        A destination is not a drawing. Robin's rule for this class of fix is
         that the links keep working (2026-09-26) -- the way to a hidden name's
         page has to stay on the page or the cover would be a deleted thing
         rather than a covered one -- so `href` and `src` go, while `alt` and
@@ -1118,7 +1118,7 @@ def test_any_piece_can_be_shared_to_the_feed_from_its_card(client):
 
 
 def test_a_mintpad_link_may_name_its_seller_by_name(client):
-    """a tester, 2026-09-27: /mintpad/<@name>/<collection> is the link people
+    """tester-e5, 2026-09-27: /mintpad/<@name>/<collection> is the link people
     share, and it bounced to the Mintpads tab. A name resolves to its address
     first; one nobody holds still lands on the tab, not an error."""
     app, state = client

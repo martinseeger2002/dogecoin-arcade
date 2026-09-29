@@ -126,8 +126,8 @@ def test_the_front_page_is_their_own_account_with_admin(named):
 
 def test_the_name_is_one_name_however_it_is_typed(named):
     app, _ = named
-    _claim(app, username="the operator")
-    for typed in ("robin", "ROBIN", " the operator ", "@robin"):
+    _claim(app, username="Robin")
+    for typed in ("robin", "ROBIN", " Robin ", "@robin"):
         app.cookies.clear()
         answer = app.post("/auth/password", headers=EDGE,
                           json={"username": typed,

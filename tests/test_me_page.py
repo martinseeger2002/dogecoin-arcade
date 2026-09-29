@@ -46,7 +46,7 @@ def test_an_account_gets_its_own_page(client):
     body = app.get("/me").text
     assert "Your arcade" in body
     assert "Your keys are in this browser" in body
-    # Since 2026-09-25 (the operator: "it should have your name, bio, URL ... and your
+    # Since 2026-09-25 (Robin: "it should have your name, bio, URL ... and your
     # usage"): the profile and the usage, not the wallet or the counts -- and
     # still none of the settings that configure the NODE's own automation.
     assert 'id="me-bio"' in body and "Your usage" in body
@@ -344,7 +344,7 @@ def test_one_create_tab_and_backup_on_the_wallet_page(public):
 
 
 def test_an_unfinished_inscription_is_listed_and_can_be_given_up(public):
-    """a tester, 2026-09-27: a 14-piece picture stopped at 5 when its tab
+    """tester-e5, 2026-09-27: a 14-piece picture stopped at 5 when its tab
     closed, and on return nothing said so. The page lists what still owes
     pieces; giving up stops it for good (the pieces sent stay on the chain)."""
     from arcade.accountparts import Parts

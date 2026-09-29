@@ -492,7 +492,7 @@ def test_the_maker_answers_what_a_take_would_ask(node):
 # --- and the pass-over, which only the taker could see ----------------------
 
 def test_the_maker_sees_that_the_queue_walked_past_their_order(node):
-    """a tester S-work-2: "skipped" as a state, on the page the maker opens.
+    """@tester S-work-2: "skipped" as a state, on the page the maker opens.
 
     The queue steps past a maker nobody can message rather than refusing the
     press, because one address with no published key would otherwise hold up a

@@ -1,6 +1,6 @@
 """The identity address is pinned, and both front ends read the same pin.
 
-a test machine found this on a real machine: the web interface and the CLI answered as two
+BOXA found this on a real machine: the web interface and the CLI answered as two
 different people from the same wallet at the same moment. The web pinned its
 choice in the store; the CLI recomputed `sorted(getaddressesbyaccount(...))[0]`
 on every call and never looked at the pin. The moment the account held a second
@@ -56,7 +56,7 @@ def store():
 
 
 def test_a_new_earlier_sorting_address_does_not_change_the_identity(store):
-    """The exact failure a test machine measured: identity flipped with no user action."""
+    """The exact failure BOXA measured: identity flipped with no user action."""
     wallet = FakeWallet(["netiMj1HFc2TuWegeQQKDLcjL1jUAXTnPD"])
     first = resolve_identity_address(wallet, store, "test")
 

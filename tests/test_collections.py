@@ -631,7 +631,7 @@ def test_a_pause_that_arrives_as_the_run_settles_leaves_it_paused(tmp_path, monk
 
 def test_the_wait_backs_off_rather_than_asking_a_thousand_times():
     """Blocks are a minute apart and longer when busy, so the gap doubles to
-    a minute rather than polling every three seconds throughout (the operator)."""
+    a minute rather than polling every three seconds throughout (Robin)."""
     gaps, seconds = [], C.POLL
     for _ in range(8):
         gaps.append(seconds)
@@ -810,7 +810,7 @@ def test_a_set_is_costed_in_whole_chunks_and_has_no_size_limit(tmp_path):
     """No cap belongs on a piece: the pictures come from a folder and are
     planned as a job, and a piece takes as many chunks as it takes. What a
     form caps is a single image chosen in that form, and that cap must never
-    reach this path (a test machine)."""
+    reach this path (BOXA)."""
     from arcade import collections as C
 
     build = C.read_build(hashlips(tmp_path, count=3))

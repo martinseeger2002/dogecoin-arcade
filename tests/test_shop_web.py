@@ -1191,7 +1191,7 @@ def test_a_bid_is_not_taken_twice_while_the_first_is_in_flight(trading):
     """Eleven fill transactions went out in fifty seconds against two bids,
     each for the full amount, because the book is built from blocks and the
     bid it crosses stays untouched until one lands. The node must remember
-    what it has already sent (a test machine, D-119)."""
+    what it has already sent (BOXA, D-119)."""
     state, index, keeper, answers, maker, built = trading
     _crossing_bid(index)
 
@@ -1205,7 +1205,7 @@ def test_a_refused_fill_is_not_asked_again_on_the_next_tick(trading, monkeypatch
     """The case that actually loops: the note says refused, so an in-flight
     check lets it through, and the book has not changed because nothing has
     landed -- so it asks again, and again. Eleven times in fifty seconds
-    (a test machine, D-119)."""
+    (BOXA, D-119)."""
     state, index, keeper, answers, maker, built = trading
     _crossing_bid(index)
 

@@ -224,7 +224,7 @@ def test_the_review_screen_leads_with_the_name_not_the_path(client, tmp_path):
     indistinguishable when the name is a table row and the path is what
     catches the eye. That is how a raw HashLips build went on the chain in
     place of a prepared one, reviewed by two people and noticed by neither
-    (a test machine, D-114)."""
+    (BOXA, D-114)."""
     app, state = client
     build = hashlips(tmp_path, count=3)
 
@@ -429,7 +429,7 @@ def test_a_run_from_an_older_floor_does_not_block_a_new_one(client, tmp_path,
 
     `collections.sqlite` was never named in the reset instruction, so after a
     floor moved it still held runs against a chain nobody reads -- and they
-    went on refusing a set that no longer existed anywhere. The operator hit this
+    went on refusing a set that no longer existed anywhere. Robin hit this
     on the first collection test after the second reset (D-125).
     """
     import contextlib
@@ -494,7 +494,7 @@ def test_a_finished_run_does_not_say_go_and_resume_it(client, tmp_path):
     it with "Open that run and resume it", which was wrong twice over:
     nothing was being inscribed and there was nothing to resume. Whether the
     SET exists is a question for the chain; what this file knows is whether a
-    run is still going (a test machine, D-125)."""
+    run is still going (BOXA, D-125)."""
     from arcade import collections as C
 
     app, state = client
@@ -532,7 +532,7 @@ def test_the_review_says_what_number_one_will_say_about_the_set(client, tmp_path
     A build wrote a real name into the `collection` object's `artist` field —
     the object a marketplace reads for the whole set — and the only reason it
     was not inscribed for ever was an unrelated defect stopping the run. The
-    screen showed the cost of that text and never the text (a test machine).
+    screen showed the cost of that text and never the text (BOXA).
     """
     import contextlib
     import json as jsonlib
