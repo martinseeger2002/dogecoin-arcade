@@ -262,24 +262,47 @@ function wire() {
   $("kept").onchange = () => { $("done").disabled = !$("kept").checked; };
   $("done").onclick = () => { location.href = NEXT; };
 
+  // Opening a wallet takes a few seconds (600,000 rounds of PBKDF2, then a
+  // session), and a button that looked idle meanwhile got pressed again and
+  // again -- each press starting over and fetching the wallet anew, 13 times in
+  // one sign-in, close to the rate limit (2026-09-28: "I just had to
+  // click the button a few times"). So it says it is working, and holds still.
+  const busy = (button, text) => {
+    if (button.disabled) return false;
+    button.dataset.was = button.textContent;
+    button.disabled = true;
+    button.textContent = text;
+    return true;
+  };
+  const idle = (button) => {
+    button.disabled = false;
+    if (button.dataset.was) button.textContent = button.dataset.was;
+  };
+
   $("enter").onclick = async () => {
+    const button = $("enter");
+    if (!busy(button, "Opening your wallet\u2026")) return;
     say("");
     try {
       // Signing in opens the wallet: it is the same password and the same
       // moment, and asking for it again on the next page is asking the
       // same question twice.
       await wallet.signIn($("in-tag").value.trim(), $("in-pw").value, CHAIN);
+      button.textContent = "Signed in \u2713";
       location.href = NEXT;
-    } catch (e) { say(String(e.message || e)); }
+    } catch (e) { idle(button); say(String(e.message || e)); }
   };
 
   $("open-file").onclick = async () => {
+    const button = $("open-file");
+    if (button.disabled) return;
     say("");
     const file = $("backup-file").files[0];
     if (!file) { say("choose the file the Backup page saved"); return; }
     let said;
     try { said = JSON.parse(await file.text()); }
     catch (e) { say("that file is not something this can read."); return; }
+    busy(button, "Opening your wallet\u2026");
     try {
       // Read and opened in this tab, and nowhere else. This node is told
       // nothing about the file at all until the key inside it signs
@@ -288,7 +311,7 @@ function wire() {
       // this node ever holding what makes it spendable.
       await wallet.openFile(said, $("backup-pw").value, CHAIN);
       location.href = NEXT;
-    } catch (e) { say(String(e.message || e)); }
+    } catch (e) { idle(button); say(String(e.message || e)); }
   };
 }
 
