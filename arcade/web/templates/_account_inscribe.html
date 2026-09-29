@@ -870,8 +870,8 @@ async function buildFile(file) {
   if (!spec || !spec.max || !arcadeIsImage(file)) return file;
   const shrunk = await arcadeShrink(file, spec.max, spec.quality);
   if (!shrunk || shrunk.blob.size >= file.size) return file;
-  return new File([shrunk.blob], arcadeJpegName(file.name),
-                  {type: "image/jpeg"});
+  return new File([shrunk.blob], arcadeJpegName(file.name, shrunk.type),
+                  {type: shrunk.type});
 }
 
 $("run-start").onclick = async () => {

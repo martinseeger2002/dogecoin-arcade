@@ -1386,9 +1386,10 @@ function arcadePutFile(input, file){
 }
 
 // Re-encode to at most `max` on the long side. JPEG, because it is the one
-// format every phone and every browser agrees on -- and because it has no
-// transparency, anything see-through is painted onto white first rather than
-// coming out black.
+// format every phone and every browser agrees on -- unless the picture has
+// transparency, which JPEG cannot carry: a game's sprites came out as white
+// boxes (2026-09-29, the shared sprite library), so a see-through picture is
+// re-encoded as PNG and keeps it. `type` in the answer says which it became.
 function arcadeShrink(file, max, quality){
   return new Promise(function(resolve){
     var url = URL.createObjectURL(file);
@@ -1400,21 +1401,32 @@ function arcadeShrink(file, max, quality){
       var canvas = document.createElement('canvas');
       canvas.width = cw; canvas.height = ch;
       var ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, cw, ch);
       ctx.drawImage(img, 0, 0, cw, ch);
+      var clear = false;
+      if (!/jpe?g/.test(file.type)) {
+        try {
+          var px = ctx.getImageData(0, 0, cw, ch).data;
+          for (var i = 3; i < px.length; i += 4) { if (px[i] < 255) { clear = true; break; } }
+        } catch (e) { clear = true; }       // cannot look: keep what might be there
+      }
+      if (!clear) {                          // opaque: JPEG, on white as before
+        ctx.globalCompositeOperation = 'destination-over';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, cw, ch);
+      }
+      var type = clear ? 'image/png' : 'image/jpeg';
       canvas.toBlob(function(blob){
         URL.revokeObjectURL(url);
-        resolve(blob ? {blob: blob, width: cw, height: ch} : null);
-      }, 'image/jpeg', quality);
+        resolve(blob ? {blob: blob, width: cw, height: ch, type: type} : null);
+      }, type, quality);
     };
     img.onerror = function(){ URL.revokeObjectURL(url); resolve(null); };
     img.src = url;
   });
 }
 
-function arcadeJpegName(name){
-  return name.replace(/\.[^.\/]+$/, '') + '.jpg';
+function arcadeJpegName(name, type){
+  return name.replace(/\.[^.\/]+$/, '') + (type === 'image/png' ? '.png' : '.jpg');
 }
 
 // Work out all three, then let the caller draw them. Every one is measured
@@ -1428,8 +1440,8 @@ function arcadeOfferSizes(file, onReady){
     return arcadeShrink(file, spec.max, spec.quality).then(function(out){
       if (!out || out.blob.size >= file.size) return null;
       return {key: spec.key, label: spec.label, hint: spec.hint,
-              file: new File([out.blob], arcadeJpegName(file.name),
-                             {type: 'image/jpeg'}),
+              file: new File([out.blob], arcadeJpegName(file.name, out.type),
+                             {type: out.type}),
               bytes: out.blob.size, width: out.width, height: out.height};
     });
   });
@@ -1671,7 +1683,10 @@ function arcadePick(input, drawText){
   arcadeOfferSizes(file, function(results){
     if (arcadeAttach.original !== file) return;       // superseded by a new pick
     arcadeAttach.choices = results;
-    var preferred = results.filter(function(r){ return r.key === 'medium'; })[0]
+    // A picture that already fits in one piece goes as it is: a re-encode
+    // saves a few hundred bytes and no transaction (2026-09-29).
+    var preferred = (arcadeFileCost(file.size).chunks <= 1 ? results[0] : null)
+                 || results.filter(function(r){ return r.key === 'medium'; })[0]
                  || results[results.length - 1];
     arcadeChoose(input, preferred.key, drawText);
   });
@@ -1700,6 +1715,8 @@ function arcadeChoose(input, key, drawText){
     button.innerHTML = '<strong>' + r.label + '</strong> ' +
       (r.width ? r.width + '&times;' + r.height + ' · ' : '') +
       arcadeSize(r.bytes) + ' · ' + arcadeCoins(cost.coins) +
+      (arcadeAttach.original && r.file.type !== arcadeAttach.original.type
+        ? ' · as ' + (r.file.type === 'image/png' ? 'PNG' : 'JPEG') : '') +
       (cost.chunks > 1 ? ' · ' + cost.chunks.toLocaleString() + ' pieces' : '');
     button.title = r.hint;
     button.addEventListener('click', function(){

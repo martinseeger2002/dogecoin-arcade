@@ -838,3 +838,78 @@ def test_clicking_a_picture_opens_it_rather_than_downloading_it(phone):
     finally:
         browser.switch_to.default_content()
 
+
+
+# --- transparency survives (2026-09-29: sprites became white boxes) -------------
+
+MAKE_A_SPRITE = """
+const done = arguments[arguments.length - 1];
+const side = arguments[0];
+const c = document.createElement('canvas');
+c.width = side; c.height = side;
+const g = c.getContext('2d');
+const img = g.createImageData(side, side);
+for (let i = 0; i < img.data.length; i += 4) {
+  img.data[i] = (i * 7) % 255; img.data[i+1] = (i * 13) % 255;
+  img.data[i+2] = (i * 29) % 255; img.data[i+3] = (i / 4) % 3 ? 255 : 0;
+}
+g.putImageData(img, 0, 0);
+c.toBlob(function (blob) {
+  const input = document.getElementById('attachment');
+  const dt = new DataTransfer();
+  dt.items.add(new File([blob], 'player.png', {type: 'image/png'}));
+  input.files = dt.files;
+  input.dispatchEvent(new Event('change'));
+  done(blob.size);
+}, 'image/png');
+"""
+
+
+def _sizes_settle(browser, want=None):
+    for _ in range(60):
+        state = browser.execute_script(READ_SIZES)
+        if state["chosen"] and (want is None or len(state["labels"]) >= want):
+            return state
+        time.sleep(0.5)
+    return browser.execute_script(READ_SIZES)
+
+
+def test_a_small_picture_goes_as_it_is(phone):
+    """Under one piece, a re-encode saves bytes and no transaction."""
+    visit, peer = phone
+    browser = visit(f"/messages/{peer}")
+    try:
+        browser.set_script_timeout(30)
+        original = browser.execute_async_script(MAKE_A_SPRITE, 40)
+        assert original < 7628
+        state = _sizes_settle(browser)
+        assert state["chosen"] == ["Large"], state
+        assert state["name"] == "player.png" and state["bytes"] == original
+    finally:
+        browser.switch_to.default_content()
+
+
+def test_a_see_through_picture_shrinks_to_png_and_stays_see_through(phone):
+    visit, peer = phone
+    browser = visit(f"/messages/{peer}")
+    try:
+        browser.set_script_timeout(60)
+        browser.execute_async_script(MAKE_A_SPRITE, 2000)
+        state = _sizes_settle(browser, want=2)
+        assert state["chosen"] != ["Large"], state
+        assert state["name"] == "player.png" and state["type"] == "image/png", state
+        assert any("as PNG" not in l and l.startswith("Large") for l in state["labels"])
+        clear = browser.execute_async_script("""
+            const done = arguments[0];
+            const f = document.getElementById('attachment').files[0];
+            const im = new Image();
+            im.onload = () => { const c = document.createElement('canvas');
+              c.width = im.width; c.height = im.height;
+              const g = c.getContext('2d'); g.drawImage(im, 0, 0);
+              const d = g.getImageData(0, 0, c.width, c.height).data;
+              let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] < 255) n++;
+              done(n); };
+            im.src = URL.createObjectURL(f);""")
+        assert clear > 0, "the transparency came through the re-encode"
+    finally:
+        browser.switch_to.default_content()
