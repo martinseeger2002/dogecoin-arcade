@@ -453,6 +453,28 @@
               + "neither.",
         refuse ? "Refuse" : "Answer it");
       if (!ok) return;
+      if (refuse) {
+          // Gone from both lists at once (2026-09-28); the buyer's own
+          // node is told afterwards, and that note failing does not undo it.
+          button.disabled = true;
+          const r = await fetch("/account/offer/decline", {method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({offer: button.dataset.offer, piece: button.dataset.piece,
+                                  chain: CHAIN.network})});
+          const said = await r.json();
+          if (!r.ok) { button.disabled = false; say(said.detail || "that offer cannot be declined", false); return; }
+          const rowEl = button.closest(".offerrow, tr");
+          if (rowEl) rowEl.remove();
+          say("Declined.", true);
+          (async () => {
+            try {
+              const held = await opening;
+              if (held) await wallet.answerOffer(held, {offer: button.dataset.offer,
+                piece: button.dataset.piece, refuse: true, chain: CHAIN.network});
+            } catch (e) { /* the decline stands; the note is a courtesy */ }
+          })();
+          return;
+        }
       for (const other of document.querySelectorAll("[data-offer]")) {
         other.disabled = true;
       }

@@ -6510,8 +6510,8 @@ def create_app(state: AppState) -> FastAPI:
                     # Pre-signed offers: withdrawn, spent or already done ones
                     # are not offers any more; open ones accept in one press.
                     marks = _bids.statuses([o["txid"] for o in asks])
-                    asks = [o for o in asks
-                            if marks.get(o["txid"]) not in ("withdrawn", "stale", "filled")]
+                    ended = _bids.ended([o["txid"] for o in asks])
+                    asks = [o for o in asks if o["txid"] not in ended]
                     for o in asks:
                         o["presigned"] = marks.get(o["txid"]) == bidslib.OPEN
                     for ask in asks:
@@ -10090,6 +10090,32 @@ def create_app(state: AppState) -> FastAPI:
         offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what, done=swept)
         return JSONResponse({"offer": offer.id, "chain": chain.network,
                              "count": len(coins), **unsigned.as_json()})
+
+    @app.post("/account/offer/decline")
+    def account_offer_decline(request: Request, payload: Any = Body(None)):
+        """Decline an offer on a piece of yours: it leaves your offers and the
+        buyer's at once (2026-09-28). Nothing is spent here; a pre-signed
+        offer's coins are the buyer's to spend again. The sealed "refused" note to
+        the buyer's own node goes after this, from the tab, and a failure there
+        does not undo the decline."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        try:
+            index = state.token_index(chain)
+            ask = _offer_answered(index, chain, address, said)
+        except Exception as exc:                     # noqa: BLE001 -- said to the person
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        bid = _bids.get(ask["txid"])
+        if bid and bid["status"] == bidslib.OPEN:
+            _bids.close(ask["txid"], "declined")
+        else:
+            _bids.end(ask["txid"], "declined")
+        return JSONResponse({"offer": ask["txid"], "declined": True})
 
     @app.post("/account/offer/withdraw")
     def account_offer_withdraw(request: Request, payload: Any = Body(None)):
@@ -17169,7 +17195,8 @@ def create_app(state: AppState) -> FastAPI:
                                 "other_chains": [c for c in state.token_chains
                                                  if c is not chain],
                                 "shops": [], "node_error": None, "owned": set(),
-                                "offers_in": [], "offers_out": [], "tags": {}}
+                                "offers_in": [], "offers_out": [], "tags": {},
+                                "offer_history": []}
         try:
             data["shops"] = _shop_listings(index, chain)
         except Exception as exc:
@@ -17304,9 +17331,32 @@ def create_app(state: AppState) -> FastAPI:
                 index.offers_by(sorted(data["owned"])))
             # Pre-signed offers that are done, withdrawn or spent are not offers.
             marks = _bids.statuses([o["txid"] for o in data["offers_in"] + data["offers_out"]])
-            gone = ("withdrawn", "stale", "filled")
-            data["offers_in"] = [o for o in data["offers_in"] if marks.get(o["txid"]) not in gone]
-            data["offers_out"] = [o for o in data["offers_out"] if marks.get(o["txid"]) not in gone]
+            # Ended offers leave both lists at once, on both sides (the operator,
+            # 2026-09-28: "declined offers should be removed from both sides
+            # instantly"; "accepted offers should go directly into the history").
+            ended = _bids.ended([o["txid"] for o in data["offers_in"] + data["offers_out"]])
+            data["offers_in"] = [o for o in data["offers_in"] if o["txid"] not in ended]
+            data["offers_out"] = [o for o in data["offers_out"] if o["txid"] not in ended]
+            data["offer_history"] = []
+            looking = signed_in(request) if data["viewer"] == "account" else None
+            if looking is not None:
+                for b in _bids.history(looking.pubkey, sorted(data["owned"]), chain.network):
+                    piece = index.inscription(b["piece"]) or {}
+                    mine = b["account"] == looking.pubkey
+                    try:
+                        price = swaplib.describe_leg(b["take"])
+                    except Exception:
+                        price = f"{b['price_sats'] / 100000000:g} coins"
+                    data["offer_history"].append({
+                        "txid": b["id"], "inscription": b["piece"], "mine": mine,
+                        "number": piece.get("number"), "collection": piece.get("collection"),
+                        "edition": piece.get("edition"), "price": price,
+                        "other": b["seller"] if mine else b["buyer"],
+                        "status": {"filled": "bought" if mine else "sold",
+                                   "declined": "declined", "withdrawn": "cancelled",
+                                   "stale": "expired"}.get(b["status"], b["status"]),
+                        "at": b["ended_at"]})
+                data["tags"].update(_tags_for([h["other"] for h in data["offer_history"]]))
             try:
                 swapping = index.pending_swaps()
             except Exception:

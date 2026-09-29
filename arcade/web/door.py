@@ -220,6 +220,7 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # pre-signed offers: the buyer's signatures, withdrawing, completing
                "/account/offer/bid", "/account/offer/bid-build", "/account/offer/withdraw",
                "/account/dust/sweep",
+               "/account/offer/decline",
                # paying the operator for extra room (the account's own coins)
                "/account/boost",
                # buy orders this node holds (standing.py): place, lots, sign, cancel

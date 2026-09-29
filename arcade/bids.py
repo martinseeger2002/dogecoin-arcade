@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS bid (
     done_txid   TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS bid_draft ON bid(draft);
+CREATE TABLE IF NOT EXISTS offer_end (
+    txid   TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    at     REAL NOT NULL
+);
 CREATE INDEX IF NOT EXISTS bid_account ON bid(account, status);
 """
 
@@ -138,6 +143,51 @@ class Bids:
         with self._open() as conn:
             conn.execute("UPDATE bid SET status=?, done_txid=? WHERE id=?",
                          (status, done_txid, str(txid)))
+        self.end(txid, status)
+
+    def end(self, txid: str, status: str) -> None:
+        """When and how an offer stopped being one -- accepted (filled), declined,
+        withdrawn, or its coins spent (stale) -- for the History list (the operator,
+        2026-09-28: "most recent things at the top"). Also the one record of a
+        decline for an offer that was never pre-signed."""
+        with self._open() as conn:
+            conn.execute("INSERT OR REPLACE INTO offer_end (txid, status, at) VALUES (?,?,?)",
+                         (str(txid), status, time.time()))
+
+    def ended(self, txids: list[str]) -> dict[str, str]:
+        """How each of these offers ended, if it did: pre-signed ones by their row,
+        the rest by `offer_end`."""
+        if not txids:
+            return {}
+        marks = ",".join("?" * len(txids))
+        with self._open() as conn:
+            out = {r["txid"]: r["status"] for r in conn.execute(
+                f"SELECT txid, status FROM offer_end WHERE txid IN ({marks})", tuple(txids))}
+            for r in conn.execute(f"SELECT id, status FROM bid WHERE id IN ({marks})",
+                                  tuple(txids)):
+                if r["status"] not in (OPEN, UNSIGNED):
+                    out[r["id"]] = r["status"]
+        return out
+
+    def history(self, account: str, addresses: list[str], network: str,
+                limit: int = 40) -> list[dict]:
+        """Pre-signed offers this account made or was made, that have ended,
+        newest ending first."""
+        marks = ",".join("?" * len(addresses)) or "''"
+        with self._open() as conn:
+            rows = conn.execute(
+                "SELECT b.*, COALESCE(e.at, b.created) AS ended_at FROM bid b "
+                "LEFT JOIN offer_end e ON e.txid = b.id "
+                f"WHERE b.network=? AND b.status NOT IN (?, ?) "
+                f"AND (b.account=? OR b.seller IN ({marks})) "
+                "ORDER BY ended_at DESC LIMIT ?",
+                (network, OPEN, UNSIGNED, account, *addresses, int(limit))).fetchall()
+        out = []
+        for r in rows:
+            row = self._row(r)
+            row["ended_at"] = float(r["ended_at"])
+            out.append(row)
+        return out
 
     def reserved(self, account: str, network: str = "") -> frozenset:
         """The coins this account's standing offers are signed over: not to be
