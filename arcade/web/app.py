@@ -11949,6 +11949,18 @@ def create_app(state: AppState) -> FastAPI:
             if claim_hash and not re.fullmatch(r"[0-9a-f]{64}", claim_hash):
                 raise ValueError("a claim is named by the sha256 of its phrase, "
                                  "64 hex characters")
+            bound = ""
+            if str(said.get("bound") or "").strip():
+                if not claim_hash:
+                    raise ValueError("only a claim can be bound to an inscription")
+                row = state.token_index(chain).inscription(
+                    contentlib._key(str(said.get("bound")).strip().lstrip("#")))
+                if row is None:
+                    raise ValueError("no such inscription to bind this to")
+                if row["owner"] != address:
+                    raise ValueError(f"inscription #{row['number']} is not yours, so it "
+                                     "cannot be what this pays out for")
+                bound = row["txid"]
             if not claim_hash:
                 # A token lot on a public page would be the one listing in the
                 # book no page knows how to show; lots are for claims.
@@ -11969,7 +11981,7 @@ def create_app(state: AppState) -> FastAPI:
                     # A mintpad lists a whole set for weeks, not a day
                     # (2026-09-26); anything else keeps LISTED_FOR.
                     seconds=_listing_days(said) * 86400 or listingslib.LISTED_FOR,
-                    claim_hash=claim_hash)
+                    claim_hash=claim_hash, bound=bound)
         except (listingslib.ListingError, fundinglib.FundingError,
                 swaplib.SwapError, AmountError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
@@ -12032,8 +12044,30 @@ def create_app(state: AppState) -> FastAPI:
         name = data.get("name") if isinstance(data, dict) else None
         return f"{name} (#{row['number']})" if name else f"#{row['number']}"
 
+    def _bound_refusal(chain, listing: dict, page: str = "") -> str:
+        """Why a bound claim cannot pay out now, or "" when it can.
+
+        The seller has to hold the inscription the pool is bound to at the
+        moment of the claim, not only when the pool was made (2026-09-29).
+        `page` is the inscription the claim says it came from. The node cannot
+        prove which page asked, so that half is a courtesy against a page
+        claiming another page's prize; the holding half is the rule.
+        """
+        bound = listing.get("bound") or ""
+        if not bound:
+            return ""
+        row = state.token_index(chain).inscription(bound)
+        if row is None or row["owner"] != listing["owner"]:
+            return ("this prize pays out only while its seller holds the page it "
+                    "belongs to, and they no longer do")
+        if page:
+            asked = state.token_index(chain).inscription(contentlib._key(page))
+            if asked is None or asked["txid"] != bound:
+                return "this prize belongs to another page"
+        return ""
+
     def _listing_to_fill(account, chain, address: str, listing_id: str,
-                         secret: str = "") -> tuple:
+                         secret: str = "", page: str = "") -> tuple:
         """A listing this node filed, and the transaction that completes it.
 
         The row out of the book, and then the whole of `_fill_terms`, which is
@@ -12052,6 +12086,9 @@ def create_app(state: AppState) -> FastAPI:
                 "no such listing on this chain -- it may have expired, been "
                 "filled, or been made over on the other one")
         _claim_opens(account, listing, secret)
+        refusal = _bound_refusal(chain, listing, page)
+        if refusal:
+            raise ValueError(refusal)
         return _fill_terms(account, chain, address, listing)
 
     def _fill_terms(account, chain, address: str, listing: dict) -> tuple:
@@ -12173,7 +12210,7 @@ def create_app(state: AppState) -> FastAPI:
         try:
             listing, unsigned, _ = _listing_to_fill(
                 account, chain, address, str(said.get("listing", "")),
-                str(said.get("secret") or ""))
+                str(said.get("secret") or ""), str(said.get("page") or ""))
         except (fundinglib.FundingError, listingslib.ListingError,
                 swaplib.SwapError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
@@ -12235,7 +12272,7 @@ def create_app(state: AppState) -> FastAPI:
             try:
                 listing, unsigned, what = _listing_to_fill(
                     account, chain, address, str(said.get("listing", "")),
-                    str(said.get("secret") or ""))
+                    str(said.get("secret") or ""), str(said.get("page") or ""))
             except (fundinglib.FundingError, listingslib.ListingError,
                     swaplib.SwapError, ValueError) as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=400)
@@ -14649,6 +14686,32 @@ def create_app(state: AppState) -> FastAPI:
                         "number": got["number"], "edition": got.get("edition"),
                         "maker": got["creator"]})
         return out
+
+    @app.get("/r/claimpool/{key}")
+    def r_claimpool(key: str):
+        """The prize pool bound to an inscription, for that page to find at run
+        time (2026-09-29): a pool can only be bound to a page that already
+        exists, so the page cannot carry the pool's id. Never the phrase.
+        `open` is false when there is nothing left or the seller no longer holds
+        the page, so a game can say "cash-out closed" instead of failing."""
+        chain, index = _token_chain()
+        row = index.inscription(contentlib._key(key))
+        if row is None:
+            return contentlib._missing("no such inscription")
+        _sweep_book(chain)
+        pool = [r for r in state.listings.open_listings(chain.network, limit=1000, claims=True)
+                if r.get("bound") == row["txid"] and r.get("claim_hash")]
+        pool.sort(key=lambda r: r["created"])
+        first = pool[0] if pool else None
+        held = bool(first) and row["owner"] == first["owner"]
+        lot = _token_lot(bytes.fromhex(first["payload"] or "")) if first else None
+        return contentlib._json({
+            "inscription": row["txid"], "open": bool(first) and held,
+            "listing": first["id"] if first else None,
+            "lots_left": len(pool) if held else 0,
+            "what": (_lot_words(chain, lot) if lot else _piece_called(chain, first))
+                    if first else "",
+            "price": int(first["price"]) if first else 0})
 
     @app.get("/r/book/{property_id}")
     def r_book(property_id: int, address: str = ""):

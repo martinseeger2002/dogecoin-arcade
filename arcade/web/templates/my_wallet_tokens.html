@@ -54,6 +54,8 @@
     <label class="lotf">Price per lot, coins<input id="lot-price" inputmode="decimal" value="0.01" autocomplete="off"></label>
     <label class="lotf">Days<input id="lot-days" inputmode="numeric" value="30" autocomplete="off"></label>
   </div>
+  <label class="lotf" style="display:block;margin-top:8px">Pays out only while I hold inscription (number or id, optional)
+    <input id="lot-bound" class="mono" autocomplete="off" spellcheck="false" placeholder="#198" style="width:auto"></label>
   <label class="lotf" style="display:block;margin-top:8px">Phrase
     <span class="row" style="gap:6px"><input id="lot-phrase" class="mono" autocomplete="off" spellcheck="false" style="flex:1">
     <button type="button" class="ghost small" id="lot-new">Make one</button></span></label>
@@ -191,11 +193,15 @@ $("lot-make").onclick = async () => {
       property_id: lotsFor.token.property_id, lot: $("lot-size").value.trim(),
       count: parseInt($("lot-count").value, 10) || 0, price: $("lot-price").value.trim(),
       days: parseInt($("lot-days").value, 10) || 0, chain: lotsFor.chain.network,
+      bound: $("lot-bound").value.trim().replace(/^#/, ""),
     }, phrase, (step) => news(step));
     news("");
     $("lot-done-what").textContent = `${made.ids.length} lot${made.ids.length === 1 ? "" : "s"} set aside: ${made.what}.`;
-    $("lot-snippet").textContent = "parent.postMessage({arcade: \"claim\", seq: 1,\n"
-      + `  listing: ${JSON.stringify(made.ids[0] || "")},\n  secret: ${JSON.stringify(phrase)}}, "*");`;
+    $("lot-snippet").textContent = $("lot-bound").value.trim()
+      ? "// the bound page finds its own pool: no listing id\n"
+        + `parent.postMessage({arcade: "claim", seq: 1, secret: ${JSON.stringify(phrase)}}, "*");`
+      : "parent.postMessage({arcade: \"claim\", seq: 1,\n"
+        + `  listing: ${JSON.stringify(made.ids[0] || "")},\n  secret: ${JSON.stringify(phrase)}}, "*");`;
     $("lot-done").hidden = false;
     await draw();
   } catch (e) { news(""); say(String(e.message || e)); }

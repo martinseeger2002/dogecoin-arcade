@@ -538,8 +538,8 @@ export async function checkedListing(leg, wallet) {
  * not off `leg.price` -- the payload is what the signatures stand over, and a
  * row priced from anywhere else could carry a number no signature covers.
  */
-export async function list(wallet, leg, {days = 0, claim = ""} = {}) {
-  return working(() => _list(wallet, leg, days, claim));
+export async function list(wallet, leg, {days = 0, claim = "", bound = ""} = {}) {
+  return working(() => _list(wallet, leg, days, claim, bound));
 }
 
 /** A prize pool of token lots, each claimed with `phrase` (2026-09-28:
@@ -571,7 +571,7 @@ export async function makeClaimLots(wallet, ask, phrase, onStep = () => {}) {
     const ids = [];
     for (const leg of said.legs || []) {
       onStep(`Signing lot ${ids.length + 1} of ${said.legs.length}\u2026`);
-      const done = await _list(wallet, leg, Number(ask.days || 0), phrase);
+      const done = await _list(wallet, leg, Number(ask.days || 0), phrase, ask.bound || "");
       ids.push(done.listed);
     }
     return {ids, what: said.what || ""};
@@ -592,7 +592,7 @@ export async function offerSplit(count, chain) {
   });
 }
 
-async function _list(wallet, leg, days = 0, claim = "") {
+async function _list(wallet, leg, days = 0, claim = "", bound = "") {
   const keys = keysOn(wallet, leg.chain
                       || (wallet.on && Object.keys(wallet.on)[0]));
   const shown = await coins.verifyLeg(leg, keys);
@@ -606,7 +606,8 @@ async function _list(wallet, leg, days = 0, claim = "") {
     body: JSON.stringify({raw: leg.raw, chain: leg.chain || "",
                           amount: shown.coinsOf(shown.listing.sats),
                           pubkey: coinsHex(keys.pubkey), signatures, days,
-                          claim_hash: claim ? await claimHash(claim) : ""}),
+                          claim_hash: claim ? await claimHash(claim) : "",
+                          bound: bound || ""}),
   });
   const said = await done.json();
   if (!done.ok) throw new Error(said.detail || "the node would not take it");
@@ -990,17 +991,18 @@ export async function signTake(wallet, built) {
  * nothing of either side.
  */
 
-export async function offerBuy(listing, chain, secret = "") {
+export async function offerBuy(listing, chain, secret = "", page = "") {
   return working(async () => {
     const asked = await fetch("/account/buy", {
       method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({listing, chain: chain || "", secret: secret || ""}),
+      body: JSON.stringify({listing, chain: chain || "", secret: secret || "",
+                            page: page || ""}),
     });
     const offer = await asked.json();
     if (!asked.ok) throw new Error(offer.detail || "that cannot be bought");
     // A claim's phrase goes with the signature too: the node decides the
     // trade again from scratch there, phrase and all.
-    return {...offer, secret: secret || ""};
+    return {...offer, secret: secret || "", page: page || ""};
   });
 }
 
@@ -1023,7 +1025,7 @@ export async function buy(wallet, offer) {
     const done = await fetch("/account/buy/sign", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({listing: offer.listing, chain: offer.chain || "",
-                            secret: offer.secret || "",
+                            secret: offer.secret || "", page: offer.page || "",
                             raw: offer.raw, signatures,
                             pubkey: coinsHex(keys.pubkey)}),
     });

@@ -21,7 +21,7 @@ from arcade import funding                                              # noqa: 
 PHRASE = "the vault on level five"
 
 
-def _lots(book, count=3, lot="25", price="0.01", phrase=PHRASE):
+def _lots(book, count=3, lot="25", price="0.01", phrase=PHRASE, bound=""):
     """Make `count` lots the way the Tokens page does: split if asked, sign each."""
     who, secret, pubkey = book["client"], book["secret"], book["pubkey"]
     ask = {"property_id": book["pid"], "lot": lot, "count": count, "price": price,
@@ -39,6 +39,7 @@ def _lots(book, count=3, lot="25", price="0.01", phrase=PHRASE):
     for leg in legs:
         filed = who.post("/account/list/sign", json={
             "raw": leg["raw"], "amount": price, "pubkey": pubkey.hex(), "days": 30,
+            "bound": bound,
             "claim_hash": hashlib.sha256(phrase.encode()).hexdigest(),
             "signatures": [_sign(secret, bytes.fromhex(d), funding.SINGLE_ANYONECANPAY).hex()
                            for d in leg["sighashes"]]})
@@ -48,13 +49,14 @@ def _lots(book, count=3, lot="25", price="0.01", phrase=PHRASE):
     return ids, legs
 
 
-def _claim(buyer, listing, phrase=PHRASE):
+def _claim(buyer, listing, phrase=PHRASE, page=""):
     client, secret, pubkey, _address = buyer
-    asked = client.post("/account/buy", json={"listing": listing, "secret": phrase})
+    asked = client.post("/account/buy", json={"listing": listing, "secret": phrase, "page": page})
     assert asked.status_code == 200, asked.text
     said = asked.json()
     done = client.post("/account/buy/sign", json={
-        "raw": said["raw"], "listing": listing, "secret": phrase, "pubkey": pubkey.hex(),
+        "raw": said["raw"], "listing": listing, "secret": phrase, "page": page,
+        "pubkey": pubkey.hex(),
         "signatures": [_sign(secret, bytes.fromhex(d)).hex() for d in said["sighashes"]]})
     assert done.status_code == 200, done.text
     return said, done.json()
@@ -124,3 +126,62 @@ def test_an_account_on_the_public_site_can_reach_the_pool_route():
     not name, and the tests above run as the node's own machine."""
     from arcade.web import door
     assert "/account/claimlots" in door.PUBLIC_POST
+
+
+def test_a_bound_pool_pays_only_while_its_seller_holds_the_page(node, monkeypatch):
+    """2026-09-29: "only NFTs that are in your wallet should be able to send out
+    your tokens or NFTs." A pool bound to a page pays out only while its seller
+    holds that page; sending the page away retires it."""
+    from test_account_offer import _inscribed
+    from arcade import ledger
+    book = _bookcoin(node, 91)
+    state, rpc = book["state"], book["rpc"]
+    page = _inscribed(book["client"], state, rpc, book["secret"], book["pubkey"], "the game")
+    ids, _ = _lots(book, count=2, lot="10", bound=page)
+
+    pool = book["client"].get(f"/r/claimpool/{page}").json()
+    assert pool["open"] and pool["lots_left"] == 2 and pool["listing"] in ids
+    assert "10 " in pool["what"]
+    assert "secret" not in pool and PHRASE not in str(pool)
+
+    player = _seated(node[0], state, rpc, 92)
+    elsewhere = player[0].post("/account/buy", json={
+        "listing": ids[0], "secret": PHRASE, "page": "ab" * 32})
+    assert elsewhere.status_code == 400
+    _claim(player, pool["listing"], page=page)
+    _settled(state, rpc)
+    assert _held(state, player[3], book["pid"])[0] == 10 * COIN
+
+    real = ledger.LedgerIndex.inscription
+
+    def moved(self, key):
+        row = real(self, key)
+        if row is not None and row["txid"] == page:
+            row = dict(row, owner="nSomebodyElse")
+        return row
+    monkeypatch.setattr(ledger.LedgerIndex, "inscription", moved)
+    gone = player[0].post("/account/buy", json={"listing": ids[1], "secret": PHRASE, "page": page})
+    assert gone.status_code == 400 and "no longer" in gone.json()["detail"]
+    assert book["client"].get(f"/r/claimpool/{page}").json()["open"] is False
+
+
+def test_only_a_page_its_seller_holds_can_be_bound(node):
+    book = _bookcoin(node, 93)
+    other = _bookcoin(node, 94)
+    from test_account_offer import _inscribed
+    theirs = _inscribed(other["client"], other["state"], other["rpc"], other["secret"],
+                        other["pubkey"], "not yours")
+    who, secret, pubkey = book["client"], book["secret"], book["pubkey"]
+    ask = {"property_id": book["pid"], "lot": "5", "count": 1, "price": "0.01"}
+    said = who.post("/account/claimlots", json=ask)
+    if said.json().get("needs_split"):
+        _signed(who, secret, pubkey, said)
+        _settled(book["state"], book["rpc"])
+        said = who.post("/account/claimlots", json=ask)
+    leg = said.json()["legs"][0]
+    refused = who.post("/account/list/sign", json={
+        "raw": leg["raw"], "amount": "0.01", "pubkey": pubkey.hex(), "bound": theirs,
+        "claim_hash": hashlib.sha256(PHRASE.encode()).hexdigest(),
+        "signatures": [_sign(secret, bytes.fromhex(d), funding.SINGLE_ANYONECANPAY).hex()
+                       for d in leg["sighashes"]]})
+    assert refused.status_code == 400 and "not yours" in refused.json()["detail"]

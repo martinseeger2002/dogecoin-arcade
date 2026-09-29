@@ -124,7 +124,8 @@ CREATE TABLE IF NOT EXISTS listing (
     -- The transaction that spent the listed piece: the swap that filled this,
     -- or the spend that cancelled it. Which one is `status`'s business.
     spent_by    TEXT NOT NULL DEFAULT '',
-    claim_hash  TEXT NOT NULL DEFAULT ''
+    claim_hash  TEXT NOT NULL DEFAULT '',
+    bound       TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS listing_open ON listing(status, network);
 CREATE INDEX IF NOT EXISTS listing_piece ON listing(in_txid, in_vout);
@@ -219,6 +220,11 @@ def listing_row(network: str, owner: str, raw: str, piece: dict,
 #: it, or is told it. The leg itself is never served to anybody who has not
 #: said the phrase, because a signed leg is all a stranger needs to finish it.
 #: (No SQL comment beside the column: add_missing_columns reads the lines.)
+#:
+#: A claim may be BOUND to one inscription, its txid in `bound` (2026-09-29:
+#: "only NFTs that are in your wallet should be able to send out your tokens
+#: or NFTs"): it pays out only while its seller holds that inscription, so a
+#: game is retired by sending it away. `/account/buy` refuses otherwise.
 
 
 class Listings:
@@ -258,8 +264,8 @@ class Listings:
                 "INSERT INTO listing(id, network, owner, leg, in_txid, in_vout, "
                 "in_value, payload, coin_txid, coin_vout, coin_value, "
                 "out_value, out_script, fee, price, what, status, "
-                "created, expires, claim_hash) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "created, expires, claim_hash, bound) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (listing["id"], listing["network"], listing["owner"],
                  listing["leg"], listing["input"]["txid"],
                  int(listing["input"]["vout"]), int(listing["input"]["value"]),
@@ -272,7 +278,8 @@ class Listings:
                  str(listing.get("what") or ""),
                  str(listing.get("status") or "open"),
                  float(listing["created"]), float(listing["expires"]),
-                 str(listing.get("claim_hash") or "")))
+                 str(listing.get("claim_hash") or ""),
+                 str(listing.get("bound") or "")))
         return listing
 
     def from_leg(self, rpc: Any, leg: Leg, signatures: list[str],
@@ -296,7 +303,7 @@ class Listings:
     def register(self, rpc: Any, *, raw: str, signatures: list[str],
                  pubkey: bytes, network: str, owner: str, price: int,
                  seconds: float = LISTED_FOR, what: str = "",
-                 record: bool = True, claim_hash: str = "") -> dict:
+                 record: bool = True, claim_hash: str = "", bound: str = "") -> dict:
         """File a leg a browser signed, with nothing remembered from before.
 
         A listing is two requests: this node builds a leg and shows it, the tab
@@ -414,6 +421,7 @@ class Listings:
                               seconds, coin=coin, payload=payload)
         check_leg(rpc, listing)
         listing["claim_hash"] = str(claim_hash or "")
+        listing["bound"] = str(bound or "")
         if not record:
             return listing
         return self.add(listing)
@@ -521,6 +529,7 @@ def row_listing(row: dict) -> dict:
         "created": float(row["created"]), "expires": float(row["expires"]),
         "spent_by": row["spent_by"] or None,
         "claim_hash": row.get("claim_hash") or "",
+        "bound": row.get("bound") or "",
     }
 
 

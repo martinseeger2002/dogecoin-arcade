@@ -821,7 +821,7 @@ window.arcadePress = function (form, doing) {
 // and never sees a key; the phrase only opens the listing on the node.
 //   parent.postMessage({arcade: "claim", seq, listing, secret}, "*")
 //   answers {arcade: "claim", seq, heard} then {ok, txid} or {error}
-async function claimFor(source, m) {
+async function claimFor(source, m, page = "") {
   const answer = (body) => source.postMessage({arcade: "claim", seq: m.seq, ...body}, "*");
   answer({heard: true});
   if (!ARCADE_ME) {
@@ -834,8 +834,16 @@ async function claimFor(source, m) {
   try {
     const wallet = await import("/wallet.js");
     const held = (await wallet.opened(ARCADE_CHAIN)) || await arcadeKeys(ARCADE_CHAIN);
-    const offer = await wallet.offerBuy(String(m.listing || ""), ARCADE_CHAIN.network,
-                                        String(m.secret || ""));
+    // A page may name no listing: its own bound pool is looked up by the
+    // inscription it is (2026-09-29), which also tells the node who asked.
+    let listing = String(m.listing || "");
+    if (!listing && page) {
+      const pool = await (await fetch("/r/claimpool/" + page, {cache: "no-store"})).json();
+      if (!pool.open) throw new Error("this page has nothing left to pay out");
+      listing = pool.listing;
+    }
+    const offer = await wallet.offerBuy(listing, ARCADE_CHAIN.network,
+                                        String(m.secret || ""), page);
     const shown = await wallet.checked(offer, held);
     const coins = String(Number(offer.price) / 1e8);
     const unit = coins === "1" ? "coin" : "coins";
@@ -867,7 +875,10 @@ window.addEventListener("message", async (e) => {
     return;
   }
   if (m.arcade === "take" && typeof m.seq === "number") { takeFor(e.source, m); return; }
-  if (m.arcade === "claim" && typeof m.seq === "number") { claimFor(e.source, m); return; }
+  if (m.arcade === "claim" && typeof m.seq === "number") {
+    const said = /\/content\/([0-9a-f]{64})/.exec(frame.getAttribute("src") || "");
+    claimFor(e.source, m, said ? said[1] : ""); return;
+  }
   if (m.arcade !== "mint" || typeof m.seq !== "number") return;
   const answer = (body) => e.source.postMessage({arcade: "mint", seq: m.seq, ...body}, "*");
   // Heard at once: the card below waits for a person, and a pad that heard
