@@ -1360,7 +1360,10 @@ class MessageStore:
                 AND (ax.height, ax.txid) > (ad.height, ad.txid)))
         + (SELECT COUNT(*) FROM feed_act ash
             WHERE ash.target = {a}.txid AND ash.network = {a}.network
-              AND ash.kind = {share})
+              AND ash.kind = {share}
+              AND NOT EXISTS (SELECT 1 FROM feed_act ud
+                WHERE ud.target = ash.txid AND ud.network = ash.network
+                  AND ud.author = ash.author AND ud.kind = {delete}))
         + COALESCE((SELECT SUM(tip_value(at.amount,
                 COALESCE(NULLIF(at.paid_on, ''), at.network)))
             FROM feed_act at
@@ -1374,6 +1377,7 @@ class MessageStore:
             a=alias, like=feed.LIKE, unlike=feed.UNLIKE,
             dislike=feed.DISLIKE, undislike=feed.UNDISLIKE,
             share=feed.SHARE, tip=feed.TIP, like_value=feed.LIKE_VALUE,
+            delete=feed.DELETE,
             dislike_value=feed.DISLIKE_VALUE)
 
     def feed_posts_popular(self, network: str, cursor: int | None = None,

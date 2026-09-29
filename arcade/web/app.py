@@ -2531,7 +2531,10 @@ def create_app(state: AppState) -> FastAPI:
             # as deep as the conversation goes -- it stopped at two, so a reply
             # to a reply to a reply was never drawn (2026-09-28).
             replies: list[str] = []
-            level = [a["txid"] for a in acts if a["kind"] == feedlib.REPLY]
+            # Shares too, one level: an unshare is a delete aimed at the share
+            # itself, not at the post (2026-09-29).
+            level = [a["txid"] for a in acts
+                     if a["kind"] in (feedlib.REPLY, feedlib.SHARE)]
             for _ in range(12):
                 if not level:
                     break
@@ -3291,7 +3294,10 @@ def create_app(state: AppState) -> FastAPI:
         kinds = {"like": feedlib.LIKE, "unlike": feedlib.UNLIKE,
                  "dislike": feedlib.DISLIKE, "undislike": feedlib.UNDISLIKE,
                  "reply": feedlib.REPLY, "share": feedlib.SHARE,
-                 "edit": feedlib.EDIT, "delete": feedlib.DELETE}
+                 "edit": feedlib.EDIT, "delete": feedlib.DELETE,
+                 # An unshare deletes the share itself: the txid in the path is
+                 # the viewer's own share, not the post (2026-09-29).
+                 "unshare": feedlib.DELETE}
         try:
             check_csrf(csrf_token)
             if doing == "mute":

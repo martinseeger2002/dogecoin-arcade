@@ -127,15 +127,22 @@
     <button class="ghost small" type="button"
             onclick="toggle('reply-{{ p.txid }}')">Reply</button>
 
+    {# Shared once is shared: a second share is a second paid transaction
+       saying the same thing (a tester, 2026-09-26). So a share you made
+       becomes Unshare, which deletes YOUR share and nothing else (2026-09-29). #}
+    {% if p.shared_by_me and p.my_share %}
+    <form method="post" action="/feed/{{ p.my_share }}/unshare" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="back" value="{{ here }}">
+      <button class="ghost small on" type="submit" title="Take your share back">
+        Unshare {{ p.shares or '' }}</button></form>
+    {% else %}
     <form method="post" action="/feed/{{ p.txid }}/share" style="margin:0">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <input type="hidden" name="back" value="{{ here }}">
-      {# Shared once is shared: a second share is a second paid transaction
-         saying the same thing (a tester, 2026-09-26). #}
-      <button class="ghost small{{ ' on' if p.shared_by_me }}" type="submit"
-              {{ 'disabled' if p.shared_by_me }}
-              title="{{ 'You shared this' if p.shared_by_me else 'Put this on your own feed' }}">
-        {{ 'Shared ✓' if p.shared_by_me else 'Share' }} {{ p.shares or '' }}</button></form>
+      <button class="ghost small" type="submit" title="Put this on your own feed">
+        Share {{ p.shares or '' }}</button></form>
+    {% endif %}
 
     {% if acts %}
     {# The one of these that costs something gets the amount box the
@@ -548,7 +555,7 @@
   const $ = (id) => document.getElementById(id);
   const DONE = {like: "Liked", unlike: "Like taken back", reply: "Replied",
                 dislike: "Disliked", undislike: "Dislike taken back",
-                share: "Shared", edit: "Edited", delete: "Deleted",
+                share: "Shared", unshare: "Unshared", edit: "Edited", delete: "Deleted",
                 tip: "Tipped"};
   const say = (text, bad) => {
     $("acts-said").textContent = text;
@@ -573,7 +580,7 @@
   document.addEventListener("submit", async (event) => {
     const form = event.target;
     const one = (form.getAttribute("action") || "").match(
-      /^\/feed\/([0-9a-f]{64})\/(like|unlike|dislike|undislike|reply|share|edit|delete|tip)$/);
+      /^\/feed\/([0-9a-f]{64})\/(like|unlike|dislike|undislike|reply|share|unshare|edit|delete|tip)$/);
     if (!one) return;               // the composer, or a page with no door
     event.preventDefault();
     say("");
@@ -643,7 +650,8 @@
           opener.disabled = true;
         }
       } else {
-        out = await wallet.react(held, txid, KINDS[doing],
+        // An unshare is a delete of the share itself (the txid is the share).
+        out = await wallet.react(held, txid, KINDS[doing === "unshare" ? "delete" : doing],
                                  (form.elements.text || {}).value || "");
         if (form.elements.text) {
           form.elements.text.value = "";

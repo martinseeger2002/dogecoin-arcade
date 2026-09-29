@@ -48,6 +48,9 @@ class Shown:
     mine: bool = False
     edited: bool = False
     deleted: bool = False
+    #: The txid of the viewer's own standing share of this post, which an
+    #: Unshare deletes; "" when they have not shared it.
+    my_share: str = ""
     likes: int = 0
     liked_by_me: bool = False
     dislikes: int = 0
@@ -165,6 +168,15 @@ def _one(txid: str, author: str, text: str, row: Any,
                 or (act["network"] if "network" in act.keys() else ""))
         tipped[paid] = tipped.get(paid, 0) + int(act["amount"])
 
+    # A share its own author deleted is an UNSHARE (2026-09-29: "the share
+    # button should become an unshare button"): it no longer counts, and the
+    # person who shared can share again. The same rule notify.py applies.
+    shares = [a for a in acts if a["kind"] == feed.SHARE
+              and _latest_by(by_target.get(a["txid"], []), feed.DELETE, a["author"]) is None]
+    my_share = next((a["txid"] for a in sorted(shares, key=lambda a: (a["height"] or 0, a["txid"]),
+                                                reverse=True)
+                     if me and a["author"] == me), "")
+
     claims = [(str(a["text"] or "").strip().lower(), a["author"]) for a in acts
               if a["kind"] == feed.TIP_TOKEN and a["author"] != author
               and (a["height"] or 0) > 0]
@@ -185,9 +197,9 @@ def _one(txid: str, author: str, text: str, row: Any,
         liked_by_me=bool(me) and me in liked,
         dislikes=len(disliked),
         disliked_by_me=bool(me) and me in disliked,
-        shares=sum(1 for a in acts if a["kind"] == feed.SHARE),
-        shared_by_me=bool(me) and any(a["kind"] == feed.SHARE and a["author"] == me
-                                      for a in acts),
+        shares=len(shares),
+        shared_by_me=bool(my_share),
+        my_share=my_share,
         tips=len(tips),
         tipped=tipped,
         is_reply=is_reply,

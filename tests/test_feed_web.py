@@ -585,7 +585,7 @@ def test_page_scripts_wait_for_what_base_defines_below_them():
     assert not late, late
 
 
-def test_a_post_you_shared_says_so_and_cannot_be_shared_again(client):
+def test_a_post_you_shared_offers_unshare_instead_of_a_second_share(client):
     """A second share is a second paid transaction saying the same thing
     (tester-e5, 2026-09-26)."""
     from arcade import feedview
@@ -593,7 +593,7 @@ def test_a_post_you_shared_says_so_and_cannot_be_shared_again(client):
     assert "shared_by_me" in feedview.Shown.__dataclass_fields__
     page = (pathlib.Path(__file__).resolve().parents[1]
             / "arcade/web/templates/feed.html").read_text()
-    assert "Shared ✓" in page and "{{ 'disabled' if p.shared_by_me }}" in page
+    assert "Unshare" in page and "/unshare" in page and "p.my_share" in page
 
 
 

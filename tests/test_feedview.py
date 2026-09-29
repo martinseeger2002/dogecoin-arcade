@@ -151,3 +151,25 @@ def test_two_actions_in_one_block_resolve_the_same_way_everywhere():
     assert shown.text == "f wins"
     (again,) = feedview.assemble(rows(post("a" * 64)), list(reversed(acts)))
     assert again.text == "f wins", "and the same however the rows arrive"
+
+
+def test_a_share_its_author_deleted_is_an_unshare():
+    """2026-09-29: "After I share a post or comment, I should be able to
+    unshare it." An unshare is a delete aimed at the share itself."""
+    share = "5" * 64
+    acts = rows(act(share, feed.SHARE, "a" * 64, author=ME),
+                act("6" * 64, feed.SHARE, "a" * 64, author="nOther"))
+    (shown,) = feedview.assemble(rows(post("a" * 64)), acts, me=ME)
+    assert shown.shares == 2 and shown.shared_by_me and shown.my_share == share
+
+    acts.append(Row(act("7" * 64, feed.DELETE, share, author=ME, height=201)))
+    (shown,) = feedview.assemble(rows(post("a" * 64)), acts, me=ME)
+    assert shown.shares == 1 and not shown.shared_by_me and shown.my_share == ""
+
+
+def test_nobody_else_can_unshare_your_share():
+    share = "5" * 64
+    acts = rows(act(share, feed.SHARE, "a" * 64, author=ME),
+                act("7" * 64, feed.DELETE, share, author="nOther", height=201))
+    (shown,) = feedview.assemble(rows(post("a" * 64)), acts, me=ME)
+    assert shown.shares == 1 and shown.shared_by_me
