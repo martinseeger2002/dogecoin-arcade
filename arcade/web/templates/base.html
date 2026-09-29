@@ -840,6 +840,30 @@ async function claimFor(source, m, page = "") {
     if (!listing && page) {
       const pool = await (await fetch("/r/claimpool/" + page, {cache: "no-store"})).json();
       if (!pool.open) throw new Error("this page has nothing left to pay out");
+      if (pool.kind === "chain") {
+        // A pool on the chain (2026-09-29): its lots opened here with the
+        // phrase, one of the lots still free picked at random, and claimed
+        // through whichever node this is.
+        const lots = await wallet.openPrize(pool.pool, String(m.secret || ""));
+        const free = (pool.free || []).filter((n) => lots[n]);
+        if (!free.length) throw new Error("this page has nothing left to pay out");
+        const n = free[Math.floor(Math.random() * free.length)];
+        const offer = await wallet.offerPrize(pool.pool, n, lots[n], String(m.secret || ""),
+                                              page, ARCADE_CHAIN.network);
+        const shown = await wallet.checked(offer, held);
+        const coins = String(Number(offer.price) / 1e8);
+        const unit = coins === "1" ? "coin" : "coins";
+        const seller = offer.seller_tag ? "@" + offer.seller_tag : "its owner";
+        const ok = await arcadeAsk(`Claim ${offer.piece}?`,
+          `${seller} set these aside for whoever got here. They cost ${coins} ${unit} to ${seller}`
+          + ` and a network fee of ${shown.coinsOf(shown.fee)}. The tokens and the coins move `
+          + "in one transaction, checked in this browser.", `Claim them for ${coins} ${unit}`);
+        if (!ok) { answer({error: "Cancelled."}); return; }
+        const out = await wallet.claimPrize(held, offer);
+        answer({ok: true, txid: out.txid || ""});
+        arcadeToast(`You claimed ${offer.piece}. They're yours when the block lands.`);
+        return;
+      }
       listing = pool.listing;
     }
     const offer = await wallet.offerBuy(listing, ARCADE_CHAIN.network,

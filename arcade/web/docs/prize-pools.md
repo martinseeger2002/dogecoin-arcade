@@ -1,8 +1,10 @@
 # Prize pools
 
 A prize pool is how a game, a puzzle or any other page pays out tokens to
-whoever wins, without its owner being there. This guide is in three parts:
-making a pool, building a page that pays from one, and what a player sees.
+whoever wins, without its owner being there. A pool is an inscription: you
+make one by inscribing a short piece of JSON, and delete it by inscribing
+another. Every DogecoinArcade node reads pools from the chain, so a pool pays
+out through any node, and all nodes agree on what is left.
 
 ## What a pool is
 
@@ -11,59 +13,66 @@ for a small price you choose to whoever gives the right phrase. A winner pays
 that price plus the network fee, and the tokens and the coins move in one
 transaction.
 
-* **Hidden.** A pool is on no public page and in no order book, so nobody can
-  buy it out from the Exchange. It opens only with its phrase.
-* **At its own address.** Your wallet makes an address for each pool from your
+* **Its own address.** Your wallet makes an address for each pool from your
   same twelve words, so there is nothing new to back up. One send moves the
   pool's tokens, and the coins its lots stand on, to that address. Nothing but
-  a claim, or closing the pool, ever sends from it, so nothing else you do can
-  spend a prize before it is claimed.
-* **Tied to your game**, if you want. A pool bound to one of your inscriptions
-  pays out only while you hold that inscription. Send the game to somebody
-  else, or sell it, and its pool stops paying. A claim from any other page is
-  refused.
+  a claim, or deleting the pool, ever sends from it.
+* **On the chain.** The pool inscription holds the pool's terms in the open,
+  and the signed lots sealed with the phrase. Anyone with the phrase can open
+  them; nobody else learns anything from them.
+* **No double claims.** Each lot stands on two coins of its own. Two claims of
+  one lot spend the same coins, so the network accepts only one, whichever
+  nodes they came through. The pool's address holds exactly one lot of tokens
+  for every lot, so every lot is always covered.
+* **Tied to your game**, if you name one. The pool then pays out only while you
+  hold the game's inscription: send or sell the game and its pool stops
+  paying, on every node. A claim from any other page is refused.
 
 ## Making a pool
 
-On *Wallet → Tokens*, press *Prize lots* beside the token and fill in:
+Inscribe the game first, if the pool is for one. Then, on the NFTs page, open
+*Inscribe one thing*, open *JSON beside the file*, and write:
 
-| | |
+```json
+{"name": "GHOST FLEET cash-out",
+ "prizepool": {"token": 19, "lot": "50", "lots": 20, "price": "0.01",
+               "game": "#201", "phrase": "<your phrase>"}}
+```
+
+| field | |
 |---|---|
-| Tokens per lot | what one winner gets |
-| How many lots | up to 25 in one pool; make more pools for more |
-| Price per lot | 0.01 coins or more, paid by the winner to you |
-| Days | how long the pool is offered |
-| Phrase | the secret a winning page hands over. Type your own, or press *Make one* |
-| Pays out only while I hold inscription | optional: the game's number or id |
+| `token` | the token's number (it is on the token's page) |
+| `lot` | how much one winner gets, as a decimal: `"50"`, or `"0.5"` for a divisible token |
+| `lots` | how many winners: 1 to 25. Make more pools for more |
+| `price` | what a winner pays you per lot, in coins: `"0.01"` or more |
+| `game` | optional: the inscription it pays out for, as `#number` or its id |
+| `phrase` | the secret the game hands over when somebody wins |
+| `name` | optional: what the pool is called on the chain |
 
-Then *Set them aside*. Your wallet does three things:
+Press *Inscribe it*; there is no file to choose. Your wallet then:
 
-1. It registers the pool's own address with this node.
-2. It sends the tokens and two small coins per lot to that address. You
-   confirm this send like any other.
-3. When that send is in a block (a minute or two), it signs every lot with the
-   pool's key.
+1. asks you to confirm the pool, and then the send that moves the tokens and
+   the coins into the pool's own address;
+2. signs every lot with the pool's key and seals the signatures with the
+   phrase;
+3. inscribes the pool: its terms in the JSON, and the sealed lots as its
+   content. **The phrase itself is never inscribed.**
 
-If you close the page while it waits, open *Wallet → Tokens* again: the pool
-is under *Your prize pools* with *Finish setting up*.
+When the pool inscription is in a block, it pays out through any node.
 
-A game can only be bound to a pool after the game is inscribed, so inscribe
-the game first. The phrase can be chosen before that: write it into the game,
-then type the same phrase into the form.
+## Deleting a pool
 
-## Running a pool
+Inscribe, from the same wallet:
 
-*Wallet → Tokens → Your prize pools* lists each pool: how many lots are left,
-what each pays, its price, and which game it is bound to.
+```json
+{"prizepool_delete": "#<the pool inscription's number>"}
+```
 
-**Cancel and close** sends the pool's unclaimed tokens and all of its coins
-back to you in one transaction. Once that is in a block, no lot of that pool
-can be claimed. Pools made before pool addresses existed have *Withdraw*
-instead, which spends the coins their lots stand on and leaves their tokens
-where they always were.
-
-The coins a winner pays for a lot arrive at the pool's address, and come
-back to you with everything else when you close it.
+Your wallet shows the transaction that sends the pool's unclaimed tokens and
+all of its coins back to you, then inscribes the deletion. Once both are in a
+block, no lot can be claimed on any node. Deleting is the only way to take
+the tokens back: a pool stays open until you delete it, or until every lot is
+claimed.
 
 ## A page that pays out
 
@@ -72,15 +81,19 @@ A page learns about its own pool from:
 `GET /r/claimpool/<inscription>`
 
 ```json
-{ "inscription": "…", "open": true, "listing": "…", "lots_left": 20,
-  "what": "50 PLASMA", "price": 1000000 }
+{ "inscription": "…", "kind": "chain", "pool": "…", "open": true,
+  "lots_left": 20, "free": [0, 1, 2], "what": "50 PLASMA", "price": 1000000 }
 ```
 
-* `open` is false when nothing is left, or the seller no longer holds the
-  page. Say "cash-out closed" rather than letting a player try.
+* `open` is false when nothing is left, the pool was deleted, or its creator no
+  longer holds the page. Say "cash-out closed" rather than letting a player
+  try.
 * `price` is in the chain's smallest unit: 100,000,000 is one coin, so
   1,000,000 is 0.01.
 * It never includes the phrase.
+
+`GET /r/prizepool/<pool inscription>` gives the same for a pool by its own
+id, with its terms.
 
 When a player wins, the page asks the wallet it is framed in to claim:
 
@@ -88,18 +101,16 @@ When a player wins, the page asks the wallet it is framed in to claim:
 parent.postMessage({arcade: "claim", seq: 1, secret: "<phrase>"}, "*");
 ```
 
-A page bound to a pool leaves out `listing`: the wallet finds the pool for
-the page that asked. A pool that is not bound needs its listing id,
-`listing: "<id>"`, which the Prize lots form shows when it is made.
-
-The answers come back as messages with the same `seq`:
+The wallet finds the pool for the page that asked, opens the lots with the
+phrase, picks a free one and asks the player. The answers come back as
+messages with the same `seq`:
 
 * `{arcade: "claim", seq, heard: true}`: the wallet has it and is asking the
   player.
 * `{arcade: "claim", seq, ok: true, txid}`: claimed. It arrives with the next
   block.
-* `{arcade: "claim", seq, error}`: not claimed. `"Cancelled."` means the
-  player closed the card; anything else is a reason to show them.
+* `{arcade: "claim", seq, error}`: not claimed. `"Cancelled."` means the player
+  closed the card; anything else is a reason to show them.
 
 If no `heard` arrives within a few seconds, the page is not open inside the
 arcade, and should say so.
@@ -114,6 +125,12 @@ pool as a prize, not a vault.
 When they win, the arcade shows its own card over the game, outside the
 game's reach: "Claim 50 PLASMA for 0.01 coins?", who set it aside, the
 network fee, and *Claim them* or *Cancel*. The claim is one transaction that
-their browser builds and checks before signing: it pays the seller's pool and
-delivers the tokens to the player, or does nothing at all. The tokens show in
-their wallet when the block lands.
+their browser builds and checks before signing: it pays the pool and delivers
+the tokens to the player, or does nothing at all. The tokens show in their
+wallet when the block lands.
+
+## Pools made before
+
+Pools made from the Prize lots form, before pools were inscriptions, keep
+working on the node they were made on. They are listed under *Wallet → Tokens
+→ Your prize pools*, with *Withdraw* or *Cancel and close*.

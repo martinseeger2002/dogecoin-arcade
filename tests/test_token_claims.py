@@ -9,6 +9,7 @@ given one listing id for the whole pool; each claim takes the next open lot.
 """
 
 import hashlib
+import json
 import pathlib
 import sys
 
@@ -275,3 +276,83 @@ def test_a_pool_at_its_own_address_pays_claims_and_closes(node):
     assert after["pools"] == [] and after["setup"] == []
     late = player[0].post("/account/buy", json={"listing": ids[1], "secret": PHRASE})
     assert late.status_code == 400, "no lot of a closed pool can be claimed"
+
+
+def test_a_prize_pool_inscribed_on_the_chain_pays_and_is_deleted_by_another(node):
+    """2026-09-29: pools "created with an inscription and then ... deleted with
+    another inscription", working "across many instances of Dogecoin arcade"
+    with no double spending. The claim is built only from what the chain says:
+    the pool inscription's JSON, and signatures the claimer opened with the
+    phrase (here handed over directly; the browser decrypts them)."""
+    import base64
+    from test_account_offer import _pubkey, _inscribed
+    book = _bookcoin(node, 99)
+    state, rpc, who = book["state"], book["rpc"], book["client"]
+    game = _inscribed(who, state, rpc, book["secret"], book["pubkey"], "the game")
+    pool_secret = int.from_bytes(bytes([0x63, 99]) + bytes(30), "big")
+    pool_pub = _pubkey(pool_secret)
+    opened = who.post("/account/pools/open", json={"index": 123456, "pubkey": pool_pub.hex()})
+    assert opened.status_code == 200, opened.text
+    pool = opened.json()["address"]
+    funding = who.post("/account/pools/fund", json={
+        "pool": pool, "property_id": book["pid"], "lot": "30", "count": 2, "price": "0.01",
+        "bound": game, "claim_hash": hashlib.sha256(PHRASE.encode()).hexdigest()})
+    assert funding.status_code == 200, funding.text
+    fund = _signed(who, book["secret"], book["pubkey"], funding).json()["txid"]
+
+    legs = who.post("/account/pools/legs", json={"pool": pool, "fund": fund})
+    assert legs.status_code == 200, legs.text
+    sigs = [[_sign(pool_secret, bytes.fromhex(d), funding_mod.SINGLE_ANYONECANPAY).hex()
+             for d in leg["sighashes"]] for leg in legs.json()["legs"]]
+    public = {**legs.json()["prizepool"], "pubkey": pool_pub.hex()}
+    assert public["game"] == game and public["count"] == 2
+    made = who.post("/account/inscribe", json={
+        "content": base64.b64encode(b"sealed signatures").decode(),
+        "content_type": "application/vnd.arcade.prizepool",
+        "json": json.dumps({"name": "Prize pool", "prizepool": public})})
+    assert made.status_code == 200, made.text
+    pool_txid = _signed(who, book["secret"], book["pubkey"], made).json()["txid"]
+    _settled(state, rpc)
+
+    info = who.get(f"/r/claimpool/{game}").json()
+    assert info["kind"] == "chain" and info["pool"] == pool_txid
+    assert info["open"] and info["free"] == [0, 1], info
+
+    client, secret, pubkey, address = _seated(node[0], state, rpc, 100)
+    bad = client.post("/account/prize", json={"pool": pool_txid, "lot": 0,
+                                              "signatures": sigs[0], "secret": "wrong"})
+    assert bad.status_code == 400 and "phrase" in bad.json()["detail"]
+    asked = client.post("/account/prize", json={"pool": pool_txid, "lot": 0, "page": game,
+                                                "signatures": sigs[0], "secret": PHRASE})
+    assert asked.status_code == 200, asked.text
+    said = asked.json()
+    done = client.post("/account/prize/sign", json={
+        "pool": pool_txid, "lot": 0, "page": game, "signatures": sigs[0], "secret": PHRASE,
+        "raw": said["raw"], "pubkey": pubkey.hex(),
+        "claimer": [_sign(secret, bytes.fromhex(d)).hex() for d in said["sighashes"]]})
+    assert done.status_code == 200, done.text
+    again = client.post("/account/prize", json={"pool": pool_txid, "lot": 0,
+                                                "signatures": sigs[0], "secret": PHRASE})
+    assert again.status_code == 400, "a lot claimed in the pool cannot be claimed twice"
+    _settled(state, rpc)
+    assert _held(state, address, book["pid"])[0] == 30 * COIN
+    assert who.get(f"/r/prizepool/{pool_txid}").json()["free"] == [1]
+
+    closing = who.post("/account/pools/close", json={"prize": pool_txid})
+    assert closing.status_code == 200, closing.text
+    closed = who.post("/account/sign", json={
+        "offer": closing.json()["offer"], "pubkey": pool_pub.hex(),
+        "signatures": [_sign(pool_secret, bytes.fromhex(d)).hex()
+                       for d in closing.json()["sighashes"]]})
+    assert closed.status_code == 200, closed.text
+    gone = who.post("/account/inscribe", json={
+        "content": base64.b64encode(b"prize pool deleted").decode(),
+        "content_type": "text/plain; charset=utf-8",
+        "json": json.dumps({"prizepool_delete": {"pool": pool_txid}})})
+    _signed(who, book["secret"], book["pubkey"], gone)
+    _settled(state, rpc)
+    assert _held(state, pool, book["pid"])[0] == 0
+    assert _held(state, book["address"], book["pid"])[0] == HELD - 30 * COIN
+    after = who.get(f"/r/prizepool/{pool_txid}").json()
+    assert after["deleted"] and not after["open"]
+    assert who.get(f"/r/claimpool/{game}").json()["open"] is False

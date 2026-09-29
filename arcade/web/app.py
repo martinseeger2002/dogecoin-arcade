@@ -11905,8 +11905,8 @@ def create_app(state: AppState) -> FastAPI:
             if not main:
                 raise ValueError("this account has no address yet")
             index = int(said.get("index") or 0)
-            if not 1 <= index <= 10_000:
-                raise ValueError("a pool address is derived at index 1 or above")
+            if not 1 <= index < 2 ** 31:
+                raise ValueError("a pool address is derived at an index from 1 to 2^31-1")
             pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
             if len(pubkey) != 33:
                 raise ValueError("that is not a public key")
@@ -12002,28 +12002,352 @@ def create_app(state: AppState) -> FastAPI:
         try:
             chain = _chain_asked(said)
             main = _account_address(account.pubkey, chain)
-            pool = _pool_of(account, str(said.get("pool") or ""), chain.network)
+            chained = _chain_pool(chain, str(said.get("prize") or "")) if said.get("prize") else None
+            if said.get("prize"):
+                if chained is None or chained["creator"] != main:
+                    raise ValueError("that prize pool is not this account's")
+                pool = {"address": chained["pool"], "index": chained["index"],
+                        "property_id": chained["property_id"], "network": chain.network}
+            else:
+                pool = _pool_of(account, str(said.get("pool") or ""), chain.network)
             if pool is None:
                 raise ValueError("that is not a pool of this account")
             index = state.token_index(chain)
             naming = b""
-            if pool.get("property_id"):
+            if chained is not None:
+                # What it holds, less the lots claimed and still in the pool:
+                # those tokens are already a claimer's.
+                _, waiting = _pool_lots(chain, chained)
+                left = (state.token_index(chain).balance(chained["pool"], chained["property_id"])
+                        - waiting * chained["lot"])
+                if left > 0:
+                    naming = encode_class_c(P.SimpleSend(
+                        property_id=chained["property_id"], amount=left).encode())
+            elif pool.get("property_id"):
                 left = _lot_room(chain, pool["address"], int(pool["property_id"]))
                 if left > 0:
                     naming = encode_class_c(P.SimpleSend(
                         property_id=int(pool["property_id"]), amount=left).encode())
             with contextlib.closing(index.open()) as db:
                 coins = list(utxoslib.unspent(db, pool["address"]))
+            if chained is not None:
+                # The lots' own coins are the funding's outputs, which a node that
+                # started watching the pool later never saw arrive: asked for by
+                # name, and only those nothing has spent, mempool included.
+                known = {(c["txid"], int(c["vout"])) for c in coins}
+                with chain.rpc() as rpc:
+                    for vout in range(1, 1 + 2 * chained["count"]):
+                        if (chained["fund"], vout) in known:
+                            continue
+                        if rpc.call("gettxout", chained["fund"], vout, True):
+                            coins.append({"txid": chained["fund"], "vout": vout,
+                                          "value": chained["each"]})
             unsigned = fundinglib.build_pool_close(
                 pool["address"], coins, main, fees.MIN_FEE_PER_KB, payload=naming,
                 what="cancel and close a prize pool: its tokens and coins come back to you")
         except (fundinglib.FundingError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
-        pool["closed"] = True
-        _save_pool(account, pool)
+        if chained is None:
+            pool["closed"] = True
+            _save_pool(account, pool)
         offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what)
         return JSONResponse({"offer": offer.id, "chain": chain.network,
                              "index": pool["index"], **unsigned.as_json()})
+
+    # --- prize pools ON THE CHAIN (2026-09-29) ------------------------------------
+    # "It should just be a custom inscription ... created with an inscription and
+    # then it can be deleted with another inscription", and "it needs to work
+    # across many instances of Dogecoin arcade ... so they don't have double
+    # spending." A pool is an inscription (content type POOL_TYPE) whose JSON
+    # says everything public about it -- token, lot, count, price, game, its own
+    # address and key, and the funding transaction whose outputs 1..2N the lots
+    # stand on -- and whose content is the lots' signatures, encrypted with the
+    # phrase. Any node rebuilds any lot from that JSON; which lots are left is
+    # read from the chain and the shared mempool, never from a node's own book,
+    # so every node answers alike and the chain itself refuses a double claim.
+
+    POOL_TYPE = "application/vnd.arcade.prizepool"
+    _chain_pool_cache: dict[str, tuple] = {}
+    _watched_pools: set = set()
+
+    def _chain_pools(chain) -> dict[str, dict]:
+        """Every prize pool inscribed on this chain, by inscription txid."""
+        index = state.token_index(chain)
+        height = index.indexed_height() or 0
+        held = _chain_pool_cache.get(chain.network)
+        if held and held[0] == height:
+            return held[1]
+        pools: dict[str, dict] = {}
+        deletes: set = set()
+        try:
+            with contextlib.closing(index.open()) as db:
+                rows = db.conn.execute(
+                    "SELECT txid, number, creator, json, content_type, block_height "
+                    "FROM inscription WHERE json LIKE '%\"prizepool%' "
+                    "ORDER BY block_height, position").fetchall()
+        except Exception:
+            rows = []
+        for r in rows:
+            try:
+                said = json.loads(r["json"] or "{}") or {}
+            except ValueError:
+                continue
+            gone = said.get("prizepool_delete")
+            if gone:
+                deletes.add((r["creator"], str(gone.get("pool") if isinstance(gone, dict)
+                                               else gone).lower()))
+                continue
+            p = said.get("prizepool")
+            if not isinstance(p, dict) or not str(r["content_type"]).startswith(POOL_TYPE):
+                continue
+            # The creator inscribed it: a pool naming somebody else is nobody's.
+            if p.get("creator") != r["creator"]:
+                continue
+            try:
+                pools[r["txid"]] = {
+                    "txid": r["txid"], "number": r["number"], "creator": r["creator"],
+                    "pool": str(p["pool"]), "pubkey": str(p["pubkey"]),
+                    "index": int(p["index"]), "property_id": int(p["property_id"]),
+                    "lot": int(p["lot"]), "count": int(p["count"]),
+                    "price": int(p["price"]), "each": int(p["each"]),
+                    "fund": str(p["fund"]).lower(), "game": str(p.get("game") or "").lower(),
+                    "claim_hash": str(p["claim_hash"]).lower(), "height": r["block_height"]}
+            except (KeyError, TypeError, ValueError):
+                continue
+        for txid, p in pools.items():
+            p["deleted"] = (p["creator"], txid) in deletes
+            if not p["deleted"] and p["pool"] not in _watched_pools:
+                # So this node can gather what claims pay to the pool, for its close.
+                try:
+                    _watch(p["pool"], "prize pool", chain)
+                    _watched_pools.add(p["pool"])
+                except Exception:                     # noqa: BLE001
+                    pass
+        _chain_pool_cache[chain.network] = (height, pools)
+        return pools
+
+    def _chain_pool(chain, key: str) -> dict | None:
+        pools = _chain_pools(chain)
+        key = str(key or "").strip().lstrip("#")
+        if key in pools:
+            return pools[key]
+        row = state.token_index(chain).inscription(contentlib._key(key)) if key else None
+        return pools.get(row["txid"]) if row else None
+
+    def _pool_lots(chain, pool: dict) -> tuple[list[int], int]:
+        """(lots still claimable, lots claimed and waiting for their block), read
+        from the chain: a lot is claimable while the coin it stands on is unspent
+        even counting the mempool, and waiting while only the mempool spent it."""
+        free, waiting = [], 0
+        with chain.rpc() as rpc:
+            for n in range(pool["count"]):
+                vout = 1 + 2 * n
+                if rpc.call("gettxout", pool["fund"], vout, True):
+                    free.append(n)
+                elif rpc.call("gettxout", pool["fund"], vout, False):
+                    waiting += 1
+        return free, waiting
+
+    def _pool_leg(chain, pool: dict, n: int):
+        """Lot `n` of a pool, rebuilt from its public JSON: the same bytes its
+        creator's pool key signed."""
+        from ..encoding import encode_class_c
+        naming = encode_class_c(P.SimpleSend(property_id=pool["property_id"],
+                                             amount=pool["lot"]).encode())
+        piece = {"txid": pool["fund"], "vout": 1 + 2 * n, "value": pool["each"],
+                 "address": pool["pool"]}
+        coin = {"txid": pool["fund"], "vout": 2 + 2 * n, "value": pool["each"],
+                "address": pool["pool"]}
+        return fundinglib.build_leg(chain.params, pool["pool"], piece, coins=pool["price"],
+                                    rate=fees.MIN_FEE_PER_KB, payload=naming, coin=coin)
+
+    def _pool_refusal(chain, pool: dict | None, page: str = "") -> str:
+        if pool is None:
+            return "there is no such prize pool on this chain"
+        if pool["deleted"]:
+            return "that prize pool was deleted by its creator"
+        if pool["game"]:
+            row = state.token_index(chain).inscription(pool["game"])
+            if row is None or row["owner"] != pool["creator"]:
+                return ("this prize pays out only while its creator holds the page it "
+                        "belongs to, and they no longer do")
+            if page:
+                asked = state.token_index(chain).inscription(contentlib._key(page))
+                if asked is None or asked["txid"] != pool["game"]:
+                    return "this prize belongs to another page"
+        return ""
+
+    @app.get("/r/prizepool/{key}")
+    def r_prizepool(key: str):
+        """A prize pool inscription as any node reads it: its public terms and
+        which lots are left. Never the phrase, never a signature."""
+        chain, _ = _token_chain()
+        pool = _chain_pool(chain, key)
+        if pool is None:
+            return contentlib._missing("no such prize pool")
+        free, waiting = _pool_lots(chain, pool)
+        refusal = _pool_refusal(chain, pool)
+        return contentlib._json({**{k: pool[k] for k in (
+            "txid", "number", "creator", "pool", "index", "property_id", "lot", "count",
+            "price", "game", "deleted")},
+            "what": _lot_words(chain, (pool["property_id"], pool["lot"])),
+            "free": free, "waiting": waiting, "lots_left": len(free),
+            "open": not refusal and bool(free), "why": refusal})
+
+    def _chain_pool_for_game(chain, game_txid: str) -> dict | None:
+        found = [p for p in _chain_pools(chain).values()
+                 if p["game"] == game_txid and not p["deleted"]]
+        return max(found, key=lambda p: p["height"] or 0) if found else None
+
+    @app.post("/account/pools/legs")
+    def account_pools_legs(request: Request, payload: Any = Body(None)):
+        """The lots of a pool this account just funded, for its tab to sign with
+        the pool's key and seal into the pool inscription. Built from the
+        funding transaction's own outputs, so nothing waits for its block."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+            pool = _pool_of(account, str(said.get("pool") or ""), chain.network)
+            if pool is None or not pool.get("property_id"):
+                raise ValueError("that is not a funded pool of this account")
+            fund = str(said.get("fund") or "").strip().lower()
+            with chain.rpc() as rpc:
+                tx = rpc.call("getrawtransaction", fund, 1)
+            outs = tx.get("vout") or []
+            count = int(pool["count"])
+            script = txbuild.p2pkh_script(pool["address"]).hex()
+            for vout in range(1, 1 + 2 * count):
+                out = outs[vout] if vout < len(outs) else {}
+                if (str((out.get("scriptPubKey") or {}).get("hex") or "") != script
+                        or int(round(float(out.get("value", 0)) * COIN)) != SPLIT_EACH):
+                    raise ValueError("that transaction did not fund this pool")
+            shape = {"pool": pool["address"], "fund": fund, "each": SPLIT_EACH,
+                     "property_id": int(pool["property_id"]), "lot": int(pool["lot"]),
+                     "price": int(pool["price"]), "count": count}
+            prop = state.token_index(chain).property(shape["property_id"])
+            legs = []
+            for n in range(count):
+                leg = _pool_leg(chain, shape, n)
+                legs.append({**leg.as_json(), "chain": chain.network, "price": shape["price"],
+                             "send": {"propertyid": shape["property_id"], "units": str(shape["lot"]),
+                                      "amount": format_amount(shape["lot"], prop["divisible"]),
+                                      "name": prop["name"]}})
+        except Exception as exc:                          # noqa: BLE001
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"chain": chain.network, "legs": legs,
+                             "prizepool": {"v": 1, "creator": _account_address(account.pubkey, chain),
+                                           "pool": pool["address"], "index": int(pool["index"]),
+                                           "property_id": shape["property_id"], "lot": shape["lot"],
+                                           "count": count, "price": shape["price"],
+                                           "each": SPLIT_EACH, "fund": fund,
+                                           "game": pool.get("bound") or "",
+                                           "claim_hash": pool["claim_hash"]}})
+
+    def _prize_terms(account, chain, address: str, said: dict) -> tuple:
+        """One lot of a chain pool, checked, and the transaction that claims it."""
+        pool = _chain_pool(chain, str(said.get("pool") or ""))
+        refusal = _pool_refusal(chain, pool, str(said.get("page") or ""))
+        if refusal:
+            raise ValueError(refusal)
+        secret = str(said.get("secret") or "").strip()
+        if not secrets.compare_digest(hashlib.sha256(secret.encode()).hexdigest(),
+                                      pool["claim_hash"]):
+            raise ValueError("that is not this prize's phrase" if secret
+                             else "this prize opens only with its phrase")
+        n = int(said.get("lot", -1))
+        if not 0 <= n < pool["count"]:
+            raise ValueError("no such lot in that pool")
+        leg = _pool_leg(chain, pool, n)
+        with chain.rpc() as rpc:
+            listing = state.listings.register(
+                rpc, raw=leg.raw, signatures=[str(s) for s in (said.get("signatures") or [])],
+                pubkey=bytes.fromhex(pool["pubkey"]), network=chain.network,
+                owner=pool["pool"], price=pool["price"], seconds=listingslib.ANSWERED_FOR,
+                record=False, claim_hash=pool["claim_hash"], bound=pool["game"])
+        listing["parent"] = pool["creator"]
+        listing["id"] = ""
+        _, unsigned, what = _fill_terms(account, chain, address, listing)
+        return pool, listing, unsigned, what
+
+    @app.post("/account/prize")
+    def account_prize(request: Request, payload: Any = Body(None)):
+        """Show an account the transaction that claims one lot of a chain pool.
+        The signatures come from the claimer's browser, which opened them with
+        the phrase; this node rebuilds the lot from the pool's public JSON and
+        believes nothing else."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+            address = _account_address(account.pubkey, chain)
+            if not address:
+                raise ValueError("this account has no address yet")
+            pool, listing, unsigned, _ = _prize_terms(account, chain, address, said)
+        except (fundinglib.FundingError, listingslib.ListingError, swaplib.SwapError,
+                ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"chain": chain.network, "pool": pool["txid"],
+                             "lot_index": int(said.get("lot")), "claim": True, "lot": True,
+                             "seller": pool["creator"],
+                             "seller_tag": _tags_for([pool["creator"]]).get(pool["creator"], ""),
+                             "price": pool["price"], "piece": _piece_called(chain, listing),
+                             **unsigned.as_json()})
+
+    @app.post("/account/prize/sign")
+    def account_prize_sign(request: Request, payload: Any = Body(None)):
+        """Paste the claimer's signatures onto the lot and broadcast it. The
+        chain decides between two claims of one lot: they spend one coin."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        lane = f"account {account.pubkey}"
+        if not state.begin_send(lane):
+            return JSONResponse({"detail": "one of your transactions is still going; "
+                                           "try again in a moment"}, status_code=409)
+        piece_lane = ""
+        try:
+            try:
+                pool, listing, unsigned, what = _prize_terms(account, chain, address, said)
+            except (fundinglib.FundingError, listingslib.ListingError, swaplib.SwapError,
+                    ValueError) as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=400)
+            piece_lane, refusal = _claim_piece(chain, listing)
+            if refusal:
+                return JSONResponse({"detail": refusal}, status_code=409)
+            if str(said.get("raw") or "") != unsigned.raw:
+                return JSONResponse({"detail": "this node would build a different "
+                                     "transaction now; ask again"}, status_code=409)
+            try:
+                _real_coins_gate(account, chain)
+                pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
+                if not pubkey or hash160(pubkey) != b58check_decode(address)[1]:
+                    raise ValueError("that public key is not this account's")
+                with chain.rpc() as rpc:
+                    raw = listingslib.paste_leg(rpc, listing, unsigned,
+                                                [str(x) for x in (said.get("claimer") or [])],
+                                                pubkey)
+                _quota(account, "send")
+                with chain.rpc() as rpc:
+                    txid = rpc.call("sendrawtransaction", raw)
+            except (listingslib.ListingError, fundinglib.FundingError, swaplib.SwapError,
+                    AmountError, ValueError) as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=400)
+            except Exception as exc:
+                return JSONResponse({"detail": f"the node refused it: {exc}"}, status_code=409)
+            _lots_flying.setdefault((chain.network, pool["pool"], pool["property_id"]),
+                                    {})[txid] = pool["lot"]
+            _flights.add(account.pubkey, txid, unsigned, address, network=chain.network)
+            state.bump_generation()
+            return JSONResponse({"txid": txid, "what": what, "chain": chain.network})
+        finally:
+            state.end_send(lane)
+            if piece_lane:
+                state.end_send(piece_lane)
 
     #: Lots one request builds: two coins each, so at most fifty coins split,
     #: and inside the thirty listings an hour an account may file.
@@ -12316,7 +12640,8 @@ def create_app(state: AppState) -> FastAPI:
         if not bound:
             return ""
         row = state.token_index(chain).inscription(bound)
-        holder = _pool_parent(listing["owner"]) or listing["owner"]
+        holder = (listing.get("parent") or _pool_parent(listing["owner"])
+                  or listing["owner"])
         if row is None or row["owner"] != holder:
             return ("this prize pays out only while its seller holds the page it "
                     "belongs to, and they no longer do")
@@ -14958,6 +15283,16 @@ def create_app(state: AppState) -> FastAPI:
         row = index.inscription(contentlib._key(key))
         if row is None:
             return contentlib._missing("no such inscription")
+        chained = _chain_pool_for_game(chain, row["txid"])
+        if chained is not None:
+            free, waiting = _pool_lots(chain, chained)
+            refusal = _pool_refusal(chain, chained)
+            return contentlib._json({
+                "inscription": row["txid"], "kind": "chain", "pool": chained["txid"],
+                "open": not refusal and bool(free), "listing": None,
+                "lots_left": 0 if refusal else len(free), "free": [] if refusal else free,
+                "what": _lot_words(chain, (chained["property_id"], chained["lot"])),
+                "price": chained["price"]})
         _sweep_book(chain)
         pool = [r for r in state.listings.open_listings(chain.network, limit=1000, claims=True)
                 if r.get("bound") == row["txid"] and r.get("claim_hash")]

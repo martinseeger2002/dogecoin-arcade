@@ -263,6 +263,10 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # a prize pool's own address: registered, funded, and closed.
                # Each is built here and signed in the tab; none spends by itself.
                "/account/pools/open", "/account/pools/fund", "/account/pools/close",
+               "/account/pools/legs",
+               # claiming one lot of a prize pool read off the chain: built here
+               # from the pool's own inscription, signed in the claimer's tab.
+               "/account/prize", "/account/prize/sign",
                # the pair that fills one of those listings: the first shows a
                # buyer the transaction, the second pastes its signatures onto
                # the seller's leg and broadcasts. Neither reaches

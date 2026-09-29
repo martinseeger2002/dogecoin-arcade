@@ -143,11 +143,7 @@ function row(token, chain) {
   trade.textContent = "Trade";
   doing.append(open, trade);
   if (Number(token.balance) > 0) {
-    const lots = document.createElement("button");
-    lots.className = "btn ghost small";
-    lots.textContent = "Prize lots";
-    lots.onclick = () => chooseLots(token, chain);
-    doing.append(send, lots);
+    doing.append(send);
   }
 
   box.append(top, doing);

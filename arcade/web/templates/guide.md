@@ -648,41 +648,21 @@ without you.
 ## Prize pools
 
 How a game, a puzzle or any other page pays out tokens to whoever wins,
-without its owner being there.
+without its owner being there. The Prize pools guide has the details.
 
-* **A prize pool is a set of identical lots** of one token, say 20 lots of 50,
-  each sold for a small price you choose (0.01 coins or more) to whoever gives
-  the right phrase. You make one on *Wallet → Tokens → Prize lots*, and your
-  browser signs every lot once, up front. Up to 25 lots at a time; make more
-  pools if you need more.
-* **It is tied to your game.** Name the game's inscription when you make the
-  pool, and the pool pays out only while you still hold that inscription.
-  Sending the game to somebody else, or selling it, closes its pool. A claim
-  from any other page is refused.
-* **The game finds its own pool.** A page asks `/r/claimpool/<its own id>`
-  how many lots are left, and when a player wins it asks the wallet to claim
-  with the phrase. The player sees an ordinary confirmation card ("Claim 50
-  PLASMA for 0.01 coins?"), pays the price plus the network fee, and the
-  tokens and coins move in one transaction. The details for page makers are
-  in the inscription API guide, under Claims.
-* **The lots are hidden.** A pool is on no public page and in no order book,
-  so nobody can buy it out from the Exchange.
-* **The phrase is inside the game's code**, which anyone can read. Somebody
-  determined can claim without playing, for the same price as a winner. Size a
-  pool as a prize, not a vault.
-* **A pool keeps its tokens at an address of its own.** Your wallet makes
-  that address from your same twelve words, so there is nothing new to back
-  up, and one send moves the pool's tokens and the coins its lots stand on
-  there. Nothing but a claim, or closing the pool, ever sends from it, so a
-  trade or a send of yours can never spend the tokens a lot promised, and a
-  winner never pays for a prize that is gone. The lots are signed once that
-  send is in a block; if you close the page first, *Finish setting up* picks
-  it up again.
-* **Cancel and close** is on *Wallet → Tokens → Your prize pools*: one
-  transaction sends the pool's unclaimed tokens and all of its coins back to
-  you. Once it is in a block, no lot of that pool can be claimed. Pools made
-  before pool addresses existed have *Withdraw* instead, which spends their
-  coins back and leaves their tokens where they always were.
+* **A pool is an inscription.** You inscribe a short piece of JSON (token, lot,
+  number of lots, price, game, phrase) and your wallet does the rest: it moves
+  the tokens into the pool's own address, signs the lots, seals them with the
+  phrase and inscribes the pool. Another inscription deletes it and brings the
+  unclaimed tokens back.
+* **Every node reads it.** A pool pays out through any DogecoinArcade node,
+  and the chain decides between two claims of one lot, so nothing is claimed
+  twice.
+* **Tied to your game**, if you name one: it pays only while you hold the
+  game. A winner pays the price plus the fee, and gets the tokens in the same
+  transaction or nothing at all.
+* **The phrase is in the game's code**, which anyone can read, so size a pool
+  as a prize, not a vault.
 
 ---
 

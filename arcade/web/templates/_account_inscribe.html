@@ -315,6 +315,16 @@ async function pieceOffer(bytes, start, n, until) {
  */
 async function inscribeTheFile() {
   const file = $("file").files[0];
+  // A prize pool, or its deletion, is an inscription written from the
+  // template in the Prize pools guide (2026-09-29): the wallet does the
+  // signing it needs, and there is no file to choose.
+  let typed = null;
+  try { typed = JSON.parse(($("json-field") && $("json-field").value.trim()) || "null"); }
+  catch (e) { typed = null; }
+  if (typed && typed.prizepool && typeof typed.prizepool === "object") {
+    return inscribePrizePool(typed.prizepool);
+  }
+  if (typed && typed.prizepool_delete) return deletePrizePool(typed.prizepool_delete);
   if (!file) { say("choose a file first"); return; }
   say(""); news("");
   let bytes;
@@ -357,9 +367,39 @@ async function shaOf(bytes) {
   return [...h].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function inscribeBytes(bytes, name, type) {
+async function inscribePrizePool(spec) {
+  say(""); news("");
+  try {
+    const held = (await take()) || await arcadeKeys(CHAIN);
+    if (!(await arcadeAsk("Make this prize pool?",
+        `${spec.lots} lots of ${spec.lot} of token #${spec.token}, at ${spec.price} coins each`
+        + (spec.game ? `, paying out only while you hold ${spec.game}` : "")
+        + ". Next: one send moves the tokens and the coins the lots stand on to the pool's "
+        + "own address, then the pool is inscribed.", "Make it"))) return;
+    const made = await wallet.makeChainPool(held, spec, CHAIN.network, (t) => news(t));
+    await inscribeBytes(made.content, "prize-pool", made.type, made.json);
+  } catch (e) { say(String(e.message || e)); }
+}
+
+async function deletePrizePool(which) {
+  say(""); news("");
+  try {
+    const held = (await take()) || await arcadeKeys(CHAIN);
+    const key = typeof which === "object" ? String(which.pool || "") : String(which);
+    const closing = await wallet.closeChainPool(held, key, CHAIN.network);
+    if (!(await arcadeAsk("Delete this prize pool?",
+        `${closing.shown.says} Its unclaimed tokens and all its coins come back to you, `
+        + "and no lot of it can be claimed once this is in a block.", "Delete it"))) return;
+    await wallet.sendClose(held, closing);
+    await inscribeBytes(new TextEncoder().encode("prize pool deleted"), "delete.txt",
+                        "text/plain; charset=utf-8",
+                        JSON.stringify({prizepool_delete: {pool: closing.pool}}));
+  } catch (e) { say(String(e.message || e)); }
+}
+
+async function inscribeBytes(bytes, name, type, jsonGiven = "") {
   const file = {name, type};
-  const typed = ($("json-field") && $("json-field").value.trim()) || "";
+  const typed = jsonGiven || ($("json-field") && $("json-field").value.trim()) || "";
   if (typed) {
     try { JSON.parse(typed); }
     catch (e) { say("the JSON beside the file does not parse: " + e.message); return; }
@@ -370,7 +410,7 @@ async function inscribeBytes(bytes, name, type) {
       content: b64(bytes),
       content_type: file.type || "application/octet-stream",
       name: file.name, chain: CHAIN.network,
-      json: ($("json-field") && $("json-field").value.trim()) || ""});
+      json: typed});
     // What this browser reads off the transaction's own bytes, not what this
     // node says it costs: a confirmation that repeats the node's number proves
     // nothing. For a file already half up, the split is not offered again, and

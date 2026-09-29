@@ -649,6 +649,132 @@ export async function finishPool(wallet, chain, address, index, onStep = () => {
   return working(() => _finishPool(wallet, chain, address, Number(index), onStep));
 }
 
+/* --- prize pools ON THE CHAIN (2026-09-29) --------------------------------
+ *
+ * A pool is an inscription any node can read: its terms in the JSON, and its
+ * lots' signatures sealed with the phrase (AES-GCM, key = SHA-256 of
+ * "arcade prize pool v1\n" + phrase). Whoever holds the phrase can open them,
+ * which is exactly who can claim; nobody else learns anything.
+ */
+const POOL_TYPE = "application/vnd.arcade.prizepool";
+
+async function poolCipher(phrase) {
+  const bytes = new TextEncoder().encode("arcade prize pool v1\n" + String(phrase || "").trim());
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return crypto.subtle.importKey("raw", digest, "AES-GCM", false, ["encrypt", "decrypt"]);
+}
+
+async function sealLots(phrase, lots) {
+  const parts = [];
+  for (const sigs of lots) for (const sig of sigs) {
+    const raw = unhex(sig);
+    parts.push(raw.length, ...raw);
+  }
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const sealed = new Uint8Array(await crypto.subtle.encrypt(
+    {name: "AES-GCM", iv}, await poolCipher(phrase), new Uint8Array(parts)));
+  const out = new Uint8Array(12 + sealed.length);
+  out.set(iv); out.set(sealed, 12);
+  return out;
+}
+
+/** The lots' signatures of pool inscription `pool`, opened with `phrase`. */
+export async function openPrize(pool, phrase) {
+  const bytes = new Uint8Array(await (await fetch("/content/" + pool)).arrayBuffer());
+  let plain;
+  try {
+    plain = new Uint8Array(await crypto.subtle.decrypt(
+      {name: "AES-GCM", iv: bytes.slice(0, 12)}, await poolCipher(phrase), bytes.slice(12)));
+  } catch (e) { throw new Error("that is not this prize's phrase"); }
+  const sigs = [];
+  for (let at = 0; at < plain.length;) {
+    const n = plain[at];
+    sigs.push(coinsHex(plain.slice(at + 1, at + 1 + n)));
+    at += 1 + n;
+  }
+  const lots = [];
+  for (let i = 0; i + 1 < sigs.length; i += 2) lots.push([sigs[i], sigs[i + 1]]);
+  return lots;
+}
+
+/** Everything a prize pool inscription needs, from the JSON a person wrote:
+ *  {token, lot, lots, price, game, phrase, days, name}. Funds the pool's own
+ *  address from this account (one send, confirmed on its card), signs every
+ *  lot with the pool's key, and seals the signatures with the phrase. Returns
+ *  {content, json, type} for the inscription; nothing is inscribed here. */
+export async function makeChainPool(wallet, spec, chain, onStep = () => {}) {
+  return working(async () => {
+    const phrase = String(spec.phrase || "").trim();
+    if (!phrase) throw new Error("a prize pool needs a \"phrase\"");
+    const index = 1 + (crypto.getRandomValues(new Uint32Array(1))[0] % 0x7ffffffe);
+    const keys = await poolKeys(wallet, chain, index);
+    const opened = await askJson("/account/pools/open",
+                                 {chain, index, pubkey: coinsHex(keys.pubkey)});
+    if (!opened.ok) throw new Error(opened.said.detail || "the pool could not be opened");
+    const funding = await askJson("/account/pools/fund", {
+      chain, pool: keys.address, property_id: spec.token, lot: String(spec.lot),
+      count: Number(spec.lots), price: String(spec.price), days: spec.days || 0,
+      bound: spec.game ? String(spec.game) : "", claim_hash: await claimHash(phrase)});
+    if (!funding.ok) throw new Error(funding.said.detail || "the pool could not be funded");
+    onStep("Moving the tokens and coins into the pool\u2026");
+    const sent = await signOffer(wallet, funding.said);
+    const built = await askJson("/account/pools/legs", {chain, pool: keys.address, fund: sent.txid});
+    if (!built.ok) throw new Error(built.said.detail || "the pool's lots could not be built");
+    const lots = [];
+    for (const leg of built.said.legs) {
+      onStep(`Signing lot ${lots.length + 1} of ${built.said.legs.length}\u2026`);
+      const shown = await coins.verifyLeg(leg, keys);
+      const sigs = [];
+      for (const sighash of shown.hashes) {
+        sigs.push(coinsHex(await coins.signInput(keys.key, unhex(sighash), coins.SINGLE_ANYONECANPAY)));
+      }
+      lots.push(sigs);
+    }
+    const content = await sealLots(phrase, lots);
+    const json = JSON.stringify({name: String(spec.name || "Prize pool").slice(0, 60),
+                                 prizepool: {...built.said.prizepool,
+                                             pubkey: coinsHex(keys.pubkey)}});
+    return {content, json, type: POOL_TYPE};
+  });
+}
+
+/** The transaction that claims one lot of a chain pool, from any node. */
+export async function offerPrize(pool, lot, sigs, secret, page, chain) {
+  return working(async () => {
+    const r = await askJson("/account/prize", {pool, lot, signatures: sigs, secret, page,
+                                               chain: chain || ""});
+    if (!r.ok) throw new Error(r.said.detail || "that prize cannot be claimed");
+    return {...r.said, _ask: {pool, lot, signatures: sigs, secret, page, chain: chain || ""}};
+  });
+}
+
+export async function claimPrize(wallet, offer) {
+  return working(async () => {
+    const keys = keysOn(wallet, offer.chain || (wallet.on && Object.keys(wallet.on)[0]));
+    const shown = await coins.verifyOffer(offer, keys);
+    const claimer = [];
+    for (const sighash of shown.hashes) claimer.push(coinsHex(await coins.signInput(keys.key, unhex(sighash))));
+    const r = await askJson("/account/prize/sign", {...offer._ask, raw: offer.raw, claimer,
+                                                    pubkey: coinsHex(keys.pubkey)});
+    if (!r.ok) throw new Error(r.said.detail || "the node would not take it");
+    return {...r.said, fee: shown.fee, says: shown.says};
+  });
+}
+
+/** Close a chain pool this account made: returns what closePool returns,
+ *  for sendClose once the person has said yes. */
+export async function closeChainPool(wallet, key, chain) {
+  return working(async () => {
+    const info = await (await fetch("/r/prizepool/" + encodeURIComponent(key))).json();
+    if (!info || !info.txid) throw new Error("there is no such prize pool");
+    const r = await askJson("/account/pools/close", {chain, prize: info.txid});
+    if (!r.ok) throw new Error(r.said.detail || "that pool could not be closed");
+    const keys = await poolKeys(wallet, chain, Number(info.index));
+    const shown = await coins.verifyOffer(r.said, keys);
+    return {offer: r.said, shown, keys, pool: info.txid};
+  });
+}
+
 /** Cancel and close a pool: its tokens and every coin back to this account,
  *  signed with the pool's own key. Returns what was sent. */
 export async function closePool(wallet, chain, address, index) {
