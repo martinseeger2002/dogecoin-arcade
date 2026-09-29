@@ -11702,14 +11702,20 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         address = _account_address(account.pubkey, ctx)
         _sweep_book(ctx, force=True)          # a withdrawn pool shows as gone
+        mine = [p for p in _pools_of(account) if p["network"] == ctx.network]
+        by_address = {p["address"]: p for p in mine}
         pools: dict[tuple, dict] = {}
         for r in state.listings.open_listings(ctx.network, limit=1000, claims=True):
-            if r["owner"] != address or not r.get("claim_hash"):
+            if (r["owner"] != address and r["owner"] not in by_address) \
+                    or not r.get("claim_hash"):
                 continue
             key = (r["claim_hash"], r["payload"])
+            own = by_address.get(r["owner"])
             got = pools.setdefault(key, {"pool": r["id"], "lots": 0, "created": r["created"],
                                          "price": int(r["price"]), "bound": r.get("bound") or "",
-                                         "what": _piece_called(ctx, r)})
+                                         "what": _piece_called(ctx, r),
+                                         "address": own["address"] if own else "",
+                                         "index": own["index"] if own else 0})
             got["lots"] += 1
             if r["created"] < got["created"]:
                 got.update(pool=r["id"], created=r["created"])
@@ -11718,7 +11724,27 @@ def create_app(state: AppState) -> FastAPI:
         for got in sorted(pools.values(), key=lambda g: g["created"], reverse=True):
             bound = index.inscription(got["bound"]) if got["bound"] else None
             out.append({**got, "bound_number": bound["number"] if bound else None})
-        return JSONResponse({"chain": ctx.network, "pools": out},
+        # A pool address with tokens or coins and no open lot: funded and not
+        # yet signed (the page was closed while its block came), or its lots all
+        # claimed with coins left. Either way it can be finished or closed.
+        listed = {p["address"] for p in out if p.get("address")}
+        setup = []
+        with contextlib.closing(index.open()) as db:
+            for p in mine:
+                if p["address"] in listed:
+                    continue
+                coins = list(utxoslib.unspent(db, p["address"]))
+                tokens = (index.balance(p["address"], int(p["property_id"]))
+                          if p.get("property_id") else 0)
+                if not coins and not tokens:
+                    continue
+                setup.append({"address": p["address"], "index": p["index"],
+                              "coins": len(coins), "tokens": int(tokens),
+                              "ready": bool(tokens) and len(coins) >= 2 * int(p.get("count") or 0)
+                                       and not p.get("closed"),
+                              "closing": bool(p.get("closed"))})
+        return JSONResponse({"chain": ctx.network, "pools": out, "setup": setup,
+                             "next_index": max([p["index"] for p in mine] + [0]) + 1},
                             headers={"Cache-Control": "no-store"})
 
     @app.post("/account/list/cancel")
@@ -11843,6 +11869,162 @@ def create_app(state: AppState) -> FastAPI:
         state.bump_generation()
         return JSONResponse({"done": True, "chain": chain.network})
 
+    # --- prize pools at their own address (2026-09-29) ---------------------------
+    # "Can't we split a transaction and lock some of the coins?" A token is a
+    # balance of an ADDRESS, not of a coin, so any send from the seller's address
+    # could spend what a lot promised and leave its claimer paying for nothing.
+    # So a pool lives at an address of its own, derived in the browser from the
+    # account's words at index 1, 2, ... (0 is the account's address): nothing
+    # but a claim, or closing the pool, ever sends from it.
+
+    def _pools_of(account) -> list[dict]:
+        return [dict(p) for p in (state.setting(f"pools:{account.pubkey}", []) or [])]
+
+    def _pool_of(account, address: str, network: str) -> dict | None:
+        return next((p for p in _pools_of(account)
+                     if p["address"] == address and p["network"] == network), None)
+
+    def _save_pool(account, pool: dict) -> None:
+        pools = [p for p in _pools_of(account) if p["address"] != pool["address"]]
+        state.set_setting(f"pools:{account.pubkey}", pools + [pool])
+
+    def _pool_parent(address: str) -> str:
+        """The account address a pool's address belongs to, or ""."""
+        return str(state.setting(f"pool_parent:{address}", "") or "")
+
+    @app.post("/account/pools/open")
+    def account_pools_open(request: Request, payload: Any = Body(None)):
+        """Register a pool's own address, from the public key the browser derived.
+        It is watched from now on, which is why it comes before the funding."""
+        from ..script import b58check_encode
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+            main = _account_address(account.pubkey, chain)
+            if not main:
+                raise ValueError("this account has no address yet")
+            index = int(said.get("index") or 0)
+            if not 1 <= index <= 10_000:
+                raise ValueError("a pool address is derived at index 1 or above")
+            pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
+            if len(pubkey) != 33:
+                raise ValueError("that is not a public key")
+            address = b58check_encode(chain.params.pubkeyhash_version, hash160(pubkey))
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        held = _pool_of(account, address, chain.network)
+        if held is None:
+            if any(p["index"] == index and p["network"] == chain.network
+                   for p in _pools_of(account)):
+                return JSONResponse({"detail": "that index already has a pool"},
+                                    status_code=400)
+            _watch(address, "prize pool", chain)
+            held = {"address": address, "index": index, "network": chain.network,
+                    "created": time.time()}
+            _save_pool(account, held)
+            state.set_setting(f"pool_parent:{address}", main)
+        return JSONResponse({"address": address, "index": held["index"]})
+
+    @app.post("/account/pools/fund")
+    def account_pools_fund(request: Request, payload: Any = Body(None)):
+        """The one send that moves a pool's tokens and its coins (two a lot)
+        from the account to the pool's address, and writes down what the pool
+        is -- lot, count, price, phrase hash, game -- so setting up its lots
+        can resume if the page is closed while the send waits for its block."""
+        from ..encoding import encode_class_c
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+            main = _account_address(account.pubkey, chain)
+            pool = _pool_of(account, str(said.get("pool") or ""), chain.network)
+            if pool is None:
+                raise ValueError("that is not a pool of this account")
+            index = state.token_index(chain)
+            prop = index.property(int(said.get("property_id") or 0))
+            if prop is None:
+                raise tokenlib.TokenError(f"there is no token {said.get('property_id')}.")
+            units = parse_amount(str(said.get("lot", "")), prop["divisible"])
+            count = int(said.get("count") or 0)
+            if units <= 0 or not 1 <= count <= LOTS_AT_ONCE:
+                raise ValueError(f"a lot above zero, and between 1 and {LOTS_AT_ONCE} lots")
+            price = parse_amount(str(said.get("price", "")), True)
+            _above_dust(price, "price")
+            claim_hash = str(said.get("claim_hash") or "").strip().lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", claim_hash):
+                raise ValueError("a pool needs the sha256 of its phrase")
+            bound = ""
+            if str(said.get("bound") or "").strip():
+                row = index.inscription(contentlib._key(str(said["bound"]).strip().lstrip("#")))
+                if row is None or row["owner"] != main:
+                    raise ValueError("a pool can be tied only to an inscription you hold")
+                bound = row["txid"]
+            _sweep_book(chain, force=True)
+            free = (_lot_room(chain, main, prop["property_id"])
+                    - _lots_listed(chain, main, prop["property_id"]))
+            if units * count > free:
+                raise tokenlib.TokenError(
+                    f"that is {format_amount(units * count, prop['divisible'])} "
+                    f"{prop['name']}, and this account has "
+                    f"{format_amount(max(0, free), prop['divisible'])} free")
+            naming = encode_class_c(P.SimpleSend(property_id=prop["property_id"],
+                                                 amount=units * count).encode())
+            outputs = ([(0, txbuild.op_return_script(naming))]
+                       + [(SPLIT_EACH, txbuild.p2pkh_script(pool["address"]))] * (2 * count))
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, main, outputs, rate=fees.MIN_FEE_PER_KB,
+                    what=(f"move {format_amount(units * count, prop['divisible'])} "
+                          f"{prop['name']} and {2 * count} coins into a prize pool"),
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "send")
+        except (fundinglib.FundingError, tokenlib.TokenError, AmountError,
+                ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        pool.update({"property_id": prop["property_id"], "lot": str(units), "count": count,
+                     "price": price, "days": _listing_days(said), "bound": bound,
+                     "claim_hash": claim_hash, "closed": False})
+        _save_pool(account, pool)
+        offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what)
+        return JSONResponse({"offer": offer.id, "chain": chain.network, **unsigned.as_json()})
+
+    @app.post("/account/pools/close")
+    def account_pools_close(request: Request, payload: Any = Body(None)):
+        """Cancel and close a pool: everything at its address -- the tokens it
+        still holds and every coin, lots' coins included -- back to the
+        account in one transaction, signed with the pool's own key. Once it is
+        in a block no lot of the pool can be claimed."""
+        from ..encoding import encode_class_c
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+            main = _account_address(account.pubkey, chain)
+            pool = _pool_of(account, str(said.get("pool") or ""), chain.network)
+            if pool is None:
+                raise ValueError("that is not a pool of this account")
+            index = state.token_index(chain)
+            naming = b""
+            if pool.get("property_id"):
+                left = _lot_room(chain, pool["address"], int(pool["property_id"]))
+                if left > 0:
+                    naming = encode_class_c(P.SimpleSend(
+                        property_id=int(pool["property_id"]), amount=left).encode())
+            with contextlib.closing(index.open()) as db:
+                coins = list(utxoslib.unspent(db, pool["address"]))
+            unsigned = fundinglib.build_pool_close(
+                pool["address"], coins, main, fees.MIN_FEE_PER_KB, payload=naming,
+                what="cancel and close a prize pool: its tokens and coins come back to you")
+        except (fundinglib.FundingError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        pool["closed"] = True
+        _save_pool(account, pool)
+        offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what)
+        return JSONResponse({"offer": offer.id, "chain": chain.network,
+                             "index": pool["index"], **unsigned.as_json()})
+
     #: Lots one request builds: two coins each, so at most fifty coins split,
     #: and inside the thirty listings an hour an account may file.
     LOTS_AT_ONCE = 25
@@ -11873,13 +12055,25 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse(
                 {"detail": f"this account has no {chain.label.lower()} "
                            f"address yet"}, status_code=400)
+        pool = (_pool_of(account, str(said.get("pool") or ""), chain.network)
+                if said.get("pool") else None)
+        if said.get("pool") and pool is None:
+            return JSONResponse({"detail": "that is not a pool of this account"},
+                                status_code=400)
+        if pool is not None:
+            # The terms the pool was funded for, not new ones: a pool's address
+            # holds exactly what they need.
+            said = {**said, "property_id": pool.get("property_id"), "lot": None,
+                    "count": pool.get("count"), "price": None}
+            address = pool["address"]
         try:
             from ..encoding import encode_class_c
             index = state.token_index(chain)
             prop = index.property(int(said.get("property_id") or 0))
             if prop is None:
                 raise tokenlib.TokenError(f"there is no token {said.get('property_id')}.")
-            units = parse_amount(str(said.get("lot", "")), prop["divisible"])
+            units = (int(pool["lot"]) if pool is not None
+                     else parse_amount(str(said.get("lot", "")), prop["divisible"]))
             if units <= 0:
                 raise tokenlib.TokenError("a lot is an amount above zero")
             try:
@@ -11888,9 +12082,20 @@ def create_app(state: AppState) -> FastAPI:
                 count = 0
             if not 1 <= count <= LOTS_AT_ONCE:
                 raise ValueError(f"make between 1 and {LOTS_AT_ONCE} lots at a time")
-            price = parse_amount(str(said.get("price", "")), True)
+            price = (int(pool["price"]) if pool is not None
+                     else parse_amount(str(said.get("price", "")), True))
             _above_dust(price, "price")
             _sweep_book(chain, force=True)    # a pool withdrawn frees its tokens
+            if pool is not None:
+                # Its tokens and coins arrive with the funding's block; until
+                # then there is nothing at the address to build lots from.
+                with contextlib.closing(index.open()) as db:
+                    arrived = len(list(utxoslib.unspent(db, address)))
+                if (_lot_room(chain, address, prop["property_id"]) < units * count
+                        or arrived < 2 * count):
+                    return JSONResponse({"detail": "the pool's tokens and coins are on "
+                                         "their way; they arrive with the next block",
+                                         "waiting": True}, status_code=409)
             free = (_lot_room(chain, address, prop["property_id"])
                     - _lots_listed(chain, address, prop["property_id"]))
             if units * count > free:
@@ -11911,14 +12116,15 @@ def create_app(state: AppState) -> FastAPI:
                 # Coins still in the mempool count: the split below is spent by
                 # these legs straight after it is broadcast.
                 for c in (list(utxoslib.unspent(db, address))
-                          + list(_flights.change_for(account.pubkey, chain.network))):
+                          + (list(_flights.change_for(account.pubkey, chain.network))
+                             if pool is None else [])):
                     key = (c["txid"], int(c["vout"]))
                     if key in spent or key in seen or int(c["value"]) < fees.DUST_LIMIT:
                         continue
                     seen.add(key)
                     held.append(c)
                 held.sort(key=lambda c: int(c["value"]))
-                if len(held) < 2 * count:
+                if len(held) < 2 * count and pool is None:
                     need = 2 * count - len(held)
                     split = fundinglib.build(
                         db, chain.params, address,
@@ -11937,7 +12143,10 @@ def create_app(state: AppState) -> FastAPI:
                         rate=fees.MIN_FEE_PER_KB, what=what,
                         payload=naming, coin=held[2 * n + 1])
                     legs.append({**leg.as_json(), "chain": chain.network,
-                                 "price": price,
+                                 "price": price, "owner": address,
+                                 "claim_hash": pool["claim_hash"] if pool else "",
+                                 "bound": pool.get("bound", "") if pool else "",
+                                 "days": pool.get("days", 0) if pool else 0,
                                  "send": {"propertyid": prop["property_id"],
                                           "units": str(units), "amount": shown,
                                           "name": prop["name"]}})
@@ -11992,6 +12201,13 @@ def create_app(state: AppState) -> FastAPI:
             if claim_hash and not re.fullmatch(r"[0-9a-f]{64}", claim_hash):
                 raise ValueError("a claim is named by the sha256 of its phrase, "
                                  "64 hex characters")
+            main = address
+            if str(said.get("owner") or "") not in ("", address):
+                pool = _pool_of(account, str(said["owner"]), chain.network)
+                if pool is None or not claim_hash:
+                    raise ValueError("a leg is filed as this account's own, or as "
+                                     "one of its prize pools'")
+                address = pool["address"]
             bound = ""
             if str(said.get("bound") or "").strip():
                 if not claim_hash:
@@ -12000,7 +12216,7 @@ def create_app(state: AppState) -> FastAPI:
                     contentlib._key(str(said.get("bound")).strip().lstrip("#")))
                 if row is None:
                     raise ValueError("no such inscription to bind this to")
-                if row["owner"] != address:
+                if row["owner"] != main:
                     raise ValueError(f"inscription #{row['number']} is not yours, so it "
                                      "cannot be what this pays out for")
                 bound = row["txid"]
@@ -12100,7 +12316,8 @@ def create_app(state: AppState) -> FastAPI:
         if not bound:
             return ""
         row = state.token_index(chain).inscription(bound)
-        if row is None or row["owner"] != listing["owner"]:
+        holder = _pool_parent(listing["owner"]) or listing["owner"]
+        if row is None or row["owner"] != holder:
             return ("this prize pays out only while its seller holds the page it "
                     "belongs to, and they no longer do")
         if page:
@@ -14746,7 +14963,7 @@ def create_app(state: AppState) -> FastAPI:
                 if r.get("bound") == row["txid"] and r.get("claim_hash")]
         pool.sort(key=lambda r: r["created"])
         first = pool[0] if pool else None
-        held = bool(first) and row["owner"] == first["owner"]
+        held = bool(first) and row["owner"] == (_pool_parent(first["owner"]) or first["owner"])
         lot = _token_lot(bytes.fromhex(first["payload"] or "")) if first else None
         return contentlib._json({
             "inscription": row["txid"], "open": bool(first) and held,

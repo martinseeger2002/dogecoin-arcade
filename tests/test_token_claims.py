@@ -17,6 +17,7 @@ from test_account_offer import node, _seated, _settled                 # noqa: F
 from test_account_order import _bookcoin, _held, _signed, COIN, HELD   # noqa: E402
 from test_funding import _sign                                          # noqa: E402
 from arcade import funding                                              # noqa: E402
+funding_mod = funding
 
 PHRASE = "the vault on level five"
 
@@ -209,3 +210,68 @@ def test_a_pool_is_listed_and_withdrawn_in_one_transaction(node):
     fits = who.post("/account/claimlots", json={
         "property_id": book["pid"], "lot": "100", "count": 3, "price": "0.01"})
     assert fits.status_code == 200, fits.text
+
+
+def test_a_pool_at_its_own_address_pays_claims_and_closes(node):
+    """2026-09-29: "Can't we split a transaction and lock some of the coins?"
+    A pool's tokens and coins live at an address of its own, so nothing but a
+    claim or closing the pool can spend them; closing brings everything back."""
+    from test_account_offer import _pubkey
+    from arcade.script import b58check_encode, hash160
+    book = _bookcoin(node, 97)
+    state, rpc, who = book["state"], book["rpc"], book["client"]
+    pool_secret = int.from_bytes(bytes([0x62, 97]) + bytes(30), "big")
+    pool_pub = _pubkey(pool_secret)
+    opened = who.post("/account/pools/open", json={"index": 1, "pubkey": pool_pub.hex()})
+    assert opened.status_code == 200, opened.text
+    pool = opened.json()["address"]
+    assert pool == b58check_encode(state.messaging.params.pubkeyhash_version, hash160(pool_pub))
+
+    funding = who.post("/account/pools/fund", json={
+        "pool": pool, "property_id": book["pid"], "lot": "40", "count": 2, "price": "0.01",
+        "claim_hash": hashlib.sha256(PHRASE.encode()).hexdigest()})
+    assert funding.status_code == 200, funding.text
+    early = who.post("/account/claimlots", json={"pool": pool})
+    assert early.status_code == 409 and early.json()["waiting"], "nothing until the block"
+    _signed(who, book["secret"], book["pubkey"], funding)
+    _settled(state, rpc)
+    assert _held(state, pool, book["pid"])[0] == 80 * COIN, "the pool holds its tokens"
+    assert _held(state, book["address"], book["pid"])[0] == HELD - 80 * COIN
+
+    built = who.post("/account/claimlots", json={"pool": pool})
+    assert built.status_code == 200, built.text
+    ids = []
+    for leg in built.json()["legs"]:
+        assert leg["owner"] == pool
+        filed = who.post("/account/list/sign", json={
+            "raw": leg["raw"], "amount": "0.01", "pubkey": pool_pub.hex(), "owner": pool,
+            "claim_hash": leg["claim_hash"],
+            "signatures": [_sign(pool_secret, bytes.fromhex(d), funding_mod.SINGLE_ANYONECANPAY).hex()
+                           for d in leg["sighashes"]]})
+        assert filed.status_code == 200, filed.text
+        ids.append(filed.json()["listed"])
+    listed = who.get("/account/claimpools").json()
+    assert listed["pools"][0]["address"] == pool and listed["pools"][0]["lots"] == 2
+    assert listed["next_index"] == 2
+
+    player = _seated(node[0], state, rpc, 98)
+    _claim(player, ids[0])
+    _settled(state, rpc)
+    assert _held(state, player[3], book["pid"])[0] == 40 * COIN
+    assert _held(state, pool, book["pid"])[0] == 40 * COIN
+
+    closing = who.post("/account/pools/close", json={"pool": pool})
+    assert closing.status_code == 200, closing.text
+    done = who.post("/account/sign", json={
+        "offer": closing.json()["offer"], "pubkey": pool_pub.hex(),
+        "signatures": [_sign(pool_secret, bytes.fromhex(d)).hex()
+                       for d in closing.json()["sighashes"]]})
+    assert done.status_code == 200, done.text
+    _settled(state, rpc)
+    assert _held(state, pool, book["pid"])[0] == 0, "the pool is empty"
+    assert _held(state, book["address"], book["pid"])[0] == HELD - 40 * COIN, \
+        "everything unclaimed came home"
+    after = who.get("/account/claimpools").json()
+    assert after["pools"] == [] and after["setup"] == []
+    late = player[0].post("/account/buy", json={"listing": ids[1], "secret": PHRASE})
+    assert late.status_code == 400, "no lot of a closed pool can be claimed"

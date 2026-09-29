@@ -455,8 +455,8 @@ export async function offerSend(to, amount, chain) {
  * key is used -- which is the only place the refusal can be effective. A
  * node that can choose what you sign does not need your key.
  */
-async function signOffer(wallet, offer) {
-  const keys = keysOn(wallet, offer.chain
+async function signOffer(wallet, offer, given = null) {
+  const keys = given || keysOn(wallet, offer.chain
                       || (wallet.on && Object.keys(wallet.on)[0]));
   const shown = await coins.verifyOffer(offer, keys);
   const signatures = [];
@@ -578,6 +578,94 @@ export async function makeClaimLots(wallet, ask, phrase, onStep = () => {}) {
   });
 }
 
+/* --- prize pools at their own address (2026-09-29) --------------------------
+ *
+ * A token is a balance of an address, so a pool whose tokens sat at the
+ * account's own address could be spent from under its lots. A pool gets an
+ * address of its own, from these same words at index 1, 2, ...: nothing to
+ * write down, and nothing but a claim or closing the pool ever sends from it.
+ */
+async function poolKeys(wallet, network, index) {
+  const on = keysOn(wallet, network);
+  const coin = await coins.coinKey(wallet.seed, network, index);
+  return {network, version: on.version, key: coin.key, pubkey: coin.pubkey,
+          address: await coins.address(coin.pubkey, on.version)};
+}
+
+async function askJson(url, body) {
+  const asked = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"},
+                                  body: JSON.stringify(body)});
+  const said = await asked.json().catch(() => ({}));
+  return {ok: asked.ok, status: asked.status, said};
+}
+
+/** Sign and file a funded pool's lots, waiting for its funding block first. */
+async function _finishPool(wallet, chain, address, index, onStep) {
+  const keys = await poolKeys(wallet, chain, index);
+  let built = null;
+  for (let tries = 0; tries < 90; tries++) {             // up to ~20 minutes
+    const r = await askJson("/account/claimlots", {chain, pool: address});
+    if (r.ok) { built = r.said; break; }
+    if (!r.said.waiting) throw new Error(r.said.detail || "the pool's lots could not be made");
+    onStep("Waiting for the pool's tokens and coins to land in a block\u2026");
+    await new Promise((ok) => setTimeout(ok, 15000));
+  }
+  if (!built) throw new Error("the pool's funding has not landed yet; finish it later from Your prize pools");
+  const ids = [];
+  for (const leg of built.legs || []) {
+    onStep(`Signing lot ${ids.length + 1} of ${built.legs.length}\u2026`);
+    const done = await _list(wallet, leg, Number(leg.days || 0), "", leg.bound || "",
+                             keys, leg.claim_hash);
+    ids.push(done.listed);
+  }
+  return {ids, what: built.what || "", address};
+}
+
+/** A new prize pool at its own address: register it, fund it from this
+ *  account in one send, then sign its lots when that send is in a block.
+ *  `ask` is {property_id, lot, count, price, days, bound, chain}. */
+export async function makePool(wallet, ask, phrase, onStep = () => {}) {
+  return working(async () => {
+    if (!String(phrase || "").trim()) throw new Error("a claim needs its phrase");
+    const chain = ask.chain;
+    const list = await (await fetch("/account/claimpools?chain=" + chain)).json();
+    const index = Number(list.next_index || 1);
+    const keys = await poolKeys(wallet, chain, index);
+    const opened = await askJson("/account/pools/open",
+                                 {chain, index, pubkey: coinsHex(keys.pubkey)});
+    if (!opened.ok) throw new Error(opened.said.detail || "the pool could not be opened");
+    if (opened.said.address !== keys.address) throw new Error("the node named a different pool address");
+    const funding = await askJson("/account/pools/fund", {...ask, pool: keys.address,
+                                  claim_hash: await claimHash(phrase)});
+    if (!funding.ok) throw new Error(funding.said.detail || "the pool could not be funded");
+    onStep("Moving the tokens and coins into the pool\u2026");
+    await signOffer(wallet, funding.said);
+    return _finishPool(wallet, chain, keys.address, index, onStep);
+  });
+}
+
+/** Finish a pool whose funding landed while the page was closed. */
+export async function finishPool(wallet, chain, address, index, onStep = () => {}) {
+  return working(() => _finishPool(wallet, chain, address, Number(index), onStep));
+}
+
+/** Cancel and close a pool: its tokens and every coin back to this account,
+ *  signed with the pool's own key. Returns what was sent. */
+export async function closePool(wallet, chain, address, index) {
+  return working(async () => {
+    const r = await askJson("/account/pools/close", {chain, pool: address});
+    if (!r.ok) throw new Error(r.said.detail || "the pool could not be closed");
+    const keys = await poolKeys(wallet, chain, Number(index));
+    const shown = await coins.verifyOffer(r.said, keys);
+    return {offer: r.said, shown, keys};
+  });
+}
+
+/** Send what closePool built, once the person has said yes. */
+export async function sendClose(wallet, closing) {
+  return working(() => signOffer(wallet, closing.offer, closing.keys));
+}
+
 /** Offer one payment to this account's own address in `count` coins -- what a
  *  mintpad needs to stand one listing per piece on (two coins each). */
 export async function offerSplit(count, chain) {
@@ -592,8 +680,9 @@ export async function offerSplit(count, chain) {
   });
 }
 
-async function _list(wallet, leg, days = 0, claim = "", bound = "") {
-  const keys = keysOn(wallet, leg.chain
+async function _list(wallet, leg, days = 0, claim = "", bound = "", given = null,
+                     hashed = "") {
+  const keys = given || keysOn(wallet, leg.chain
                       || (wallet.on && Object.keys(wallet.on)[0]));
   const shown = await coins.verifyLeg(leg, keys);
   const signatures = [];
@@ -606,8 +695,8 @@ async function _list(wallet, leg, days = 0, claim = "", bound = "") {
     body: JSON.stringify({raw: leg.raw, chain: leg.chain || "",
                           amount: shown.coinsOf(shown.listing.sats),
                           pubkey: coinsHex(keys.pubkey), signatures, days,
-                          claim_hash: claim ? await claimHash(claim) : "",
-                          bound: bound || ""}),
+                          claim_hash: hashed || (claim ? await claimHash(claim) : ""),
+                          bound: bound || "", owner: given ? given.address : ""}),
   });
   const said = await done.json();
   if (!done.ok) throw new Error(said.detail || "the node would not take it");

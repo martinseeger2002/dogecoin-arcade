@@ -414,6 +414,37 @@ def build_sweep(db, params: Params, address: str, coins: list[dict], rate: int,
                     fee=fee, change=change, what=what)
 
 
+def build_pool_close(address: str, coins: list[dict], back_to: str, rate: int,
+                     payload: bytes = b"", what: str = "") -> Unsigned:
+    """Close a prize pool: every coin of the pool's own address, and the
+    tokens it still holds, back to the account in one transaction.
+
+    `payload` is the Class C token send of what the pool still holds, or
+    nothing. The pool's address is the only input address, so it is the
+    send's sender, and `back_to` is the only other output, so it is the
+    reference that receives the tokens (tx.determine_reference). Spending the
+    coins also stills every lot signed over them (2026-09-29: "the pool should
+    be able to be canceled and closed").
+    """
+    given = [{"txid": str(c["txid"]), "vout": int(c["vout"]), "value": int(c["value"]),
+              "address": address} for c in coins]
+    if not given:
+        raise FundingError("that pool holds no coins to close it with")
+    outputs = [(0, op_return_script(payload))] if payload else []
+    total = sum(c["value"] for c in given)
+    fee = price(len(given), outputs, rate, change=True)
+    back = total - fee
+    if back < fees.DUST_LIMIT:
+        raise FundingError("that pool's coins cannot pay the fee to close it")
+    outputs.append((back, p2pkh_script(back_to)))
+    raw = build_raw_tx([(c["txid"], c["vout"]) for c in given], outputs)
+    script = p2pkh_script(address)
+    return Unsigned(raw=raw, inputs=given, outputs=outputs,
+                    sighashes=[sighash(given, outputs, n, script).hex()
+                               for n in range(len(given))],
+                    fee=fee, change=0, what=what)
+
+
 def build_bid(db, params: Params, buyer: str, seller: str, payload: bytes,
               price_sats: int, rate: int, what: str = "",
               exclude=frozenset(), extra: list | None = None) -> Unsigned:

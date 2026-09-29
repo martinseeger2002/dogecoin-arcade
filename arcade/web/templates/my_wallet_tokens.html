@@ -194,7 +194,7 @@ $("lot-make").onclick = async () => {
   button.disabled = true;
   try {
     if (!keys) keys = await arcadeKeys(CHAIN);
-    const made = await wallet.makeClaimLots(keys, {
+    const made = await wallet.makePool(keys, {
       property_id: lotsFor.token.property_id, lot: $("lot-size").value.trim(),
       count: parseInt($("lot-count").value, 10) || 0, price: $("lot-price").value.trim(),
       days: parseInt($("lot-days").value, 10) || 0, chain: lotsFor.chain.network,
@@ -209,7 +209,8 @@ $("lot-make").onclick = async () => {
         + `  listing: ${JSON.stringify(made.ids[0] || "")},\n  secret: ${JSON.stringify(phrase)}}, "*");`;
     $("lot-done").hidden = false;
     await draw();
-  } catch (e) { news(""); say(String(e.message || e)); }
+    await drawPools();
+  } catch (e) { news(""); say(String(e.message || e)); await drawPools(); }
   finally { button.disabled = false; }
 };
 
@@ -280,7 +281,7 @@ async function drawPools() {
   try { said = await (await fetch("/account/claimpools?chain=" + CHAIN.network)).json(); }
   catch (e) { /* no pools shown is the honest fallback */ }
   const list = $("pools-list");
-  list.innerHTML = "";
+  list.replaceChildren();
   for (const p of (said.pools || [])) {
     const row = document.createElement("div");
     row.className = "row";
@@ -296,7 +297,13 @@ async function drawPools() {
     id.title = p.pool;
     const go = document.createElement("button");
     go.className = "btn ghost small";
-    go.textContent = "Withdraw";
+    go.textContent = p.address ? "Cancel and close" : "Withdraw";
+    if (p.address) {
+      go.onclick = () => closeIt(p.address, p.index, go);
+      row.append(words, id, go);
+      list.append(row);
+      continue;
+    }
     go.onclick = async () => {
       say(""); news("");
       go.disabled = true;
@@ -318,7 +325,55 @@ async function drawPools() {
     row.append(words, id, go);
     list.append(row);
   }
-  $("pools").hidden = !(said.pools || []).length;
+  for (const s of (said.setup || [])) {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.style.cssText = "align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--line)";
+    const words = document.createElement("span");
+    words.style.flex = "1";
+    words.textContent = s.closing ? "Closing: its tokens and coins come back when the block lands"
+      : s.ready ? "Funded, lots not signed yet" : "Being funded: waiting for its block";
+    row.append(words);
+    if (s.ready) {
+      const finish = document.createElement("button");
+      finish.className = "btn small"; finish.textContent = "Finish setting up";
+      finish.onclick = async () => {
+        say(""); finish.disabled = true;
+        try {
+          if (!keys) keys = await arcadeKeys(CHAIN);
+          const made = await wallet.finishPool(keys, CHAIN.network, s.address, s.index, (t) => news(t));
+          news(`${made.ids.length} lots set aside.`);
+        } catch (e) { say(String(e.message || e)); }
+        finally { finish.disabled = false; await drawPools(); }
+      };
+      row.append(finish);
+    }
+    if (!s.closing) {
+      const close = document.createElement("button");
+      close.className = "btn ghost small"; close.textContent = "Cancel and close";
+      close.onclick = () => closeIt(s.address, s.index, close);
+      row.append(close);
+    }
+    list.append(row);
+  }
+  $("pools").hidden = !((said.pools || []).length || (said.setup || []).length);
+}
+
+// Cancel and close (2026-09-29): the pool's tokens and every coin back to you,
+// signed with the pool's own key; no lot can be claimed once it is in a block.
+async function closeIt(address, index, button) {
+  say(""); news("");
+  button.disabled = true;
+  try {
+    if (!keys) keys = await arcadeKeys(CHAIN);
+    const closing = await wallet.closePool(keys, CHAIN.network, address, index);
+    if (!(await arcadeAsk("Cancel and close this pool?",
+        `${closing.shown.says} Its tokens come back to you with it, and nobody can `
+        + "claim from it once this is in a block.", "Cancel and close"))) return;
+    const done = await wallet.sendClose(keys, closing);
+    news(`Closing: ${done.txid.slice(0, 16)}… Everything comes back when its block lands.`);
+  } catch (e) { say(String(e.message || e)); }
+  finally { button.disabled = false; await drawPools(); }
 }
 
 keys = await wallet.opened(CHAIN);
