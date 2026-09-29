@@ -41,3 +41,29 @@ def test_replies_to_a_name_and_where_to_answer(client):
     assert "the purge begins" in page and f'id="reply-{OTHER}"' in page, \
         "a reply's own id opens its thread, with its own Reply form"
 
+
+
+def test_a_comment_link_opens_its_thread_at_the_comment(client):
+    """2026-09-28: a notification about a comment loads the comment, not
+    only the post -- /feed?post=<comment> draws the post and marks the comment."""
+    app, state = client
+    now = int(time.time())
+    with state.store() as store:
+        net = state.messaging.network
+        store.add_group_post(net, "", POST, 100, now - 100, SILAS, "", "the purge begins")
+        store.add_feed_act(net, REPLY, feed.REPLY, POST, FAN, "who are you?", 101, now - 90)
+    page = app.get(f"/feed?post={REPLY}").text
+    assert "the purge begins" in page and "who are you?" in page
+    assert f'.feedpost[data-key="{REPLY}"]' in page, "the page is told which comment to open"
+    assert ".feedpost[data-key=" not in app.get(f"/feed?post={POST}").text, "a post alone opens nothing"
+
+
+def test_a_notification_about_a_comment_links_to_the_comment():
+    from arcade import notify
+    from arcade.messaging import feed as f
+    ev = notify.Event(source="feed", seq=1, kind=notify.ON_MINE[f.REPLY], actor=FAN, target=POST,
+                      extra={"txid": REPLY})
+    (row,) = notify.grouped([ev])
+    assert row.comment == REPLY
+    like = notify.Event(source="feed", seq=2, kind="liked", actor=FAN, target=POST, extra={"txid": OTHER})
+    assert notify.grouped([like])[0].comment == ""

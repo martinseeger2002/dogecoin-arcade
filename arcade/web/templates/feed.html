@@ -1109,4 +1109,27 @@ document.addEventListener("keydown", (e) => {
 document.addEventListener("focusout", (e) => { if (e.target === field) setTimeout(close, 120); });
 </script>
 {% endif %}
+{% if focus %}
+<script>
+/* A link to one comment (a notification's): its post is on the page; open every
+   thread down to the comment, and bring it into view, marked (2026-09-28:
+   "it should load the comment as well as the post"). */
+(function(){
+  var card = document.querySelector('.feedpost[data-key="{{ focus }}"]');
+  if (!card) return;
+  for (var el = card.parentElement; el; el = el.parentElement) {
+    if (el.id && el.id.indexOf("thread-") === 0) {
+      el.hidden = false;
+      var fold = document.getElementById("fold-" + el.id.slice(7));
+      if (fold && fold.dataset.open) fold.textContent = fold.dataset.open;
+      try { arcadeOpenThreads.add(el.id); } catch (e) {}   // stays open through a refresh
+    }
+  }
+  card.classList.add("focused");
+  setTimeout(function(){ card.scrollIntoView({block: "center"}); }, 150);
+})();
+</script>
+<style>.feedpost.focused{box-shadow:0 0 0 2px var(--accent);animation:focusfade 3s ease-out 1}
+@keyframes focusfade{0%{background:color-mix(in srgb,var(--accent) 22%,var(--panel))}100%{background:var(--panel)}}</style>
+{% endif %}
 {% endblock %}

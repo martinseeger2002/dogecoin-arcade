@@ -14,7 +14,7 @@
 
 {% macro row(r) %}
 {% set link = ('/me/messages' if r.source == 'message'
-               else ('/feed?post=' ~ r.target if r.source in ('feed', 'mention', 'mention_reply')
+               else ('/feed?post=' ~ (r.comment or r.target) if r.source in ('feed', 'mention', 'mention_reply')
                else ('/inscriptions/' ~ r.target ~ '/view' if r.source == 'swap' else '/me/nfts'))) %}
 {% set who = r.actors[0] if r.actors else '' %}
 {% set badge = {'liked': ('♥', 'like'), 'disliked': ('↓', 'dislike'), 'replied to': ('↩', 'reply'),

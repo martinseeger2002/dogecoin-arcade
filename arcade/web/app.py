@@ -2818,6 +2818,7 @@ def create_app(state: AppState) -> FastAPI:
                       drawable=(drawn := _drawable_in(shown)),
                       frames=_frames_for(request, drawn), cursor=cursor, whose=None,
                       missing=missing, not_an_id=bool(named),
+                      focus=wanted if wanted and rows and rows[0]["txid"] != wanted else "",
                       here="/feed" if sort == "popular" else f"/feed?sort={sort}",
                       sort=sort, mine=mine, kinds=feedlib.BY_NAME,
                       friends=_operator_friends(request) if sort == "friends" else [],

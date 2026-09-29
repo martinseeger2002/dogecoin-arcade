@@ -214,7 +214,13 @@ class Group:
     about_mine: bool = True
     unread: bool = False
     count: int = 1
+    #: The comment itself, for a row about a comment, so the link opens the post
+    #: WITH that comment shown (2026-09-28). Empty for everything else.
+    comment: str = ""
 
+
+#: The kinds a feed REPLY is shown as, on my post and on one I follow.
+REPLIED = {ON_MINE.get(feed.REPLY), ON_FOLLOWED.get(feed.REPLY)}
 
 #: Kinds that fold into one row per post; a reply is words, so each is its own.
 FOLDS = {"liked", "disliked", "shared", "tipped", "message"}
@@ -234,7 +240,10 @@ def grouped(events: Iterable[Event]) -> list[Group]:
         if row is None:
             row = Group(kind=ev.kind, source=ev.source, target=ev.target, actors=[ev.actor],
                         text=ev.text, at=ev.at, amount=ev.amount,
-                        about_mine=ev.about_mine, unread=ev.unread)
+                        about_mine=ev.about_mine, unread=ev.unread,
+                        comment=str((ev.extra or {}).get("txid") or "")
+                        if (ev.source == "feed" and ev.kind in REPLIED)
+                        or ev.kind == "mentioned you in a comment" else "")
             rows.append(row)
             if key:
                 index[key] = row
