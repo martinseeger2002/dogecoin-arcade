@@ -83,7 +83,13 @@
     {# Your own post, still being checked, shows your own words (a tester):
        the check is about what OTHER people are shown. #}
     {% elif seen is none and p.author != (mine.address or '') %}
-    <p class="muted posttext" style="margin:10px 0 0">Checking this post&hellip;</p>
+    {# Says what the wait is for, and a post's WORDS may be shown before the check
+       ends (2026-09-28) -- pictures and files in it still wait for theirs,
+       because an unchecked one could be illegal, and those are served screened. #}
+    <details class="covered checking" style="margin:10px 0 0">
+      <summary>Checking this post for sensitive material&hellip; tap to show it now</summary>
+      <div class="posttext" style="margin:8px 0 0;white-space:pre-wrap"
+        >{{ render_post(p.text, drawable, frames) }}</div></details>
     {% else %}
     <div class="posttext" style="margin:10px 0 0;white-space:pre-wrap"
       >{{ render_post(p.text, drawable, frames) }}</div>

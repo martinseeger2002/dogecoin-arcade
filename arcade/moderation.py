@@ -271,9 +271,9 @@ def notice_image(text: str) -> bytes:
         font = ImageFont.load_default(size=26)
     except TypeError:                                  # an older Pillow: no sizes
         font = ImageFont.load_default()
-    box = draw.textbbox((0, 0), text, font=font)
-    draw.text(((480 - (box[2] - box[0])) // 2, (300 - (box[3] - box[1])) // 2), text,
-              fill=(236, 232, 224), font=font)
+    box = draw.multiline_textbbox((0, 0), text, font=font, align="center", spacing=8)
+    draw.multiline_text(((480 - (box[2] - box[0])) // 2, (300 - (box[3] - box[1])) // 2), text,
+                        fill=(236, 232, 224), font=font, align="center", spacing=8)
     out = io.BytesIO()
     im.save(out, "PNG")
     return out.getvalue()

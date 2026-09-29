@@ -5211,7 +5211,7 @@ def create_app(state: AppState) -> FastAPI:
             return Response(mod.notice_image("Removed by this arcade"), status_code=451,
                             media_type="image/png", headers=fresh)
         if verdict is None:
-            return Response(mod.notice_image("Checking this picture\u2026"), status_code=503,
+            return Response(mod.notice_image("Checking for sensitive\nmaterial\u2026"), status_code=503,
                             media_type="image/png", headers={**fresh, "Retry-After": "5"})
         if reveal:                                     # sensitive, and asked for
             return Response(body, media_type=content_type, headers=fresh)
