@@ -2,7 +2,14 @@
    library from anywhere to say what two trades went for. Empty candles are
    drawn as empty: a day with no trade is a gap, never a line ruled to the
    next price (D-039). #}
-{% macro candles(slots, unit='', height=160, period='day') %}
+{% macro candles(slots, unit='', height=200, period='day') %}
+{# Standard candles (2026-09-28: "candles ... with a candle and a wick,
+   according to how standard trading charts work"): each candle OPENS at the
+   previous candle's close, so a period with one trade still has a body -- from
+   where the market was to where it went -- and its wick spans that move too.
+   Green when it closed at or above where it opened, red when below. A quiet
+   period is a flat green line at the last price. The wick keeps its width
+   however far the chart is stretched (non-scaling-stroke). #}
 {% set traded = slots | selectattr('count') | list %}
 {% if not traded %}
   <p class="muted" style="margin:0">No trades yet on this chain.</p>
@@ -15,52 +22,62 @@
   {% set range = (top - bot) or 1 %}
   {% set w = 1000 %}
   {% set step = w / (slots | length) %}
-  <div style="overflow-x:auto">
+  {% set Y = namespace() %}
+  <div class="candlewrap" style="position:relative">
   <svg viewBox="0 0 {{ w }} {{ height }}" width="100%" height="{{ height }}"
        preserveAspectRatio="none" role="img"
        aria-label="candles, {{ traded|length }} of {{ slots|length }} periods traded">
+    {% for f in (0.25, 0.5, 0.75) %}
+    <line x1="0" y1="{{ height * f }}" x2="{{ w }}" y2="{{ height * f }}" stroke="currentColor"
+          opacity=".08" vector-effect="non-scaling-stroke"/>
+    {% endfor %}
     <line x1="0" y1="{{ height - 1 }}" x2="{{ w }}" y2="{{ height - 1 }}"
-          stroke="currentColor" opacity=".18"/>
-    {# A period with no trade is a flat green line at the market -- the last
-       price -- where its candle would be (2026-09-28); before the first
-       trade there is no market yet, so it stays a dot. #}
+          stroke="currentColor" opacity=".18" vector-effect="non-scaling-stroke"/>
     {% set market = namespace(last=none) %}
     {% for s in slots %}
       {% set x = loop.index0 * step + step / 2 %}
       {% if s.count %}
-        {% set y = { 'hi': height - (s.high - bot) / range * (height - 8) - 4,
-                     'lo': height - (s.low  - bot) / range * (height - 8) - 4,
-                     'o':  height - (s.open - bot) / range * (height - 8) - 4,
-                     'c':  height - (s.close- bot) / range * (height - 8) - 4 } %}
-        {% set up = s.close >= s.open %}
+        {% set o = market.last if market.last is not none else s.open %}
+        {% set h = [s.high, o] | max %}
+        {% set l = [s.low, o] | min %}
+        {% set y = { 'hi': height - (h - bot) / range * (height - 8) - 4,
+                     'lo': height - (l - bot) / range * (height - 8) - 4,
+                     'o':  height - (o - bot) / range * (height - 8) - 4,
+                     'c':  height - (s.close - bot) / range * (height - 8) - 4 } %}
+        {% set up = s.close >= o %}
         {% set colour = 'var(--ok)' if up else 'var(--bad)' %}
-        <line x1="{{ '%.1f'|format(x) }}" y1="{{ '%.1f'|format(y.hi) }}"
+        <g><line x1="{{ '%.1f'|format(x) }}" y1="{{ '%.1f'|format(y.hi) }}"
               x2="{{ '%.1f'|format(x) }}" y2="{{ '%.1f'|format(y.lo) }}"
-              stroke="{{ colour }}" stroke-width="2"/>
-        <rect x="{{ '%.1f'|format(x - step * 0.3) }}"
+              stroke="{{ colour }}" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+        <rect x="{{ '%.1f'|format(x - step * 0.36) }}"
               y="{{ '%.1f'|format([y.o, y.c] | min) }}"
-              width="{{ '%.1f'|format(step * 0.6) }}"
+              width="{{ '%.1f'|format(step * 0.72) }}"
               height="{{ '%.1f'|format([(y.o - y.c) | abs, 2] | max) }}"
-              fill="{{ colour }}"/>
+              fill="{{ colour }}" stroke="{{ colour }}" vector-effect="non-scaling-stroke"/>
         <title>{{ s.count }} trade{{ '' if s.count == 1 else 's' }} &middot;
-          open {{ s.open }} high {{ s.high }} low {{ s.low }} close {{ s.close }}</title>
+          open {{ o }} high {{ h }} low {{ l }} close {{ s.close }}</title></g>
         {% set market.last = s.close %}
       {% elif market.last is not none %}
         {% set ym = height - (market.last - bot) / range * (height - 8) - 4 %}
-        <line class="flat" x1="{{ '%.1f'|format(x - step * 0.3) }}" y1="{{ '%.1f'|format(ym) }}"
-              x2="{{ '%.1f'|format(x + step * 0.3) }}" y2="{{ '%.1f'|format(ym) }}"
-              stroke="var(--ok)" stroke-width="2"><title>no trade &middot; market {{ market.last }}</title></line>
+        <line class="flat" x1="{{ '%.1f'|format(x - step * 0.36) }}" y1="{{ '%.1f'|format(ym) }}"
+              x2="{{ '%.1f'|format(x + step * 0.36) }}" y2="{{ '%.1f'|format(ym) }}"
+              stroke="var(--ok)" stroke-width="2" vector-effect="non-scaling-stroke"><title>no trade &middot; market {{ market.last }}</title></line>
       {% else %}
         <circle cx="{{ '%.1f'|format(x) }}" cy="{{ height - 4 }}" r="1"
                 fill="currentColor" opacity=".25"/>
       {% endif %}
     {% endfor %}
   </svg>
+  <span class="axis" style="top:2px">{{ '%g'|format(top) }}</span>
+  <span class="axis" style="top:calc(50% - 7px)">{{ '%g'|format((top + bot) / 2) }}</span>
+  <span class="axis" style="bottom:2px">{{ '%g'|format(bot) }}</span>
   </div>
+  <style>.candlewrap .axis{position:absolute;right:4px;font:10px ui-monospace,monospace;color:var(--muted);
+    background:color-mix(in srgb,var(--panel,#fff) 70%,transparent);padding:0 3px;border-radius:3px;pointer-events:none}</style>
   <p class="muted" style="font-size:.8rem;margin:6px 0 0">
     {{ traded | length }} of {{ slots | length }} {{ period }}s traded &middot; high
-    {{ hi }} &middot; low {{ lo }}{% if unit %} {{ unit }}{% endif %}. A {{ period }} with
-    no trade is a flat green line at the last price.</p>
+    {{ hi }} &middot; low {{ lo }}{% if unit %} {{ unit }}{% endif %}. Each candle opens where
+    the last one closed; a {{ period }} with no trade is a flat green line at the last price.</p>
 {% endif %}
 {% endmacro %}
 
