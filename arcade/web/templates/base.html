@@ -1821,6 +1821,21 @@ function arcadeFileCost(bytes){
       for (var t = j; t < L.length; t++) if (key(L[t]) === k) { found = t; break; }
       if (found >= 0) { M[i] = L[found]; j = found + 1; } else M[i] = null;
     }
+    // Text the page redrew no longer matches the server's old words, so it lined up
+    // with nothing, and the server's new words were then ADDED beside it: a like
+    // drawn at once as "♥ 1" became "♥ 1 ♥ 1" when its block landed
+    // (2026-09-28: "still seeing the double heart bug"). An unmatched
+    // server text takes the page's unmatched text in the same gap, so it is replaced.
+    var used = new Set(M.filter(Boolean));
+    for (i = 0; i < W.length; i++) {
+      if (M[i] || W[i].nodeType !== 3) continue;
+      var lo = 0, hi = L.length;
+      for (t = i - 1; t >= 0; t--) if (M[t]) { lo = L.indexOf(M[t]) + 1; break; }
+      for (t = i + 1; t < W.length; t++) if (M[t]) { hi = L.indexOf(M[t]); break; }
+      for (t = lo; t < hi; t++) if (L[t].nodeType === 3 && !used.has(L[t])) {
+        M[i] = L[t]; used.add(L[t]); break;
+      }
+    }
     if (W.length === N.length) {
       var same = true;
       for (i = 0; i < W.length; i++) if (key(W[i]) !== key(N[i])) { same = false; break; }
@@ -1837,12 +1852,14 @@ function arcadeFileCost(bytes){
       var w = W.length - 1 - i;
       if (M[w]) apply(M[w], W[w], N[N.length - 1 - i]);
     }
+    // The old middle goes first: a head child's next sibling may be in it, and
+    // inserting before a node just taken out throws.
+    for (i = p; i < W.length - s; i++) if (M[i] && M[i].parentNode === live) live.removeChild(M[i]);
     // Where the new middle goes: before the first surviving tail child, else after the
     // last head child, else at the end.
     var after = null;
     for (i = W.length - s; i < W.length; i++) if (M[i]) { after = M[i]; break; }
     if (!after) { for (i = p - 1; i >= 0; i--) if (M[i]) { after = M[i].nextSibling; break; } }
-    for (i = p; i < W.length - s; i++) if (M[i] && M[i].parentNode === live) live.removeChild(M[i]);
     for (i = p; i < N.length - s; i++) live.insertBefore(document.importNode(N[i], true), after);
   }
 
@@ -1918,6 +1935,7 @@ function arcadeFileCost(bytes){
   setTimeout(poll, 300);   // the baseline, as soon as the page is up
   // For a page that used to reload itself to show new state: ask for the same update.
   window.arcadeLiveUpdate = function () { known = -1; poll(); };
+  window.arcadePatch = apply;   // for tests/test_live_update.py
 })();
 </script>
 <script>

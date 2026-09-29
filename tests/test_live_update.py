@@ -236,3 +236,28 @@ def test_new_site_code_is_offered_not_forced(browser, served):
         )
     finally:
         cls.running_version = old
+
+
+def test_a_label_the_page_redrew_is_replaced_not_doubled(browser, served):
+    """A heart pressed is drawn at once as "♥ 1"; when its block lands the
+    server says "♥ 1" too. The page's words matched neither the server's old
+    ones nor its new ones, and the update ADDED the new beside them: "♥ 1 ♥ 1"
+    (2026-09-28: "I'm still seeing the double heart bug")."""
+    base, peer_hex, peer, state = served
+    browser.get(f"{base}/messages/{peer_hex}")
+    got = browser.execute_script("""
+      function el(html) { return new DOMParser().parseFromString(html, "text/html").body.firstChild; }
+      var out = [];
+      [["<button>\\n  \\u2661 0</button>", "\\u2665 1", "<button>\\n  \\u2665 1</button>"],
+       ["<button>\\n  \\ud83d\\udc4e</button>", "\\ud83d\\udc4e 1", "<button>\\n  \\ud83d\\udc4e 1</button>"],
+       ["<p><b>x</b> 2 likes</p>", null, "<p><b>x</b> 3 likes</p>"]].forEach(function (c) {
+        var live = document.importNode(el(c[0]), true);
+        if (c[1] !== null) live.textContent = c[1];
+        else live.lastChild.nodeValue = " 3 likes, drawn";
+        window.arcadePatch(live, el(c[0]), el(c[2]));
+        out.push([live.childNodes.length, live.textContent.trim()]);
+      });
+      return out;""")
+    assert got[0] == [1, "♥ 1"], got
+    assert got[1] == [1, "\U0001F44E 1"], got
+    assert got[2] == [2, "x 3 likes"], got
