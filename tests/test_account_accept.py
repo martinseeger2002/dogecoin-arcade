@@ -804,7 +804,7 @@ def test_an_accepted_offer_binds_until_it_is_taken_back(node):
         conn.execute("UPDATE bid SET expires = 1 WHERE direction = 'in'")
 
     page = holder_client.get("/exchange?tab=offers").text
-    assert "You accepted this" in page and "Take it back</button>" in page
+    assert "accepted, waiting for them" in page and "Take it back</button>" in page
     assert "data-accept" not in page, "an accepted offer is never offered for Accept again"
 
     said = holder_client.post("/account/answer/withdraw", json={
