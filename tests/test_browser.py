@@ -895,7 +895,13 @@ def test_a_see_through_picture_shrinks_to_png_and_stays_see_through(phone):
     try:
         browser.set_script_timeout(60)
         browser.execute_async_script(MAKE_A_SPRITE, 2000)
-        state = _sizes_settle(browser, want=2)
+        _sizes_settle(browser, want=2)
+        # Large by default now (never Small unasked); choose the shrunk one.
+        browser.execute_script("""
+            [...document.querySelectorAll('#picked-sizes button')]
+              .filter(b => b.textContent.indexOf('Large') !== 0)[0].click();""")
+        time.sleep(0.4)
+        state = browser.execute_script(READ_SIZES)
         assert state["chosen"] != ["Large"], state
         assert state["name"] == "player.png" and state["type"] == "image/png", state
         assert any("as PNG" not in l and l.startswith("Large") for l in state["labels"])
@@ -911,5 +917,31 @@ def test_a_see_through_picture_shrinks_to_png_and_stays_see_through(phone):
               done(n); };
             im.src = URL.createObjectURL(f);""")
         assert clear > 0, "the transparency came through the re-encode"
+    finally:
+        browser.switch_to.default_content()
+
+
+def test_a_tall_picture_is_not_crushed_by_default(phone):
+    """A 256x1960 map was shrunk to 84x640 by the default (2026-09-29)."""
+    visit, peer = phone
+    browser = visit(f"/messages/{peer}")
+    try:
+        browser.set_script_timeout(30)
+        browser.execute_async_script("""
+            const done = arguments[0];
+            const c = document.createElement('canvas'); c.width = 256; c.height = 1960;
+            const g = c.getContext('2d'); const img = g.createImageData(256, 1960);
+            for (let i = 0; i < img.data.length; i += 4) {
+              img.data[i] = (i * 7) % 255; img.data[i+1] = (i * 13) % 255;
+              img.data[i+2] = (i * 29) % 255; img.data[i+3] = 255; }
+            g.putImageData(img, 0, 0);
+            c.toBlob(function (blob) {
+              const input = document.getElementById('attachment'); const dt = new DataTransfer();
+              dt.items.add(new File([blob], 'map.jpg', {type: 'image/jpeg'}));
+              input.files = dt.files; input.dispatchEvent(new Event('change')); done(blob.size);
+            }, 'image/jpeg', 0.95);""")
+        state = _sizes_settle(browser)
+        assert state["chosen"] == ["Large"], state
+        assert not any(l.startswith("Small") for l in state["labels"]), state["labels"]
     finally:
         browser.switch_to.default_content()

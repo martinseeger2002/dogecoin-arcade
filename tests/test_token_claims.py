@@ -185,3 +185,27 @@ def test_only_a_page_its_seller_holds_can_be_bound(node):
         "signatures": [_sign(secret, bytes.fromhex(d), funding.SINGLE_ANYONECANPAY).hex()
                        for d in leg["sighashes"]]})
     assert refused.status_code == 400 and "not yours" in refused.json()["detail"]
+
+
+def test_a_pool_is_listed_and_withdrawn_in_one_transaction(node):
+    """2026-09-29: "how does @vex withdraw the old pool?" Withdrawing spends
+    every lot's coins back to the seller, and the tokens it held are free for
+    a new pool."""
+    book = _bookcoin(node, 95)
+    state, rpc, who = book["state"], book["rpc"], book["client"]
+    ids, _ = _lots(book, count=3, lot="100")
+    pools = who.get("/account/claimpools").json()["pools"]
+    assert len(pools) == 1 and pools[0]["lots"] == 3 and pools[0]["pool"] in ids
+    too_big = who.post("/account/claimlots", json={
+        "property_id": book["pid"], "lot": "100", "count": 3, "price": "0.01"})
+    assert too_big.status_code == 400, "300 of 500 already stand in lots"
+
+    offer = who.post("/account/list/cancel", json={"pool": ids[1]})
+    assert offer.status_code == 200, offer.text
+    assert sorted(offer.json()["listings"]) == sorted(ids)
+    _signed(who, book["secret"], book["pubkey"], offer)
+    _settled(state, rpc)
+    assert who.get("/account/claimpools").json()["pools"] == []
+    fits = who.post("/account/claimlots", json={
+        "property_id": book["pid"], "lot": "100", "count": 3, "price": "0.01"})
+    assert fits.status_code == 200, fits.text

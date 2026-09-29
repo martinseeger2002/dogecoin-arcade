@@ -11691,6 +11691,36 @@ def create_app(state: AppState) -> FastAPI:
                              "price": price, "number": row["number"],
                              **leg.as_json()})
 
+    @app.get("/account/claimpools")
+    def account_claimpools(request: Request, chain: str = ""):
+        """This account's prize pools, one row per pool, to see and withdraw
+        (2026-09-29). A pool is the open claims of one phrase and one lot."""
+        account = _signed_in_account(request)
+        try:
+            ctx = _chain_asked({"chain": chain})
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, ctx)
+        _sweep_book(ctx, force=True)          # a withdrawn pool shows as gone
+        pools: dict[tuple, dict] = {}
+        for r in state.listings.open_listings(ctx.network, limit=1000, claims=True):
+            if r["owner"] != address or not r.get("claim_hash"):
+                continue
+            key = (r["claim_hash"], r["payload"])
+            got = pools.setdefault(key, {"pool": r["id"], "lots": 0, "created": r["created"],
+                                         "price": int(r["price"]), "bound": r.get("bound") or "",
+                                         "what": _piece_called(ctx, r)})
+            got["lots"] += 1
+            if r["created"] < got["created"]:
+                got.update(pool=r["id"], created=r["created"])
+        index = state.token_index(ctx)
+        out = []
+        for got in sorted(pools.values(), key=lambda g: g["created"], reverse=True):
+            bound = index.inscription(got["bound"]) if got["bound"] else None
+            out.append({**got, "bound_number": bound["number"] if bound else None})
+        return JSONResponse({"chain": ctx.network, "pools": out},
+                            headers={"Cache-Control": "no-store"})
+
     @app.post("/account/list/cancel")
     def account_list_cancel(request: Request, payload: Any = Body(None)):
         """Offer the transaction that takes this account's listings of a piece
@@ -11705,11 +11735,21 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         address = _account_address(account.pubkey, chain)
         piece = str(said.get("piece") or "").strip().lower()
-        rows = [r for r in state.listings.open_listings(chain.network, limit=1000,
-                                                        claims=True)
-                if r["owner"] == address and _sold_piece(r) == piece]
+        pool = state.listings.get(str(said.get("pool") or "")) if said.get("pool") else None
+        if pool is not None:
+            # A prize pool (2026-09-29: "how does @vex withdraw the old pool"):
+            # every open lot beside the one named, same seller, phrase and lot.
+            rows = [r for r in state.listings.open_listings(chain.network, limit=1000,
+                                                            claims=True)
+                    if r["owner"] == address and r.get("claim_hash") == pool.get("claim_hash")
+                    and r["payload"] == pool["payload"] and pool.get("claim_hash")]
+        else:
+            rows = [r for r in state.listings.open_listings(chain.network, limit=1000,
+                                                            claims=True)
+                    if r["owner"] == address and _sold_piece(r) == piece]
         if not address or not rows:
-            return JSONResponse({"detail": "this account has no open listing of that piece"},
+            return JSONResponse({"detail": "this account has no open listing of that piece"
+                                 if pool is None else "that pool has no open lots of yours"},
                                 status_code=404)
         coins = []
         for r in rows:
@@ -11721,7 +11761,9 @@ def create_app(state: AppState) -> FastAPI:
             with contextlib.closing(index.open()) as db:
                 unsigned = fundinglib.build_sweep(
                     db, chain.params, address, coins, rate=fees.MIN_FEE_PER_KB,
-                    what=f"cancel the listing of #{(index.inscription(piece) or {}).get('number', '?')}",
+                    what=(f"withdraw {len(rows)} prize lot{'s' if len(rows) != 1 else ''}"
+                          if pool is not None else
+                          f"cancel the listing of #{(index.inscription(piece) or {}).get('number', '?')}"),
                     exclude=_flights.spent_by(account.pubkey, chain.network),
                     extra=_flights.change_for(account.pubkey, chain.network))
         except (fundinglib.FundingError, ValueError) as exc:
@@ -11848,6 +11890,7 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError(f"make between 1 and {LOTS_AT_ONCE} lots at a time")
             price = parse_amount(str(said.get("price", "")), True)
             _above_dust(price, "price")
+            _sweep_book(chain, force=True)    # a pool withdrawn frees its tokens
             free = (_lot_room(chain, address, prop["property_id"])
                     - _lots_listed(chain, address, prop["property_id"]))
             if units * count > free:

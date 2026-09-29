@@ -111,6 +111,7 @@ PUBLIC_PAGES = frozenset({
     "/account/inscribe/unfinished",
     "/account/dust",                  # coins in this account's own payload outputs
     "/account/standing/fillable",     # this account's buy orders a sell order meets
+    "/account/claimpools",            # this account's own prize pools, to withdraw
 })
 
 #: Prefixes a stranger may read. Everything under them is public, so each

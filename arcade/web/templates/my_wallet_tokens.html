@@ -41,6 +41,11 @@
   </div>
 </div>
 
+<div class="panel" id="pools" hidden>
+  <h3 style="margin:0 0 6px">Your prize pools</h3>
+  <div id="pools-list"></div>
+</div>
+
 <div class="panel" id="lots" hidden>
   <h3 style="margin:0 0 6px" id="lots-what">Prize lots</h3>
   <p class="muted" style="font-size:.86rem;margin:0 0 10px">Tokens a game or any
@@ -267,9 +272,59 @@ async function draw() {
   if (!any) $("sending").hidden = true;
 }
 
+// Your prize pools, each with Withdraw: one transaction spends the coins
+// every lot stands on back to you, which is the only way to take back a
+// signature that has left this browser (2026-09-29).
+async function drawPools() {
+  let said = {pools: []};
+  try { said = await (await fetch("/account/claimpools?chain=" + CHAIN.network)).json(); }
+  catch (e) { /* no pools shown is the honest fallback */ }
+  const list = $("pools-list");
+  list.innerHTML = "";
+  for (const p of (said.pools || [])) {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.style.cssText = "align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--line)";
+    const words = document.createElement("span");
+    words.style.flex = "1";
+    words.textContent = `${p.lots} lot${p.lots === 1 ? "" : "s"} of ${p.what} at `
+      + `${(p.price / 1e8).toFixed(8).replace(/0+$/, "").replace(/\.$/, "")} coins`
+      + (p.bound_number !== null && p.bound_number !== undefined
+         ? ` · pays only while you hold #${p.bound_number}` : " · not bound to a page");
+    const id = document.createElement("code");
+    id.textContent = p.pool.slice(0, 10) + "…";
+    id.title = p.pool;
+    const go = document.createElement("button");
+    go.className = "btn ghost small";
+    go.textContent = "Withdraw";
+    go.onclick = async () => {
+      say(""); news("");
+      go.disabled = true;
+      try {
+        if (!keys) keys = await arcadeKeys(CHAIN);
+        const asked = await fetch("/account/list/cancel", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({pool: p.pool, chain: CHAIN.network})});
+        const offer = await asked.json().catch(() => ({}));
+        if (!asked.ok) throw new Error(offer.detail || "that pool could not be withdrawn");
+        const shown = await wallet.checked(offer, keys);
+        if (!(await arcadeAsk(`Withdraw ${p.lots} lot${p.lots === 1 ? "" : "s"}?`,
+            `${shown.says} Nobody can claim them once this is in a block.`, "Withdraw"))) return;
+        const done = await wallet.confirm(keys, offer);
+        news(`Withdrawn: ${done.txid.slice(0, 16)}… The lots close when its block lands.`);
+      } catch (e) { say(String(e.message || e)); }
+      finally { go.disabled = false; }
+    };
+    row.append(words, id, go);
+    list.append(row);
+  }
+  $("pools").hidden = !(said.pools || []).length;
+}
+
 keys = await wallet.opened(CHAIN);
 $("shut").hidden = !!keys;
 await draw();
+await drawPools();
 document.body.dataset.walletTokensReady = "yes";
 </script>
 {% endblock %}

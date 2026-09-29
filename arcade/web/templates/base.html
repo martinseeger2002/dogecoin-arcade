@@ -1450,6 +1450,9 @@ function arcadeOfferSizes(file, onReady){
   var pending = ARCADE_SIZES.slice(1).map(function(spec){
     return arcadeShrink(file, spec.max, spec.quality).then(function(out){
       if (!out || out.blob.size >= file.size) return null;
+      // Not offered when it would crush the short side: a tall or wide
+      // picture shrunk by its long side came out a sliver (2026-09-29).
+      if (Math.min(out.width, out.height) < 200) return null;
       return {key: spec.key, label: spec.label, hint: spec.hint,
               file: new File([out.blob], arcadeJpegName(file.name, out.type),
                              {type: out.type}),
@@ -1696,9 +1699,12 @@ function arcadePick(input, drawText){
     arcadeAttach.choices = results;
     // A picture that already fits in one piece goes as it is: a re-encode
     // saves a few hundred bytes and no transaction (2026-09-29).
+    // Medium when it was offered, and otherwise the picture as it is: never
+    // Small by default, which silently shrank a 256x1960 map to 84x640
+    // (2026-09-29). Small is still there to choose.
     var preferred = (arcadeFileCost(file.size).chunks <= 1 ? results[0] : null)
                  || results.filter(function(r){ return r.key === 'medium'; })[0]
-                 || results[results.length - 1];
+                 || results[0];
     arcadeChoose(input, preferred.key, drawText);
   });
 }
