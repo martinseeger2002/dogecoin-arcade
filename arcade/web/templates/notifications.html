@@ -59,7 +59,10 @@
 
 {% set fresh = rows|selectattr('unread')|list %}
 {% set older = rows|rejectattr('unread')|list %}
-{% if rows %}
+{% if rows and page > 1 %}
+  {# A later page: only its rows, for the page before to append. #}
+  <div class="panel nlist" id="npage">{% for r in rows %}{{ row(r) }}{% endfor %}</div>
+{% elif rows %}
   {% if fresh %}
   <h2 class="nhead">New</h2>
   <div class="panel nlist">{% for r in fresh %}{{ row(r) }}{% endfor %}</div>
@@ -68,7 +71,12 @@
   <h2 class="nhead">Earlier</h2>
   <div class="panel nlist">{% for r in older %}{{ row(r) }}{% endfor %}</div>
   {% endif %}
-{% else %}
+{% endif %}
+{% if more %}
+<p id="nmore" style="text-align:center;margin:14px 0">
+  <a class="btn ghost small" href="?page={{ page + 1 }}">Older</a></p>
+{% endif %}
+{% if not rows %}
 <div class="panel nempty">
   <div class="nempty-icon">🔔</div>
   <p style="margin:0">Nothing yet.</p>
@@ -77,6 +85,39 @@
     here.</p>
 </div>
 {% endif %}
+
+<script>
+// The next page as the reader reaches the foot of this one (2026-09-29).
+// The link works on its own too: scrolling is a convenience, not the only way.
+(function () {
+  var more = document.getElementById("nmore");
+  if (!more || !window.IntersectionObserver || !window.fetch) return;
+  var asking = false;
+  var watch = new IntersectionObserver(function (seen) {
+    if (!seen[0].isIntersecting || asking) return;
+    var link = more.querySelector("a");
+    if (!link) return;
+    asking = true;
+    link.textContent = "Loading…";
+    fetch(link.href, {credentials: "same-origin"}).then(function (r) { return r.text(); })
+      .then(function (html) {
+        var doc = new DOMParser().parseFromString(html, "text/html");
+        var lists = document.querySelectorAll(".nlist");
+        var into = lists[lists.length - 1];
+        doc.querySelectorAll("#npage .nrow").forEach(function (row) {
+          into.appendChild(document.importNode(row, true));
+        });
+        var next = doc.getElementById("nmore");
+        if (next && next.querySelector("a")) {
+          link.href = next.querySelector("a").href;
+          link.textContent = "Older";
+          asking = false;
+        } else { watch.disconnect(); more.remove(); }
+      }).catch(function () { link.textContent = "Older"; watch.disconnect(); });
+  }, {rootMargin: "400px"});
+  watch.observe(more);
+})();
+</script>
 
 <style>
 .nhead{font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);

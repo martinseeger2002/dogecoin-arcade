@@ -268,14 +268,38 @@ async function drawThreads() {
   // them in the address book brings the conversation back, nothing is deleted.
   const all = (await mail.threads()).filter((t) =>
     !(window.arcadeBlocked && window.arcadeBlocked.has(t.address)));
-  // Names before rows: a list that grows a name under a finger already
-  // reaching for a thread is worse than one that arrives a moment late.
-  await Promise.all(all.map(async (t) => {
-    if (!t.tag && t.address) t.tag = await tagOf(t.address);
-  }));
   $("threads").innerHTML = "";
   $("no-threads").hidden = all.length > 0;
-  for (const thread of all) {
+  // Thirty at a time, the next thirty as the list is scrolled to its foot
+  // (2026-09-29: "same with the conversations list"). The open one is always
+  // drawn, wherever it falls.
+  shownThreads = all;
+  drawnThreads = 0;
+  await drawMoreThreads();
+  return all;
+}
+
+let shownThreads = [], drawnThreads = 0, threadWatch = null;
+const THREADS_AT_ONCE = 30;
+
+async function drawMoreThreads() {
+  const all = shownThreads;
+  const start = drawnThreads;
+  let batch = all.slice(start, start + THREADS_AT_ONCE);
+  if (start === 0 && here) {
+    const open = all.findIndex((t) => t.peer === here);
+    if (open >= THREADS_AT_ONCE) batch = batch.concat([all[open]]);
+  }
+  drawnThreads = Math.min(all.length, start + THREADS_AT_ONCE);
+  // Names before rows, for these rows: a list that grows a name under a finger
+  // already reaching for a thread is worse than one that arrives a moment late.
+  await Promise.all(batch.map(async (t) => {
+    if (!t.tag && t.address) t.tag = await tagOf(t.address);
+  }));
+  const old = document.getElementById("threads-more");
+  if (old) old.remove();
+  for (const thread of batch) {
+    if (start > 0 && thread.peer === here && $("threads").querySelector(".thread.on")) continue;
     const row = document.createElement("a");
     row.className = "thread" + (here === thread.peer ? " on" : "");
     row.href = "#";
@@ -306,7 +330,23 @@ async function drawThreads() {
     row.append(top, preview, stamp);
     $("threads").appendChild(row);
   }
-  return all;
+  if (drawnThreads < all.length) {
+    const foot = document.createElement("div");
+    foot.id = "threads-more";
+    foot.className = "muted";
+    foot.style.cssText = "text-align:center;padding:10px;font-size:.85rem";
+    foot.textContent = `${all.length - drawnThreads} more`;
+    $("threads").appendChild(foot);
+    if (window.IntersectionObserver) {
+      if (threadWatch) threadWatch.disconnect();
+      threadWatch = new IntersectionObserver((seen) => {
+        if (seen[0].isIntersecting) { threadWatch.disconnect(); drawMoreThreads(); }
+      }, {root: document.querySelector(".threads"), rootMargin: "300px"});
+      threadWatch.observe(foot);
+    } else {
+      foot.onclick = () => drawMoreThreads();
+    }
+  }
 }
 
 // A `/content/<id>` line is shown as the picture it names, as the feed does

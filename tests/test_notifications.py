@@ -256,3 +256,22 @@ def test_a_buy_order_that_can_fill_is_said_as_that_not_as_mail():
     fill, mail = notify.message_events(rows, lambda pid: "Ghost Credits" if pid == "14" else "")
     assert (fill.source, fill.target, fill.text) == ("fill", "14", "Ghost Credits")
     assert mail.source == "message" and mail.actor == "nSomebody"
+
+
+def test_notifications_come_a_page_at_a_time(public, monkeypatch):
+    """2026-09-29: "Notifications is gonna need lazy loading as well because
+    the list is getting quite long." Thirty rows a page, newest first, and a
+    link to the next page that the page follows as it is scrolled."""
+    app, state = public
+    _me(app, state)
+    many = [notify.Event(source="feed", seq=n, kind="liked", actor=f"nActor{n:03d}",
+                         target=f"{n:064x}", text=f"post number {n:03d}", at=1_790_000_000 + n,
+                         extra={"txid": f"{n:064x}"})
+            for n in range(70)]
+    monkeypatch.setattr(notify, "feed_events", lambda *a, **k: list(many))
+    first = app.get("/me/notifications").text
+    assert first.count('class="nrow') == 30
+    assert 'href="?page=2"' in first
+    third = app.get("/me/notifications?page=3").text
+    assert third.count('class="nrow') == 10 and 'id="npage"' in third
+    assert 'href="?page=4"' not in third

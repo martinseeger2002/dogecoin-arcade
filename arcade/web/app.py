@@ -7707,8 +7707,12 @@ def create_app(state: AppState) -> FastAPI:
         return {"notif_count": sum(1 for e in events if e.unread and e.source != "message")
                 + mail, "mail_count": mail}
 
+    #: Notification rows a page draws (2026-09-29: "Notifications is gonna need
+    #: lazy loading as well because the list is getting quite long").
+    NOTIFS_PER_PAGE = 30
+
     @app.get("/me/notifications", response_class=HTMLResponse)
-    def my_notifications(request: Request):
+    def my_notifications(request: Request, page: int = 1):
         account = signed_in(request)
         if account is None:
             return _to_join(request)
@@ -7729,7 +7733,14 @@ def create_app(state: AppState) -> FastAPI:
         seen = notify.seen_now(events, _notif_seen(account.pubkey))
         seen["message_tab"] = max(int(seen.get("message_tab", 0)), int(seen.get("message", 0)))
         state.set_setting(f"notif_seen:{account.pubkey}", seen)
-        rows = notify.grouped(events)
+        every = notify.grouped(events)
+        # A page at a time, newest first: the next is fetched as the reader
+        # scrolls to the foot of this one, and faces are looked up only for
+        # the rows drawn (they were for every row, every time).
+        page = max(1, int(page or 1))
+        at = (page - 1) * NOTIFS_PER_PAGE
+        rows = every[at:at + NOTIFS_PER_PAGE]
+        more = at + NOTIFS_PER_PAGE < len(every)
         faces: dict[str, str] = {}
         for row in rows:
             for who in row.actors[:1]:
@@ -7744,7 +7755,7 @@ def create_app(state: AppState) -> FastAPI:
                 for row in rows for who in row.actors[:1] if who}
         return render(request, "notifications.html", rows=rows, names=names,
                       faces=faces, hues=hues, ago=notify.ago, now=int(time.time()),
-                      chain=chain)
+                      chain=chain, page=page, more=more)
 
     # --- seats, and signing in ------------------------------------------------
     #
