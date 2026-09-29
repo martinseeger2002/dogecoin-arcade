@@ -577,6 +577,34 @@ then it has to wait.
 holds the tokens for it; a pool cannot promise more than the seller has.
 Lots are withdrawn the way any listing is: by spending the coins they stand on.
 
+**Tying a pool to your page.** A pool can be bound to one inscription you
+hold (*Pays out only while I hold inscription* on the Prize lots form). It
+then pays out only while you still hold that inscription: send the page away
+and its pool closes, which is how an old game is retired. A claim that names
+a different page is refused too.
+
+Because a pool can only be bound to a page that already exists, the page
+finds its own pool at run time instead of carrying a listing id:
+
+`GET /r/claimpool/<inscription>`
+
+```json
+{ "inscription": "…", "open": true, "listing": "…", "lots_left": 20,
+  "what": "50 PLASMA", "price": 1000000 }
+```
+
+`open` is false when nothing is left or the seller no longer holds the page,
+so a game can say "cash-out closed" rather than fail at the card. It never
+includes the phrase. A bound page can also leave `listing` out of its claim
+message, and the wallet looks up the pool for the page that asked:
+
+```js
+parent.postMessage({arcade: "claim", seq: 1, secret: "<phrase>"}, "*");
+```
+
+The phrase can be chosen before the page is inscribed; type it into the form
+when you set the pool aside.
+
 ### A page that is its owner's own words
 
 A page asks with `arcade.send` and the person is asked. A page this wallet
