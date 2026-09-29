@@ -32,7 +32,10 @@ GUIDE = Path(__file__).parent / "templates" / "guide.md"
 #: clone downloads (2026-09-28: "make the plan private"). A plan read
 #: by the public is a plan whose agent instructions are public too.
 #: arcade/bootstrap.py keeps the same list; a test holds them together.
-PRIVATE = ("multi-user.md", "voice-plan.md")
+PRIVATE = ("multi-user.md", "voice-plan.md",
+           # The engineering history too (2026-09-28: the public docs are
+           # general documentation -- what it is, how it works, how to run a node).
+           "DECISIONS.md", "M0-notes.md", "M1-notes.md", "M2-notes.md", "03-companion-app-design.md", "p2p-messaging.md", "tokens-notes.md", "messaging/04-testnet-results.md")
 
 #: Everything else, as shipped. One directory, read at request time like the
 #: templates are, so a document can be corrected without a restart.
@@ -43,6 +46,8 @@ DOCS = Path(__file__).parent / "docs"
 #: named here is still served -- it goes at the end under its own file name
 #: -- so adding one to `docs/` is enough to publish it.
 ORDER = (
+    ("how-it-works.md", "How DogecoinArcade works",
+     "What it is, what lives on the chain, and what your browser and a node each do."),
     ("features.md", "What it does", "Every part of the application, in one page."),
     ("inscription-api.md", "The inscription API",
      "What an inscribed page may ask the wallet, and what it is refused."),

@@ -299,7 +299,8 @@ NOT_SOURCE = (".venv", ".git", "__pycache__", "build", "dist", "bootstrap",
 
 #: The working plans, which a clone does not get (arcade/web/guide.py PRIVATE:
 #: the program ships them to its operator and to nobody else).
-NOT_PUBLISHED = ("arcade/web/docs/multi-user.md", "arcade/web/docs/voice-plan.md")
+NOT_PUBLISHED = tuple(f"arcade/web/docs/{name}" for name in (
+    "multi-user.md", "voice-plan.md", "DECISIONS.md", "M0-notes.md", "M1-notes.md", "M2-notes.md", "03-companion-app-design.md", "p2p-messaging.md", "tokens-notes.md", "messaging/04-testnet-results.md"))
 
 
 def _is_source(name: str) -> bool:

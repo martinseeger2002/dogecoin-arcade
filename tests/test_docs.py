@@ -125,7 +125,7 @@ def test_the_plans_are_for_the_operator_only(client, name):
     try:
         body = app.get("/docs").text
         assert f"/docs/{name}" not in body
-        assert "Every decision, and why" in body, "the rest is still offered"
+        assert "How DogecoinArcade works" in body, "the rest is still offered"
         answer = app.get(f"/docs/{name}", follow_redirects=False)
         assert answer.status_code == 303 and answer.headers["location"] == "/docs"
     finally:
@@ -137,4 +137,4 @@ def test_the_source_archive_leaves_the_plans_out(tmp_path):
     assert set(bootstrap.NOT_PUBLISHED) == {f"arcade/web/docs/{n}" for n in guide.PRIVATE}
     for name in bootstrap.NOT_PUBLISHED:
         assert not bootstrap._is_source(name)
-    assert bootstrap._is_source("arcade/web/docs/DECISIONS.md")
+    assert bootstrap._is_source("arcade/web/docs/how-it-works.md")

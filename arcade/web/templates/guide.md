@@ -18,7 +18,7 @@ installations reading the same chain agree without talking to each other.
 |---|---|
 | Interface | `http://127.0.0.1:8420`, bound to loopback because it can spend |
 | Chains | Pepecoin, mainnet and testnet — the two this arcade moves coins on, and the only two |
-| Messaging | **testnet only**, by design (D-010) |
+| Messaging | **testnet only**, by design |
 | Tokens, inscriptions, @tags | mainnet and testnet |
 | Storage | your node's datadir for the chain; `~/.dogecoinarcade` for what the app remembers |
 
@@ -30,7 +30,7 @@ Private messages between two people, encrypted end to end and carried on the
 chain.
 
 * **Read from the mempool, not only from blocks.** A message is a
-  transaction, so waiting for a block meant waiting a block; the scanner
+  transaction, and rather than waiting for its block the scanner
   reads what is on its way as well, and a message usually appears within
   seconds. It says "in the pool, not in a block yet" until its block lands.
   Balances, the order book and inscriptions are still read from blocks and
@@ -401,19 +401,19 @@ website, Twitter, and a thumbnail — and writes them onto that piece; or put
 them there yourself, in a `collection` object beside the name:
 
 ```json
-{"name": "Goofball #1", "edition": 1,
- "collection": {"name": "Goofball",
-                "description": "100 hand drawn goofballs",
-                "url": "https://goofball.example",
-                "twitter": "@goofballs",
+{"name": "Space Frogs #1", "edition": 1,
+ "collection": {"name": "Space Frogs",
+                "description": "100 hand drawn space frogs",
+                "url": "https://spacefrogs.example",
+                "twitter": "@spacefrogs",
                 "supply": 100}}
 ```
 
 `description`, `url` (or `website`, or `external_url`), `twitter`, `discord`,
 `telegram`, `supply`, `artist` and `icon` are read — **field by field**, the
 object first and the item's own top level after, so adding one of them never
-hides another. (A HashLips `description` at the top level keeps being read
-after the wizard writes an object for the thumbnail.) Everything else is ignored, text
+hides another. (A HashLips `description` at the top level is still read
+when the wizard writes an object for the thumbnail.) Everything else is ignored, text
 is capped, and a link that is not http(s) is not shown as a link — an
 inscription is written by anybody and this ends up on a page. A HashLips
 build already writes `description` and `external_url` at the top level of
@@ -426,7 +426,7 @@ somebody's website is a face that disappears when the hosting does. One this
 node cannot draw falls back to #1 rather than to a broken image.
 
 **Membership is not decided by any of that.** A piece belongs to the set its
-own `name` or a `collection` STRING says, exactly as before — an object is
+own `name` or a `collection` STRING says — an object is
 not a string, so a set that describes itself is still filed by its name. Two
 nodes cannot disagree about what is in a collection because one of them
 understood a richer JSON.
@@ -468,8 +468,7 @@ node listens; the page inscribed with it is the storefront.
 * **It answers orders, not answers.** An answer carries the txid it answers
   and whether it worked; an order carries neither. A shopkeeper that could
   not tell them apart would answer the other shop's refusals for ever, a
-  message a block out of each wallet, which is what two of these nodes did
-  for eleven minutes before it was fixed.
+  message a block out of each wallet.
 * **The buyer is asked, once.** The offer arrives as a node-to-node message,
   the buyer's wallet builds the transaction and shows it in the approvals
   pop-up like any other send, and Approve signs the buyer's half only.
@@ -490,7 +489,7 @@ node listens; the page inscribed with it is the storefront.
   broadcasts at once, and the send is listed with the approvals as one that
   came from a page of your own.
 
-Testnet only, like the messages it travels on (D-010). Swaps are read from a
+Testnet only, like the messages it travels on. Swaps are read from a
 starting height per chain (`swaps_from`), so a swap in a block before it is
 recorded as unread rather than as an old transaction meaning something new.
 
@@ -570,7 +569,7 @@ from the swaps on the chain — there is no order book to draw, so what is
 drawn is what people paid. A day with no trade is a dot on the axis, never a
 line ruled to the next price. **One chart per collection**, drawn on that
 collection's own page beside the pieces it prices, and one currency to a
-chart: what a Goofball goes for says nothing about what a Doge Punk goes
+chart: what a Space Frog goes for says nothing about what a Doge Punk goes
 for, and coins and tokens on one axis is adding pounds to metres. Drawn as
 SVG in the page: no charting library is fetched from anywhere, and the
 page's CSP would stop it if it tried.
@@ -610,8 +609,8 @@ switched off without withdrawing the price.
   one. Only offers in a block are acted on. The switch is on the Overview,
   under **Selling**; turned off, offers wait for you.
 
-Asks are read from a height, like everything else that makes valid what used
-to be invalid; before it, an ask made on that chain would be read by nobody,
+Asks are read from a starting height per chain, like every other newer
+record type; before it, an ask made on that chain would be read by nobody,
 and the page says so before the fee.
 
 **An offer is made with what you have.** The form lists the tokens this
@@ -660,7 +659,7 @@ A page or a program can ask this wallet to send something. It cannot send.
   you press *Approve and send*. Refusing costs nothing.
 * **Shown everywhere you are**: in a pop-up in front of the inscription that
   asked, the moment it asks; a banner on every other page; and on the phone
-  over the remote tunnel. Only a request made while that page is open pops up
+  if the node is reachable from it. Only a request made while that page is open pops up
   over it; what was already waiting is listed under the page with a link, not
   opened over a page that never asked. The page that asked cannot see the
   pop-up or press anything in it, and it is told afterwards whether the
@@ -683,18 +682,18 @@ A page or a program can ask this wallet to send something. It cannot send.
 ## @tags
 
 **The @ is punctuation.** Anywhere a name can be typed — a send, a message, a
-search — it works with or without it: `@boxa` and `boxa` are the same name.
+search — it works with or without it: `@alice` and `alice` are the same name.
 What tells a name from an address is the shape, not the sigil: a tag is at
 most 24 characters of `a-z`, `0-9` and `_`, and an address is 34 of
 mixed-case base58.
 
-Case is free when you search, and with an `@` it is free everywhere — `@a test machine`
+Case is free when you search, and with an `@` it is free everywhere — `@ALICE`
 is plainly a name. A **bare** name in a field that spends is read as a name
 only if it is written as one, in lower case, so that a mistyped address is
 still answered with "that is not a valid address" rather than "nobody holds
 that name".
 
-A handle that belongs to an address. `@robin`.
+A handle that belongs to an address, such as `@alice`.
 
 * **One name to an address, one address to a name.** A name pointing at two
   people is not a name.
@@ -722,7 +721,7 @@ before it costs anything.
   on this chain, the same wallet's address on the other chain, and your @tag.
   The tag is the part a reader can *check*: their own index says who holds the
   name, and an announcement that disagrees is shown as disagreeing rather than
-  believed. The name you type is no longer published at all — it travels with
+  believed. A name you type for yourself is not published — it travels with
   a first message, and stays yours to give people in your own book.
 
 ---
@@ -779,7 +778,7 @@ depend on one website staying up.
 
 ## Two ways to run it
 
-**As a wallet** — the default, and what it has always been. One person's
+**As a wallet** — the default. One person's
 machine, everything in it theirs, reachable from where it is served.
 
 **As a public arcade** — `--public`, which is what a node on a real domain
@@ -925,7 +924,7 @@ forwarding. The mempool already gossips to every node in seconds.
   plainly why there is no auto-sell, auto-fill or update setting -- those
   run on the NODE's own key, and an account has no such automation to
   configure. Wallet has the same three tabs: Coins (send moved here),
-  Tokens (new -- a real Omni Simple Send, never wrapped in AnyData, unlike
+  Tokens (a real Omni Simple Send, never wrapped in AnyData, unlike
   a tag claim), and NFTs. Backup explains that the twelve words are
   everything, and that the message history and address book are this
   browser's alone -- neither comes back on a different device, because
@@ -989,8 +988,8 @@ forwarding. The mempool already gossips to every node in seconds.
   through `arcade/fees.py`, which counts the sigops of what it just built
   and raises the fee rate until the block assembler would take it at
   0.01 PEP/kB; a plain send is unchanged, an inscription chunk pays about
-  0.004 PEP per data output. Before this, testnet mined one piece per
-  block.
+  0.004 PEP per data output, so data-heavy transactions are mined
+  promptly.
 * **Mine a testnet block** from the wallet page, any time. The node hashes
   in batches of about thirty seconds, the page says how many hashes so far
   and how long a block takes at today's difficulty, and Stop mining stops
@@ -1015,7 +1014,7 @@ when something is wrong.
 ## What it does not do
 
 * **No custom peer-to-peer protocol.** See above: it would not propagate.
-* **No encrypted messaging on mainnet.** Testnet only, deliberately (D-010).
+* **No encrypted messaging on mainnet.** Testnet only, deliberately.
 * **No send-to-owners** (Omni type 3). The engine does not implement it and a
   transaction of that type would stop the index.
 * **No automatic matching.** There is an order book, but the engine does not

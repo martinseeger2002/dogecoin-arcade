@@ -16,7 +16,7 @@ so anyone who has scripted against Omni knows it already. The code is
 | Auth | HTTP basic auth with the contents of `~/.dogecoinarcade/rpc.cookie` (`__cookie__:<secret>`, mode 0600, rewritten at every start of arcade-web) |
 | Body | `{"id": 1, "method": "omni_getbalance", "params": ["nAddress", 3]}` — positional or named params, batches as a list |
 | Answer | `{"result": ..., "error": null, "id": 1}`; on failure `error` is `{"code", "message"}` in bitcoind's codes (`src/rpc/protocol.h`): -32601 unknown method, -32602 wrong arguments, -8 bad value, -5 bad address, -4 not this wallet's address |
-| Shell | `arcade-rpc omni_listproperties`, `arcade-rpc -main omni_getinfo` — reads the cookie for you; testnet unless `-main`. The installer puts it beside `dogecoinarcade` (`~/.local/bin`, or `%LOCALAPPDATA%\DogecoinArcade\bin` on Windows); an older installation gets it at its next `dogecoinarcade-update` |
+| Shell | `arcade-rpc omni_listproperties`, `arcade-rpc -main omni_getinfo` — reads the cookie for you; testnet unless `-main`. The installer puts it beside `dogecoinarcade` (`~/.local/bin`, or `%LOCALAPPDATA%\DogecoinArcade\bin` on Windows); `dogecoinarcade-update` adds it to an existing installation |
 
 Nothing listens anywhere but loopback, and the cookie is the whole key: a
 browser tab cannot present it, so this endpoint is out of reach of the
@@ -66,7 +66,7 @@ Reading (no wallet needed):
 
 Amounts are strings the way Omni gives them: `"1000.00000000"` for a
 divisible token, `"1000"` for whole units. `reserved` and `frozen` are always
-zero — the arcade has no exchange or freezing yet — and are there so an Omni
+zero — the arcade has no exchange or freezing — and are there so an Omni
 client reading them does not break.
 
 Writing (needs the chain's node to have a wallet, and `fromaddress` in it):
@@ -99,24 +99,23 @@ builds, funds and signs the transaction and returns it **unsent**:
 
 ```json
 {"txid": "2ea169a4…", "hex": "…",
- "sendingaddress": "nYW2BPLENpu2nGa7WCExvzxD3hQYueULFa",
- "referenceaddress": "ncpXrSCQx667v4y92zSWidxs96N5TtPjTE",
+ "sendingaddress": "nSenderAddressExample1111111111111",
+ "referenceaddress": "nRecipientAddressExample2222222222",
  "class": "C", "size": 257,
  "fee": "0.00257000", "outputscost": "0.01000000", "total": "0.01257000",
  "outputs": [
    {"value": "0.00000000", "to": "token data (OP_RETURN)", "change": false, "recipient": false},
-   {"value": "0.01000000", "to": "ncpXrSCQx667v4y92zSWidxs96N5TtPjTE", "change": false, "recipient": true},
-   {"value": "1.48683000", "to": "nYW2BPLENpu2nGa7WCExvzxD3hQYueULFa", "change": true, "recipient": false}],
+   {"value": "0.01000000", "to": "nRecipientAddressExample2222222222", "change": false, "recipient": true},
+   {"value": "1.48683000", "to": "nSenderAddressExample1111111111111", "change": true, "recipient": false}],
  "broadcast": false}
 ```
 
-(a real `omni_send` of 1 Arcade Test on testnet; the fee is what the node's
-`getmempoolentry` reported for the send before it, byte for byte the same
-size)
+(the shape of an `omni_send` of 1 Arcade Test on testnet; addresses shortened
+to placeholders)
 
 `omni_broadcast <txid>` then sends exactly those bytes. A bot sees the fee
 before it pays it, a typo in an amount costs nothing, and the rule the whole
-interface follows — broadcast what was shown (D-016) — holds for scripts too.
+interface follows — broadcast exactly what was shown — holds for scripts too.
 A bot that wants Omni's behaviour calls the two in a row. Prepared
 transactions are kept in the server's memory (the newest hundred) and
 forgotten on restart; `omni_broadcast` of a txid it does not hold is refused,
@@ -143,18 +142,18 @@ need it. It files a request:
 
 ```json
 {"method": "da_requesttoken",
- "params": ["", "ncpXrSCQx667v4y92zSWidxs96N5TtPjTE", 3, "5", "tournament prize"]}
+ "params": ["", "nRecipientAddressExample2222222222", 3, "5", "tournament prize"]}
 ```
 
 ```json
 {"id": "402d9a3126e70394", "network": "test", "kind": "token", "status": "pending",
- "from": null, "to": "ncpXrSCQx667v4y92zSWidxs96N5TtPjTE", "amount": "5",
+ "from": null, "to": "nRecipientAddressExample2222222222", "amount": "5",
  "propertyid": 3, "propertyname": "Arcade Test", "origin": "rpc",
  "note": "tournament prize", "txid": null, "error": null, ...}
 ```
 
-Nothing is built. The request appears on the wallet's Approvals page — on
-this machine and on the phone over the remote tunnel — where the owner sees
+Nothing is built. The request appears on the wallet's Approvals page — locally
+or over remote access — where the owner sees
 the transaction it would be, fee and every output, and presses **Approve and
 send** or **Refuse**. The bot polls `da_request <id>` until `status` is no
 longer `pending`; `sent` carries the `txid`, and `sent` is not `confirmed`:
@@ -168,7 +167,7 @@ hold, an address it cannot sign for. Whether a balance covers it is checked
 when the owner looks, because that is when it matters.
 
 The same queue answers an inscribed page over `POST /r/send`
-(inscription-api.md), so a page and a bot asking for the same thing look the
+(see the inscription API reference), so a page and a bot asking for the same thing look the
 same to the person deciding.
 
 ### Airdrops
@@ -190,7 +189,6 @@ index; do not construct one.
 ### Mainnet
 
 `/rpc/main` answers the same methods. Whether a send there works depends on
-the mainnet node having a wallet (it runs `disablewallet=1` until deliberately
-changed) — and on the operator: a bot with the cookie can spend from that
+the mainnet node having a wallet (by default it runs `disablewallet=1`) — and on the operator: a bot with the cookie can spend from that
 wallet, which is the same authority as the shell that runs `pepecoin-cli`.
-Test on `/rpc/test` first, as everything here was.
+Test on `/rpc/test` first.

@@ -1,31 +1,27 @@
-# Step 2 — Message format and encryption
+# Messaging design
 
-Status: **draft for the operator's approval. No implementation code written.**
-Date: 2026-09-11
+This page describes how DogecoinArcade messages are built: identity keys, the
+on-chain records, the encryption envelope, sizing and cost, delivery, and
+exactly what the chain reveals. The node side is in [01-node.md](01-node.md).
 
-Every size in this document was **measured**, not estimated, using PyNaCl 1.5.0 on
-this machine. The construction in §3 was prototyped and its failure modes tested
-before being written down.
-
----
+Sizes in this document were **measured** with PyNaCl 1.5.0, not estimated. The
+construction in §3 has its failure modes covered by tests.
 
 ## 0. Context
 
-The Messenger is part of DogecoinArcade and is **testnet-only, permanently**
-(D-010), enforced in code by `require_messaging_network()`. It still designs to
+The Messenger is part of DogecoinArcade and is **testnet-only, permanently**,
+enforced in code by `require_messaging_network()`. It still designs to
 **mainnet** standardness limits: testnet sets `fRequireStandard = false`
 (`chainparams.cpp:108`), so a format that only worked there would be silently
 unrelayable anywhere real.
 
-Carrier decisions from D-009:
+Carriers:
 
 | Message size | Carrier | Chunking |
 |---|---|---|
 | any, ≤ 7,514 chars | **Class B** (bare multisig), one transaction | **none** |
 | larger | chained Class B, countdown index | chunk header only here |
 | key announcements | **Class C** (`OP_RETURN`), 38 bytes | n/a |
-
----
 
 ## 1. Identity keys
 
@@ -44,9 +40,8 @@ rather than as a principle:
 3. Compromise of a spending key would otherwise retroactively decrypt every
    message ever sent to that person.
 
-The operator's existing DogecoinArcade code encrypts to **secp256k1 wallet pubkeys**
-(`encrypt_data.py`). This design deliberately departs from that; see D-011 for the
-comparison.
+This is a deliberate departure from encrypting to **secp256k1 wallet pubkeys**,
+the simpler approach some chain messengers take.
 
 ### At rest
 
@@ -59,7 +54,7 @@ Measured Argon2id presets, and the choice:
 | Preset | ops | memory | Verdict |
 |---|---|---|---|
 | INTERACTIVE | 2 | 64 MiB | too weak for a long-lived identity key |
-| **MODERATE** | **3** | **256 MiB** | **chosen** — 1.30 s on this Celeron (*measured*) |
+| **MODERATE** | **3** | **256 MiB** | **chosen** — about 1.3 s on a low-power quad-core x86 CPU (*measured*) |
 | SENSITIVE | 4 | 1024 MiB | 1 GiB will fail or thrash on phones and small VPSes |
 
 File layout (all fields fixed-width, little ambiguity by design):
@@ -103,10 +98,8 @@ it. There is no cryptographic chain from old key to new.
 A stronger design adds a long-term **Ed25519** identity key that signs every
 announcement, so rotation is chained and address compromise alone is insufficient.
 That costs 64 bytes per announcement and a second key to protect.
-**Recommendation: address-binding for v1, with this limitation stated in the UI**,
-and the Ed25519 chain as a documented upgrade path.
-
----
+Version 1 uses **address binding, with this limitation stated in the UI**; the
+Ed25519 chain is the documented upgrade path.
 
 ## 2. Key publication
 
@@ -132,19 +125,19 @@ Only **one `OP_RETURN` per standard transaction** is permitted
 
 ### What an announcement carries now
 
-The 38-byte form above is what earlier versions publish and is still read. A
+The 38-byte form above is the minimal announcement, and every reader understands it. A
 tail of optional sections follows it, each one a kind byte and its value, so
 an older reader stops at the first kind it does not know and still gets the
 key:
 
 | kind | what | why |
 |------|------|-----|
-| `0x01` | identity address (20-byte hash160) + name | Without it the key is filed under whichever address funded the transaction, which changes with coin selection (D-062) |
-| `0x02` | the other chain's address (20 bytes) | So one lookup gives somebody both places to pay you (D-137) |
+| `0x01` | identity address (20-byte hash160) + name | Without it the key is filed under whichever address funded the transaction, which changes with coin selection |
+| `0x02` | the other chain's address (20 bytes) | So one lookup gives somebody both places to pay you |
 | `0x03` | the `@tag` this address holds | Unlike a name, a reader can check it against the tag index |
-| `0x04` | profile picture: an inscription's 32-byte txid | Honoured only while the chain says that address still holds the piece (D-138) |
+| `0x04` | profile picture: an inscription's 32-byte txid | Honoured only while the chain says that address still holds the piece |
 | `0x05` | a bio, at most 160 bytes | Shown on their feed; refused rather than trimmed |
-| `0x06` | a link, at most 120 bytes, `http(s)` only | It lands on other people's pages as something to click (D-145) |
+| `0x06` | a link, at most 120 bytes, `http(s)` only | It lands on other people's pages as something to click |
 
 A whole profile is therefore one transaction: name, both addresses, key,
 face, bio and link. Anybody who finds the tag has everything without asking
@@ -153,7 +146,7 @@ the person or the node that drew it.
 ### Type 7: what was done to a post
 
 The feed's reactions are one type with a kind byte rather than six types
-(`arcade/messaging/feed.py`, D-138):
+(`arcade/messaging/feed.py`):
 
 ```
 magic      4   b"arcm"
@@ -166,8 +159,7 @@ text     0..   present for reply, share and edit only
 
 A like is 39 bytes. The target is any transaction, so a reply's parent may be
 a post or another reply and nothing in the format knows the difference --
-which is what makes threads free, and would make commenting on an inscription
-free too.
+which is what makes threads free.
 
 A **tip** is the one kind that rides on a LEDGER chain rather than the
 messaging one: the transaction that moves the coins carries this note saying
@@ -200,8 +192,6 @@ tamper-evident binding between *an address* and *a key*.
 An announcement is a **key directory entry, not an identity certificate.** The
 fingerprint exists so the binding can be confirmed out of band — a phone call, a
 face-to-face check — which is the only step that actually establishes identity.
-
----
 
 ## 3. Encryption
 
@@ -251,8 +241,8 @@ The inner `crypto_box` nonce is **24 bytes (192 bits) of `os.urandom`**, generat
 fresh per message and carried in the ciphertext.
 
 At 192 bits, random generation is safe without any counter or state: a collision
-requires roughly 2⁹⁶ messages. The brief warns against deriving nonces from
-transaction data — correctly, because an unbroadcast transaction can be rebuilt
+requires roughly 2⁹⁶ messages. Nonces must never be derived from transaction
+data, because an unbroadcast transaction can be rebuilt
 with the same inputs and silently reuse a nonce under the same key pair, which
 would be catastrophic. **We derive nonces from nothing.** The sealed box's own
 ephemeral key is generated internally by libsodium and is fresh per call.
@@ -270,7 +260,7 @@ without inventing anything.
 
 ### Verified failure modes
 
-Prototyped and tested before writing this document. All five rejected:
+Covered by tests. Every attack is rejected:
 
 | Attack | Result |
 |---|---|
@@ -286,8 +276,6 @@ The whole message is encrypted **once**, then the resulting ciphertext is split.
 Never the reverse. Encrypting per chunk would multiply the 126-byte overhead by
 the chunk count and leak the chunk boundary structure.
 
----
-
 ## 4. Sizing and cost
 
 ### Framing
@@ -298,8 +286,9 @@ Single-transaction message (inside the type-200 `AnyData` payload):
 magic      4   b"arcm"
 version    1   = 1
 type       1   = 1 (single)
+clen       2   big-endian; exact ciphertext length
 ----------------
-6 bytes, copied inside the ciphertext for authentication
+8 bytes; the first 6 are copied inside the ciphertext for authentication
 ```
 
 Chunk header, for messages that exceed one transaction:
@@ -309,23 +298,23 @@ magic      4   b"arcm"
 version    1   = 1
 type       1   = 2 (chunk)
 msg_id     8   random; ties chunks of one message together
+clen       2   big-endian; exact ciphertext length in this chunk
 countdown  2   big-endian; 0 marks the FINAL chunk
 ----------------
-16 bytes
+18 bytes; the first 14 are authenticated
 ```
 
 **The countdown is NOT authenticated.** A chunked message is sealed once, as a
 whole, so there is exactly one authenticated header copy — but every chunk carries
 a different countdown, so binding it would make reassembly impossible by
-construction. Only magic, version, type and message id are bound (14 bytes for a
+construction. Only magic, version, type and message id are bound (`clen` is transport framing too) (14 bytes for a
 chunk, 6 for a single message). Excluding the countdown is safe: it is transport
 framing, not content, and tampering with it can only cause a reassembly failure —
 which the gap and ordering checks already detect, and which the UTXO chain makes
-structurally hard in the first place. *This was found by a test during
-implementation, not by inspection.*
+structurally hard in the first place.
 
-The **countdown** is borrowed from the operator's Doginals design (`doginals.js:476`),
-where the last chunk carries index 0. Completion is then self-describing: an
+The **countdown** is borrowed from the Doginals inscription tooling
+(`doginals.js`), where the last chunk carries index 0. Completion is then self-describing: an
 abandoned chain never reaches 0, so an incomplete message is always
 distinguishable from a complete one — no separate "seal" transaction needed.
 
@@ -333,11 +322,10 @@ Ordering and sender-binding come from the **UTXO chain**: each transaction spend
 the previous one's change output, so chunks cannot be reordered, skipped, or
 extended by anyone else. Structural, not conventional.
 
-### ⚠️ Correction: there are THREE dust thresholds, not two
+### Three dust thresholds
 
-Found by the Step 4 standardness tests, which is the only reason it was found at
-all. `fundrawtransaction` refused every transaction with "Transaction amount too
-small".
+Output values must clear three different floors. Below the wallet's own floor,
+`fundrawtransaction` refuses with "Transaction amount too small".
 
 | Threshold | Value | Enforced by | Source |
 |---|---|---|---|
@@ -345,10 +333,9 @@ small".
 | `DEFAULT_DUST_LIMIT` | 0.01 PEP | extra-fee rule | `policy/policy.h:70` |
 | **`DEFAULT_DISCARD_THRESHOLD`** | **0.01 PEP** | **the wallet will not CREATE smaller outputs** | `wallet/wallet.h:68` |
 
-Earlier sections of this document used the relay limit of 0.001 PEP. That is
-correct for what the *network* will relay, but we fund through the node's wallet,
-and **the wallet's own floor binds first**. Output value is therefore **0.01 PEP**,
-ten times what was originally budgeted.
+The relay limit of 0.001 PEP is what the *network* will accept, but transactions
+are funded through the node's wallet, and **the wallet's own floor binds first**.
+Every payload output is therefore **0.01 PEP**.
 
 **The dust is still mostly recoverable.** Every Class B multisig output embeds the
 sender's redeeming pubkey (`encoding.cpp:37`), so it stays spendable and can be
@@ -381,17 +368,13 @@ The 101 kB unconfirmed-chain size limit (`validation.h:76`) means roughly **6**
 full transactions can chain before a confirmation is needed — send a batch, wait
 one block (~60 s), continue.
 
-### ⚠️ Correction: the header needs an explicit ciphertext length
+### Explicit ciphertext length
 
-Also found in Step 4, by an integration test. Class B pads its final packet with
-NULs to a 30-byte boundary and Omni does not strip that padding
-(`omnicore.cpp:1263`), so a payload arrives carrying up to 29 bytes the sender
-never wrote. The sealed box sees trailing garbage and rejects the entire message.
-
-The M1 notes had already flagged this hazard for inscriptions and said the fix
-belonged in the header — and then it was not applied to the messaging header.
-It is now: both message headers carry `clen`, the exact ciphertext length, and the
-reader truncates to it before opening.
+Class B pads its final packet with NULs to a 30-byte boundary and Omni-style
+decoding does not strip that padding (`omnicore.cpp:1263`), so a payload
+arrives carrying up to 29 bytes the sender never wrote. A sealed box with
+trailing garbage fails to open. So both message headers carry `clen`, the exact
+ciphertext length, and the reader truncates to it before opening.
 
 Stripping trailing NULs instead was considered and rejected: ciphertext ends in
 NUL roughly one time in 256, so that would silently corrupt about 0.4 % of
@@ -402,7 +385,7 @@ Resulting header sizes: **8 bytes** single (magic 4, version 1, type 1, clen 2),
 bytes respectively — `clen` and `countdown` are transport framing and are
 deliberately not bound.
 
-### Comparison: Doginals-style P2SH (not built, per the brief)
+### Comparison: Doginals-style P2SH (not used)
 
 | Carrier | Bytes/tx | Atomic | Ordering | Mainnet-standard |
 |---|---|---|---|---|
@@ -415,14 +398,12 @@ tuned precisely to the 1,650-byte `scriptsig-size` ceiling
 (`policy/policy.cpp:86`). It simply carries **5× less** per transaction than Class
 B. We take its *mechanism* (UTXO chaining, countdown index) and not its carrier.
 
----
-
 ## 5. Delivery and discovery
 
-### Trial decryption — **recommended default**
+### Trial decryption — **the default**
 
-Scan every `arcm` payload and attempt a sealed-box open. **Measured on this
-machine: 227 µs per attempt, 4,409/sec.**
+Scan every `arcm` payload and attempt a sealed-box open. **Measured on a
+low-power quad-core x86 CPU: 227 µs per attempt, 4,409/sec.**
 
 | Messages on chain | Scan time |
 |---:|---:|
@@ -438,10 +419,10 @@ a scan is incremental, and only new messages are ever tried.
 A dust output to the recipient's address makes lookup an index query rather than a
 scan. It also **publicly and permanently links sender to recipient**.
 
-### Recommendation
+### Policy
 
-**Trial decryption by default; notification output only as an explicit per-message
-opt-in.**
+**Trial decryption by default; a notification output only as an explicit
+per-message opt-in.**
 
 Content confidentiality is the easy half. The social graph is the harder and more
 valuable target, and a notification output hands it over in exchange for saving
@@ -450,8 +431,6 @@ the link is on-chain forever.
 
 An opt-in is still worth having: a public announcement channel, or a
 correspondent whose relationship with you is already public, loses nothing.
-
----
 
 ## 6. Threat model, stated plainly
 
@@ -479,7 +458,7 @@ sender address (`parsing.cpp:108-131`), so anyone can strip it. It provides zero
 confidentiality. Our confidentiality comes entirely from the sealed box.
 
 **Testnet is not durable.** Testnet chains can be reset or deeply reorganised.
-Messages may simply vanish. Since the Messenger is testnet-only (D-010), this is a
+Messages may simply vanish. Since the Messenger is testnet-only, this is a
 permanent property of the product, not a testing caveat.
 
 **Metadata analysis.** Even without notification outputs, an observer sees a
@@ -488,8 +467,6 @@ with other activity is a real attack. We do not defend against it.
 
 **Not defended against:** a compromised node, a compromised machine, a keylogged
 passphrase, or coercion.
-
----
 
 ## 7. Mainnet standardness
 
@@ -506,22 +483,18 @@ Pepecoin v1.1.0 (identical in Dogecoin 1.14.99):
 | Tx size | `MAX_STANDARD_TX_WEIGHT` | ~14.7 kB at maximum | `policy/policy.cpp:73` |
 | Unconfirmed ancestors | 25 count / 101 kB | batched to stay under | `validation.h:74,76` |
 
-**This is asserted, not yet proven.** Step 4 proves it by running a regtest node
-with `-acceptnonstdtxn=0` and confirming every transaction the tool builds is
-accepted there. That is the only evidence that counts, because testnet's
+The test suite (`tests/test_standardness.py`) checks this by running a regtest
+node with `-acceptnonstdtxn=0` and confirming every transaction the tool builds
+is accepted there. That is the evidence that counts, because testnet's
 `fRequireStandard = false` would accept transactions mainnet rejects.
 
----
+## 8. Known limits
 
-## 8. Open questions for the operator
-
-1. **Ed25519 identity chain for rotation** — v1 as described, or now? It closes
-   the address-compromise gap at the cost of 64 bytes per announcement and a
-   second key to protect.
-2. **Message size cap in the UI.** 7,514 characters is one transaction; beyond
-   that costs multiple transactions and confirmation waits. Cap at one transaction
-   by default, or allow longer with a warning?
-3. **Do we need a "read receipt" or delivery confirmation?** Both would be
-   additional on-chain messages, with their own metadata leakage.
-4. **Passphrase policy.** Enforce a minimum length or a strength estimate, or
-   accept whatever the user provides with a warning?
+- **Key rotation is bound to the wallet address**, not chained
+  cryptographically (see §1, Rotation). An Ed25519 identity chain would close
+  that gap at 64 bytes per announcement and a second key to protect.
+- **Long messages cost more than money.** Up to about 7,500 characters is one
+  transaction; beyond that a message spans several chained transactions and may
+  need confirmation waits between batches.
+- **No read receipts or delivery confirmation.** Either would be an additional
+  on-chain record, with its own metadata leakage.

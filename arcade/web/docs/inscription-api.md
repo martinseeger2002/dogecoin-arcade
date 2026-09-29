@@ -57,13 +57,13 @@ stranger's code inside a wallet that can spend.
 
 ### Where your page turns up
 
-Two places now, and they are the same sandbox:
+Two places, both with the same sandbox:
 
 * **The viewer**, `/inscriptions/<id>/view`, one page at a time.
 * **The feed.** When anybody writes `/content/<id>` in a post, an HTML
   inscription is drawn in a frame under that post with exactly the CSP and
   sandbox above, an image is shown inline, and anything the node cannot
-  identify stays a link (D-138).
+  identify stays a link.
 
 So write your page as though several copies of it might be on one screen at
 once, none of them focused, some of them below the fold and loaded lazily.
@@ -77,7 +77,7 @@ answer, and `location.pathname` is still `/content/<id>` so a page still
 knows which inscription it is.
 
 Keep every address **root-relative** (`/r/wallet`, `/content/<id>`), as in
-every example here. On the owner's phone, over the remote tunnel, your page is
+every example here. When the wallet is reached remotely, your page is
 served from a hostname of its own that carries nothing but `/content/*` and
 `/r/*` — a page that hard-codes a host, or reaches for a wallet page, breaks
 there and nowhere else.
@@ -141,7 +141,7 @@ everybody else's), you get `404` and enough to go and get it yourself:
 `GET /r/inscription/<id>`
 
 ```json
-{ "id": "2ea169a4c7b1…", "number": 41, "creator": "nYW2BP…", "owner": "ncpXrS…",
+{ "id": "2ea169a4c7b1…", "number": 41, "creator": "nAlice1…", "owner": "nBob22…",
   "block": 1486617, "contenttype": "image/jpeg", "length": 135150,
   "sha256": "b1946ac9…", "transactions": 18, "held": true,
   "json": { "name": "Sunrise", "collection": "first" },
@@ -207,7 +207,7 @@ somebody else's.
 | `GET /r/collection/<creator>/<name>` | one set and a page of its items, by edition |
 
 ```json
-{ "creator": "nYW2BP…", "name": "Doge Punks", "count": 100,
+{ "creator": "nAlice1…", "name": "Doge Punks", "count": 100,
   "firstnumber": 41, "lastnumber": 140, "firstedition": 1, "lastedition": 100,
   "cover": "2ea169a4c7b1…", "covertype": "image/png" }
 ```
@@ -251,10 +251,10 @@ const set = await (await fetch('/r/collection/' + creator + '/' +
 actually holds, so a page doing arithmetic never has to parse the display form
 back. Only non-zero holdings appear.
 
-`GET /r/tag/<name>` → `{ "tag": "robin", "address": "nYW2BP…" }`
+`GET /r/tag/<name>` → `{ "tag": "alice", "address": "nAlice1…" }`
 (`address` is `null` if nobody holds it)
 
-`GET /r/address/<address>` → `{ "address": "nYW2BP…", "tag": "robin" }`
+`GET /r/address/<address>` → `{ "address": "nAlice1…", "tag": "alice" }`
 (`tag` is `null` if they have not claimed one)
 
 ### Asking the wallet to send
@@ -333,7 +333,7 @@ opens in front of it at once: the transaction as built, fee and every output,
 and *Approve and send* / *Refuse*. That pop-up belongs to the wallet, outside
 your sandbox — your page cannot see it, cannot press anything in it, and
 cannot frame the approval page itself (`frame-ancestors 'self'`). On every
-other page of the wallet, and on the phone over the remote tunnel, the same
+other page of the wallet, including when the wallet is reached remotely, the same
 request waits under *Approvals*. Only a request filed while your page is open
 (or in the seconds it took to load) pops up over it; one left waiting from
 earlier is listed under the page with a link, and never opened over a page
@@ -460,7 +460,7 @@ anything is asked of anybody.
 {"shop": {"node": "arcade:test:…",
           "listings": [
             {"give": {"token": 3, "amount": "100"}, "take": {"coins": "2"}},
-            {"give": {"collection": "Goofball", "pick": "random"},
+            {"give": {"collection": "Pixel Pals", "pick": "random"},
              "take": {"token": 3, "amount": "10"}},
             {"give": {"inscription": 57}, "take": {"inscription": 58}}]}}
 ```
@@ -506,8 +506,8 @@ arcade.swap.shop().then(function (s) {
 * The stages on their own, for a page that wants to draw them: `offer(n)`,
   `awaitOffer(txid)`, `accept(offer)`, `status(request)`,
   `awaitDecision(request)`, `awaitSwap(offer)`.
-* `describe(leg)` — a leg in words: `100 Arcade Test`, `a random Goofball`,
-  `inscription #57 (Goofball #12)`, `2 coins`.
+* `describe(leg)` — a leg in words: `100 Arcade Test`, `a random Pixel Pals`,
+  `inscription #57 (Pixel Pals #12)`, `2 coins`.
 
 **What the buyer sees, and why it is safe.** The offer comes back from the
 shop's node as a node-to-node message with the two legs made concrete and
@@ -572,8 +572,8 @@ created the page and still holds it.
 `GET /r/profile/<tag>`
 
 ```json
-{ "tag": "robin", "address": "nYW2BP…", "pending": false,
-  "mainnet": "PY4PeN…", "bio": "builds chain things",
+{ "tag": "alice", "address": "nAlice1…", "pending": false,
+  "mainnet": "PAlice1…", "bio": "makes pixel art",
   "url": "https://dogecoinarcade.com",
   "picture": "a3f1…", "content": "/content/a3f1…" }
 ```
@@ -601,7 +601,7 @@ showing whose shop a page belongs to, or crediting whoever made a piece.
 
 ```json
 { "network": "test", "mainnet": false,
-  "addresses": ["nYW2BP…", "nqLQ3u…"], "tag": "robin",
+  "addresses": ["nAlice1…", "nAlice2…"], "tag": "alice",
   "coin": { "spendable": 13847.945, "ticker": "" },
   "tokens": [ { "propertyid": 3, "name": "Arcade Test", "balance": "989,995",
                 "units": 98999500000000, "divisible": true } ],

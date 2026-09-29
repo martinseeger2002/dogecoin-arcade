@@ -1,250 +1,383 @@
-# Phase 0 — Node setup
+# Node setup
 
-Status: **machine survey done. Target chain changed to Pepecoin (see docs/DECISIONS.md D-002).**
-Litecoin sections below are retained as historical record and are superseded.
-Last updated: 2026-09-10
+This page explains what a DogecoinArcade node is made of, what the installer
+does, and how to do the same thing by hand. If you just want a working node,
+the installer is the quickest route; the manual steps are here so you can see
+exactly what ends up on your machine, or reproduce it on a system the
+installer does not handle.
 
----
+## What a node is
 
-## Step 1 — Machine survey
+A DogecoinArcade node is three things running on one machine:
 
-### Which machine is this?
+| Part | What it does |
+|---|---|
+| **Pepecoin Core, mainnet** | The ledger: tokens, NFTs, inscriptions and coins |
+| **Pepecoin Core, testnet** | The Messenger's chain (messaging is testnet-only) |
+| **DogecoinArcade** | The indexer and web interface, served at `http://127.0.0.1:8420` |
 
-The project brief describes an NVIDIA DGX Spark (GB10), DGX OS / Ubuntu 24.04, ARM64.
-**This machine is not that machine.** the operator confirmed mid-session: *"this pc is not the spark it's the mini pc"*.
+Pepecoin is a Dogecoin Core fork (Scrypt proof of work, AuxPoW merged mining
+since block 42,000). The protocol DogecoinArcade uses is identical on
+Dogecoin, so the installer can set up a Dogecoin node instead of, or as well
+as, a Pepecoin one. Everything below uses Pepecoin; the Dogecoin differences
+are listed at the end.
 
-Everything below was measured on this host, not assumed.
+## Quick install (Linux)
 
-| Property | Value | How verified |
-|---|---|---|
-| Hostname | `robin-a second test machine` | `uname -a` — *verified on host* |
-| Product name | `a second test machine` (generic mini PC) | `/sys/devices/virtual/dmi/id/product_name` — *verified on host* |
-| Architecture | **x86_64 / amd64** | `uname -m`, `dpkg --print-architecture` — *verified on host* |
-| OS | **Linux Mint 22.3 "Zena"** (`ID_LIKE=ubuntu debian`, `UBUNTU_CODENAME=noble`) | `/etc/os-release` — *verified on host* |
-| Kernel | `6.17.0-29-generic #29~24.04.1-Ubuntu` | `uname -a` — *verified on host* |
-| CPU | **Intel Celeron N5095A @ 2.00 GHz**, 4 cores / 4 threads, 1 socket (Jasper Lake) | `lscpu` — *verified on host* |
-| RAM | **15 GiB** total, ~13 GiB available, 2 GiB swap | `free -h` — *verified on host* |
-| GPU | Intel UHD (Jasper Lake). No NVIDIA GPU, no `nvidia-smi`. | `lspci`, `nvidia-smi` — *verified on host* |
-
-> Note: it is an Ubuntu 24.04 (noble) userland under Mint branding, so Ubuntu-targeted
-> binaries and systemd units apply normally.
-
-### Storage — the constraint that matters
-
-**There is exactly one drive.**
-
-| Device | Size | Type | Model | Mount | Free |
-|---|---|---|---|---|---|
-| `sda1` | 512 M | vfat | — | `/boot/efi` | 505 M |
-| `sda2` | 465.3 G | ext4 | — | `/` | **415 G** |
-
-- `/sys/block/sda/queue/rotational` = **1** → *verified on host*: this is a **spinning hard disk**, not an SSD.
-- Model `ST9500325AS` = Seagate Momentus 5400.6, 500 GB, **5400 RPM 2.5" SATA laptop drive** — *stated in Seagate product documentation* (model-number identification; the on-host evidence is the model string + `rotational=1`).
-- Measured sequential write: **63.1 MB/s** (`dd bs=1M count=512 conv=fdatasync`) — *verified on host*. The read figure was served from page cache and is not meaningful; I could not drop caches without root.
-
-### Current Litecoin mainnet storage requirement
-
-| Component | Size | Basis |
-|---|---|---|
-| Raw block data (`blocks/`) | **~216.8 GiB** (232,812,927,925 bytes) | *verified via Blockchair API* `api.blockchair.com/litecoin/stats`, 2026-09-11, at height 3,175,747 |
-| Undo/rev files | ~30 GiB | **assumption** — undo data historically runs ~15 % of block data in Bitcoin Core–derived nodes |
-| `chainstate/` (UTXO set) | ~4–6 GiB | **assumption** |
-| `indexes/txindex/` | ~18–25 GiB | **assumption** — Litecoin has 413,359,859 txs (*verified via Blockchair*); at ~45–60 bytes/entry incl. LevelDB overhead |
-| `indexes/blockfilter/` | ~5–8 GiB | **assumption** — see note below, this is **on by default** in Litecoin Core |
-| **Total with `txindex=1`** | **~275–290 GiB** | sum of the above |
-
-Chain stats at survey time (*verified via Blockchair API*):
-height **3,175,747**, 413,359,859 transactions, 855 reachable nodes.
-
-**Verdict on capacity:** 415 GiB free vs ~275–290 GiB needed → it fits, with roughly
-125–140 GiB of headroom. Capacity is **not** the problem. Speed is.
-
-### Finding: `blockfilterindex` defaults to ON in Litecoin Core
-
-*Verified on host* from `litecoind -help` in v0.21.5.6:
-
-```
--blockfilterindex=<type>
-     Maintain an index of compact filters by block (default: 1, values: basic).
+```bash
+curl -O https://dogecoinarcade.com/install.py
+python3 install.py
 ```
 
-This differs from Bitcoin Core, where the default is `0`. It is presumably there to
-serve MWEB/light clients. It costs disk and IBD time we do not need for this project,
-so I recommend `blockfilterindex=0` unless we later want BIP157/158 support.
+Check the installer before you run it: the site's homepage publishes the
+expected `sha256sum install.py` value next to the command.
 
-### Finding: `rpcserialversion` defaults to 2, not 1
+Requirements: Python 3.10 or newer (3.12 is what gets tested), `gpg` for the
+signature check (strongly recommended), and `git` if you have it (otherwise
+the installer fetches a source archive instead).
 
-*Verified on host* from `litecoind -help` in v0.21.5.6:
+When it finishes:
 
 ```
--rpcserialversion
-     Sets the serialization of raw transaction or block hex returned in
-     non-verbose mode, non-segwit(0) or segwit(1) (default: 2)
+Start it with:   dogecoinarcade
+Then open:       http://127.0.0.1:8420
 ```
 
-The help text documents only 0 and 1 but the **default is 2** — an undocumented third
-value that does not exist in Bitcoin Core. This is a strong early signal that MWEB
-added a serialization level. Full analysis is Phase 0 step 5; flagged here because it
-directly affects how the Phase 2 extractor parses raw blocks.
+### Installer options
 
-### Pre-existing install (disclosure)
+| Flag | Effect |
+|---|---|
+| `--dry-run` | Show what would happen, change nothing |
+| `--coin pepecoin\|dogecoin\|both` | Choose the chain without being asked (default when not interactive: Pepecoin) |
+| `--skip-core` | Install only the application, not the node |
+| `--force-core` | Install the pinned Core even if one is already installed or running |
+| `--no-services` | Do not register services |
+| `--no-browser` | Do not open a browser at the end |
+| `--no-bootstrap` | Build the index from the chain instead of downloading the latest bootstrap |
+| `--update` | Update an existing installation to the latest code |
 
-Before this project brief was given, earlier in the same session I had already
-installed Litecoin Core v0.21.5.6 on this host at the operator's request:
+After installation, `dogecoinarcade-update` (in `~/.local/bin`) does the same
+as `--update`; it also accepts `--dry-run` and `--check`.
 
-- x86_64 tarball from the official GitHub release, SHA-256 **matched**
-  (`3c0a217651a431ef446641669a0b74ce7dbcd9b9ed1a118fc830b8f6779ee83f`),
-  GPG signature on `SHA256SUMS.asc` **good** (David Burkett, key
-  `D356 21D5 3A1C C6A3 4567 58D0 3620 E9D3 87E5 5666`).
-- Binaries in `~/.local/bin`, config at `~/.litecoin/litecoin.conf` with
-  `txindex=1`, `daemon=1`, `server=1`, RPC bound to 127.0.0.1, cookie auth.
-- Daemon started; at the time of writing it is at block 0 / ~262k headers,
-  3 peers, 288 bytes on disk — i.e. **essentially nothing has been downloaded yet.**
+### Platform support
 
-This does not satisfy the Phase 0 requirements (`/usr/local/bin`, systemd unit,
-`dbcache`, ZMQ, `disablewallet`), so the plan is to stop it, migrate, and restart
-cleanly. Discarding the current state costs nothing.
+| Platform | Status |
+|---|---|
+| Linux x86_64 | tested |
+| Linux aarch64 / arm64, armv7l | supported, untested |
+| macOS (Intel and Apple silicon) | supported, untested |
+| Windows 64-bit | supported, untested (`curl.exe -O ...` then `py install.py` in PowerShell) |
 
-### Release check
+## What the installer does
 
-*Verified via GitHub API* (`/repos/litecoin-project/litecoin/releases`), 2026-09-10:
+1. **Checks the machine** — operating system, architecture, Python version.
+2. **Downloads Pepecoin Core** for your platform from the official GitHub
+   release, unless a Pepecoin Core is already installed (then it is left
+   alone; `--force-core` overrides that).
+3. **Verifies it** — SHA-256 against the release's `SHA256SUMS.asc` *and*
+   against a hash pinned inside the installer, then the GPG signature on
+   `SHA256SUMS.asc`. It stops on any mismatch.
+4. **Installs the binaries** (`pepecoind`, `pepecoin-cli`, `pepecoin-tx`) into
+   `~/.local/bin`. No root needed.
+5. **Writes two configs**: mainnet and testnet. An existing config is never
+   overwritten.
+6. **Registers both nodes as user services** that start at login and keep
+   running after logout.
+7. **Installs DogecoinArcade** into its own virtual environment under
+   `~/.dogecoinarcade`.
+8. **Fetches the latest index bootstrap** for each chain, so a new node starts
+   near the chain tip instead of indexing from block zero.
+9. **Registers the web interface** as a user service, writes the
+   `dogecoinarcade` launcher, adds `~/.local/bin` to your PATH if needed, and
+   opens the browser.
 
-| Tag | Published | Prerelease |
+The nodes still have to sync their block chains after installation. Testnet
+is small; mainnet is larger. The application shows progress while they do.
+
+## Doing it by hand
+
+The steps below reproduce the installer on Linux with systemd.
+
+### 1. Download and verify Pepecoin Core
+
+```bash
+mkdir -p ~/arcade-install && cd ~/arcade-install
+BASE=https://github.com/pepecoinppc/pepecoin/releases/download/v1.1.0
+curl -LO $BASE/pepecoin-1.1.0-x86_64-linux-gnu.tar.gz   # pick your architecture
+curl -LO $BASE/SHA256SUMS.asc
+
+sha256sum pepecoin-1.1.0-x86_64-linux-gnu.tar.gz
+grep pepecoin-1.1.0-x86_64-linux-gnu.tar.gz SHA256SUMS.asc
+```
+
+The two hashes must be identical. The installer additionally pins these
+hashes:
+
+| Asset | SHA-256 |
+|---|---|
+| `pepecoin-1.1.0-x86_64-linux-gnu.tar.gz` | `9d7ef948e5726c9941cbc5307b4a0b725edc715bc10ed5515154485faecd710b` |
+| `pepecoin-1.1.0-aarch64-linux-gnu.tar.gz` | `c0abd1451e978a171ca5a7d37a57ecb79cc70c6755acf473018acbcd8d31083c` |
+| `pepecoin-1.1.0-arm-linux-gnueabihf.tar.gz` | `42394118ecabdb25894a69650f3981fe6ca13eeb23ce7847974437a66a770832` |
+| `pepecoin-1.1.0-win64.zip` | `0df90ce84518f1bd827f67fb4900785ce4bfa422304f1a0bc768c0d2489fdf63` |
+| `pepecoin-1.1.0-osx-unsigned.dmg` | `9c8cb2c59d96e7db95ca1e6d19ae31de5e81ba326be1b6065882c239a6220c32` |
+
+Then check the signature. The signing key is not on public keyservers, so it
+comes from the Pepecoin source tree at the release tag:
+
+```bash
+curl -L -o signer.pgp \
+  https://raw.githubusercontent.com/pepecoinppc/pepecoin/v1.1.0/contrib/gitian-keys/david2278-key.pgp
+export GNUPGHOME=$(mktemp -d)
+gpg --batch --import signer.pgp
+gpg --batch --verify SHA256SUMS.asc
+```
+
+Expect **Good signature** from key
+`18250EC9 2E527E97 23E49116 FD415169 D2691927`. Stop if either check fails.
+
+Two things to be aware of:
+
+- **The signing key expired on 2026-01-02.** The v1.1.0 signature was made on
+  2024-12-16, while the key was valid, so it still stands; expiry only
+  prevents new signatures. gpg will mention the expiry.
+- **Trust is single-channel.** The tarball, checksums, signature and signing
+  key all come from the same GitHub organisation, and `pepecoin.com` links
+  back to the same releases. A compromise there would defeat every check at
+  once. If that matters to you, build from source and compare: the release
+  binary reports `v1.1.0.0-4fb5a0cd9`, and the `v1.1.0` tag is commit
+  `4fb5a0cd930c0df82c88292e973a7b7cfa06c4e8`.
+
+### 2. Install the binaries
+
+```bash
+tar xzf pepecoin-1.1.0-x86_64-linux-gnu.tar.gz
+mkdir -p ~/.local/bin
+install -m 0755 pepecoin-1.1.0/bin/{pepecoind,pepecoin-cli,pepecoin-tx} ~/.local/bin/
+```
+
+`pepecoin-qt` and the test binary are not needed on a node.
+
+### 3. Write the configs
+
+Mainnet goes in `~/.pepecoin/pepecoin.conf`:
+
+```ini
+# Pepecoin Core -- MAINNET (the ledger: tokens, NFTs and coins)
+server=1
+txindex=1
+prune=0
+
+rpcbind=127.0.0.1
+rpcallowip=127.0.0.1
+
+# Cookie authentication: the daemon regenerates .cookie at every start,
+# so no password is written to a file. This works because the node runs as you.
+
+dbcache=512
+
+zmqpubhashblock=tcp://127.0.0.1:28332
+zmqpubrawblock=tcp://127.0.0.1:28333
+zmqpubrawtx=tcp://127.0.0.1:28335
+```
+
+Testnet goes in `~/.pepecoin-testnet/pepecoin.conf`: the same file with
+`testnet=1` added and the ZMQ ports moved to **28432 / 28433 / 28435**.
+
+Make both files mode `0600`.
+
+### 4. Register the nodes as user services
+
+Create `~/.config/systemd/user/pepecoind-mainnet.service`:
+
+```ini
+[Unit]
+Description=Pepecoin mainnet Core for DogecoinArcade
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/pepecoind -datadir=%h/.pepecoin
+Restart=always
+RestartSec=5
+TimeoutStopSec=600
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictRealtime=true
+
+[Install]
+WantedBy=default.target
+```
+
+and `pepecoind-testnet.service`, identical except for
+`-datadir=%h/.pepecoin-testnet`. Then:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now pepecoind-mainnet.service pepecoind-testnet.service
+loginctl enable-linger "$USER"     # keep them running after you log out (may need sudo)
+```
+
+Why the unit looks like this:
+
+- **`Type=simple`, foreground.** This codebase has no `-daemonwait`, so
+  `Type=forking` would race against the PID file.
+- **`Restart=always`.** The application restores a wallet by shutting the node
+  down cleanly and swapping `wallet.dat`; the node has to come back afterwards.
+  An explicit `systemctl stop` is still honoured.
+- **`AF_NETLINK` must be allowed.** libzmq opens a netlink socket to enumerate
+  interfaces; without it the daemon aborts at startup.
+- **It runs as you.** `.cookie` is always written with mode `0600`, so cookie
+  authentication only works when the application runs as the same user as the
+  daemon.
+
+### 5. Install the application
+
+```bash
+git clone https://dogecoinarcade.com/repo ~/.dogecoinarcade/src
+python3 -m venv ~/.dogecoinarcade/venv
+~/.dogecoinarcade/venv/bin/pip install --upgrade pip
+~/.dogecoinarcade/venv/bin/pip install --upgrade "$HOME/.dogecoinarcade/src[web]"
+~/.dogecoinarcade/venv/bin/python -c "import arcade"      # should print nothing
+```
+
+Without git, download `https://dogecoinarcade.com/source.tar.gz`, check it
+against `https://dogecoinarcade.com/source.tar.gz.sha256`, and unpack it into
+`~/.dogecoinarcade/src`. `https://dogecoinarcade.com/source.rev` names the
+revision it contains.
+
+A dedicated virtual environment keeps the pinned dependencies away from the
+rest of your system.
+
+### 6. Fetch the index bootstrap
+
+The application keeps its own index of each chain in
+`~/.dogecoinarcade/<test|main>-ledger.sqlite`. Building it from block zero is
+slow, so a live node publishes a recent copy. For each of `test` and `main`,
+**and only if you have no index yet**:
+
+```bash
+NET=main   # then repeat with NET=test
+curl -O https://app.dogecoinarcade.com/bootstrap/$NET.json
+curl -O https://app.dogecoinarcade.com/bootstrap/$NET.sqlite.gz
+cat $NET.json                      # shows bytes, sha256 and height
+stat -c %s $NET.sqlite.gz          # must equal "bytes"
+sha256sum $NET.sqlite.gz           # must equal "sha256"
+gunzip -c $NET.sqlite.gz > ~/.dogecoinarcade/$NET-ledger.sqlite.partial
+mv ~/.dogecoinarcade/$NET-ledger.sqlite.partial ~/.dogecoinarcade/$NET-ledger.sqlite
+```
+
+The node carries on indexing from the bootstrap's height. An existing index is
+never replaced. If you skip this step (or the installer's `--no-bootstrap`),
+the node builds its index from the chain itself, which just takes longer.
+
+### 7. Run the web interface
+
+Create `~/.config/systemd/user/arcade-web.service`:
+
+```ini
+[Unit]
+Description=DogecoinArcade web interface
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.dogecoinarcade/venv/bin/arcade-web
+Restart=always
+RestartSec=10
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now arcade-web.service
+```
+
+Then open `http://127.0.0.1:8420`.
+
+`arcade-web` binds to `127.0.0.1` by default, on purpose: whoever can reach the
+port controls the node's wallet. See [remote-access.md](remote-access.md) for
+reaching it from elsewhere.
+
+## Everyday commands
+
+```bash
+systemctl --user status pepecoind-mainnet pepecoind-testnet arcade-web
+systemctl --user restart pepecoind-mainnet
+journalctl --user -u pepecoind-mainnet -f
+tail -f ~/.pepecoin/debug.log
+
+pepecoin-cli -datadir=$HOME/.pepecoin getblockchaininfo
+pepecoin-cli -datadir=$HOME/.pepecoin-testnet getblockchaininfo
+```
+
+## Ports
+
+| | Mainnet | Testnet |
 |---|---|---|
-| **v0.21.5.6** | 2026-08-02 | no |
-| v0.21.5.5 | 2026-05-06 | no |
-| v0.21.5.4 | 2026-04-26 | no |
-| v0.21.4 | 2024-11-07 | no |
+| P2P | 33874 | 44874 |
+| RPC (loopback only) | 33873 | 44873 |
+| ZMQ hashblock / rawblock / rawtx | 28332 / 28333 / 28335 | 28432 / 28433 / 28435 |
+| Web interface | 8420 (both chains, one application) | |
 
-**v0.21.5.6 is the newest release; nothing newer exists**, including prereleases.
-This confirms the operator's expectation.
+## Pepecoin Core options that matter
 
----
-
-## Open questions for the operator
-
-See the session summary. Blocking item: the 5400 RPM HDD.
-
----
-
-## Open decision: Pepecoin instead of Litecoin?
-
-Raised by the operator mid-Phase-0, 2026-09-10.
-
-### Findings
-
-| Claim | Evidence | Label |
-|---|---|---|
-| Pepecoin (PEP) is a **Dogecoin Core** fork, Scrypt PoW, AuxPoW merged mining since block 42,000 | `github.com/pepecoinppc/pepecoin` README; ViaBTC writeup | *stated in documentation* |
-| Latest release is **Pepecoin Core v1.1.0, published 2024-12-18** — ~21 months stale as of today | *verified via GitHub API* `/repos/pepecoinppc/pepecoin/releases/latest` | verified |
-| x86_64 Linux build exists (`pepecoin-1.1.0-x86_64-linux-gnu.tar.gz`), with `SHA256SUMS.asc` | *verified via GitHub API* release asset list | verified |
-| Windows/macOS builds are marked `-unsigned` | *verified via GitHub API* asset names | verified |
-| **No Omni Layer implementation exists on Pepecoin.** Omni Core forks Bitcoin Core; OmniLite forks Litecoin. "OMNIPEPE" in search results is an unrelated Solana memecoin. | web search; `github.com/OmniLayer/omnicore` is "forked from bitcoin/bitcoin" | *verified by absence* — no port found; would need deeper search to prove a negative |
-
-### Analysis
-
-**Phases 0-2 cannot move to Pepecoin.** the operator's files were inscribed via Omni **on Litecoin**
-in 2021-2023. Those bytes exist in Litecoin blocks and nowhere else. Recovering them requires
-a Litecoin node reading Litecoin history. No other chain substitutes, at any price.
-
-**Phase 3 cannot move to Pepecoin either,** as currently scoped. The companion app is an *Omni*
-app — indexer, consensus engine, consensus hash, property/NFT rules. On Pepecoin there is no
-Omni protocol to index, so there would be nothing for it to do.
-
-**Phase 4 is where Pepecoin genuinely fits,** and the fit is good:
-
-- Because Pepecoin is Dogecoin-derived, **Doginals-style inscriptions transfer almost directly** —
-  Dogecoin-lineage chains inscribe via P2SH redeem-script envelopes rather than Taproot witness
-  envelopes. The operator already has `doginals` and `dogcoin_ordinal_auto_inscriber` repos, so the
-  tooling is largely written. (*assumption* pending Phase 4 verification of Pepecoin's script rules.)
-- The Pepecoin chain is small and young (launched 2024), so it would sync quickly even on this
-  5400 RPM disk — unlike Litecoin's 217 GiB.
-- Cost per KB on a low-value chain is far below Litecoin's.
-
-**Risks if Pepecoin is chosen for Phase 4:** a ~21-month-stale node release, a much smaller
-network (fewer nodes = weaker permanence guarantee for inscribed data), and unsigned
-binaries on some platforms.
-
-### Status: awaiting the operator's answer. Litecoin install is staged and ready to proceed.
-
----
----
-
-# PEPECOIN CORE INSTALL (current target)
-
-## Software verification — Pepecoin Core v1.1.0
-
-Downloaded from the official GitHub release
-`github.com/pepecoinppc/pepecoin/releases/download/v1.1.0/`.
-
-| Check | Result | Label |
-|---|---|---|
-| SHA-256 of `pepecoin-1.1.0-x86_64-linux-gnu.tar.gz` | `9d7ef948e5726c9941cbc5307b4a0b725edc715bc10ed5515154485faecd710b` | *verified on host* |
-| Matches entry in `SHA256SUMS.asc` | ✅ **identical** | *verified on host* |
-| GPG signature on `SHA256SUMS.asc` | ✅ **Good signature**, RSA key `18250EC9 2E527E97 23E49116 FD415169 D2691927` | *verified on host* |
-| Signer identity | David Eichel (email redacted; identity is pinned by the fingerprint below) | *verified on host* |
-| Key provenance | ✅ fingerprint **matches `contrib/gitian-keys/david2278-key.pgp`** committed in the Pepecoin repo at tag v1.1.0 | *verified in source code* |
-| Binary ↔ source correspondence | `pepecoind --version` reports build `v1.1.0.0-4fb5a0cd9`; the cloned `v1.1.0` tag is commit `4fb5a0cd930c0df82c88292e973a7b7cfa06c4e8` — **same commit** | *verified on host* |
-
-### ⚠️ Two caveats, stated honestly
-
-1. **The signing key expired 2026-01-02.** The signature was made 2024-12-16, i.e. while the
-   key was still valid, so the signature itself is sound — expiry prevents *new* signatures,
-   it does not retroactively invalidate old ones. But nobody has re-signed or rotated since.
-
-2. **Single-channel trust.** With Litecoin we had two independent distribution channels
-   (`download.litecoin.org` and GitHub) publishing the same hash, plus a key on public
-   keyservers. For Pepecoin, the tarball, the checksums, the signature, **and** the signing
-   key all come from the same GitHub organisation, and the key is **not on
-   `keyserver.ubuntu.com`** (*verified on host*: "keyserver receive failed: No data").
-   `pepecoin.com` only links back to the same GitHub releases (*verified on host*).
-   So the trust root is "whoever controls the pepecoinppc GitHub org". A compromise there
-   would defeat every check simultaneously.
-
-   This is weaker than Litecoin's chain of custody. It is not a reason to stop — it is the
-   normal state of a small project — but it should be a conscious acceptance, not an
-   oversight. Mitigation available if wanted: build from source and compare against the
-   published binary.
-
-## Feature availability check (*verified on host*, `pepecoind -help`)
+Checked against `pepecoind -help` for v1.1.0:
 
 | Option | Present | Note |
 |---|---|---|
-| `-txindex` `-prune` `-dbcache` | ✅ | |
-| `-rpcbind` `-rpcallowip` | ✅ | |
-| `-disablewallet` | ✅ | |
-| `-datacarriersize` `-permitbaremultisig` | ✅ | Omni Class C / Class B depend on these |
-| `-dustlimit` `-harddustlimit` | ✅ | Pepecoin-specific, inherited from Dogecoin |
-| `-rpcserialversion` | ✅ | |
-| `-blockfilterindex` | ❌ | Bitcoin 0.19+ feature; this codebase is 0.13-era |
-| ZMQ: `hashblock` `hashtx` `rawblock` `rawtx` | ✅ | compiled in |
-| ZMQ: `sequence` | ❌ | **reorgs must be detected via `previousblockhash`** |
+| `-txindex` `-prune` `-dbcache` | yes | |
+| `-rpcbind` `-rpcallowip` | yes | |
+| `-disablewallet` | yes | Do not use it: the application uses the node's wallet |
+| `-datacarriersize` `-permitbaremultisig` | yes | Class C and Class B payloads depend on these |
+| `-dustlimit` `-harddustlimit` | yes | Inherited from Dogecoin |
+| `-rpcserialversion` | yes | |
+| `-blockfilterindex` | no | Bitcoin 0.19+ feature; this codebase is 0.13/0.14-era |
+| ZMQ `hashblock` `hashtx` `rawblock` `rawtx` | yes | |
+| ZMQ `sequence` | no | Reorgs are detected via `previousblockhash` |
 
-## Install layout
+## Running Core as a system service instead
 
-| Path | Contents |
-|---|---|
-| `/usr/local/bin/pepecoind`, `pepecoin-cli`, `pepecoin-tx` | binaries, root-owned, 0755 |
-| `/etc/pepecoin/pepecoin.conf` | config, `pepecoin:pepecoin` 0640 |
-| `/var/lib/pepecoind/` | datadir, `pepecoin:pepecoin` 0710 |
-| `/etc/systemd/system/pepecoind.service` | service unit |
+If you prefer a system-wide node (binaries in `/usr/local/bin`, config in
+`/etc/pepecoin/pepecoin.conf`, datadir `/var/lib/pepecoind`, a dedicated
+`pepecoin` user and a hardened system unit), note that cookie authentication
+will not work for the application: `.cookie` is always `0600`, and no group
+membership, `-rpccookiefile` path or ACL shares it across users. Use `rpcauth`
+in the node's config and give the application a config with `rpcuser` /
+`rpcpassword` (`arcade-web --ledger-conf ...` / `--msg-conf ...`).
 
-Runs as a dedicated `pepecoin` system user with a hardened unit (`ProtectSystem=full`,
-`NoNewPrivileges`, `PrivateDevices`, `MemoryDenyWriteExecute`, restricted syscalls and
-address families). `Restart=on-failure`, `RestartSec=30`. `robin` is added to the
-`pepecoin` group so tooling can read the RPC cookie without root.
+When generating the `rpcauth` line yourself, the HMAC uses the salt as the
+**raw ASCII of the hex string**, not decoded hex. Getting this wrong gives a
+silent authentication failure.
 
-`pepecoin-qt` and `test_pepecoin` are deliberately **not** installed to `/usr/local/bin`
-(no GUI needed on a headless node; the test binary stays in the staging dir).
+## Dogecoin instead of Pepecoin
 
-## Service commands
+Choose Dogecoin at the installer's prompt or with `--coin dogecoin` (or
+`both`). The differences are data only:
 
-```bash
-sudo systemctl status pepecoind          # state
-sudo systemctl start|stop|restart pepecoind
-sudo systemctl enable|disable pepecoind  # start at boot
-sudo journalctl -u pepecoind -f          # service log
-sudo tail -f /var/lib/pepecoind/debug.log
+| | Pepecoin | Dogecoin |
+|---|---|---|
+| Core version | 1.1.0 (`pepecoinppc/pepecoin`) | 1.14.9 (`dogecoin/dogecoin`) |
+| Binaries | `pepecoind`, `pepecoin-cli`, `pepecoin-tx` | `dogecoind`, `dogecoin-cli`, `dogecoin-tx` |
+| Signing key | `david2278-key.pgp`, `18250EC92E527E9723E49116FD415169D2691927` (expired) | `patricklodder-key.pgp`, `DC6EF4A8BF9F1B1E4DE1EE522D3A345B98D0DC1F` (valid) |
+| Datadirs (Linux) | `~/.pepecoin`, `~/.pepecoin-testnet` | `~/.dogecoin`, `~/.dogecoin-testnet` |
+| ZMQ base port, mainnet / testnet | 28332 / 28432 | 28532 / 28632 |
+| Services | `pepecoind-mainnet`, `pepecoind-testnet` | `dogecoind-mainnet`, `dogecoind-testnet` |
 
-pepecoin-cli -conf=/etc/pepecoin/pepecoin.conf -datadir=/var/lib/pepecoind getblockchaininfo
-```
+## Other platforms
+
+| | Linux | macOS | Windows |
+|---|---|---|---|
+| Binaries | `~/.local/bin` | `/Applications/Pepecoin-Qt.app` (copied from the `.dmg`) | `%LOCALAPPDATA%\DogecoinArcade\bin` |
+| Datadirs | `~/.pepecoin`, `~/.pepecoin-testnet` | `~/Library/Application Support/Pepecoin`, `...Pepecoin-testnet` | `%APPDATA%\Pepecoin`, `%APPDATA%\Pepecoin-testnet` |
+| Services | systemd user units | launchd agents | logon tasks, or Startup-folder entries |
