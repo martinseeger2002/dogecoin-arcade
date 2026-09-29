@@ -670,13 +670,19 @@ without its owner being there.
 * **The phrase is inside the game's code**, which anyone can read. Somebody
   determined can claim without playing, for the same price as a winner. Size a
   pool as a prize, not a vault.
-* **Your tokens stay yours until claimed**, but a pool reserves them: the
-  lots standing in pools count against your balance when you make a new one,
-  and a lot is refused if you no longer hold its tokens.
-* **Withdrawing** is *Wallet → Tokens → Your prize pools → Withdraw*: one
-  transaction that spends the coins every lot stands on back to you. Once it
-  is in a block, nobody can claim from that pool, and its tokens are free for
-  a new one.
+* **A pool keeps its tokens at an address of its own.** Your wallet makes
+  that address from your same twelve words, so there is nothing new to back
+  up, and one send moves the pool's tokens and the coins its lots stand on
+  there. Nothing but a claim, or closing the pool, ever sends from it, so a
+  trade or a send of yours can never spend the tokens a lot promised, and a
+  winner never pays for a prize that is gone. The lots are signed once that
+  send is in a block; if you close the page first, *Finish setting up* picks
+  it up again.
+* **Cancel and close** is on *Wallet → Tokens → Your prize pools*: one
+  transaction sends the pool's unclaimed tokens and all of its coins back to
+  you. Once it is in a block, no lot of that pool can be claimed. Pools made
+  before pool addresses existed have *Withdraw* instead, which spends their
+  coins back and leaves their tokens where they always were.
 
 ---
 
