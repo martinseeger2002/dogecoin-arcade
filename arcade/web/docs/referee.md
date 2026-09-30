@@ -64,7 +64,7 @@ function judge(seed, inputs, params) {
 |---|---|
 | `seed` | 64 hex characters, issued by the referee. All randomness comes from it |
 | `inputs` | whatever your page recorded, as JSON, up to 1 MB |
-| `params` | what the pool says, so one judge can serve several pools: `{"stage": 10}` |
+| `params` | what the pool says, so one judge can serve several pools: `{"stage": 10}`. The referee adds `params.claimer`, the address the claim pays, and `params.facts` when the pool asks for them |
 
 It returns `won` (true or false) and `score` (a number). The pool decides which
 one matters.

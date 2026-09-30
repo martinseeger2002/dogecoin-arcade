@@ -521,6 +521,8 @@ function judge(seed, inputs, params) {
   var target = parseInt(seed.slice(0, 2), 16) + params.bonus;
   // What the player holds, as the referee read it: a token balance per number.
   if (!params.facts || !/^[0-9]+$/.test(params.facts.tokens[String(params.pid)] || "")) return {won: false, score: -1};
+  // Who is claiming: the address the seed was issued to.
+  if (!/^[mn2][1-9A-HJ-NP-Za-km-z]{25,34}$/.test(params.claimer || "")) return {won: false, score: -2};
   var sum = 0;
   for (var i = 0; i < inputs.moves.length; i++) sum += inputs.moves[i];
   return {won: sum === target, score: sum};

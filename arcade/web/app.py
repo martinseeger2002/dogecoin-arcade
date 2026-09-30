@@ -12915,6 +12915,12 @@ def create_app(state: AppState) -> FastAPI:
                 raise refereelib.RefereeError("this node does not hold the pool's judge")
             source = found[1].decode("utf-8", "replace")
             params = ref["params"]
+            # Who is claiming (2026-09-30, a multi-session tour whose trophies are
+            # earned outside any one run): the address the seed was issued to,
+            # which is the only one this claim can pay. A judge can then check a
+            # certificate somebody signed for that address.
+            params = {**(params if isinstance(params, dict) else {"params": params}),
+                      "claimer": claimer}
             if ref.get("facts"):
                 # What the player held when the run began and still holds now:
                 # the judge caps the run's claimed levels and gear to it.
