@@ -1054,7 +1054,7 @@ def test_a_price_only_ask_is_not_shown_to_buyers_as_for_sale():
     root = pathlib.Path(__file__).resolve().parents[1]
     app_src = (root / "arcade/web/app.py").read_text()
     assert "def _prices_for(index, chain, asks: bool = True)" in app_src
-    assert "asks=not _public_request(request)" in app_src
+    assert "asks=not _account_view(request)" in app_src
     body = (root / "arcade/web/templates/market_collection.html").read_text()
     assert "data-buy-listing=" in body and '_buy_listing.html' in body
     # The Exchange tab lists collections only (2026-09-28).
@@ -1280,3 +1280,82 @@ def test_an_account_is_fetched_from_another_arcade_only_for_the_machine_itself(n
                    headers=EDGE).status_code in (403, 404), "not a proxy for strangers"
     assert app.get("/signin-import?node=file:///etc&tag=friend",
                    headers=LOCAL).status_code == 400
+
+
+# --- the node's own machine, signed in as an account (2026-09-30) -------------
+
+def test_an_account_signed_in_on_the_nodes_own_machine_sees_its_own_arcade(named):
+    """A friend installed an arcade, signed in there as the account he already
+    had, and was shown the installer's wallet: no name, no coins, an offer to
+    claim a name that was his. On the node's own machine a signed-in account
+    now sees its own tabs, and can switch to the node's built-in wallet."""
+    app, state = named
+    mine = _seat(app)
+    state.set_setting(f"address:{mine}", "n4sZQy4dMCQLJKHkLNpPEj4dpv2CxA8VUj")
+    page = app.get("/feed", headers=LOCAL).text
+    assert 'href="/me"' in page and 'href="/me/accounts"' in page
+    assert 'href="/wallet"' not in page, "the node's wallet is behind the switch"
+    assert 'href="/admin"' in page, "the machine's own Admin stays"
+
+    node = app.get("/view/node", headers=LOCAL, follow_redirects=False)
+    assert node.status_code == 303 and "arcade_view=node" in node.headers["set-cookie"]
+    app.cookies.set("arcade_view", "node")
+    page = app.get("/feed", headers=LOCAL).text
+    assert 'href="/wallet"' in page and 'href="/me/accounts"' in page
+
+    back = app.get("/view/account", headers=LOCAL, follow_redirects=False)
+    assert back.status_code == 303 and back.headers["location"] == "/me"
+    app.cookies.delete("arcade_view")
+    assert 'href="/wallet"' not in app.get("/feed", headers=LOCAL).text
+
+
+def test_a_password_only_operator_still_sees_the_node(named):
+    """The installer's username and password open the NODE: it has no wallet of
+    its own to show instead."""
+    app, state = named
+    assert app.post("/auth/set-password", headers=LOCAL, json={
+        "username": "owner", "password": "a long enough password"}).status_code == 200
+    assert app.post("/auth/password", headers=LOCAL, json={
+        "username": "owner", "password": "a long enough password"}).status_code == 200
+    page = app.get("/feed", headers=LOCAL).text
+    assert 'href="/wallet"' in page and 'href="/me/accounts"' not in page
+
+
+def test_the_switch_is_not_on_the_public_site(named):
+    app, state = named
+    _seat(app, headers=EDGE)
+    assert app.get("/view/node", headers=EDGE).status_code in (403, 404)
+    assert 'href="/me/accounts"' not in app.get("/feed", headers=EDGE).text
+    assert app.get("/me/accounts", headers=EDGE).status_code in (403, 404)
+    assert app.get("/auth/accounts", headers=EDGE).status_code in (403, 404)
+
+
+def test_several_accounts_signed_in_on_the_nodes_own_machine_can_be_switched(named):
+    """2026-09-30: "a way to have multiple wallets imported into the local web
+    ui". A second sign-in keeps the first; the list shows both; switching back
+    keeps the other one in turn."""
+    app, state = named
+    first = _seat(app)
+    state.set_setting(f"address:{first}", "n4sZQy4dMCQLJKHkLNpPEj4dpv2CxA8VUj")
+    second = _seat(app)
+    state.set_setting(f"address:{second}", "mk3gxtreqachy2EGax1pALfmBwFW8qAPiy")
+    listed = app.get("/auth/accounts", headers=LOCAL).json()["accounts"]
+    assert [(a["pubkey"], a["current"]) for a in listed] == [(second, True), (first, False)]
+    assert app.get("/me/accounts", headers=LOCAL).status_code == 200
+
+    switched = app.post("/auth/switch", headers=LOCAL, json={"pubkey": first})
+    assert switched.status_code == 200, switched.text
+    assert app.get("/auth/who", headers=LOCAL).json()["pubkey"] == first
+    listed = app.get("/auth/accounts", headers=LOCAL).json()["accounts"]
+    assert [(a["pubkey"], a["current"]) for a in listed] == [(first, True), (second, False)]
+    assert app.post("/auth/switch", headers=LOCAL,
+                    json={"pubkey": "ab" * 32}).status_code == 404, "only accounts signed in here"
+
+
+def test_a_public_sign_in_remembers_nobody_before_it(named):
+    """A stranger's computer should not keep the last person signed in."""
+    app, state = named
+    _seat(app, headers=EDGE)
+    second = _seat(app, headers=EDGE)
+    assert "arcade_others" not in app.cookies
+    assert app.get("/auth/who", headers=EDGE).json()["pubkey"] == second

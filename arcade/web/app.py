@@ -364,6 +364,15 @@ PAGE_INSCRIPTIONS = 24
 #: thousands of them eventually").
 PAGE_TOKENS = 50
 
+#: Which wallet the node's own machine is showing: "node" for its built-in
+#: wallet, absent for the signed-in account's (app._account_view).
+VIEW_COOKIE = "arcade_view"
+#: The other accounts signed in on this browser, on the node's own machine
+#: only: their session tokens, newest first (2026-09-30: "a way to have
+#: multiple wallets imported into the local web ui").
+OTHERS_COOKIE = "arcade_others"
+OTHERS_MOST = 5
+
 NAV = [
     ("/",             "Overview",     None,        True),
     ("/messages",     "Messages",     "testnet",   True),
@@ -705,6 +714,31 @@ def create_app(state: AppState) -> FastAPI:
             return False
         return True
 
+    def _account_view(request: Request) -> bool:
+        """Whether a page is drawn for an ACCOUNT rather than for the node.
+
+        Always, for a public request. On the node's own machine, when an
+        account with a wallet of its own is signed in -- unless the browser
+        switched to the node's built-in wallet (VIEW_COOKIE, "Node wallet" in
+        the menu). Before 2026-09-30 the node's own machine always drew the
+        node, so somebody who installed an arcade and signed in there as the
+        account they already had saw the installer's wallet instead: no name,
+        no coins, no pieces, and an offer to claim a name that was already
+        theirs.
+
+        Presentation only. The door, and what the operator's machine may read
+        (`_reads_the_plans`), still ask `_public_request`.
+        """
+        if _public_request(request):
+            return True
+        if request.cookies.get(VIEW_COOKIE) == "node":
+            return False
+        account = signed_in(request)
+        if account is None:
+            return False
+        # A username-and-password operator with no wallet of its own IS the node.
+        return bool(_account_address(account.pubkey, _account_chain()))
+
     def _is_operator(request: Request) -> bool:
         account = signed_in(request)
         return bool(account is not None and state.operator
@@ -721,13 +755,35 @@ def create_app(state: AppState) -> FastAPI:
 
     def _nav_for(request: Request) -> list:
         """The tabs: an account's own, the operator's machine's, and Admin for the
-        operator either way (the panel itself asks for what it needs)."""
+        operator either way (the panel itself asks for what it needs). On the
+        node's own machine, a signed-in account can switch between its own view
+        and the node's built-in wallet (2026-09-30)."""
         admin = ("/admin", "Admin", None, True)
-        if _public_request(request):
+        here = not _public_request(request)
+        if _account_view(request):
             if signed_in(request) is not None:
-                return ACCOUNT_NAV + ([admin] if _is_operator(request) else [])
+                return (ACCOUNT_NAV
+                        + ([("/me/accounts", "Accounts", None, True)] if here else [])
+                        + ([admin] if here or _is_operator(request) else []))
             return [entry for entry in NAV if doorlib.public_path(entry[0])]
-        return NAV + [admin]
+        mine = ([("/me/accounts", "Accounts", None, True)]
+                if signed_in(request) is not None
+                and _account_address(signed_in(request).pubkey, _account_chain()) else [])
+        return NAV + mine + [admin]
+
+    @app.get("/view/{which}")
+    def switch_view(request: Request, which: str):
+        """Flip the node's own machine between the signed-in account's view and
+        the node's built-in wallet. A cookie, so each browser keeps its own."""
+        if _public_request(request) or which not in ("node", "account"):
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        answer = RedirectResponse("/" if which == "node" else "/me", status_code=303)
+        if which == "node":
+            answer.set_cookie(VIEW_COOKIE, "node", max_age=365 * 86400, httponly=True,
+                              samesite="strict")
+        else:
+            answer.delete_cookie(VIEW_COOKIE)
+        return answer
 
     def _again(where: str, **context: Any) -> RedirectResponse:
         """Post, redirect, get -- with what the POST decided carried over.
@@ -770,7 +826,7 @@ def create_app(state: AppState) -> FastAPI:
             # unreachable ones removed: a menu of four things that work
             # beats a menu of eleven with seven missing.
             "nav": _nav_for(request),
-            "public": _public_request(request),
+            "public": _account_view(request),
             # Whether the operator is looking: their machine, or signed in from
             # outside. Offers "Not sensitive" on a screened post (feed.html).
             "operator_here": _reads_the_plans(request),
@@ -786,7 +842,7 @@ def create_app(state: AppState) -> FastAPI:
             **_account_counts(request),
             # Whether this page is drawn for a signed-in account, for the
             # key-publishing check every page runs (base.html).
-            "account_here": bool(_public_request(request)
+            "account_here": bool(_account_view(request)
                                  and signed_in(request) is not None),
             # The name its wallet opens under, for the unlock sheet every page
             # carries (a tester, 2026-09-26: "unlock your wallet from each page").
@@ -797,7 +853,7 @@ def create_app(state: AppState) -> FastAPI:
             "unread_board": _unread_board(),
             # The operator's own badge: on a public page nobody sees it, and
             # working it out asks the node's wallet which addresses are its own.
-            "offers_waiting": 0 if _public_request(request) else _offers_waiting(),
+            "offers_waiting": 0 if _account_view(request) else _offers_waiting(),
         }
         base.update(context)
         # What a POST decided, picked up by the GET it redirected to. Last,
@@ -938,7 +994,7 @@ def create_app(state: AppState) -> FastAPI:
         # arcade has to have a front page at all -- so the route itself has
         # to be the one that is safe to serve, or the allowlist would be
         # handing out the Overview's balances, unread counts and identity.
-        if _public_request(request):
+        if _account_view(request):
             # The arcade opens on the feed, signed in or not (the operator,
             # 2026-09-27: "When the arcade app opens, it should be open to the
             # feed tab"). Signing up and signing in land here when there is no
@@ -2428,7 +2484,7 @@ def create_app(state: AppState) -> FastAPI:
         copy that draws it, and a stranger gets `null` where a stranger has no
         business reading anybody's counterparty.
         """
-        mine = not _public_request(request)
+        mine = not _account_view(request)
         return JSONResponse({
             "generation": state.generation,
             "tips": state.tips,
@@ -2639,7 +2695,7 @@ def create_app(state: AppState) -> FastAPI:
             return {}
         base = state.pages_origin or ""
         here = ""
-        if _public_request(request):
+        if _account_view(request):
             looking = signed_in(request)
             if looking is not None:
                 here = _account_address(looking.pubkey, _token_chain()[0])
@@ -2745,7 +2801,7 @@ def create_app(state: AppState) -> FastAPI:
         is handed to the page; an account's is in its browser and the page
         reads it there. Nothing for a public request.
         """
-        if _public_request(request) or not state.store_path.exists():
+        if _account_view(request) or not state.store_path.exists():
             return []
         try:
             with state.store() as store:
@@ -4066,7 +4122,7 @@ def create_app(state: AppState) -> FastAPI:
         and offers the node's wallet page to send them with.
         """
         data = _inscription_page_data(page=page)
-        if _public_request(request):
+        if _account_view(request):
             account = signed_in(request)
             address = (_account_address(account.pubkey, data["chain"])
                        if account else "")
@@ -4212,7 +4268,7 @@ def create_app(state: AppState) -> FastAPI:
         # Whose pieces these are, for the Send button: the looking account's on
         # a public copy, never the node's wallet (the D-184 shape, again).
         owned, _held, _coins = _offerable(chain, index, request)
-        public = _public_request(request)
+        public = _account_view(request)
         # What is for sale, buyable with one press (2026-09-27): shown on
         # each listed card and gathered at the top, so the page reads "for sale
         # first" like the market does (a tester, the same day).
@@ -5068,7 +5124,7 @@ def create_app(state: AppState) -> FastAPI:
     def _account_name(request: Request) -> str:
         """The name the signed-in account's encrypted wallet is kept under here,
         or "" (not signed in, or a wallet this node was only shown)."""
-        if not _public_request(request):
+        if not _account_view(request):
             return ""
         account = signed_in(request)
         if account is None:
@@ -5088,7 +5144,7 @@ def create_app(state: AppState) -> FastAPI:
         to somebody signed in as @gx1 -- which is both a lie about who they
         are and a disclosure about who runs the node (D-158).
         """
-        if not _public_request(request):
+        if not _account_view(request):
             return _my_tag()
         chain, index = _tag_chain()
         account = signed_in(request)
@@ -6638,7 +6694,7 @@ def create_app(state: AppState) -> FastAPI:
         # account's own key, and a stranger on a public copy has neither. The
         # route says it because the page cannot tell -- one template, one set
         # of buttons, either way.
-        public = _public_request(request)
+        public = _account_view(request)
         viewer = "wallet"
         if public:
             viewer = "account" if signed_in(request) is not None else "nobody"
@@ -6917,8 +6973,8 @@ def create_app(state: AppState) -> FastAPI:
                 "likes": len(likes.get(r["txid"], ())), "liked": me in likes.get(r["txid"], ())})
         return render(request, "launch_thread.html", chain=chain, launch=launch,
                       tree=by_parent, root=txid, count=len(replies), mine=mine,
-                      public=_public_request(request), when=_when,
-                      acts=_public_request(request) and bool(mine.get("tag")))
+                      public=_account_view(request), when=_when,
+                      acts=_account_view(request) and bool(mine.get("tag")))
 
     @app.get("/launch")
     def launchpad(request: Request):
@@ -6947,7 +7003,7 @@ def create_app(state: AppState) -> FastAPI:
         the node's switch and the two can disagree -- and a page that answers
         that with "sign in first" is a page that lies to somebody who did.
         """
-        if _public_request(request):
+        if _account_view(request):
             account = signed_in(request)
             address = (_account_address(account.pubkey, _token_chain()[0])
                        if account else "")
@@ -7838,7 +7894,7 @@ def create_app(state: AppState) -> FastAPI:
 
     def _account_counts(request: Request) -> dict:
         """The red counts for an account's tabs; nothing for anybody else."""
-        if not _public_request(request):
+        if not _account_view(request):
             return {}
         account = signed_in(request)
         if account is None:
@@ -8075,6 +8131,7 @@ def create_app(state: AppState) -> FastAPI:
         answer = JSONResponse({"pubkey": account.pubkey, "tag": "",
                                "created": account.created,
                                "free": register.free()})
+        _keep_previous(request, answer, token)
         answer.set_cookie(
             SESSION_COOKIE, token,
             max_age=accountslib.SESSION_DAYS * 86400,
@@ -8092,6 +8149,65 @@ def create_app(state: AppState) -> FastAPI:
         answer.delete_cookie(SESSION_COOKIE)
         return answer
 
+    def _account_row(token: str, current: bool) -> dict | None:
+        who = state.account_for(token)
+        if who is None:
+            return None
+        chain = _account_chain()
+        address = _account_address(who.pubkey, chain)
+        tag = ""
+        try:
+            tag = state.token_index(chain).tag_of(address) or "" if address else ""
+        except Exception:                                  # noqa: BLE001
+            tag = ""
+        if not tag:
+            tag = (state.vault().by_pubkey(who.pubkey) or {}).get("tag") or ""
+        return {"pubkey": who.pubkey, "tag": tag, "address": address, "current": current,
+                "operator": who.pubkey.lower() == state.operator}
+
+    @app.get("/auth/accounts")
+    def auth_accounts(request: Request):
+        """The accounts signed in on this browser, on the node's own machine."""
+        if _public_request(request):
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        rows = []
+        now = str(request.cookies.get(SESSION_COOKIE, "") or "")
+        if now:
+            rows.append(_account_row(now, True))
+        rows += [_account_row(t, False) for t in _others(request)]
+        return JSONResponse({"accounts": [r for r in rows if r],
+                             "view": "node" if request.cookies.get(VIEW_COOKIE) == "node"
+                             else "account"})
+
+    @app.post("/auth/switch")
+    def auth_switch(request: Request, payload: Any = Body(None)):
+        """Make another account signed in on this browser the current one. The
+        one that was current stays remembered."""
+        if _public_request(request):
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        said = payload if isinstance(payload, dict) else {}
+        want = str(said.get("pubkey") or "").lower()
+        others = _others(request)
+        token = next((t for t in others if (state.account_for(t) or None)
+                      and state.account_for(t).pubkey.lower() == want), None)
+        if token is None:
+            return JSONResponse({"detail": "that account is not signed in on this browser"},
+                                status_code=404)
+        now = str(request.cookies.get(SESSION_COOKIE, "") or "")
+        answer = JSONResponse({"pubkey": state.account_for(token).pubkey})
+        _set_others(answer, [t for t in ([now] if now and state.account_for(now) else [])
+                             + [t for t in others if t != token]][:OTHERS_MOST])
+        answer.set_cookie(SESSION_COOKIE, token, max_age=accountslib.SESSION_DAYS * 86400,
+                          httponly=True, samesite="strict", secure=_over_https(request))
+        answer.delete_cookie(VIEW_COOKIE)
+        return answer
+
+    @app.get("/me/accounts", response_class=HTMLResponse)
+    def my_accounts(request: Request):
+        """Switch between the accounts signed in here and the node's own wallet."""
+        if _public_request(request):
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        return render(request, "my_accounts.html", chain=_account_chain())
     # --- what an account does on the chain ------------------------------------
     #
     # The node builds and explains; the browser shows, asks and signs; the
@@ -8733,7 +8849,43 @@ def create_app(state: AppState) -> FastAPI:
              now + accountslib.SESSION_DAYS * 86400))
         return token
 
+    def _others(request: Request) -> list[str]:
+        """The other accounts signed in on this browser: live session tokens."""
+        if _public_request(request):
+            return []
+        said = [t for t in str(request.cookies.get(OTHERS_COOKIE, "")).split(",") if t]
+        return [t for t in said if state.account_for(t) is not None][:OTHERS_MOST]
+
+    def _keep_previous(request: Request, answer, token: str) -> None:
+        """A sign-in on the node's own machine keeps the account that was signed
+        in before it, so the two can be switched between without signing in
+        again. Public requests keep nothing: a stranger's computer should not
+        remember the last person."""
+        if _public_request(request):
+            return
+        before = str(request.cookies.get(SESSION_COOKIE, "") or "")
+        kept = [t for t in ([before] if before else []) + _others(request)
+                if t and t != token and state.account_for(t) is not None]
+        mine = state.account_for(token)
+        seen, out = set(), []
+        for t in kept:
+            who = state.account_for(t)
+            if who is None or (mine is not None and who.pubkey == mine.pubkey) or who.pubkey in seen:
+                continue
+            seen.add(who.pubkey)
+            out.append(t)
+        _set_others(answer, out[:OTHERS_MOST])
+
+    def _set_others(answer, tokens: list[str]) -> None:
+        if tokens:
+            answer.set_cookie(OTHERS_COOKIE, ",".join(tokens),
+                              max_age=accountslib.SESSION_DAYS * 86400,
+                              httponly=True, samesite="strict")
+        else:
+            answer.delete_cookie(OTHERS_COOKIE)
+
     def _set_session(answer, token: str, request: Request) -> None:
+        _keep_previous(request, answer, token)
         answer.set_cookie(
             SESSION_COOKIE, token,
             max_age=accountslib.SESSION_DAYS * 86400,
@@ -17063,6 +17215,7 @@ def create_app(state: AppState) -> FastAPI:
         answer = JSONResponse({"pubkey": account.pubkey,
                                "operator": account.pubkey.lower() == state.operator,
                                "tag": ""})
+        _keep_previous(request, answer, token)
         answer.set_cookie(
             SESSION_COOKIE, token,
             max_age=accountslib.SESSION_DAYS * 86400,
@@ -18264,7 +18417,7 @@ def create_app(state: AppState) -> FastAPI:
         held: list[dict[str, Any]] = []
         coins = 0.0
         owned: set[str] = set()
-        if request is not None and _public_request(request):
+        if request is not None and _account_view(request):
             account = signed_in(request)
             here = _account_address(account.pubkey, chain) if account else ""
             if not here:
@@ -18343,7 +18496,7 @@ def create_app(state: AppState) -> FastAPI:
         # is answered out of the index, because on this path the node holds
         # nobody's key; a stranger is told nothing about a reader, because there
         # is no reader to describe.
-        public = _public_request(request)
+        public = _account_view(request)
         viewer = "wallet"
         if public:
             viewer = "account" if signed_in(request) is not None else "nobody"
@@ -18941,7 +19094,7 @@ def create_app(state: AppState) -> FastAPI:
                               "slots": chartlib.candles(points)}
         listed: dict[str, dict[str, Any]] = {}
         try:
-            listed = _prices_for(index, chain, asks=not _public_request(request))
+            listed = _prices_for(index, chain, asks=not _account_view(request))
         except Exception as exc:
             data["node_error"] = f"the prices could not be read: {exc}"
         owned, data["tokens"], data["coins"] = _offerable(chain, index, request)
@@ -18989,7 +19142,7 @@ def create_app(state: AppState) -> FastAPI:
         # /exchange/sell) are refused at the door, so an account is sent to the
         # piece's own page, where buying, offering and selling are signed in its
         # tab (a tester, 2026-09-26: "Buy for 3 coins" landed on "Not here").
-        data["account_view"] = _public_request(request)
+        data["account_view"] = _account_view(request)
         data["signed_in"] = bool(signed_in(request)) if data["account_view"] else True
         return render(request, "market_collection.html", **data)
 
@@ -19208,7 +19361,7 @@ def create_app(state: AppState) -> FastAPI:
         # and showing an account the offers standing on it -- with a button to
         # answer them -- is showing them another person's post (D-172).
         data["viewer"] = "wallet"
-        if _public_request(request):
+        if _account_view(request):
             data["viewer"] = "account"
             looking = signed_in(request)
             here = _account_address(looking.pubkey, chain) if looking else ""
@@ -19293,7 +19446,7 @@ def create_app(state: AppState) -> FastAPI:
             # pieces it prices are (D-096).
             try:
                 data["collections"] = _market_collections(
-                    index, chain, trades, public=_public_request(request))
+                    index, chain, trades, public=_account_view(request))
                 # Popular means traded, and traded recently: what a market
                 # is for is not the biggest set, it is the busy one. Falls
                 # back on what is for sale where nothing has traded at all,

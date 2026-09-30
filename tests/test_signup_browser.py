@@ -403,11 +403,14 @@ def test_a_file_and_a_password_open_a_wallet_this_node_never_held(
     browser.find_element(By.ID, "backup-file").send_keys(str(path))
     browser.find_element(By.ID, "backup-pw").send_keys("a long enough password")
     browser.find_element(By.ID, "open-file").click()
+    # "/" on the node's own machine shows a signed-in account its feed
+    # (2026-09-30), as it does on a public node.
+    landed = (base, base + "/feed")
     for _ in range(120):
-        if browser.current_url.rstrip("/") == base:
+        if browser.current_url.rstrip("/") in landed:
             break
         time.sleep(0.25)
-    assert browser.current_url.rstrip("/") == base, \
+    assert browser.current_url.rstrip("/") in landed, \
         "it takes them in the way a sign-in does"
 
     who = browser.execute_async_script("""
@@ -523,3 +526,37 @@ def test_sign_in_links_to_restore_and_every_warning_names_it(loaded):
     root = pathlib.Path(__file__).resolve().parents[1] / "arcade/web/templates"
     for name in ("signup.html", "join.html", "clone.html", "my_backup.html"):
         assert "Restore" in (root / name).read_text(), name
+
+
+def test_two_accounts_in_one_tab_switch_without_a_password(loaded):
+    """2026-09-30: "a way to have multiple wallets imported into the local web
+    ui". Two accounts signed in on the node's own machine; switching back to
+    the first opens its wallet at once, because this tab unlocked it before."""
+    browser, base, state, home = loaded
+    state.accounts().seats = max(state.accounts().seats, 40)
+    _ready(browser, base)
+    first = _sign_up(browser, "swapfirst")
+    assert "error" not in first, first
+    _ready(browser, base)
+    second = _sign_up(browser, "swapsecond")
+    assert "error" not in second, second
+    browser.get(f"{base}/me/accounts")            # a page that stays where it is
+    time.sleep(1)
+    _w(browser)
+    said = browser.execute_async_script("""
+        const done = arguments[2];
+        const chain = {network: "regtest", version: arguments[1]};
+        window.w.switchAccount(arguments[0], chain)
+          .then(() => fetch("/auth/who").then((r) => r.json()))
+          .then((who) => window.w.opened(chain).then((open) =>
+                done({who: who.pubkey, open: open ? open.pubkey : null})))
+          .catch((e) => done({error: String(e.message || e)}));""",
+        first["pubkey"], REGTEST_VERSION)
+    assert "error" not in said, said
+    assert said["who"] == first["pubkey"], "the node signed this browser in as the first"
+    assert said["open"] == first["pubkey"], "and its wallet opened with no password"
+    listed = browser.execute_async_script("""
+        const done = arguments[0];
+        fetch("/auth/accounts").then((r) => r.json()).then(done);""")
+    assert [a["current"] for a in listed["accounts"]][:2] == [True, False]
+    assert {a["pubkey"] for a in listed["accounts"]} >= {first["pubkey"], second["pubkey"]}

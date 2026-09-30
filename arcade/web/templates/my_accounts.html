@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Accounts · DogecoinArcade{% endblock %}
+{% block body %}
+{# The accounts signed in on this browser, and the node's own wallet
+   (2026-09-30: "a way to have multiple wallets imported into the local web ui").
+   The node's own machine only. #}
+<p class="sub" style="margin-top:0">Every account signed in on this browser, and this
+  node's own wallet. Switching keeps the others signed in.</p>
+<div class="panel" id="accounts-panel">
+  <h2 style="margin-top:0">Accounts</h2>
+  <div id="accounts-list"><p class="muted">Loading&hellip;</p></div>
+  <p style="margin:14px 0 0">
+    <a class="btn small" href="/join">Add another account</a>
+  </p>
+</div>
+<div class="panel">
+  <h2 style="margin-top:0">This node's own wallet</h2>
+  <p class="muted" style="margin-top:0">The wallet the installer made inside the node:
+    what the node pays fees and gifts from, and what the operator's pages show.</p>
+  <a class="btn small" id="node-view" href="/view/node">Show the node's wallet</a>
+</div>
+<p class="msg err" id="accounts-trouble" hidden></p>
+<script type="module">
+const $ = (id) => document.getElementById(id);
+function say(text) { $("accounts-trouble").textContent = text; $("accounts-trouble").hidden = !text; }
+
+async function draw() {
+  const said = await (await fetch("/auth/accounts", {cache: "no-store"})).json();
+  const list = $("accounts-list");
+  list.replaceChildren();
+  if (!(said.accounts || []).length) {
+    const p = document.createElement("p"); p.className = "muted";
+    p.textContent = "No account is signed in on this browser.";
+    list.appendChild(p);
+  }
+  for (const a of said.accounts || []) {
+    const row = document.createElement("div");
+    row.className = "row"; row.style.cssText = "align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--line)";
+    const name = document.createElement("strong");
+    name.textContent = a.tag ? "@" + a.tag : (a.address || a.pubkey.slice(0, 12) + "\u2026");
+    row.appendChild(name);
+    if (a.operator) {
+      const op = document.createElement("span"); op.className = "muted small"; op.textContent = "operator";
+      row.appendChild(op);
+    }
+    const right = document.createElement("span"); right.style.marginLeft = "auto";
+    if (a.current && said.view !== "node") {
+      right.className = "muted small"; right.textContent = "showing now";
+    } else {
+      const b = document.createElement("button"); b.type = "button"; b.className = "small";
+      b.textContent = a.current ? "Show it" : "Switch to it";
+      b.onclick = () => (a.current ? (location.href = "/view/account") : switchTo(a.pubkey));
+      right.appendChild(b);
+    }
+    row.appendChild(right);
+    list.appendChild(row);
+  }
+  if (said.view === "node") $("node-view").textContent = "Showing the node's wallet";
+}
+
+async function switchTo(pubkey) {
+  say("");
+  try {
+    const wallet = await import("/wallet.js");
+    await wallet.switchAccount(pubkey, typeof ARCADE_CHAIN !== "undefined" ? ARCADE_CHAIN : null);
+    location.href = "/me";
+  } catch (e) { say(String(e.message || e)); }
+}
+
+draw().catch((e) => say("This node did not answer: " + (e.message || e)));
+</script>
+{% endblock %}

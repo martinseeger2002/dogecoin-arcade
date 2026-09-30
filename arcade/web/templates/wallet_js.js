@@ -1835,6 +1835,22 @@ async function settle(wantName, wantKey, tag, step, seconds = 300) {
  */
 
 const OPEN_WALLET = "arcade-open-wallet";
+/* Every wallet unlocked in this tab, for switching between accounts signed in
+ * on the node's own machine without typing a password again (2026-09-30).
+ * The same place and the same lifetime as OPEN_WALLET: this tab, until it
+ * closes. */
+const OPEN_WALLETS = "arcade-open-wallets";
+
+function openWallets() {
+  try { return JSON.parse(sessionStorage.getItem(OPEN_WALLETS) || "[]"); } catch (e) { return []; }
+}
+
+function keepOpen(phrase) {
+  if (!phrase) return;
+  const kept = openWallets().filter((p) => p !== phrase);
+  kept.unshift(phrase);
+  try { sessionStorage.setItem(OPEN_WALLETS, JSON.stringify(kept.slice(0, 6))); } catch (e) {}
+}
 
 /* Unlocked once, unlocked everywhere (2026-09-26: "If you unlock on one
  * page, it should stay unlocked on all pages"). The open wallet lives in THIS
@@ -1843,6 +1859,10 @@ const OPEN_WALLET = "arcade-open-wallet";
  * only: an inscribed page is on the pages host and cannot hear it): a tab that
  * opens locked asks, and any unlocked tab answers. Nothing is written to disk --
  * close the last tab and it is locked -- and locking one locks them all. */
+// One name per page, shared by every copy of this module the page loaded.
+const THIS_PAGE = (typeof window !== "undefined")
+  ? (window.__arcadePage = window.__arcadePage || Math.random().toString(36).slice(2))
+  : "worker";
 const TABS = (typeof BroadcastChannel !== "undefined")
   ? new BroadcastChannel("arcade-open-wallet") : null;
 if (TABS) {
@@ -1858,6 +1878,11 @@ if (TABS) {
       } catch (x) {}
     } else if (m.locked) {
       try { sessionStorage.removeItem(OPEN_WALLET); } catch (x) {}
+    } else if (m.switched && m.from !== THIS_PAGE) {
+      // Another tab switched accounts: this one is showing the old one. Not
+      // this page, which may hold more than one copy of this module.
+      try { sessionStorage.removeItem(OPEN_WALLET); } catch (x) {}
+      location.reload();
     }
   };
 }
@@ -1875,6 +1900,7 @@ function fromAnotherTab(ms = 400) {
 
 export function remember(phrase) {
   try { sessionStorage.setItem(OPEN_WALLET, phrase); } catch (e) {}
+  keepOpen(phrase);
   // Tabs already open and locked open now too.
   try { if (TABS) TABS.postMessage({phrase}); } catch (e) {}
 }
@@ -1897,8 +1923,44 @@ export async function signOut(chain) {
 }
 
 export function forgetOpen() {
+  let phrase = null;
+  try { phrase = sessionStorage.getItem(OPEN_WALLET); } catch (e) {}
   try { sessionStorage.removeItem(OPEN_WALLET); } catch (e) {}
+  if (phrase) {
+    try { sessionStorage.setItem(OPEN_WALLETS,
+            JSON.stringify(openWallets().filter((p) => p !== phrase))); } catch (e) {}
+  }
   try { if (TABS) TABS.postMessage({locked: true}); } catch (e) {}
+}
+
+/** Switch this browser to another account signed in on it. Its wallet opens
+ *  at once if it was unlocked in this tab before; otherwise it opens locked,
+ *  and asks for its password the first time it has to sign. */
+export async function switchAccount(pubkey, chain) {
+  const answer = await fetch("/auth/switch", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({pubkey}),
+  });
+  const said = await answer.json();
+  if (!answer.ok) throw new Error(said.detail || "that account could not be switched to");
+  let current = null;
+  try { current = sessionStorage.getItem(OPEN_WALLET); } catch (e) {}
+  if (current) keepOpen(current);
+  let found = null;
+  for (const phrase of openWallets()) {
+    try {
+      const w = await walletFrom(phrase, chain ? chain.network : undefined,
+                                 chain ? chain.version : undefined);
+      if (w.pubkey === String(pubkey).toLowerCase()) { found = phrase; break; }
+    } catch (e) { /* a phrase that no longer opens is skipped */ }
+  }
+  try {
+    if (found) sessionStorage.setItem(OPEN_WALLET, found);
+    else sessionStorage.removeItem(OPEN_WALLET);
+  } catch (e) {}
+  // Other tabs were showing the account that is no longer current.
+  try { if (TABS) TABS.postMessage({switched: true, from: THIS_PAGE}); } catch (e) {}
+  return said;
 }
 
 /** The wallet unlocked in this tab, or null. */
