@@ -10,6 +10,7 @@ given one listing id for the whole pool; each claim takes the next open lot.
 
 import hashlib
 import json
+import time
 import pathlib
 import sys
 
@@ -551,7 +552,8 @@ def test_a_refereed_pool_pays_only_a_verified_win_and_nothing_gets_around_it(nod
     pool_pub = _pubkey(pool_secret)
     opened = who.post("/account/pools/open", json={
         "index": 4242, "pubkey": pool_pub.hex(), "creator_pubkey": book["pubkey"].hex(),
-        "referee": {"judge": judge, "require": {"won": True}, "params": {"bonus": 7}}})
+        "referee": {"judge": judge, "require": {"won": True}, "params": {"bonus": 7},
+                    "seed_hours": 24}})
     assert opened.status_code == 200, opened.text
     pool = opened.json()["address"]
     assert opened.json()["referee"] and pool.startswith("2"), "a two-key address"
@@ -574,6 +576,7 @@ def test_a_refereed_pool_pays_only_a_verified_win_and_nothing_gets_around_it(nod
     _settled(state, rpc)
     card = who.get(f"/r/prizepool/{pool_txid}").json()
     assert card["open"] and card["referee"]["judge"] == judge, card
+    assert card["referee"]["seed_hours"] == 24, "the pool says how long its seeds last"
 
     player = _seated(app, state, rpc, 111)
     client, secret, pubkey, address = player
@@ -591,7 +594,9 @@ def test_a_refereed_pool_pays_only_a_verified_win_and_nothing_gets_around_it(nod
 
     _, none = claim(player, 0, None)
     assert none.status_code == 400 and "replay" in none.json()["detail"], none.text
-    seed = client.post("/account/referee/seed", json={"pool": pool_txid}).json()["seed"]
+    seeded = client.post("/account/referee/seed", json={"pool": pool_txid}).json()
+    seed = seeded["seed"]
+    assert abs(seeded["expires"] - time.time() - 24 * 3600) < 60, seeded
     target = int(seed[:2], 16) + 7
     _, lost = claim(player, 0, {"seed": seed, "inputs": {"moves": [target - 1]}})
     assert lost.status_code == 400 and "did not win" in lost.json()["detail"], lost.text

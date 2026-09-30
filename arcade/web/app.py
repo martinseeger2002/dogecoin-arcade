@@ -12396,7 +12396,8 @@ def create_app(state: AppState) -> FastAPI:
                         "judge": str(ref["judge"]).lower(),
                         "require": ref.get("require") if isinstance(ref.get("require"), dict)
                         else {"won": True},
-                        "params": ref.get("params") if ref.get("params") is not None else {}}
+                        "params": ref.get("params") if ref.get("params") is not None else {},
+                        "seed_hours": refereelib.seed_seconds(ref) / 3600}
                     pools[r["txid"]]["redeem"] = redeem.hex()
             except (KeyError, TypeError, ValueError):
                 pools.pop(r["txid"], None)
@@ -12456,8 +12457,15 @@ def create_app(state: AppState) -> FastAPI:
         params = spec.get("params") if spec.get("params") is not None else {}
         if len(json.dumps(params)) > 4096:
             raise ValueError("a judge's params are at most 4 KB")
+        # How long a player has from a run's seed to its claim: the pool's call
+        # (2026-09-29: "each pool set its own"), two hours unless it says.
+        hours = spec.get("seed_hours", 2)
+        if (not isinstance(hours, (int, float)) or isinstance(hours, bool)
+                or not 0 < hours <= refereelib.SEED_HOURS_MOST):
+            raise ValueError(f"seed_hours is a number of hours, above 0 and at most "
+                             f"{refereelib.SEED_HOURS_MOST}")
         return {"node": node, "pubkey": pubkey, "judge": row["txid"],
-                "require": require, "params": params}
+                "require": require, "params": params, "seed_hours": hours}
 
     def _referee_json(account, pool: dict) -> dict:
         """The part of a pool inscription that names its referee, if it has one."""
@@ -12487,7 +12495,8 @@ def create_app(state: AppState) -> FastAPI:
         complaint = _check_address(address, mainnet=chain.is_mainnet)
         if complaint:
             raise refereelib.RefereeError(complaint)
-        return _referee.issue_seed(pool["txid"], address)
+        return _referee.issue_seed(pool["txid"], address,
+                                   refereelib.seed_seconds(pool["referee"]))
 
     def _referee_sign(chain, key: str, n: int, raw: str, replay: Any) -> dict:
         """The referee's half of a claim: a verdict on the replay, then a signature
@@ -12741,7 +12750,8 @@ def create_app(state: AppState) -> FastAPI:
         return {**{k: pool[k] for k in (
             "txid", "number", "creator", "kind", "pool", "index", "property_id", "lot",
             "count", "price", "game", "deleted", "once", "name")},
-            "referee": ({k: pool["referee"][k] for k in ("node", "judge", "require", "params")}
+            "referee": ({k: pool["referee"][k]
+                         for k in ("node", "judge", "require", "params", "seed_hours")}
                         if pool.get("referee") else None),
             "pool_id": pool["txid"], "total": pool["count"],
             "what": _pool_what(chain, pool), "free": [] if refusal else free,

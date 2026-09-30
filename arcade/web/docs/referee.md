@@ -152,7 +152,8 @@ Everything in the [prize pools](prize-pools.md) guide applies. Add `referee`:
                "referee": {"node": "https://app.dogecoinarcade.com",
                            "judge": "#<your judge>",
                            "require": {"won": true},
-                           "params": {"stage": 10}}}}
+                           "params": {"stage": 10},
+                           "seed_hours": 2}}}
 ```
 
 | field | |
@@ -161,6 +162,7 @@ Everything in the [prize pools](prize-pools.md) guide applies. Add `referee`:
 | `judge` | your judge inscription, `#number` or id |
 | `require` | `{"won": true}`, or `{"score_min": N}` |
 | `params` | optional, up to 4 KB: handed to the judge |
+| `seed_hours` | optional: how long a player has from starting a run to claiming its prize. 2 unless you say, up to 720 (30 days). Give a game whose runs are long, or that lets a player claim later, more |
 
 ## The page's side
 
@@ -178,9 +180,10 @@ The answer comes back as a message with the same `seq`:
 * `{arcade: "seed", seq: 1, error}`: no seed. `"this pool has no referee"`
   means a plain pool, so claim the plain way.
 
-A seed belongs to the wallet that is looking and to that pool. It works once
-and lasts two hours: a run has to be claimed within two hours of starting.
-Only seeds expire. The judge is an inscription and never does, and the pool
+A seed belongs to the wallet that is looking and to that pool. It works once,
+and lasts as long as the pool's `seed_hours` says (two hours unless it says):
+a run has to be claimed within that long of starting. `expires` says when, in
+seconds since 1970. Only seeds expire. The judge is an inscription and never does, and the pool
 pays out until it is empty or you delete it. `pool_id` comes from `GET /r/claimpools/<your game>`.
 
 ### Claiming with the run

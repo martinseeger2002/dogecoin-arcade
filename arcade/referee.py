@@ -59,10 +59,23 @@ CPU_SECONDS = 5
 MEMORY_BYTES = 64 << 20
 INPUTS_BYTES = 1 << 20
 JUDGE_BYTES = 256 << 10
-#: How long a seed can wait for its run, and how many one wallet may hold
-#: open for one pool at once.
+#: How long a seed can wait for its run and its claim, unless the pool says
+#: (`seed_hours`, 2026-09-29: "each pool set its own"), and the longest a pool
+#: may say. How many one wallet may hold open for one pool at once.
 SEED_SECONDS = 2 * 3600
+SEED_HOURS_MOST = 720
 SEEDS_OPEN = 20
+
+
+def seed_seconds(ref: dict) -> int:
+    """How long a pool's seeds last: its own `seed_hours`, or two hours."""
+    try:
+        hours = float(ref.get("seed_hours") or 0)
+    except (TypeError, ValueError):
+        hours = 0
+    if not hours > 0:
+        return SEED_SECONDS
+    return int(min(hours, SEED_HOURS_MOST) * 3600)
 #: Replays one wallet may have judged in a minute.
 JUDGED_PER_MINUTE = 3
 
@@ -161,7 +174,7 @@ class Referee:
                      "address TEXT, issued REAL, expires REAL, used TEXT DEFAULT '')")
         return conn
 
-    def issue_seed(self, pool: str, address: str) -> dict:
+    def issue_seed(self, pool: str, address: str, seconds: int = SEED_SECONDS) -> dict:
         now = time.time()
         with self._lock, closing(self._db()) as db, db:
             db.execute("DELETE FROM seed WHERE expires < ? AND used = ''", (now - 86400,))
@@ -172,8 +185,8 @@ class Referee:
                                    "for this pool; play one of them")
             seed = secrets.token_hex(32)
             db.execute("INSERT INTO seed (seed, pool, address, issued, expires) "
-                       "VALUES (?,?,?,?,?)", (seed, pool, address, now, now + SEED_SECONDS))
-        return {"seed": seed, "expires": int(now + SEED_SECONDS)}
+                       "VALUES (?,?,?,?,?)", (seed, pool, address, now, now + seconds))
+        return {"seed": seed, "expires": int(now + seconds)}
 
     def seed_row(self, seed: str) -> dict | None:
         with closing(self._db()) as db:
