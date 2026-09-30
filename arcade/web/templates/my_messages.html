@@ -183,14 +183,19 @@ async function tagOf(address) {
   return NAMED[address];
 }
 
-/* The same shape the rest of the application prints: a time, not a guess
-   at how long ago it was. */
+/* A time, not a guess at how long ago it was, said the way the reader's own
+   clock says it and naming its zone (2026-09-29: "the timestamps in the
+   messages should show the users local time"). The old "2026-09-29 20:05"
+   was local too, but read like the server's; this is the shape the rest of
+   the application prints ("Sep 29, 8:05 PM CDT"), and if a browser hides its
+   zone and says UTC, the stamp says so rather than passing it off as local. */
 function when(seconds) {
   if (!seconds) return "";
   const at = new Date(seconds * 1000);
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} `
-       + `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  const opts = {month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+                timeZoneName: "short"};
+  if (at.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+  try { return at.toLocaleString(undefined, opts); } catch (e) { return at.toString(); }
 }
 
 const nameOf = (thread) => thread.group ? "\u{1F465} " + (thread.group.name || "A group")
