@@ -283,10 +283,14 @@ def run_judge(source: str, seed: str, inputs: Any, params: Any,
 def meets(verdict: dict, require: dict) -> str:
     """Why a verdict falls short of a pool's requirement, or nothing."""
     if require.get("won") and verdict.get("won") is not True:
-        return "the replay did not win"
+        return ("the replay did not win" if "won" in verdict
+                else "the judge did not say whether the replay won")
     if "score_min" in require:
-        if float(verdict.get("score") or 0) < float(require["score_min"]):
-            return f"the replay scored {verdict.get('score')}, under {require['score_min']}"
+        score = verdict.get("score")
+        if isinstance(score, bool) or not isinstance(score, (int, float)):
+            return "the judge gave no score"
+        if float(score) < float(require["score_min"]):
+            return f"the replay scored {score}, under {require['score_min']}"
     return ""
 
 

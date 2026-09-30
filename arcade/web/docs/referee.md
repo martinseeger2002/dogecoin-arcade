@@ -66,8 +66,12 @@ function judge(seed, inputs, params) {
 | `inputs` | whatever your page recorded, as JSON, up to 1 MB |
 | `params` | what the pool says, so one judge can serve several pools: `{"stage": 10}`. The referee adds `params.claimer`, the address the claim pays, and `params.facts` when the pool asks for them |
 
-It returns `won` (true or false) and `score` (a number). The pool decides which
-one matters.
+It returns an object of your own design, up to 2 KB: whatever your game or
+use case needs to say about a run — a time, a score, the order of finishers,
+a level reached. The referee keeps it exactly as returned. Two fields are read
+only when a pool asks for them: `won` (true) for a pool that requires a win,
+and `score` (a number) for one that requires `score_min`. A judge that never
+feeds a pool can leave both out.
 
 ### The rules that make a judge agree with the game
 
@@ -239,6 +243,7 @@ run before it pays. The answers are those of any claim: `heard`, then
 | error | what to tell the player |
 |---|---|
 | `the replay did not win` | the run did not win under the judge. If it did in the game, the game and the judge disagree |
+| `the judge did not say whether the replay won` / `the judge gave no score` | the pool requires `won` or `score_min` and the judge's result has no such field |
 | `the replay scored N, under M` | a `score_min` pool, and the score was short |
 | `that seed was used; a new run needs a new seed` | ask for a new seed and play again |
 | `that seed expired; ...` | the same |
@@ -275,9 +280,9 @@ parent.postMessage({arcade: "inscribe", seq: 2,
 The referee runs the judge and signs **what it said** — the whole result
 object, up to 2 KB — for **this player's address** over **this content**. The
 signature goes into the inscription's JSON as `attested`. A copy inscribed by
-anybody else, or over other content, does not check out. Verified is not the
-same as won: a losing run is verified too, with `won: false`, so a game keeps
-every result and decides what counts.
+anybody else, or over other content, does not check out. Verified means "this
+is what the judge said", not "this was good": every run the judge scores is
+verified, so a game keeps every result and decides for itself what counts.
 
 A seed works once. If the player cancels the inscription card after the
 referee has signed, that run is spent; play again with a new seed.

@@ -51,17 +51,16 @@ def main() -> None:
     except ValueError:
         verdict = None
     if not isinstance(verdict, dict):
-        print(json.dumps({"error": "the judge did not answer {won, score}"}))
+        print(json.dumps({"error": "the judge did not answer with an object"}))
         return
-    score = verdict.get("score", 0)
-    # The whole result, not two fields of it (2026-09-30: a verified result is
-    # inscribed, and a leaderboard wants the times, the order, the track): up
-    # to 2 KB of it, with `won` and `score` always of the shape pools compare.
-    rest = {k: v for k, v in verdict.items() if k not in ("won", "score")}
-    if len(json.dumps(rest)) > 2048:
-        rest = {}
-    print(json.dumps({**rest, "won": verdict.get("won") is True,
-                      "score": score if isinstance(score, (int, float)) else 0}))
+    # The result exactly as the judge returned it (2026-09-30, the operator: "take
+    # out the hard coded won and score entries ... leave them optional"): any
+    # object, up to 2 KB. A pool that requires a win or a score reads those
+    # fields when the judge gives them, and counts them missing when it does not.
+    if len(json.dumps(verdict)) > 2048:
+        print(json.dumps({"error": "the judge's result is larger than 2 KB"}))
+        return
+    print(json.dumps(verdict))
 
 
 if __name__ == "__main__":
