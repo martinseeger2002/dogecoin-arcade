@@ -402,6 +402,10 @@ def seller(browser, served):
         f"seller{int(time.time() * 1000) % 100000}",
         "a long enough password", state.messaging.params.pubkeyhash_version)
     assert "error" not in made, made
+    # These pages are the node's own copies, driven by an account's tab: the
+    # view the node's own machine shows when switched to the node's wallet
+    # (2026-09-30), rather than the account's view with its own checks.
+    browser.add_cookie({"name": "arcade_view", "value": "node", "path": "/"})
     node.rpc.call("sendtoaddress", made["address"], 10.0)
     node.rpc.call("generate", 1)
     _catch_up(state)

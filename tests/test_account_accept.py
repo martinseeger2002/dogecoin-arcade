@@ -707,6 +707,9 @@ def test_the_piece_page_answers_for_the_account_that_holds_it(node):
         "nobody is offered a fee to ask their own wallet for a piece"
 
     state.public = False
+    # On the node's own machine a signed-in account sees its own copy
+    # (2026-09-30); the operator's is the node's-wallet view it can switch to.
+    holder_client.cookies.set("arcade_view", "node")
     page = holder_client.get(f"/inscriptions/{pair['piece']}/view").text
     assert 'action="/exchange/offer"' in page, \
         "the operator's copy is unchanged by any of this"

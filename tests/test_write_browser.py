@@ -130,6 +130,11 @@ def _scan(state):
 
 def _page(browser, base):
     browser.get(f"{base}/join")
+    # The node's own view (2026-09-30): an account's view refreshes the page
+    # when that account's coins arrive, and this test pays its accounts between
+    # steps that keep their wallet on `window`.
+    browser.add_cookie({"name": "arcade_view", "value": "node", "path": "/"})
+    browser.get(f"{base}/join")
     browser.set_script_timeout(180)
     assert browser.execute_async_script("""
         const done = arguments[arguments.length - 1];
