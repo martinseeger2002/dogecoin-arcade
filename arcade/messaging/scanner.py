@@ -151,25 +151,44 @@ class Scanner:
         return content
 
     def content_floor(self) -> int:
-        """Where everything but key announcements is read from: the shared floor,
-        raised to this identity's creation when that is known."""
+        """Where everything but key announcements is read from: the shared floor.
+
+        It used to be raised to this identity's creation, on the grounds that
+        nothing older can be addressed to it. True of a private message, and
+        wrong for everything public -- posts, replies, profiles -- which is
+        addressed to nobody: a node installed today read the feed from today,
+        and showed its operator only the last conversation on it (2026-09-30:
+        "his feed is not the same as mine"). Every node on a release now reads
+        the same history from the same floor, which is what the floor is for.
+        """
         floor = max(self.params.messaging_start_height,
                     self.params.activation_height or 0)
-
-        # A local record can only push the start LATER, never earlier: nothing
-        # written before a key existed can be addressed to it, so there is no
-        # point reading it. It cannot drag the start below the shared floor.
+        if floor:
+            return floor
+        # A chain with no shared floor (the regtest) would read from its genesis:
+        # there, and only there, the identity's creation still sets the start.
         recorded = self.store.get_meta(f"identity_height:{self.params.name}")
-        if recorded is not None:
-            return max(int(recorded), floor)
-        return floor
+        return int(recorded) if recorded is not None else 0
 
     def _resolve_fork(self, result: ScanResult) -> int:
         """Return the height to resume from, unwinding if our view is stale."""
         floor = self.start_height()
         cursor = self.store.scan_cursor(self.params.name)
         if cursor is None:
+            self.store.set_meta(f"public_from:{self.params.name}", str(self.content_floor()))
             return floor
+        # A store that read content only from its identity's creation (before
+        # 2026-09-30) goes back ONCE for what it skipped. Reading a block twice
+        # is harmless: a candidate already filed is left as it is.
+        read_from = self.store.get_meta(f"public_from:{self.params.name}")
+        shared = max(self.params.messaging_start_height, self.params.activation_height or 0)
+        if shared and (read_from is None or int(read_from) > self.content_floor()):
+            recorded = self.store.get_meta(f"identity_height:{self.params.name}")
+            self.store.set_meta(f"public_from:{self.params.name}", str(self.content_floor()))
+            if recorded is not None and int(recorded) > self.content_floor():
+                log.info("reading the public feed from %d, which this store skipped "
+                         "(it read from %s)", self.content_floor(), recorded)
+                return floor
 
         height, stored_hash = cursor
         if height + 1 < floor:

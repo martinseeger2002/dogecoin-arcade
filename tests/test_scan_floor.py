@@ -142,20 +142,36 @@ def test_a_local_record_cannot_start_earlier_than_everyone_else(store):
         testnet.messaging_start_height
 
 
-def test_a_later_identity_may_start_later(store):
-    """Nothing written before a key existed can be addressed to it."""
+def test_a_later_identity_still_reads_the_public_feed_from_the_shared_floor(store):
+    """2026-09-30: "his feed is not the same as mine" -- a node installed today
+    read content from its own identity's creation, and so showed only the last
+    conversation. Posts are addressed to nobody, so every node reads them from
+    the shared floor, whenever its identity was made."""
     from arcade.config import NETWORKS
 
     testnet = NETWORKS["test"]
-    later = testnet.messaging_start_height + 5000
-    store.set_meta("identity_height:test", str(later))
+    store.set_meta("identity_height:test", str(testnet.messaging_start_height + 5000))
     scanner = Scanner(FakeRpc(), testnet, store)
-    # Messages, posts and the rest start where the identity did...
-    assert scanner.content_floor() == later
-    # ...but key announcements are read from where names begin, so every @name
-    # is reachable on this node too (Params.names_from, 2026-09-25): below the
-    # content floor nothing else is read.
-    assert scanner.start_height() == min(later, testnet.names_from or later)
+    assert scanner.content_floor() == testnet.messaging_start_height
+    assert scanner.start_height() == min(testnet.messaging_start_height,
+                                         testnet.names_from or testnet.messaging_start_height)
+
+
+def test_a_store_that_started_late_goes_back_once_for_what_it_skipped(store):
+    """A store from before the change, its cursor far past a late identity:
+    resumed from the shared floor once, and from its cursor after that."""
+    from arcade.config import NETWORKS
+    from arcade.messaging.scanner import ScanResult
+
+    testnet = NETWORKS["test"]
+    floor = testnet.messaging_start_height
+    store.set_meta("identity_height:test", str(floor + 5000))
+    rpc = FakeRpc()
+    store.set_scan_cursor("test", floor + 6000, rpc.get_block_hash(floor + 6000))
+    scanner = Scanner(rpc, testnet, store)
+    assert scanner._resolve_fork(ScanResult()) == scanner.start_height() <= floor
+    assert store.get_meta("public_from:test") == str(floor)
+    assert scanner._resolve_fork(ScanResult()) == floor + 6001, "only once"
 
 
 def test_the_shared_height_is_a_release_decision_not_a_guess():
