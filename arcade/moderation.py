@@ -37,6 +37,7 @@ import re
 import sqlite3
 import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -117,6 +118,11 @@ class Screen:
         #: fills this in); empty means no names, as before.
         self.ledgers: list[Path] = []
         self._names: tuple[float, list[tuple[str, str]]] = (0.0, [])
+        #: Whether the endpoint takes vLLM's own fields (Qwen's thinking switch,
+        #: `priority`). A cloud API may refuse a request that carries them
+        #: (2026-09-30: "cloud services ... for screening"), so the first refusal
+        #: of one turns them off for this endpoint.
+        self._vllm_fields = True
 
     # --- what is already known -------------------------------------------------
 
@@ -220,25 +226,38 @@ class Screen:
     def _ask(self, content: Any) -> tuple[str, str] | None:
         """One question to the model; None if it could not be asked or answered."""
         cfg = self.config or {}
-        body = {"model": cfg["model"], "temperature": 0, "max_tokens": 80,
-                "messages": [{"role": "system", "content": PROMPT},
-                             {"role": "user", "content": content}],
-                "chat_template_kwargs": {"enable_thinking": False}}
+        plain = {"model": cfg["model"], "temperature": 0, "max_tokens": 80,
+                 "messages": [{"role": "system", "content": PROMPT},
+                              {"role": "user", "content": content}]}
+        extra = {"chat_template_kwargs": {"enable_thinking": False}}
         # Screening goes ahead of everything else on a shared model (the operator,
         # 2026-09-28: "checking posts should be given vLLM priority"): vLLM's
         # `priority`, lower first. Only when the config says so, because a vLLM
         # not started with --scheduling-policy priority refuses the field.
         if cfg.get("priority") is not None:
-            body["priority"] = int(cfg["priority"])
+            extra["priority"] = int(cfg["priority"])
         headers = {"Content-Type": "application/json"}
         if cfg.get("key"):
             headers["Authorization"] = f"Bearer {cfg['key']}"
         url = str(cfg["url"]).rstrip("/") + "/chat/completions"
-        try:
+
+        def ask(body: dict) -> str:
             with urllib.request.urlopen(urllib.request.Request(
                     url, data=json.dumps(body).encode(), headers=headers),
                     timeout=float(cfg.get("timeout", TIMEOUT))) as answer:
-                said = json.load(answer)["choices"][0]["message"]["content"]
+                return json.load(answer)["choices"][0]["message"]["content"]
+
+        try:
+            try:
+                said = ask({**plain, **extra} if self._vllm_fields else plain)
+            except urllib.error.HTTPError as exc:
+                # A 400 or 422 to a request carrying vLLM's own fields: an API that
+                # is not vLLM. Asked again without them, and never sent them again.
+                if not self._vllm_fields or exc.code not in (400, 422):
+                    raise
+                said = ask(plain)
+                self._vllm_fields = False
+                log.info("screening: %s refused vLLM's own fields; asking without them", url)
         except Exception as exc:                      # noqa: BLE001 -- the model is away
             log.info("screening could not ask %s: %s", url, exc)
             return None

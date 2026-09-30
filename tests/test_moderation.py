@@ -355,3 +355,43 @@ def test_only_the_operator_is_offered_not_sensitive(client, model):
         assert "Sensitive post" in body and ">Not sensitive</button>" not in body
     finally:
         state.public = False
+
+
+def test_a_cloud_api_that_refuses_vllm_fields_is_asked_without_them(tmp_path):
+    """2026-09-30: "cloud services that Dogecoin arcade can connect to for
+    screening". OpenAI's own API answers 400 to a field it does not know, and the
+    screener sends vLLM's (Qwen's thinking switch, priority): asked again without
+    them, and never sent them again for that endpoint."""
+    asked = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            asked.append(body)
+            if "chat_template_kwargs" in body or "priority" in body:
+                said, code = {"error": {"message": "Unrecognized request argument"}}, 400
+            else:
+                said = {"choices": [{"message": {"content": '{"verdict": "ok", "reason": "fine"}'}}]}
+                code = 200
+            out = json.dumps(said).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+
+        def log_message(self, *a):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        screen = mod.Screen(tmp_path, {"url": f"http://127.0.0.1:{server.server_port}/v1",
+                                       "model": "gpt-4o-mini", "key": "k", "priority": -10})
+        assert screen.check_image("image/png", PICTURE) == mod.OK
+        assert screen.check_image("image/png", _png((1, 2, 3))) == mod.OK
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert len(asked) == 3, "refused once, then asked plainly every time after"
+    assert "chat_template_kwargs" not in asked[2]
