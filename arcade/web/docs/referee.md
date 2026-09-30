@@ -249,6 +249,72 @@ run before it pays. The answers are those of any claim: `heard`, then
 | `that wallet has had its limit of replays judged this minute ...` | wait a minute |
 | `this pool's referee did not answer ...` | the referee node is offline. The prize is still there |
 
+## Verified results
+
+A game can also keep its results on the chain — times, scores, a finished
+level — with the referee's word that each one really happened. Nobody has to
+run a score keeper: the result is an inscription, and any node, prize pool or
+leaderboard page can check it.
+
+### Recording a verified result
+
+1. Ask for a seed bound to the judge (and the player):
+   `parent.postMessage({arcade: "seed", seq, judge: "<judge id>"}, "*")`.
+   Name another arcade as `referee: "https://…"` to use its referee.
+2. Play from the seed and record the inputs.
+3. Ask to inscribe the result with `verify`:
+
+```js
+parent.postMessage({arcade: "inscribe", seq: 2,
+                    data: JSON.stringify({track: "Harbour"}),
+                    contenttype: "application/json", json: {game: "racecondition"},
+                    verify: {judge: "<judge id>", seed, inputs, params: {laps: 3}}}, "*");
+// answers {ok, txid, result}
+```
+
+The referee runs the judge and signs **what it said** — the whole result
+object, up to 2 KB — for **this player's address** over **this content**. The
+signature goes into the inscription's JSON as `attested`. A copy inscribed by
+anybody else, or over other content, does not check out. Verified is not the
+same as won: a losing run is verified too, with `won: false`, so a game keeps
+every result and decides what counts.
+
+A seed works once. If the player cancels the inscription card after the
+referee has signed, that run is spent; play again with a new seed.
+
+### Reading them: a leaderboard with no server
+
+`GET /r/verified/<judge>` lists every inscription carrying a result that
+judge verified, newest first, from every player:
+
+```json
+{"judge": "…", "referee": "02…", "next": 212,
+ "results": [{"id": "…", "number": 214, "creator": "n…", "creatortag": "pip",
+              "block": 1518123, "result": {"won": true, "score": 120.4, …},
+              "json": {"game": "racecondition"}}]}
+```
+
+* `referee=<key>` names the referee the list trusts; this node's own unless
+  given. An attestation signed with any other key is left out — without that,
+  anybody could sign results with a key of their own.
+* `after=<number>` pages on (pass `next`); `limit` up to 200.
+* A leaderboard page reads this, sorts `result` its own way, and shows
+  `creatortag`. Names come from the chain, never from the result.
+
+### Paying on them: facts
+
+A pool's `facts` can ask for the claimer's own verified results:
+
+```json
+"facts": {"attested": ["<judge id>"]}
+```
+
+and its judge gets `params.facts.attested`: every result of that judge the
+claimer inscribed, checked against this referee's key —
+`[{id, number, judge, block, result, json}]`. A 16-race tour pays its
+trophies this way: the trophy pool's judge totals the claimer's verified races.
+`params.claimer` is the address the claim pays.
+
 ## The referee node
 
 `GET /r/referee` on any arcade says whether and how it referees:

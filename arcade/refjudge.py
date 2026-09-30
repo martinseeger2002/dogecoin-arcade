@@ -54,7 +54,13 @@ def main() -> None:
         print(json.dumps({"error": "the judge did not answer {won, score}"}))
         return
     score = verdict.get("score", 0)
-    print(json.dumps({"won": verdict.get("won") is True,
+    # The whole result, not two fields of it (2026-09-30: a verified result is
+    # inscribed, and a leaderboard wants the times, the order, the track): up
+    # to 2 KB of it, with `won` and `score` always of the shape pools compare.
+    rest = {k: v for k, v in verdict.items() if k not in ("won", "score")}
+    if len(json.dumps(rest)) > 2048:
+        rest = {}
+    print(json.dumps({**rest, "won": verdict.get("won") is True,
                       "score": score if isinstance(score, (int, float)) else 0}))
 
 

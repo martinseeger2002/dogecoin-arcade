@@ -12761,7 +12761,9 @@ def create_app(state: AppState) -> FastAPI:
                 or len(cols) > refereelib.FACT_COLLECTIONS_MOST):
             raise ValueError(f"facts name at most {refereelib.FACT_TOKENS_MOST} tokens and "
                              f"{refereelib.FACT_COLLECTIONS_MOST} collections")
-        return {"tokens": tokens, "collections": cols}
+        attested = [str(j).strip().lstrip("#") for j in (raw.get("attested") or [])][:10]
+        return {"tokens": tokens, "collections": cols,
+                **({"attested": attested} if attested else {})}
 
     def _facts_of(chain, ref: dict, address: str) -> dict | None:
         """What `address` holds of what a pool's judge is told about, now."""
@@ -12782,7 +12784,18 @@ def create_app(state: AppState) -> FastAPI:
                     data = None
                 pieces.append({"id": row["txid"], "number": row.get("number"),
                                "collection": row.get("collection"), "json": data})
-        return {"tokens": tokens, "pieces": pieces}
+        results = []
+        for judge in spec.get("attested") or []:
+            try:
+                row = _judge_row(chain, judge)
+            except refereelib.RefereeError:
+                continue
+            for r in _attested_rows(chain, row["txid"], _referee.pubkey.hex(),
+                                    creator=address, limit=200):
+                results.append({"id": r["id"], "number": r["number"], "judge": row["txid"],
+                                "block": r["block"], "result": r["result"], "json": r["json"]})
+        return {"tokens": tokens, "pieces": pieces,
+                **({"attested": results} if spec.get("attested") else {})}
 
     def _referee_json(account, pool: dict) -> dict:
         """The part of a pool inscription that names its referee, if it has one."""
@@ -12800,7 +12813,23 @@ def create_app(state: AppState) -> FastAPI:
                                           "where it is, and it is not this one")
         return ref["node"]
 
-    def _referee_seed(chain, key: str, address: str, game: str = "") -> dict:
+    def _judge_row(chain, key: str) -> dict:
+        row = state.token_index(chain).inscription(contentlib._key(str(key or "").lstrip("#")))
+        if row is None:
+            raise refereelib.RefereeError("there is no such judge")
+        if "javascript" not in media.standard_type(str(row["content_type"])):
+            raise refereelib.RefereeError(f"#{row['number']} is not JavaScript, so it cannot judge")
+        return row
+
+    def _referee_seed(chain, key: str, address: str, game: str = "", judge: str = "") -> dict:
+        if judge:
+            # A run that is only to be recorded, not paid (2026-09-30): its seed
+            # is bound to the judge that will score it, and to this address.
+            row = _judge_row(chain, judge)
+            complaint = _check_address(address, mainnet=chain.is_mainnet)
+            if complaint:
+                raise refereelib.RefereeError(complaint)
+            return _referee.issue_seed("judge:" + row["txid"], address)
         if game:
             return _referee_game_seed(chain, game, address)
         pool = _chain_pool(chain, key)
@@ -12960,6 +12989,164 @@ def create_app(state: AppState) -> FastAPI:
                 raise refereelib.RefereeError(str(said.get("detail") or "the referee refused"))
         return [bytes.fromhex(s) for s in said["signatures"]]
 
+    def _referee_url(value: Any) -> str:
+        """A referee named by a page: "" for this node, or another node's address."""
+        node = str(value or "").strip().rstrip("/")
+        if not node:
+            return ""
+        if not re.fullmatch(r"https?://[A-Za-z0-9.\-]+(:\d+)?", node):
+            raise refereelib.RefereeError("a referee is named by its address, like "
+                                          "https://app.dogecoinarcade.com")
+        try:
+            if str(requests.get(node + "/r/referee", timeout=10).json().get("pubkey")) \
+                    == _referee.pubkey.hex():
+                return ""
+        except Exception:                                  # noqa: BLE001
+            pass
+        return node
+
+    def _ask_referee(node: str, path: str, body: dict) -> dict:
+        try:
+            answer = requests.post(node + path, timeout=30, json=body)
+            said = answer.json()
+        except Exception:                                  # noqa: BLE001
+            raise refereelib.RefereeError("the referee did not answer; try again later") from None
+        if answer.status_code != 200:
+            raise refereelib.RefereeError(str(said.get("detail") or "the referee refused"))
+        return said
+
+    def _referee_attest(chain, judge: str, seed_text: str, inputs: Any, params: Any,
+                        address: str, content: str) -> dict:
+        """Score one run with a judge and sign what it said -- for this address,
+        over this content -- so the inscription that carries it is a verified
+        result every node can check (2026-09-30: inscription requests)."""
+        row = _judge_row(chain, judge)
+        if not re.fullmatch(r"[0-9a-fA-F]{64}", str(content or "")):
+            raise refereelib.RefereeError("name the sha256 of the content to be inscribed")
+        seed = _referee.seed_row(str(seed_text or ""))
+        if seed is None or seed["pool"] != "judge:" + row["txid"]:
+            raise refereelib.RefereeError("that seed was not issued for this judge")
+        if seed["address"] != address:
+            raise refereelib.RefereeError("that seed was issued to another wallet")
+        if seed["expires"] < time.time():
+            raise refereelib.RefereeError("that seed expired; a new run needs a new seed")
+        if _referee.used_at(seed["seed"], "attest:" + row["txid"]):
+            raise refereelib.RefereeError("that seed was used; a new run needs a new seed")
+        _referee.pace(address)
+        found = state.token_index(chain).inscription_content(row["txid"])
+        if found is None:
+            raise refereelib.RefereeError("this node does not hold that judge")
+        if params is not None and len(json.dumps(params)) > 4096:
+            raise refereelib.RefereeError("a judge's params are at most 4 KB")
+        given = {**(params if isinstance(params, dict) else {"params": params}),
+                 "claimer": address}
+        verdict = _referee.judge(found[1].decode("utf-8", "replace"), seed["seed"],
+                                 inputs, given)
+        if not _referee.use_seed(seed["seed"], "attested", "attest:" + row["txid"]):
+            raise refereelib.RefereeError("that seed was used; a new run needs a new seed")
+        return {"attested": refereelib.attest(_referee, row["txid"], verdict, address,
+                                              str(content).lower())}
+
+    @app.post("/r/referee/attest")
+    def r_referee_attest(payload: Any = Body(None)):
+        """The referee's signed verdict on one run, for the address its seed was
+        issued to. Asked by the node the player is on."""
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+            return JSONResponse(_referee_attest(
+                chain, str(said.get("judge") or ""), str(said.get("seed") or ""),
+                said.get("inputs"), said.get("params"), str(said.get("address") or ""),
+                str(said.get("content") or "")))
+        except (ValueError, refereelib.RefereeError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    @app.post("/account/referee/attest")
+    def account_referee_attest(request: Request, payload: Any = Body(None)):
+        """A verified result for the signed-in player: from this node's referee,
+        or from the referee the page names."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+            address = _account_address(account.pubkey, chain)
+            if not address:
+                raise ValueError("this account has no address yet")
+            node = _referee_url(said.get("referee"))
+            body = {"chain": chain.network, "judge": str(said.get("judge") or ""),
+                    "seed": str(said.get("seed") or ""), "inputs": said.get("inputs"),
+                    "params": said.get("params"), "address": address,
+                    "content": str(said.get("content") or "")}
+            if not node:
+                return JSONResponse(_referee_attest(
+                    chain, body["judge"], body["seed"], body["inputs"], body["params"],
+                    address, body["content"]))
+            return JSONResponse(_ask_referee(node, "/r/referee/attest", body))
+        except (ValueError, refereelib.RefereeError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    #: Attestations already checked: txid -> whether it holds (content and
+    #: creator included). Inscriptions do not change, so neither do these.
+    _attested_ok: dict[str, bool] = {}
+
+    def _attested_rows(chain, judge: str, referee: str, creator: str = "",
+                       after: int = -1, limit: int = 100) -> list[dict]:
+        """Inscriptions carrying a verified result from `judge`, signed by the
+        referee whose key is `referee`, newest first. Checked here: the
+        signature, the content it names, and that its creator is the address it
+        was issued for."""
+        index = state.token_index(chain)
+        sql = ("SELECT txid, number, creator, json, block_height FROM inscription "
+               "WHERE json LIKE ? " + ("AND creator = ? " if creator else "")
+               + ("AND number < ? " if after >= 0 else "") + "ORDER BY number DESC LIMIT ?")
+        args = [f'%"{judge}"%'] + ([creator] if creator else []) \
+            + ([after] if after >= 0 else []) + [max(1, min(int(limit), 500)) * 4]
+        out = []
+        with contextlib.closing(index.open()) as db:
+            rows = [dict(r) for r in db.conn.execute(sql, args).fetchall()]
+        for r in rows:
+            try:
+                said = json.loads(r["json"] or "{}")
+            except ValueError:
+                continue
+            att = said.get("attested") if isinstance(said, dict) else None
+            if not isinstance(att, dict) or str(att.get("judge", "")).lower() != judge:
+                continue
+            ok = _attested_ok.get(r["txid"])
+            if ok is None:
+                found = index.inscription_content(r["txid"])
+                body = found[1] if found else b""
+                ok = bool(found) and refereelib.verify_attestation(
+                    att, content=hashlib.sha256(body).hexdigest(), address=r["creator"])
+                _attested_ok[r["txid"]] = ok
+            if not ok or str(att.get("referee", "")).lower() != referee.lower():
+                continue
+            out.append({"id": r["txid"], "number": r["number"], "creator": r["creator"],
+                        "block": r["block_height"], "result": att.get("result"),
+                        "json": {k: v for k, v in said.items() if k != "attested"}})
+            if len(out) >= limit:
+                break
+        return out
+
+    @app.get("/r/verified/{judge}")
+    def r_verified(judge: str, referee: str = "", after: int = -1, limit: int = 50):
+        """Every inscription carrying a result `judge` verified, by the referee a
+        leaderboard trusts (its key; this node's referee unless named), newest
+        first. `after` is the last `number` seen, for the next page."""
+        chain, index = _token_chain()
+        try:
+            row = _judge_row(chain, judge)
+        except refereelib.RefereeError as exc:
+            return contentlib._json({"error": str(exc)}, status=404)
+        trusted = str(referee or _referee.pubkey.hex()).lower()
+        rows = _attested_rows(chain, row["txid"], trusted, after=int(after),
+                              limit=max(1, min(int(limit), 200)))
+        tags = _tags_for([r["creator"] for r in rows])
+        for r in rows:
+            r["creatortag"] = tags.get(r["creator"]) or None
+        return contentlib._json({"judge": row["txid"], "referee": trusted, "results": rows,
+                                 "next": rows[-1]["number"] if rows else None})
+
     @app.get("/r/referee")
     def r_referee():
         """This node as a referee: its key, and the engine and caps its judges run under."""
@@ -12979,7 +13166,8 @@ def create_app(state: AppState) -> FastAPI:
             chain = _chain_asked(said)
             return JSONResponse(_referee_seed(chain, str(said.get("pool") or ""),
                                               str(said.get("address") or ""),
-                                              game=str(said.get("game") or "")))
+                                              game=str(said.get("game") or ""),
+                                              judge=str(said.get("judge") or "")))
         except (ValueError, refereelib.RefereeError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
 
@@ -13005,6 +13193,15 @@ def create_app(state: AppState) -> FastAPI:
             address = _account_address(account.pubkey, chain)
             if not address:
                 raise ValueError("this account has no address yet")
+            if said.get("judge"):
+                # A judge's seed comes from the referee the page names, or this node.
+                node = _referee_url(said.get("referee"))
+                if not node:
+                    return JSONResponse(_referee_seed(chain, "", address,
+                                                      judge=str(said["judge"])))
+                got = _ask_referee(node, "/r/referee/seed", {
+                    "chain": chain.network, "judge": str(said["judge"]), "address": address})
+                return JSONResponse({"seed": str(got["seed"]), "expires": int(got["expires"])})
             game = ""
             if said.get("game"):
                 # A seed for the whole game: its refereed pools share a referee.

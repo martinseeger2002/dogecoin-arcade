@@ -304,8 +304,153 @@ def both(at_seed: dict | None, now: dict) -> dict:
     tokens = {pid: str(min(int(at_seed.get("tokens", {}).get(pid, 0)), int(units)))
               for pid, units in now.get("tokens", {}).items()}
     seen = {p["id"] for p in at_seed.get("pieces", [])}
-    return {"tokens": tokens, "pieces": [p for p in now.get("pieces", []) if p["id"] in seen]}
+    out = {"tokens": tokens, "pieces": [p for p in now.get("pieces", []) if p["id"] in seen]}
+    if "attested" in now:
+        # A result is the player's own inscription and cannot be handed on, so
+        # what is verified now is what counts -- including runs since the seed.
+        out["attested"] = now["attested"]
+    return out
 
 
 def fingerprint(source: str) -> str:
     return hashlib.sha256(source.encode()).hexdigest()
+
+
+# --- attestations: a verified result, carried in an inscription (2026-09-30) ---
+#
+# The operator: "inscription requests ... game and data agnostic", so a game saves
+# its scores and results on the chain without a score keeper, and a prize pool
+# or a leaderboard page reads them. A result is only worth reading if the run
+# behind it was checked, so the referee signs what its judge said about one run
+# -- for one address, over one content -- and the signature rides in the
+# inscription's own JSON. Any node checks it against the referee's public key;
+# nothing about it lives in one node's index.
+
+ATTESTATION_VERSION = 1
+
+
+def attestation_message(referee: str, judge: str, result: Any, address: str,
+                        content: str) -> bytes:
+    """The bytes a referee signs: every field, in one canonical JSON."""
+    return json.dumps({"v": ATTESTATION_VERSION, "referee": referee.lower(),
+                       "judge": judge.lower(), "result": result,
+                       "address": address, "content": content.lower()},
+                      sort_keys=True, separators=(",", ":")).encode()
+
+
+def attest(referee: "Referee", judge: str, result: Any, address: str,
+           content: str) -> dict:
+    """What goes into the inscription's JSON as `attested`."""
+    pub = referee.pubkey.hex()
+    digest = hashlib.sha256(attestation_message(pub, judge, result, address,
+                                                content)).digest()
+    sig = referee.sign(digest, 1)[:-1]            # DER, no sighash byte
+    return {"v": ATTESTATION_VERSION, "referee": pub, "judge": judge.lower(),
+            "result": result, "address": address, "content": content.lower(),
+            "sig": sig.hex()}
+
+
+# secp256k1, for checking a signature on a node without `cryptography`: a
+# verify is public arithmetic, so any node can do it, slowly and correctly.
+_P = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
+_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+_G = (0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798,
+      0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8)
+
+
+def _add(a, b):
+    if a is None:
+        return b
+    if b is None:
+        return a
+    if a[0] == b[0] and (a[1] + b[1]) % _P == 0:
+        return None
+    if a == b:
+        m = 3 * a[0] * a[0] * pow(2 * a[1], _P - 2, _P) % _P
+    else:
+        m = (b[1] - a[1]) * pow(b[0] - a[0], _P - 2, _P) % _P
+    x = (m * m - a[0] - b[0]) % _P
+    return (x, (m * (a[0] - x) - a[1]) % _P)
+
+
+def _mul(k, point):
+    out = None
+    while k:
+        if k & 1:
+            out = _add(out, point)
+        point = _add(point, point)
+        k >>= 1
+    return out
+
+
+def _point(pub: bytes):
+    if len(pub) != 33 or pub[0] not in (2, 3):
+        return None
+    x = int.from_bytes(pub[1:], "big")
+    y = pow((pow(x, 3, _P) + 7) % _P, (_P + 1) // 4, _P)
+    if (y * y - (pow(x, 3, _P) + 7)) % _P:
+        return None
+    if (y & 1) != (pub[0] & 1):
+        y = _P - y
+    return (x, y)
+
+
+def _der(sig: bytes):
+    try:
+        if sig[0] != 0x30 or sig[2] != 0x02:
+            return None
+        rlen = sig[3]
+        r = int.from_bytes(sig[4:4 + rlen], "big")
+        at = 4 + rlen
+        if sig[at] != 0x02:
+            return None
+        slen = sig[at + 1]
+        s = int.from_bytes(sig[at + 2:at + 2 + slen], "big")
+        return r, s
+    except IndexError:
+        return None
+
+
+def verify_attestation(att: Any, *, content: str = "", address: str = "",
+                       referee: str = "") -> bool:
+    """Whether an `attested` object is a referee's signature over exactly these
+    fields -- and, when given, over THIS content, for THIS address, by THIS
+    referee. A leaderboard trusts a referee by its key: without naming one, an
+    attestation anybody signed with a key of their own would count."""
+    if not isinstance(att, dict):
+        return False
+    try:
+        pub = str(att["referee"]).lower()
+        if referee and pub != referee.lower():
+            return False
+        if content and str(att["content"]).lower() != content.lower():
+            return False
+        if address and str(att["address"]) != address:
+            return False
+        digest = hashlib.sha256(attestation_message(
+            pub, str(att["judge"]), att["result"], str(att["address"]),
+            str(att["content"]))).digest()
+        rs = _der(bytes.fromhex(str(att["sig"])))
+        point = _point(bytes.fromhex(pub))
+    except (KeyError, TypeError, ValueError):
+        return False
+    if rs is None or point is None:
+        return False
+    r, s = rs
+    if not (0 < r < _N and 0 < s < _N):
+        return False
+    try:
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec, utils
+        key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256K1(), bytes.fromhex(pub))
+        key.verify(utils.encode_dss_signature(r, s), digest,
+                   ec.ECDSA(utils.Prehashed(hashes.SHA256())))
+        return True
+    except ImportError:
+        pass
+    except Exception:                                  # noqa: BLE001 -- a bad signature
+        return False
+    z = int.from_bytes(digest, "big")
+    w = pow(s, _N - 2, _N)
+    at = _add(_mul(z * w % _N, _G), _mul(r * w % _N, point))
+    return at is not None and at[0] % _N == r

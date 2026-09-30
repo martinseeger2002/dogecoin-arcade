@@ -899,6 +899,79 @@ async function claimFor(source, m, page = "") {
     answer({error: String(err.message || err)});
   } finally { minting = false; }
 }
+// A page asks to inscribe something for the person looking (2026-09-30:
+// "inscription requests ... game and data agnostic"): a score, a save, an
+// achievement. Optionally VERIFIED: the referee runs the run through its judge
+// and signs the verdict for this address over this content, and the signature
+// rides in the inscription's JSON as `attested`, which any node can check.
+//   parent.postMessage({arcade: "inscribe", seq, data, encoding, contenttype,
+//                       json, label, note,
+//                       verify: {judge, seed, inputs, params, referee}}, "*")
+//   answers {arcade: "inscribe", seq, heard} then {ok, txid, result} or {error}
+const INSCRIBE_MOST = 7000;
+async function inscribeFor(source, m) {
+  const answer = (body) => source.postMessage({arcade: "inscribe", seq: m.seq, ...body}, "*");
+  answer({heard: true});
+  if (!ARCADE_ME) { answer({error: "Sign in or join first."}); return; }
+  if (minting) { answer({error: "One at a time."}); return; }
+  minting = true;
+  try {
+    const wallet = await import("/wallet.js");
+    const held = (await wallet.opened(ARCADE_CHAIN)) || await arcadeKeys(ARCADE_CHAIN);
+    let bytes;
+    if (m.encoding === "base64") {
+      bytes = Uint8Array.from(atob(String(m.data || "")), (c) => c.charCodeAt(0));
+    } else {
+      bytes = new TextEncoder().encode(typeof m.data === "string" ? m.data
+                                       : JSON.stringify(m.data === undefined ? "" : m.data));
+    }
+    if (!bytes.length) throw new Error("there is nothing to inscribe");
+    if (bytes.length > INSCRIBE_MOST) {
+      throw new Error(`a page may inscribe up to ${INSCRIBE_MOST.toLocaleString()} bytes at a `
+                      + `time, and this is ${bytes.length.toLocaleString()}`);
+    }
+    const type = String(m.contenttype || (m.encoding === "base64" ? "application/octet-stream"
+                                                                  : "text/plain; charset=utf-8"));
+    const json = (m.json && typeof m.json === "object" && !Array.isArray(m.json)) ? {...m.json} : {};
+    delete json.attested;
+    if (m.verify && typeof m.verify === "object") {
+      const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
+        .map((b) => b.toString(16).padStart(2, "0")).join("");
+      const r = await fetch("/account/referee/attest", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({judge: String(m.verify.judge || ""), seed: String(m.verify.seed || ""),
+                              inputs: m.verify.inputs, params: m.verify.params,
+                              referee: String(m.verify.referee || ""), content: hash,
+                              chain: ARCADE_CHAIN.network})});
+      const got = await r.json();
+      if (!r.ok) throw new Error(got.detail || "the referee would not verify it");
+      json.attested = got.attested;
+    }
+    let b64 = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) b64 += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    const r = await fetch("/account/inscribe", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({content: btoa(b64), content_type: type,
+                            json: Object.keys(json).length ? JSON.stringify(json) : "",
+                            chain: ARCADE_CHAIN.network})});
+    const offer = await r.json();
+    if (!r.ok) throw new Error(offer.detail || "this cannot be inscribed");
+    if (offer.part) throw new Error("that needs more than one transaction; a page may inscribe one");
+    const shown = await wallet.checked(offer, held);
+    const who = m.label ? `"${String(m.label).slice(0, 60)}"` : "This page";
+    const ok = await arcadeAsk(`${who} asks to inscribe ${bytes.length.toLocaleString()} bytes`,
+      (m.note ? `"${String(m.note).slice(0, 200)}" ` : "")
+      + `${type}${json.attested ? ", with its result verified by the game's judge" : ""}. `
+      + "It goes on the chain for good, as yours. " + shown.says, "Inscribe it");
+    if (!ok) { answer({error: "Cancelled."}); return; }
+    const done = await wallet.confirm(held, offer);
+    answer({ok: true, txid: done.txid || "",
+            ...(json.attested ? {result: json.attested.result} : {})});
+    arcadeToast("Inscribed. It is on the chain when the block lands.");
+  } catch (err) {
+    answer({error: String(err.message || err)});
+  } finally { minting = false; }
+}
 // A page asked this account to send (2026-09-29: "load some plasma from my
 // wallet to the game"): the node holds the question, this page shows it on
 // the account's own card, the browser signs, and the page's polling of
@@ -959,6 +1032,7 @@ window.addEventListener("message", async (e) => {
     return;
   }
   if (m.arcade === "take" && typeof m.seq === "number") { takeFor(e.source, m); return; }
+  if (m.arcade === "inscribe" && typeof m.seq === "number") { inscribeFor(e.source, m); return; }
   // A seed for one run at a refereed pool (2026-09-29): the game plays from it,
   // and sends it back with its moves when it claims. Issued to the wallet that
   // is looking, for that pool, once.
@@ -968,6 +1042,18 @@ window.addEventListener("message", async (e) => {
     const answer = (body) => e.source.postMessage({arcade: "seed", seq: m.seq, ...body}, "*");
     if (!ARCADE_ME) { answer({error: "Sign in or join first."}); return; }
     try {
+      if (m.judge) {
+        // A run that is only to be recorded (2026-09-30): its seed is bound to
+        // the judge that will score it, from this node's referee or the one named.
+        const r = await fetch("/account/referee/seed", {method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({judge: String(m.judge), referee: String(m.referee || ""),
+                                chain: ARCADE_CHAIN.network})});
+        const got = await r.json();
+        if (!r.ok) throw new Error(got.detail || "no seed");
+        answer({seed: got.seed, expires: got.expires});
+        return;
+      }
       let key = String(m.pool || "");
       const game = m.game === true || m.pool === "*";
       if (game) {
