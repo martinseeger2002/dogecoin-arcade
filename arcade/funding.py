@@ -112,7 +112,8 @@ class Unsigned:
             # checks its own key is in it (coins.js verifyOffer).
             "inputs": [{"txid": i["txid"], "vout": i["vout"],
                         "value": i["value"], "address": i["address"],
-                        **({"script": i["script"]} if i.get("multisig") else {})}
+                        **({"script": i["script"]} if i.get("multisig") else {}),
+                        **({"redeem": i["redeem"]} if i.get("redeem") else {})}
                        for i in self.inputs],
             "sighashes": self.sighashes,
             "signed_from": self.signed_from,
@@ -415,7 +416,7 @@ def build_sweep(db, params: Params, address: str, coins: list[dict], rate: int,
 
 
 def build_pool_close(address: str, coins: list[dict], back_to: str, rate: int,
-                     payload: bytes = b"", what: str = "") -> Unsigned:
+                     payload: bytes = b"", what: str = "", redeem: bytes = b"") -> Unsigned:
     """Close a prize pool: every coin of the pool's own address, and the
     tokens it still holds, back to the account in one transaction.
 
@@ -427,7 +428,8 @@ def build_pool_close(address: str, coins: list[dict], back_to: str, rate: int,
     be able to be canceled and closed").
     """
     given = [{"txid": str(c["txid"]), "vout": int(c["vout"]), "value": int(c["value"]),
-              "address": address} for c in coins]
+              "address": address, **({"redeem": bytes(redeem).hex()} if redeem else {})}
+             for c in coins]
     if not given:
         raise FundingError("that pool holds no coins to close it with")
     outputs = [(0, op_return_script(payload))] if payload else []
@@ -438,7 +440,7 @@ def build_pool_close(address: str, coins: list[dict], back_to: str, rate: int,
         raise FundingError("that pool's coins cannot pay the fee to close it")
     outputs.append((back, p2pkh_script(back_to)))
     raw = build_raw_tx([(c["txid"], c["vout"]) for c in given], outputs)
-    script = p2pkh_script(address)
+    script = bytes(redeem) or p2pkh_script(address)
     return Unsigned(raw=raw, inputs=given, outputs=outputs,
                     sighashes=[sighash(given, outputs, n, script).hex()
                                for n in range(len(given))],
@@ -701,6 +703,10 @@ def assemble(unsigned: Unsigned, signatures: list[str], pubkey: bytes) -> str:
         if n >= first and coin.get("multisig"):
             # 1-of-n CHECKMULTISIG pops one item too many: the OP_0 is that item.
             script_sig = b"\x00" + push(bytes.fromhex(signatures[n - first]))
+        elif n >= first and coin.get("redeem"):
+            # A refereed pool's coin, closed by its creator: the ELSE branch.
+            script_sig = (push(bytes.fromhex(signatures[n - first])) + b"\x00"
+                          + push(bytes.fromhex(coin["redeem"])))
         elif n >= first:
             script_sig = push(bytes.fromhex(signatures[n - first])) + push(pubkey)
         raw += bytes.fromhex(coin["txid"])[::-1]
@@ -762,6 +768,9 @@ class Leg:
     #: never seen.
     sighash_type: int = SINGLE_ANYONECANPAY
     what: str = ""
+    #: The redeem script, for a leg at a refereed pool's two-key address: what
+    #: the browser checks its key is in, and signs over.
+    redeem: bytes = b""
 
     def as_json(self) -> dict:
         return {
@@ -778,6 +787,7 @@ class Leg:
             "paid": self.paid,
             "payload": self.payload.hex(),
             "what": self.what,
+            **({"redeem": self.redeem.hex()} if self.redeem else {}),
         }
 
 
@@ -834,7 +844,7 @@ def swap_fee(rate: int, payload_script: bytes = b"") -> int:
 
 def build_leg(params: Params, address: str, piece: dict, coins: int,
               rate: int, what: str = "", payload: bytes | None = None,
-              coin: dict | None = None) -> Leg:
+              coin: dict | None = None, redeem: bytes = b"") -> Leg:
     """The transaction a seller signs to LIST: its own coins in, one payment
     out, and -- when it names the thing it is selling -- the bytes that say so.
 
@@ -932,8 +942,13 @@ def build_leg(params: Params, address: str, piece: dict, coins: int,
     script = p2pkh_script(address)
     outputs = ([(0, payload_script)] if payload else []) + [(paid, script)]
     raw = build_raw_tx([(c["txid"], c["vout"]) for c in inputs], outputs)
-    digests = [sighash(inputs, outputs, n, script,
+    # A leg at a script-hash address (a refereed prize pool, 2026-09-29) signs
+    # over the script its coins are locked by: the redeem script, not the
+    # address's own 23 bytes.
+    code = bytes(redeem) or script
+    digests = [sighash(inputs, outputs, n, code,
                        sighash_type=SINGLE_ANYONECANPAY).hex()
                for n in range(len(inputs))]
     return Leg(raw=raw, inputs=inputs, outputs=outputs, sighashes=digests,
-               fee=fee, pays=address, paid=paid, payload=payload, what=what)
+               fee=fee, pays=address, paid=paid, payload=payload, what=what,
+               redeem=bytes(redeem))

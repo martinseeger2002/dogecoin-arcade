@@ -511,3 +511,134 @@ def test_an_nft_prize_pool_hands_out_pieces_once_per_wallet_and_closes(node):
     _settled(state, rpc)
     assert [index.inscription(p)["owner"] for p in pieces[1:]] == [me, me], "home again"
     assert who.get(f"/r/prizepool/{pool_txid}").json()["open"] is False
+
+
+JUDGE = """
+function judge(seed, inputs, params) {
+  // A game whose rules are one sum: a run wins when its moves add up to the
+  // seed's first byte plus the pool's bonus. Deterministic, like every judge.
+  var target = parseInt(seed.slice(0, 2), 16) + params.bonus;
+  var sum = 0;
+  for (var i = 0; i < inputs.moves.length; i++) sum += inputs.moves[i];
+  return {won: sum === target, score: sum};
+}
+"""
+
+
+def test_a_refereed_pool_pays_only_a_verified_win_and_nothing_gets_around_it(node):
+    """2026-09-29, the operator via a tester: "a GAME-AGNOSTIC REFEREE to prize pools,
+    so a claim pays only for a verified win, in any game." The pool's coins and
+    tokens sit at a two-key address; a claim needs the referee's signature, which
+    it gives only for a replay its judge passes, over a claim that pays the
+    wallet the seed was issued to. The chain itself refuses one without it."""
+    import base64
+    from test_account_offer import _pubkey, _inscribed
+    from arcade import referee as refereelib
+    from arcade.listings import _serialise
+    from arcade.txbuild import push
+    app, state, rpc = node
+    book = _bookcoin(node, 110)
+    who = book["client"]
+    game = _inscribed(who, state, rpc, book["secret"], book["pubkey"], "a refereed game")
+    judged = who.post("/account/inscribe", json={
+        "content": base64.b64encode(JUDGE.encode()).decode(),
+        "content_type": "text/javascript"})
+    assert judged.status_code == 200, judged.text
+    judge = _signed(who, book["secret"], book["pubkey"], judged).json()["txid"]
+    _settled(state, rpc)
+
+    pool_secret = int.from_bytes(bytes([0x65, 110]) + bytes(30), "big")
+    pool_pub = _pubkey(pool_secret)
+    opened = who.post("/account/pools/open", json={
+        "index": 4242, "pubkey": pool_pub.hex(), "creator_pubkey": book["pubkey"].hex(),
+        "referee": {"judge": judge, "require": {"won": True}, "params": {"bonus": 7}}})
+    assert opened.status_code == 200, opened.text
+    pool = opened.json()["address"]
+    assert opened.json()["referee"] and pool.startswith("2"), "a two-key address"
+    funding = who.post("/account/pools/fund", json={
+        "pool": pool, "property_id": book["pid"], "lot": "30", "count": 2, "price": "0.01",
+        "bound": game, "claim_hash": hashlib.sha256(PHRASE.encode()).hexdigest()})
+    assert funding.status_code == 200, funding.text
+    fund = _signed(who, book["secret"], book["pubkey"], funding).json()["txid"]
+    legs = who.post("/account/pools/legs", json={"pool": pool, "fund": fund})
+    assert legs.status_code == 200, legs.text
+    sigs = [[_sign(pool_secret, bytes.fromhex(d), funding_mod.SINGLE_ANYONECANPAY).hex()
+             for d in leg["sighashes"]] for leg in legs.json()["legs"]]
+    public = {**legs.json()["prizepool"], "pubkey": pool_pub.hex()}
+    assert public["referee"]["judge"] == judge and public["creator_pubkey"] == book["pubkey"].hex()
+    made = who.post("/account/inscribe", json={
+        "content": base64.b64encode(b"sealed").decode(),
+        "content_type": "application/vnd.arcade.prizepool",
+        "json": json.dumps({"name": "Refereed", "prizepool": public})})
+    pool_txid = _signed(who, book["secret"], book["pubkey"], made).json()["txid"]
+    _settled(state, rpc)
+    card = who.get(f"/r/prizepool/{pool_txid}").json()
+    assert card["open"] and card["referee"]["judge"] == judge, card
+
+    player = _seated(app, state, rpc, 111)
+    client, secret, pubkey, address = player
+
+    def claim(seat, n, replay):
+        c, s, pk, _ = seat
+        asked = c.post("/account/prize", json={"pool": pool_txid, "lot": n, "page": game,
+                                               "signatures": sigs[n], "secret": PHRASE})
+        assert asked.status_code == 200, asked.text
+        return asked.json(), c.post("/account/prize/sign", json={
+            "pool": pool_txid, "lot": n, "page": game, "signatures": sigs[n],
+            "secret": PHRASE, "raw": asked.json()["raw"], "pubkey": pk.hex(),
+            "replay": replay,
+            "claimer": [_sign(s, bytes.fromhex(d)).hex() for d in asked.json()["sighashes"]]})
+
+    _, none = claim(player, 0, None)
+    assert none.status_code == 400 and "replay" in none.json()["detail"], none.text
+    seed = client.post("/account/referee/seed", json={"pool": pool_txid}).json()["seed"]
+    target = int(seed[:2], 16) + 7
+    _, lost = claim(player, 0, {"seed": seed, "inputs": {"moves": [target - 1]}})
+    assert lost.status_code == 400 and "did not win" in lost.json()["detail"], lost.text
+
+    # Somebody else's run, handed a stolen winning seed: the referee signs only a
+    # claim that pays the wallet the seed was issued to.
+    thief = _seated(app, state, rpc, 112)
+    _, stolen = claim(thief, 0, {"seed": seed, "inputs": {"moves": [target]}})
+    assert stolen.status_code == 400 and "wallet that played" in stolen.json()["detail"], stolen.text
+
+    # Around the referee entirely: the pool's own signatures (anybody with the
+    # phrase has them) and the claimer's, pasted by hand. The chain refuses it.
+    asked, _ = claim(player, 1, None)
+    tx = rpc.call("decoderawtransaction", asked["raw"])
+    redeem = refereelib.redeem_script(
+        pool_pub, bytes.fromhex(who.get("/r/referee").json()["pubkey"]), book["pubkey"])
+    mine = [_sign(secret, bytes.fromhex(d)) for d in asked["sighashes"]]
+    for forged in ([push(bytes.fromhex(sigs[1][i])) + b"\x51" + push(redeem) for i in range(2)],
+                   [push(bytes.fromhex(sigs[1][i])) * 2 + b"\x51" + push(redeem)
+                    for i in range(2)],
+                   [push(bytes.fromhex(sigs[1][i])) + b"\x00" + push(redeem) for i in range(2)]):
+        raw = _serialise(
+            [(v["txid"], int(v["vout"]), forged[n] if n < 2 else push(mine[n - 2]) + push(pubkey))
+             for n, v in enumerate(tx["vin"])],
+            [(int(round(float(o["value"]) * COIN)), bytes.fromhex(o["scriptPubKey"]["hex"]))
+             for o in tx["vout"]])
+        # This chain's node has no testmempoolaccept: sent for real, and refused.
+        try:
+            rpc.call("sendrawtransaction", raw)
+        except Exception as exc:                          # noqa: BLE001
+            assert "script" in str(exc).lower() or "mandatory" in str(exc).lower(), exc
+        else:
+            raise AssertionError("a claim without the referee's signature was accepted")
+
+    _, won = claim(player, 0, {"seed": seed, "inputs": {"moves": [target - 3, 3]}})
+    assert won.status_code == 200, won.text
+    _settled(state, rpc)
+    assert _held(state, address, book["pid"])[0] == 30 * COIN, "the winner holds the prize"
+    _, reused = claim(player, 1, {"seed": seed, "inputs": {"moves": [target]}})
+    assert reused.status_code == 400 and "seed was used" in reused.json()["detail"], reused.text
+
+    # Closing is the creator's own key, down the other branch.
+    closing = who.post("/account/pools/close", json={"prize": pool_txid})
+    assert closing.status_code == 200, closing.text
+    assert closing.json()["creator_signs"] is True
+    closed = _signed(who, book["secret"], book["pubkey"], closing)
+    assert closed.status_code == 200, closed.text
+    _settled(state, rpc)
+    assert _held(state, pool, book["pid"])[0] == 0
+    assert _held(state, book["address"], book["pid"])[0] == HELD - 30 * COIN

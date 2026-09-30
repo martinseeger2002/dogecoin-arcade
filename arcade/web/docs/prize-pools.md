@@ -102,6 +102,111 @@ inscription. A piece can be claimed once its move is in a block; until then
 the page sees it as `waiting`. Deleting an NFT pool sends every unclaimed piece
 back to you, one transaction each, and then the coins.
 
+## A pool with a referee
+
+A plain pool pays whoever gives its phrase, and the phrase is in your page's
+code. A pool with a **referee** pays only for a verified win: the game plays
+from a seed the referee hands out, records the player's moves, and sends them
+with the claim. The referee replays them with your game's rules and signs the
+claim only if the replay wins.
+
+It works for any game whose rules can run without graphics and give the same
+answer every time: turn-based, puzzles, shooters, racers.
+
+### The judge
+
+Inscribe your game's rules as plain JavaScript (content type
+`text/javascript`) defining one function:
+
+```js
+function judge(seed, inputs, params) {
+  // replay the run from the seed and the recorded inputs
+  return {won: true, score: 1234};
+}
+```
+
+* `seed` is a 64-character hex string. Build your random numbers from it
+  (a seeded generator), never from `Math.random`.
+* `inputs` is whatever your page recorded, as JSON: keys per frame, moves,
+  choices. Up to 1 MB.
+* `params` comes from the pool, so one judge can serve several pools (a
+  stage number, a difficulty).
+* No `Date`, no `Math.random`, no page, no network. Use a fixed timestep, and
+  write your own `sin`, `cos` and `atan2` if your game needs them, so the
+  browser and the referee agree to the last bit.
+* It runs in QuickJS (`pip install quickjs==1.19.4`) with 64 MB and 5 seconds.
+  Test it there before you inscribe it:
+
+```python
+import quickjs, json
+ctx = quickjs.Context(); ctx.set_memory_limit(64 << 20); ctx.set_time_limit(5)
+ctx.eval("delete globalThis.Date; Math.random = undefined;")
+ctx.eval(open("judge.js").read())
+ctx.set("s", seed); ctx.set("i", json.dumps(inputs)); ctx.set("p", json.dumps(params))
+print(ctx.eval("JSON.stringify(judge(s, JSON.parse(i), JSON.parse(p)))"))
+```
+
+### Making a refereed pool
+
+Add `referee` to the pool's JSON:
+
+```json
+{"prizepool": {"token": 19, "lot": "250", "lots": 10, "price": "0.01",
+               "game": "#226", "once": true, "phrase": "<your phrase>",
+               "referee": {"node": "https://app.dogecoinarcade.com",
+                           "judge": "#<your judge>",
+                           "require": {"won": true},
+                           "params": {"stage": 10}}}}
+```
+
+| field | |
+|---|---|
+| `node` | the arcade that referees. Leave it out to make the node you are on the referee |
+| `judge` | your judge inscription |
+| `require` | `{"won": true}`, or `{"score_min": N}` |
+| `params` | optional: handed to the judge |
+
+A refereed pool's tokens, coins and pieces sit at a two-key address. A claim
+needs the pool's signature (inside the inscription, sealed with the phrase)
+**and** the referee's, which it gives only for a winning replay, over a claim
+that pays the wallet that played. Knowing the phrase is not enough: a claim
+built by hand without the referee is refused by the network itself. You close
+the pool with your own wallet, as any other.
+
+### The page's side
+
+Before a run, ask for a seed:
+
+```js
+parent.postMessage({arcade: "seed", seq: 1, pool: "<pool_id>"}, "*");
+// answers {arcade: "seed", seq: 1, seed, expires} or {error}
+```
+
+Play the run from that seed and record the inputs. When the player wins,
+claim with the run:
+
+```js
+parent.postMessage({arcade: "claim", seq: 2, secret: "<phrase>", pool: "<pool_id>",
+                    replay: {seed, inputs}}, "*");
+```
+
+A refusal says why: "the replay did not win", "that seed was used; a new run
+needs a new seed", "that seed expired", "the judge ran too long". A pool with
+no referee answers the seed request with "this pool has no referee", so a page
+can fall back to a plain claim.
+
+* A seed belongs to one wallet and one pool, works once, and lasts two hours.
+* `GET /r/referee` on a node says its key, its engine and its limits.
+* Every node takes the claim; the referee node judges it. If the referee is
+  offline, claims wait, and the prizes stay in the pool.
+
+**What a referee proves, and what it does not.** It proves that a winning run
+was played from a fresh seed, by the wallet that claims. It does not prove a
+person played it: a program that can win the game can win the prize. And the
+seed is what stops a run being replayed: the same moves on another seed may
+still win an easy stage, so pay out for hard ones (the final stage, a high
+score), not for the first level.
+
 ## Deleting a pool
 
 Inscribe, from the same wallet:

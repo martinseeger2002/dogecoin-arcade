@@ -853,8 +853,12 @@ async function claimFor(source, m, page = "") {
         const free = (pool.free || []).filter((n) => lots[n]);
         if (!free.length) throw new Error("this page has nothing left to pay out");
         const n = free[Math.floor(Math.random() * free.length)];
+        // A refereed pool pays only for a replay its judge passes: the page
+        // sends the run with the claim, and the referee sees it (2026-09-29).
+        const replay = m.replay && typeof m.replay === "object"
+          ? {seed: String(m.replay.seed || ""), inputs: m.replay.inputs} : null;
         const offer = await wallet.offerPrize(pool.pool, n, lots[n], String(m.secret || ""),
-                                              page, ARCADE_CHAIN.network);
+                                              page, ARCADE_CHAIN.network, replay);
         const shown = await wallet.checked(offer, held);
         const coins = String(Number(offer.price) / 1e8);
         const unit = coins === "1" ? "coin" : "coins";
@@ -864,7 +868,9 @@ async function claimFor(source, m, page = "") {
           `${seller} set ${one ? "it" : "these"} aside for whoever got here. `
           + `${one ? "It costs" : "They cost"} ${coins} ${unit} to ${seller}`
           + ` and a network fee of ${shown.coinsOf(shown.fee)}. The ${one ? "piece" : "tokens"} and the coins move `
-          + "in one transaction, or neither does.", `Claim ${one ? "it" : "them"} for ${coins} ${unit}`);
+          + "in one transaction, or neither does."
+          + (pool.referee ? " The pool's referee checks your run before it pays." : ""),
+          `Claim ${one ? "it" : "them"} for ${coins} ${unit}`);
         if (!ok) { answer({error: "Cancelled."}); return; }
         const out = await wallet.claimPrize(held, offer);
         answer({ok: true, txid: out.txid || "", piece: out.piece || offer.piece || ""});
@@ -953,6 +959,28 @@ window.addEventListener("message", async (e) => {
     return;
   }
   if (m.arcade === "take" && typeof m.seq === "number") { takeFor(e.source, m); return; }
+  // A seed for one run at a refereed pool (2026-09-29): the game plays from it,
+  // and sends it back with its moves when it claims. Issued to the wallet that
+  // is looking, for that pool, once.
+  //   parent.postMessage({arcade: "seed", seq, pool}, "*")
+  //   answers {arcade: "seed", seq, seed, expires} or {error}
+  if (m.arcade === "seed" && typeof m.seq === "number") {
+    const answer = (body) => e.source.postMessage({arcade: "seed", seq: m.seq, ...body}, "*");
+    if (!ARCADE_ME) { answer({error: "Sign in or join first."}); return; }
+    try {
+      let key = String(m.pool || "");
+      if (!key) {
+        const said = /\/content\/([0-9a-f]{64})/.exec(frame.getAttribute("src") || "");
+        const own = said ? await (await fetch("/r/claimpool/" + said[1], {cache: "no-store"})).json() : {};
+        key = String(own.pool || "");
+      }
+      if (!key) throw new Error("this pool has no referee");
+      const wallet = await import("/wallet.js");
+      const got = await wallet.refereeSeed(key, ARCADE_CHAIN.network);
+      answer({seed: got.seed, expires: got.expires});
+    } catch (err) { answer({error: String(err.message || err)}); }
+    return;
+  }
   if (m.arcade === "claim" && typeof m.seq === "number") {
     const said = /\/content\/([0-9a-f]{64})/.exec(frame.getAttribute("src") || "");
     claimFor(e.source, m, said ? said[1] : ""); return;

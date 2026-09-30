@@ -735,14 +735,23 @@ export async function makeChainPool(wallet, spec, chain, onStep = () => {}) {
     }
     const index = 1 + (crypto.getRandomValues(new Uint32Array(1))[0] % 0x7ffffffe);
     const keys = await poolKeys(wallet, chain, index);
-    const opened = await askJson("/account/pools/open",
-                                 {chain, index, pubkey: coinsHex(keys.pubkey)});
+    // A refereed pool (2026-09-29) lives at a two-key address the node works
+    // out from the pool key, the referee's and this wallet's own: the one that
+    // closes it. So the address is the node's answer, checked below by the lots.
+    const opened = await askJson("/account/pools/open", {
+      chain, index, pubkey: coinsHex(keys.pubkey),
+      ...(spec.referee ? {referee: spec.referee,
+                          creator_pubkey: coinsHex(keysOn(wallet, chain).pubkey)} : {})});
     if (!opened.ok) throw new Error(opened.said.detail || "the pool could not be opened");
+    if (!spec.referee && opened.said.address !== keys.address) {
+      throw new Error("the node named a different pool address");
+    }
+    const home = opened.said.address;
     const funding = await askJson("/account/pools/fund", nft ? {
-      chain, pool: keys.address, kind: "nft", pieces, price: String(spec.price),
+      chain, pool: home, kind: "nft", pieces, price: String(spec.price),
       days: spec.days || 0, bound: spec.game ? String(spec.game) : "", once: !!spec.once,
       claim_hash: await claimHash(phrase)} : {
-      chain, pool: keys.address, property_id: spec.token, lot: String(spec.lot),
+      chain, pool: home, property_id: spec.token, lot: String(spec.lot),
       count: Number(spec.lots), price: String(spec.price), days: spec.days || 0,
       once: !!spec.once,
       bound: spec.game ? String(spec.game) : "", claim_hash: await claimHash(phrase)});
@@ -751,11 +760,11 @@ export async function makeChainPool(wallet, spec, chain, onStep = () => {}) {
     const sent = await signOffer(wallet, funding.said);
     for (let n = 0; n < pieces.length; n++) {
       onStep(`Moving piece ${n + 1} of ${pieces.length} into the pool\u2026`);
-      const moved = await askJson("/account/nft/send", {piece: pieces[n], to: keys.address, chain});
+      const moved = await askJson("/account/nft/send", {piece: pieces[n], to: home, chain});
       if (!moved.ok) throw new Error(moved.said.detail || "a piece could not be moved");
       await signOffer(wallet, moved.said);
     }
-    const built = await askJson("/account/pools/legs", {chain, pool: keys.address, fund: sent.txid});
+    const built = await askJson("/account/pools/legs", {chain, pool: home, fund: sent.txid});
     if (!built.ok) throw new Error(built.said.detail || "the pool's lots could not be built");
     const lots = [];
     for (const leg of built.said.legs) {
@@ -776,13 +785,21 @@ export async function makeChainPool(wallet, spec, chain, onStep = () => {}) {
 }
 
 /** The transaction that claims one lot of a chain pool, from any node. */
-export async function offerPrize(pool, lot, sigs, secret, page, chain) {
+export async function offerPrize(pool, lot, sigs, secret, page, chain, replay = null) {
   return working(async () => {
     const r = await askJson("/account/prize", {pool, lot, signatures: sigs, secret, page,
                                                chain: chain || ""});
     if (!r.ok) throw new Error(r.said.detail || "that prize cannot be claimed");
-    return {...r.said, _ask: {pool, lot, signatures: sigs, secret, page, chain: chain || ""}};
+    return {...r.said, _ask: {pool, lot, signatures: sigs, secret, page, chain: chain || "",
+                              ...(replay ? {replay} : {})}};
   });
+}
+
+/** A seed for one run at a refereed pool, from its referee (2026-09-29). */
+export async function refereeSeed(pool, chain) {
+  const r = await askJson("/account/referee/seed", {pool, chain: chain || ""});
+  if (!r.ok) throw new Error(r.said.detail || "no seed");
+  return r.said;
 }
 
 export async function claimPrize(wallet, offer) {
@@ -806,7 +823,8 @@ export async function closeChainPool(wallet, key, chain) {
     if (!info || !info.txid) throw new Error("there is no such prize pool");
     const r = await askJson("/account/pools/close", {chain, prize: info.txid});
     if (!r.ok) throw new Error(r.said.detail || "that pool could not be closed");
-    const keys = await poolKeys(wallet, chain, Number(info.index));
+    const keys = r.said.creator_signs ? keysOn(wallet, chain)
+                                      : await poolKeys(wallet, chain, Number(info.index));
     if (Array.isArray(r.said.offers)) {
       const offers = [];
       for (const offer of r.said.offers) offers.push({offer, shown: await coins.verifyOffer(offer, keys)});

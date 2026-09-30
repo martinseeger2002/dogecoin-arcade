@@ -54,7 +54,7 @@ from . import fees
 from .db import add_missing_columns
 from .funding import SINGLE_ANYONECANPAY, Leg, build_partial, swap_fee
 from .script import OP_RETURN, b58check_decode, hash160, iter_pushes
-from .txbuild import op_return_script, p2pkh_script, push, varint
+from .txbuild import is_scripthash, op_return_script, p2pkh_script, push, varint
 
 COIN = 100_000_000
 
@@ -640,7 +640,10 @@ def check_leg(rpc: Any, listing: dict) -> dict:
                 f"only thing that reaches output {n}. A transaction is not a "
                 f"promise until somebody's key is on it")
         pushes = iter_pushes(bytes.fromhex(script_sig))
-        if len(pushes) != 2 or len(pushes[1]) not in (33, 65):
+        # At a script-hash address (a refereed prize pool) the second push is the
+        # redeem script, which hashes to the address the same way a key does.
+        if len(pushes) != 2 or (len(pushes[1]) not in (33, 65)
+                                and not is_scripthash(owner)):
             raise ListingError("a leg's scriptSig is a signature and a public key")
         if hash160(pushes[1]) != b58check_decode(owner)[1]:
             raise ListingError(
@@ -669,7 +672,7 @@ def piece_held(rpc: Any, listing: dict) -> int | None:
 
 
 def paste_leg(rpc: Any, listing: dict, unsigned: Any, signatures: list[str],
-              pubkey: bytes) -> str:
+              pubkey: bytes, referee_sigs: list[bytes] | None = None) -> str:
     """Finish a swap out of a stored leg. Checks first, bytes second.
 
     This is `swap.countersign` with the seller's half turned into something it
@@ -769,7 +772,7 @@ def paste_leg(rpc: Any, listing: dict, unsigned: Any, signatures: list[str],
                 f"input {n} belongs to the seller; a listing pays the seller "
                 f"out of its own output, not out of its own wallet")
 
-    raw = _combine(leg, unsigned, signatures, pubkey)
+    raw = _combine(leg, unsigned, signatures, pubkey, referee_sigs)
     decoded = rpc.call("decoderawtransaction", raw)
     total_in = (int(listing["input"]["value"])
                 + (int(coin["value"]) if coin else 0)
@@ -918,7 +921,7 @@ def wallet_completes(rpc: Any, db: Any, params: Any, listing: dict,
 
 
 def _combine(leg: dict, unsigned: Any, signatures: list[str],
-             pubkey: bytes) -> str:
+             pubkey: bytes, referee_sigs: list[bytes] | None = None) -> str:
     """The finished swap: the leg's scriptSigs, then the buyer's, one input each.
 
     The leg's scriptSigs are taken from the decoded leg rather than sliced out
@@ -936,6 +939,17 @@ def _combine(leg: dict, unsigned: Any, signatures: list[str],
                bytes.fromhex(str((spent.get("scriptSig") or {}).get("hex")
                                  or "")))
               for spent in leg["vin"]]
+    if referee_sigs is not None:
+        # A refereed lot (2026-09-29): the leg holds the pool's signature and
+        # the redeem script; the claim spends the IF branch, which wants the
+        # referee's signature beside them.
+        from .referee import claim_script_sig
+        if len(referee_sigs) != len(inputs):
+            raise ListingError("the referee signed a different number of inputs "
+                               "than this lot has")
+        inputs = [(txid, vout, claim_script_sig(pushed[0], ref, pushed[1]))
+                  for (txid, vout, sig), ref in zip(inputs, referee_sigs)
+                  for pushed in [iter_pushes(sig)]]
     inputs += [(coin["txid"], int(coin["vout"]),
                 push(bytes.fromhex(sig)) + push(pubkey))
                for coin, sig in zip(unsigned.inputs[signed_at:], signatures)]

@@ -35,11 +35,31 @@ def push(data: bytes) -> bytes:
     return b"\x4e" + len(data).to_bytes(4, "little") + data
 
 
+#: The script-hash version bytes of the chains an arcade pays (config.py:
+#: Pepecoin mainnet 22, its testnet and the regtest 196). None of them is also a
+#: pubkey-hash version on those chains, so the byte alone says which script.
+SCRIPTHASH_VERSIONS = frozenset({22, 196})
+
+
 def p2pkh_script(address: str) -> bytes:
-    _, h160 = b58check_decode(address)
+    """The script that pays `address`. A script-hash address gets
+    OP_HASH160 <20> OP_EQUAL (2026-09-29: refereed prize pools live at one).
+    Before that date every address got the pubkey-hash script, so coins sent to
+    a script-hash address -- which `_check_address` accepts -- would have gone
+    to a key nobody holds."""
+    version, h160 = b58check_decode(address)
     if len(h160) != 20:
         raise ValueError(f"address {address!r} does not contain a 20-byte hash")
+    if version in SCRIPTHASH_VERSIONS:
+        return b"\xa9" + push(h160) + b"\x87"
     return b"\x76\xa9" + push(h160) + b"\x88\xac"
+
+
+def is_scripthash(address: str) -> bool:
+    try:
+        return b58check_decode(address)[0] in SCRIPTHASH_VERSIONS
+    except Exception:                                    # noqa: BLE001
+        return False
 
 
 def op_return_script(data: bytes) -> bytes:

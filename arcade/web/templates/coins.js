@@ -246,6 +246,21 @@ export function p2pkh(hash) {
 
 const SAME = (a, b) => a.length === b.length && a.every((b2, n) => b2 === b[n]);
 
+/** The script that pays a script hash: a refereed prize pool's address. */
+export function p2sh(hash) {
+  return new Uint8Array([0xa9, 0x14, ...hash, 0x87]);
+}
+
+/** The three keys of a refereed pool's script (arcade/referee.py), or null:
+ *  OP_IF <pool> OP_CHECKSIGVERIFY <referee> OP_CHECKSIG
+ *  OP_ELSE <creator> OP_CHECKSIG OP_ENDIF. Nothing else is signed over. */
+export function refereeKeys(s) {
+  if (!s || s.length !== 108 || s[0] !== 0x63 || s[1] !== 33 || s[35] !== 0xad
+      || s[36] !== 33 || s[70] !== 0xac || s[71] !== 0x67 || s[72] !== 33
+      || s[106] !== 0xac || s[107] !== 0x68) return null;
+  return {pool: s.slice(2, 35), referee: s.slice(37, 70), creator: s.slice(73, 106)};
+}
+
 /** Split an unsigned transaction into what it spends and what it pays. */
 export function parseTx(raw) {
   const bytes = unhex(String(raw || ""));
@@ -590,13 +605,22 @@ export async function verifyOffer(offer, keys) {
   const own = keys.address || await address(keys.pubkey, keys.version);
   const hashes = [];
   for (let n = from; n < tx.inputs.length; n++) {
-    if (String(named[n].address || "").toLowerCase() !== own.toLowerCase()) {
+    // A refereed prize pool's coin, closed by its creator (2026-09-29): signed
+    // over the pool's script, and only if this key is the one that closes it.
+    const redeem = named[n].redeem ? unhex(String(named[n].redeem)) : null;
+    if (redeem) {
+      const parts = refereeKeys(redeem);
+      if (!parts || !SAME(parts.creator, keys.pubkey)) {
+        throw new Error(`input ${n} is a prize pool's coin that this key does not `
+          + "close. Nothing was signed.");
+      }
+    } else if (String(named[n].address || "").toLowerCase() !== own.toLowerCase()) {
       throw new Error(`that transaction spends a coin at input ${n} that this `
         + "key does not hold. Nothing was signed.");
     }
     // A Class B payload output being swept back (2026-09-28) is signed
     // over its own bare 1-of-n multisig script -- and only if this key is in it.
-    let spent = mine;
+    let spent = redeem || mine;
     if (named[n].script) {
       spent = unhex(String(named[n].script));
       if (!ownMultisig(spent, keys.pubkey)) {
@@ -724,7 +748,17 @@ export async function verifyLeg(leg, keys) {
       + "naming the piece, and over the price. Nothing was signed.");
   }
 
-  const mine = p2pkh(await hash160(keys.pubkey));
+  // A refereed pool's lot (2026-09-29) stands at a two-key address: this key
+  // has to be its POOL key, and the signature is over the script itself.
+  const redeem = leg.redeem ? unhex(String(leg.redeem)) : null;
+  if (redeem) {
+    const parts = refereeKeys(redeem);
+    if (!parts || !SAME(parts.pool, keys.pubkey)) {
+      throw new Error("that lot is at a two-key address this key is not the pool "
+        + "key of. Nothing was signed.");
+    }
+  }
+  const mine = redeem ? p2sh(await hash160(redeem)) : p2pkh(await hash160(keys.pubkey));
   const own = keys.address || await address(keys.pubkey, keys.version);
   const hashes = [];
   for (let n = 0; n < tx.inputs.length; n++) {
@@ -733,11 +767,11 @@ export async function verifyLeg(leg, keys) {
       throw new Error(`input ${n} of that transaction is not the coin the `
         + "listing names. Nothing was signed.");
     }
-    if (String(named[n].address || "").toLowerCase() !== own.toLowerCase()) {
+    if (!redeem && String(named[n].address || "").toLowerCase() !== own.toLowerCase()) {
       throw new Error(`that listing promises a coin at input ${n} that this key `
         + "does not hold. Nothing was signed.");
     }
-    const derived = hex(await sighashLeg(tx, n, mine));
+    const derived = hex(await sighashLeg(tx, n, redeem || mine));
     if (derived !== asked[n]) {
       throw new Error("those signatures were asked for over different bytes "
         + `than this transaction -- what this browser worked out for input ${n} `

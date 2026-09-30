@@ -20,6 +20,10 @@ dependencies = [
 # newer than the pin's wheels got "Failed to build 'pyzmq'" and no application,
 # for a module that was never going to load. Install it with [zmq] to work on it.
 zmq = ["pyzmq>=26.2"]
+# Only a node that referees prize pools needs these (2026-09-29): QuickJS runs
+# the judges, pinned so a game's author can test in the same engine, and
+# cryptography signs with the referee's key. Every other node forwards claims.
+referee = ["quickjs==1.19.4", "cryptography>=42"]
 web = [
     "fastapi==0.115.6",
     "uvicorn==0.34.0",

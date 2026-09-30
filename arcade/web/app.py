@@ -25,6 +25,7 @@ import urllib.parse
 import shutil
 import sys
 import os
+import requests
 from pathlib import Path
 from urllib.parse import quote
 from typing import Any
@@ -47,6 +48,7 @@ from .. import standing as standinglib
 from .. import collections as collectionlib
 from .. import approvals as approvalslib
 from .. import payload as P
+from .. import referee as refereelib
 from .. import feedview
 from ..messaging import feed as feedlib
 from ..messaging import mempool as mempoollib
@@ -12094,7 +12096,22 @@ def create_app(state: AppState) -> FastAPI:
             if len(pubkey) != 33:
                 raise ValueError("that is not a public key")
             address = b58check_encode(chain.params.pubkeyhash_version, hash160(pubkey))
-        except ValueError as exc:
+            referee = None
+            if said.get("referee"):
+                # A refereed pool (2026-09-29): its coins sit at a two-key
+                # address, so no claim spends them without the referee's word.
+                referee = _referee_terms(chain, said["referee"])
+                # The creator's own coin key closes the pool. The node knows the
+                # account by its address, so the key comes from the wallet and has
+                # to be the one behind that address.
+                creator_pub = bytes.fromhex(str(said.get("creator_pubkey") or ""))
+                if (len(creator_pub) != 33 or not main
+                        or hash160(creator_pub) != b58check_decode(main)[1]):
+                    raise ValueError("a refereed pool needs this wallet's own public key")
+                redeem = refereelib.redeem_script(pubkey, bytes.fromhex(referee["pubkey"]),
+                                                  creator_pub)
+                address = refereelib.address_of(redeem, chain.params)
+        except (ValueError, refereelib.RefereeError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         held = _pool_of(account, address, chain.network)
         if held is None:
@@ -12104,10 +12121,14 @@ def create_app(state: AppState) -> FastAPI:
                                     status_code=400)
             _watch(address, "prize pool", chain)
             held = {"address": address, "index": index, "network": chain.network,
-                    "created": time.time()}
+                    "created": time.time(),
+                    **({"referee": referee, "redeem": redeem.hex(),
+                        "pubkey": pubkey.hex(), "creator_pubkey": creator_pub.hex()}
+                       if referee else {})}
             _save_pool(account, held)
             state.set_setting(f"pool_parent:{address}", main)
-        return JSONResponse({"address": address, "index": held["index"]})
+        return JSONResponse({"address": address, "index": held["index"],
+                             "referee": bool(held.get("referee"))})
 
     @app.post("/account/pools/fund")
     def account_pools_fund(request: Request, payload: Any = Body(None)):
@@ -12241,7 +12262,8 @@ def create_app(state: AppState) -> FastAPI:
                 if chained is None or chained["creator"] != main:
                     raise ValueError("that prize pool is not this account's")
                 pool = {"address": chained["pool"], "index": chained["index"],
-                        "property_id": chained["property_id"], "network": chain.network}
+                        "property_id": chained["property_id"], "network": chain.network,
+                        "redeem": chained.get("redeem") or ""}
             else:
                 pool = _pool_of(account, str(said.get("pool") or ""), chain.network)
             if pool is None:
@@ -12281,7 +12303,8 @@ def create_app(state: AppState) -> FastAPI:
                 return _close_nft_pool(account, chain, main, chained, coins)
             unsigned = fundinglib.build_pool_close(
                 pool["address"], coins, main, fees.MIN_FEE_PER_KB, payload=naming,
-                what="cancel and close a prize pool: its tokens and coins come back to you")
+                what="cancel and close a prize pool: its tokens and coins come back to you",
+                redeem=bytes.fromhex(pool.get("redeem") or ""))
         except (fundinglib.FundingError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         if chained is None:
@@ -12289,7 +12312,8 @@ def create_app(state: AppState) -> FastAPI:
             _save_pool(account, pool)
         offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what)
         return JSONResponse({"offer": offer.id, "chain": chain.network,
-                             "index": pool["index"], **unsigned.as_json()})
+                             "index": pool["index"], "creator_signs": bool(pool.get("redeem")),
+                             **unsigned.as_json()})
 
     # --- prize pools ON THE CHAIN (2026-09-29) ------------------------------------
     # "It should just be a custom inscription ... created with an inscription and
@@ -12352,8 +12376,30 @@ def create_app(state: AppState) -> FastAPI:
                     "lot": int(p.get("lot") or 0), "count": int(p["count"]),
                     "price": int(p["price"]), "each": int(p["each"]),
                     "fund": str(p["fund"]).lower(), "game": str(p.get("game") or "").lower(),
-                    "claim_hash": str(p["claim_hash"]).lower(), "height": r["block_height"]}
+                    "claim_hash": str(p["claim_hash"]).lower(), "height": r["block_height"],
+                    "referee": None, "redeem": ""}
+                if p.get("referee"):
+                    # The address has to be the two-key one these three keys make,
+                    # and the creator key has to be the inscriber's, or it is not a
+                    # refereed pool at all -- and not an unrefereed one either.
+                    ref = p["referee"]
+                    creator_pub = bytes.fromhex(str(p["creator_pubkey"]))
+                    if hash160(creator_pub) != b58check_decode(r["creator"])[1]:
+                        raise ValueError("creator key")
+                    redeem = refereelib.redeem_script(
+                        bytes.fromhex(str(p["pubkey"])), bytes.fromhex(str(ref["pubkey"])),
+                        creator_pub)
+                    if refereelib.address_of(redeem, chain.params) != str(p["pool"]):
+                        raise ValueError("address")
+                    pools[r["txid"]]["referee"] = {
+                        "node": str(ref.get("node") or ""), "pubkey": str(ref["pubkey"]).lower(),
+                        "judge": str(ref["judge"]).lower(),
+                        "require": ref.get("require") if isinstance(ref.get("require"), dict)
+                        else {"won": True},
+                        "params": ref.get("params") if ref.get("params") is not None else {}}
+                    pools[r["txid"]]["redeem"] = redeem.hex()
             except (KeyError, TypeError, ValueError):
+                pools.pop(r["txid"], None)
                 continue
             q = pools[r["txid"]]
             if q["kind"] == "nft" and len(q["pieces"]) != q["count"]:
@@ -12369,6 +12415,240 @@ def create_app(state: AppState) -> FastAPI:
                     pass
         _chain_pool_cache[chain.network] = (height, pools)
         return pools
+
+    # --- the referee (2026-09-29) --------------------------------------------------
+    # "A game-agnostic referee ... so a claim pays only for a verified win, in any
+    # game." See arcade/referee.py for why it is a key and not a check. This node
+    # is a referee for every pool that names its key; for a pool that names
+    # another node's, it forwards the seed request and the replay there.
+
+    _referee = refereelib.Referee(state.home)
+
+    def _referee_terms(chain, spec: Any) -> dict:
+        """What a pool's JSON says about its referee, checked when it is opened:
+        whose key, which judge, what a win is."""
+        if not isinstance(spec, dict):
+            raise ValueError("a referee is {\"node\": ..., \"judge\": ..., \"require\": ...}")
+        node = str(spec.get("node") or "").strip().rstrip("/")
+        if node and not re.fullmatch(r"https?://[A-Za-z0-9.\-]+(:\d+)?", node):
+            raise ValueError("a referee node is named by its address, like "
+                             "https://app.dogecoinarcade.com")
+        if not node:
+            pubkey = _referee.pubkey.hex()
+        else:
+            try:
+                said = requests.get(node + "/r/referee", timeout=15).json()
+                pubkey = str(said["pubkey"])
+            except Exception:                             # noqa: BLE001
+                raise ValueError(f"{node} did not answer as a referee") from None
+        if len(bytes.fromhex(pubkey)) != 33:
+            raise ValueError("that referee's key is not a public key")
+        row = state.token_index(chain).inscription(
+            contentlib._key(str(spec.get("judge") or "").strip().lstrip("#")))
+        if row is None:
+            raise ValueError("a refereed pool names its judge, an inscription of plain "
+                             "JavaScript, and there is no such inscription")
+        if "javascript" not in media.standard_type(str(row["content_type"])):
+            raise ValueError(f"#{row['number']} is not JavaScript, so it cannot judge")
+        require = spec.get("require") if isinstance(spec.get("require"), dict) else {"won": True}
+        if not (require.get("won") is True or isinstance(require.get("score_min"), (int, float))):
+            raise ValueError("a referee requires {\"won\": true} or {\"score_min\": N}")
+        params = spec.get("params") if spec.get("params") is not None else {}
+        if len(json.dumps(params)) > 4096:
+            raise ValueError("a judge's params are at most 4 KB")
+        return {"node": node, "pubkey": pubkey, "judge": row["txid"],
+                "require": require, "params": params}
+
+    def _referee_json(account, pool: dict) -> dict:
+        """The part of a pool inscription that names its referee, if it has one."""
+        if not pool.get("referee"):
+            return {}
+        return {"referee": pool["referee"], "creator_pubkey": pool["creator_pubkey"]}
+
+    def _referee_node(pool: dict) -> str:
+        """Where a pool's referee is, or "" when it is this node."""
+        ref = pool["referee"]
+        if ref["pubkey"] == _referee.pubkey.hex():
+            return ""
+        if not ref["node"]:
+            raise refereelib.RefereeError("this pool's referee is a node that did not say "
+                                          "where it is, and it is not this one")
+        return ref["node"]
+
+    def _referee_seed(chain, key: str, address: str) -> dict:
+        pool = _chain_pool(chain, key)
+        if pool is None or not pool.get("referee"):
+            raise refereelib.RefereeError("this pool has no referee")
+        if pool["referee"]["pubkey"] != _referee.pubkey.hex():
+            raise refereelib.RefereeError("this node is not that pool's referee")
+        refusal = _pool_refusal(chain, pool)
+        if refusal:
+            raise refereelib.RefereeError(refusal)
+        complaint = _check_address(address, mainnet=chain.is_mainnet)
+        if complaint:
+            raise refereelib.RefereeError(complaint)
+        return _referee.issue_seed(pool["txid"], address)
+
+    def _referee_sign(chain, key: str, n: int, raw: str, replay: Any) -> dict:
+        """The referee's half of a claim: a verdict on the replay, then a signature
+        over the whole claim -- or a reason."""
+        import hashlib as _h
+        pool = _chain_pool(chain, key)
+        if pool is None or not pool.get("referee"):
+            raise refereelib.RefereeError("this pool has no referee")
+        ref = pool["referee"]
+        if ref["pubkey"] != _referee.pubkey.hex():
+            raise refereelib.RefereeError("this node is not that pool's referee")
+        refusal = _pool_refusal(chain, pool)
+        if refusal:
+            raise refereelib.RefereeError(refusal)
+        if not isinstance(replay, dict) or not replay.get("seed"):
+            raise refereelib.RefereeError("this prize pays only for a replay of a win: "
+                                          "the game has to send {seed, inputs}")
+        seed = _referee.seed_row(str(replay["seed"]))
+        if seed is None or seed["pool"] != pool["txid"]:
+            raise refereelib.RefereeError("that seed was not issued for this pool")
+        digest = _h.sha256(str(raw).encode()).hexdigest()
+        if seed["used"] and seed["used"] != digest:
+            raise refereelib.RefereeError("that seed was used; a new run needs a new seed")
+        if seed["expires"] < time.time():
+            raise refereelib.RefereeError("that seed expired; a new run needs a new seed")
+        claimer = seed["address"]
+        if not 0 <= n < pool["count"]:
+            raise refereelib.RefereeError("no such lot in that pool")
+        leg = _pool_leg(chain, pool, n)
+        with chain.rpc() as rpc:
+            tx = rpc.call("decoderawtransaction", str(raw))
+            vin, vout = tx.get("vin") or [], tx.get("vout") or []
+            if len(vin) < 3 or any(
+                    (vin[i]["txid"], int(vin[i]["vout"])) != (leg.inputs[i]["txid"],
+                                                              int(leg.inputs[i]["vout"]))
+                    for i in range(2)):
+                raise refereelib.RefereeError("that is not a claim of this lot")
+            outputs = [(int(round(float(o["value"]) * COIN)),
+                        bytes.fromhex(o["scriptPubKey"]["hex"])) for o in vout]
+            if outputs[:len(leg.outputs)] != list(leg.outputs):
+                raise refereelib.RefereeError("that claim does not pay the pool what the lot asks")
+            # Everything else goes to the wallet the seed was issued to -- or back
+            # to the pool, which is where a claim returns the fee its lot reserved
+            # -- and the LAST output, the one the engine hands a token lot to, is
+            # the player's. Every other coin in it is the player's too: the prize
+            # cannot be steered to anybody who did not play.
+            mine = txbuild.p2pkh_script(claimer)
+            back = txbuild.p2pkh_script(pool["pool"])
+            rest = outputs[len(leg.outputs):]
+            if (not rest or rest[-1][1] != mine
+                    or any(script not in (mine, back) for _, script in rest)):
+                raise refereelib.RefereeError("that claim pays somebody other than the "
+                                              "wallet that played")
+            for spent in vin[2:]:
+                prev = rpc.call("gettxout", spent["txid"], int(spent["vout"]), True)
+                if not prev or prev["scriptPubKey"]["hex"] != mine.hex():
+                    raise refereelib.RefereeError("that claim spends coins that are not "
+                                                  "the player's")
+        if pool.get("once") and claimer in _pool_claimers(chain, pool):
+            raise refereelib.RefereeError("this wallet has already claimed from this prize pool")
+        if not seed["used"]:
+            _referee.pace(claimer)
+            found = state.token_index(chain).inscription_content(ref["judge"])
+            if found is None:
+                raise refereelib.RefereeError("this node does not hold the pool's judge")
+            source = found[1].decode("utf-8", "replace")
+            verdict = _referee.judge(source, seed["seed"], replay.get("inputs"), ref["params"])
+            short = refereelib.meets(verdict, ref["require"])
+            if short:
+                raise refereelib.RefereeError(short)
+            if not _referee.use_seed(seed["seed"], digest):
+                raise refereelib.RefereeError("that seed was used; a new run needs a new seed")
+        else:
+            verdict = {"won": True, "again": True}
+        redeem = bytes.fromhex(pool["redeem"])
+        raw_inputs = [{"txid": v["txid"], "vout": int(v["vout"])} for v in vin]
+        sigs = [_referee.sign(fundinglib.sighash(raw_inputs, outputs, i, redeem)).hex()
+                for i in range(2)]
+        return {"signatures": sigs, "verdict": verdict}
+
+    def _referee_verdict(chain, pool: dict, n: int, raw: str, replay: Any) -> list[bytes]:
+        """Ask the pool's referee -- this node, or the one it names -- to sign a claim."""
+        node = _referee_node(pool)
+        if not node:
+            said = _referee_sign(chain, pool["txid"], n, raw, replay)
+        else:
+            try:
+                answer = requests.post(node + "/r/referee/sign", timeout=30, json={
+                    "chain": chain.network, "pool": pool["txid"], "lot": n, "raw": raw,
+                    "replay": replay})
+                said = answer.json()
+            except Exception:                             # noqa: BLE001
+                raise refereelib.RefereeError(
+                    "this pool's referee did not answer; the prize is still there, "
+                    "so try again later") from None
+            if answer.status_code != 200:
+                raise refereelib.RefereeError(str(said.get("detail") or "the referee refused"))
+        return [bytes.fromhex(s) for s in said["signatures"]]
+
+    @app.get("/r/referee")
+    def r_referee():
+        """This node as a referee: its key, and the engine and caps its judges run under."""
+        return contentlib._json({
+            "pubkey": _referee.pubkey.hex(), "engine": refereelib.ENGINE,
+            "cpu_seconds": refereelib.CPU_SECONDS, "memory_bytes": refereelib.MEMORY_BYTES,
+            "inputs_bytes": refereelib.INPUTS_BYTES, "judge_bytes": refereelib.JUDGE_BYTES,
+            "seed_seconds": refereelib.SEED_SECONDS,
+            "judged_per_minute": refereelib.JUDGED_PER_MINUTE})
+
+    @app.post("/r/referee/seed")
+    def r_referee_seed(payload: Any = Body(None)):
+        """A fresh seed for one wallet's run at one refereed pool. Asked by the node
+        the player is on; answered only by the pool's referee."""
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+            return JSONResponse(_referee_seed(chain, str(said.get("pool") or ""),
+                                              str(said.get("address") or "")))
+        except (ValueError, refereelib.RefereeError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    @app.post("/r/referee/sign")
+    def r_referee_sign(payload: Any = Body(None)):
+        """The referee's signature over a claim whose replay wins, or why not."""
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+            return JSONResponse(_referee_sign(chain, str(said.get("pool") or ""),
+                                              int(said.get("lot", -1)), str(said.get("raw") or ""),
+                                              said.get("replay")))
+        except (ValueError, fundinglib.FundingError, refereelib.RefereeError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    @app.post("/account/referee/seed")
+    def account_referee_seed(request: Request, payload: Any = Body(None)):
+        """A seed for the signed-in player's next run, from the pool's referee."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+            address = _account_address(account.pubkey, chain)
+            if not address:
+                raise ValueError("this account has no address yet")
+            pool = _chain_pool(chain, str(said.get("pool") or ""))
+            if pool is None or not pool.get("referee"):
+                raise refereelib.RefereeError("this pool has no referee")
+            node = _referee_node(pool)
+            if not node:
+                return JSONResponse(_referee_seed(chain, pool["txid"], address))
+            try:
+                answer = requests.post(node + "/r/referee/seed", timeout=15, json={
+                    "chain": chain.network, "pool": pool["txid"], "address": address})
+                got = answer.json()
+            except Exception:                             # noqa: BLE001
+                raise refereelib.RefereeError("this pool's referee did not answer; "
+                                              "try again later") from None
+            if answer.status_code != 200:
+                raise refereelib.RefereeError(str(got.get("detail") or "the referee refused"))
+            return JSONResponse({"seed": str(got["seed"]), "expires": int(got["expires"])})
+        except (ValueError, refereelib.RefereeError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
 
     def _chain_pool(chain, key: str) -> dict | None:
         pools = _chain_pools(chain)
@@ -12417,7 +12697,8 @@ def create_app(state: AppState) -> FastAPI:
         coin = {"txid": pool["fund"], "vout": first + 1 + 2 * n, "value": pool["each"],
                 "address": pool["pool"]}
         return fundinglib.build_leg(chain.params, pool["pool"], piece, coins=pool["price"],
-                                    rate=fees.MIN_FEE_PER_KB, payload=naming, coin=coin)
+                                    rate=fees.MIN_FEE_PER_KB, payload=naming, coin=coin,
+                                    redeem=bytes.fromhex(pool.get("redeem") or ""))
 
     def _pool_refusal(chain, pool: dict | None, page: str = "") -> str:
         if pool is None:
@@ -12460,6 +12741,8 @@ def create_app(state: AppState) -> FastAPI:
         return {**{k: pool[k] for k in (
             "txid", "number", "creator", "kind", "pool", "index", "property_id", "lot",
             "count", "price", "game", "deleted", "once", "name")},
+            "referee": ({k: pool["referee"][k] for k in ("node", "judge", "require", "params")}
+                        if pool.get("referee") else None),
             "pool_id": pool["txid"], "total": pool["count"],
             "what": _pool_what(chain, pool), "free": [] if refusal else free,
             "waiting": waiting, "lots_left": 0 if refusal else len(free),
@@ -12513,7 +12796,8 @@ def create_app(state: AppState) -> FastAPI:
                     raise ValueError("that transaction did not fund this pool")
             shape = {"pool": pool["address"], "fund": fund, "each": SPLIT_EACH,
                      "property_id": int(pool["property_id"]), "lot": int(pool["lot"]),
-                     "price": int(pool["price"]), "count": count}
+                     "price": int(pool["price"]), "count": count,
+                     "redeem": pool.get("redeem") or ""}
             prop = state.token_index(chain).property(shape["property_id"])
             legs = []
             for n in range(count):
@@ -12531,7 +12815,9 @@ def create_app(state: AppState) -> FastAPI:
                                            "count": count, "price": shape["price"],
                                            "each": SPLIT_EACH, "fund": fund,
                                            "game": pool.get("bound") or "",
-                                           "claim_hash": pool["claim_hash"]}})
+                                           "claim_hash": pool["claim_hash"],
+                                           "once": bool(pool.get("once")),
+                                           **_referee_json(account, pool)}})
 
     #: Claims this node broadcast, by pool: who claimed, before their block.
     _pool_claims: dict[str, set] = {}
@@ -12613,7 +12899,7 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError("that transaction did not fund this pool")
         shape = {"kind": "nft", "pool": pool["address"], "fund": fund, "each": SPLIT_EACH,
                  "pieces": list(pool["pieces"]), "price": int(pool["price"]),
-                 "count": count, "first": 0}
+                 "count": count, "first": 0, "redeem": pool.get("redeem") or ""}
         legs = [{**_pool_leg(chain, shape, n).as_json(), "chain": chain.network,
                  "price": shape["price"]} for n in range(count)]
         return JSONResponse({"chain": chain.network, "legs": legs, "prizepool": {
@@ -12621,7 +12907,7 @@ def create_app(state: AppState) -> FastAPI:
             "pool": pool["address"], "index": int(pool["index"]), "pieces": shape["pieces"],
             "count": count, "price": shape["price"], "each": SPLIT_EACH, "fund": fund,
             "first": 0, "game": pool.get("bound") or "", "claim_hash": pool["claim_hash"],
-            "once": bool(pool.get("once"))}})
+            "once": bool(pool.get("once")), **_referee_json(account, pool)}})
 
     def _close_nft_pool(account, chain, main: str, pool: dict, coins: list):
         """Close an NFT pool: each unclaimed piece goes home on its own lot's two
@@ -12644,18 +12930,21 @@ def create_app(state: AppState) -> FastAPI:
                 txid=bytes.fromhex(piece)).encode()).encode())
             unsigned = fundinglib.build_pool_close(
                 pool["pool"], held, main, fees.MIN_FEE_PER_KB, payload=naming,
-                what=f"send #{row['number']} back from a prize pool")
+                what=f"send #{row['number']} back from a prize pool",
+                redeem=bytes.fromhex(pool.get("redeem") or ""))
             offers.append(_offers.add(account.pubkey, chain.network, unsigned, unsigned.what))
         rest = [c for c in coins if (c["txid"], int(c["vout"])) not in lot_coins]
         if rest:
             unsigned = fundinglib.build_pool_close(
                 pool["pool"], rest, main, fees.MIN_FEE_PER_KB,
-                what="what claimers paid into a prize pool, back to you")
+                what="what claimers paid into a prize pool, back to you",
+                redeem=bytes.fromhex(pool.get("redeem") or ""))
             offers.append(_offers.add(account.pubkey, chain.network, unsigned, unsigned.what))
         if not offers:
             return JSONResponse({"detail": "that pool has nothing left to send back"},
                                 status_code=400)
-        return JSONResponse({"chain": chain.network, "index": pool["index"], "offers": [
+        return JSONResponse({"chain": chain.network, "index": pool["index"],
+                             "creator_signs": bool(pool.get("redeem")), "offers": [
             {"offer": o.id, "chain": chain.network, **o.unsigned.as_json()} for o in offers]})
 
     def _prize_terms(account, chain, address: str, said: dict) -> tuple:
@@ -12678,7 +12967,7 @@ def create_app(state: AppState) -> FastAPI:
         with chain.rpc() as rpc:
             listing = state.listings.register(
                 rpc, raw=leg.raw, signatures=[str(s) for s in (said.get("signatures") or [])],
-                pubkey=bytes.fromhex(pool["pubkey"]), network=chain.network,
+                pubkey=bytes.fromhex(pool["redeem"] or pool["pubkey"]), network=chain.network,
                 owner=pool["pool"], price=pool["price"], seconds=listingslib.ANSWERED_FOR,
                 record=False, claim_hash=pool["claim_hash"], bound=pool["game"])
         listing["parent"] = pool["creator"]
@@ -12744,15 +13033,20 @@ def create_app(state: AppState) -> FastAPI:
                 pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
                 if not pubkey or hash160(pubkey) != b58check_decode(address)[1]:
                     raise ValueError("that public key is not this account's")
+                referee_sigs = None
+                if pool.get("referee"):
+                    # The referee's word, over this very transaction, or nothing.
+                    referee_sigs = _referee_verdict(chain, pool, int(said.get("lot")),
+                                                    unsigned.raw, said.get("replay"))
                 with chain.rpc() as rpc:
                     raw = listingslib.paste_leg(rpc, listing, unsigned,
                                                 [str(x) for x in (said.get("claimer") or [])],
-                                                pubkey)
+                                                pubkey, referee_sigs=referee_sigs)
                 _quota(account, "send")
                 with chain.rpc() as rpc:
                     txid = rpc.call("sendrawtransaction", raw)
             except (listingslib.ListingError, fundinglib.FundingError, swaplib.SwapError,
-                    AmountError, ValueError) as exc:
+                    AmountError, ValueError, refereelib.RefereeError) as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=400)
             except Exception as exc:
                 return JSONResponse({"detail": f"the node refused it: {exc}"}, status_code=409)
