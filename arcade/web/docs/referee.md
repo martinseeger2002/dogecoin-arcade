@@ -164,6 +164,27 @@ Everything in the [prize pools](prize-pools.md) guide applies. Add `referee`:
 | `params` | optional, up to 4 KB: handed to the judge |
 | `seed_hours` | optional: how long a player has from starting a run to claiming its prize. 2 unless you say, up to 720 (30 days). Give a game whose runs are long, or that lets a player claim later, more |
 
+### What the player holds: facts
+
+A game where levels are token balances and gear is NFTs needs the judge to
+know what the player really holds, or a replay could claim the best gear.
+Name what to read, and the referee passes it to the judge as `params.facts`:
+
+```json
+"facts": {"tokens": [21, 22],
+          "collections": [{"creator": "<address>", "collection": "Arsenal"}]}
+```
+
+```js
+params.facts = {tokens: {"21": "1500", "22": "0"},        // balances, in units
+                pieces: [{id, number, collection, json}]}  // held pieces of those collections
+```
+
+It is what the player held when the seed was issued **and** still holds when
+the claim is judged: the smaller balance of each token, and only the pieces
+held at both moments. Gear handed to another wallet after a run starts counts
+for neither run. Up to 20 tokens and 10 collections.
+
 ## The page's side
 
 ### Asking for a seed
@@ -185,6 +206,20 @@ and lasts as long as the pool's `seed_hours` says (two hours unless it says):
 a run has to be claimed within that long of starting. `expires` says when, in
 seconds since 1970. Only seeds expire. The judge is an inscription and never does, and the pool
 pays out until it is empty or you delete it. `pool_id` comes from `GET /r/claimpools/<your game>`.
+
+### One run, several prizes
+
+A session that can pay more than one prize (experience from one pool, an item
+from another) asks for a seed for the whole game instead of one pool:
+
+```js
+parent.postMessage({arcade: "seed", seq: 1, game: true}, "*");
+// answers {seed, expires, pools: [pool ids]}
+```
+
+Every refereed pool of this page takes that seed **once each**, with the same
+replay; each pool's judge and `params` decide what it pays for. The pools must
+share a referee. The seed lasts as long as the longest `seed_hours` among them.
 
 ### Claiming with the run
 

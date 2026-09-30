@@ -172,35 +172,68 @@ class Referee:
         conn = sqlite3.connect(self.home / "referee.sqlite", timeout=10)
         conn.execute("CREATE TABLE IF NOT EXISTS seed (seed TEXT PRIMARY KEY, pool TEXT, "
                      "address TEXT, issued REAL, expires REAL, used TEXT DEFAULT '')")
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(seed)")}
+        if "facts" not in columns:
+            conn.execute("ALTER TABLE seed ADD COLUMN facts TEXT DEFAULT ''")
+        if "game" not in columns:
+            conn.execute("ALTER TABLE seed ADD COLUMN game TEXT DEFAULT ''")
+        # A game's seed is spent once at EACH of its pools (2026-09-30: one play
+        # session pays several prizes, each from its own pool).
+        conn.execute("CREATE TABLE IF NOT EXISTS seed_use (seed TEXT, pool TEXT, used TEXT, "
+                     "PRIMARY KEY (seed, pool))")
         return conn
 
-    def issue_seed(self, pool: str, address: str, seconds: int = SEED_SECONDS) -> dict:
+    def issue_seed(self, pool: str, address: str, seconds: int = SEED_SECONDS,
+                   facts: dict | None = None, game: str = "") -> dict:
+        """A seed for one pool, or (with `game`, and `pool` empty) for every
+        refereed pool of one game, each of which takes it once."""
         now = time.time()
         with self._lock, closing(self._db()) as db, db:
             db.execute("DELETE FROM seed WHERE expires < ? AND used = ''", (now - 86400,))
-            open_ = db.execute("SELECT COUNT(*) FROM seed WHERE pool=? AND address=? "
-                               "AND used='' AND expires > ?", (pool, address, now)).fetchone()[0]
+            open_ = db.execute("SELECT COUNT(*) FROM seed WHERE pool=? AND game=? AND address=? "
+                               "AND used='' AND expires > ?",
+                               (pool, game, address, now)).fetchone()[0]
             if open_ >= SEEDS_OPEN:
                 raise RefereeError(f"this wallet already holds {SEEDS_OPEN} unused seeds "
                                    "for this pool; play one of them")
             seed = secrets.token_hex(32)
-            db.execute("INSERT INTO seed (seed, pool, address, issued, expires) "
-                       "VALUES (?,?,?,?,?)", (seed, pool, address, now, now + seconds))
+            db.execute("INSERT INTO seed (seed, pool, address, issued, expires, facts, game) "
+                       "VALUES (?,?,?,?,?,?,?)", (seed, pool, address, now, now + seconds,
+                                                  json.dumps(facts) if facts else "", game))
         return {"seed": seed, "expires": int(now + seconds)}
 
     def seed_row(self, seed: str) -> dict | None:
         with closing(self._db()) as db:
-            row = db.execute("SELECT seed, pool, address, issued, expires, used FROM seed "
-                             "WHERE seed=?", (str(seed),)).fetchone()
+            row = db.execute("SELECT seed, pool, address, issued, expires, used, facts, game "
+                             "FROM seed WHERE seed=?", (str(seed),)).fetchone()
         if row is None:
             return None
-        return dict(zip(("seed", "pool", "address", "issued", "expires", "used"), row))
+        out = dict(zip(("seed", "pool", "address", "issued", "expires", "used", "facts",
+                        "game"), row))
+        out["facts"] = json.loads(out["facts"]) if out["facts"] else None
+        return out
 
-    def use_seed(self, seed: str, txid: str) -> bool:
-        """Spend a seed on the claim it won. False if something got there first."""
+    def used_at(self, seed: str, pool: str) -> str:
+        """What a seed was spent on at one pool, or ""."""
+        with closing(self._db()) as db:
+            row = db.execute("SELECT used FROM seed_use WHERE seed=? AND pool=?",
+                             (seed, pool)).fetchone()
+            if row:
+                return row[0]
+            old = db.execute("SELECT used FROM seed WHERE seed=? AND pool=?",
+                             (seed, pool)).fetchone()
+        return (old[0] or "") if old else ""
+
+    def use_seed(self, seed: str, txid: str, pool: str = "") -> bool:
+        """Spend a seed at one pool on the claim it won. False if something got
+        there first."""
         with self._lock, closing(self._db()) as db, db:
-            return db.execute("UPDATE seed SET used=? WHERE seed=? AND used=''",
-                              (txid or "signed", seed)).rowcount == 1
+            try:
+                db.execute("INSERT INTO seed_use (seed, pool, used) VALUES (?,?,?)",
+                           (seed, pool, txid or "signed"))
+            except sqlite3.IntegrityError:
+                return False
+            return True
 
     def unuse_seed(self, seed: str) -> None:
         """A signed claim the network refused: the seed was never really spent."""
@@ -255,6 +288,23 @@ def meets(verdict: dict, require: dict) -> str:
         if float(verdict.get("score") or 0) < float(require["score_min"]):
             return f"the replay scored {verdict.get('score')}, under {require['score_min']}"
     return ""
+
+
+FACT_TOKENS_MOST = 20
+FACT_COLLECTIONS_MOST = 10
+
+
+def both(at_seed: dict | None, now: dict) -> dict:
+    """What a player held at the seed AND still holds at judging: the smaller
+    balance of each token, the pieces held at both moments. Gear handed on after
+    a run began counts for neither wallet's run (2026-09-30, a tester: "the
+    judge must know what the claimer really HOLDS")."""
+    if not at_seed:
+        return now
+    tokens = {pid: str(min(int(at_seed.get("tokens", {}).get(pid, 0)), int(units)))
+              for pid, units in now.get("tokens", {}).items()}
+    seen = {p["id"] for p in at_seed.get("pieces", [])}
+    return {"tokens": tokens, "pieces": [p for p in now.get("pieces", []) if p["id"] in seen]}
 
 
 def fingerprint(source: str) -> str:

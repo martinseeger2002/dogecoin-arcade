@@ -969,6 +969,19 @@ window.addEventListener("message", async (e) => {
     if (!ARCADE_ME) { answer({error: "Sign in or join first."}); return; }
     try {
       let key = String(m.pool || "");
+      const game = m.game === true || m.pool === "*";
+      if (game) {
+        // A seed for the whole game: this page's inscription (2026-09-30).
+        const said = /\/content\/([0-9a-f]{64})/.exec(frame.getAttribute("src") || "");
+        if (!said) throw new Error("this page is not an inscription");
+        const r = await fetch("/account/referee/seed", {method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({game: said[1], chain: ARCADE_CHAIN.network})});
+        const got = await r.json();
+        if (!r.ok) throw new Error(got.detail || "no seed");
+        answer({seed: got.seed, expires: got.expires, pools: got.pools || []});
+        return;
+      }
       if (!key) {
         const said = /\/content\/([0-9a-f]{64})/.exec(frame.getAttribute("src") || "");
         const own = said ? await (await fetch("/r/claimpool/" + said[1], {cache: "no-store"})).json() : {};

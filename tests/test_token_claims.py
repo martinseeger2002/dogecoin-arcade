@@ -519,6 +519,8 @@ function judge(seed, inputs, params) {
   // A game whose rules are one sum: a run wins when its moves add up to the
   // seed's first byte plus the pool's bonus. Deterministic, like every judge.
   var target = parseInt(seed.slice(0, 2), 16) + params.bonus;
+  // What the player holds, as the referee read it: a token balance per number.
+  if (!params.facts || !/^[0-9]+$/.test(params.facts.tokens[String(params.pid)] || "")) return {won: false, score: -1};
   var sum = 0;
   for (var i = 0; i < inputs.moves.length; i++) sum += inputs.moves[i];
   return {won: sum === target, score: sum};
@@ -552,8 +554,9 @@ def test_a_refereed_pool_pays_only_a_verified_win_and_nothing_gets_around_it(nod
     pool_pub = _pubkey(pool_secret)
     opened = who.post("/account/pools/open", json={
         "index": 4242, "pubkey": pool_pub.hex(), "creator_pubkey": book["pubkey"].hex(),
-        "referee": {"judge": judge, "require": {"won": True}, "params": {"bonus": 7},
-                    "seed_hours": 24}})
+        "referee": {"judge": judge, "require": {"won": True},
+                    "params": {"bonus": 7, "pid": book["pid"]}, "seed_hours": 24,
+                    "facts": {"tokens": [book["pid"]]}}})
     assert opened.status_code == 200, opened.text
     pool = opened.json()["address"]
     assert opened.json()["referee"] and pool.startswith("2"), "a two-key address"
@@ -577,6 +580,7 @@ def test_a_refereed_pool_pays_only_a_verified_win_and_nothing_gets_around_it(nod
     card = who.get(f"/r/prizepool/{pool_txid}").json()
     assert card["open"] and card["referee"]["judge"] == judge, card
     assert card["referee"]["seed_hours"] == 24, "the pool says how long its seeds last"
+    assert card["referee"]["facts"] == {"tokens": [book["pid"]], "collections": []}
 
     player = _seated(app, state, rpc, 111)
     client, secret, pubkey, address = player
@@ -644,6 +648,17 @@ def test_a_refereed_pool_pays_only_a_verified_win_and_nothing_gets_around_it(nod
     _, reused = claim(player, 1, {"seed": seed, "inputs": {"moves": [target]}})
     assert reused.status_code == 400 and "seed was used" in reused.json()["detail"], reused.text
 
+    # A seed for the whole game (2026-09-30: one session, several prizes): every
+    # refereed pool of the game takes it, once each.
+    whole = client.post("/account/referee/seed", json={"game": game})
+    assert whole.status_code == 200, whole.text
+    assert whole.json()["pools"] == [pool_txid]
+    g = whole.json()["seed"]
+    aim = int(g[:2], 16) + 7
+    _, paid = claim(player, 1, {"seed": g, "inputs": {"moves": [aim]}})
+    assert paid.status_code == 200, paid.text
+    _settled(state, rpc)
+
     # Closing is the creator's own key, down the other branch.
     closing = who.post("/account/pools/close", json={"prize": pool_txid})
     assert closing.status_code == 200, closing.text
@@ -652,4 +667,4 @@ def test_a_refereed_pool_pays_only_a_verified_win_and_nothing_gets_around_it(nod
     assert closed.status_code == 200, closed.text
     _settled(state, rpc)
     assert _held(state, pool, book["pid"])[0] == 0
-    assert _held(state, book["address"], book["pid"])[0] == HELD - 30 * COIN
+    assert _held(state, book["address"], book["pid"])[0] == HELD - 60 * COIN
