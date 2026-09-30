@@ -758,3 +758,24 @@ def test_a_run_waits_for_a_block_before_the_chain_is_too_long(seated, tmp_path,
     _catch_up(state, rpc)
     offer, _ = _next(app, pubkey, run["run"])
     assert offer["piece"] == 2, "the same piece, after the block"
+
+
+def test_asking_again_for_the_same_piece_is_not_charged_again(seated, tmp_path):
+    """2026-09-30: a stalled run re-asked for the same piece hundreds of times
+    and was charged for every ask, until the hour's allowance was gone with
+    about 60 pieces on the chain. A piece is charged when it is first offered."""
+    app, state, rpc, pubkey, mine = seated
+    started = _start(app, hashlips(tmp_path, count=2, prefix="Charged Once Punks"))
+    assert started.status_code == 200, started.text
+    run = started.json()["run"]
+
+    def charged():
+        return state.accounts().conn.execute(
+            "SELECT COUNT(*) FROM deed WHERE kind = 'inscribe'").fetchone()[0]
+
+    before = charged()
+    for _ in range(3):
+        asked = app.post("/account/run/piece", json={"run": run})
+        assert asked.status_code == 200, asked.text
+        assert asked.json()["piece"] == 1, "the same piece each time"
+    assert charged() == before + 1, "one piece, one charge"

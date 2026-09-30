@@ -9884,7 +9884,13 @@ def create_app(state: AppState) -> FastAPI:
                     f"{MEMPOOL_CHAIN_ROOM} of this account's transactions are waiting "
                     "for a block, which is as many in a row as the network holds, so "
                     "the next piece waits for the next block: try again in 1 minute.")
-            _quota(account, "inscribe", len(content))
+            # Charged once per piece, when it is first offered. A piece already
+            # `sending` was charged then, and asking again (an expired offer, a
+            # refused broadcast, a closed tab) is the same piece, not another:
+            # 2026-09-30, a stalled 462-piece run was charged 500 inscriptions
+            # an hour for about 60 on the chain.
+            _quota(account, "inscribe", len(content),
+                   count=piece.get("status") != "sending")
         except (fundinglib.FundingError, ValueError) as exc:
             # Not a failure of the piece: no coins and a closed dial are both
             # true of this minute and not of the piece, so it stays pending
