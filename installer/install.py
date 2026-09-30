@@ -1126,6 +1126,33 @@ def read_url(url: str, label: str, quiet: bool = False) -> str:
     return ""
 
 
+def venv_package() -> str:
+    """The Debian/Ubuntu package that gives this Python its venv module."""
+    return f"python{sys.version_info[0]}.{sys.version_info[1]}-venv"
+
+
+def venv_missing() -> str:
+    """Why this Python cannot make a virtual environment with pip in it, or "".
+
+    Asked by making one, in a scratch folder: whether `ensurepip` imports says
+    nothing on Debian, which ships the module and withholds the wheels it needs.
+    """
+    with tempfile.TemporaryDirectory() as scratch:
+        made = subprocess.run([sys.executable, "-m", "venv", str(Path(scratch) / "v")],
+                              capture_output=True, text=True)
+    if made.returncode == 0:
+        return ""
+    said = (made.stderr + made.stdout).strip()
+    if "ensurepip" in said or "python3-venv" in said or "venv" in said:
+        return ("this Python cannot make a virtual environment, which the application "
+                "is installed into.\n"
+                "      On Ubuntu or Debian, install the missing package and run this "
+                "installer again:\n"
+                f"        sudo apt install {venv_package()}\n"
+                "      Nothing has been downloaded or changed yet.")
+    return f"this Python cannot make a virtual environment:\n{said[-800:]}"
+
+
 def install_app(dry_run: bool) -> Path:
     """Install DogecoinArcade into its own virtual environment.
 
@@ -1140,8 +1167,20 @@ def install_app(dry_run: bool) -> Path:
         info(f"would create {venv} and install from {source}")
         return venv
 
+    pip = venv / ("Scripts/pip.exe" if os.name == "nt" else "bin/pip")
+    if venv.exists() and not pip.exists():
+        # What a failed attempt leaves behind: the folder, and no pip in it. Kept,
+        # it made every later run fail one step on with "no such file" (bug #11).
+        # It is this installer's own folder and holds nothing else.
+        info(f"{venv} was left half-made by an earlier attempt; making it again")
+        shutil.rmtree(venv)
     if not venv.exists():
-        subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
+        made = subprocess.run([sys.executable, "-m", "venv", str(venv)],
+                              capture_output=True, text=True)
+        if made.returncode != 0:
+            shutil.rmtree(venv, ignore_errors=True)
+            fail(venv_missing() or "making the virtual environment failed:\n"
+                 + (made.stderr + made.stdout)[-800:])
         info(f"created {venv}")
 
     # Before the install rather than after it: an environment with no
@@ -1149,7 +1188,6 @@ def install_app(dry_run: bool) -> Path:
     # stops halfway is one way to reach it.
     write_repair(venv)
 
-    pip = venv / ("Scripts/pip.exe" if os.name == "nt" else "bin/pip")
     # pip needs to be current enough to understand modern metadata; the version
     # shipped inside an older venv often is not.
     subprocess.run([str(pip), "install", "-q", "--upgrade", "pip"],
@@ -1748,6 +1786,13 @@ def main(argv: list[str] | None = None) -> int:
         if sys.version_info < (3, 12):
             info(f"Python {sys.version.split()[0]} -- supported, though 3.12 is what "
                  f"gets tested")
+        # Ubuntu and Debian ship Python without the part that makes virtual
+        # environments, and the installer used to find out at step 6 of 8, after
+        # the node download, with a traceback (bug #11, 2026-09-30).
+        if not args.dry_run:
+            missing = venv_missing()
+            if missing:
+                fail(missing)
 
         for coin in coins:
             system, machine, asset = detect(coin)

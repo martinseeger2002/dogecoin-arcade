@@ -766,3 +766,54 @@ def test_windows_gets_its_command_directory_onto_the_path(tmp_path, monkeypatch)
     # An answer that is not one of ours is a failure, not a success.
     Done.stdout = "powershell is very sorry\n"
     assert install.add_to_user_path(target, "Windows") is None
+
+
+# --- bug #11 (2026-09-30): Ubuntu's Python makes no venv without python3.X-venv ---
+
+def test_a_python_that_cannot_make_a_venv_is_caught_before_anything_downloads(monkeypatch):
+    """The failure Ubuntu gives, answered with the one command that fixes it."""
+    class Done:
+        returncode = 1
+        stdout = ""
+        stderr = ("The virtual environment was not created successfully because "
+                  "ensurepip is not available.  On Debian/Ubuntu systems, you need "
+                  "to install the python3-venv package")
+    monkeypatch.setattr(install.subprocess, "run", lambda *a, **k: Done())
+    said = install.venv_missing()
+    assert f"sudo apt install python{sys.version_info[0]}.{sys.version_info[1]}-venv" in said
+    assert "Nothing has been downloaded" in said
+
+
+def test_a_python_that_can_make_a_venv_passes():
+    assert install.venv_missing() == ""
+
+
+def test_a_half_made_venv_is_made_again(fake_home, monkeypatch, tmp_path):
+    """A folder with no pip in it, left by the failure above, is rebuilt rather
+    than trusted -- it used to make every later run fail one step on."""
+    venv = Path.home() / ".dogecoinarcade" / "venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "bin" / "python3").write_text("")               # and no pip
+    made = []
+
+    class Done:
+        returncode = 0
+        stdout = stderr = ""
+
+    def run(cmd, *a, **k):
+        if "venv" in cmd and "-m" in cmd:
+            made.append(cmd)
+            assert not venv.exists(), "the half-made folder is gone before it is made again"
+            (venv / "bin").mkdir(parents=True)
+            (venv / "bin" / "pip").write_text("")
+        return Done()
+
+    monkeypatch.setattr(install.subprocess, "run", run)
+    monkeypatch.setattr(install, "find_source", lambda dry: tmp_path)
+    monkeypatch.setattr(install, "write_repair", lambda v: None)
+    try:
+        install.install_app(False)
+    except install.InstallError:
+        pass                                   # the fake pip installs nothing importable
+    assert made, "the venv was made again"
+    assert (venv / "bin" / "pip").exists()
