@@ -1227,3 +1227,56 @@ def test_a_page_asks_the_signed_in_reader_to_send(client):
                         headers=stranger).status_code == 403
     finally:
         state.public = was
+
+
+# --- bringing an account over from another arcade (2026-09-30) ----------------
+
+def test_a_password_operator_hands_the_node_to_an_account_with_its_password(named):
+    """A friend "already made an account on my node [and] wants to transfer his
+    account ... to be his operator account", on a node whose installer set a
+    username and password. The password, typed on the machine, hands it over;
+    the same username and password then open the new operator."""
+    app, state = named
+    assert app.post("/auth/set-password", headers=LOCAL, json={
+        "username": "mini", "password": "a long enough password"}).status_code == 200
+    first = state.operator
+    mine = _seat(app)
+    assert app.get("/auth/who", headers=LOCAL).json()["handover"] is True
+    refused = app.post("/auth/operator", headers=LOCAL, json={})
+    assert refused.status_code == 403 and state.operator == first
+    wrong = app.post("/auth/operator", headers=LOCAL, json={"password": "nope nope nope"})
+    assert wrong.status_code == 403 and state.operator == first
+    outside = app.post("/auth/operator", headers=EDGE,
+                       json={"password": "a long enough password"})
+    assert outside.status_code in (403, 404) and state.operator == first
+    handed = app.post("/auth/operator", headers=LOCAL,
+                      json={"password": "a long enough password"})
+    assert handed.status_code == 200, handed.text
+    assert state.operator == mine
+    again = app.post("/auth/password", headers=LOCAL, json={
+        "username": "mini", "password": "a long enough password"})
+    assert again.status_code == 200 and again.json()["pubkey"] == mine, \
+        "the same username and password open the new operator"
+
+
+def test_an_account_is_fetched_from_another_arcade_only_for_the_machine_itself(named, monkeypatch):
+    app, state = named
+    import requests as _requests
+
+    class Answer:
+        status_code = 200
+
+        def json(self):
+            return {"tag": "friend", "pubkey": "ab" * 32, "address": "mxyz",
+                    "blob": {"sealed": "00", "salt": "00", "iterations": 1, "nonce": "00"}}
+
+    asked = []
+    monkeypatch.setattr(_requests, "get", lambda url, **k: asked.append(url) or Answer())
+    got = app.get("/signin-import?node=app.dogecoinarcade.com&tag=@friend", headers=LOCAL)
+    assert got.status_code == 200, got.text
+    assert asked == ["https://app.dogecoinarcade.com/signin/friend"]
+    assert got.json()["blob"]["sealed"] == "00" and got.json()["tag"] == "friend"
+    assert app.get("/signin-import?node=app.dogecoinarcade.com&tag=friend",
+                   headers=EDGE).status_code in (403, 404), "not a proxy for strangers"
+    assert app.get("/signin-import?node=file:///etc&tag=friend",
+                   headers=LOCAL).status_code == 400

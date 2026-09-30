@@ -49,6 +49,13 @@
       It can only be done from the machine itself, which is the whole of
       why it is safe. Do it once, from here.
     </p>
+    <div id="handover-in" hidden>
+      <p class="muted" style="margin:0 0 8px">This node's operator is the username
+        and password set on it. Type that password to make this account the
+        operator instead; the same username and password then open this account.</p>
+      <input type="password" id="handover-pw" autocomplete="current-password"
+             placeholder="this node's password">
+    </div>
     <button class="btn primary" id="claim-go">This node is mine</button>
   </div>
   <p class="muted" id="operator-note" hidden>
@@ -223,7 +230,8 @@ function show(answer) {
   // is nothing to show until a tag has been claimed (D-147).
   $("who-tag").textContent = answer.tag ? " — @" + answer.tag
     : " — no name claimed yet";
-  $("claim").hidden = !answer.claimable;
+  $("claim").hidden = !(answer.claimable || answer.handover);
+  $("handover-in").hidden = !answer.handover;
   $("operator-note").hidden = !answer.operator;
   $("who-since").textContent = answer.created
     ? "Seat taken " + new Date(answer.created * 1000).toLocaleDateString()
@@ -312,7 +320,9 @@ function wire() {
 
   $("claim-go").onclick = async () => {
     say("");
-    const answer = await fetch("/auth/operator", {method: "POST"});
+    const answer = await fetch("/auth/operator", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify($("handover-in").hidden ? {} : {password: $("handover-pw").value})});
     const said = await answer.json();
     if (!answer.ok) { say(said.detail); return; }
     location.reload();

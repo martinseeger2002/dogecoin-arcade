@@ -2324,5 +2324,23 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
 })();
 </script>
 {% endif %}
+<script>
+// A node with no operator yet (or one whose operator is only a username and
+// password), opened on its own machine by a signed-in account: say where to
+// make it theirs (2026-09-30: bringing an account over to run a new node).
+(function () {
+  if (!ARCADE_ME || location.pathname.indexOf("/join") === 0) return;
+  fetch("/auth/who", {cache: "no-store"}).then(function (r) { return r.json(); }).then(function (w) {
+    if (!(w.claimable || w.handover)) return;
+    var bar = document.createElement("div");
+    bar.className = "msg info";
+    bar.style.cssText = "margin:10px auto;max-width:960px";
+    bar.innerHTML = 'This node has no operator account yet. '
+      + '<a href="/join/keys">Make this account its operator</a>.';
+    var main = document.querySelector("main") || document.body;
+    main.insertBefore(bar, main.firstChild);
+  }).catch(function () {});
+})();
+</script>
 </body>
 </html>

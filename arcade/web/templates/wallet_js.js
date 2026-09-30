@@ -259,6 +259,51 @@ async function _signIn(tag, password, {network, version}) {
   return {...result, tag: said.tag, address: said.address, wallet};
 }
 
+/** Bring an account from another arcade (2026-09-30): its encrypted wallet,
+ *  fetched there by name, opened here with its password, and filed with this
+ *  node the way a sign-up is -- so the same name and password open it here
+ *  from now on. The words and the password stay in this tab. */
+export async function importFrom(node, tag, password, options) {
+  return working(() => _importFrom(node, tag, password, options));
+}
+
+async function _importFrom(node, tag, password, {network, version}) {
+  const got = await fetch(`/signin-import?node=${encodeURIComponent(node)}`
+                          + `&tag=${encodeURIComponent(String(tag).replace(/^@/, ""))}`);
+  const said = await got.json();
+  if (!got.ok) throw new Error(said.detail || "that arcade did not send the wallet");
+  const phrase = await open(said.blob, password);
+  const wallet = await walletFrom(phrase, network, version);
+  const running = await chains();
+  await everyChain(wallet, running);
+  if (said.pubkey && wallet.pubkey !== String(said.pubkey).toLowerCase()) {
+    throw new Error("that wallet does not match its name. Nothing was opened.");
+  }
+  const alsoOn = {};
+  for (const chain of running) {
+    if (chain.network === network) continue;
+    const keys = wallet.on[chain.network];
+    if (!keys) continue;
+    alsoOn[`address_${chain.network}`] = keys.address;
+    alsoOn[`coin_pubkey_${chain.network}`] = coinsHex(keys.pubkey);
+  }
+  const filed = await fetch("/signup", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({tag: said.tag, pubkey: wallet.pubkey, address: wallet.address,
+                          coin_pubkey: coinsHex(wallet.coinPubkey), ...alsoOn,
+                          blob: said.blob}),
+  });
+  let result;
+  if (filed.ok) {
+    result = await filed.json();
+  } else {
+    // Already here (brought over before): sign in the ordinary way.
+    result = await seatWith(wallet);
+  }
+  remember(wallet.phrase);
+  return {...result, tag: said.tag, wallet};
+}
+
 /** Open a wallet this node has never held, from the file the Backup page
  *  saves, and take the seat the words entitle.
  *

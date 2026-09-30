@@ -65,6 +65,15 @@
     </div>
     <input type="password" id="in-pw" autocomplete="current-password"
            placeholder="password">
+    <label class="muted small" style="display:block;margin:8px 0 4px">
+      <input type="checkbox" id="elsewhere"> I made it on another arcade</label>
+    <input type="text" id="in-node" hidden autocomplete="off" autocapitalize="off"
+           spellcheck="false" value="https://app.dogecoinarcade.com"
+           placeholder="that arcade's address, like https://app.dogecoinarcade.com">
+    <p class="muted small" id="elsewhere-note" hidden style="margin:4px 0 8px">
+      Your encrypted wallet is fetched from there and opened here with your
+      password; this node keeps a copy, so the same name and password work here
+      too. On your own node, you can then make it the operator account.</p>
     <button class="btn" id="enter">Sign in</button>
     <p class="muted small" style="margin:10px 0 0">This node kept your
       encrypted wallet when you signed up. It did not keep it? Use the file
@@ -279,6 +288,10 @@ function wire() {
     if (button.dataset.was) button.textContent = button.dataset.was;
   };
 
+  $("elsewhere").onchange = () => {
+    $("in-node").hidden = $("elsewhere-note").hidden = !$("elsewhere").checked;
+  };
+
   $("enter").onclick = async () => {
     const button = $("enter");
     if (!busy(button, "Opening your wallet\u2026")) return;
@@ -287,7 +300,12 @@ function wire() {
       // Signing in opens the wallet: it is the same password and the same
       // moment, and asking for it again on the next page is asking the
       // same question twice.
-      await wallet.signIn($("in-tag").value.trim(), $("in-pw").value, CHAIN);
+      if ($("elsewhere").checked) {
+        await wallet.importFrom($("in-node").value.trim(), $("in-tag").value.trim(),
+                                $("in-pw").value, CHAIN);
+      } else {
+        await wallet.signIn($("in-tag").value.trim(), $("in-pw").value, CHAIN);
+      }
       button.textContent = "Signed in \u2713";
       location.href = NEXT;
     } catch (e) { idle(button); say(String(e.message || e)); }

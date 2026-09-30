@@ -8635,6 +8635,47 @@ def create_app(state: AppState) -> FastAPI:
                              "address": found["address"],
                              "blob": json.loads(found["blob"])})
 
+    @app.get("/signin-import")
+    def signin_import(request: Request, node: str = "", tag: str = ""):
+        """An account's encrypted wallet from ANOTHER arcade, for this browser to
+        open (2026-09-30: a friend "already made an account on my node [and]
+        wants to transfer his account ... to be his operator account").
+
+        The other node hands its `/signin/{tag}` answer to anybody; this only
+        fetches it for a browser that cannot fetch across origins. The password
+        never comes here, and neither do the words: the blob is opened in the
+        tab. From the machine itself only, so a public node is not a way to
+        make requests to wherever a stranger names.
+        """
+        if _from_outside(request):
+            return JSONResponse({"detail": "bringing an account from another arcade is "
+                                           "done on the machine this node runs on"},
+                                status_code=403)
+        node = str(node or "").strip().rstrip("/")
+        if node and "://" not in node:
+            node = "https://" + node
+        if not re.fullmatch(r"https?://[A-Za-z0-9.\-]+(:\d+)?", node):
+            return JSONResponse({"detail": "that is not an arcade's address, like "
+                                           "https://app.dogecoinarcade.com"}, status_code=400)
+        name = str(tag or "").strip().lstrip("@")
+        if not re.fullmatch(r"[A-Za-z0-9_.\-]{1,40}", name):
+            return JSONResponse({"detail": "that is not a name"}, status_code=400)
+        try:
+            answer = requests.get(f"{node}/signin/{urllib.parse.quote(name)}", timeout=15)
+            said = answer.json()
+        except Exception:                                   # noqa: BLE001
+            return JSONResponse({"detail": f"{node} did not answer"}, status_code=502)
+        if answer.status_code != 200:
+            return JSONResponse({"detail": f"{node} says: "
+                                 + str(said.get("detail") or "no wallet by that name")},
+                                status_code=404)
+        blob = said.get("blob") if isinstance(said, dict) else None
+        if not isinstance(blob, dict) or not blob.get("sealed"):
+            return JSONResponse({"detail": f"{node} did not send a wallet"}, status_code=502)
+        return JSONResponse({"tag": str(said.get("tag") or name), "pubkey": str(said.get("pubkey") or ""),
+                             "address": str(said.get("address") or ""), "blob": blob,
+                             "from": node})
+
     def _open_session(pubkey: str) -> str:
         """A session for an account that has just proved itself another way."""
         register = state.accounts()
@@ -17329,7 +17370,7 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"ok": True})
 
     @app.post("/auth/operator")
-    def auth_claim_operator(request: Request):
+    def auth_claim_operator(request: Request, payload: Any = Body(None)):
         """Make the signed-in account this node's operator.
 
         Only from the machine itself. The whole security of it is that
@@ -17352,9 +17393,26 @@ def create_app(state: AppState) -> FastAPI:
                            "node to answer to"}, status_code=403)
         held = state.operator
         if held and held != account.pubkey.lower():
-            return JSONResponse(
-                {"detail": "this node already has an operator. Sign in as "
-                           "them to change it."}, status_code=403)
+            # Handed over (2026-09-30: an account brought from another arcade to
+            # be a new node's operator, on a node whose installer already set a
+            # username and password). The operator's own password, typed on the
+            # machine itself, is the operator saying yes; the same username and
+            # password open the new operator from then on.
+            said = payload if isinstance(payload, dict) else {}
+            creds = state.credentials()
+            name = adminlib.username_for(creds, held)
+            try:
+                if not name or not said.get("password"):
+                    raise accountslib.AccountError("")
+                creds.check(name, str(said["password"]),
+                            ip=(request.client.host if request.client else ""))
+            except accountslib.AccountError as refused:
+                return JSONResponse(
+                    {"detail": (str(refused) or "this node already has an operator. "
+                                "Type its password to hand the node to this account.")},
+                    status_code=403)
+            creds.conn.execute("UPDATE credential SET pubkey=? WHERE pubkey=?",
+                               (account.pubkey.lower(), held))
         state.claim_operator(account.pubkey)
         return JSONResponse({"operator": account.pubkey})
 
@@ -17371,7 +17429,15 @@ def create_app(state: AppState) -> FastAPI:
                              "free": register.free(), "seats": register.seats,
                              "operator": account.pubkey.lower() == state.operator,
                              "claimable": not state.operator
-                             and not _from_outside(request)})
+                             and not _from_outside(request),
+                             # A node whose operator is a username and password,
+                             # opened on its own machine by another account: the
+                             # password hands it over (/auth/operator).
+                             "handover": bool(state.operator)
+                             and account.pubkey.lower() != state.operator
+                             and not _from_outside(request)
+                             and bool(adminlib.username_for(state.credentials(),
+                                                            state.operator))})
 
     # --- making the next one --------------------------------------------------
     #
