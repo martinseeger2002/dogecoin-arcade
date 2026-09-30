@@ -80,6 +80,46 @@ def watch(db, address: str, height: int, why: str = "") -> None:
         "ON CONFLICT(address) DO NOTHING", (address, int(height), why))
 
 
+SPENDABLE = (OutputType.PUBKEYHASH, OutputType.SCRIPTHASH)
+
+
+def backfill(index, rpc, params, address: str, start: int, end: int) -> int:
+    """The coins an address already held when it started being watched: the
+    one exception to "never retroactive", for an account brought here from
+    another node (2026-09-30: "he has zero balance ... has @tag"), whose coins
+    all arrived while this node was not looking.
+
+    Reads blocks `start`..`end` for payments to `address`, then keeps only what
+    the chain says is still unspent (gettxout), so a spend this pass did not
+    see -- in a later block, or read by the indexer meanwhile -- cannot leave a
+    coin counted that is gone. Returns how many coins it filed.
+    """
+    found = []
+    for height in range(int(start), int(end) + 1):
+        block = rpc.get_block(rpc.get_block_hash(height), 2)
+        for tx in block.get("tx") or []:
+            if not isinstance(tx, dict):
+                continue
+            for out in tx.get("vout", []):
+                script = (out.get("scriptPubKey") or {}).get("hex", "")
+                if not script:
+                    continue
+                parsed = parse_output(script, 0, params)
+                if parsed.type in SPENDABLE and parsed.address == address:
+                    found.append((tx["txid"], int(out.get("n", 0)),
+                                  int(round(float(out.get("value", 0)) * 100_000_000)), height))
+    filed = 0
+    with index.open() as db:
+        for txid, vout, value, height in found:
+            if value <= 0 or not rpc.call("gettxout", txid, vout, False):
+                continue
+            db.conn.execute(
+                "INSERT OR IGNORE INTO utxo (txid, vout, address, value, height) "
+                "VALUES (?,?,?,?,?)", (txid, vout, address, value, height))
+            filed += 1
+    return filed
+
+
 def watching(db) -> set[str]:
     return {row[0] for row in db.conn.execute("SELECT address FROM watched")}
 
@@ -135,12 +175,14 @@ def on_block(state, height: int, block: dict[str, Any], params,
             if not script:
                 continue
             parsed = parse_output(script, 0, params)
-            # Only what an ordinary key can spend. A bare multisig output
-            # is a payload (Class B) and is never spendable in practice --
-            # including them would fill this table with dust nobody can
-            # move, which is the exact way the index stopped being lean
-            # last time.
-            if parsed.type is not OutputType.PUBKEYHASH:
+            # Only what a key or a script hash can spend. A bare multisig
+            # output is a payload (Class B) and is never spendable in practice
+            # -- including them would fill this table with dust nobody can
+            # move, which is the exact way the index stopped being lean last
+            # time. Script hashes since 2026-09-30: a refereed prize pool lives
+            # at one, and its claims, its "once per wallet" and its close all
+            # read what the pool holds from here.
+            if parsed.type not in SPENDABLE:
                 continue
             if parsed.address not in addresses:
                 continue

@@ -635,6 +635,12 @@ def test_a_refereed_pool_pays_only_a_verified_win_and_nothing_gets_around_it(nod
     assert won.status_code == 200, won.text
     _settled(state, rpc)
     assert _held(state, address, book["pid"])[0] == 30 * COIN, "the winner holds the prize"
+    # The claim paid the pool's two-key address, and the coin index sees it:
+    # "once per wallet" and the close both read what the pool holds from there.
+    import contextlib as _cl
+    from arcade import utxos as _utxos
+    with _cl.closing(state.token_index(state.messaging).open()) as db:
+        assert _utxos.unspent(db, pool), "coins at a script-hash address are counted"
     _, reused = claim(player, 1, {"seed": seed, "inputs": {"moves": [target]}})
     assert reused.status_code == 400 and "seed was used" in reused.json()["detail"], reused.text
 

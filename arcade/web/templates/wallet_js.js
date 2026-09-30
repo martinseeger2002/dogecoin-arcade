@@ -301,6 +301,8 @@ async function _importFrom(node, tag, password, {network, version}) {
     result = await seatWith(wallet);
   }
   remember(wallet.phrase);
+  // Its coins arrived while this node was not watching it: read them back.
+  fetch("/account/coins/backfill", {method: "POST"}).catch(() => {});
   return {...result, tag: said.tag, wallet};
 }
 
@@ -335,6 +337,7 @@ async function _openFile(said, password, {network, version}) {
       + "Nothing was opened.");
   }
   const result = await seatWith(wallet);
+  fetch("/account/coins/backfill", {method: "POST"}).catch(() => {});
   return {...result, tag: (said && said.tag) || "", wallet};
 }
 

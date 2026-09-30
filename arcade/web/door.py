@@ -278,6 +278,8 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # random number; a signature comes only for a replay the judge
                # passes, over a claim that pays the wallet that played.
                "/account/referee/seed", "/r/referee/seed", "/r/referee/sign",
+               # an account brought from elsewhere: find the coins it already held
+               "/account/coins/backfill",
                # the pair that fills one of those listings: the first shows a
                # buyer the transaction, the second pastes its signatures onto
                # the seller's leg and broadcasts. Neither reaches

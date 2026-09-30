@@ -8635,6 +8635,51 @@ def create_app(state: AppState) -> FastAPI:
                              "address": found["address"],
                              "blob": json.loads(found["blob"])})
 
+    #: Addresses whose past coins are being read right now (utxos.backfill).
+    _backfilling: set = set()
+
+    @app.post("/account/coins/backfill")
+    def account_coins_backfill(request: Request):
+        """Find the coins an account already held before this node watched it --
+        for an account brought here from another arcade or a backup file, whose
+        coins all arrived elsewhere. Once per address; in the background; from
+        each chain's shared floor to where this node started watching."""
+        account = _signed_in_account(request)
+        started = []
+        for chain in _account_chains():
+            address = _account_address(account.pubkey, chain)
+            key = f"backfilled:{chain.network}:{address}"
+            if not address or address in _backfilling or state.setting(key):
+                continue
+            index = state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                since = utxoslib.since(db, address)
+            end = (since if since is not None else (index.indexed_height() or 0)) - 1
+            start = max(chain.params.messaging_start_height,
+                        chain.params.activation_height or 0)
+            if end < start:
+                state.set_setting(key, 0)
+                continue
+            _backfilling.add(address)
+
+            def run(chain=chain, address=address, key=key, start=start, end=end, index=index):
+                try:
+                    with chain.rpc() as rpc:
+                        filed = utxoslib.backfill(index, rpc, chain.params, address, start, end)
+                    state.set_setting(key, filed)
+                    state.bump_generation()
+                    log.info("backfill: %s held %d coins before this node watched it",
+                             address, filed)
+                except Exception as exc:                  # noqa: BLE001
+                    log.warning("backfill of %s stopped: %s", address, exc)
+                finally:
+                    _backfilling.discard(address)
+
+            threading.Thread(target=run, daemon=True, name=f"backfill {address}").start()
+            started.append({"chain": chain.network, "address": address,
+                            "from": start, "to": end})
+        return JSONResponse({"started": started})
+
     @app.get("/signin-import")
     def signin_import(request: Request, node: str = "", tag: str = ""):
         """An account's encrypted wallet from ANOTHER arcade, for this browser to
