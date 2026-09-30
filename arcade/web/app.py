@@ -12550,20 +12550,52 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:                                  # noqa: BLE001
             paid = set()
         paid.discard(pool["fund"])
-        if not paid:
-            return found
+
+        def signers(tx: dict) -> set:
+            out = set()
+            for spent in (tx.get("vin") or [])[2:]:
+                asm = str((spent.get("scriptSig") or {}).get("asm") or "").split()
+                if len(asm) == 2 and len(asm[1]) == 66:
+                    out.add(b58check_encode(chain.params.pubkeyhash_version,
+                                            hash160(bytes.fromhex(asm[1]))))
+            return out
+
         with chain.rpc() as rpc:
             for txid in paid:
                 try:
-                    tx = rpc.call("getrawtransaction", txid, 1)
+                    found |= signers(rpc.call("getrawtransaction", txid, 1))
                 except Exception:                          # noqa: BLE001
                     continue
-                for spent in (tx.get("vin") or [])[2:]:
-                    asm = str((spent.get("scriptSig") or {}).get("asm") or "").split()
-                    if len(asm) == 2 and len(asm[1]) == 66:
-                        found.add(b58check_encode(chain.params.pubkeyhash_version,
-                                                  hash160(bytes.fromhex(asm[1]))))
+            # And claims still in the mempool, whichever node sent them
+            # (2026-09-29: "can the first gap be filled by reading from the
+            # mempool?"). A claim spends a lot's two coins, which are outputs of
+            # the pool's fund transaction, so that is what gives it away. What
+            # is left is a claim sent to another node in the seconds before it
+            # reaches this one: no pool has a coin every claim by one wallet
+            # must spend, so nothing on the chain can close that.
+            try:
+                ids = list(rpc.call("getrawmempool") or [])
+            except Exception:                              # noqa: BLE001
+                ids = []
+            for txid in ids:
+                if txid not in _mempool_claims:
+                    try:
+                        tx = rpc.call("getrawtransaction", txid, 1)
+                    except Exception:                      # noqa: BLE001
+                        continue
+                    vin = tx.get("vin") or []
+                    _mempool_claims[txid] = (
+                        str(vin[0].get("txid") or ""), signers(tx)) if vin else ("", set())
+                fund, who = _mempool_claims[txid]
+                if fund == pool["fund"]:
+                    found |= who
+            for gone in set(_mempool_claims) - set(ids):
+                del _mempool_claims[gone]
         return found
+
+    #: Mempool transactions already read: txid -> (what its first input spends,
+    #: who signed after the lot's two coins). Dropped when they leave the pool.
+    _mempool_claims: dict[str, tuple] = {}
 
     def _nft_pool_legs(account, chain, pool: dict, fund: str):
         """An NFT pool's lots: one sale of each piece, standing on outputs 2n and

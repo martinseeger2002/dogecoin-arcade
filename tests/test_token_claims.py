@@ -488,6 +488,13 @@ def test_an_nft_prize_pool_hands_out_pieces_once_per_wallet_and_closes(node):
     got = claim(player, 0)
     assert got.status_code == 200, got.text
     assert got.json()["piece"].startswith("#")
+    # Another node on the same chain, which did not send that claim and has no
+    # block yet: it reads the claim from the mempool and refuses a second one.
+    from fastapi.testclient import TestClient
+    from arcade.web.app import create_app
+    elsewhere = TestClient(create_app(state), cookies=player[0].cookies)
+    early = claim((elsewhere, *player[1:]), 1)
+    assert early.status_code == 400 and "already claimed" in early.json()["detail"], early.text
     _settled(state, rpc)
     index = state.token_index(state.messaging)
     assert index.inscription(pieces[0])["owner"] == player[3], "the claimer holds the piece"
