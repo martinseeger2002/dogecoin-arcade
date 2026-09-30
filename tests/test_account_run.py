@@ -726,3 +726,35 @@ def test_the_run_pages_are_ones_a_public_node_will_reach(client):
     assert door.public_path("/me/run/0123456789ab")
     assert not door.public_path("/me/run/0123456789ab/export")
     assert not door.public_path("/me/run/0123456789abcdef0123456789abcdef0123")
+
+
+def test_a_run_waits_for_a_block_before_the_chain_is_too_long(seated, tmp_path,
+                                                              monkeypatch):
+    """2026-09-30: a 462-piece run stalled at 26 pieces with
+    "too-long-mempool-chain": each piece spends the change of the one before,
+    and the network holds 25 unconfirmed in a row. The next piece is now held
+    back with the wording the run page already waits on, and nothing charged."""
+    from arcade import rpc as rpclib
+
+    app, state, rpc, pubkey, mine = seated
+    started = _start(app, hashlips(tmp_path, count=3, prefix="Chain Room Punks"))
+    assert started.status_code == 200, started.text
+    run = started.json()
+    _next(app, pubkey, run["run"])                    # in the mempool, no block
+
+    real = rpclib.RpcClient.call
+
+    def deep(self, method, *args):
+        if method == "getmempoolentry":
+            return {"ancestorcount": 24, "descendantcount": 1}
+        return real(self, method, *args)
+
+    monkeypatch.setattr(rpclib.RpcClient, "call", deep)
+    held = app.post("/account/run/piece", json={"run": run["run"]})
+    assert held.status_code == 400
+    assert "again in 1 minute" in held.json()["detail"], held.text
+    monkeypatch.setattr(rpclib.RpcClient, "call", real)
+    rpc.call("generate", 1)
+    _catch_up(state, rpc)
+    offer, _ = _next(app, pubkey, run["run"])
+    assert offer["piece"] == 2, "the same piece, after the block"

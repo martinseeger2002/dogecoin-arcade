@@ -9782,6 +9782,30 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"run": run["id"], "name": run["name"],
                              "forgotten": True})
 
+    #: The network keeps at most 25 unconfirmed transactions in one chain
+    #: (ancestors or descendants). One short of it, a run waits for a block.
+    MEMPOOL_CHAIN_ROOM = 24
+
+    def _chain_too_long(chain, unsigned) -> bool:
+        """Whether a transaction spending these coins would be the 26th in an
+        unconfirmed chain, which the network refuses (2026-09-30: a 462-piece
+        run stalled at 26 with "too-long-mempool-chain" -- each piece spends
+        the one before's change). Asked of the node, which counts exactly what
+        its own mempool will count."""
+        try:
+            with chain.rpc() as rpc:
+                for coin in unsigned.inputs:
+                    try:
+                        entry = rpc.call("getmempoolentry", coin["txid"])
+                    except Exception:                      # noqa: BLE001 -- confirmed
+                        continue
+                    if (int(entry.get("ancestorcount", 0)) >= MEMPOOL_CHAIN_ROOM
+                            or int(entry.get("descendantcount", 0)) >= MEMPOOL_CHAIN_ROOM):
+                        return True
+        except Exception:                                  # noqa: BLE001 -- node away
+            return False
+        return False
+
     @app.post("/account/run/piece")
     def account_run_piece(request: Request, payload: Any = Body(None)):
         """Offer the next piece of a run, or say that the run is finished.
@@ -9853,6 +9877,13 @@ def create_app(state: AppState) -> FastAPI:
                     what=f"inscribe {piece['name']}",
                     exclude=_flights.spent_by(account.pubkey, chain.network),
                     extra=_flights.change_for(account.pubkey, chain.network))
+            if _chain_too_long(chain, unsigned):
+                # Before the allowance is charged: this piece is not refused,
+                # only early. The run page waits on "again in N minute".
+                raise ValueError(
+                    f"{MEMPOOL_CHAIN_ROOM} of this account's transactions are waiting "
+                    "for a block, which is as many in a row as the network holds, so "
+                    "the next piece waits for the next block: try again in 1 minute.")
             _quota(account, "inscribe", len(content))
         except (fundinglib.FundingError, ValueError) as exc:
             # Not a failure of the piece: no coins and a closed dial are both
