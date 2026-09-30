@@ -82,6 +82,29 @@ def test_limits_faucet_and_switches_are_saved(public):
     assert state.setting("moderation") is None
 
 
+def test_a_screening_token_is_kept_hidden_and_saving_keeps_what_the_form_does_not_show(public):
+    """2026-09-30: "a place where a person can enter a vLLM address and access
+    token". The token is saved, never sent back, and survives a save that does
+    not retype it; settings the form does not show (priority) survive too."""
+    app, state = public
+    state.set_setting("moderation", {"url": "http://m:1/v1", "model": "q", "priority": -10})
+    assert app.post("/admin/api/settings", headers={**LOCAL, **WRITE}, json={
+        "moderation": {"url": "http://m:1/v1", "model": "q", "key": "sekrit"}}).status_code == 200
+    assert state.setting("moderation") == {"url": "http://m:1/v1", "model": "q",
+                                           "priority": -10, "key": "sekrit"}
+    shown = app.get("/admin/api/state", headers={**LOCAL, **WRITE}).text
+    assert "sekrit" not in shown and '"has_key":true' in shown.replace(" ", "")
+    app.post("/admin/api/settings", headers={**LOCAL, **WRITE}, json={
+        "moderation": {"url": "http://m:2/v1", "model": "q", "key": ""}})
+    assert state.setting("moderation")["key"] == "sekrit", "a blank box keeps the token"
+    app.post("/admin/api/settings", headers={**LOCAL, **WRITE}, json={
+        "moderation": {"url": "http://m:2/v1", "model": "q", "clear_key": True}})
+    assert "key" not in state.setting("moderation")
+    bad = app.post("/admin/api/moderation/test", headers={**LOCAL, **WRITE},
+                   json={"url": "http://127.0.0.1:9/v1"})
+    assert bad.status_code == 400 and "no answer" in bad.json()["detail"]
+
+
 def test_a_stranger_gets_nothing_from_outside(public):
     app, state = public
     assert app.get("/admin/api/state", headers=EDGE).status_code in (403, 404)

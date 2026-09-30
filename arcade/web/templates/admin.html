@@ -78,12 +78,19 @@
   <label class="switch"><input type="checkbox" id="auto_sell"> Sell listed pieces automatically</label>
   <label class="switch"><input type="checkbox" id="auto_fill"> Fill exchange orders automatically</label>
   <h3 style="margin-bottom:6px">Content screening</h3>
-  <p class="muted" style="margin-top:0">A model looks at pictures and posts before this arcade
-    shows them. Empty = off.</p>
+  <p class="muted" style="margin-top:0">A model (vLLM, or any OpenAI-compatible server that
+    reads images) looks at pictures and posts before this arcade shows them.
+    <strong>Leave the address empty and nothing is screened</strong>: everything shows.</p>
   <div class="row" style="gap:8px;flex-wrap:wrap">
     <input autocomplete="off" id="modurl" placeholder="http://host:port/v1" style="flex:2;min-width:200px">
     <input autocomplete="off" id="modmodel" placeholder="model name" style="flex:1;min-width:140px">
+    <input autocomplete="new-password" type="password" id="modkey"
+           placeholder="access token (optional)" style="flex:1;min-width:160px">
+    <button type="button" class="small ghost" id="modtest">Test</button>
   </div>
+  <label class="switch" id="modclearrow" hidden><input type="checkbox" id="modclear">
+    Remove the saved access token</label>
+  <p class="muted" id="modsaid"></p>
   <p class="muted" id="pushline"></p>
   <button type="button" class="small" id="saveswitches">Save switches</button>
 </section>
@@ -284,6 +291,13 @@ section.panel h2{margin-top:0}
     ['auto_update', 'auto_sell', 'auto_fill'].forEach(function (k) { $(k).checked = !!d.selling[k]; });
     $('modurl').value = (d.moderation && d.moderation.url) || '';
     $('modmodel').value = (d.moderation && d.moderation.model) || '';
+    $('modkey').value = '';
+    $('modkey').placeholder = (d.moderation && d.moderation.has_key)
+      ? 'access token saved (type to replace)' : 'access token (optional)';
+    $('modclearrow').hidden = !(d.moderation && d.moderation.has_key);
+    $('modclear').checked = false;
+    $('modsaid').textContent = (d.moderation && d.moderation.url)
+      ? 'Screening is on.' : 'Screening is off: nothing is screened.';
     $('pushline').textContent = d.push.available
       ? 'Message notifications are available here (' + d.push.devices + ' accounts use them).'
       : 'Message notifications are off: this node needs `pip install .[push]`.';
@@ -321,8 +335,21 @@ section.panel h2{margin-top:0}
   $('saveswitches').onclick = function () {
     call('/admin/api/settings', {auto_update: $('auto_update').checked, auto_sell: $('auto_sell').checked,
       auto_fill: $('auto_fill').checked,
-      moderation: {url: $('modurl').value.trim(), model: $('modmodel').value.trim()}})
+      moderation: {url: $('modurl').value.trim(), model: $('modmodel').value.trim(),
+                   key: $('modkey').value.trim(), clear_key: $('modclear').checked}})
       .then(function () { say('Switches saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
+  };
+
+  $('modtest').onclick = function () {
+    $('modsaid').textContent = 'Asking\u2026';
+    call('/admin/api/moderation/test', {url: $('modurl').value.trim(),
+      model: $('modmodel').value.trim(), key: $('modkey').value.trim()})
+      .then(function (r) {
+        $('modsaid').textContent = r.found
+          ? 'It answers' + (r.models.length ? ': ' + r.models.join(', ') : '') + '. Save to use it.'
+          : 'It answers, but has no model called "' + $('modmodel').value.trim()
+            + '". It has: ' + (r.models.join(', ') || 'none');
+      }).catch(function (e) { $('modsaid').textContent = e.message; });
   };
 
   var ticket = null;

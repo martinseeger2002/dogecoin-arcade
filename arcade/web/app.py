@@ -17030,7 +17030,11 @@ def create_app(state: AppState) -> FastAPI:
             "faucet": {"gift": int(state.setting("faucet", faucetlib.GIFT)),
                        "daily": state.setting("faucet_daily"),
                        "real_coins": bool(state.setting("faucet_real_coins", False))},
-            "moderation": state.setting("moderation") or {},
+            # Never the access token itself: only that there is one.
+            "moderation": {k: v for k, v in (state.setting("moderation") or {}).items()
+                           if k != "key"}
+                          | ({"has_key": True} if (state.setting("moderation") or {}).get("key")
+                             else {}),
             "push": {"available": push is not None,
                      "devices": (len(push.subscribed()) if push is not None else 0)},
             "selling": {"auto_update": bool(state.setting("auto_update", True)),
@@ -17119,13 +17123,45 @@ def create_app(state: AppState) -> FastAPI:
             if "moderation" in said:
                 mod = said["moderation"] or {}
                 if mod.get("url") and mod.get("model"):
-                    state.set_setting("moderation", {"url": str(mod["url"]).strip(),
-                                                     "model": str(mod["model"]).strip()})
+                    # What the form does not show (priority, timeout) is kept, and so
+                    # is the access token unless a new one is typed or it is cleared
+                    # (2026-09-30: saving used to write url and model alone).
+                    was = dict(state.setting("moderation") or {})
+                    new = {**was, "url": str(mod["url"]).strip(),
+                           "model": str(mod["model"]).strip()}
+                    if str(mod.get("key") or "").strip():
+                        new["key"] = str(mod["key"]).strip()
+                    elif mod.get("clear_key"):
+                        new.pop("key", None)
+                    state.set_setting("moderation", new)
                 else:
+                    # Empty is off: nothing is screened, and everything shows.
                     state.set_setting("moderation", None)
         except (ValueError, walletlib.WalletError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         return JSONResponse({"ok": True})
+
+    @app.post("/admin/api/moderation/test")
+    def admin_moderation_test(request: Request, payload: Any = Body(None)):
+        """Whether a screening model answers at an address, before it is saved:
+        its /models list, with the token typed or the one already saved."""
+        import urllib.request as _ur
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        url = str(said.get("url") or "").strip().rstrip("/")
+        if not re.match(r"https?://", url):
+            return JSONResponse({"detail": "an address like http://host:8000/v1"},
+                                status_code=400)
+        key = str(said.get("key") or "").strip() or (state.setting("moderation") or {}).get("key")
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        try:
+            with _ur.urlopen(_ur.Request(url + "/models", headers=headers), timeout=10) as r:
+                models = [m.get("id") for m in (json.load(r).get("data") or [])]
+        except Exception as exc:                          # noqa: BLE001
+            return JSONResponse({"detail": f"no answer from {url}: {exc}"}, status_code=400)
+        wanted = str(said.get("model") or "").strip()
+        return JSONResponse({"ok": True, "models": models,
+                             "found": (not wanted) or wanted in models})
 
     _admin_prepared: dict[str, tuple[float, str, Any]] = {}
 
