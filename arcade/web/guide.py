@@ -51,6 +51,8 @@ ORDER = (
     ("features.md", "What it does", "Every part of the application, in one page."),
     ("prize-pools.md", "Prize pools",
      "How a game or any page pays out tokens to whoever wins, and how to make one."),
+    ("referee.md", "The referee: prizes for a verified win",
+     "Make a prize pool pay only for a real win: a judge, seeds and replays."),
     ("mintpads.md", "Mintpads: designing your own",
      "Build your own mintpad page instead of using the ready-made looks."),
     ("inscription-api.md", "The inscription API",
