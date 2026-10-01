@@ -6663,7 +6663,7 @@ def create_app(state: AppState) -> FastAPI:
             kind, src = "picture", ""
         else:
             return RedirectResponse(f"/inscriptions/{row['txid']}/view", status_code=303)
-        return render(request, "inscription_full.html", kind=kind, src=src,
+        return render(request, "inscription_full.html", fullscreen=True, kind=kind, src=src,
                       txid=row["txid"], title=str(title)[:80],
                       back=f"/inscriptions/{row['txid']}/view")
 

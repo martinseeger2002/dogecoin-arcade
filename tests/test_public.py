@@ -1160,6 +1160,14 @@ def test_full_screen_carries_the_wallet_into_the_page(client):
         assert re.search(rf"pages\.example/content/{page_tx}\?v=[A-Za-z0-9_-]+", full), \
             "the reader's ticket rides on it, so the wallet carries in"
         assert "Ghost Fleet" in full
+        # 2026-09-30: the whole screen is the game -- no bar, no back button,
+        # nothing of the app's drawn over it -- and the wallet still reads.
+        assert 'id="full-back"' not in full and 'class="fullbar"' not in full
+        assert 'id="unlockbar"' not in full and '<footer class="version">' not in full
+        assert "Pull to refresh" not in full, "a game's touch controls stay the game's"
+        assert 'class="fullscreen"' in full
+        for bridge in ('m.arcade === "claim"', 'm.arcade !== "mint"'):
+            assert bridge in full, f"the wallet bridge is still here: {bridge}"
         pic = app.get(f"/inscriptions/{pic_tx}/full").text
         assert f'src="/content/{pic_tx}"' in pic
         other = app.get(f"/inscriptions/{file_tx}/full", follow_redirects=False)

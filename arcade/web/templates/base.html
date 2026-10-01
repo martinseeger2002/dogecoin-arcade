@@ -673,7 +673,7 @@ ol.words{column-gap:1.4em}
 {# Every page is live. The counter lives on the body rather than in an
    element each page has to remember to add: eight templates had one and the
    rest sat stale until somebody pressed reload (the operator, D-142). #}
-<body{% if embed %} class="embed"{% endif %} data-generation="{{ state.generation }}">
+<body{% if embed %} class="embed"{% elif fullscreen %} class="fullscreen"{% endif %} data-generation="{{ state.generation }}">
 {% if not embed %}
 <header><div class="bar">
   <span class="brand">DogecoinArcade</span>
@@ -691,7 +691,7 @@ ol.words{column-gap:1.4em}
   {%- endfor %}
   </nav>
 </div></header>
-{% if stranger_here and not embed and path not in ('/', '/join', '/restore', '/join/keys') %}
+{% if stranger_here and not embed and not fullscreen and path not in ('/', '/join', '/restore', '/join/keys') %}
 {# A visitor: everything here can be read, and nothing can be done until they
    sign in (a tester, 2026-09-26: no sign-in hint on most public pages). #}
 <div class="unlockbar">
@@ -738,7 +738,11 @@ let minting = false;
 async function takeFor(source, m) {
   const answer = (body) => source.postMessage({arcade: "take", seq: m.seq, ...body}, "*");
   answer({heard: true});
-  if (!ARCADE_ME) { answer({error: "Sign in or join first, then mint."}); return; }
+  if (!ARCADE_ME) {
+    answer({error: "Sign in or join first, then mint."});
+    arcadeSignIn("Minting needs your wallet.");
+    return;
+  }
   if (minting) { answer({error: "One mint at a time."}); return; }
   minting = true;
   try {
@@ -826,7 +830,7 @@ async function claimFor(source, m, page = "") {
   answer({heard: true});
   if (!ARCADE_ME) {
     answer({error: "Sign in or join first, then claim."});
-    arcadeToast("Sign in or join, then claim it from this page.");
+    arcadeSignIn("Claiming this needs your wallet.");
     return;
   }
   if (minting) { answer({error: "One at a time."}); return; }
@@ -966,7 +970,11 @@ window.addEventListener("message", async (e) => {
   //   answers {arcade: "seed", seq, seed, expires} or {error}
   if (m.arcade === "seed" && typeof m.seq === "number") {
     const answer = (body) => e.source.postMessage({arcade: "seed", seq: m.seq, ...body}, "*");
-    if (!ARCADE_ME) { answer({error: "Sign in or join first."}); return; }
+    if (!ARCADE_ME) {
+      answer({error: "Sign in or join first."});
+      arcadeSignIn("Playing for a prize needs your wallet.");
+      return;
+    }
     try {
       let key = String(m.pool || "");
       const game = m.game === true || m.pool === "*";
@@ -1005,7 +1013,7 @@ window.addEventListener("message", async (e) => {
   answer({heard: true});
   if (!ARCADE_ME) {
     answer({error: "Sign in or join first, then mint."});
-    arcadeToast("Sign in or join, then mint from this page.");
+    arcadeSignIn("Minting needs your wallet.");
     return;
   }
   if (minting) { answer({error: "One mint at a time."}); return; }
@@ -1216,7 +1224,7 @@ document.addEventListener("click", async (event) => {
 })().catch(() => {});
 </script>
 {% endif %}
-{% if account_here and account_name and not embed and path not in ('/me', '/join', '/restore') %}
+{% if account_here and account_name and not embed and not fullscreen and path not in ('/me', '/join', '/restore') %}
 {# Signed in, wallet locked in this browser: one bar, every page. #}
 <div id="unlockbar" class="unlockbar" hidden>
   <span>Your wallet is locked.</span>
@@ -1744,11 +1752,27 @@ function arcadeToast(text){
   document.body.append(t);
   setTimeout(function(){ t.remove(); }, 15000);
 }
+// Nobody signed in, and a page needs the wallet (2026-09-30: "If they need to
+// log into their Wallet, you should be able to pop up a login pop-up"): a card
+// that takes them to sign in and straight back to where they were -- the game
+// in full screen included. Answers false either way: the page's request ends
+// here, and the person comes back to try it again signed in.
+async function arcadeSignIn(why){
+  var go = await arcadeAsk('Sign in to continue',
+    (why || 'This needs your wallet.') + ' Sign in or join, and you come straight back here.',
+    'Sign in');
+  if (go) location.href = '/join?next=' + encodeURIComponent(location.pathname + location.search);
+  return false;
+}
+
 async function arcadeKeys(chain, why){
   var w = await import('/wallet.js');
   var keys = await w.opened(chain || ARCADE_CHAIN);
   if (keys) return keys;
-  if (!ARCADE_ME) throw new Error('Sign in first: this action needs your wallet.');
+  if (!ARCADE_ME) {
+    arcadeSignIn(why);
+    throw new Error('Sign in first: this action needs your wallet.');
+  }
   var opened = await arcadeUnlockSheet(why || 'This needs your key.');
   if (!opened) throw new Error('Unlock your wallet to do that.');
   return chain ? await w.opened(chain) : opened;
@@ -2267,7 +2291,7 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
 }
 {% endif %}
 </script>
-{% if not embed %}
+{% if not embed and not fullscreen %}
 <footer class="version">
   {% if state.running_version %}running {{ state.running_version }}{% endif %}
   {% if public %}
@@ -2277,7 +2301,7 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
   {% endif %}
 </footer>
 {% endif %}
-{% if not embed %}
+{% if not embed and not fullscreen %}
 <script>
 // Pull to refresh in the installed app (2026-09-27: "When I'm in the
 // PWA on my iPhone, if I scroll all the way to the top and I pull down ... it
@@ -2342,7 +2366,8 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
 // password), opened on its own machine by a signed-in account: say where to
 // make it theirs (2026-09-30: bringing an account over to run a new node).
 (function () {
-  if (!ARCADE_ME || location.pathname.indexOf("/join") === 0) return;
+  if (!ARCADE_ME || location.pathname.indexOf("/join") === 0
+      || document.body.classList.contains("fullscreen")) return;
   fetch("/auth/who", {cache: "no-store"}).then(function (r) { return r.json(); }).then(function (w) {
     if (!(w.claimable || w.handover)) return;
     var bar = document.createElement("div");
