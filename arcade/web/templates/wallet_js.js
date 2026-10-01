@@ -1181,7 +1181,7 @@ export async function offerFill(leg, chain) {
   });
 }
 
-export async function fill(wallet, leg, offer) {
+export async function fill(wallet, leg, offer, expect) {
   return working(async () => {
     const keys = keysOn(wallet, offer.chain
                         || (wallet.on && Object.keys(wallet.on)[0]));
@@ -1193,11 +1193,83 @@ export async function fill(wallet, leg, offer) {
     const done = await fetch("/account/fill/sign", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({leg, chain: offer.chain || "", raw: offer.raw,
-                            signatures, pubkey: coinsHex(keys.pubkey)}),
+                            signatures, pubkey: coinsHex(keys.pubkey),
+                            ...(expect ? {expect} : {})}),
     });
     const said = await done.json();
     if (!done.ok) throw new Error(said.detail || "the node would not take it");
     return {...said, fee: shown.fee, says: shown.says};
+  });
+}
+
+/* --- a trade between two players, agreed inside a game -------------------
+ *
+ * The side giving an NFT signs a leg for ONE named player (`tradeLeg`), seals
+ * it to that player's messaging key (`sealTrade`), and the viewer carries it
+ * across the realtime room. The other side opens it (`openTrade`) and finishes
+ * it with the terms it agreed to (`offerTradeFill`, then `fill(..., expect)`):
+ * the node refuses a leg whose bytes say any other trade. A leg in clear is a
+ * promise anybody holding it could take up, so it only ever travels sealed.
+ */
+export async function tradeLeg(wallet, t) {
+  return working(async () => {
+    const ask = () => fetch("/account/trade/leg", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(t),
+    });
+    let asked = await ask(), said = await asked.json();
+    if (!asked.ok) throw new Error(said.detail || "that trade cannot be signed");
+    if (said.needs_split) {
+      await signOffer(wallet, said);       // one small send to yourself first
+      asked = await ask(); said = await asked.json();
+      if (!asked.ok) throw new Error(said.detail || "that trade cannot be signed");
+    }
+    const keys = keysOn(wallet, said.chain || t.chain
+                        || (wallet.on && Object.keys(wallet.on)[0]));
+    const shown = await coins.verifyLeg(said, keys);
+    const signatures = [];
+    for (const sighash of shown.hashes) {
+      signatures.push(coinsHex(await coins.signInput(
+        keys.key, unhex(sighash), coins.SINGLE_ANYONECANPAY)));
+    }
+    const back = await fetch("/account/trade/leg/sign", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({...t, chain: said.chain, raw: said.raw, signatures,
+                            pubkey: coinsHex(keys.pubkey)}),
+    });
+    const checked = await back.json();
+    if (!back.ok) throw new Error(checked.detail || "the node would not take it");
+    return checked;                        // {leg, seal_to, what, held_until}
+  });
+}
+
+export async function sealTrade(wallet, toKeyHex, value) {
+  const {mail, me} = await messenger(wallet);
+  const sealed = mail.sealEnvelope(new TextEncoder().encode(JSON.stringify(value)),
+                                   me, unhex(toKeyHex));
+  return btoa(String.fromCharCode(...sealed));
+}
+
+export async function openTrade(wallet, b64) {
+  const {mail, me} = await messenger(wallet);
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  // Two layers, as sealEnvelope makes them: the sealed box to this key, and
+  // inside it the envelope that proves who sealed it.
+  const inner = mail.openSealedBox(bytes, me);
+  const opened = inner && mail.openEnvelope(inner, me);
+  if (!opened) throw new Error("that trade was not sealed for this account");
+  return JSON.parse(new TextDecoder().decode(opened.plain));
+}
+
+export async function offerTradeFill(leg, expect, chain) {
+  return working(async () => {
+    const asked = await fetch("/account/fill", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({leg, expect, chain: chain || ""}),
+    });
+    const offer = await asked.json();
+    if (!asked.ok) throw new Error(offer.detail || "that trade cannot be finished");
+    return offer;
   });
 }
 

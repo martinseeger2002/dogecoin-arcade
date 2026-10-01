@@ -42,6 +42,20 @@
 // `buy(n, opts)`: all of the above in order. opts.step(text) is told what
 //   is happening; opts.timeout as for awaitOffer.
 //
+// TRADES between two players (any game; needs arcade.realtime: both players
+// in one room). A side is {inscription: id}, {token: id, amount: "25"} or
+// {coins: "1.5"}; at least one side is an NFT.
+// `trade({with, give, get})`: offer `give` for `get` to the player whose
+//   realtime id is `with`. Your viewer asks you first. Resolves to {id}.
+// `answer(id, accept)`: say yes or no to a trade offered to you (your viewer
+//   asks you again before anything is signed).
+// `cancel(id)`, `items()`: {address, inscriptions, balances} -- what this
+//   player holds, for a trade window.
+// `onTrade(fn)`: fn({id, status, with, give, get, role, why, txid}) on every
+//   change. status: proposed, incoming, accepted, signed, broadcast, settled,
+//   declined, cancelled, failed. `give`/`get` are always from YOUR side.
+//   Settled = in a block, and the NFT really moved; both moved, or neither.
+//
 // Timing: every step but the buyer's own yes travels as a node-to-node
 // message, and a message is in a block or it is nowhere. On testnet that
 // is a minute or several, twice, and then the swap itself. A storefront
@@ -49,9 +63,9 @@
 // transactions rather than two, because the signature has to be carried
 // onto a trade the buyer's own node cannot finish.
 (function () {
-  var seq = 0, waiting = {}, decided = null, byAccount = false;
+  var seq = 0, waiting = {}, decided = null, byAccount = false, onTrade = [];
 
-  function ask(message) {
+  function ask(message, wait) {
     return new Promise(function (resolve, reject) {
       message.arcade = 'swap';
       message.seq = ++seq;
@@ -61,13 +75,17 @@
           delete waiting[message.seq];
           reject(new Error('no wallet is listening: open this page in a DogecoinArcade viewer'));
         }
-      }, 60000);
+      }, wait || 60000);
       window.parent.postMessage(message, '*');
     });
   }
 
   window.addEventListener('message', function (e) {
     var m = e.data || {};
+    if (m.arcade === 'swap' && m.event && m.event.type === 'trade') {
+      onTrade.forEach(function (fn) { try { fn(m.event); } catch (err) { setTimeout(function () { throw err; }); } });
+      return;
+    }
     if (m.arcade !== 'swap' || !waiting[m.seq]) return;
     var w = waiting[m.seq];
     delete waiting[m.seq];
@@ -106,6 +124,16 @@
   }
 
   var swap = {
+    trade: function (t) {
+      t = t || {};
+      return ask({op: 'trade', with: String(t.with || ''), give: t.give, get: t.get}, 600000);
+    },
+    answer: function (id, accept, why) {
+      return ask({op: 'answer', id: id, accept: !!accept, why: why || ''}, 600000);
+    },
+    cancel: function (id) { return ask({op: 'cancel', id: id}); },
+    items: function () { return ask({op: 'items'}); },
+    onTrade: function (fn) { onTrade.push(fn); return swap; },
     shop: function () {
       return ask({op: 'shop'}).then(function (s) {
         byAccount = !!s.account;

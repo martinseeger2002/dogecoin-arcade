@@ -57,6 +57,8 @@ ORDER = (
      "Build your own mintpad page instead of using the ready-made looks."),
     ("games.md", "Games: listing yours on the Games tab",
      "Put a game on the Games tab: the JSON that lists it, versions, tips and launchers."),
+    ("multiplayer.md", "Multiplayer and trades",
+     "Rooms where players meet in your game, and trades between them: arcade.realtime and arcade.swap.trade."),
     ("inscription-api.md", "The inscription API",
      "What an inscribed page may ask the wallet, and what it is refused."),
     ("bot-rpc.md", "The bot RPC",

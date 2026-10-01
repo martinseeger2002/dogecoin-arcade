@@ -74,6 +74,16 @@
               es.onmessage = function(ev){
                 var d; try { d = JSON.parse(ev.data); } catch (err) { return; }
                 d.room = name;
+                var h = rt[name];
+                if (h && d.member) {
+                  if (d.type === 'join') h.members[d.member.id] = d.member;
+                  if (d.type === 'leave') delete h.members[d.member.id];
+                }
+                if (d.type === 'message' && typeof d.data === 'string'
+                    && d.data.indexOf(TRADE) === 0) {
+                  tradeHeard(name, d.member, d.data.slice(TRADE.length));
+                  return;                 // the viewers' own talk: never the page's
+                }
                 frame.postMessage({arcade: 'realtime', event: d}, '*');
               };
               es.addEventListener('closed', function(ev){
@@ -81,7 +91,9 @@
                 var why = ''; try { why = JSON.parse(ev.data).why; } catch (err) {}
                 frame.postMessage({arcade: 'realtime', event: {type: 'closed', room: name, why: why}}, '*');
               });
-              rt[name] = {token: j.token, es: es};
+              rt[name] = {token: j.token, es: es, me: j.me, members: {}};
+              (j.members || []).forEach(function(p){ rt[name].members[p.id] = p; });
+              tradeFrame = frame;
               answer({ok: true, online: true, me: j.me, members: j.members});
             });
           }).catch(function(err){
@@ -101,6 +113,217 @@
         answer({ok: true});
       } else {
         answer({ok: false, error: 'realtime ops are join, send and leave'});
+      }
+    }
+    // In-game trades (arcade.swap.trade, templates/swap.js). Game-agnostic: a
+    // side is {inscription: id}, {token: id, amount} or {coins}. The proposal,
+    // the yes and the receipt travel as hidden messages in the realtime room
+    // both players are in; the signed leg travels SEALED to the other player's
+    // key, because a leg in clear is a promise anybody holding it could take
+    // up. Each player says yes in their own viewer -- the proposer when it
+    // proposes, the other when it accepts -- and signs with their own key; the
+    // page only ever hears statuses. One transaction settles it: both move or
+    // neither does.
+    var TRADE = '\u001farcade-trade:', trades = {}, tradeFrame = null;
+    function nftSide(l){ return !!(l && l.inscription); }
+    function iSign(t){ return nftSide(t.give) && (t.role === 'proposer' || !nftSide(t.get)); }
+    function roomWith(id){ for (var k in rt) if (rt[k].members && rt[k].members[id]) return k; return ''; }
+    function sideWords(l){
+      if (!l) return Promise.resolve('nothing');
+      if (l.inscription) return fetch('/r/inscription/' + encodeURIComponent(l.inscription))
+        .then(function(r){ return r.ok ? r.json() : {}; })
+        .then(function(j){ return 'NFT #' + (j.number != null ? j.number : String(l.inscription).slice(0, 10)); })
+        .catch(function(){ return 'an NFT'; });
+      if (l.token) return Promise.resolve(String(l.amount) + ' of token #' + l.token);
+      if (l.coins) return Promise.resolve(String(l.coins) + ' coins');
+      return Promise.resolve('something');
+    }
+    function who(p){ return p && p.tag ? '@' + p.tag : 'the other player'; }
+    function tradeSay(t, status, extra){
+      t.status = status;
+      if (tradeFrame) tradeFrame.postMessage({arcade: 'swap', event: Object.assign({
+        type: 'trade', id: t.id, status: status, with: t.peer, give: t.give, get: t.get,
+        role: t.role}, extra || {})}, '*');
+    }
+    function tradeSend(t, msg){
+      var h = rt[t.room];
+      if (!h) return Promise.reject(new Error('you left the room this trade was in'));
+      msg.id = t.id; msg.to = t.peer.id;
+      return realtimePost('/realtime/send', {token: h.token, data: TRADE + JSON.stringify(msg)})
+        .then(function(j){ if (!j.ok) throw new Error(j.error || 'the room did not take it'); });
+    }
+    function tradeFail(t, err, quiet){
+      var why = String((err && err.message) || err || 'failed');
+      tradeSay(t, 'failed', {why: why});
+      if (!quiet) tradeSend(t, {t: 'failed', why: why}).catch(function(){});
+    }
+    function tradeKeys(why){
+      return import('/wallet.js').then(function(w){
+        return arcadeKeys(CHAIN, why).then(function(keys){ return {w: w, keys: keys}; });
+      });
+    }
+    function tradeAsk(t, title, button){
+      return Promise.all([sideWords(t.give), sideWords(t.get)]).then(function(said){
+        return arcadeAsk(title, 'You give ' + said[0] + ' and get ' + said[1] + ', with '
+          + who(t.peer) + '. One transaction: both move, or neither does.', button);
+      });
+    }
+    async function tradeSign(t){
+      try {
+        var k = await tradeKeys('Sign your half of this trade.');
+        var r = await k.w.tradeLeg(k.keys, {chain: CHAIN.network, give: t.give,
+                                            take: t.get, buyer: t.peer.address});
+        var sealed = await k.w.sealTrade(k.keys, r.seal_to, {leg: r.leg});
+        var parts = sealed.match(/.{1,360}/g) || [];
+        for (var i = 0; i < parts.length; i++) {
+          await tradeSend(t, {t: 'leg', n: i, of: parts.length, part: parts[i]});
+          await new Promise(function(ok){ setTimeout(ok, 250); });   // the room's pace
+        }
+        tradeSay(t, 'signed');
+      } catch (err) { tradeFail(t, err); }
+    }
+    async function tradeFinish(t){
+      try {
+        var k = await tradeKeys('Finish this trade with your key.');
+        var got = await k.w.openTrade(k.keys, t.parts.join(''));
+        var leg = got && got.leg;
+        if (!leg || leg.seller !== t.peer.address)
+          throw new Error('that leg is not from the player you are trading with');
+        // The leg's own view: the signer gives what this player gets.
+        var expect = {give: t.get, take: t.give};
+        var offer = await k.w.offerTradeFill(leg, expect, CHAIN.network);
+        var shown = await k.w.checked(offer, k.keys);
+        if (!(await arcadeAsk('Finish the trade?', 'The network fee is '
+            + shown.coinsOf(shown.fee) + '. Both sides move in one transaction.', 'Finish'))) {
+          throw new Error('cancelled');
+        }
+        var done = await k.w.fill(k.keys, leg, offer, expect);
+        await tradeSend(t, {t: 'done', txid: done.txid}).catch(function(){});
+        tradeSay(t, 'broadcast', {txid: done.txid});
+        tradeWatch(t, done.txid);
+      } catch (err) { tradeFail(t, err); }
+    }
+    function tradeWatch(t, txid){
+      var until = Date.now() + 30 * 60 * 1000;
+      var nft = nftSide(t.give) ? t.give.inscription : t.get.inscription;
+      var owner = nftSide(t.give) ? t.peer.address : (rt[t.room] && rt[t.room].me.address);
+      (function tick(){
+        fetch('/r/tx/' + txid, {cache: 'no-store'}).then(function(r){ return r.ok ? r.json() : {}; })
+          .then(function(j){
+            if (j.conflicted) return tradeFail(t, new Error('the trade was not confirmed'), true);
+            if (!j.confirmed) {
+              if (Date.now() < until) setTimeout(tick, 10000);
+              return;
+            }
+            return fetch('/r/inscription/' + nft, {cache: 'no-store'})
+              .then(function(r){ return r.ok ? r.json() : {}; })
+              .then(function(row){
+                if (row.owner && owner && row.owner !== owner) {
+                  tradeFail(t, new Error('the block refused the trade; nothing moved'), true);
+                } else {
+                  tradeSay(t, 'settled', {txid: txid});
+                }
+              });
+          }).catch(function(){ if (Date.now() < until) setTimeout(tick, 10000); });
+      })();
+    }
+    function tradeHeard(room, from, text){
+      var msg; try { msg = JSON.parse(text); } catch (err) { return; }
+      var me = rt[room] && rt[room].me;
+      if (!me || !msg || msg.to !== me.id || !from) return;     // not for this player
+      var t = trades[msg.id];
+      if (msg.t === 'propose') {
+        if (t || me.guest || from.guest) return;
+        t = trades[msg.id] = {id: msg.id, role: 'responder', room: room, peer: from,
+                              give: msg.get, get: msg.give, parts: []};
+        tradeSay(t, 'incoming');
+        return;
+      }
+      if (!t || t.peer.id !== from.id) return;
+      if (msg.t === 'accept' && t.role === 'proposer' && t.status === 'proposed') {
+        tradeSay(t, 'accepted');
+        if (iSign(t)) tradeSign(t);
+      } else if (msg.t === 'decline') {
+        tradeSay(t, 'declined', {why: msg.why || ''});
+      } else if (msg.t === 'cancel') {
+        tradeSay(t, 'cancelled');
+      } else if (msg.t === 'failed') {
+        tradeSay(t, 'failed', {why: msg.why || ''});
+      } else if (msg.t === 'leg' && !iSign(t) && !t.finishing) {
+        var n = parseInt(msg.n, 10), of = parseInt(msg.of, 10);
+        if (!(of > 0 && of <= 64 && n >= 0 && n < of)) return;
+        t.parts[n] = String(msg.part || '');
+        var have = 0;
+        for (var i = 0; i < of; i++) if (typeof t.parts[i] === 'string') have++;
+        if (have === of) { t.finishing = true; t.parts.length = of; tradeFinish(t); }
+      } else if (msg.t === 'done' && iSign(t)) {
+        tradeSay(t, 'broadcast', {txid: msg.txid});
+        tradeWatch(t, msg.txid);
+      }
+    }
+    async function tradeDoor(m, answer, frame){
+      tradeFrame = frame;
+      try {
+        if (m.op === 'items') {
+          var room = Object.keys(rt)[0], me = room && rt[room].me;
+          var address = me && me.address;
+          if (!address) {
+            var acct = await fetch('/account', {cache: 'no-store'}).then(function(r){ return r.ok ? r.json() : {}; });
+            address = acct.address;
+          }
+          if (!address) throw new Error('sign in first: items belong to an account');
+          var pieces = await fetch('/r/inscriptions/' + address).then(function(r){ return r.json(); });
+          var balances = await fetch('/r/balances/' + address).then(function(r){ return r.json(); });
+          return answer({ok: true, address: address, inscriptions: pieces, balances: balances});
+        }
+        if (viewer !== 'account') throw new Error('trades are signed with an account’s own key: sign in as an account');
+        if (m.op === 'trade') {
+          var peerId = String(m.with || ''), room2 = roomWith(peerId);
+          if (!room2) throw new Error('that player is not in a room with you');
+          var meNow = rt[room2].me, peer = rt[room2].members[peerId];
+          if (meNow.guest || !meNow.address) throw new Error('sign in to trade');
+          if (peer.guest || !peer.address) throw new Error('that player is a guest and cannot trade');
+          if (!nftSide(m.give) && !nftSide(m.get)) throw new Error('a trade needs an NFT on at least one side');
+          var t = {id: Math.random().toString(36).slice(2) + Date.now().toString(36),
+                   role: 'proposer', room: room2, peer: peer, give: m.give, get: m.get, parts: []};
+          // The signed half travels sealed to whoever finishes the trade, so that
+          // player needs a published messaging key: said now, not after a yes.
+          var reader = iSign(t) ? peer : meNow;
+          var known = await fetch('/account/who/' + encodeURIComponent(reader.address), {cache: 'no-store'});
+          if (!known.ok) {
+            throw new Error((reader === peer ? 'that player has' : 'you have')
+              + ' not published a messaging key yet, so a trade cannot reach '
+              + (reader === peer ? 'them' : 'you') + '. It is one button: publish your tag.');
+          }
+          if (!(await tradeAsk(t, 'Offer this trade?', 'Offer'))) throw new Error('cancelled');
+          trades[t.id] = t;
+          await tradeSend(t, {t: 'propose', give: t.give, get: t.get});
+          tradeSay(t, 'proposed');
+          return answer({ok: true, id: t.id});
+        }
+        var tr = trades[String(m.id || '')];
+        if (!tr) throw new Error('no such trade');
+        if (m.op === 'answer') {
+          if (tr.role !== 'responder' || tr.status !== 'incoming') throw new Error('nothing to answer');
+          if (!m.accept || !(await tradeAsk(tr, 'Accept this trade?', 'Accept'))) {
+            await tradeSend(tr, {t: 'decline', why: m.why || ''}).catch(function(){});
+            tradeSay(tr, 'declined');
+            return answer({ok: true, accepted: false});
+          }
+          await tradeSend(tr, {t: 'accept'});
+          tradeSay(tr, 'accepted');
+          if (iSign(tr)) tradeSign(tr);
+          return answer({ok: true, accepted: true});
+        }
+        if (m.op === 'cancel') {
+          if (['broadcast', 'settled'].indexOf(tr.status) >= 0) throw new Error('too late: it was sent');
+          await tradeSend(tr, {t: 'cancel'}).catch(function(){});
+          tradeSay(tr, 'cancelled');
+          return answer({ok: true});
+        }
+        throw new Error('trade ops are trade, answer, cancel and items');
+      } catch (err) {
+        answer({ok: false, error: String((err && err.message) || err || 'refused')});
       }
     }
     window.addEventListener('pagehide', function(){
@@ -153,6 +376,9 @@
         e.source.postMessage(body, '*');   // an opaque origin cannot be named
       }
       if (m.arcade === 'realtime') { realtimeDoor(m, answer, e.source); return; }
+      if (m.arcade === 'swap' && ['trade', 'answer', 'cancel', 'items'].indexOf(m.op) >= 0) {
+        tradeDoor(m, answer, e.source); return;
+      }
       // One import of the account kit, with the key opened only for the
       // doors that cannot answer without it.
       function byKey(doIt, needKey){

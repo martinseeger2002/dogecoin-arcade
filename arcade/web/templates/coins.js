@@ -520,19 +520,23 @@ function listingPayload(data) {
   // transaction's: every number in a leg is written the other way round from
   // every number in the serialisation above it.
   const kind = field(1, "has no second leg")[0];
-  let sats = 0n, token = null;
+  let sats = 0n, token = null, piece = null;
   if (kind === LEG_COINS) {
     sats = toBig(field(8, "names no price"));
+  } else if (kind === LEG_INSCRIPTION) {
+    // A piece for a piece (a trade between two players): the buyer pays with an
+    // NFT, which -- like a token -- moves in the ledger on these bytes alone.
+    piece = hex(field(32, "names no piece it takes"));
   } else if (kind === LEG_TOKEN) {
     // Read, and read only here: a token is not paid inside this transaction,
     // so nothing else states this price and nothing else can contradict it.
     token = {propertyid: Number(toBig(field(4, "names no token"))),
              units: toBig(field(8, "names no amount"))};
   } else {
-    refuse("takes something besides coins or tokens, which nobody has signed");
+    refuse("takes something besides coins, a token or a piece, which nobody has signed");
   }
   if (at !== data.length) refuse("longer than the trade it states");
-  return {txid, sats, token};
+  return {txid, sats, token, piece};
 }
 
 /* --- what this key may sign ---------------------------------------------
@@ -882,6 +886,17 @@ export async function verifyLeg(leg, keys) {
   // have to invent one to be printed at all. Every route that hands this function a
   // leg states `take` when its payload takes a token; this is what one that forgets
   // costs the tab, which is nothing.
+  // A piece taken in payment is written only in these bytes too, so the node
+  // has to name the same one, or the card would name a piece the bytes do not.
+  const toldPiece = (leg.take && leg.take.kind === "inscription") ? leg.take : null;
+  if (listing.piece && (!toldPiece || String(toldPiece.txid).toLowerCase() !== listing.piece)) {
+    throw new Error("that trade takes a piece and says a different one, or none. "
+      + "A price paid in a piece is written nowhere but those bytes. Nothing was signed.");
+  }
+  if (toldPiece && !listing.piece) {
+    throw new Error("that trade says it takes a piece and its own bytes take "
+      + "something else. Nothing was signed.");
+  }
   if (listing.token && !told) {
     throw new Error("that listing takes a token and says nothing about which one "
       + "or how much, so there is no price here to read aloud. A card that named "
@@ -904,7 +919,9 @@ export async function verifyLeg(leg, keys) {
       + "mempool until it fell out. Nothing was signed.");
   }
   const coinsOf = (sats) => (Number(sats) / 100000000).toFixed(8);
-  const price = listing.token
+  const price = listing.piece
+    ? `inscription ${listing.piece.slice(0, 16)}…${toldPiece.number != null ? ` (#${toldPiece.number})` : ""}`
+    : listing.token
     ? `${listing.token.text || listing.token.units} `
       + `${listing.token.name || `token ${listing.token.propertyid}`}`
     : `${coinsOf(listing.sats)} coins`;
