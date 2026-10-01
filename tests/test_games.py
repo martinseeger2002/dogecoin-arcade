@@ -148,3 +148,47 @@ def test_play_opens_the_real_game_only_when_its_maker_made_both(client):
     assert f'href="/games/{card}"' in page, "the discussion stays with the card"
     thread = app.get(f"/games/{card}").text
     assert f"/inscriptions/{real}/full" in thread
+
+
+def _delete(state, target, author, txid):
+    from arcade.messaging import feed as feedlib
+    with state.store() as store:
+        store.add_feed_act(state.messaging.network, txid, feedlib.DELETE, target, author,
+                           height=200, block_time=1)
+
+
+def test_a_maker_removes_a_game_card_like_a_post_and_nobody_else_can(client):
+    """2026-10-01: game cards removable by whoever created them, the way feed
+    posts are -- the feed's own DELETE aimed at the card, from its maker."""
+    app, state = client
+    old, card, other = "f1" * 32, "f2" * 32, "f3" * 32
+    _inscribe(state, old, 60, MAKER, {"game": {"name": "Gone Game", "version": "1"}}, height=90)
+    _inscribe(state, card, 61, MAKER, {"game": {"name": "Gone Game", "version": "2"}})
+    _inscribe(state, other, 62, MAKER, {"game": {"name": "Still Here"}})
+    _delete(state, other, OTHER, "aa" * 32)                         # a stranger's delete
+    page = app.get("/games").text
+    assert f"/inscriptions/{card}/full" in page and f"/inscriptions/{other}/full" in page
+    _delete(state, card, MAKER, "ab" * 32)                          # the maker's
+    page = app.get("/games").text
+    assert f"/inscriptions/{card}/full" not in page, "removed by its maker"
+    assert f"/inscriptions/{old}/full" not in page, "and no older version comes back"
+    assert f"/inscriptions/{other}/full" in page, "a stranger's delete counts for nothing"
+    assert app.get(f"/games/{card}").status_code == 404
+    # The inscription itself is untouched: it still plays from its own link.
+    assert app.get(f"/inscriptions/{card}/full").status_code == 200
+    # A newer version brings the game back.
+    _inscribe(state, "f4" * 32, 63, MAKER, {"game": {"name": "Gone Game", "version": "3"}},
+              height=300)
+    assert "/inscriptions/" + "f4" * 32 + "/full" in app.get("/games").text
+
+
+def test_only_the_maker_is_offered_remove(client):
+    app, state = client
+    mine, theirs = "c7" * 32, "c8" * 32
+    _inscribe(state, mine, 70, MAKER, {"game": {"name": "Mine"}})
+    _inscribe(state, theirs, 71, OTHER, {"game": {"name": "Theirs"}})
+    with state.store() as store:
+        store.set_meta(f"identity_address:{state.messaging.network}", MAKER)
+    page = app.get("/games").text
+    assert f'action="/feed/{mine}/delete"' in page
+    assert f'action="/feed/{theirs}/delete"' not in page

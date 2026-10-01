@@ -70,6 +70,18 @@ Its card replaces the old one.
 * An older version is not deleted. It is still on the chain and still plays;
   it just is not the card on the tab any more.
 
+## Removing a game
+
+The maker of a game can take its card off the tab, the same way a post's
+author removes a post from the feed: press *Remove* on your own card. Only the
+address that inscribed the card sees the button, and only its removal counts.
+
+* The card disappears from the *Games* tab on every arcade, and so do older
+  versions with the same name: removing a game does not bring an older one back.
+* The inscription itself stays on the chain, as everything on a chain does.
+  It still plays from its own link; it is just no longer listed.
+* To list the game again, inscribe a new version with the same name.
+
 ## How the tab ranks games
 
 * **Popular** weighs what people said: likes, minus dislikes, plus half a point

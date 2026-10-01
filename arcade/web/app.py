@@ -16847,7 +16847,7 @@ def create_app(state: AppState) -> FastAPI:
     # (launchlist), Latest is newest block first. Nothing is registered and
     # nothing new goes on the chain to list one.
 
-    def _game_rows(index, limit: int = 500) -> list[dict]:
+    def _game_rows(index, limit: int = 500, newest: bool = True) -> list[dict]:
         try:
             with contextlib.closing(index.open()) as db:
                 rows = db.conn.execute(
@@ -16864,7 +16864,45 @@ def create_app(state: AppState) -> FastAPI:
             game = gameslib.parse(r["json"])
             if game:
                 found.append({**dict(r), "game": game})
-        return gameslib.newest_per_game(found)
+        return gameslib.newest_per_game(found) if newest else found
+
+    # A game's maker can take its card off the tab the way a post's author takes
+    # a post off the feed (2026-10-01): the feed's own DELETE, aimed at the card's
+    # txid, counted only when it comes from whoever inscribed the card -- at
+    # their address on this chain or the one their announcement binds to it.
+    # The inscription stays on the chain and still plays from its own link;
+    # the card is gone from every arcade's Games tab, older versions included,
+    # until the maker inscribes a newer one.
+
+    def _game_acts(txids: list[str]) -> list[dict]:
+        """The feed's actions aimed at these cards, the mempool's included."""
+        acts: list = []
+        try:
+            with state.store() as store:
+                acts = [dict(a) for a in store.feed_acts_on(state.messaging.network, txids)]
+        except Exception:
+            acts = []
+        waiting = _pending_feed(state.messaging.network)
+        known, targets = {a["txid"] for a in acts}, set(txids)
+        acts += [dict(a, height=a.get("height") or 0) for a in (waiting.acts or [])
+                 if a.get("target") in targets and a["txid"] not in known]
+        return acts
+
+    def _makers(creator: str) -> set[str]:
+        """Every address that speaks for the inscription's creator."""
+        ids = {creator}
+        try:
+            with state.store() as store:
+                other = store.address_for_other(creator)
+            if other:
+                ids.add(other)
+        except Exception:
+            pass
+        return ids
+
+    def _game_removed(acts: list[dict], txid: str, makers: set[str]) -> bool:
+        return any(int(a["kind"]) == feedlib.DELETE and a.get("target") == txid
+                   and a.get("author") in makers for a in acts)
 
     def _game_by_txid(txid: str) -> dict | None:
         """The game an inscription on the Games tab's chain is, or None."""
@@ -16878,7 +16916,7 @@ def create_app(state: AppState) -> FastAPI:
         if not row or not gameslib.is_page(row.get("content_type")):
             return None
         game = gameslib.parse(row.get("json"))
-        if not game:
+        if not game or _game_removed(_game_acts([txid]), txid, _makers(row["creator"])):
             return None
         game["opens"] = _game_opens(index, row["creator"], txid, game)
         return {**row, "game": game, "chain": chain}
@@ -16899,24 +16937,20 @@ def create_app(state: AppState) -> FastAPI:
     def _games_ranked(request: Request, sort: str) -> list[dict]:
         from .. import launchlist
         chain, index = _token_chain()
-        rows = _game_rows(index)
+        every = _game_rows(index, newest=False)
+        acts = _game_acts([r["txid"] for r in every])
+        makers = {c: _makers(c) for c in {r["creator"] for r in every}}
+        for r in every:
+            r["removed"] = _game_removed(acts, r["txid"], makers[r["creator"]])
+        # The newest card per game decides: one its maker removed takes the game
+        # off the tab rather than bringing an older version back.
+        rows = [r for r in gameslib.newest_per_game(every) if not r["removed"]]
         for r in rows:
             r["game"]["opens"] = _game_opens(index, r["creator"], r["txid"], r["game"])
         items = [{"txid": r["txid"], "number": r["number"], "creator": r["creator"],
                   "name": r["game"]["name"], "game": r["game"],
                   "time": int(r["time"] or 0), "height": r["block_height"],
                   "trades": 0, "volume": 0.0} for r in rows]
-        acts: list = []
-        try:
-            with state.store() as store:
-                acts = [dict(a) for a in store.feed_acts_on(
-                    state.messaging.network, [i["txid"] for i in items])]
-        except Exception:
-            acts = []
-        waiting = _pending_feed(state.messaging.network)
-        known, targets = {a["txid"] for a in acts}, {i["txid"] for i in items}
-        acts += [dict(a, height=a.get("height") or 0) for a in (waiting.acts or [])
-                 if a.get("target") in targets and a["txid"] not in known]
         said = launchlist.tally(acts)
         tips: dict[str, int] = {}
         for a in acts:
@@ -16930,6 +16964,7 @@ def create_app(state: AppState) -> FastAPI:
             item["comment_rows"] = got["comments"][-3:]
             item["comments"] = len(got["comments"])
             item["tips"] = tips.get(item["txid"], 0)
+            item["mine"] = bool(me) and me in makers.get(item["creator"], {item["creator"]})
         return launchlist.rank(items, sort, int(time.time()))
 
     @app.get("/games", response_class=HTMLResponse)

@@ -93,7 +93,16 @@
       <span class="pill">&#128172; {{ it.comments }}</span>
       <a class="muted" style="font-size:.84rem" href="/join?next=/games">Sign in to react or tip</a>
       {% endif %}
+      {% if acts and it.mine %}
+      <form method="post" action="/feed/{{ it.txid }}/delete" style="display:inline;margin-left:auto"
+            {% if viewer == 'wallet' %}onsubmit="return confirm('Remove this game from the Games tab? The inscription stays on the chain and still plays from its own link, but no arcade lists this card any more.')"{% endif %}>
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <input type="hidden" name="back" value="/games{{ '?sort=new' if sort == 'new' else '' }}">
+        <button class="small ghost" type="submit" title="Take this card off the Games tab">Remove</button></form>
+      <a class="small" href="/inscriptions/{{ g.opens or it.txid }}/view">Details</a>
+      {% else %}
       <a class="small" style="margin-left:auto" href="/inscriptions/{{ g.opens or it.txid }}/view">Details</a>
+      {% endif %}
     </div>
 
     {% for c in it.comment_rows %}
@@ -143,7 +152,7 @@
 import * as wallet from "/wallet.js";
 const CHAIN = {network: "{{ state.messaging.network }}",
                version: {{ state.messaging.params.pubkeyhash_version }}};
-const KINDS = {like: 1, unlike: 2, reply: 3, tip: 7, dislike: 8, undislike: 9};
+const KINDS = {like: 1, unlike: 2, reply: 3, delete: 6, tip: 7, dislike: 8, undislike: 9};
 const news = document.getElementById("games-news");
 const say = (t, bad) => { news.textContent = t; news.hidden = !t;
                           news.className = "msg " + (bad ? "err" : "ok"); };
@@ -151,10 +160,13 @@ const opening = wallet.opened(CHAIN);
 document.addEventListener("submit", async (event) => {
   const form = event.target;
   const one = (form.getAttribute("action") || "").match(
-    /^\/feed\/([0-9a-f]{64})\/(like|unlike|dislike|undislike|reply|tip)$/);
+    /^\/feed\/([0-9a-f]{64})\/(like|unlike|dislike|undislike|reply|tip|delete)$/);
   if (!one) return;
   event.preventDefault();
-  const flip = one[2] === "tip" ? null : window.arcadePress(form, one[2]);
+  if (one[2] === "delete" && !(await arcadeAsk("Remove this game?",
+      "The inscription stays on the chain and still plays from its own link, but no "
+      + "arcade lists this card on the Games tab any more.", "Remove"))) return;
+  const flip = (one[2] === "tip" || one[2] === "delete") ? null : window.arcadePress(form, one[2]);
   const held = (await opening) || await arcadeKeys(CHAIN).catch(() => null);
   if (!held) { if (flip) flip.undo(); say("Unlock your wallet to do that.", true); return; }
   const [, txid, doing] = one;
