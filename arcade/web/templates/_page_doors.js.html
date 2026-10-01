@@ -16,7 +16,100 @@
     var holder = {{ row.owner|tojson }}, maker = {{ row.creator|tojson }};
     var CHAIN = {network: "{{chain.network}}",
                  version: {{chain.params.pubkeyhash_version}}};
-    var doors = {storage: '/storage/', node: '/node/', swap: '/swap/', owner: '/owner/'};
+    var doors = {storage: '/storage/', node: '/node/', swap: '/swap/', owner: '/owner/',
+                 realtime: '/realtime/'};
+
+    // Realtime rooms (arcade/web/realtime.py, templates/realtime.js): this page
+    // joins on the frame's behalf, holds the token and the stream, and passes
+    // what happens in the room back into the frame. The game is THIS
+    // inscription unless the page names a family, so a page cannot sit in
+    // another game's rooms by accident. A signed-in account plays as its own
+    // address, proved once a day by a signature its key makes here; if the
+    // wallet stays locked it plays as a guest rather than not at all.
+    var rt = {};
+    function realtimeProof(hello){
+      if (!hello.sign || !hello.who || hello.who.kind !== 'account') return Promise.resolve(null);
+      var slot = 'arcade-rt-cert:' + hello.sign.message;
+      try {
+        var kept = JSON.parse(sessionStorage.getItem(slot) || 'null');
+        if (kept && kept.sig) return Promise.resolve(kept);
+      } catch (err) {}
+      return import('/wallet.js').then(function(w){
+        return w.opened(hello.sign.chain).then(function(keys){
+          return keys || arcadeKeys(hello.sign.chain, 'Join this game as you? Your wallet signs who you are, once a day.');
+        });
+      }).then(function(keys){
+        var mine = keys && keys.on && keys.on[hello.sign.chain.network];
+        if (!mine || mine.address !== hello.who.address) return null;
+        return import('/coins.js').then(function(coins){
+          return coins.signMessage(mine.key, hello.sign.message, hello.sign.magic);
+        }).then(function(sig){
+          var proof = {sig: sig, expires: hello.sign.expires};
+          try { sessionStorage.setItem(slot, JSON.stringify(proof)); } catch (err) {}
+          return proof;
+        });
+      }).catch(function(){ return null; });        // locked or refused: a guest
+    }
+    function realtimePost(path, body){
+      body.csrf_token = csrf;
+      return fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                          body: JSON.stringify(body), keepalive: path === '/realtime/leave'})
+        .then(function(r){ return r.json(); });
+    }
+    function realtimeDoor(m, answer, frame){
+      var name = String(m.room || '');
+      if (m.op === 'join') {
+        fetch('/realtime/hello', {cache: 'no-store'}).then(function(r){ return r.json(); })
+          .then(function(hello){
+            if (!hello.online) {
+              answer({ok: true, online: false, why: hello.why || 'this node is not on the mesh'});
+              return;
+            }
+            return realtimeProof(hello).then(function(proof){
+              return realtimePost('/realtime/join', {game: m.game || here, room: name,
+                                  sig: proof && proof.sig, expires: proof && proof.expires});
+            }).then(function(j){
+              if (!j.ok) { answer({ok: false, error: j.error || 'refused'}); return; }
+              var es = new EventSource('/realtime/stream?token=' + encodeURIComponent(j.token));
+              es.onmessage = function(ev){
+                var d; try { d = JSON.parse(ev.data); } catch (err) { return; }
+                d.room = name;
+                frame.postMessage({arcade: 'realtime', event: d}, '*');
+              };
+              es.addEventListener('closed', function(ev){
+                es.close(); delete rt[name];
+                var why = ''; try { why = JSON.parse(ev.data).why; } catch (err) {}
+                frame.postMessage({arcade: 'realtime', event: {type: 'closed', room: name, why: why}}, '*');
+              });
+              rt[name] = {token: j.token, es: es};
+              answer({ok: true, online: true, me: j.me, members: j.members});
+            });
+          }).catch(function(err){
+            answer({ok: false, error: String((err && err.message) || err || 'refused')});
+          });
+        return;
+      }
+      var held = rt[name];
+      if (!held) { answer({ok: false, error: 'join the room first'}); return; }
+      if (m.op === 'send') {
+        realtimePost('/realtime/send', {token: held.token, data: String(m.data || '')})
+          .then(function(j){ answer(j.ok ? {ok: true} : {ok: false, error: j.error || 'refused'}); })
+          .catch(function(){ answer({ok: false, error: 'the node did not answer'}); });
+      } else if (m.op === 'leave') {
+        held.es.close(); delete rt[name];
+        realtimePost('/realtime/leave', {token: held.token}).catch(function(){});
+        answer({ok: true});
+      } else {
+        answer({ok: false, error: 'realtime ops are join, send and leave'});
+      }
+    }
+    window.addEventListener('pagehide', function(){
+      for (var k in rt) {
+        rt[k].es.close();
+        realtimePost('/realtime/leave', {token: rt[k].token}).catch(function(){});
+      }
+      rt = {};
+    });
 
     // Holding off the automatic refresh for as long as a trade is being
     // carried. `buy` keeps asking once or twice a second until it is done, so
@@ -59,6 +152,7 @@
         body.arcade = m.arcade; body.seq = m.seq;
         e.source.postMessage(body, '*');   // an opaque origin cannot be named
       }
+      if (m.arcade === 'realtime') { realtimeDoor(m, answer, e.source); return; }
       // One import of the account kit, with the key opened only for the
       // doors that cannot answer without it.
       function byKey(doIt, needKey){

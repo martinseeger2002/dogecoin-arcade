@@ -26,6 +26,7 @@ from ..rpc import RpcClient
 from ..tx import TxError, extract
 from .. import release as releaselib
 from .. import instance as instancelib
+from ..mesh import announce as meshannounce
 from . import content, feed, group
 from ..script import b58check_encode
 from .envelope import (
@@ -37,6 +38,7 @@ from .envelope import (
     TYPE_KEY_ANNOUNCE,
     TYPE_RELEASE,
     TYPE_INSTANCE,
+    TYPE_MESH,
     TYPE_SINGLE,
     is_message_payload,
     open_message,
@@ -369,6 +371,18 @@ class Scanner:
                     self.store.add_instance_announcement(
                         atx.txid, self.params.name, atx.sender, said["domain"],
                         said["revision"], height, block_time)
+                    result.announcements += 1
+                continue
+
+            # A mesh node saying where it can be reached (mesh/announce.py):
+            # public, paid for by its fee address, read by every node so every
+            # node starts its mesh from the same list.
+            if len(body) >= 6 and body[5] == TYPE_MESH:
+                said = meshannounce.parse(body)
+                if said and atx.sender:
+                    self.store.add_mesh_announcement(
+                        atx.txid, self.params.name, atx.sender, said["host"],
+                        said["port"], said["key"], height, block_time)
                     result.announcements += 1
                 continue
 

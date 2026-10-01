@@ -129,6 +129,7 @@ PUBLIC_TREES = (
     "/u/",                    # somebody's feed, profile and holdings
     "/content/",              # inscribed content, as the chain has it
     "/r/",                    # the page API: what an inscribed page may ask
+    "/realtime/",             # game rooms over the mesh: hello and the stream (realtime.py)
     "/collections/",
     "/tokens/",               # a token's own page
     "/exchange/collection/",
@@ -207,6 +208,10 @@ LINKED_FROM_PUBLIC = ("/content/", "/collections", "/feed", "/u/", "/docs",
 #: equally correct; it is named so that nobody reads that 405 as the door having
 #: opened something. (the door census, 2026-09-27)
 PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
+               # game rooms over the mesh (realtime.py): each acts only on the
+               # caller's own token, and an account joins only as the address
+               # its own browser signed for
+               "/realtime/join", "/realtime/send", "/realtime/leave",
                "/admin/login",
                "/auth/password",
                "/account/address", "/account/announce", "/account/post",

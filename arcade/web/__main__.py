@@ -53,6 +53,24 @@ def main(argv: list[str] | None = None) -> int:
         "--host", default="127.0.0.1",
         help="deliberately defaults to loopback; changing it exposes spending authority",
     )
+    # The realtime mesh (arcade/mesh): this node linking to other arcade nodes
+    # directly, for game rooms. On by default; it dials out, so it works behind
+    # any router, and it listens too, so a node somebody can reach helps others.
+    parser.add_argument(
+        "--no-mesh", action="store_true",
+        help="do not join the realtime mesh: games here play solo")
+    parser.add_argument(
+        "--mesh-port", type=int, default=8421,
+        help="port the mesh listens on for other nodes (0: do not listen, only dial out)")
+    parser.add_argument(
+        "--mesh-peer", action="append", default=[], metavar="IP:PORT",
+        help="another node to link to directly, e.g. one on this network "
+             "(the chain cannot carry private addresses); may be repeated")
+    parser.add_argument(
+        "--mesh-announce", metavar="IP:PORT",
+        help="announce on the chain, once a day, that other nodes can reach this "
+             "node's mesh here: this machine's public IP and a port forwarded to "
+             "--mesh-port. Paid for by the fee address, like the instance announcement")
     parser.add_argument(
         "--log-level", default=os.environ.get("ARCADE_LOG_LEVEL", "info"),
         choices=["debug", "info", "warning", "error"],
@@ -161,6 +179,23 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         print(f"  collections could not be resumed: {exc}")
     print("  watching for new blocks")
+
+    if not args.no_mesh:
+        try:
+            from ..mesh.service import for_state
+
+            def host_port(text: str) -> tuple[str, int]:
+                host, _, port = text.rpartition(":")
+                return host.strip("[]"), int(port)
+            state.mesh = for_state(
+                state, listen_port=args.mesh_port or None,
+                peers=[host_port(p) for p in args.mesh_peer],
+                announce_at=host_port(args.mesh_announce) if args.mesh_announce else None,
+            ).start()
+            print(f"  mesh node {state.mesh.node_id[:16]}"
+                  + (f" listening on {args.mesh_port}" if args.mesh_port else " (dial-out only)"))
+        except Exception as exc:                  # noqa: BLE001 -- games play solo instead
+            print(f"  mesh not started: {exc}")
 
     state.port = args.port
     state.public = bool(args.public)

@@ -68,6 +68,22 @@ CREATE TABLE IF NOT EXISTS instance_announcement (
 );
 CREATE INDEX IF NOT EXISTS instance_announcement_domain
     ON instance_announcement(network, domain, height);
+-- Mesh nodes saying where they can be reached (arcade/mesh/announce.py): an IP,
+-- a port and a mesh key, published by the fee address that paid. Every node
+-- starts its mesh from these; the latest per key wins.
+CREATE TABLE IF NOT EXISTS mesh_announcement (
+    txid        TEXT PRIMARY KEY,
+    network     TEXT NOT NULL,
+    address     TEXT NOT NULL,
+    host        TEXT NOT NULL,
+    port        INTEGER NOT NULL,
+    mesh_key    TEXT NOT NULL,
+    height      INTEGER NOT NULL,
+    block_time  INTEGER NOT NULL,
+    seen_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mesh_announcement_key
+    ON mesh_announcement(network, mesh_key, height);
 -- The inscription somebody uses as their picture, as announced. Honoured only
 -- while the chain says they still hold it (D-138), so this is what they SAID,
 -- never what is drawn.
@@ -563,6 +579,35 @@ class MessageStore:
             "     AND b.domain = a.domain AND b.height > 0"
             "     AND (b.height, b.txid) > (a.height, a.txid))"
             " ORDER BY a.height DESC, a.txid DESC", (network,)).fetchall()
+
+    def add_mesh_announcement(self, txid: str, network: str, address: str, host: str,
+                              port: int, mesh_key: str, height: int,
+                              block_time: int) -> None:
+        """A mesh node announcing where it can be reached (arcade/mesh/announce.py).
+        Kept from the pool too: a new node should be findable in seconds, and a
+        wrong address costs one failed dial, not a wrong balance."""
+        import time as _time
+        self.conn.execute(
+            "INSERT INTO mesh_announcement (txid, network, address, host, port,"
+            " mesh_key, height, block_time, seen_at) VALUES (?,?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(txid) DO UPDATE SET"
+            "  height = CASE WHEN excluded.height > 0 THEN excluded.height"
+            "                ELSE mesh_announcement.height END,"
+            "  block_time = CASE WHEN excluded.height > 0 THEN excluded.block_time"
+            "                ELSE mesh_announcement.block_time END",
+            (txid, network, address, host, int(port), mesh_key, int(height),
+             int(block_time), int(_time.time())))
+        self.conn.commit()
+
+    def mesh_peers(self, network: str, since: int = 0) -> list[sqlite3.Row]:
+        """The latest announcement per mesh key seen since `since` (unix time),
+        newest first."""
+        return self.conn.execute(
+            "SELECT * FROM mesh_announcement a WHERE a.network = ? AND a.seen_at >= ?"
+            " AND NOT EXISTS (SELECT 1 FROM mesh_announcement b"
+            "   WHERE b.network = a.network AND b.mesh_key = a.mesh_key"
+            "     AND (b.seen_at, b.txid) > (a.seen_at, a.txid))"
+            " ORDER BY a.seen_at DESC LIMIT 200", (network, int(since))).fetchall()
 
     def set_meta(self, key: str, value: str) -> None:
         self.conn.execute(

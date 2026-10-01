@@ -19747,6 +19747,12 @@ def create_app(state: AppState) -> FastAPI:
 
 
 
+    # Realtime rooms for inscribed pages, over the mesh (arcade/web/realtime.py).
+    # Registered last: it is handed the helpers above rather than reaching for them.
+    from . import realtime as realtimelib
+    realtimelib.register(app, state, account_view=_account_view, signed_in=signed_in,
+                         account_address=_account_address, account_chain=_account_chain,
+                         check_csrf=check_csrf)
     return app
 
 

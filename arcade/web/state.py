@@ -771,6 +771,30 @@ class AppState:
         self.bump_generation()
         return txid
 
+    def announce_mesh(self, host: str, port: int, mesh_key: str) -> dict:
+        """Say on the chain where this node's mesh can be reached: an IP, a port
+        and its mesh key (arcade/mesh/announce.py), paid for by the fee address
+        like the instance announcement. Every node's index reads it, which is
+        how nodes that have never met find each other with no website between
+        them."""
+        from ..mesh import announce as meshannounce
+        from ..messaging.sender import MessageSender, funded_address
+
+        chain = self.messaging
+        fee_address = self.derived_address
+        if not fee_address:
+            raise ValueError("this node has no fee address yet")
+        payload = meshannounce.build(host, port, mesh_key)
+        with chain.rpc() as rpc:
+            sender = MessageSender(rpc, chain.params, public_only=True)
+            address = funded_address(rpc, prefer=fee_address, mainnet=chain.is_mainnet)
+            if address != fee_address:
+                raise ValueError(f"the fee address {fee_address} has no coins to pay for this")
+            prepared = sender.prepare(address, payload, change_address=address)
+            txid = sender.broadcast(prepared)
+        return {"txid": txid, "host": meshannounce.clean_host(host),
+                "port": meshannounce.clean_port(port), "key": mesh_key}
+
     def announce_instance(self, domain: str) -> dict:
         """Say on the chain who runs this arcade: its domain and revision, paid
         for by its FEE ADDRESS (arcade/instance.py). The fee address has to pay
@@ -1030,6 +1054,8 @@ class AppState:
     _approvals: Any = None
     _pagestore: Any = None
     _talk: Any = None
+    #: The realtime mesh (arcade/mesh/service.py), when this node runs one.
+    mesh: Any = None
     _offers: Any = None
     _listings: Any = None
 

@@ -240,6 +240,36 @@ export function varint(bytes, at) {
 }
 
 /** The script that pays a hash160 -- the one shape this wallet spends from. */
+/* --- signing a message, the way Core's `signmessage` does ----------------
+ *
+ * Proof that whoever holds an address's key said these words, checkable by
+ * any node with `verifymessage` and nothing else: hash256 of the chain's
+ * magic and the message, each length-prefixed, signed with a recoverable
+ * signature, and handed over as Core hands its own -- 65 bytes, base64, the
+ * first byte saying which of four keys to recover and that it is compressed.
+ * Used for the realtime certificate (arcade/mesh/service.py), which is how a
+ * player's own address vouches for them on nodes that have never seen them.
+ */
+function compactSize(n) {
+  if (n < 0xfd) return Uint8Array.of(n);
+  if (n <= 0xffff) return Uint8Array.of(0xfd, n & 0xff, n >> 8);
+  return Uint8Array.of(0xfe, n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff);
+}
+
+export async function messageHash(message, magic) {
+  const m = enc.encode(magic), b = enc.encode(message);
+  return hash256(join([compactSize(m.length), m, compactSize(b.length), b]));
+}
+
+export async function signMessage(priv, message, magic) {
+  const sig = await secp.signAsync(await messageHash(message, magic), priv, {lowS: true});
+  const out = new Uint8Array(65);
+  out[0] = 27 + sig.recovery + 4;                  // +4: the key is compressed
+  out.set(beBytes(sig.r, 32), 1);
+  out.set(beBytes(sig.s, 32), 33);
+  return btoa(String.fromCharCode(...out));
+}
+
 export function p2pkh(hash) {
   return new Uint8Array([0x76, 0xa9, ...sizeOf(hash.length), ...hash, 0x88, 0xac]);
 }
