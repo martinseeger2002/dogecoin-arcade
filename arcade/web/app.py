@@ -14137,8 +14137,8 @@ def create_app(state: AppState) -> FastAPI:
         take = leg.get("take")
         take = take if isinstance(take, dict) else {}
         kind = str(take.get("kind") or "")
-        if kind == "token":
-            price = 0
+        if kind in ("token", "inscription"):
+            price = 0                 # paid in the ledger, not in a coin (D-183)
         elif kind == "coins":
             price = int(take.get("sats") or 0)
         elif str(leg.get("amount", "")).strip() in ("", "0"):
@@ -14218,6 +14218,187 @@ def create_app(state: AppState) -> FastAPI:
                 out[str(key)] = str(exc) or "it can no longer be completed"
         return JSONResponse({"legs": out})
 
+    # --- trades between two players, from inside a page -----------------------
+    #
+    # A game's trade window: one player gives an NFT and the other pays in an NFT,
+    # a token or coins, settled as ONE swap both sign (inscriptions.Swap), so both
+    # move or neither does. It is the answered-offer path (D-182, D-176) with the
+    # offer taken out: the two players agreed in the game, so there is nothing on
+    # the chain to answer. The side that gives an NFT signs a leg for ONE named
+    # buyer; the leg reaches that buyer sealed to their messaging key (the viewer
+    # does it, over the realtime room), and the buyer finishes it with
+    # /account/fill, naming the terms it agreed to (`expect`). Game-agnostic:
+    # these routes know an inscription, a token and an amount, never a game.
+
+    def _trade_terms(account, said: dict) -> dict:
+        """The trade a request describes, checked: this account gives the piece,
+        the buyer can pay, and the buyer can be written to."""
+        chain = _chain_asked(said)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            raise ValueError(f"this account has no {chain.label.lower()} address yet")
+        index = state.token_index(chain)
+        give_spec = said.get("give") if isinstance(said.get("give"), dict) else {}
+        take_spec = said.get("take") if isinstance(said.get("take"), dict) else {}
+        if "inscription" not in give_spec:
+            raise ValueError("the side that signs first gives an NFT: {\"inscription\": id}")
+        give = swaplib.leg_of(give_spec, index)
+        take = swaplib.leg_of(take_spec, index)
+        row = index.inscription(give.txid.hex())
+        if row is None or row["owner"] != address:
+            raise swaplib.SwapError("that piece is not this account's to trade")
+        buyer = str(said.get("buyer") or "")
+        if not buyer or buyer == address:
+            raise ValueError("a trade needs another player")
+        held_for, until = _answer_held(chain, row["txid"])
+        if held_for and held_for != buyer:
+            raise swaplib.SwapError(
+                "that piece is promised to somebody else for another "
+                f"{describe_duration(max(0, int(until - time.time())))}")
+        with chain.rpc() as rpc:
+            problem = swaplib.holds(index, rpc, buyer, take)
+        if problem:
+            raise swaplib.SwapError("the other player cannot pay "
+                                    f"{swaplib.describe_leg(swaplib.leg_json(take, index))}: "
+                                    f"{problem}")
+        to = _key_at(buyer)
+        price = int(take.amount) if take.kind == inscriptionlib.LEG_COINS else 0
+        what = (f"trade {swaplib.describe_leg(swaplib.leg_json(give, index))} for "
+                f"{swaplib.describe_leg(swaplib.leg_json(take, index))}")
+        return {"chain": chain, "address": address, "index": index, "row": row,
+                "give": give, "take": take, "buyer": buyer, "to": to,
+                "price": price, "what": what}
+
+    @app.post("/account/trade/leg")
+    def account_trade_leg(request: Request, payload: Any = Body(None)):
+        """The leg this account signs to give a piece to ONE other player.
+
+        {chain, give: {inscription}, take: {inscription} | {token, amount} |
+        {coins}, buyer} -> the leg to sign (SINGLE|ANYONECANPAY over its two
+        coins), or {needs_split} first when this account holds one coin. The
+        same build `/account/accept` makes, for a trade agreed in a game rather
+        than an offer on the chain."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            t = _trade_terms(account, said)
+            chain, address = t["chain"], t["address"]
+            with contextlib.closing(t["index"].open()) as db:
+                spent = _flights.spent_by(account.pubkey, chain.network)
+                seen: set = set()
+                coins_here = []
+                for c in (list(utxoslib.unspent(db, address))
+                          + list(_flights.change_for(account.pubkey, chain.network))):
+                    key = (c["txid"], int(c["vout"]))
+                    if key in spent or key in seen:
+                        continue
+                    seen.add(key)
+                    coins_here.append(c)
+                held = _smallest_two_first(coins_here)
+                if len(held) < 2:
+                    split = fundinglib.build(
+                        db, chain.params, address,
+                        [(fundinglib.EXACT_SELLER_COIN, txbuild.p2pkh_script(address))],
+                        rate=fees.MIN_FEE_PER_KB,
+                        what="split a coin so this trade has two to sign",
+                        exclude=spent,
+                        extra=_flights.change_for(account.pubkey, chain.network))
+                    offer = _offers.add(account.pubkey, chain.network, split, split.what)
+                    return JSONResponse({"needs_split": True, "offer": offer.id,
+                                         "chain": chain.network, **split.as_json()})
+                leg = fundinglib.build_leg(
+                    chain.params, address, held[0], coins=t["price"],
+                    rate=fees.MIN_FEE_PER_KB, what=t["what"],
+                    payload=_ask_payload(t["row"], t["take"]), coin=held[1])
+        except (fundinglib.FundingError, listingslib.ListingError,
+                swaplib.SwapError, inscriptionlib.InscriptionError,
+                tokenlib.TokenError, AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"chain": chain.network, "buyer": t["buyer"],
+                             "seal_to": t["to"].hex(), "price": t["price"],
+                             "what": t["what"],
+                             "give": swaplib.leg_json(t["give"], t["index"]),
+                             "take": swaplib.leg_json(t["take"], t["index"]),
+                             **leg.as_json()})
+
+    @app.post("/account/trade/leg/sign")
+    def account_trade_leg_sign(request: Request, payload: Any = Body(None)):
+        """Take the leg's two signatures back, check the bytes say this trade,
+        and hand the leg over for the viewer to seal to the buyer. Nothing is
+        broadcast: the buyer's wallet finishes it (`/account/fill`)."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            t = _trade_terms(account, said)
+            chain, address, index = t["chain"], t["address"], t["index"]
+            _quota(account, "trade")
+            with chain.rpc() as rpc:
+                listing = state.listings.register(
+                    rpc, raw=str(said.get("raw") or ""),
+                    signatures=[str(s) for s in (said.get("signatures") or [])],
+                    pubkey=bytes.fromhex(str(said.get("pubkey") or "")),
+                    network=chain.network, owner=address, price=t["price"],
+                    seconds=listingslib.ANSWERED_FOR, record=False)
+            named = listingslib.named_swap(bytes.fromhex(str(listing["payload"] or "")))
+            if named is None or named.give != t["give"] or named.take != t["take"]:
+                raise swaplib.SwapError(
+                    "that leg's own bytes say a different trade than this one, "
+                    "and for anything but coins those bytes are the only place "
+                    "the price is written")
+        except (fundinglib.FundingError, listingslib.ListingError,
+                swaplib.SwapError, inscriptionlib.InscriptionError,
+                tokenlib.TokenError, AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        committed = [(listing["input"]["txid"], listing["input"]["vout"])]
+        if listing.get("coin"):
+            committed.append((listing["coin"]["txid"], listing["coin"]["vout"]))
+        _flights.note_committed(account.pubkey, tuple(committed), network=chain.network)
+        now = time.time()
+        state.offers.add_bid({
+            "id": secrets.token_hex(8), "network": chain.network,
+            "direction": "in", "inscription": t["row"]["txid"],
+            "number": t["row"]["number"], "owner": address, "buyer": t["buyer"],
+            "peer_pubkey": t["to"].hex(), "take": swaplib.leg_json(t["take"], index),
+            "note": "a trade in a game", "created": now,
+            "expires": now + ACCOUNT_ANSWER_HOLD,
+            "coins": [{"txid": tx, "vout": v} for tx, v in committed]})
+        state.bump_generation()
+        return JSONResponse({
+            "chain": chain.network, "ok": True, "buyer": t["buyer"],
+            "seal_to": t["to"].hex(), "held_until": now + ACCOUNT_ANSWER_HOLD,
+            "what": t["what"],
+            "leg": {"raw": str(said.get("raw") or ""),
+                    "signatures": [str(x) for x in (said.get("signatures") or [])],
+                    "pubkey": str(said.get("pubkey") or ""), "seller": address,
+                    "amount": format_amount(t["price"], True) if t["price"] else "0",
+                    "take": swaplib.leg_json(t["take"], index),
+                    "give": swaplib.leg_json(t["give"], index)}})
+
+    def _trade_expected(said: dict, listing: dict, chain, buyer: str) -> None:
+        """When the buyer names the trade it agreed to (`expect`, from a game's
+        trade window), the leg must say exactly that, and the buyer must still
+        hold what it pays. Without this a leg paid in a token or an NFT could
+        take any amount at all: there is no coin in it to disagree with."""
+        expect = said.get("expect")
+        if not isinstance(expect, dict):
+            return
+        index = state.token_index(chain)
+        give = swaplib.leg_of(expect.get("give") if isinstance(expect.get("give"), dict) else {}, index)
+        take = swaplib.leg_of(expect.get("take") if isinstance(expect.get("take"), dict) else {}, index)
+        named = listingslib.named_swap(bytes.fromhex(str(listing.get("payload") or "")))
+        if named is None or named.give != give or named.take != take:
+            raise swaplib.SwapError(
+                "that leg is not the trade you agreed to: it says "
+                + (f"{swaplib.describe_leg(swaplib.leg_json(named.give, index))} for "
+                   f"{swaplib.describe_leg(swaplib.leg_json(named.take, index))}"
+                   if named else "nothing")
+                + f", and you agreed to {swaplib.describe_leg(swaplib.leg_json(give, index))} "
+                f"for {swaplib.describe_leg(swaplib.leg_json(take, index))}")
+        with chain.rpc() as rpc:
+            problem = swaplib.holds(index, rpc, buyer, take)
+        if problem:
+            raise swaplib.SwapError(f"you cannot pay that any more: {problem}")
+
     @app.post("/account/fill")
     def account_fill(request: Request, payload: Any = Body(None)):
         """Show an account the transaction that completes a leg sent to it.
@@ -14249,8 +14430,9 @@ def create_app(state: AppState) -> FastAPI:
                 {"detail": f"this account has no {chain.label.lower()} "
                            f"address yet"}, status_code=400)
         try:
-            listing, unsigned, _ = _fill_terms(
-                account, chain, address, _leg_answered(said, chain, address))
+            answered = _leg_answered(said, chain, address)
+            _trade_expected(said, answered, chain, address)
+            listing, unsigned, _ = _fill_terms(account, chain, address, answered)
         except (fundinglib.FundingError, listingslib.ListingError,
                 swaplib.SwapError, AmountError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
@@ -14304,8 +14486,9 @@ def create_app(state: AppState) -> FastAPI:
                 status_code=409)
         try:
             try:
-                listing, unsigned, what = _fill_terms(
-                    account, chain, address, _leg_answered(said, chain, address))
+                answered = _leg_answered(said, chain, address)
+                _trade_expected(said, answered, chain, address)
+                listing, unsigned, what = _fill_terms(account, chain, address, answered)
             except (fundinglib.FundingError, listingslib.ListingError,
                     swaplib.SwapError, AmountError, ValueError) as exc:
                 return JSONResponse({"detail": str(exc)}, status_code=400)

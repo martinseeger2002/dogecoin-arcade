@@ -212,6 +212,10 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # caller's own token, and an account joins only as the address
                # its own browser signed for
                "/realtime/join", "/realtime/send", "/realtime/leave",
+               # a trade between two players in a game: the giver signs a leg for
+               # one named buyer (its own piece, its own key); the buyer finishes it
+               # with /account/fill like any answered leg
+               "/account/trade/leg", "/account/trade/leg/sign",
                "/admin/login",
                "/auth/password",
                "/account/address", "/account/announce", "/account/post",
