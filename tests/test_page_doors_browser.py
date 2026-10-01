@@ -442,3 +442,22 @@ def test_a_signed_out_stranger_gets_a_shelf_and_no_voice(browser, doors):
     _click(browser, frame, "i")
     who = _settled(browser, frame, "nid")
     assert "error" in who and "sign in first" in who["error"], who
+
+
+def test_a_page_in_full_screen_keeps_what_it_saved(browser, doors):
+    """2026-09-30, the operator: the arcade's storage was "not saving the game state
+    from one session to the next" -- in full screen, where no page answered the
+    storage door, so a game fell back to a sandbox that has no storage at all."""
+    def full():
+        browser.get(f"{doors['base']}/inscriptions/{doors['page']}/full")
+        frames = browser.find_elements(By.CSS_SELECTOR, "iframe.inscription-frame")
+        assert frames, "the full-screen page draws the frame"
+        return frames[0]
+
+    frame = full()
+    _click(browser, frame, "r")
+    saved = _settled(browser, frame, "mem")
+    assert not str(saved).startswith("error"), saved
+    frame = full()                                   # a new session of the page
+    before = _settled(browser, frame, "before")
+    assert before == saved, "what the page saved is there when it comes back"

@@ -14,6 +14,9 @@
 <iframe class="inscription-frame fullframe" src="{{ src }}"
         sandbox="allow-scripts allow-pointer-lock" referrerpolicy="no-referrer"
         title="{{ title }}"></iframe>
+<script>
+{% include "_page_doors.js.html" %}
+</script>
 {% else %}
 <div class="fullframe fullpic"><img src="/content/{{ txid }}" alt=""></div>
 {% endif %}

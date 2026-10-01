@@ -6663,9 +6663,14 @@ def create_app(state: AppState) -> FastAPI:
             kind, src = "picture", ""
         else:
             return RedirectResponse(f"/inscriptions/{row['txid']}/view", status_code=303)
+        # The same doors as the view page, for the same reader (storage, node,
+        # owner, swap): a game's saves are kept in full screen too.
+        viewer = "wallet"
+        if _account_view(request):
+            viewer = "account" if signed_in(request) is not None else "nobody"
         return render(request, "inscription_full.html", fullscreen=True, kind=kind, src=src,
-                      txid=row["txid"], title=str(title)[:80],
-                      back=f"/inscriptions/{row['txid']}/view")
+                      txid=row["txid"], title=str(title)[:80], row=row, chain=chain,
+                      viewer=viewer, back=f"/inscriptions/{row['txid']}/view")
 
     @app.get("/inscriptions/{key}/view", response_class=HTMLResponse)
     def inscription_view(request: Request, key: str):
