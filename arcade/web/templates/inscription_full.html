@@ -18,12 +18,30 @@
 <div class="fullframe fullpic"><img src="/content/{{ txid }}" alt=""></div>
 {% endif %}
 <style>
+/* In the page's own flow, at exactly the screen's size, and held at the top
+   (2026-09-30: in the race game, taps had to land BELOW its buttons to
+   count). A page in a frame that focuses a text box makes iPhone Safari zoom
+   and scroll the page AROUND it -- the game can only undo that inside its own
+   frame -- and a frame over a moved page takes its touches offset. So this
+   page does not zoom on focus (the viewport tag, base.html `fullscreen`) and
+   puts itself back at the top whenever anything moves it. */
 header, footer.version, .notice, #appbar, .unlockbar, #newposts { display: none !important; }
-html, body.fullscreen { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #000; }
+html, body.fullscreen { margin: 0; padding: 0; height: 100%; overflow: hidden;
+  overscroll-behavior: none; background: #000; }
 main { max-width: none !important; padding: 0 !important; margin: 0 !important; }
-.fullframe { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh;
-  border: 0; background: #000; display: block; }
+.fullframe { display: block; width: 100%; height: 100vh; height: 100dvh;
+  margin: 0; border: 0; background: #000; }
 .fullpic { display: grid; place-items: center; }
 .fullpic img { max-width: 100%; max-height: 100%; object-fit: contain; }
 </style>
+<script>
+(function () {
+  function top() { if (window.scrollX || window.scrollY) window.scrollTo(0, 0); }
+  window.addEventListener("load", top);
+  window.addEventListener("resize", top);
+  window.addEventListener("scroll", top, {passive: true});
+  window.addEventListener("orientationchange", function () { setTimeout(top, 300); });
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", top);
+})();
+</script>
 {% endblock %}
