@@ -65,7 +65,7 @@
     <div class="muted" style="font-size:.84rem">by {{ it.creator|who }}
       &middot; {{ when(it.time) if it.time else 'just now' }}
       {%- if g.version %} &middot; v{{ g.version }}{% endif %}
-      {%- if g.players %} &middot; {{ g.players }} players{% endif %}
+      {%- if g.players %} &middot; {{ g.players }}{% if 'player' not in g.players|lower %} {{ 'player' if g.players.strip() == '1' else 'players' }}{% endif %}{% endif %}
       {%- if it.tips %} &middot; tipped {{ it.tips }} time{{ '' if it.tips == 1 else 's' }}{% endif %}</div>
     {% if g.description %}<p style="margin:6px 0 0">{{ g.description }}</p>{% endif %}
 
@@ -139,7 +139,9 @@
   .gamecover{flex:0 0 132px;aspect-ratio:1;border-radius:12px;overflow:hidden;display:grid;
              place-items:center;background:linear-gradient(135deg,var(--accent,#c9a227),#6b4ea3);
              color:#fff;text-decoration:none}
-  .gamecover img{width:100%;height:100%;object-fit:cover;display:block}
+  /* contain, not cover: a wide cover with its title on it was cut to the middle of
+     the title ("CE CONDITI"). Letterboxed on the square, full width on a phone. */
+  .gamecover img{width:100%;height:100%;object-fit:contain;display:block;background:#111}
   .gamename{font-weight:700;font-size:1.05rem;padding:10px;text-align:center;line-height:1.2;
             word-break:break-word}
   .gamebody{flex:1;min-width:0}

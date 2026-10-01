@@ -192,3 +192,15 @@ def test_only_the_maker_is_offered_remove(client):
     page = app.get("/games").text
     assert f'action="/feed/{mine}/delete"' in page
     assert f'action="/feed/{theirs}/delete"' not in page
+
+
+def test_one_player_is_a_player_and_covers_are_never_cropped(client):
+    app, state = client
+    _inscribe(state, "d7" * 32, 80, MAKER, {"game": {"name": "Solo", "players": "1"}})
+    _inscribe(state, "d8" * 32, 81, MAKER, {"game": {"name": "Party", "players": "2-4"}})
+    _inscribe(state, "d9" * 32, 82, MAKER, {"game": {"name": "Said", "players": "1-2 players"}})
+    page = app.get("/games").text
+    assert "1 player<" in page.replace(" </", "<") or "&middot; 1 player" in page
+    assert "1 players" not in page and "2-4 players" in page
+    assert "players players" not in page
+    assert "object-fit:contain" in page
