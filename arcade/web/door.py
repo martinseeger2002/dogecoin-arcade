@@ -223,6 +223,8 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/escrow/open", "/account/escrow/deposit",
                "/account/escrow/reclaim", "/account/escrow/reclaim/sign",
                "/r/escrow/release",
+               # a game's state for its pieces: anybody asks, the game's judge decides
+               "/r/state/update",
                "/admin/login",
                "/auth/password",
                "/account/address", "/account/announce", "/account/post",

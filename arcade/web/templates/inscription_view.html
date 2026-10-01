@@ -202,6 +202,40 @@
   </div>
 </div>
 
+{# Each game's own state for this piece (arcade/gamestate.py): a condition, a
+   charge, a count -- written only by that game, and it travels with the piece,
+   so what a buyer sees here is what they get. Drawn from /r/state, labelled the
+   way the game asked; nothing at all when no game has written any. #}
+<div id="game-state" hidden>
+  <h2>In games</h2>
+  <div class="panel" id="game-state-list"></div>
+</div>
+<script>
+(function(){
+  fetch('/r/state/{{ row.txid }}', {cache: 'no-store'}).then(function(r){ return r.json(); })
+    .then(function(j){
+      var games = (j && j.games) || [];
+      if (!games.length) return;
+      var list = document.getElementById('game-state-list');
+      games.forEach(function(g){
+        var line = document.createElement('div');
+        line.style.margin = '4px 0';
+        var name = document.createElement('strong');
+        name.textContent = (g.name || g.family) + ': ';
+        line.append(name);
+        var said = [];
+        Object.keys(g.state || {}).forEach(function(k){
+          var label = (g.show && typeof g.show[k] === 'string') ? g.show[k] : k;
+          said.push(label + ' ' + JSON.stringify(g.state[k]).replace(/^"|"$/g, ''));
+        });
+        line.append(document.createTextNode(said.join(' · ')));
+        list.append(line);
+      });
+      document.getElementById('game-state').hidden = false;
+    }).catch(function(){});
+})();
+</script>
+
 {% if viewer == 'account' and mine_account %}
 {# Yours: the one "Sell" (2026-09-26) lives with the rest of your pieces. #}
 <div class="panel row" style="align-items:center;gap:10px">

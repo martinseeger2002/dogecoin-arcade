@@ -771,6 +771,31 @@ class AppState:
         self.bump_generation()
         return txid
 
+    def publish_game_state(self, family: str, updates: list) -> list[str]:
+        """Publish a game's state for its pieces (arcade/gamestate.py) from this
+        node's fee address -- the address a game names as its publisher -- one
+        announcement per batch. The chain proves the sender; readers count only
+        the publisher the game named."""
+        from .. import gamestate as gamestatelib
+        from ..messaging.sender import MessageSender, funded_address
+
+        chain = self.messaging
+        fee_address = self.derived_address
+        if not fee_address:
+            raise ValueError("this node has no fee address yet")
+        txids = []
+        with chain.rpc() as rpc:
+            sender = MessageSender(rpc, chain.params, public_only=True)
+            for batch in gamestatelib.batches(list(updates)):
+                address = funded_address(rpc, prefer=fee_address, mainnet=chain.is_mainnet)
+                if address != fee_address:
+                    raise ValueError(f"the publisher address {fee_address} has no coins to "
+                                     "publish with")
+                prepared = sender.prepare(address, gamestatelib.build(family, batch),
+                                          change_address=address)
+                txids.append(sender.broadcast(prepared))
+        return txids
+
     def announce_mesh(self, host: str, port: int, mesh_key: str) -> dict:
         """Say on the chain where this node's mesh can be reached: an IP, a port
         and its mesh key (arcade/mesh/announce.py), paid for by the fee address

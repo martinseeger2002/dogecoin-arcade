@@ -62,6 +62,9 @@ def main() -> None:
     # who `to` (optional, and only ever compared), and `why` when it says no.
     if "release" in verdict:
         said["release"] = verdict.get("release") is True
+    # A game-state judge's yes or no to the states a page asked for.
+    if "update" in verdict:
+        said["update"] = verdict.get("update") is True
     if isinstance(verdict.get("to"), str):
         said["to"] = verdict["to"][:100]
     if isinstance(verdict.get("why"), str):

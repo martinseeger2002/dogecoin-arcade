@@ -61,6 +61,8 @@ ORDER = (
      "Rooms where players meet in your game, and trades between them: arcade.realtime and arcade.swap.trade."),
     ("escrow.md", "Escrow: holding players' items for your game",
      "Put a player's NFTs and tokens at stake: your judge decides who gets them, the player can always take them back after the unlock time."),
+    ("game-state.md", "Game state: a game's own record on each NFT",
+     "Conditions, charges and counts that travel with a piece, written only by its game: arcade.state."),
     ("inscription-api.md", "The inscription API",
      "What an inscribed page may ask the wallet, and what it is refused."),
     ("bot-rpc.md", "The bot RPC",

@@ -17,7 +17,7 @@
     var CHAIN = {network: "{{chain.network}}",
                  version: {{chain.params.pubkeyhash_version}}};
     var doors = {storage: '/storage/', node: '/node/', swap: '/swap/', owner: '/owner/',
-                 realtime: '/realtime/', escrow: '/r/escrow/'};
+                 realtime: '/realtime/', escrow: '/r/escrow/', state: '/r/state/'};
 
     // Realtime rooms (arcade/web/realtime.py, templates/realtime.js): this page
     // joins on the frame's behalf, holds the token and the stream, and passes
@@ -441,6 +441,17 @@
       }
       if (m.arcade === 'realtime') { realtimeDoor(m, answer, e.source); return; }
       if (m.arcade === 'escrow') { escrowDoor(m, answer); return; }
+      if (m.arcade === 'state' && m.op === 'update') {
+        // Game state (arcade.state): anybody asks, the game's judge decides, so
+        // no key is involved -- only the game named by the frame, unless the
+        // page names its own.
+        fetch('/r/state/update', {method: 'POST', headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({game: m.game || here, items: m.items || [], replay: m.replay})})
+          .then(function(r){ return r.json(); })
+          .then(function(j){ answer(j.ok ? j : {ok: false, error: j.error || 'refused'}); })
+          .catch(function(){ answer({ok: false, error: 'the node did not answer'}); });
+        return;
+      }
       if (m.arcade === 'swap' && ['trade', 'answer', 'cancel', 'items'].indexOf(m.op) >= 0) {
         tradeDoor(m, answer, e.source); return;
       }

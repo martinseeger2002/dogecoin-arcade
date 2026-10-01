@@ -53,6 +53,8 @@ TYPE_INSTANCE = 9     # an arcade saying who runs it: its domain and revision,
 TYPE_MESH = 10        # a mesh node saying where it can be reached: IP, port and
                       # mesh key, paid for by its fee address (mesh/announce.py).
                       # Public. Older nodes do not know the type and skip it.
+TYPE_GAMESTATE = 11   # a game's own state for its pieces, published by the
+                      # game's publisher address (gamestate.py). Public.
 
 # Cleartext header lengths. Both message types carry `clen`, the exact number of
 # ciphertext bytes in this payload.
@@ -111,7 +113,7 @@ class Header:
                     + self.countdown.to_bytes(2, "big")
                     + self.clen.to_bytes(2, "big"))
         if self.type in (TYPE_KEY_ANNOUNCE, TYPE_GROUP, TYPE_FEED_ACT,
-                         TYPE_RELEASE, TYPE_INSTANCE, TYPE_MESH):
+                         TYPE_RELEASE, TYPE_INSTANCE, TYPE_MESH, TYPE_GAMESTATE):
             # Neither carries `clen`. It exists to undo Class B's NUL padding
             # before opening a sealed box, and nothing here is sealed: an
             # announcement is fixed-length and a group post is plain text, where
@@ -163,7 +165,7 @@ class Header:
         """Length of the full cleartext header on chain."""
         if self.type == TYPE_KEY_ANNOUNCE:
             return KEY_ANNOUNCE_HEADER_LEN
-        if self.type in (TYPE_GROUP, TYPE_FEED_ACT, TYPE_RELEASE, TYPE_INSTANCE, TYPE_MESH):
+        if self.type in (TYPE_GROUP, TYPE_FEED_ACT, TYPE_RELEASE, TYPE_INSTANCE, TYPE_MESH, TYPE_GAMESTATE):
             # Public and unsealed, so neither carries `clen`: it exists to
             # undo Class B's padding before a sealed box will open.
             return GROUP_HEADER_LEN
@@ -210,7 +212,7 @@ class Header:
                 clen=int.from_bytes(payload[16:18], "big"),
             )
         if msg_type not in (TYPE_KEY_ANNOUNCE, TYPE_GROUP, TYPE_FEED_ACT,
-                            TYPE_RELEASE, TYPE_INSTANCE, TYPE_MESH):
+                            TYPE_RELEASE, TYPE_INSTANCE, TYPE_MESH, TYPE_GAMESTATE):
             raise EnvelopeError(f"unknown message type {msg_type}")
         return cls(type=msg_type)
 

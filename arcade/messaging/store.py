@@ -84,6 +84,24 @@ CREATE TABLE IF NOT EXISTS mesh_announcement (
 );
 CREATE INDEX IF NOT EXISTS mesh_announcement_key
     ON mesh_announcement(network, mesh_key, height);
+-- A game's state for its pieces (arcade/gamestate.py): one row per piece per
+-- record, with whoever sent it. Which sender counts is decided when it is
+-- read -- the game's publisher, named in the game's own JSON -- so nothing
+-- written here has to be undone when a game names a new one.
+CREATE TABLE IF NOT EXISTS game_state (
+    txid        TEXT NOT NULL,
+    network     TEXT NOT NULL,
+    sender      TEXT NOT NULL,
+    family      TEXT NOT NULL,
+    piece       TEXT NOT NULL,
+    seq         INTEGER NOT NULL,
+    state       TEXT NOT NULL,
+    height      INTEGER NOT NULL,
+    position    INTEGER NOT NULL,
+    seen_at     INTEGER NOT NULL,
+    PRIMARY KEY (txid, piece)
+);
+CREATE INDEX IF NOT EXISTS game_state_piece ON game_state(network, piece, family);
 -- The inscription somebody uses as their picture, as announced. Honoured only
 -- while the chain says they still hold it (D-138), so this is what they SAID,
 -- never what is drawn.
@@ -598,6 +616,35 @@ class MessageStore:
             (txid, network, address, host, int(port), mesh_key, int(height),
              int(block_time), int(_time.time())))
         self.conn.commit()
+
+    def add_game_state(self, txid: str, network: str, sender: str, family: str,
+                       updates: list, height: int, position: int) -> None:
+        """One record of a game's state for its pieces. A pool row (height 0) is
+        promoted in place when its block arrives."""
+        import json as _json
+        import time as _time
+        for piece, seq, state in updates:
+            self.conn.execute(
+                "INSERT INTO game_state (txid, network, sender, family, piece, seq, state,"
+                " height, position, seen_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
+                " ON CONFLICT(txid, piece) DO UPDATE SET"
+                "  height = CASE WHEN excluded.height > 0 THEN excluded.height"
+                "                ELSE game_state.height END,"
+                "  position = CASE WHEN excluded.height > 0 THEN excluded.position"
+                "                ELSE game_state.position END",
+                (txid, network, sender, family, piece, int(seq),
+                 _json.dumps(state, separators=(",", ":"), sort_keys=True),
+                 int(height), int(position), int(_time.time())))
+        self.conn.commit()
+
+    def game_state_rows(self, network: str, piece: str, family: str = "") -> list[sqlite3.Row]:
+        """Every record naming a piece (in one family, if given), any sender."""
+        if family:
+            return self.conn.execute(
+                "SELECT * FROM game_state WHERE network=? AND piece=? AND family=?",
+                (network, piece, family)).fetchall()
+        return self.conn.execute("SELECT * FROM game_state WHERE network=? AND piece=?",
+                                 (network, piece)).fetchall()
 
     def mesh_peers(self, network: str, since: int = 0) -> list[sqlite3.Row]:
         """The latest announcement per mesh key seen since `since` (unix time),

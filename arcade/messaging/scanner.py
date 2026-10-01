@@ -27,6 +27,7 @@ from ..tx import TxError, extract
 from .. import release as releaselib
 from .. import instance as instancelib
 from ..mesh import announce as meshannounce
+from .. import gamestate as gamestatelib
 from . import content, feed, group
 from ..script import b58check_encode
 from .envelope import (
@@ -39,6 +40,7 @@ from .envelope import (
     TYPE_RELEASE,
     TYPE_INSTANCE,
     TYPE_MESH,
+    TYPE_GAMESTATE,
     TYPE_SINGLE,
     is_message_payload,
     open_message,
@@ -383,6 +385,17 @@ class Scanner:
                     self.store.add_mesh_announcement(
                         atx.txid, self.params.name, atx.sender, said["host"],
                         said["port"], said["key"], height, block_time)
+                    result.announcements += 1
+                continue
+
+            # A game's state for its pieces (gamestate.py): public; whose record
+            # counts is decided when it is read, by the game's own JSON.
+            if len(body) >= 6 and body[5] == TYPE_GAMESTATE:
+                said = gamestatelib.parse(body)
+                if said and atx.sender:
+                    self.store.add_game_state(atx.txid, self.params.name, atx.sender,
+                                              said["family"], said["updates"], height,
+                                              position)
                     result.announcements += 1
                 continue
 

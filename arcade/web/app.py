@@ -44,6 +44,7 @@ from ..ledger import COIN, AmountError, format_amount, parse_amount
 from ..config import NETWORKS, MainnetRefused, WrongChain
 from .. import inscribe as inscribelib
 from .. import games as gameslib
+from .. import gamestate as gamestatelib
 from .. import bids as bidslib
 from .. import standing as standinglib
 from .. import collections as collectionlib
@@ -13394,6 +13395,167 @@ def create_app(state: AppState) -> FastAPI:
                             "inscriptions": held["inscriptions"], "tokens": held["tokens"]})
         return JSONResponse({"escrows": out, "chain": context.network})
 
+    # --- game state on pieces (arcade/gamestate.py) ------------------------------------
+    #
+    # A game names, in its JSON, who publishes its state and which judge decides
+    # an update: {"game": {..., "family": "x"}, "state": {"publisher": <address>,
+    # "judge": <inscription>, "params": {...}, "show": {"c": "Condition"},
+    # "node": <where the publisher is, if not here>}}. A family belongs to the
+    # creator who declared it first; their newest declaration is the one in force.
+
+    _state_cache: dict = {}
+
+    def _state_families(chain) -> dict:
+        """family -> its terms in force, from every game that declares state."""
+        index = state.token_index(chain)
+        height = index.indexed_height() or 0
+        held = _state_cache.get(chain.network)
+        if held and held[0] == height:
+            return held[1]
+        try:
+            with contextlib.closing(index.open()) as db:
+                rows = db.conn.execute(
+                    "SELECT txid, creator, json FROM inscription WHERE content_type LIKE "
+                    "'text/html%' AND json LIKE '%\"state\"%' ORDER BY block_height, position"
+                ).fetchall()
+        except Exception:
+            rows = []
+        owners: dict = {}
+        found: dict = {}
+        for r in rows:
+            game = gameslib.parse(r["json"])
+            try:
+                terms = (json.loads(r["json"] or "{}") or {}).get("state")
+            except ValueError:
+                terms = None
+            if not game or not isinstance(terms, dict):
+                continue
+            family = game.get("family") or r["txid"]
+            owners.setdefault(family, r["creator"])
+            if owners[family] != r["creator"]:
+                continue                       # somebody else's family name
+            publisher = str(terms.get("publisher") or "")
+            if not publisher or _check_address(publisher, mainnet=False) and \
+                    _check_address(publisher, mainnet=True):
+                continue
+            found[family] = {"family": family, "game": r["txid"], "name": game["name"],
+                             "publisher": publisher, "judge": str(terms.get("judge") or ""),
+                             "params": terms.get("params") if isinstance(terms.get("params"), dict) else {},
+                             "show": terms.get("show") if isinstance(terms.get("show"), dict) else {},
+                             "node": str(terms.get("node") or "")}
+        _state_cache[chain.network] = (height, found)
+        return found
+
+    def _state_of(piece: str, family: str = "") -> list[dict]:
+        """A piece's state in each game family that has written one."""
+        chain = _token_chain()[0]
+        families = _state_families(chain)
+        try:
+            with state.store() as store:
+                rows = [dict(r) for r in store.game_state_rows(state.messaging.network,
+                                                               piece, family)]
+        except Exception:
+            rows = []
+        out = []
+        for fam in sorted({r["family"] for r in rows}):
+            terms = families.get(fam)
+            if terms is None:
+                continue
+            now = gamestatelib.current([r for r in rows if r["family"] == fam], terms["publisher"])
+            if now:
+                out.append({"family": fam, "game": terms["game"], "name": terms["name"],
+                            "show": terms["show"], **now})
+        return out
+
+    @app.get("/r/state/{piece}")
+    def r_state(piece: str):
+        """Every game's state for one piece: what the marketplace shows."""
+        piece = piece.strip().lower()
+        if not gamestatelib.TXID.match(piece):
+            return contentlib._json({"error": "a piece is named by its 64-character txid"}, status=400)
+        return contentlib._json({"piece": piece, "games": _state_of(piece)})
+
+    @app.get("/r/state/{family}/{piece}")
+    def r_state_one(family: str, piece: str):
+        """One game family's state for one piece, or 404 if it has written none."""
+        got = _state_of(piece.strip().lower(), family)
+        if not got:
+            return contentlib._missing("that game has written no state for that piece")
+        return contentlib._json(got[0])
+
+    _state_seq: dict = {}
+
+    @app.post("/r/state/update")
+    def r_state_update(payload: Any = Body(None)):
+        """Ask a game to change its state for some pieces. Anybody may ask; the
+        game's judge decides; the game's publisher (this node, or the one the
+        game names) publishes, one announcement per batch."""
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _token_chain()[0]
+            row = state.token_index(chain).inscription(contentlib._key(str(said.get("game") or "")))
+            game = gameslib.parse(row["json"]) if row else None
+            if not game:
+                raise gamestatelib.StateError("there is no such game")
+            family = game.get("family") or row["txid"]
+            # The family's terms in force: its owner's newest declaration, whichever
+            # of its versions the page happens to be.
+            terms = _state_families(chain).get(family)
+            if terms is None:
+                raise gamestatelib.StateError("that game keeps no state")
+            if terms["publisher"] != (state.derived_address or ""):
+                if not terms["node"]:
+                    raise refereelib.RefereeError("that game's publisher is another node that "
+                                                  "did not say where it is")
+                try:
+                    answer = requests.post(terms["node"] + "/r/state/update", timeout=60, json=said)
+                    return contentlib._json(answer.json(), status=answer.status_code)
+                except Exception:                      # noqa: BLE001
+                    raise refereelib.RefereeError("the game's publisher did not answer; try "
+                                                  "again later") from None
+            items = [i for i in (said.get("items") or []) if isinstance(i, dict)][:200]
+            if not items:
+                raise gamestatelib.StateError("name the pieces and their new state")
+            now = {}
+            for i in items:
+                piece = str(i.get("piece") or "").lower()
+                gamestatelib.check(family, [[piece, 1, i.get("state")]])
+                held = _state_of(piece, family)
+                now[piece] = held[0]["state"] if held else None
+            found = state.token_index(chain).inscription_content(terms["judge"])
+            if found is None:
+                raise refereelib.RefereeError("this node does not hold the game's judge")
+            verdict = _referee.judge(found[1].decode("utf-8", "replace"), family,
+                                     said.get("replay"),
+                                     {**terms["params"], "family": family,
+                                      "items": items, "current": now})
+            if verdict.get("update") is not True:
+                raise refereelib.RefereeError(str(verdict.get("why") or "the game's judge said no"))
+            updates = []
+            with state.store() as store:
+                for i in items:
+                    piece = str(i["piece"]).lower()
+                    rows = [dict(r) for r in store.game_state_rows(state.messaging.network,
+                                                                   piece, family)]
+                    known = max([int(r["seq"]) for r in rows
+                                 if r["sender"] == terms["publisher"]] or [0])
+                    seq = max(known, _state_seq.get((family, piece), 0)) + 1
+                    _state_seq[(family, piece)] = seq
+                    updates.append([piece, seq, i["state"]])
+            txids = state.publish_game_state(family, updates)
+        except (gamestatelib.StateError, refereelib.RefereeError, ValueError, RpcError) as exc:
+            return contentlib._json({"ok": False, "error": str(exc)}, status=400)
+        state.bump_generation()
+        return contentlib._json({"ok": True, "txids": txids, "verdict": verdict,
+                                 "updates": updates})
+
+    @app.get("/r/state.js")
+    def r_state_js():
+        """The page's half of game state: `arcade.state` (templates/state.js)."""
+        return Response((TEMPLATE_DIR / "state.js").read_text(),
+                        media_type="application/javascript",
+                        headers={**contentlib.CORS, "Cache-Control": "public, max-age=3600"})
+
     @app.get("/r/escrow.js")
     def r_escrow_js():
         """The page's half of the escrow: `arcade.escrow` (templates/escrow.js)."""
@@ -13406,6 +13568,8 @@ def create_app(state: AppState) -> FastAPI:
         """This node as a referee: its key, and the engine and caps its judges run under."""
         return contentlib._json({
             "pubkey": _referee.pubkey.hex(), "engine": refereelib.ENGINE,
+            # A game's state publisher (gamestate.py), when this node is it.
+            "state_publisher": state.derived_address or "",
             "cpu_seconds": refereelib.CPU_SECONDS, "memory_bytes": refereelib.MEMORY_BYTES,
             "inputs_bytes": refereelib.INPUTS_BYTES, "judge_bytes": refereelib.JUDGE_BYTES,
             "seed_seconds": refereelib.SEED_SECONDS,
