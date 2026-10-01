@@ -43,6 +43,7 @@ from .. import backup, media, tokens as tokenlib, wallet as walletlib
 from ..ledger import COIN, AmountError, format_amount, parse_amount
 from ..config import NETWORKS, MainnetRefused, WrongChain
 from .. import inscribe as inscribelib
+from .. import games as gameslib
 from .. import bids as bidslib
 from .. import standing as standinglib
 from .. import collections as collectionlib
@@ -375,6 +376,8 @@ OTHERS_MOST = 5
 
 NAV = [
     ("/",             "Overview",     None,        True),
+    # Every inscribed game (arcade/games.py), where an account's sits.
+    ("/games",        "Games",        "mainnet",   True),
     ("/messages",     "Messages",     "testnet",   True),
     ("/feed",         "Feed",         "testnet",   True),
     ("/contacts",     "Address book", None,        True),
@@ -399,6 +402,9 @@ NAV = [
 #: page's own footer already.
 ACCOUNT_NAV = [
     ("/me",              "Your arcade",  None,        True),
+    # Every inscribed game (arcade/games.py), right after the account's own
+    # page (2026-10-01: "between your arcade and Messages").
+    ("/games",           "Games",        "mainnet",   True),
     ("/me/messages",     "Messages",     "testnet",   True),
     # 2026-09-25: Messages, Notifications, Feed, then the address book.
     ("/me/notifications", "Notifications", None,      True),
@@ -3183,6 +3189,22 @@ def create_app(state: AppState) -> FastAPI:
                 return {"txid": txid, "author": row["author"],
                         "text": row["text"], "block_time": 0,
                         "what": feedlib.NAMES.get(row["kind"], "comment")}
+        # A game on the Games tab is tipped like a post (2026-09-30: "the same
+        # ability for people to comment like or tip"), and its author is whoever
+        # inscribed it. A tip is paid on this chain, so the author is the
+        # maker's address HERE: the inscription's own creator when the games
+        # live on this chain (testnet, for now), else the address the maker's
+        # own announcement binds to it (D-032). No binding, no author: an
+        # address nobody published is an address nobody asked to be paid at.
+        game = _game_by_txid(txid)
+        if game is not None:
+            author = game["creator"] if game["chain"].network == network else ""
+            if not author:
+                with state.store() as store:
+                    author = store.address_for_other(game["creator"])
+            if author:
+                return {"txid": txid, "author": author, "text": game["game"]["name"],
+                        "block_time": 0, "what": "game"}
         return None
 
     def _profile_of(address: str, waiting: Any = _POOL) -> dict[str, Any]:
@@ -6943,7 +6965,11 @@ def create_app(state: AppState) -> FastAPI:
         chain, index = _token_chain()
         launch = next((i for i in index.launches(limit=1000) if i.get("txid") == txid), None)
         if launch is None:
-            raise HTTPException(404, "no such launch")
+            game = _game_by_txid(txid)
+            if game is None:
+                raise HTTPException(404, "no such launch")
+            launch = {"kind": "game", "name": game["game"]["name"],
+                      "creator": game["creator"], "id": txid}
         mine = _tag_of_whoever_is_asking(request)
         waiting = _pending_feed(state.messaging.network)
         pool = [dict(a, height=a.get("height") or 0) for a in (waiting.acts or [])]
@@ -16812,6 +16838,99 @@ def create_app(state: AppState) -> FastAPI:
             item["comment_rows"] = got["comments"][-3:]
             item["comments"] = len(got["comments"])
         return launchlist.rank(items, sort, int(time.time()))
+
+    # --- games ----------------------------------------------------------------
+    #
+    # Every inscribed page whose JSON says {"game": ...} (arcade/games.py),
+    # one card per game, ranked the way the mintpads are: Popular is the
+    # feed's likes, dislikes and comments aimed at the game's txid
+    # (launchlist), Latest is newest block first. Nothing is registered and
+    # nothing new goes on the chain to list one.
+
+    def _game_rows(index, limit: int = 500) -> list[dict]:
+        try:
+            with contextlib.closing(index.open()) as db:
+                rows = db.conn.execute(
+                    "SELECT i.txid, i.number, i.creator, i.json, i.block_height, "
+                    "COALESCE(b.time, 0) AS time FROM inscription i "
+                    "LEFT JOIN block b ON b.height = i.block_height "
+                    "WHERE i.content_type LIKE 'text/html%' AND i.json LIKE '%\"game\"%' "
+                    "ORDER BY i.block_height DESC, i.position DESC LIMIT ?",
+                    (int(limit),)).fetchall()
+        except Exception:
+            return []
+        found = []
+        for r in rows:
+            game = gameslib.parse(r["json"])
+            if game:
+                found.append({**dict(r), "game": game})
+        return gameslib.newest_per_game(found)
+
+    def _game_by_txid(txid: str) -> dict | None:
+        """The game an inscription on the Games tab's chain is, or None."""
+        if not re.fullmatch(r"[0-9a-f]{64}", str(txid or "")):
+            return None
+        chain, index = _token_chain()
+        try:
+            row = index.inscription(txid)
+        except Exception:
+            return None
+        if not row or not gameslib.is_page(row.get("content_type")):
+            return None
+        game = gameslib.parse(row.get("json"))
+        return {**row, "game": game, "chain": chain} if game else None
+
+    def _games_ranked(request: Request, sort: str) -> list[dict]:
+        from .. import launchlist
+        chain, index = _token_chain()
+        items = [{"txid": r["txid"], "number": r["number"], "creator": r["creator"],
+                  "name": r["game"]["name"], "game": r["game"],
+                  "time": int(r["time"] or 0), "height": r["block_height"],
+                  "trades": 0, "volume": 0.0} for r in _game_rows(index)]
+        acts: list = []
+        try:
+            with state.store() as store:
+                acts = [dict(a) for a in store.feed_acts_on(
+                    state.messaging.network, [i["txid"] for i in items])]
+        except Exception:
+            acts = []
+        waiting = _pending_feed(state.messaging.network)
+        known, targets = {a["txid"] for a in acts}, {i["txid"] for i in items}
+        acts += [dict(a, height=a.get("height") or 0) for a in (waiting.acts or [])
+                 if a.get("target") in targets and a["txid"] not in known]
+        said = launchlist.tally(acts)
+        tips: dict[str, int] = {}
+        for a in acts:
+            if int(a["kind"]) in (feedlib.TIP, feedlib.TIP_TOKEN):
+                tips[a["target"]] = tips.get(a["target"], 0) + 1
+        me = _tag_of_whoever_is_asking(request).get("address") or ""
+        for item in items:
+            got = said.get(item["txid"], {"likes": set(), "dislikes": set(), "comments": []})
+            item["likes"], item["dislikes"] = len(got["likes"]), len(got["dislikes"])
+            item["liked"], item["disliked"] = me in got["likes"], me in got["dislikes"]
+            item["comment_rows"] = got["comments"][-3:]
+            item["comments"] = len(got["comments"])
+            item["tips"] = tips.get(item["txid"], 0)
+        return launchlist.rank(items, sort, int(time.time()))
+
+    @app.get("/games", response_class=HTMLResponse)
+    def games_page(request: Request, sort: str = "popular"):
+        """Every game on the chain, Popular or Latest, with the feed's buttons."""
+        chain, _index = _token_chain()
+        sort = "new" if sort == "new" else "popular"
+        games = _games_ranked(request, sort)
+        mine = _tag_of_whoever_is_asking(request) or {}
+        return render(request, "games.html", chain=chain, games=games, sort=sort,
+                      viewer="account" if _account_view(request) else "wallet",
+                      mine_tag=mine.get("tag") or "", when=_when)
+
+    @app.get("/games/{txid}", response_class=HTMLResponse)
+    def game_thread(request: Request, txid: str):
+        """One game's whole discussion: the launch thread, aimed at the game."""
+        txid = (txid or "").lower()
+        if _game_by_txid(txid) is None:
+            raise HTTPException(404, "no such game")
+        return launch_thread(request, txid)
 
     def _mintpad_inscription(chain, creator: str, name: str) -> str:
         """The newest inscription that is this collection's mintpad, by its JSON,

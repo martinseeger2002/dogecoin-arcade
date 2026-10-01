@@ -1,14 +1,14 @@
 {% extends "base.html" %}
-{% block title %}{{ wall_text(launch.name, 'A launch') }} · Launches · DogecoinArcade{% endblock %}
+{% block title %}{{ wall_text(launch.name, 'A launch') }} · {{ 'Games' if launch.kind == 'game' else 'Launches' }} · DogecoinArcade{% endblock %}
 {% block body %}
 {# One launch's whole discussion (2026-09-27): every comment, and the
    replies to each, the way the feed shows a thread. Anyone can read it; an
    account signs its own comments, replies and likes in its tab. #}
-<p class="back-link"><a href="/launches">&larr; all launches</a></p>
+<p class="back-link">{% if launch.kind == 'game' %}<a href="/games">&larr; all games</a>{% else %}<a href="/launches">&larr; all launches</a>{% endif %}</p>
 <h1 style="margin-bottom:4px">{{ wall(launch.name, 'name') }}</h1>
 <p class="sub" style="margin-top:0">
-  {{ 'A token' if launch.kind == 'token' else 'A collection' }} by {{ launch.creator|who }}
-  &middot; <a href="{% if launch.kind == 'token' %}/tokens/{{ launch.id }}{% else %}/exchange/collection/{{ launch.creator }}/{{ launch.name|urlencode }}{% endif %}">open it</a>
+  {{ 'A token' if launch.kind == 'token' else ('A game' if launch.kind == 'game' else 'A collection') }} by {{ launch.creator|who }}
+  &middot; <a href="{% if launch.kind == 'token' %}/tokens/{{ launch.id }}{% elif launch.kind == 'game' %}/inscriptions/{{ launch.id }}/full{% else %}/exchange/collection/{{ launch.creator }}/{{ launch.name|urlencode }}{% endif %}">{{ 'play it' if launch.kind == 'game' else 'open it' }}</a>
   &middot; {{ count }} comment{{ '' if count == 1 else 's' }}</p>
 
 <p class="msg" id="launch-news" hidden></p>
@@ -21,7 +21,7 @@
   <button class="small" type="submit">Comment</button>
 </form>
 {% elif not mine.tag %}
-<p class="muted"><a href="/join?next=/launches/{{ root }}">Join or sign in</a> to comment.</p>
+<p class="muted"><a href="/join?next=/{{ 'games' if launch.kind == 'game' else 'launches' }}/{{ root }}">Join or sign in</a> to comment.</p>
 {% endif %}
 
 {% macro thread(parent, depth) %}

@@ -849,6 +849,16 @@ class MessageStore:
             "ORDER BY stated DESC, height DESC, rowid DESC LIMIT 1", (address,),
         ).fetchone()
 
+    def address_for_other(self, other: str) -> str:
+        """The messaging-chain address an announcement binds to `other`, an
+        address on the other chain (D-032), or ''. The newest stated binding."""
+        if not other:
+            return ""
+        row = self.conn.execute(
+            "SELECT address FROM key_announcement WHERE other_address = ? "
+            "ORDER BY stated DESC, height DESC, rowid DESC LIMIT 1", (other,)).fetchone()
+        return row["address"] if row else ""
+
     def confirmed_key_for(self, address: str) -> sqlite3.Row | None:
         """The key for an address, but only once a block carries the announcement.
 

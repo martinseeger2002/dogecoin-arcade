@@ -63,6 +63,7 @@ PUBLIC_PAGES = frozenset({
     "/create",
     "/inscriptions",
     "/exchange",
+    "/games",                 # every inscribed game (arcade/games.py)
     "/launch",
     "/launches",
     "/mintpad/new",
@@ -147,6 +148,8 @@ PUBLIC_TREES = (
 #: Nothing is disclosed on the page itself: `inscription_view` reads this
 #: node's wallet only when it is the operator's own copy of the page.
 PUBLIC_SHAPES = (
+    # One game's discussion: read-only, like the launch thread it is.
+    re.compile(r"^/games/[0-9a-f]{64}$"),
     re.compile(r"^/inscriptions/(?:[0-9a-fA-F]{64}|[0-9]{1,12})/view$"),
     # The same piece filling the screen (2026-09-29): read-only, and the
     # frame in it is the same sandbox the piece page uses.

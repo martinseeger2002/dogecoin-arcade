@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+{% block title %}Games · DogecoinArcade{% endblock %}
+{% block body %}
+{# Every inscribed game on the chain (arcade/games.py): a page whose JSON says
+   {"game": ...}. Ranked like the mintpads -- Popular is what people said about
+   it, Latest is newest first -- with the feed's own buttons aimed at the game's
+   txid, so a like, a comment or a tip here is the same transaction it is on
+   the feed. An account's tab signs its own (script below). #}
+{% set acts = viewer == 'wallet' or (mine_tag) %}
+<h1 style="margin-bottom:4px">Games</h1>
+<p class="sub" style="margin-top:0">Games people have inscribed on {{ chain.label|lower }}.
+  Press Play to open one full screen.</p>
+
+<div class="row" style="gap:8px;margin:0 0 12px;flex-wrap:wrap;align-items:center">
+  <a class="btn small {{ 'on' if sort != 'new' else 'ghost' }}" href="/games">Popular</a>
+  <a class="btn small {{ 'on' if sort == 'new' else 'ghost' }}" href="/games?sort=new">Latest</a>
+  <button class="btn small ghost" style="margin-left:auto" type="button"
+          onclick="var p=document.getElementById('howto');p.hidden=!p.hidden">List your game</button>
+</div>
+
+<div class="panel" id="howto" hidden>
+  <p style="margin-top:0"><strong>Any HTML page you inscribe can be a game here.</strong>
+    Put a <code>game</code> object in the inscription's JSON and it appears on this tab on
+    every arcade, ranked by what people say about it. Inscribe a new version with the
+    same name to replace the card.</p>
+<pre style="white-space:pre-wrap;font-size:.82rem">{
+  "game": {
+    "name": "My Game",
+    "description": "One line about it.",
+    "version": "1.0",
+    "players": "1-8",
+    "multiplayer": true,
+    "family": "my-game",
+    "cover": "&lt;txid of a picture you inscribed&gt;",
+    "genre": "puzzle"
+  }
+}</pre>
+  <p class="muted" style="font-size:.86rem;margin-bottom:0">Only <code>name</code> is
+    required. A multiplayer game uses <code>arcade.realtime</code> to meet other players;
+    the full guide is in the <a href="/docs">docs</a>.</p>
+</div>
+
+<p class="msg" id="games-news" hidden></p>
+
+{% if not games %}
+<div class="panel empty"><p>No games are on {{ chain.label|lower }} yet.</p>
+  <p class="muted" style="font-size:.86rem">Be the first: inscribe an HTML page with a
+    <code>game</code> in its JSON.</p></div>
+{% endif %}
+
+{% for it in games %}
+{% set g = it.game %}
+<div class="panel gamecard">
+  <a class="gamecover" href="/inscriptions/{{ it.txid }}/full" title="Play {{ g.name }}">
+    {% if g.cover %}
+    <img src="/content/{{ g.cover }}" alt="" loading="lazy">
+    {% else %}
+    <span class="gamename">{{ wall(g.name, 'name') }}</span>
+    {% endif %}
+  </a>
+  <div class="gamebody">
+    <div style="margin:0 0 4px"><strong style="font-size:1.05rem">{{ wall(g.name, 'name') }}</strong>
+      {% if g.multiplayer %}<span class="pill">multiplayer</span>{% endif %}
+      {% if g.genre %}<span class="pill">{{ g.genre }}</span>{% endif %}</div>
+    <div class="muted" style="font-size:.84rem">by {{ it.creator|who }}
+      &middot; {{ when(it.time) if it.time else 'just now' }}
+      {%- if g.version %} &middot; v{{ g.version }}{% endif %}
+      {%- if g.players %} &middot; {{ g.players }} players{% endif %}
+      {%- if it.tips %} &middot; tipped {{ it.tips }} time{{ '' if it.tips == 1 else 's' }}{% endif %}</div>
+    {% if g.description %}<p style="margin:6px 0 0">{{ g.description }}</p>{% endif %}
+
+    <div class="row lacts" style="gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
+      <a class="btn small" href="/inscriptions/{{ it.txid }}/full">Play</a>
+      {% if acts %}
+      <form method="post" action="/feed/{{ it.txid }}/{{ 'unlike' if it.liked else 'like' }}" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <input type="hidden" name="back" value="/games{{ '?sort=new' if sort == 'new' else '' }}">
+        <button class="small ghost likebtn{{ ' liked' if it.liked }}" type="submit" data-count="{{ it.likes }}">{{ '♥' if it.liked else '♡' }} {{ it.likes }}</button></form>
+      <form method="post" action="/feed/{{ it.txid }}/{{ 'undislike' if it.disliked else 'dislike' }}" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <input type="hidden" name="back" value="/games{{ '?sort=new' if sort == 'new' else '' }}">
+        <button class="small ghost dislikebtn{{ ' disliked' if it.disliked }}" type="submit" data-count="{{ it.dislikes }}">&#128078; {{ it.dislikes }}</button></form>
+      <button class="small ghost" type="button" onclick="var f=document.getElementById('c-{{ it.txid }}');f.hidden=!f.hidden">&#128172; {{ it.comments }}</button>
+      {% if viewer == 'wallet' %}
+      <a class="btn small ghost" href="/feed/{{ it.txid }}/tip">Tip</a>
+      {% else %}
+      <button class="small ghost" type="button" data-tip-for="{{ it.txid }}"
+              onclick="var f=document.getElementById('t-{{ it.txid }}');f.hidden=!f.hidden">Tip</button>
+      {% endif %}
+      {% else %}
+      <span class="pill">&#9829; {{ it.likes }}</span>
+      <span class="pill">&#128078; {{ it.dislikes }}</span>
+      <span class="pill">&#128172; {{ it.comments }}</span>
+      <a class="muted" style="font-size:.84rem" href="/join?next=/games">Sign in to react or tip</a>
+      {% endif %}
+      <a class="small" style="margin-left:auto" href="/inscriptions/{{ it.txid }}/view">Details</a>
+    </div>
+
+    {% for c in it.comment_rows %}
+    <div class="muted" style="font-size:.86rem;margin-top:6px"><strong>{{ c.author|who }}</strong> {{ c.text }}</div>
+    {% endfor %}
+    <a class="small" style="display:inline-block;margin-top:6px" href="/games/{{ it.txid }}">
+      {%- if it.comments %}All {{ it.comments }} comment{{ '' if it.comments == 1 else 's' }} and replies &rarr;
+      {%- else %}Discuss it &rarr;{% endif %}</a>
+
+    {% if acts %}
+    <form method="post" action="/feed/{{ it.txid }}/reply" id="c-{{ it.txid }}" hidden
+          class="row" style="gap:8px;margin-top:8px">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="back" value="/games{{ '?sort=new' if sort == 'new' else '' }}">
+      <div style="flex:1"><input autocomplete="off" name="text" maxlength="200" placeholder="say something about it"></div>
+      <button class="small" type="submit">Comment</button>
+    </form>
+    {% if viewer != 'wallet' %}
+    <form method="post" action="/feed/{{ it.txid }}/tip" id="t-{{ it.txid }}" hidden
+          class="row" style="gap:8px;margin-top:8px" data-author-name="{{ it.creator|who_text }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <div style="flex:1"><input autocomplete="off" name="amount" inputmode="decimal"
+        placeholder="How many coins?" maxlength="24"></div>
+      <button class="small" type="submit">Send the tip</button>
+    </form>
+    {% endif %}
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+
+<style>
+  .gamecard{display:flex;gap:14px;margin:0 0 14px;min-width:0;align-items:flex-start}
+  .gamecover{flex:0 0 132px;aspect-ratio:1;border-radius:12px;overflow:hidden;display:grid;
+             place-items:center;background:linear-gradient(135deg,var(--accent,#c9a227),#6b4ea3);
+             color:#fff;text-decoration:none}
+  .gamecover img{width:100%;height:100%;object-fit:cover;display:block}
+  .gamename{font-weight:700;font-size:1.05rem;padding:10px;text-align:center;line-height:1.2;
+            word-break:break-word}
+  .gamebody{flex:1;min-width:0}
+  @media(max-width:560px){.gamecard{flex-direction:column}.gamecover{flex:none;width:100%;aspect-ratio:16/9}}
+</style>
+
+{% if viewer == 'account' and mine_tag %}
+<script type="module">
+/* An account's tab signs its own like, dislike, comment or tip, as on the feed. */
+import * as wallet from "/wallet.js";
+const CHAIN = {network: "{{ state.messaging.network }}",
+               version: {{ state.messaging.params.pubkeyhash_version }}};
+const KINDS = {like: 1, unlike: 2, reply: 3, tip: 7, dislike: 8, undislike: 9};
+const news = document.getElementById("games-news");
+const say = (t, bad) => { news.textContent = t; news.hidden = !t;
+                          news.className = "msg " + (bad ? "err" : "ok"); };
+const opening = wallet.opened(CHAIN);
+document.addEventListener("submit", async (event) => {
+  const form = event.target;
+  const one = (form.getAttribute("action") || "").match(
+    /^\/feed\/([0-9a-f]{64})\/(like|unlike|dislike|undislike|reply|tip)$/);
+  if (!one) return;
+  event.preventDefault();
+  const flip = one[2] === "tip" ? null : window.arcadePress(form, one[2]);
+  const held = (await opening) || await arcadeKeys(CHAIN).catch(() => null);
+  if (!held) { if (flip) flip.undo(); say("Unlock your wallet to do that.", true); return; }
+  const [, txid, doing] = one;
+  const button = form.querySelector("button[type=submit]");
+  if (button) button.disabled = true;
+  try {
+    let out;
+    if (doing === "tip") {
+      // A tip moves coins: ask for the offer, read it here, ask, then sign.
+      const amount = ((form.elements.amount || {}).value || "").trim();
+      const offer = await wallet.offerReact(txid, KINDS.tip, amount);
+      const shown = await wallet.checked(offer, held);
+      const ok = await arcadeAsk("Send this tip?",
+        `Tip ${amount} coins to ${form.dataset.authorName || "whoever made this game"}. The network fee is `
+        + `${shown.coinsOf(shown.fee)}. It is a payment: it cannot be taken back.`, "Send the tip");
+      if (!ok) return;
+      out = await wallet.confirm(held, offer);
+      form.reset();
+      form.hidden = true;
+      const opener = document.querySelector(`[data-tip-for="${txid}"]`);
+      if (opener) { opener.textContent = "Tipped ✓ waiting for its block"; opener.disabled = true; }
+    } else {
+      out = await wallet.react(held, txid, KINDS[doing], (form.elements.text || {}).value || "");
+      if (form.elements.text) { form.elements.text.value = ""; form.hidden = true; }
+    }
+    say(`Sent (${out.txid.slice(0, 12)}…). It counts here when its block lands.`);
+  } catch (e) {
+    if (flip) flip.undo();
+    say(String(e.message || e), true);
+  } finally { if (button) button.disabled = false; }
+});
+</script>
+{% endif %}
+{% endblock %}
