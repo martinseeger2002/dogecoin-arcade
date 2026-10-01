@@ -55,6 +55,8 @@ ORDER = (
      "Make a prize pool pay only for a real win: a judge, seeds and replays."),
     ("mintpads.md", "Mintpads: designing your own",
      "Build your own mintpad page instead of using the ready-made looks."),
+    ("games.md", "Games: listing yours on the Games tab",
+     "Put a game on the Games tab: the JSON that lists it, versions, tips and launchers."),
     ("inscription-api.md", "The inscription API",
      "What an inscribed page may ask the wallet, and what it is refused."),
     ("bot-rpc.md", "The bot RPC",
