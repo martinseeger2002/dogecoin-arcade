@@ -496,3 +496,45 @@ def test_a_node_that_ignores_its_own_rate_is_cut_off_by_the_next():
         finally:
             await stop(a)
     run(go())
+
+
+# ------------------------------------------------------------------ can I be reached
+
+def test_a_node_knows_its_own_address_when_it_dials_it():
+    async def go():
+        a, b = mk(), mk()
+        await started(a, b)
+        try:
+            assert await a.reaches_itself("127.0.0.1", a.listen_port)
+            assert not await a.reaches_itself("127.0.0.1", b.listen_port), "that is b, not a"
+            closed = mk()
+            await closed.start()
+            port = closed.listen_port
+            await closed.stop()
+            assert not await a.reaches_itself("127.0.0.1", port)
+        finally:
+            await stop(b, a)
+    run(go())
+
+
+def test_a_peer_dials_back_only_where_it_sees_the_asker():
+    async def go():
+        a = mk()
+        await a.start()
+        b = mk(peers=[addr(a)], target=1)
+        await b.start()
+        c = mk(listen=False, peers=[addr(a)], target=1)
+        await c.start()
+        try:
+            await until(lambda: len(a.links) == 2, what="links")
+            said = await b.ask_dial_back(b.listen_port, timeout=5)
+            assert said == {"reached": True, "seen": ["127.0.0.1"]}
+            # c does not listen: a dials where c's connection comes from, and fails.
+            said = await c.ask_dial_back(45999, timeout=5)
+            assert said["reached"] is False and said["seen"] == ["127.0.0.1"]
+            # Asking again at once is not answered: once a minute per peer.
+            said = await b.ask_dial_back(b.listen_port, timeout=0.5)
+            assert said == {"reached": False, "seen": []}
+        finally:
+            await stop(c, b, a)
+    run(go())

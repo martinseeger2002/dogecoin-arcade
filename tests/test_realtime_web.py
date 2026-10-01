@@ -267,3 +267,63 @@ def test_an_announcement_says_an_ip_and_never_a_name():
         with pytest.raises(ValueError):
             meshannounce.build(host, 8421, "c" * 64)
     assert meshannounce.parse(payload.replace(b"8421", b"0")) is None
+
+
+# ------------------------------------------------------------------ announcing itself
+
+def test_the_public_address_is_what_most_peers_see():
+    from arcade.mesh.service import public_address
+    assert public_address(["129.222.44.26", "129.222.44.26:44874", "8.8.8.8"]) == "129.222.44.26"
+    assert public_address(["129.222.44.26"]) is None, "one peer is not a majority of anything"
+    assert public_address(["192.168.1.20", "192.168.1.20", "10.0.0.1"]) is None
+    v6 = "[2605:59ca:13cf:2e10:4b3e:ae74:97dd:c48e]:33874"
+    assert public_address([v6, v6]) == "2605:59ca:13cf:2e10:4b3e:ae74:97dd:c48e"
+    assert public_address([v6, v6, "1.1.1.1", "1.1.1.1"]) == "1.1.1.1", "IPv4 first"
+    assert public_address(["", "-", "nonsense"]) is None
+
+
+def test_a_node_announces_itself_when_its_address_is_new_and_not_otherwise(tmp_path):
+    import asyncio as aio
+    seen = {"now": ["1.1.1.1", "1.1.1.1"]}
+    told = []
+    svc = MeshService("arcade-test", nacl.signing.SigningKey.generate(),
+                      listen_host="127.0.0.1", listen_port=0,
+                      observe=lambda: seen["now"], announce=lambda h, p: told.append((h, p)),
+                      remember=tmp_path / "mesh-announced.json").start()
+    reach = {"ok": True}
+
+    async def reaches(host, port):
+        return reach["ok"]
+    svc.node.reaches_itself = reaches
+    due = lambda: svc._call(svc.announce_if_due(), timeout=10)
+    try:
+        port = svc.node.listen_port
+        assert due() and told == [("1.1.1.1", port)]
+        assert not due(), "same address, announced today: nothing to say"
+        seen["now"] = ["2.2.2.2", "2.2.2.2"]
+        assert due() and told[-1] == ("2.2.2.2", port), "the address changed: say so"
+        reach["ok"] = False
+        seen["now"] = ["3.3.3.3", "3.3.3.3"]
+        assert not due() and len(told) == 2, "an address that does not lead here is not announced"
+        assert svc.status()["reachable"] is False
+        reach["ok"] = True
+        seen["now"] = ["192.168.1.9", "192.168.1.9"]
+        assert not due(), "a private address is nobody's way in"
+    finally:
+        svc.stop()
+    # A restart remembers what it last said.
+    again = MeshService("arcade-test", nacl.signing.SigningKey.generate(),
+                        listen_host="127.0.0.1", listen_port=0,
+                        remember=tmp_path / "mesh-announced.json")
+    assert again.last_announced["host"] == "2.2.2.2"
+
+
+def test_a_fixed_address_is_announced_without_looking(tmp_path):
+    told = []
+    svc = MeshService("arcade-test", nacl.signing.SigningKey.generate(),
+                      listen_host="127.0.0.1", listen_port=0, announce_at=("4.4.4.4", 9000),
+                      announce=lambda h, p: told.append((h, p))).start()
+    try:
+        assert svc._call(svc.announce_if_due(), timeout=10) and told == [("4.4.4.4", 9000)]
+    finally:
+        svc.stop()

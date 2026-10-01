@@ -12,6 +12,17 @@ and none of it comes from a website. Then whatever `--mesh-peer` names (a
 machine on the same network, which the chain cannot carry), and then what the
 peers themselves pass on.
 
+**Saying where this node can be reached, by itself.** A node that listens
+works out its own public address and announces it on the chain, again whenever
+it changes -- with no website asked "what is my IP": the Pepecoin peers each of
+its Core nodes is connected to say what address they see it at (getpeerinfo's
+`addrlocal`), and a majority of them is the answer. It announces only an address
+that has been shown to lead back here: it dials itself there (which works when
+the router forwards the port and lets a machine reach its own address), or asks
+a mesh peer to dial it back. A node behind a router with no port forwarded
+therefore announces nothing, which is right: it can still play by dialling out.
+`--mesh-announce IP:PORT` still names an address by hand and skips all of this.
+
 **Who a player is.** A player is their chain address, proved by a certificate
 their own key signed: `cert_message` binds the address to ONE mesh node and an
 expiry, and every node checks it with its own Core's `verifymessage`, which
@@ -52,6 +63,35 @@ GUEST = re.compile(r"^guest-[0-9a-f]{8}$")
 BOOTSTRAP_EVERY = 60.0
 ANNOUNCE_EVERY = 24 * 3600.0
 ANNOUNCED_WITHIN = 14 * 24 * 3600       # chain announcements older than this are skipped
+CHECK_EVERY = 600.0                     # how often a node looks at its own address
+MIN_VOTES = 2                           # peers that must agree on what they see
+
+
+def public_address(seen: list[str]) -> str | None:
+    """The address most peers say they see this node at, if at least MIN_VOTES
+    agree. IPv4 first: an IPv6 address on a home network is often a temporary
+    one that changes by itself, which would mean announcing again every day."""
+    import collections
+    import ipaddress
+    votes: dict[int, collections.Counter] = {4: collections.Counter(), 6: collections.Counter()}
+    for raw in seen:
+        host = str(raw or "").strip()
+        if host.startswith("["):
+            host = host[1:host.index("]")] if "]" in host else host[1:]
+        elif host.count(":") == 1:
+            host = host.split(":")[0]
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            continue
+        if ip.is_global:
+            votes[ip.version][str(ip)] += 1
+    for version in (4, 6):
+        if votes[version]:
+            host, n = votes[version].most_common(1)[0]
+            if n >= MIN_VOTES:
+                return host
+    return None
 
 
 def cert_message(network: str, node_id: str, address: str, expires: int) -> str:
@@ -87,14 +127,28 @@ class MeshService:
                  peers: list[tuple[str, int]] | None = None,
                  verify: Callable[[str, str, str], bool] | None = None,
                  announced: Callable[[], list[dict]] | None = None,
-                 announce: Callable[[], Any] | None = None):
+                 announce: Callable[[str, int], Any] | None = None,
+                 announce_at: tuple[str, int] | None = None,
+                 observe: Callable[[], list[str]] | None = None,
+                 public_port: int | None = None,
+                 remember: Path | None = None):
         """`verify(address, signature, message)` asks a Core node; `announced()`
-        lists the chain's mesh announcements; `announce()` publishes this node's
-        own. Each is optional, so a test can run a node with none of them."""
+        lists the chain's mesh announcements; `announce(host, port)` publishes
+        this node's; `announce_at` fixes the address by hand; `observe()` lists
+        the addresses Core's peers see this node at; `public_port` is the port
+        the router forwards (the listening port unless said); `remember` keeps
+        the last announcement across restarts. All optional: a test runs a node
+        with none of them."""
         self.network = network
         self.verify = verify
         self.announced = announced
         self.announce = announce
+        self.announce_at = announce_at
+        self.observe = observe
+        self.public_port = public_port or listen_port
+        self.remember = remember
+        self.last_announced = self._recall()
+        self.reachable: bool | None = None
         self.node = MeshNode(key, network, listen_host=listen_host, listen_port=listen_port,
                              peers=peers or [], vouch=self._vouch)
         self.node_id = self.node.node_id
@@ -135,7 +189,7 @@ class MeshService:
 
     def _spawn_background(self) -> None:
         self.node._spawn(self._bootstrapper())
-        if self.announce is not None:
+        if self.announce is not None and (self.announce_at or self.observe):
             self.node._spawn(self._announcer())
 
     def _call(self, coro, timeout: float = 5.0):
@@ -159,14 +213,65 @@ class MeshService:
                     log.exception("mesh bootstrap")
             await asyncio.sleep(BOOTSTRAP_EVERY)
 
+    def _recall(self) -> dict:
+        try:
+            import json
+            return json.loads(self.remember.read_text()) if self.remember else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _keep(self, said: dict) -> None:
+        self.last_announced = said
+        if self.remember:
+            import json
+            try:
+                self.remember.write_text(json.dumps(said))
+            except OSError:
+                pass
+
+    async def where_am_i(self) -> tuple[str, int] | None:
+        """The public address this node can be reached at, proved, or None."""
+        if self.announce_at:
+            return self.announce_at
+        if self.node.listen_port is None or self.observe is None:
+            return None
+        try:
+            seen = await asyncio.to_thread(self.observe)
+        except Exception:                          # noqa: BLE001 -- ask again later
+            seen = []
+        host = public_address(seen)
+        if host is None:
+            return None
+        port = int(self.public_port or self.node.listen_port)
+        self.reachable = await self.node.reaches_itself(host, port)
+        if not self.reachable and self.node.links:
+            said = await self.node.ask_dial_back(port)
+            self.reachable = said["reached"]
+        return (host, port) if self.reachable else None
+
+    async def announce_if_due(self) -> bool:
+        """Announce when the address is new, or once a day to stay fresh."""
+        found = await self.where_am_i()
+        if found is None:
+            return False
+        host, port = found
+        last = self.last_announced or {}
+        fresh = time.time() - float(last.get("at") or 0) < ANNOUNCE_EVERY
+        if last.get("host") == host and last.get("port") == port and fresh:
+            return False
+        await asyncio.to_thread(self.announce, host, port)
+        log.info("mesh: announced this node at %s:%s", host, port)
+        self._keep({"host": host, "port": port, "at": int(time.time())})
+        return True
+
     async def _announcer(self) -> None:
         await asyncio.sleep(30)                         # let the node settle first
         while True:
             try:
-                await asyncio.to_thread(self.announce)
+                await self.announce_if_due()
             except Exception as exc:                   # noqa: BLE001
                 log.warning("mesh: could not announce this node: %s", exc)
-            await asyncio.sleep(ANNOUNCE_EVERY)
+            await asyncio.sleep(CHECK_EVERY)
 
     # ---------------------------------------------------------------- who is who
 
@@ -206,7 +311,9 @@ class MeshService:
         links = len(self.node.links)
         return {"linked": links > 0, "node": self.node_id, "network": self.network,
                 "peers": links, "known": len(self.node.addrs),
-                "listening": self.node.listen_port}
+                "listening": self.node.listen_port, "reachable": self.reachable,
+                "announced": {k: self.last_announced.get(k) for k in ("host", "port", "at")}
+                if self.last_announced else None}
 
     def join(self, room: str, member: str, cred: dict | None) -> Session:
         with self._lock:
@@ -265,7 +372,8 @@ class MeshService:
 
 def for_state(state, *, listen_host: str = "0.0.0.0", listen_port: int | None = DEFAULT_PORT,
               peers: list[tuple[str, int]] | None = None,
-              announce_at: tuple[str, int] | None = None) -> MeshService:
+              announce_at: tuple[str, int] | None = None,
+              public_port: int | None = None) -> MeshService:
     """A MeshService wired to an arcade node: its key in the arcade's home, its
     peers from the messaging chain's index, and players checked by the
     messaging chain's Core -- the chain the @tags live on, so a player's
@@ -288,9 +396,21 @@ def for_state(state, *, listen_host: str = "0.0.0.0", listen_port: int | None = 
                                     since=int(time.time()) - ANNOUNCED_WITHIN)
         return [{"host": r["host"], "port": r["port"], "key": r["mesh_key"]} for r in rows]
 
+    def observe() -> list[str]:
+        """Where the Pepecoin network sees this machine: each Core peer's addrlocal."""
+        seen: list[str] = []
+        for chain in (state.ledger, state.messaging):
+            try:
+                with chain.rpc() as rpc:
+                    seen += [str(p.get("addrlocal") or "") for p in rpc.call("getpeerinfo")]
+            except Exception:                          # noqa: BLE001 -- the other chain may answer
+                continue
+        return seen
+
     service = MeshService(
         f"arcade-{state.ledger.params.name}", key, listen_host=listen_host,
         listen_port=listen_port, peers=peers, verify=verify, announced=announced,
-        announce=(lambda: state.announce_mesh(announce_at[0], announce_at[1], bytes(key.verify_key).hex()))
-        if announce_at else None)
+        announce=lambda host, port: state.announce_mesh(host, port, bytes(key.verify_key).hex()),
+        announce_at=announce_at, observe=observe, public_port=public_port,
+        remember=Path(state.home) / "mesh-announced.json")
     return service

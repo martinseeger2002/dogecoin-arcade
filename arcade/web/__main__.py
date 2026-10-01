@@ -68,9 +68,14 @@ def main(argv: list[str] | None = None) -> int:
              "(the chain cannot carry private addresses); may be repeated")
     parser.add_argument(
         "--mesh-announce", metavar="IP:PORT",
-        help="announce on the chain, once a day, that other nodes can reach this "
-             "node's mesh here: this machine's public IP and a port forwarded to "
-             "--mesh-port. Paid for by the fee address, like the instance announcement")
+        help="announce THIS address on the chain instead of working it out. By "
+             "default a listening node finds its public address from what its "
+             "Pepecoin peers see, checks the address really leads back to it, and "
+             "announces it (again when it changes, and daily); nothing is announced "
+             "if no port is forwarded. Paid for by the fee address")
+    parser.add_argument(
+        "--mesh-public-port", type=int, default=None, metavar="PORT",
+        help="the port the router forwards to --mesh-port, if it is a different number")
     parser.add_argument(
         "--log-level", default=os.environ.get("ARCADE_LOG_LEVEL", "info"),
         choices=["debug", "info", "warning", "error"],
@@ -191,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
                 state, listen_port=args.mesh_port or None,
                 peers=[host_port(p) for p in args.mesh_peer],
                 announce_at=host_port(args.mesh_announce) if args.mesh_announce else None,
+                public_port=args.mesh_public_port,
             ).start()
             print(f"  mesh node {state.mesh.node_id[:16]}"
                   + (f" listening on {args.mesh_port}" if args.mesh_port else " (dial-out only)"))

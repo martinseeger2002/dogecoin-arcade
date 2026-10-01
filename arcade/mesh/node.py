@@ -43,6 +43,7 @@ import asyncio
 import json
 import logging
 import random
+import secrets
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -170,6 +171,8 @@ class MeshNode:
         self._present: dict[str, set[tuple[str, str]]] = {}
         self._fwd_buckets: dict[tuple[str, str], _Bucket] = {}
         self._sub_buckets: dict[str, _Bucket] = {}
+        self._dialbacks: dict[str, asyncio.Future] = {}
+        self._dialed_back: dict[str, float] = {}
         self._seq = 0
         self._server: asyncio.base_events.Server | None = None
         self._tasks: set[asyncio.Task] = set()
@@ -576,6 +579,93 @@ class MeshNode:
             return
         if kind == "pub":
             await self._on_pub(link, header, blob)
+            return
+        if kind == "dialback":
+            self._spawn(self._dial_back(link, header))
+            return
+        if kind == "dialback-said":
+            waiter = self._dialbacks.pop(str(header.get("n", "")), None)
+            if waiter is not None and not waiter.done():
+                waiter.set_result(header)
+
+    # ---------------------------------------------------------------- can I be reached
+
+    async def reaches_itself(self, host: str, port: int) -> bool:
+        """Dial host:port and see whether this node answers. If it does, the
+        address really leads here (a router forwards the port, and lets a
+        machine reach its own public address); anything else proves nothing."""
+        writer = None
+        try:
+            reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), 5.0)
+            await handshake(reader, writer, self.key, self.network, True, None)
+            return False                      # somebody answered, and it was not us
+        except LinkError as exc:
+            return "itself" in str(exc)
+        except (OSError, asyncio.TimeoutError):
+            return False
+        finally:
+            if writer is not None:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except (ConnectionError, OSError):
+                    pass
+
+    async def ask_dial_back(self, port: int, timeout: float = 15.0) -> dict:
+        """Ask up to three peers to dial this node back on `port`, at the address
+        each of them sees it coming from. Returns {"reached": bool, "seen": [hosts]}:
+        whether any of them got through, and where they see this node."""
+        asks = []
+        for link in list(self.links.values())[:3]:
+            nonce = secrets.token_hex(8)
+            waiter = asyncio.get_running_loop().create_future()
+            self._dialbacks[nonce] = waiter
+            try:
+                await link.send({"t": "dialback", "port": int(port), "n": nonce})
+                asks.append(waiter)
+            except (LinkError, ConnectionError, OSError):
+                self._dialbacks.pop(nonce, None)
+        reached, seen = False, []
+        for waiter in asks:
+            try:
+                said = await asyncio.wait_for(waiter, timeout)
+            except asyncio.TimeoutError:
+                continue
+            reached = reached or said.get("ok") is True
+            if isinstance(said.get("host"), str):
+                seen.append(said["host"])
+        return {"reached": reached, "seen": seen}
+
+    async def _dial_back(self, link: Link, header: dict) -> None:
+        """A peer asks whether it can be reached. Dial it -- only ever at the
+        address its own connection comes from, so nobody can aim this node at a
+        third machine -- and say what happened, and where it was seen from."""
+        port = header.get("port")
+        now = time.monotonic()
+        if not isinstance(port, int) or not 0 < port < 65536:
+            return
+        if now - self._dialed_back.get(link.peer_id, 0) < 60:
+            return                                # once a minute per peer is plenty
+        self._dialed_back[link.peer_id] = now
+        host, ok, writer = link.host, False, None
+        try:
+            reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), 5.0)
+            back = await handshake(reader, writer, self.key, self.network, True, None)
+            ok = back.peer_id == link.peer_id     # the node that asked, not just anybody
+        except (LinkError, OSError, asyncio.TimeoutError):
+            ok = False
+        finally:
+            if writer is not None:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except (ConnectionError, OSError):
+                    pass
+        try:
+            await link.send({"t": "dialback-said", "n": str(header.get("n", ""))[:32],
+                             "ok": ok, "host": host})
+        except (LinkError, ConnectionError, OSError):
+            pass
 
     async def _on_sub(self, link: Link, header: dict) -> None:
         origin = str(header.get("o", ""))
