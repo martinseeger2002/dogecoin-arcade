@@ -20,6 +20,14 @@ signed by the node it came from, over everything but the hop count. A node that
 forwards can drop or delay, never forge or alter; and the receiver checks the
 signature, not the neighbour it came from.
 
+**Who a member is.** A member id is whatever the layer above says it is, and
+each one may carry a credential (an opaque dict) that its node hands round with
+it. Before a node shows a member to its own players or delivers their messages,
+it asks `vouch` -- the layer above -- whether that credential proves that id.
+The mesh never decides what proves what; the arcade decides that (a signature by
+the member's chain address, bound to the node it is on). Nodes that only
+forward never ask, so a busy crossroads costs nothing per member.
+
 **What the mesh promises a game, and what it does not.** Delivery is
 best-effort and unordered across senders, which is what a position update
 wants: the next one replaces it. A message is opaque bytes, at most MAX_PAYLOAD,
@@ -38,7 +46,7 @@ import random
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import nacl.exceptions
 import nacl.signing
@@ -104,6 +112,7 @@ class Event:
     member: str
     node: str                   # the mesh key (hex) of the node the member is on
     data: bytes = b""
+    cred: dict | None = None    # what the member's node vouched for it with
 
 
 @dataclass
@@ -113,6 +122,7 @@ class _Local:
     member: str
     queue: asyncio.Queue
     bucket: _Bucket
+    cred: dict | None = None
     touched: float = field(default_factory=time.monotonic)
 
 
@@ -136,12 +146,16 @@ class MeshNode:
     def __init__(self, signing_key: nacl.signing.SigningKey, network: str, *,
                  listen_host: str = "0.0.0.0", listen_port: int | None = None,
                  peers: list[tuple[str, int]] | None = None,
-                 outbound_target: int = OUTBOUND_TARGET):
+                 outbound_target: int = OUTBOUND_TARGET,
+                 vouch: Callable[[str, str, dict | None], Awaitable[bool]] | None = None):
         self.key = signing_key
         self.node_id = bytes(signing_key.verify_key).hex()
         self.network = network
         self.listen_host, self.listen_port = listen_host, listen_port
         self.outbound_target = outbound_target
+        # Asked before a remote member is shown or heard; None trusts every node.
+        self.vouch = vouch
+        self._vetted: OrderedDict[tuple, tuple[bool, float]] = OrderedDict()
         # node id -> link, for every live link
         self.links: dict[str, Link] = {}
         # (host, port) -> {"id": node id or None, "ok": last success, "fail": failures, "next": retry at}
@@ -149,7 +163,7 @@ class MeshNode:
         for host, port in peers or []:
             self.add_address(host, port)
         self.local: dict[tuple[str, str], _Local] = {}
-        # room -> origin node -> {"via": peer id or None, "members": set, "until": expiry}
+        # room -> origin node -> {"via": peer id or None, "members": {member: cred}, "until": expiry}
         self.remote: dict[str, dict[str, dict]] = {}
         self._seen: OrderedDict[str, None] = OrderedDict()
         # room -> {(origin, member)} this node's members have been told are there
@@ -306,8 +320,11 @@ class MeshNode:
 
     # ---------------------------------------------------------------- rooms: local side
 
-    async def join(self, room: str, member: str) -> asyncio.Queue:
-        """Put a member of this node into a room; returns the queue of its Events."""
+    async def join(self, room: str, member: str, cred: dict | None = None) -> asyncio.Queue:
+        """Put a member of this node into a room; returns the queue of its Events.
+
+        `cred` goes round with the member so other nodes can check who it is;
+        the caller has checked it already, since it is this node's own player."""
         room, member = check_room(room), check_member(member)
         if (room, member) in self.local:
             return self.local[(room, member)].queue
@@ -316,10 +333,12 @@ class MeshNode:
             raise MeshError("this node is in as many rooms as it may be")
         if sum(1 for r, _ in self.local if r == room) >= MAX_MEMBERS_PER_ROOM:
             raise MeshError("this room is full on this node")
-        entry = _Local(room, member, asyncio.Queue(maxsize=1000), _Bucket(RATE, BURST))
+        if cred is not None and (not isinstance(cred, dict) or len(_canon(cred)) > 400):
+            raise MeshError("a credential is a small object")
+        entry = _Local(room, member, asyncio.Queue(maxsize=1000), _Bucket(RATE, BURST), cred)
         self.local[(room, member)] = entry
         self._announce_local(room, member, "join")
-        await self._publish(room, member, "join", b"")
+        await self._publish(room, member, "join", b"", cred=cred)
         await self._send_own_sub()
         return entry.queue
 
@@ -341,7 +360,8 @@ class MeshNode:
         entry.touched = time.monotonic()
         for other in self._locals_in(room):
             if other.member != member:
-                self._put(other, Event("message", room, member, self.node_id, bytes(data)))
+                self._put(other, Event("message", room, member, self.node_id, bytes(data),
+                                       entry.cred))
         await self._publish(room, member, "msg", bytes(data))
 
     def touch(self, room: str, member: str) -> None:
@@ -351,11 +371,16 @@ class MeshNode:
             entry.touched = time.monotonic()
 
     def members(self, room: str) -> list[dict]:
-        out = [{"member": m.member, "node": self.node_id} for m in self._locals_in(room)]
+        """Who is in a room: this node's own, and every remote member that has
+        been vouched for (only those ever reach a game)."""
+        out = [{"member": m.member, "node": self.node_id, "cred": m.cred}
+               for m in self._locals_in(room)]
         now = time.monotonic()
         for origin, info in self.remote.get(room, {}).items():
             if info["until"] > now:
-                out += [{"member": m, "node": origin} for m in sorted(info["members"])]
+                out += [{"member": m, "node": origin, "cred": c}
+                        for m, c in sorted(info["members"].items())
+                        if self._vetted_already(origin, m, c)]
         return out
 
     def _locals_in(self, room: str) -> list[_Local]:
@@ -372,9 +397,40 @@ class MeshNode:
                 pass
 
     def _announce_local(self, room: str, member: str, kind: str) -> None:
+        cred = (self.local.get((room, member)) or _Local(room, member, None, None)).cred
         for other in self._locals_in(room):
             if other.member != member:
-                self._put(other, Event(kind, room, member, self.node_id))
+                self._put(other, Event(kind, room, member, self.node_id, b"", cred))
+
+    # ---------------------------------------------------------------- vouching
+
+    @staticmethod
+    def _cred_key(origin: str, member: str, cred: dict | None) -> tuple:
+        return (origin, member, _canon(cred) if cred is not None else b"")
+
+    def _vetted_already(self, origin: str, member: str, cred: dict | None) -> bool:
+        if self.vouch is None:
+            return True
+        hit = self._vetted.get(self._cred_key(origin, member, cred))
+        return bool(hit and hit[0] and hit[1] > time.monotonic())
+
+    async def _vet(self, origin: str, member: str, cred: dict | None) -> bool:
+        """Does `cred` prove `member` on `origin`? Asked once, remembered a while."""
+        if self.vouch is None:
+            return True
+        key = self._cred_key(origin, member, cred)
+        hit = self._vetted.get(key)
+        if hit and hit[1] > time.monotonic():
+            return hit[0]
+        try:
+            ok = bool(await self.vouch(origin, member, cred))
+        except Exception:                          # noqa: BLE001 -- unproven is refused
+            log.exception("mesh vouch")
+            ok = False
+        self._vetted[key] = (ok, time.monotonic() + (600 if ok else 60))
+        while len(self._vetted) > 20_000:
+            self._vetted.popitem(last=False)
+        return ok
 
     # ---------------------------------------------------------------- rooms: the wire
 
@@ -413,9 +469,12 @@ class MeshNode:
         while len(self._seen) > SEEN_MAX:
             self._seen.popitem(last=False)
 
-    async def _publish(self, room: str, member: str, kind: str, data: bytes) -> None:
+    async def _publish(self, room: str, member: str, kind: str, data: bytes,
+                       cred: dict | None = None) -> None:
         header = {"t": "pub", "r": room, "o": self.node_id, "q": self._next_seq(),
                   "m": member, "k": kind, "hops": 0}
+        if cred is not None:
+            header["c"] = cred
         header["sig"] = self.key.sign(_canon(_signed_part(header)) + data).signature.hex()
         self._seen[f"{self.node_id}:{header['q']}"] = None
         await self._forward_pub(header, data, came_from=None)
@@ -434,7 +493,7 @@ class MeshNode:
                     pass
 
     async def _send_own_sub(self, only: Link | None = None) -> None:
-        rooms: dict[str, list[str]] = {}
+        rooms: dict[str, dict[str, dict | None]] = {}
         now = time.monotonic()
         for (room, member), entry in list(self.local.items()):
             if now - entry.touched > IDLE:          # its page went away without saying
@@ -442,7 +501,7 @@ class MeshNode:
                 self._announce_local(room, member, "leave")
                 await self._publish(room, member, "leave", b"")
                 continue
-            rooms.setdefault(room, []).append(member)
+            rooms.setdefault(room, {})[member] = entry.cred
         header = self._sign({"t": "sub", "o": self.node_id, "q": self._next_seq(),
                              "rooms": rooms, "hops": 0})
         self._seen[f"{self.node_id}:{header['q']}"] = None
@@ -485,14 +544,16 @@ class MeshNode:
         for local in self._locals_in(room):
             self._put(local, event)
 
-    def _here(self, room: str, origin: str, member: str, present: bool) -> None:
+    def _here(self, room: str, origin: str, member: str, present: bool,
+              cred: dict | None = None) -> None:
         """Say "join" or "leave" once per change, whichever of a SUB, a join
-        message or an expiry noticed it first."""
+        message or an expiry noticed it first. Only vouched members are ever
+        said to be here, so only they are ever said to have left."""
         seen = self._present.setdefault(room, set())
         key = (origin, member)
         if present and key not in seen:
             seen.add(key)
-            self._tell_locals(room, Event("join", room, member, origin))
+            self._tell_locals(room, Event("join", room, member, origin, b"", cred))
         elif not present and key in seen:
             seen.discard(key)
             self._tell_locals(room, Event("leave", room, member, origin))
@@ -533,11 +594,14 @@ class MeshNode:
             return
         if len(self._sub_buckets) > 10_000:
             self._sub_buckets.clear()
-        clean: dict[str, set[str]] = {}
+        clean: dict[str, dict[str, dict | None]] = {}
         for room, members in list(rooms.items())[:MAX_ROOMS_PER_NODE]:
             try:
                 room = check_room(room)
-                clean[room] = {check_member(m) for m in members[:MAX_MEMBERS_PER_ROOM]}
+                if not isinstance(members, dict):
+                    continue
+                clean[room] = {check_member(m): (c if isinstance(c, dict) else None)
+                               for m, c in list(members.items())[:MAX_MEMBERS_PER_ROOM]}
             except (MeshError, TypeError):
                 continue
         # Rooms this origin has left since its last SUB.
@@ -547,15 +611,20 @@ class MeshNode:
                     self._here(room, origin, member, False)
         for room, members in clean.items():
             info = self.remote.setdefault(room, {}).get(origin)
-            before = info["members"] if info else set()
+            before = info["members"] if info else {}
             via = link.peer_id
             if info and info["via"] and info["until"] > now and info["via"] in self.links:
                 via = info["via"]                       # keep the path that is working
             self.remote[room][origin] = {"via": via, "members": members, "until": now + IDLE}
-            for member in members - before:
-                self._here(room, origin, member, True)
-            for member in before - members:
+            for member in set(before) - set(members):
                 self._here(room, origin, member, False)
+            if self._locals_in(room):
+                # Only a node with players in the room asks who these are; one
+                # that merely forwards never pays for the check.
+                for member, cred in members.items():
+                    if (origin, member) not in self._present.get(room, ()) and \
+                            await self._vet(origin, member, cred):
+                        self._here(room, origin, member, True, cred)
         header["hops"] = hops + 1
         for peer_id, other in list(self.links.items()):
             if peer_id != link.peer_id:
@@ -586,21 +655,28 @@ class MeshNode:
             if len(self._fwd_buckets) > 10_000:
                 self._fwd_buckets.clear()
         known = self.remote.get(room, {}).get(origin)
-        if header["k"] == "msg":
-            self._tell_locals(room, Event("message", room, member, origin, data))
-        elif header["k"] == "join":
+        if header["k"] == "join":
+            cred = header.get("c") if isinstance(header.get("c"), dict) else None
             if known is not None:
-                known["members"].add(member)
+                known["members"][member] = cred
             else:
                 # Heard of before its node's SUB: it still has to expire if that
                 # node goes quiet, or a vanished player would stay forever.
                 self.remote.setdefault(room, {})[origin] = {
-                    "via": link.peer_id, "members": {member},
+                    "via": link.peer_id, "members": {member: cred},
                     "until": time.monotonic() + IDLE}
-            self._here(room, origin, member, True)
+            if self._locals_in(room) and await self._vet(origin, member, cred):
+                self._here(room, origin, member, True, cred)
         elif header["k"] == "leave":
             if known is not None:
-                known["members"].discard(member)
+                known["members"].pop(member, None)
             self._here(room, origin, member, False)
+        elif self._locals_in(room):
+            # A message is heard only from a member already vouched for: one
+            # whose node never said who it is (no SUB, no join) is not heard.
+            cred = known["members"].get(member) if known else None
+            if known is not None and member in known["members"] and \
+                    await self._vet(origin, member, cred):
+                self._tell_locals(room, Event("message", room, member, origin, data, cred))
         header["hops"] = hops + 1
         await self._forward_pub(header, data, came_from=link.peer_id)

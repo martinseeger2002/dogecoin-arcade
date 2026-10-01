@@ -391,9 +391,9 @@ class _FakeLink:
     peer_id = "f" * 64
 
 
-def _signed_pub(key, room="g/r", member="mallory", data=b"hi", seq=None):
+def _signed_pub(key, room="g/r", member="mallory", data=b"hi", seq=None, kind="msg"):
     header = {"t": "pub", "r": room, "o": bytes(key.verify_key).hex(),
-              "q": seq or int(time.time() * 1_000_000), "m": member, "k": "msg", "hops": 0}
+              "q": seq or int(time.time() * 1_000_000), "m": member, "k": kind, "hops": 0}
     header["sig"] = key.sign(meshlib._canon(meshlib._signed_part(header)) + data).signature.hex()
     return header
 
@@ -406,6 +406,9 @@ def test_forged_altered_and_replayed_messages_are_dropped():
             q = await a.join("g/r", "alice")
             await drain(q) if not q.empty() else None
             other = nacl.signing.SigningKey.generate()
+            await a._on_pub(_FakeLink(), _signed_pub(other, data=b"", kind="join",
+                                                     seq=int(time.time() * 1e6) - 5), b"")
+            assert (await drain(q, "join")).member == "mallory"
 
             good = _signed_pub(other)
             await a._on_pub(_FakeLink(), dict(good), b"hi")
@@ -433,6 +436,47 @@ def test_forged_altered_and_replayed_messages_are_dropped():
     run(go())
 
 
+def test_only_members_the_vouch_accepts_are_seen_or_heard():
+    """The mesh asks the layer above about every remote member before showing it,
+    and only nodes with players in the room ask."""
+    async def go():
+        asked = {"b": [], "c": []}
+
+        def vouch_for(name):
+            async def vouch(origin, member, cred):
+                asked[name].append(member)
+                return bool(cred) and cred.get("proof") == "ok:" + member
+            return vouch
+
+        a = mk(target=1)
+        await a.start()
+        b = mk(peers=[addr(a)], target=1)
+        b.vouch = vouch_for("b")
+        await b.start()
+        c = mk(listen=False, peers=[addr(b)], target=1)
+        c.vouch = vouch_for("c")
+        await c.start()
+        try:
+            await until(lambda: len(b.links) == 2, what="line")
+            await a.join("g/r", "alice", cred={"proof": "ok:alice"})
+            await a.join("g/r", "mallory", cred={"proof": "ok:alice"})   # someone else's proof
+            await a.join("g/r", "guest", cred=None)
+            qc = await c.join("g/r", "carol", cred={"proof": "ok:carol"})
+            assert (await drain(qc, "join")).member == "alice"
+            await until(lambda: "g/r" in a.remote, what="route")
+            await a.send("g/r", "mallory", b"trust me")
+            await a.send("g/r", "alice", b"hello")
+            got = await drain(qc, "message")
+            assert (got.member, got.data, got.cred) == ("alice", b"hello", {"proof": "ok:alice"})
+            assert {m["member"] for m in c.members("g/r")} == {"alice", "carol"}
+            assert asked["b"] == []                     # b only forwards: it never asks
+            assert "carol" not in asked["c"]            # c's own player is not re-checked
+            assert {"alice", "mallory", "guest"} <= set(asked["c"])
+        finally:
+            await stop(c, b, a)
+    run(go())
+
+
 def test_a_node_that_ignores_its_own_rate_is_cut_off_by_the_next():
     async def go():
         a = mk(listen=False)
@@ -440,6 +484,8 @@ def test_a_node_that_ignores_its_own_rate_is_cut_off_by_the_next():
         try:
             q = await a.join("g/r", "alice")
             other = nacl.signing.SigningKey.generate()
+            await a._on_pub(_FakeLink(), _signed_pub(other, data=b"", kind="join",
+                                                     seq=int(time.time() * 1e6) - 5), b"")
             for i in range(60):
                 await a._on_pub(_FakeLink(), _signed_pub(other, data=b"x", seq=int(time.time() * 1e6) + i), b"x")
             got = 0
