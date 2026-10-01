@@ -17,7 +17,7 @@
     var CHAIN = {network: "{{chain.network}}",
                  version: {{chain.params.pubkeyhash_version}}};
     var doors = {storage: '/storage/', node: '/node/', swap: '/swap/', owner: '/owner/',
-                 realtime: '/realtime/'};
+                 realtime: '/realtime/', escrow: '/r/escrow/'};
 
     // Realtime rooms (arcade/web/realtime.py, templates/realtime.js): this page
     // joins on the frame's behalf, holds the token and the stream, and passes
@@ -326,6 +326,70 @@
         answer({ok: false, error: String((err && err.message) || err || 'refused')});
       }
     }
+    // A refereed escrow for this game (arcade.escrow, templates/escrow.js). The
+    // game is the inscription in the frame unless the page names one. Opening
+    // and depositing are the signed-in player's own, approved on one card here
+    // and signed in this tab, one transaction per thing; a release is anybody's
+    // to ask and the game's judge's to decide, so it needs no key at all.
+    async function escrowDoor(m, answer){
+      try {
+        var send = function(path, body){
+          return fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                              body: JSON.stringify(body)})
+            .then(function(r){ return r.json().then(function(j){
+              if (!r.ok || j.ok === false) throw new Error(j.detail || j.error || 'refused');
+              return j; }); });
+        };
+        if (m.op === 'status') {
+          var r = await fetch('/r/escrow/' + encodeURIComponent(String(m.escrow || '')), {cache: 'no-store'});
+          var j = await r.json();
+          if (!r.ok) throw new Error(j.error || j.detail || 'no such escrow here');
+          return answer(Object.assign({ok: true}, j));
+        }
+        if (m.op === 'release') {
+          var body = {game: m.game || here, escrow: m.escrow, owner: m.owner,
+                      owner_pubkey: m.owner_pubkey, unlock: m.unlock, to: m.to,
+                      items: m.items || [], replay: m.replay, coins: m.coins || []};
+          return answer(Object.assign({ok: true}, await send('/r/escrow/release', body)));
+        }
+        if (viewer !== 'account') throw new Error('an escrow is an account’s own: sign in as an account');
+        if (m.op === 'open') {
+          var opened = await send('/account/escrow/open', {game: m.game || here, hours: m.hours,
+                                                           chain: CHAIN.network});
+          return answer(Object.assign({ok: true}, opened));
+        }
+        if (m.op === 'mine') {
+          var mine = await fetch('/account/escrows?chain=' + encodeURIComponent(CHAIN.network),
+                                 {cache: 'no-store'}).then(function(x){ return x.json(); });
+          var game = m.game || here;
+          return answer({ok: true, escrows: (mine.escrows || []).filter(function(e){ return e.game === game; })});
+        }
+        if (m.op === 'deposit') {
+          var items = (m.items || []).slice(0, 20);
+          if (!items.length) throw new Error('name what to put in');
+          var state = await fetch('/r/escrow/' + encodeURIComponent(String(m.escrow || ''))).then(function(x){ return x.json(); });
+          var until = new Date((state.unlock || 0) * 1000).toLocaleString();
+          var words = await Promise.all(items.map(function(i){ return sideWords(i); }));
+          if (!(await arcadeAsk('Put these in this game’s escrow?', words.join(', ')
+              + ' go into an escrow for this game until ' + until + '. Until then the game’s '
+              + 'referee decides who gets them; after that you can always take them back from '
+              + 'your wallet.', 'Put them in'))) throw new Error('cancelled');
+          var k = await tradeKeys('Put these in escrow with your key.');
+          var txids = [];
+          for (var n = 0; n < items.length; n++) {
+            var offer = await send('/account/escrow/deposit', {escrow: m.escrow, item: items[n],
+                                                                chain: CHAIN.network});
+            await k.w.checked(offer, k.keys);
+            var out = await k.w.confirm(k.keys, offer);
+            txids.push(out.txid);
+          }
+          return answer({ok: true, txids: txids});
+        }
+        throw new Error('escrow ops are open, deposit, status, release and mine');
+      } catch (err) {
+        answer({ok: false, error: String((err && err.message) || err || 'refused')});
+      }
+    }
     window.addEventListener('pagehide', function(){
       for (var k in rt) {
         rt[k].es.close();
@@ -376,6 +440,7 @@
         e.source.postMessage(body, '*');   // an opaque origin cannot be named
       }
       if (m.arcade === 'realtime') { realtimeDoor(m, answer, e.source); return; }
+      if (m.arcade === 'escrow') { escrowDoor(m, answer); return; }
       if (m.arcade === 'swap' && ['trade', 'answer', 'cancel', 'items'].indexOf(m.op) >= 0) {
         tradeDoor(m, answer, e.source); return;
       }

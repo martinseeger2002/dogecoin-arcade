@@ -1202,6 +1202,51 @@ export async function fill(wallet, leg, offer, expect) {
   });
 }
 
+/* --- taking an escrow back, after its unlock time --------------------------
+ *
+ * The node lists every move home (`/account/escrow/reclaim`), unsigned. Each is
+ * read here before this key signs it: one coin in, spent from the escrow, and
+ * every output an OP_RETURN, this owner, or the escrow itself; the digest is
+ * worked out here from the escrow's own script (the redeem script, whose hash
+ * the spent coin pays), never taken from the node.
+ */
+export async function reclaimEscrow(wallet, escrow, chain) {
+  return working(async () => {
+    const asked = await fetch("/account/escrow/reclaim", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({escrow, chain: chain || ""}),
+    });
+    const said = await asked.json();
+    if (!asked.ok) throw new Error(said.detail || "that escrow cannot be taken back yet");
+    const keys = keysOn(wallet, said.chain || chain || (wallet.on && Object.keys(wallet.on)[0]));
+    const redeem = unhex(said.redeem);
+    const mine = coins.p2pkh(await coins.hash160(keys.pubkey));
+    const escrowScript = new Uint8Array([0xa9, 20, ...(await coins.hash160(redeem)), 0x87]);
+    const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+    const txs = [];
+    for (const t of said.txs) {
+      const tx = coins.parseTx(t.raw);
+      if (tx.inputs.length !== 1) throw new Error("a move home spends one coin. Nothing was signed.");
+      for (const out of tx.outputs) {
+        const ok = out.script[0] === 0x6a || same(out.script, mine) || same(out.script, escrowScript);
+        if (!ok) throw new Error("a move home pays somebody else. Nothing was signed.");
+      }
+      const digest = coinsHex(await coins.sighashAll(tx, 0, redeem));
+      if (digest !== String(t.sighash).toLowerCase()) {
+        throw new Error("the node asked for a signature over different bytes. Nothing was signed.");
+      }
+      txs.push({raw: t.raw, signature: coinsHex(await coins.signInput(keys.key, unhex(digest)))});
+    }
+    const back = await fetch("/account/escrow/reclaim/sign", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({escrow, chain: said.chain, txs}),
+    });
+    const done = await back.json();
+    if (!back.ok) throw new Error(done.detail || "the node would not send it");
+    return done;                            // {ok, txids}
+  });
+}
+
 /* --- a trade between two players, agreed inside a game -------------------
  *
  * The side giving an NFT signs a leg for ONE named player (`tradeLeg`), seals

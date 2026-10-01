@@ -24,6 +24,10 @@
 {# Coins in the small outputs this account's messages, posts and files left on
    the chain (2026-09-28): still yours, and one press brings them back. #}
 <div class="panel" id="dust-panel" hidden style="margin-bottom:18px"></div>
+{# Things a game holds for this account in a refereed escrow (arcade/escrow.py):
+   the game's judge decides who gets them until the unlock time, and after it
+   one press brings them all home -- whatever the game, or its referee, says. #}
+<div class="panel" id="escrow-panel" hidden style="margin-bottom:18px"></div>
 
 <div class="panel" id="send-panel">
   <h2 style="margin-top:0">Send coins</h2>
@@ -247,5 +251,51 @@ document.body.dataset.walletReady = "yes";
 // the page says so, so no "tap to refresh" is offered for them.
 document.body.dataset.selfRefreshing = "yes";
 document.addEventListener("arcade:changed", () => { draw().catch(() => {}); });
+</script>
+<script type="module">
+import * as wallet from "/wallet.js";
+async function drawEscrows() {
+  const box = document.getElementById("escrow-panel");
+  let said = null;
+  try { said = await (await fetch("/account/escrows", {cache: "no-store"})).json(); } catch (e) { return; }
+  const list = (said && said.escrows) || [];
+  box.hidden = !list.length;
+  box.innerHTML = list.length ? '<h2 style="margin-top:0">Held in escrow</h2>'
+    + '<p class="muted" style="font-size:.86rem">A game holds these for you. Until the time shown, '
+    + 'the game\u2019s referee decides who gets them; after it, take them back here.</p>' : "";
+  for (const e of list) {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.style.cssText = "gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0";
+    const what = e.inscriptions.length + " NFT" + (e.inscriptions.length === 1 ? "" : "s")
+      + (Object.keys(e.tokens).length ? " and " + Object.keys(e.tokens).length + " token"
+         + (Object.keys(e.tokens).length === 1 ? "" : "s") : "");
+    const when = new Date(e.unlock * 1000).toLocaleString();
+    row.innerHTML = '<span style="flex:1"></span>';
+    row.firstChild.textContent = what + (e.open ? " \u00b7 yours to take back" : " \u00b7 the game\u2019s until " + when);
+    if (e.open) {
+      const button = document.createElement("button");
+      button.className = "small"; button.textContent = "Take back";
+      button.onclick = async () => {
+        button.disabled = true;
+        try {
+          const chain = {network: said.chain, version: {{ (state.messaging.params.pubkeyhash_version) }}};
+          const keys = (await wallet.opened(chain)) || await arcadeKeys(chain);
+          const done = await wallet.reclaimEscrow(keys, e.escrow, said.chain);
+          row.firstChild.textContent = "On its way home (" + done.txids.length + " transaction"
+            + (done.txids.length === 1 ? "" : "s") + "): it shows when its block lands.";
+          button.remove();
+        } catch (err) {
+          row.firstChild.textContent = String(err.message || err);
+          button.disabled = false;
+        }
+      };
+      row.append(button);
+    }
+    box.append(row);
+  }
+}
+drawEscrows();
+document.addEventListener("arcade:changed", () => { drawEscrows().catch(() => {}); });
 </script>
 {% endblock %}

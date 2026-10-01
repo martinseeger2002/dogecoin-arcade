@@ -13083,7 +13083,8 @@ def create_app(state: AppState) -> FastAPI:
         with contextlib.closing(index.open()) as db, db.conn:
             utxoslib.watch(db, address, index.indexed_height() or 0, why="escrow")
         return JSONResponse({"escrow": address, "unlock": unlock, "game": terms["game"],
-                             "owner": owner, "referee": terms["pubkey"], "chain": chain.network})
+                             "owner": owner, "owner_pubkey": owner_pub,
+                             "referee": terms["pubkey"], "chain": chain.network})
 
     @app.post("/account/escrow/deposit")
     def account_escrow_deposit(request: Request, payload: Any = Body(None)):
@@ -13349,6 +13350,13 @@ def create_app(state: AppState) -> FastAPI:
                             "open": time.time() >= row["unlock"],
                             "inscriptions": held["inscriptions"], "tokens": held["tokens"]})
         return JSONResponse({"escrows": out, "chain": context.network})
+
+    @app.get("/r/escrow.js")
+    def r_escrow_js():
+        """The page's half of the escrow: `arcade.escrow` (templates/escrow.js)."""
+        return Response((TEMPLATE_DIR / "escrow.js").read_text(),
+                        media_type="application/javascript",
+                        headers={**contentlib.CORS, "Cache-Control": "public, max-age=3600"})
 
     @app.get("/r/referee")
     def r_referee():
