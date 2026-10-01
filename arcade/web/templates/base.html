@@ -2139,6 +2139,36 @@ function arcadeFileCost(bytes){
     var box = img.parentNode;
     if (getComputedStyle(box).position === 'static') box.style.position = 'relative';
     box.appendChild(tag);
+    // On a thumbnail the pill is wider than the picture and spread across the
+    // ones beside it (a tester, 2026-10-01: a wallet's three NFTs, one of them
+    // covered by a label the width of all three). Where it does not fit, it
+    // becomes a small cover over that one picture instead. Asked again when a
+    // lazy picture arrives, since until then it may have no size at all.
+    function fit() {
+      if (!tag.isConnected) return;
+      tag.classList.remove('small');
+      tag.textContent = text;
+      tag.style.width = tag.style.height = tag.style.left = tag.style.top = '';
+      var w = img.getBoundingClientRect().width, h = img.getBoundingClientRect().height;
+      if (w > 24 && h > 24 && (tag.offsetWidth > w - 8 || tag.offsetHeight > h - 8)) {
+        tag.classList.add('small');
+        tag.textContent = 'Sensitive \u00b7 tap to show';
+        tag.style.width = w + 'px'; tag.style.height = h + 'px';
+        tag.style.left = img.offsetLeft + 'px'; tag.style.top = img.offsetTop + 'px';
+      }
+    }
+    fit();
+    // Whenever the picture's size changes: it arrives, it is swapped, the
+    // phone turns. Until it has a size, no label is drawn small for it.
+    if (window.ResizeObserver) {
+      var watch = new ResizeObserver(function () {
+        if (!tag.isConnected) { watch.disconnect(); return; }
+        fit();
+      });
+      watch.observe(img);
+    } else {
+      img.addEventListener('load', fit);
+    }
     return tag;
   }
   function look() {
@@ -2184,6 +2214,9 @@ function arcadeFileCost(bytes){
 .screenlabel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2;
   padding:7px 12px;border-radius:999px;border:0;background:rgba(0,0,0,.72);color:#fff;
   font:600 .8rem/1.2 inherit;cursor:pointer;box-shadow:none;white-space:nowrap}
+.screenlabel.small{transform:none;padding:3px;border-radius:8px;white-space:normal;
+  font-size:.6rem;line-height:1.15;display:flex;align-items:center;justify-content:center;
+  text-align:center;overflow:hidden;background:rgba(0,0,0,.6)}
 .unlockbar{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;
   padding:8px 16px;background:color-mix(in srgb,var(--accent) 14%,var(--panel));
   border-bottom:1px solid var(--line);font-size:.9rem}
