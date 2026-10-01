@@ -5565,6 +5565,49 @@ def create_app(state: AppState) -> FastAPI:
             held = []
         return contentlib._json([contentlib.holding(row) for row in held])
 
+    def _token_json(prop: dict) -> dict:
+        """A token as a page reads it: Omni's five issuance strings, who issued it,
+        and `details` -- its `data` parsed as JSON when it is a JSON object, every
+        key kept as the issuer wrote it, so a game can carry its own item schema
+        there ({"about": ..., "mygame": {"tier": 3}}). Issuer-supplied text: a
+        page reads it as data, never as markup or code."""
+        raw = str(prop.get("data") or "")
+        parsed = None
+        if raw.strip().startswith("{"):
+            try:
+                found = json.loads(raw)
+                parsed = found if isinstance(found, dict) else None
+            except ValueError:
+                parsed = None
+        return {"propertyid": int(prop["property_id"]), "name": prop.get("name", ""),
+                "category": prop.get("category", ""), "subcategory": prop.get("subcategory", ""),
+                "url": prop.get("url", ""), "data": raw, "details": parsed,
+                "described": tokenlib.details(prop), "issuer": prop.get("issuer", ""),
+                "divisible": bool(prop.get("divisible")), "managed": bool(prop.get("managed")),
+                "supply": int(prop.get("total_tokens") or 0)}
+
+    @app.get("/r/token/{property_id}")
+    def r_token(property_id: int):
+        """One token's issuance fields and its parsed `data` (see _token_json)."""
+        prop = _content_index().property(int(property_id))
+        if prop is None:
+            return contentlib._missing("no such token on this chain")
+        return contentlib._json(_token_json(prop))
+
+    @app.get("/r/tokens")
+    def r_tokens(ids: str = ""):
+        """Several at once, `?ids=20,22,26` (up to 100): enough to classify a whole
+        wallet in one request. Unknown ids are left out."""
+        out = []
+        for part in str(ids or "").split(",")[:100]:
+            try:
+                prop = _content_index().property(int(part))
+            except (TypeError, ValueError):
+                continue
+            if prop is not None:
+                out.append(_token_json(prop))
+        return contentlib._json(out)
+
     @app.get("/r/holders")
     def r_holders(token: int = 0, creator: str = "", collection: str = ""):
         """Who holds a token, or any piece of a collection: addresses only.

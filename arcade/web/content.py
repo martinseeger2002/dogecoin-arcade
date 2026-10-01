@@ -238,6 +238,8 @@ def holding(row: dict) -> dict:
         "balance": display,
         "units": units,
         "divisible": divisible,
+        # Who issued it, so a game can count only its own tokens (2026-10-01).
+        "issuer": row.get("issuer", ""),
     }
 
 
