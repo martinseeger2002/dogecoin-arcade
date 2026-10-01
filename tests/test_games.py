@@ -128,3 +128,23 @@ def test_a_game_on_another_chain_is_paid_where_its_maker_said(tmp_path):
         ("t1", "nTestnetAddr", b"k" * 32, "fp", 5, 0, 0, 1, "mMainnetAddr"))
     store.conn.commit()
     assert store.address_for_other("mMainnetAddr") == "nTestnetAddr"
+
+
+def test_play_opens_the_real_game_only_when_its_maker_made_both(client):
+    """A card for a game inscribed before the tab names it in `play`; Play opens
+    that inscription itself, so the viewer answers for the game (its storage,
+    its bound pools, its claims) and not for the card."""
+    app, state = client
+    real, card, borrowed, theirs = "e1" * 32, "e2" * 32, "e3" * 32, "e4" * 32
+    _inscribe(state, real, 50, MAKER, {}, height=10)                     # the old game, no JSON
+    _inscribe(state, card, 51, MAKER, {"game": {"name": "Ghost Fleet", "play": real}})
+    _inscribe(state, theirs, 52, OTHER, {}, height=11)
+    _inscribe(state, borrowed, 53, MAKER, {"game": {"name": "Not Mine", "play": theirs}})
+    page = app.get("/games").text
+    assert f"/inscriptions/{real}/full" in page and f"/inscriptions/{real}/view" in page
+    assert f"/inscriptions/{card}/full" not in page
+    assert f"/inscriptions/{theirs}/full" not in page, "a card cannot borrow another maker's game"
+    assert f"/inscriptions/{borrowed}/full" in page
+    assert f'href="/games/{card}"' in page, "the discussion stays with the card"
+    thread = app.get(f"/games/{card}").text
+    assert f"/inscriptions/{real}/full" in thread

@@ -29,6 +29,7 @@ Two things, both decided when you inscribe it:
     "multiplayer": false,
     "family": "moon-miner",
     "cover": "<txid of a picture you inscribed>",
+    "play": "<txid of the game page, if this page is only its card>",
     "genre": "arcade"
   }
 }
@@ -46,6 +47,7 @@ wrong shape is simply left out rather than refusing the game.
 | `multiplayer` | `true` puts a *multiplayer* badge on the card. Only a real `true` counts. | — |
 | `family` | A short id your versions share, such as `moon-miner`: letters, digits, `.` `_` `:` `-`. | 64 characters |
 | `cover` | The txid of a picture you inscribed. It fills the card; without one, the card shows the name. | a 64-character txid |
+| `play` | The txid of the page *Play* opens, when this inscription is only the game's card. Counts only if you inscribed both. | a 64-character txid |
 | `genre` | One word or two: `rpg`, `racing`, `puzzle`. Shown as a tag. | 24 characters |
 
 The JSON is inscribed with the page and can never be edited, so check it
@@ -98,32 +100,48 @@ anything that fits in a single inscription: the page loads in the player's
 viewer, saves with `arcade.storage`, and can pay prizes through prize pools
 (see the inscription API, prize pools and referee guides).
 
-### A launcher for a game you already inscribed
+### A card for a game you already inscribed
 
 A game inscribed before the Games tab existed has no `game` JSON, and JSON can
-never be added afterwards. Give it a card by inscribing a tiny launcher page,
-a few hundred bytes, that opens the game you already have:
+never be added afterwards. Give it a card by inscribing a tiny page, from the
+**same address** that inscribed the game, whose JSON names the game in `play`:
+
+```json
+{"game": {"name": "Moon Miner", "play": "<txid of the game you inscribed>",
+          "description": "Dig, upgrade the drill, reach the core."}}
+```
+
+*Play* and *Details* then open your original game directly, as itself. That
+matters: everything the viewer does for a page is done for the page it shows,
+so the game keeps its own `arcade.storage` saves, any prize pools bound to it,
+and its referee claims, exactly as before. Likes, comments and tips go to the
+card.
+
+The card page itself can be anything small; somebody who opens it directly
+can be sent on to the game:
 
 ```html
 <!doctype html><meta charset="utf-8">
-<script>location.replace('/content/<txid of the game you inscribed>')</script>
+<p><a href="/content/<txid of the game>">Play Moon Miner</a></p>
 ```
 
-Inscribe that page with the `game` JSON. *Play* opens the launcher, which
-opens your game in its place. This is also the way to build a big game out of
-several inscriptions: the launcher is the front door, and it loads the rest
-from `/content/<txid>`.
+Avoid a page that only redirects to the game with `location.replace` and no
+`play` field: the game would run inside the card's frame, so the viewer would
+answer for the card, not the game. Saves would be kept under the card's id,
+and anything bound to the game page (prize pools, claims) would not find it.
 
-One thing to know: the game then runs as the launcher's inscription, so what
-it saves with `arcade.storage` is kept under the launcher's id. A player's old
-saves from opening the original inscription directly are not carried across.
+### A big game made of several inscriptions
+
+Inscribe the front page as the game, with the `game` JSON, and have it load
+its parts from `/content/<txid>`. The front page is the game's identity, so
+bind pools and keep saves under it.
 
 ### One page for several games
 
 A page that offers several games behind its own menu gets **one** card,
 because it is one inscription. That is a fine way to publish a collection of
 small games together. If each game should have its own likes, comments, tips
-and place in *Popular*, give each one its own launcher instead.
+and place in *Popular*, give each one its own card with `play` instead.
 
 ## Checklist before you inscribe
 
@@ -133,6 +151,7 @@ and place in *Popular*, give each one its own launcher instead.
   inscribed (inscribe the picture first).
 * You are inscribing from the address you want tips to reach, and that address
   has published its key.
+* For a card with `play`: inscribed from the same address as the game it names.
 * For a new version: the same `name`, a new `version`.
 
 After the inscription's block lands, the game is on the *Games* tab of every

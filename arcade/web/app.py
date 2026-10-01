@@ -6969,7 +6969,7 @@ def create_app(state: AppState) -> FastAPI:
             if game is None:
                 raise HTTPException(404, "no such launch")
             launch = {"kind": "game", "name": game["game"]["name"],
-                      "creator": game["creator"], "id": txid}
+                      "creator": game["creator"], "id": game["game"]["opens"]}
         mine = _tag_of_whoever_is_asking(request)
         waiting = _pending_feed(state.messaging.network)
         pool = [dict(a, height=a.get("height") or 0) for a in (waiting.acts or [])]
@@ -16878,15 +16878,34 @@ def create_app(state: AppState) -> FastAPI:
         if not row or not gameslib.is_page(row.get("content_type")):
             return None
         game = gameslib.parse(row.get("json"))
-        return {**row, "game": game, "chain": chain} if game else None
+        if not game:
+            return None
+        game["opens"] = _game_opens(index, row["creator"], txid, game)
+        return {**row, "game": game, "chain": chain}
+
+    def _game_opens(index, creator: str, txid: str, game: dict) -> str:
+        """The inscription Play opens: `play` when the same creator inscribed it,
+        else the card's own page."""
+        play = game.get("play") or ""
+        if play and play != txid:
+            try:
+                target = index.inscription(play)
+            except Exception:
+                target = None
+            if target and target.get("creator") == creator:
+                return play
+        return txid
 
     def _games_ranked(request: Request, sort: str) -> list[dict]:
         from .. import launchlist
         chain, index = _token_chain()
+        rows = _game_rows(index)
+        for r in rows:
+            r["game"]["opens"] = _game_opens(index, r["creator"], r["txid"], r["game"])
         items = [{"txid": r["txid"], "number": r["number"], "creator": r["creator"],
                   "name": r["game"]["name"], "game": r["game"],
                   "time": int(r["time"] or 0), "height": r["block_height"],
-                  "trades": 0, "volume": 0.0} for r in _game_rows(index)]
+                  "trades": 0, "volume": 0.0} for r in rows]
         acts: list = []
         try:
             with state.store() as store:

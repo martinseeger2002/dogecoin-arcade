@@ -51,7 +51,7 @@
 {% for it in games %}
 {% set g = it.game %}
 <div class="panel gamecard">
-  <a class="gamecover" href="/inscriptions/{{ it.txid }}/full" title="Play {{ g.name }}">
+  <a class="gamecover" href="/inscriptions/{{ g.opens or it.txid }}/full" title="Play {{ g.name }}">
     {% if g.cover %}
     <img src="/content/{{ g.cover }}" alt="" loading="lazy">
     {% else %}
@@ -70,7 +70,7 @@
     {% if g.description %}<p style="margin:6px 0 0">{{ g.description }}</p>{% endif %}
 
     <div class="row lacts" style="gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
-      <a class="btn small" href="/inscriptions/{{ it.txid }}/full">Play</a>
+      <a class="btn small" href="/inscriptions/{{ g.opens or it.txid }}/full">Play</a>
       {% if acts %}
       <form method="post" action="/feed/{{ it.txid }}/{{ 'unlike' if it.liked else 'like' }}" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{ csrf }}">
@@ -93,7 +93,7 @@
       <span class="pill">&#128172; {{ it.comments }}</span>
       <a class="muted" style="font-size:.84rem" href="/join?next=/games">Sign in to react or tip</a>
       {% endif %}
-      <a class="small" style="margin-left:auto" href="/inscriptions/{{ it.txid }}/view">Details</a>
+      <a class="small" style="margin-left:auto" href="/inscriptions/{{ g.opens or it.txid }}/view">Details</a>
     </div>
 
     {% for c in it.comment_rows %}

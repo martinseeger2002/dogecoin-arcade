@@ -18,6 +18,7 @@ loads its parts from other inscriptions.
               "multiplayer": true,                     plays with others (arcade.realtime)
               "family": "ashvale",                     what its versions share (rooms too)
               "cover": "<inscription txid>",           a picture for the card
+              "play": "<inscription txid>",            the page Play opens, if not this one
               "genre": "rpg"}}                         up to 24
 
 **One card per game.** The newest inscription per creator and name is the
@@ -25,6 +26,15 @@ game; inscribing a new version with the same name replaces the card, and
 the likes and comments of the old one stay with the old one, as a mintpad's
 do. Only the creator can replace a game, because the key is the creator's
 address -- somebody else's page with the same name is somebody else's game.
+
+**Play opens the game itself.** A game inscribed before this tab cannot gain
+JSON, so its card is a small page of its own. With `play` naming the real
+game, Play and the discussion's link open THAT inscription, in its own frame
+with its own identity: its storage, its page-bound prize pools and its referee
+claims all keep working, which a page that merely redirects to it would break
+(the viewer answers for the page it showed, not for where that page went).
+`play` counts only when the same creator inscribed both, so a card cannot
+borrow somebody else's game.
 
 **Read, never trusted.** Everything here is somebody's words on the chain, so
 each field is cut to its length and anything malformed is simply absent: a
@@ -69,6 +79,8 @@ def parse(json_text: Any) -> dict | None:
     out["family"] = family if isinstance(family, str) and _FAMILY.match(family) else ""
     cover = str(game.get("cover") or "").lower()
     out["cover"] = cover if _TXID.match(cover) else ""
+    play = str(game.get("play") or "").lower()
+    out["play"] = play if _TXID.match(play) else ""
     return out
 
 
