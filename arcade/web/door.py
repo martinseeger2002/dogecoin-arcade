@@ -64,6 +64,7 @@ PUBLIC_PAGES = frozenset({
     "/inscriptions",
     "/exchange",
     "/games",                 # every inscribed game (arcade/games.py)
+    "/account/escrows",       # an account's own escrows (needs a session)
     "/launch",
     "/launches",
     "/mintpad/new",
@@ -216,6 +217,12 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # one named buyer (its own piece, its own key); the buyer finishes it
                # with /account/fill like any answered leg
                "/account/trade/leg", "/account/trade/leg/sign",
+               # a refereed escrow (arcade/escrow.py): the account's own escrow,
+               # its own deposits and reclaims; a release is the game's judge's to
+               # decide, whoever asks
+               "/account/escrow/open", "/account/escrow/deposit",
+               "/account/escrow/reclaim", "/account/escrow/reclaim/sign",
+               "/r/escrow/release",
                "/admin/login",
                "/auth/password",
                "/account/address", "/account/announce", "/account/post",

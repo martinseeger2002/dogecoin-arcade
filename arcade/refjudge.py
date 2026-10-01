@@ -10,7 +10,8 @@ The harness a game's author can reproduce exactly (docs/prize-pools.md):
 
 No DOM, no network, no clock, no randomness but the seed: the same replay
 gives the same verdict every time it is run. Answers one line of JSON,
-{"won": ..., "score": ...} or {"error": "..."}.
+{"won": ..., "score": ...} or {"error": "..."}; an escrow's judge may also say
+{"release": true|false, "to": address, "why": "..."}.
 """
 
 import json
@@ -54,8 +55,18 @@ def main() -> None:
         print(json.dumps({"error": "the judge did not answer {won, score}"}))
         return
     score = verdict.get("score", 0)
-    print(json.dumps({"won": verdict.get("won") is True,
-                      "score": score if isinstance(score, (int, float)) else 0}))
+    said = {"won": verdict.get("won") is True,
+            "score": score if isinstance(score, (int, float)) else 0}
+    # An escrow's judge answers a different question -- may these things go to
+    # that address -- in the same three words a person can check: `release`,
+    # who `to` (optional, and only ever compared), and `why` when it says no.
+    if "release" in verdict:
+        said["release"] = verdict.get("release") is True
+    if isinstance(verdict.get("to"), str):
+        said["to"] = verdict["to"][:100]
+    if isinstance(verdict.get("why"), str):
+        said["why"] = verdict["why"][:200]
+    print(json.dumps(said))
 
 
 if __name__ == "__main__":

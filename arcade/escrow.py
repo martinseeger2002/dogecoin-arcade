@@ -237,3 +237,44 @@ def signed(inputs: list[dict], outputs: list[tuple[int, bytes]], redeem: bytes,
         script_sig = (owner_script_sig if owner else referee_script_sig)(sig, redeem)
         done.append({**coin, "script_sig": script_sig})
     return serialize(done, outputs, locktime).hex()
+
+
+# --- the escrows a node opened ----------------------------------------------------------
+
+class Book:
+    """What this node knows of the escrows its accounts opened: enough to show a
+    player what is waiting and to take it back. Nothing here is needed to SPEND
+    an escrow -- the script is worked out again from public facts -- so losing
+    this file loses a list, never anything in it."""
+
+    def __init__(self, path):
+        import sqlite3
+        self.path = str(path)
+        with sqlite3.connect(self.path) as db:
+            db.execute("CREATE TABLE IF NOT EXISTS escrow (address TEXT PRIMARY KEY, "
+                       "network TEXT, game TEXT, owner TEXT, owner_pubkey TEXT, "
+                       "referee TEXT, unlock INTEGER, redeem TEXT, created INTEGER)")
+
+    def add(self, row: dict) -> None:
+        import sqlite3
+        import time as _t
+        with sqlite3.connect(self.path) as db:
+            db.execute("INSERT OR IGNORE INTO escrow VALUES (?,?,?,?,?,?,?,?,?)",
+                       (row["address"], row["network"], row["game"], row["owner"],
+                        row["owner_pubkey"], row["referee"], int(row["unlock"]),
+                        row["redeem"], int(_t.time())))
+
+    def get(self, address: str) -> dict | None:
+        import sqlite3
+        with sqlite3.connect(self.path) as db:
+            db.row_factory = sqlite3.Row
+            row = db.execute("SELECT * FROM escrow WHERE address=?", (address,)).fetchone()
+        return dict(row) if row else None
+
+    def of(self, owner: str, network: str) -> list[dict]:
+        import sqlite3
+        with sqlite3.connect(self.path) as db:
+            db.row_factory = sqlite3.Row
+            rows = db.execute("SELECT * FROM escrow WHERE owner=? AND network=? "
+                              "ORDER BY created DESC LIMIT 200", (owner, network)).fetchall()
+        return [dict(r) for r in rows]

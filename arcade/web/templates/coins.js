@@ -345,8 +345,12 @@ export async function sighashAll(tx, index, scriptPubKey) {
   const parts = [writeLE(tx.version, 4), sizeOf(BigInt(tx.inputs.length))];
   tx.inputs.forEach((input, n) => {
     const script = n === index ? scriptPubKey : new Uint8Array(0);
+    // The input's own sequence: always 0xffffffff for what this file builds,
+    // and below it for a spend that has to wait for its lock time (an escrow
+    // taken back by its owner), which the signature must cover as it is.
+    const sequence = input.sequence === undefined ? 0xffffffffn : BigInt(input.sequence);
     parts.push(unhex(input.txid).reverse(), writeLE(input.vout, 4),
-               sizeOf(BigInt(script.length)), script, writeLE(0xffffffffn, 4));
+               sizeOf(BigInt(script.length)), script, writeLE(sequence, 4));
   });
   parts.push(sizeOf(BigInt(tx.outputs.length)));
   for (const out of tx.outputs)

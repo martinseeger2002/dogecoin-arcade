@@ -50,6 +50,8 @@ from .. import collections as collectionlib
 from .. import approvals as approvalslib
 from .. import payload as P
 from .. import referee as refereelib
+from .. import escrow as escrowlib
+from ..rpc import RpcError
 from .. import feedview
 from ..messaging import feed as feedlib
 from ..messaging import mempool as mempoollib
@@ -12990,6 +12992,363 @@ def create_app(state: AppState) -> FastAPI:
             if answer.status_code != 200:
                 raise refereelib.RefereeError(str(said.get("detail") or "the referee refused"))
         return [bytes.fromhex(s) for s in said["signatures"]]
+
+    # --- a refereed escrow (arcade/escrow.py) -------------------------------------------
+    #
+    # A game names a referee and a judge in its JSON ({"escrow": {...}}); a player
+    # opens an escrow for that game with an unlock time the game chooses, deposits
+    # NFTs and tokens into it from their own wallet, and from then on the game's
+    # referee releases them to whoever the judge says. After the unlock time the
+    # owner alone can take them back. Game-agnostic: the arcade moves things, the
+    # judge decides where.
+
+    _escrows = escrowlib.Book(state.home / "escrows.sqlite")
+    #: What each deposit leaves at the escrow besides the item: the coin its own
+    #: move out spends -- a fee, the recipient's dust, and change back.
+    ESCROW_RESERVE = escrowlib.RELEASE_FEE + 2 * escrowlib.DUST
+
+    def _game_escrow(chain, game: str) -> dict:
+        """A game's escrow terms, read from its inscription's JSON."""
+        row = state.token_index(chain).inscription(contentlib._key(str(game or "")))
+        if row is None:
+            raise escrowlib.EscrowError("there is no such game")
+        try:
+            said = json.loads(row["json"] or "{}") or {}
+        except ValueError:
+            said = {}
+        terms = said.get("escrow") if isinstance(said, dict) else None
+        if not isinstance(terms, dict):
+            raise escrowlib.EscrowError("that game keeps no escrow")
+        ref = terms.get("referee") if isinstance(terms.get("referee"), dict) else {}
+        pubkey = str(ref.get("pubkey") or "").lower()
+        if len(pubkey) != 66 or pubkey[:2] not in ("02", "03"):
+            raise escrowlib.EscrowError("that game names no referee key")
+        judge = state.token_index(chain).inscription(contentlib._key(str(terms.get("judge") or "")))
+        if judge is None:
+            raise escrowlib.EscrowError("that game's judge is not on this chain")
+        try:
+            hours = float(terms.get("unlock_hours") or 24)
+        except (TypeError, ValueError):
+            hours = 24
+        return {"game": row["txid"], "pubkey": pubkey, "node": str(ref.get("node") or ""),
+                "judge": judge["txid"],
+                "params": terms.get("params") if isinstance(terms.get("params"), dict) else {},
+                "hours": max(1.0, min(hours, escrowlib.UNLOCK_HOURS_MOST))}
+
+    def _escrow_script(chain, terms: dict, owner: str, owner_pub: str, unlock: int):
+        pub = bytes.fromhex(str(owner_pub or ""))
+        if hash160(pub) != b58check_decode(owner)[1]:
+            raise escrowlib.EscrowError("that key is not the owner's address")
+        redeem = escrowlib.redeem_script(bytes.fromhex(terms["pubkey"]), pub, int(unlock),
+                                         escrowlib.tag_for(terms["game"], owner, int(unlock)))
+        return redeem, escrowlib.address_of(redeem, chain.params)
+
+    def _escrow_holdings(chain, address: str) -> dict:
+        index = state.token_index(chain)
+        with contextlib.closing(index.open()) as db:
+            coins = list(utxoslib.unspent(db, address))
+        return {"inscriptions": [r["txid"] for r in index.inscriptions(owner=address, limit=500)],
+                "tokens": {str(r["property_id"]): int(r["balance"])
+                           for r in index.balances([address]) if int(r["balance"]) > 0},
+                "coins": [{"txid": c["txid"], "vout": int(c["vout"]), "value": int(c["value"])}
+                          for c in coins]}
+
+    @app.post("/account/escrow/open")
+    def account_escrow_open(request: Request, payload: Any = Body(None)):
+        """An escrow for this account in one game: its address, and when it opens to
+        its owner. {game, hours, chain} -> nothing is sent; deposits do that."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+            owner = _account_address(account.pubkey, chain)
+            if not owner:
+                raise escrowlib.EscrowError("this account has no address on that chain yet")
+            terms = _game_escrow(chain, said.get("game"))
+            hours = min(float(said.get("hours") or terms["hours"]), terms["hours"])
+            hours = max(hours, 1.0)
+            unlock = -(-int(time.time() + hours * 3600) // 3600) * 3600   # on the hour
+            owner_pub = _coin_pubkey(account.pubkey, chain).hex()
+            if not owner_pub:
+                raise escrowlib.EscrowError("this account's coin key is not known here yet; "
+                                            "sign in once more from its wallet")
+            redeem, address = _escrow_script(chain, terms, owner, owner_pub, unlock)
+        except (escrowlib.EscrowError, ValueError, TypeError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        _escrows.add({"address": address, "network": chain.network, "game": terms["game"],
+                      "owner": owner, "owner_pubkey": owner_pub, "referee": terms["pubkey"],
+                      "unlock": unlock, "redeem": redeem.hex()})
+        # Watched from now: its coins are what every move out of it spends.
+        index = state.token_index(chain)
+        with contextlib.closing(index.open()) as db, db.conn:
+            utxoslib.watch(db, address, index.indexed_height() or 0, why="escrow")
+        return JSONResponse({"escrow": address, "unlock": unlock, "game": terms["game"],
+                             "owner": owner, "referee": terms["pubkey"], "chain": chain.network})
+
+    @app.post("/account/escrow/deposit")
+    def account_escrow_deposit(request: Request, payload: Any = Body(None)):
+        """Offer to put ONE thing into this account's escrow: an NFT or a token amount,
+        with the coin its own move out will spend. Nothing is broadcast here."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+            owner = _account_address(account.pubkey, chain)
+            book = _escrows.get(str(said.get("escrow") or ""))
+            if book is None or book["owner"] != owner or book["network"] != chain.network:
+                raise escrowlib.EscrowError("that is not an escrow of this account's")
+            if time.time() >= book["unlock"]:
+                raise escrowlib.EscrowError("that escrow's time is up; open a new one")
+            index = state.token_index(chain)
+            item = said.get("item") if isinstance(said.get("item"), dict) else {}
+            if item.get("inscription"):
+                row = index.inscription(contentlib._key(str(item["inscription"])))
+                if row is None or row["owner"] != owner:
+                    raise escrowlib.EscrowError("that piece is not this account's")
+                body = inscriptionlib.Transfer(txid=bytes.fromhex(row["txid"])).encode()
+                outputs = _class_c_or_b(chain, owner, body, _coin_pubkey(account.pubkey, chain))
+                what = f"put inscription #{row['number']} in escrow"
+            elif item.get("token"):
+                pid = int(item["token"])
+                prop = index.property(pid)
+                if prop is None:
+                    raise escrowlib.EscrowError(f"there is no token {pid}")
+                units = parse_amount(str(item.get("amount", "")), prop["divisible"])
+                held = index.balance(owner, pid) - index.pending_out(owner, pid)
+                if units > held:
+                    raise escrowlib.EscrowError(f"only {format_amount(max(0, held), prop['divisible'])} "
+                                                f"of {prop['name']} is here to put in")
+                outputs = _class_c_or_b(chain, owner, tokenlib.send_payload(pid, units),
+                                        _coin_pubkey(account.pubkey, chain), wrap=False)
+                what = f"put {format_amount(units, prop['divisible'])} {prop['name']} in escrow"
+            else:
+                raise escrowlib.EscrowError("an escrow holds an NFT or a token amount")
+            # Last, so the engine's reference rule names the escrow as the recipient.
+            outputs.append((ESCROW_RESERVE, txbuild.p2pkh_script(book["address"])))
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, owner, outputs, rate=fees.MIN_FEE_PER_KB, what=what,
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "send")
+        except (escrowlib.EscrowError, fundinglib.FundingError, tokenlib.TokenError,
+                AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what)
+        return JSONResponse({"offer": offer.id, "escrow": book["address"], "chain": chain.network,
+                             **unsigned.as_json()})
+
+    @app.get("/r/escrow/{address}")
+    def r_escrow(address: str, chain: str = ""):
+        """What an escrow holds, whose it is, and when it opens to its owner."""
+        try:
+            context = _chain_asked({"chain": chain}) if chain else _token_chain()[0]
+        except ValueError:
+            context = _token_chain()[0]
+        book = _escrows.get(address)
+        if book is None:
+            return contentlib._missing("this node does not know that escrow")
+        held = _escrow_holdings(context, address)
+        return contentlib._json({"escrow": address, "game": book["game"], "owner": book["owner"],
+                                 "owner_pubkey": book["owner_pubkey"], "referee": book["referee"],
+                                 "unlock": book["unlock"], "open": time.time() >= book["unlock"],
+                                 "inscriptions": held["inscriptions"], "tokens": held["tokens"],
+                                 "coins": held["coins"]})
+
+    def _escrow_release(chain, said: dict) -> dict:
+        """The referee's half: the game's judge decides, then every item named moves
+        to `to`, one transaction each, signed by this node's referee key."""
+        terms = _game_escrow(chain, said.get("game"))
+        if terms["pubkey"] != _referee.pubkey.hex():
+            raise refereelib.RefereeError("this node is not that game's referee")
+        owner, unlock = str(said.get("owner") or ""), int(said.get("unlock") or 0)
+        redeem, address = _escrow_script(chain, terms, owner, str(said.get("owner_pubkey") or ""),
+                                         unlock)
+        if str(said.get("escrow") or address) != address:
+            raise escrowlib.EscrowError("those facts make a different escrow")
+        to = str(said.get("to") or "")
+        complaint = _check_address(to, mainnet=chain.is_mainnet)
+        if complaint:
+            raise escrowlib.EscrowError(complaint)
+        held = _escrow_holdings(chain, address)
+        items = [i for i in (said.get("items") or []) if isinstance(i, dict)][:50]
+        if not items:
+            raise escrowlib.EscrowError("name what to release")
+        index = state.token_index(chain)
+        moves = []
+        for item in items:
+            if item.get("inscription"):
+                key = str(item["inscription"]).lower()
+                if key not in held["inscriptions"]:
+                    raise escrowlib.EscrowError("that piece is not in this escrow")
+                moves.append(("nft", key, escrowlib.nft_payload(key)))
+            elif item.get("token"):
+                pid = int(item["token"])
+                prop = index.property(pid)
+                units = parse_amount(str(item.get("amount", "")), bool(prop and prop["divisible"]))
+                if units > int(held["tokens"].get(str(pid), 0)):
+                    raise escrowlib.EscrowError("the escrow does not hold that much of that token")
+                moves.append(("token", f"{pid}:{units}", escrowlib.token_payload(pid, units)))
+            else:
+                raise escrowlib.EscrowError("an item is an NFT or a token amount")
+        _referee.pace(to)
+        found = index.inscription_content(terms["judge"])
+        if found is None:
+            raise refereelib.RefereeError("this node does not hold the game's judge")
+        source = found[1].decode("utf-8", "replace")
+        params = {**terms["params"], "escrow": {"address": address, "owner": owner,
+                                               "unlock": unlock, "game": terms["game"],
+                                               "inscriptions": held["inscriptions"],
+                                               "tokens": held["tokens"]},
+                  "to": to, "items": items}
+        verdict = _referee.judge(source, address, said.get("replay"), params)
+        if verdict.get("release") is not True:
+            raise refereelib.RefereeError(str(verdict.get("why") or "the game's judge said no"))
+        if verdict.get("to") not in (None, to):
+            raise refereelib.RefereeError("the game's judge names somebody else")
+        # The coins: what this node watches, and any the asker names -- each of
+        # those checked with this node's own Core, unspent and paying exactly this
+        # escrow, so a referee that never watched the address can still act.
+        want = escrowlib.p2sh_script(redeem).hex()
+        coins = {(c["txid"], c["vout"]): c for c in held["coins"]}
+        with chain.rpc() as rpc:
+            for c in (said.get("coins") or [])[:100]:
+                try:
+                    key = (str(c["txid"]).lower(), int(c["vout"]))
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if key in coins:
+                    continue
+                out = rpc.call("gettxout", key[0], key[1], True)
+                if out and out["scriptPubKey"]["hex"] == want:
+                    coins[key] = {"txid": key[0], "vout": key[1],
+                                  "value": int(round(float(out["value"]) * COIN))}
+        coins = sorted(coins.values(), key=lambda c: -c["value"])
+        if len(coins) < len(moves):
+            raise escrowlib.EscrowError("the escrow has fewer coins than things to move")
+        txids = []
+        with chain.rpc() as rpc:
+            for (kind, what, data), coin in zip(moves, coins):
+                inputs, outputs = escrowlib.move_out(coin, address, data, to)
+                raw = escrowlib.signed(inputs, outputs, redeem, _referee.sign)
+                txids.append(rpc.call("sendrawtransaction", raw))
+        state.bump_generation()
+        return {"ok": True, "txids": txids, "verdict": verdict}
+
+    @app.post("/r/escrow/release")
+    def r_escrow_release(payload: Any = Body(None)):
+        """Ask a game's referee to release things from an escrow. Anybody may ask;
+        the game's judge decides. Forwarded when the referee is another node."""
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said) if said.get("chain") else _token_chain()[0]
+            terms = _game_escrow(chain, said.get("game"))
+            if terms["pubkey"] == _referee.pubkey.hex():
+                return contentlib._json(_escrow_release(chain, said))
+            if not terms["node"]:
+                raise refereelib.RefereeError("that game's referee is a node that did not say "
+                                              "where it is, and it is not this one")
+            try:
+                answer = requests.post(terms["node"] + "/r/escrow/release", timeout=60, json=said)
+                body = answer.json()
+            except Exception:                              # noqa: BLE001
+                raise refereelib.RefereeError("the game's referee did not answer; what is in "
+                                              "escrow stays there, so try again later") from None
+            return contentlib._json(body, status=answer.status_code)
+        except (escrowlib.EscrowError, refereelib.RefereeError, AmountError, ValueError,
+                RpcError) as exc:
+            return contentlib._json({"ok": False, "error": str(exc)}, status=400)
+
+    @app.post("/account/escrow/reclaim")
+    def account_escrow_reclaim(request: Request, payload: Any = Body(None)):
+        """After the unlock time: every move that takes this account's escrow back,
+        unsigned, one per thing, each spending a coin of its own. The owner signs
+        them in the tab (`/account/escrow/reclaim/sign`)."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+            owner = _account_address(account.pubkey, chain)
+            book = _escrows.get(str(said.get("escrow") or ""))
+            if book is None or book["owner"] != owner:
+                raise escrowlib.EscrowError("that is not an escrow of this account's")
+            if time.time() < book["unlock"]:
+                raise escrowlib.EscrowError("that escrow is still the game's until "
+                                            f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(book['unlock']))}")
+            held = _escrow_holdings(chain, book["address"])
+            data = [escrowlib.nft_payload(t) for t in held["inscriptions"]]
+            data += [escrowlib.token_payload(int(pid), units) for pid, units in held["tokens"].items()]
+            if not data:
+                raise escrowlib.EscrowError("there is nothing left in that escrow")
+            coins = sorted(held["coins"], key=lambda c: -c["value"])
+            if len(coins) < len(data):
+                raise escrowlib.EscrowError("the escrow has fewer coins than things to move")
+            redeem = bytes.fromhex(book["redeem"])
+            txs = []
+            for payload_data, coin in zip(data, coins):
+                inputs, outputs = escrowlib.move_out(coin, book["address"], payload_data, owner)
+                coins_in = [{**c, "sequence": escrowlib.NOT_FINAL} for c in inputs]
+                txs.append({"raw": escrowlib.serialize(coins_in, outputs, book["unlock"]).hex(),
+                            "sighash": escrowlib.sighash(coins_in, outputs, 0, redeem,
+                                                         book["unlock"]).hex(),
+                            "value": coin["value"]})
+        except (escrowlib.EscrowError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"escrow": book["address"], "redeem": book["redeem"],
+                             "unlock": book["unlock"], "owner": owner, "chain": chain.network,
+                             "txs": txs})
+
+    @app.post("/account/escrow/reclaim/sign")
+    def account_escrow_reclaim_sign(request: Request, payload: Any = Body(None)):
+        """The owner's signatures, one per move; each is put in place and sent."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+            owner = _account_address(account.pubkey, chain)
+            book = _escrows.get(str(said.get("escrow") or ""))
+            if book is None or book["owner"] != owner:
+                raise escrowlib.EscrowError("that is not an escrow of this account's")
+            redeem = bytes.fromhex(book["redeem"])
+            txids = []
+            with chain.rpc() as rpc:
+                for tx in (said.get("txs") or [])[:50]:
+                    raw = bytes.fromhex(str(tx.get("raw") or ""))
+                    sig = bytes.fromhex(str(tx.get("signature") or ""))
+                    decoded = rpc.call("decoderawtransaction", raw.hex())
+                    if len(decoded["vin"]) != 1:
+                        raise escrowlib.EscrowError("a move out of an escrow spends one coin")
+                    pays = [o for o in decoded["vout"] if o["scriptPubKey"].get("addresses")]
+                    if any(a not in (owner, book["address"]) for o in pays
+                           for a in o["scriptPubKey"]["addresses"]):
+                        raise escrowlib.EscrowError("that move pays somebody besides its owner")
+                    script_sig = escrowlib.owner_script_sig(sig, redeem)
+                    # The scriptSig goes where the empty one was: right after the outpoint.
+                    at = 4 + 1 + 36
+                    signed_raw = raw[:at] + txbuild.varint(len(script_sig)) + script_sig + raw[at + 1:]
+                    txids.append(rpc.call("sendrawtransaction", signed_raw.hex()))
+        except (escrowlib.EscrowError, ValueError, RpcError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        state.bump_generation()
+        return JSONResponse({"ok": True, "txids": txids})
+
+    @app.get("/account/escrows")
+    def account_escrows(request: Request, chain: str = ""):
+        """This account's escrows, with what each still holds, for the wallet."""
+        account = _signed_in_account(request)
+        try:
+            context = _chain_asked({"chain": chain}) if chain else _account_chain()
+        except ValueError:
+            context = _account_chain()
+        owner = _account_address(account.pubkey, context)
+        out = []
+        for row in _escrows.of(owner, context.network):
+            held = _escrow_holdings(context, row["address"])
+            if held["inscriptions"] or held["tokens"]:
+                out.append({"escrow": row["address"], "game": row["game"], "unlock": row["unlock"],
+                            "open": time.time() >= row["unlock"],
+                            "inscriptions": held["inscriptions"], "tokens": held["tokens"]})
+        return JSONResponse({"escrows": out, "chain": context.network})
 
     @app.get("/r/referee")
     def r_referee():
