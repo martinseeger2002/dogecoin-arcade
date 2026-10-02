@@ -670,3 +670,130 @@ def test_a_refereed_pool_pays_only_a_verified_win_and_nothing_gets_around_it(nod
     _settled(state, rpc)
     assert _held(state, pool, book["pid"])[0] == 0
     assert _held(state, book["address"], book["pid"])[0] == HELD - 60 * COIN
+
+
+RACE_JUDGE = """
+function judge(seed, inputs, params) {
+  // A race: the time is the sum of the laps, and a run finishes when it has
+  // exactly params.laps of them. The seed's first byte sets the best lap.
+  var best = parseInt(seed.slice(0, 2), 16) + 10;
+  var laps = inputs.laps || [];
+  var time = 0;
+  for (var i = 0; i < laps.length; i++) time += Math.max(laps[i], best);
+  return {won: laps.length === params.laps, score: time, claimer: params.claimer};
+}
+"""
+
+TROPHY_JUDGE = """
+function judge(seed, inputs, params) {
+  // Pays a player with at least one verified finished race of their own.
+  var mine = (params.facts.attested || []).filter(function (r) {
+    return r.result && r.result.won === true && r.result.claimer === params.claimer; });
+  return {won: mine.length >= 1, score: mine.length};
+}
+"""
+
+
+def test_a_verified_result_is_inscribed_listed_and_read_by_a_pool(node):
+    """2026-09-30, the operator: "inscription requests ... game and data agnostic",
+    to keep players' scores on the chain with no score keeper. A run is scored
+    by the game's judge and the referee signs the verdict for that address over
+    that content; the inscription carries it; every node checks it; a
+    leaderboard lists it; a prize pool's judge reads it in facts."""
+    import base64
+    from test_account_offer import _pubkey, _inscribed
+    from arcade import referee as refereelib
+    app, state, rpc = node
+    book = _bookcoin(node, 120)
+    who = book["client"]
+    judges = {}
+    for name, source in (("race", RACE_JUDGE), ("trophy", TROPHY_JUDGE)):
+        made = who.post("/account/inscribe", json={
+            "content": base64.b64encode(source.encode()).decode(),
+            "content_type": "text/javascript"})
+        judges[name] = _signed(who, book["secret"], book["pubkey"], made).json()["txid"]
+    _settled(state, rpc)
+
+    racer = _seated(app, state, rpc, 121)
+    client, secret, pubkey, address = racer
+    seed = client.post("/account/referee/seed", json={"judge": judges["race"]}).json()["seed"]
+    content = json.dumps({"track": "Harbour", "laps": 3}).encode()
+    digest = hashlib.sha256(content).hexdigest()
+    inputs = {"laps": [40, 41, 39]}
+    got = client.post("/account/referee/attest", json={
+        "judge": judges["race"], "seed": seed, "inputs": inputs,
+        "params": {"laps": 3}, "content": digest})
+    assert got.status_code == 200, got.text
+    att = got.json()["attested"]
+    assert att["result"]["won"] is True and att["address"] == address
+    again = client.post("/account/referee/attest", json={
+        "judge": judges["race"], "seed": seed, "inputs": inputs,
+        "params": {"laps": 3}, "content": digest})
+    assert again.status_code == 400 and "seed was used" in again.json()["detail"]
+
+    made = client.post("/account/inscribe", json={
+        "content": base64.b64encode(content).decode(), "content_type": "application/json",
+        "json": json.dumps({"game": "racecondition", "attested": att})})
+    assert made.status_code == 200, made.text
+    signed = client.post("/account/sign", json={
+        "offer": made.json()["offer"], "pubkey": pubkey.hex(),
+        "signatures": [_sign(secret, bytes.fromhex(d)).hex() for d in made.json()["sighashes"]]})
+    assert signed.status_code == 200, signed.text
+    result_id = signed.json()["txid"]
+
+    # Somebody else inscribing the same attestation over the same content: it
+    # names the racer's address, not theirs, so no list counts it.
+    thief = _seated(app, state, rpc, 122)
+    copied = thief[0].post("/account/inscribe", json={
+        "content": base64.b64encode(content).decode(), "content_type": "application/json",
+        "json": json.dumps({"game": "racecondition", "attested": att, "copy": 1})})
+    thief[0].post("/account/sign", json={
+        "offer": copied.json()["offer"], "pubkey": thief[2].hex(),
+        "signatures": [_sign(thief[1], bytes.fromhex(d)).hex() for d in copied.json()["sighashes"]]})
+    _settled(state, rpc)
+
+    board = who.get(f"/r/verified/{judges['race']}").json()
+    assert [r["id"] for r in board["results"]] == [result_id], board
+    row = board["results"][0]
+    assert row["creator"] == address and row["result"]["score"] >= 120
+    assert row["json"] == {"game": "racecondition"}
+    other = who.get(f"/r/verified/{judges['race']}?referee=02{'11' * 32}").json()
+    assert other["results"] == [], "a leaderboard names the referee it trusts"
+
+    # A prize pool whose judge pays for a verified race of the claimer's own.
+    game = _inscribed(who, state, rpc, book["secret"], book["pubkey"], "the tour")
+    pool_secret = int.from_bytes(bytes([0x66, 120]) + bytes(30), "big")
+    pool_pub = _pubkey(pool_secret)
+    opened = who.post("/account/pools/open", json={
+        "index": 5151, "pubkey": pool_pub.hex(), "creator_pubkey": book["pubkey"].hex(),
+        "referee": {"judge": judges["trophy"], "require": {"won": True},
+                    "facts": {"attested": [judges["race"]]}}})
+    assert opened.status_code == 200, opened.text
+    pool = opened.json()["address"]
+    funding = who.post("/account/pools/fund", json={
+        "pool": pool, "property_id": book["pid"], "lot": "5", "count": 1, "price": "0.01",
+        "bound": game, "once": True, "claim_hash": hashlib.sha256(PHRASE.encode()).hexdigest()})
+    fund = _signed(who, book["secret"], book["pubkey"], funding).json()["txid"]
+    legs = who.post("/account/pools/legs", json={"pool": pool, "fund": fund})
+    assert legs.status_code == 200, legs.text
+    sigs = [[_sign(pool_secret, bytes.fromhex(d), funding_mod.SINGLE_ANYONECANPAY).hex()
+             for d in leg["sighashes"]] for leg in legs.json()["legs"]]
+    inscribed = who.post("/account/inscribe", json={
+        "content": base64.b64encode(b"sealed").decode(),
+        "content_type": "application/vnd.arcade.prizepool",
+        "json": json.dumps({"prizepool": {**legs.json()["prizepool"], "pubkey": pool_pub.hex()}})})
+    pool_txid = _signed(who, book["secret"], book["pubkey"], inscribed).json()["txid"]
+    _settled(state, rpc)
+
+    tseed = client.post("/account/referee/seed", json={"pool": pool_txid}).json()["seed"]
+    asked = client.post("/account/prize", json={"pool": pool_txid, "lot": 0, "page": game,
+                                                "signatures": sigs[0], "secret": PHRASE})
+    assert asked.status_code == 200, asked.text
+    paid = client.post("/account/prize/sign", json={
+        "pool": pool_txid, "lot": 0, "page": game, "signatures": sigs[0], "secret": PHRASE,
+        "raw": asked.json()["raw"], "pubkey": pubkey.hex(),
+        "replay": {"seed": tseed, "inputs": {}},
+        "claimer": [_sign(secret, bytes.fromhex(d)).hex() for d in asked.json()["sighashes"]]})
+    assert paid.status_code == 200, paid.text
+    _settled(state, rpc)
+    assert _held(state, address, book["pid"])[0] == 5 * COIN, "the verified racer is paid"

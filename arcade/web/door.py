@@ -299,6 +299,9 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # random number; a signature comes only for a replay the judge
                # passes, over a claim that pays the wallet that played.
                "/account/referee/seed", "/r/referee/seed", "/r/referee/sign",
+               # a verified result for an inscription (2026-09-30): the referee's
+               # signed verdict on one run, for the address its seed was issued to
+               "/account/referee/attest", "/r/referee/attest",
                # an account brought from elsewhere: find the coins it already held
                "/account/coins/backfill",
                # the pair that fills one of those listings: the first shows a

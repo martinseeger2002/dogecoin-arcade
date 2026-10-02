@@ -347,6 +347,33 @@ request waits under *Approvals*. Only a request filed while your page is open
 earlier is listed under the page with a link, and never opened over a page
 that did not ask.
 
+### Asking the wallet to inscribe
+
+A page can ask the person looking to inscribe something of its own making —
+a score, a save, an achievement, a replay — as theirs. Any data, any game:
+
+```js
+parent.postMessage({arcade: "inscribe", seq: 1,
+                    data: JSON.stringify({track: "Harbour", time: 120.4}),
+                    contenttype: "application/json",
+                    json: {game: "racecondition"},        // optional metadata
+                    label: "RACE CONDITION", note: "your lap times"}, "*");
+// answers {arcade: "inscribe", seq, heard}, then {ok, txid} or {error}
+```
+
+| field | |
+|---|---|
+| `data` | the content: a string, or JSON, or base64 with `encoding: "base64"` |
+| `contenttype` | what it is; `text/plain` by default |
+| `json` | optional: the inscription's metadata, an object |
+| `label`, `note` | shown on the card, in quotes |
+| `verify` | optional: have the result checked by the game's judge first — see [The referee](referee.md), "Verified results" |
+
+The arcade shows its own card — what, how big, the fee — and the person's
+browser signs. It goes on the chain for good, as the person's own. Up to 7,000
+bytes: one transaction. It counts against the account's inscription allowance
+like any other. `"Cancelled."` means they said no.
+
 ### Remembering things
 
 Your page has no `localStorage`: an opaque origin has no storage, and the

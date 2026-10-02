@@ -10,8 +10,7 @@ The harness a game's author can reproduce exactly (docs/prize-pools.md):
 
 No DOM, no network, no clock, no randomness but the seed: the same replay
 gives the same verdict every time it is run. Answers one line of JSON,
-{"won": ..., "score": ...} or {"error": "..."}; an escrow's judge may also say
-{"release": true|false, "to": address, "why": "..."}.
+{"won": ..., "score": ...} or {"error": "..."}.
 """
 
 import json
@@ -52,24 +51,16 @@ def main() -> None:
     except ValueError:
         verdict = None
     if not isinstance(verdict, dict):
-        print(json.dumps({"error": "the judge did not answer {won, score}"}))
+        print(json.dumps({"error": "the judge did not answer with an object"}))
         return
-    score = verdict.get("score", 0)
-    said = {"won": verdict.get("won") is True,
-            "score": score if isinstance(score, (int, float)) else 0}
-    # An escrow's judge answers a different question -- may these things go to
-    # that address -- in the same three words a person can check: `release`,
-    # who `to` (optional, and only ever compared), and `why` when it says no.
-    if "release" in verdict:
-        said["release"] = verdict.get("release") is True
-    # A game-state judge's yes or no to the states a page asked for.
-    if "update" in verdict:
-        said["update"] = verdict.get("update") is True
-    if isinstance(verdict.get("to"), str):
-        said["to"] = verdict["to"][:100]
-    if isinstance(verdict.get("why"), str):
-        said["why"] = verdict["why"][:200]
-    print(json.dumps(said))
+    # The result exactly as the judge returned it (2026-09-30, the operator: "take
+    # out the hard coded won and score entries ... leave them optional"): any
+    # object, up to 2 KB. A pool that requires a win or a score reads those
+    # fields when the judge gives them, and counts them missing when it does not.
+    if len(json.dumps(verdict)) > 2048:
+        print(json.dumps({"error": "the judge's result is larger than 2 KB"}))
+        return
+    print(json.dumps(verdict))
 
 
 if __name__ == "__main__":
