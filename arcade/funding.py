@@ -117,6 +117,14 @@ class Unsigned:
                        for i in self.inputs],
             "sighashes": self.sighashes,
             "signed_from": self.signed_from,
+            # Whose key makes the signatures this is waiting for -- the thing an
+            # offer used to leave unsaid while it named the address that signs
+            # (a tester). It is read off the type, never off `signed_from`,
+            # which is an index into `inputs` and stays one: an `Unsigned` is
+            # unsigned and waiting for the reader's own key, since the node that
+            # built it holds neither that key nor those coins. A node's own
+            # signature is announced by `swap.public`, and nothing hashes this.
+            "signed_by": "account",
             "fee": self.fee,
             "change": self.change,
             "what": self.what,
@@ -782,6 +790,12 @@ class Leg:
                         for value, script in self.outputs],
             "sighashes": self.sighashes,
             "sighash_type": self.sighash_type,
+            # The same disclosure an offer carries. A leg's signatures are made
+            # by whoever made the leg, in their own tab -- this node completes
+            # legs and never signs one -- so from here they are always the
+            # account's, and a reader should not have to infer it from there
+            # being a leg at all.
+            "signed_by": "account",
             "fee": self.fee,
             "pays": self.pays,
             "paid": self.paid,

@@ -277,6 +277,8 @@ def test_an_offer_locks_an_output_and_prices_the_listing(world):
     assert offer["expires"] - offer["created"] == S.OFFER_TTL
     assert offers.get(offer["id"])["status"] == "open"
     assert "buyer_pubkey" not in offer, "bookkeeping stays in the book"
+    assert offer["signed_by"] == "node", \
+        "a book offer stands on a wallet the node holds the key for (a tester)"
 
     # A second offer cannot take the same output; it takes the next one, and
     # so on until the wallet has nothing left to offer from.
