@@ -516,7 +516,11 @@ async function signOffer(wallet, offer, given = null) {
     body: JSON.stringify({offer: offer.offer, signatures,
                           pubkey: coinsHex(keys.pubkey)}),
   });
-  const said = await done.json();
+  // A node restarting answers through its proxy with an HTML page, not JSON:
+  // say that, rather than a JSON parse error nobody can act on.
+  const said = await done.json().catch(() => {
+    throw new Error(`the node did not answer (HTTP ${done.status}); it may be restarting`);
+  });
   if (!done.ok) throw new Error(said.detail || "the node would not take it");
   return {...said, fee: shown.fee, change: shown.change, says: shown.says};
 }

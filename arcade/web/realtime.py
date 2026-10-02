@@ -41,7 +41,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from ..mesh.node import MAX_PAYLOAD, MeshError
-from ..mesh.service import MESSAGE_MAGIC, cert_message
+from ..mesh.service import GUEST, MESSAGE_MAGIC, cert_message
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 GAME = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
@@ -144,7 +144,13 @@ def register(app, state, *, account_view: Callable, signed_in: Callable,
                     raise MeshError("that signature does not prove this account's address")
                 cred, member = said, address
             if cred is None:
-                member = svc.new_guest()
+                # A guest coming back after the node restarted (or after its
+                # stream dropped) keeps the name it had, so the other players
+                # see the same player return. Only a name nobody here holds
+                # now: `join` hands an existing seat to whoever names it.
+                asked = str(body.get("guest") or "")
+                member = (asked if GUEST.match(asked) and not svc.present(room, asked)
+                          else svc.new_guest())
             session = svc.join(room, member, cred)
             members = [who(m["member"], m["node"], m["cred"]) for m in svc.members(room)]
         except MeshError as exc:

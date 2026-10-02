@@ -56,56 +56,107 @@
                           body: JSON.stringify(body), keepalive: path === '/realtime/leave'})
         .then(function(r){ return r.json(); });
     }
+    // One way into a room, used for the first join and for every rejoin.
+    function realtimeConnect(name, game, guest){
+      return fetch('/realtime/hello', {cache: 'no-store'}).then(function(r){ return r.json(); })
+        .then(function(hello){
+          if (!hello.online) return {ok: true, online: false, why: hello.why || 'this node is not on the mesh'};
+          return realtimeProof(hello).then(function(proof){
+            return realtimePost('/realtime/join', {game: game, room: name, guest: guest || '',
+                                sig: proof && proof.sig, expires: proof && proof.expires});
+          });
+        });
+    }
+    function realtimeOpen(name, frame, j, game){
+      var es = new EventSource('/realtime/stream?token=' + encodeURIComponent(j.token));
+      var h = rt[name] = {token: j.token, es: es, me: j.me, members: {}, game: game};
+      (j.members || []).forEach(function(p){ h.members[p.id] = p; });
+      es.onmessage = function(ev){
+        if (rt[name] !== h) return;              // an old stream, replaced by a rejoin
+        var d; try { d = JSON.parse(ev.data); } catch (err) { return; }
+        d.room = name;
+        if (d.member) {
+          if (d.type === 'join') h.members[d.member.id] = d.member;
+          if (d.type === 'leave') delete h.members[d.member.id];
+        }
+        if (d.type === 'message' && typeof d.data === 'string'
+            && d.data.indexOf(TRADE) === 0) {
+          tradeHeard(name, d.member, d.data.slice(TRADE.length));
+          return;                 // the viewers' own talk: never the page's
+        }
+        frame.postMessage({arcade: 'realtime', event: d}, '*');
+      };
+      // The node let this seat go (idle, or it restarted and has never heard
+      // of this token): take a seat again rather than leave the game deaf.
+      es.addEventListener('closed', function(){ realtimeRejoin(name, frame, h); });
+      es.onerror = function(){ if (es.readyState === 2) realtimeRejoin(name, frame, h); };
+      tradeFrame = frame;
+      return h;
+    }
+    // 2026-10-02: every restart of a node (a merge restarts it) dropped every
+    // room on it without a word: the stream came back to a node that no longer
+    // knew its token, the browser gave up on it, and players sat in a room
+    // nobody could hear until they reloaded. Now the viewer rejoins by itself,
+    // as the same player where it can (a guest keeps its name), and tells the
+    // page who left and who is there now.
+    function realtimeRejoin(name, frame, h){
+      if (rt[name] !== h || h.rejoining) return;
+      h.rejoining = true;
+      try { h.es.close(); } catch (err) {}
+      var tries = 0;
+      (function again(){
+        if (rt[name] !== h) return;              // left in the meantime
+        tries++;
+        realtimeConnect(name, h.game, h.me && h.me.guest ? h.me.id : '').then(function(j){
+          if (rt[name] !== h) {
+            if (j && j.token) realtimePost('/realtime/leave', {token: j.token}).catch(function(){});
+            return;
+          }
+          if (!j || !j.ok || !j.online || !j.token) throw new Error('not yet');
+          var before = h.members, now = realtimeOpen(name, frame, j, h.game);
+          if (!h.me || now.me.id !== h.me.id) {
+            frame.postMessage({arcade: 'realtime', event: {type: 'me', room: name, member: now.me}}, '*');
+          }
+          for (var id in before) if (!now.members[id]) {
+            frame.postMessage({arcade: 'realtime', event: {type: 'leave', room: name, member: before[id]}}, '*');
+          }
+          for (var id2 in now.members) if (!before[id2]) {
+            frame.postMessage({arcade: 'realtime', event: {type: 'join', room: name, member: now.members[id2]}}, '*');
+          }
+        }).catch(function(){
+          if (rt[name] !== h) return;
+          if (tries >= 40) {                     // about ten minutes: say so, and stop
+            delete rt[name];
+            frame.postMessage({arcade: 'realtime', event: {type: 'closed', room: name,
+                               why: 'lost the connection to the node'}}, '*');
+            return;
+          }
+          setTimeout(again, Math.min(15000, 1000 * tries));
+        });
+      })();
+    }
     function realtimeDoor(m, answer, frame){
       var name = String(m.room || '');
       if (m.op === 'join') {
-        fetch('/realtime/hello', {cache: 'no-store'}).then(function(r){ return r.json(); })
-          .then(function(hello){
-            if (!hello.online) {
-              answer({ok: true, online: false, why: hello.why || 'this node is not on the mesh'});
-              return;
-            }
-            return realtimeProof(hello).then(function(proof){
-              return realtimePost('/realtime/join', {game: m.game || here, room: name,
-                                  sig: proof && proof.sig, expires: proof && proof.expires});
-            }).then(function(j){
-              if (!j.ok) { answer({ok: false, error: j.error || 'refused'}); return; }
-              var es = new EventSource('/realtime/stream?token=' + encodeURIComponent(j.token));
-              es.onmessage = function(ev){
-                var d; try { d = JSON.parse(ev.data); } catch (err) { return; }
-                d.room = name;
-                var h = rt[name];
-                if (h && d.member) {
-                  if (d.type === 'join') h.members[d.member.id] = d.member;
-                  if (d.type === 'leave') delete h.members[d.member.id];
-                }
-                if (d.type === 'message' && typeof d.data === 'string'
-                    && d.data.indexOf(TRADE) === 0) {
-                  tradeHeard(name, d.member, d.data.slice(TRADE.length));
-                  return;                 // the viewers' own talk: never the page's
-                }
-                frame.postMessage({arcade: 'realtime', event: d}, '*');
-              };
-              es.addEventListener('closed', function(ev){
-                es.close(); delete rt[name];
-                var why = ''; try { why = JSON.parse(ev.data).why; } catch (err) {}
-                frame.postMessage({arcade: 'realtime', event: {type: 'closed', room: name, why: why}}, '*');
-              });
-              rt[name] = {token: j.token, es: es, me: j.me, members: {}};
-              (j.members || []).forEach(function(p){ rt[name].members[p.id] = p; });
-              tradeFrame = frame;
-              answer({ok: true, online: true, me: j.me, members: j.members});
-            });
-          }).catch(function(err){
-            answer({ok: false, error: String((err && err.message) || err || 'refused')});
-          });
+        var game = m.game || here;
+        realtimeConnect(name, game, '').then(function(j){
+          if (j.ok && j.online === false && !j.token) { answer(j); return; }
+          if (!j.ok) { answer({ok: false, error: j.error || 'refused'}); return; }
+          var h = realtimeOpen(name, frame, j, game);
+          answer({ok: true, online: true, me: h.me, members: j.members});
+        }).catch(function(err){
+          answer({ok: false, error: String((err && err.message) || err || 'refused')});
+        });
         return;
       }
       var held = rt[name];
       if (!held) { answer({ok: false, error: 'join the room first'}); return; }
       if (m.op === 'send') {
         realtimePost('/realtime/send', {token: held.token, data: String(m.data || '')})
-          .then(function(j){ answer(j.ok ? {ok: true} : {ok: false, error: j.error || 'refused'}); })
+          .then(function(j){
+            if (!j.ok && /join again/.test(j.error || '')) realtimeRejoin(name, frame, held);
+            answer(j.ok ? {ok: true} : {ok: false, error: j.error || 'refused'});
+          })
           .catch(function(){ answer({ok: false, error: 'the node did not answer'}); });
       } else if (m.op === 'leave') {
         held.es.close(); delete rt[name];

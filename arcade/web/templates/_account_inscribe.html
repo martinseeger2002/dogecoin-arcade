@@ -245,10 +245,17 @@ async function ask(where, body) {
     method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify(body),
   });
-  const answer = await said.json();
+  const answer = await said.json().catch(() => {
+    throw new Error(`the node did not answer (HTTP ${said.status}); it may be restarting`);
+  });
   if (!said.ok) throw new Error(answer.detail || "that cannot be done");
   return answer;
 }
+
+/* What is worth asking again: the node away for a moment (restarting, the
+ * network dropped) or the offer it was holding lost with it. Anything else --
+ * a refusal with a reason -- is said, not retried. */
+const passing = (why) => /did not answer|may be restarting|Failed to fetch|NetworkError|Load failed|not one this node is holding/i.test(why);
 
 function b64(bytes) {
   let out = "";
@@ -493,10 +500,29 @@ async function inscribeBytes(bytes, name, type, jsonGiven = "") {
       const giveUp = Date.now() + 15 * 60 * 1000;
       for (let n = Number(start.next ?? 0); n < pieces; n++) {
         news(`Piece ${commas(n + 1)} of ${commas(pieces)}… keep this tab open until the last one.`);
-        const piece = await pieceOffer(bytes, start, n, giveUp, held);
-        const out = await wallet.confirm(held, piece);
-        if (n === 0) root = out.txid;
-        sent = Math.max(sent + 1, Number(piece.sent || 0));
+        // A node that restarts mid-file (2026-10-02: a merge restarted it
+        // between piece 5 and 6, and the loop died on the proxy's error page)
+        // is waited out: the piece is asked for again, which is safe -- an
+        // offer is only an offer, and a piece that did go out is refused as
+        // "already on the chain", which is the answer that was lost.
+        for (let tries = 1; ; tries++) {
+          try {
+            const piece = await pieceOffer(bytes, start, n, giveUp, held);
+            const out = await wallet.confirm(held, piece);
+            if (n === 0) root = out.txid;
+            sent = Math.max(sent + 1, Number(piece.sent || 0));
+            break;
+          } catch (e) {
+            const why = String(e.message || e);
+            const went = /already on the chain \(([0-9a-f]{64})\)/.exec(why);
+            if (went) { if (n === 0) root = went[1]; sent += 1; break; }
+            if (!passing(why) || tries > 20) throw e;
+            const wait = Math.min(30, 5 * tries);
+            news(`The node is not answering (it may be restarting). Piece ${commas(n + 1)} `
+                 + `is asked for again in ${wait} seconds\u2026 keep this tab open.`);
+            await new Promise((later) => setTimeout(later, wait * 1000));
+          }
+        }
         news(`${commas(sent)} of ${commas(pieces)} on the chain.`);
       }
       // Inside the hold, not after it: a sentence written after the delete

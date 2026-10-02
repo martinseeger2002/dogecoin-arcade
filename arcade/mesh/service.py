@@ -326,6 +326,10 @@ class MeshService:
             self._sessions[session.token] = session
         return session
 
+    def present(self, room: str, member: str) -> bool:
+        """Is `member` in `room` on this node right now?"""
+        return (room, member) in self.node.local
+
     def session(self, token: str) -> Session:
         with self._lock:
             found = self._sessions.get(str(token or ""))

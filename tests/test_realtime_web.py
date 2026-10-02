@@ -327,3 +327,22 @@ def test_a_fixed_address_is_announced_without_looking(tmp_path):
         assert svc._call(svc.announce_if_due(), timeout=10) and told == [("4.4.4.4", 9000)]
     finally:
         svc.stop()
+
+
+def test_a_guest_coming_back_keeps_its_name_unless_somebody_holds_it(two_nodes):
+    """After a node restarts, the viewer joins again for its page (2026-10-02),
+    asking for the guest name it had, so the other players see the same player
+    come back. A name somebody here holds now is never handed over: joining
+    under a held name would be handed that seat."""
+    (ca, sa), _ = two_nodes
+    first = join(ca, sa)
+    held = first["me"]["id"]
+    again = lambda name: ca.post("/realtime/join", json={
+        "csrf_token": sa.csrf_token, "game": "g1", "room": "town", "guest": name}).json()
+    taken = again(held)
+    assert taken["me"]["id"] != held and taken["token"] != first["token"], \
+        "a seat somebody is in is not given to whoever names it"
+    ca.post("/realtime/leave", json={"csrf_token": sa.csrf_token, "token": first["token"]})
+    back = again(held)
+    assert back["me"]["id"] == held, "the name is free again, so it comes back"
+    assert again("not-a-guest-name")["me"]["id"].startswith("guest-")

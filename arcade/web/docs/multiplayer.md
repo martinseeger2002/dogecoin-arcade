@@ -60,7 +60,7 @@ outside an arcade viewer, or anything else goes wrong, the room has
 | `room.send(value)` | send to everyone else; a string as is, anything else as JSON |
 | `room.on('message', fn(data, player))` | `data` is parsed JSON when it parses |
 | `room.on('join', fn(player))`, `room.on('leave', fn(player))` | |
-| `room.on('closed', fn(why))` | the room went away; join again to rejoin |
+| `room.on('closed', fn(why))` | the room is gone for good (the node unreachable for about ten minutes); join again to retry |
 | `room.leave()` | leave the room |
 
 A **player** is `{id, address, tag, guest, node}`. Key your game state by `id`.
@@ -78,6 +78,20 @@ proved by their own key; for a guest they are `null` and `""`, and `guest` is
 * You never hear your own messages.
 * A player whose page has gone is dropped after about 10 seconds. Nothing is
   stored: anything that has to be true later belongs on the chain.
+
+### When the node restarts
+
+A node restarts now and then (an update, a reboot), and every room on it goes
+with it. Your page does not have to notice: the viewer takes the player's seat
+again by itself, retrying until the node is back, and the room carries on.
+
+* The players who are not back yet arrive as `leave`, and come back as `join`,
+  so a game that keeps its player list from those two events stays right.
+* A guest keeps its `id`, so other players see the same player return. If that
+  name was taken in the meantime the guest gets a new one: `room.me` changes,
+  so read it again rather than keeping a copy.
+* A `send` while the seat is being taken again is rejected; send state, and
+  the next message puts things right.
 
 ### Leaving
 

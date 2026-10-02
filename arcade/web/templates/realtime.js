@@ -94,6 +94,7 @@
     if (ev.type === 'join') { this._members[p.id] = p; this._emit('join', p); }
     else if (ev.type === 'leave') { delete this._members[p.id]; this._emit('leave', p); }
     else if (ev.type === 'closed') { this.online = false; this._emit('closed', ev.why || ''); }
+    else if (ev.type === 'me') { this.me = p; }    // back after the node restarted, under a new name
     else if (ev.type === 'message') {
       var data = ev.data;
       if (typeof data === 'string') { try { data = JSON.parse(data); } catch (err) {} }
