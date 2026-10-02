@@ -14,6 +14,10 @@ with an immutable JSON field beside it. It is split across as many transactions
 as it needs (7,646 bytes each), reassembled by every node that indexes the
 chain, and verified against the SHA-256 in its own manifest.
 
+The JSON field can be up to 65,535 bytes. It travels in the manifest ahead of
+the content, so a long one simply takes more transactions: a 12 KB registry
+beside a small file is two pieces, not an error.
+
 It is addressed two ways, and both work everywhere an id is accepted:
 
 ```

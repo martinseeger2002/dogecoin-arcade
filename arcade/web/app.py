@@ -9297,14 +9297,16 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError("the content has to arrive encoded in "
                                  "base64, the way a file read in the browser "
                                  "does") from None
+            if str(said.get("part") or ""):
+                # A piece that is all manifest (a long JSON) carries no content.
+                return _inscribe_piece(account, chain, address, said, content)
             if not content:
                 raise ValueError("there is nothing to inscribe")
-            if str(said.get("part") or ""):
-                return _inscribe_piece(account, chain, address, said, content)
             kind = media.standard_type(str(said.get("content_type") or ""),
                                        str(said.get("name") or "")) or "application/octet-stream"
             return _inscribe_start(account, chain, address, said, content, kind)
-        except (fundinglib.FundingError, ValueError) as exc:
+        except (fundinglib.FundingError, inscriptionlib.InscriptionError,
+                ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
 
     def _spend_now(account, chain, address: str, outputs: list,
@@ -9335,12 +9337,19 @@ def create_app(state: AppState) -> FastAPI:
         content; every other body is content alone, and every body is the same
         length but the last -- that is what "split evenly" means, and it is what
         lets a browser slice a file from two numbers.
+
+        A long JSON makes a manifest longer than one chunk (2026-10-01: a game's
+        12 KB module registry), so the manifest is read off the whole stream and
+        can run on into the second chunk and beyond; those chunks' content is
+        what follows it, or nothing at all.
         """
         bodies = [p[inscriptionlib.CHUNK_HEADER_LEN:] for p in plan.payloads]
-        _manifest, after = inscriptionlib.Manifest.decode(bodies[0])
-        at = len(bodies[0]) - len(after)
-        return (bodies[0][:at], at, len(bodies[0]),
-                [b[at:] if n == 0 else b for n, b in enumerate(bodies)])
+        stream = b"".join(bodies)
+        _manifest, after = inscriptionlib.Manifest.decode(stream)
+        at = len(stream) - len(after)
+        size = len(bodies[0])
+        return (stream[:at], at, size,
+                [b[max(0, at - n * size):] for n, b in enumerate(bodies)])
 
     def _inscribe_start(account, chain, address: str, said: dict,
                         content: bytes, kind: str):
@@ -9575,8 +9584,8 @@ def create_app(state: AppState) -> FastAPI:
                                             "so they go out together once it "
                                             "is in a block -- about a minute, "
                                             "and no minute in between them."})
-        body = (bytes.fromhex(row["manifest"]) + content if n == 0
-                else content)
+        size = int(row["chunk_len"])
+        body = bytes.fromhex(row["manifest"])[n * size:(n + 1) * size] + content
         # The output this piece was to spend may already be gone: a send made
         # before the split's outputs were held for it (`Parts.reserved`) spent
         # them, and offering a piece over a spent coin is a refusal the tab

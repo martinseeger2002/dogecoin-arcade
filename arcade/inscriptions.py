@@ -617,9 +617,10 @@ def plan(content: bytes, content_type: str, json_text: str = "",
     manifest = Manifest(total=len(content), sha256=hashlib.sha256(content).digest(),
                         content_type=content_type or "application/octet-stream",
                         json=json_text).encode()
+    # The manifest may run on past the first chunk: a reader decodes it from
+    # the whole stream once every chunk is in (`Assembly.join`), never from
+    # the first chunk alone, so a long JSON costs chunks, not an error.
     room = capacity - CHUNK_HEADER_LEN
-    if room <= len(manifest):
-        raise InscriptionError("the manifest does not fit in one transaction")
 
     stream = manifest + content
     count = -(-len(stream) // room)

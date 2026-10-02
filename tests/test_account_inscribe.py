@@ -560,3 +560,44 @@ def test_a_splits_coins_are_held_for_its_pieces_and_a_lost_split_is_made_again(s
         assert [(i["txid"], i["vout"]) for i in piece.json()["inputs"]] == [(new_split, n)]
         assert _sign_and_send(app, pubkey, piece.json()).status_code == 200
     assert book.get(go["part"])["status"] == "done"
+
+
+def test_a_json_longer_than_one_transaction_runs_on_into_the_next(seated):
+    """A long JSON beside the file used to be refused with a bare 500 (2026-10-01:
+    a game's 12 KB module registry). The manifest is read from the whole stream
+    once every piece is in, so it may run past the first piece: the piece that
+    is all manifest carries no content, and the file and its JSON come back whole."""
+    import json as jsonlib
+
+    app, state, rpc, pubkey, mine = seated
+    _rich(state, rpc, mine)
+    said = {"registry": [{"id": f"module-{n:03}", "v": "0.4.0", "api": 2, "kind": "js"}
+                         for n in range(230)]}
+    typed = jsonlib.dumps(said)
+    assert len(typed) > 12_000
+    small = b"console.log('hello');\n"
+    go = _ask(app, small, kind="text/javascript", name="registry.js", json=typed)
+    assert go.status_code == 200, go.text
+    go = go.json()
+    assert int(go["chunks"]) >= 2 and go["manifest_len"] > go["chunk_len"], go
+    assert _sign_and_send(app, pubkey, go).status_code == 200
+    rpc.call("generate", 1)
+    _catch_up(state, rpc)
+    txids = []
+    for n in range(int(go["chunks"])):
+        asked = _piece(app, go, n, small)
+        assert asked.status_code == 200 and "offer" in asked.json(), asked.text
+        txids.append(_sign_and_send(app, pubkey, asked.json()).json()["txid"])
+    rpc.call("generate", 1)
+    index = _catch_up(state, rpc)
+    row = index.inscription(txids[0])
+    assert row is not None
+    assert jsonlib.loads(row["json"]) == said
+    assert index.inscription_content(txids[0])[1] == small
+
+
+def test_a_refused_inscription_says_why_rather_than_failing(seated):
+    app, state, rpc, pubkey, mine = seated
+    answer = _ask(app, b"x", json="{" + '"a":"' + "y" * 70_000 + '"}')
+    assert answer.status_code == 400, answer.text
+    assert "limited to" in answer.json()["detail"]
