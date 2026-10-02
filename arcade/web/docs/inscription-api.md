@@ -257,6 +257,23 @@ back. Only non-zero holdings appear.
 `GET /r/address/<address>` → `{ "address": "nAlice1…", "tag": "alice" }`
 (`tag` is `null` if they have not claimed one)
 
+### Tokens
+
+`GET /r/token/<id>` → one token, as it was issued:
+
+```json
+{ "propertyid": 22, "name": "Iron Sword", "category": "Games",
+  "subcategory": "Weapons", "url": "", "data": "{\"mygame\": {\"tier\": 3}}",
+  "details": {"mygame": {"tier": 3}}, "described": "…", "issuer": "nIssuer1…",
+  "divisible": false, "managed": true, "supply": 500 }
+```
+
+`details` is the token's `data` parsed, when it is a JSON object, every key as
+the issuer wrote it, so a game can keep its own item fields there. It is the
+issuer's text: read it as data, never as markup or code. `GET /r/tokens?ids=20,22,26`
+answers up to 100 at once, which is enough to classify a whole wallet in one
+request; unknown ids are left out.
+
 ### Asking the wallet to send
 
 A page cannot spend. It can **ask**: file a request naming what should move
@@ -373,6 +390,21 @@ The arcade shows its own card — what, how big, the fee — and the person's
 browser signs. It goes on the chain for good, as the person's own. Up to 7,000
 bytes: one transaction. It counts against the account's inscription allowance
 like any other. `"Cancelled."` means they said no.
+
+### Games: rooms, trades, escrow and state
+
+Four scripts a game page loads, each with its own guide:
+
+| Script | What it is | Guide |
+|---|---|---|
+| `/r/realtime.js` | `arcade.realtime`: rooms where players on any node meet | Multiplayer and trades |
+| `/r/swap.js` | `arcade.swap.trade`: a trade between two players, signed by both | Multiplayer and trades |
+| `/r/escrow.js` | `arcade.escrow`: items held for a game, released by its judge | Escrow |
+| `/r/state.js` | `arcade.state`: a game's own record on each NFT | Game state |
+
+`GET /r/state/<piece>` and `GET /r/escrow/<address>` read the same things
+without a page. All of them are game-agnostic: the arcade moves and stores, and
+your judge decides.
 
 ### Remembering things
 

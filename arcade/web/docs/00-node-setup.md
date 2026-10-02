@@ -329,6 +329,39 @@ pepecoin-cli -datadir=$HOME/.pepecoin-testnet getblockchaininfo
 | RPC (loopback only) | 33873 | 44873 |
 | ZMQ hashblock / rawblock / rawtx | 28332 / 28333 / 28335 | 28432 / 28433 / 28435 |
 | Web interface | 8420 (both chains, one application) | |
+| Realtime mesh (TCP) | 8421 (one port for both chains) | |
+
+## The realtime mesh
+
+Game rooms (`arcade.realtime`) run over a mesh of arcade nodes linked to each
+other directly, with no server in between. It is on by default, and needs
+nothing set up to work: a node dials out to the nodes announced on the chain.
+
+**Letting other nodes reach yours** helps the mesh and makes your node a place
+others can join through. Forward TCP **8421** on your router to the machine
+running the node, and open it in its firewall:
+
+```bash
+sudo ufw allow 8421/tcp
+```
+
+That is all. A listening node works out its own public address from what its
+Pepecoin peers see, dials itself there to check it really leads back, and then
+announces it on the chain. It does that again whenever the address changes,
+and once a day to stay fresh. It looks every ten minutes. Nothing is announced
+while the port is not forwarded, and the node still plays by dialling out.
+An announcement is a small transaction paid from the node's fee address.
+
+| Option | |
+|---|---|
+| `--no-mesh` | do not join: games on this node play solo |
+| `--mesh-port N` | listen on another port (default 8421); `0` only dials out |
+| `--mesh-public-port N` | the port the router forwards, if it is not the same number |
+| `--mesh-peer IP:PORT` | link to a node directly, such as one on the same network, which the chain cannot carry; may be repeated |
+| `--mesh-announce IP:PORT` | announce this address instead of working it out |
+
+The web interface prints the node's mesh id when it starts, and says whether it
+is listening.
 
 ## Pepecoin Core options that matter
 

@@ -291,6 +291,11 @@ meaning matches.
 | `/r/node.js` | `arcade.node`: node-to-node messages sent as the wallet the page runs in, and the replies to them |
 | `/r/swap.js` | `arcade.swap`: a shop page's listings, and a buy button that ends in one transaction both sides signed |
 | `/r/owner.js` | `arcade.owner`: a page sending, unasked, from the wallet that created it and holds it |
+| `/r/token/<id>`, `/r/tokens?ids=` | a token's issuance fields, its issuer, and its `data` parsed when it is JSON |
+| `/r/realtime.js` | `arcade.realtime`: rooms where players on any node meet, over the node mesh |
+| `/r/escrow.js` | `arcade.escrow`: a player's NFTs and tokens held for a game, released by its judge |
+| `/r/state.js`, `/r/state/<piece>` | `arcade.state`: a game's own record on each NFT (condition, charges, counts) |
+| `/r/verified/<judge>` | every inscription carrying a result that judge verified |
 
 An inscription is `<id>` by its number or its creating transaction id.
 
@@ -351,6 +356,11 @@ names itself the same way.
   `_metadata.json`, shows every item with its picture and its JSON, prices the
   whole run, and asks once. Each item's own HashLips JSON goes on the chain in
   its inscription's JSON field, compacted and otherwise untouched.
+* **Any size.** An item that fits in one transaction (7,580 bytes less its JSON)
+  goes up in one; a bigger one goes up in pieces, the way a single large file
+  does — one transaction that sets aside a coin per piece, a block's wait
+  (about a minute), then the pieces. The run page waits by itself. Smaller art
+  is quicker and cheaper; the upload page's Medium and Small sizes shrink it.
 * **Pause, resume, survive a crash.** Every transaction is written to disk the
   moment the node takes it, before the next is built. Pause stops between
   pieces; resume carries on from the next unsent one; a crash or a power cut
@@ -666,6 +676,36 @@ without its owner being there. The Prize pools guide has the details.
 
 ---
 
+## Games
+
+The **Games** tab, between *Your arcade* and *Messages*, lists every game on the
+chain, and everything a game needs from the arcade is built for any game, not
+one in particular. Each piece has its own guide.
+
+* **Listing a game.** An inscription whose JSON carries `"game": {...}` is a
+  game: it appears on the Games tab, sorted like collections, with comments,
+  likes and tips. A new version by the same maker under the same name replaces
+  the old card, and the maker can remove the card the way a feed post is removed.
+  See *Games: listing yours on the Games tab*.
+* **Multiplayer.** `arcade.realtime` puts players into rooms that span every
+  node: nodes link to each other directly over the **realtime mesh**, with no
+  server in the middle and no website to go down. A player is their chain
+  address, proved by their own key; somebody not signed in plays as a guest.
+* **Trades between players.** `arcade.swap.trade` offers NFTs, tokens and coins
+  for each other; both players sign, and it settles in one transaction or not
+  at all. See *Multiplayer and trades*.
+* **Escrow.** A player can put items at stake in a game. The game's judge
+  decides who gets them, and after the unlock time the player can always take
+  them back. See *Escrow*.
+* **Game state on NFTs.** A game can write a small record on each piece (a
+  condition, a charge, a count) that travels with it through every trade, is
+  readable everywhere and is changed only by that game. See *Game state*.
+* **Verified results.** A page can ask the player's wallet to inscribe
+  something of the game's making (a score, a save, a replay), and have the
+  game's judge verify it first. See *The referee*.
+
+---
+
 ## Approvals
 
 A page or a program can ask this wallet to send something. It cannot send.
@@ -794,6 +834,12 @@ depend on one website staying up.
 * **Nothing private is in it.** No messages, no address book, no key. Only
   the ledger index — public chain state, derived, and reproducible by
   anyone with a node.
+
+**The realtime mesh.** Nodes also link to each other directly, for game rooms.
+It is on by default and finds its peers on the chain: each node that can be
+reached announces where, and works that out by itself. A node behind a router
+with nothing forwarded still plays by dialling out. *Setting up a node* has the
+port and the options.
 
 ---
 
