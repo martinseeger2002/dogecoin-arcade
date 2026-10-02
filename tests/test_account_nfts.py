@@ -162,11 +162,14 @@ def test_the_public_nfts_page_says_who_can_inscribe(public):
     app, _ = public
     body = app.get("/nfts", headers=EDGE).text
     assert 'id="inscribe-it"' not in body
-    assert "/account/inscribe" not in body
+    assert 'id="run-start"' not in body, \
+        "the controls are the promise; the route itself is in base.html's shared script now"
     for refused in ('action="/inscriptions/create"',
                     'href="/inscriptions/collection"'):
         assert refused not in body, f"{refused} is a route the door shuts"
-    assert "Sign in and open your wallet" in body
+    assert 'class="unlockbar"' in body and "Join free, or sign in" in body, \
+        "6380231 moved the sentence a visitor gets out of the pages and onto one bar"
+    assert "href=\"/join?next=/nfts\"" in body, "the bar has to bring them back here"
 
 
 def test_the_run_list_is_asked_the_way_the_route_is_built(client):
