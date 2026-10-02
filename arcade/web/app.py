@@ -2926,6 +2926,42 @@ def create_app(state: AppState) -> FastAPI:
             at = up[0]
         return at, False
 
+    def _made_by(index: Any, address: str) -> set:
+        """What this address is on record as having made, launches included --
+        which is what tells a thread's root that it is somebody's launch."""
+        made: set = set()
+        try:
+            with contextlib.closing(index.open()) as db:
+                made = {r[0] for r in db.conn.execute(
+                    "SELECT txid FROM inscription WHERE creator=?", (address,))}
+            made |= {i["txid"] for i in index.launches() if i.get("creator") == address}
+        except Exception:
+            pass
+        return made
+
+    def _thread_shape(store, index: Any, network: str, target: str,
+                      made: set) -> tuple[str, str, str]:
+        """What a comment hangs on and the page that draws it.
+
+        Both routes that report a comment answer through here, so a caller that
+        learned the words at one of them is not told a different story at the
+        other."""
+        root, is_post = _thread_root(store, network, target)
+        if is_post:
+            return root, "post", f"/feed?post={root}"
+        kind, url = "inscription", f"/launches/{root}"
+        try:
+            got = index.inscription(root)
+            said = (_fromjson(got.get("json")) or {}) if got else {}
+            if isinstance(said, dict) and (said.get("mintpad") or said.get("tokenpad")
+                                           or said.get("shop")):
+                kind = "mintpad"
+            elif root in made or not got:
+                kind = "launch"
+        except Exception:
+            pass
+        return root, kind, url
+
     @app.get("/r/replies/{tag}")
     def r_replies(tag: str, since: str = "", limit: int = 100):
         """Every comment on something @tag wrote, and every mention of @tag,
@@ -2947,14 +2983,7 @@ def create_app(state: AppState) -> FastAPI:
             cutoff = int(time.time()) - 2 * 86400
         network = state.messaging.network
         chain, index = _token_chain()
-        made = set()
-        try:
-            with contextlib.closing(index.open()) as db:
-                made = {r[0] for r in db.conn.execute(
-                    "SELECT txid FROM inscription WHERE creator=?", (address,))}
-            made |= {i["txid"] for i in index.launches() if i.get("creator") == address}
-        except Exception:
-            pass
+        made = _made_by(index, address)
         with state.store() as store:
             theirs = {r[0] for r in store.conn.execute(
                 "SELECT txid FROM group_post WHERE network=? AND sender=?", (network, address))}
@@ -2979,21 +3008,7 @@ def create_app(state: AppState) -> FastAPI:
                 aimed = r["target"] in theirs or r["target"] in made
                 if not aimed and mention not in (r["text"] or "").lower():
                     continue
-                root, is_post = _thread_root(store, network, r["target"])
-                if is_post:
-                    kind, url = "post", f"/feed?post={root}"
-                else:
-                    kind, url = "inscription", f"/launches/{root}"
-                    try:
-                        got = index.inscription(root)
-                        said = (_fromjson(got.get("json")) or {}) if got else {}
-                        if isinstance(said, dict) and (said.get("mintpad") or said.get("tokenpad")
-                                                       or said.get("shop")):
-                            kind = "mintpad"
-                        elif root in made or not got:
-                            kind = "launch"
-                    except Exception:
-                        pass
+                root, kind, url = _thread_shape(store, index, network, r["target"], made)
                 out.append({"id": r["txid"], "parent_id": r["target"], "root_id": root,
                             "author": r["author"], "text": r["text"],
                             "time": int(r["block_time"] or 0), "root_kind": kind,
@@ -3004,6 +3019,71 @@ def create_app(state: AppState) -> FastAPI:
         for o in out:
             o["author_tag"] = tags.get(o["author"], "")
         return contentlib._json({"tag": name, "since": cutoff, "replies": out})
+
+    @app.get("/r/written/{tag}")
+    def r_written(tag: str, since: str = "", limit: int = 100):
+        """Everything @tag wrote themselves -- their posts and their comments --
+        newest first (S195, a tester 2026-10-01: "/u/<tag> lists only your posts
+        ... nothing on this node answers 'what has @X written lately'". A comment
+        is a `feed_act` row and a post is a `group_post` row, so the question
+        needs both tables, keyed on the author instead of on what it was aimed
+        at -- which is the other half, and is `/r/replies`.)
+
+        Public: these are posts on the chain. `since` is unix seconds or ISO;
+        two days back when absent. Something still in the mempool has time 0 and
+        is always included. `kind` says which it was, and `url` draws it: the
+        post itself, or the thread a comment hangs in. Likes and shares are not
+        writing and are not here."""
+        name = (tag or "").strip().lstrip("@").lower()
+        address, _ = _address_of_tag(name)
+        if not address:
+            return contentlib._missing("no such name")
+        try:
+            cutoff = int(since) if since.strip().isdigit() else int(
+                dt.datetime.fromisoformat(since.strip().replace("Z", "+00:00")).timestamp())
+        except ValueError:
+            cutoff = int(time.time()) - 2 * 86400
+        network = state.messaging.network
+        chain, index = _token_chain()
+        made = _made_by(index, address)
+        with state.store() as store:
+            rows = [{"id": r["txid"], "kind": "post", "parent_id": "", "text": r["text"],
+                     "time": int(r["block_time"] or 0)} for r in store.conn.execute(
+                        "SELECT txid, text, block_time FROM group_post "
+                        "WHERE network=? AND sender=? AND block_time>=? "
+                        "ORDER BY block_time DESC LIMIT 2000", (network, address, cutoff))]
+            rows += [{"id": r["txid"], "kind": "reply", "parent_id": r["target"],
+                      "text": r["text"], "time": int(r["block_time"] or 0)}
+                     for r in store.conn.execute(
+                        "SELECT txid, target, text, block_time FROM feed_act "
+                        "WHERE network=? AND kind=? AND author=? AND block_time>=? "
+                        "ORDER BY block_time DESC LIMIT 2000",
+                        (network, feedlib.REPLY, address, cutoff))]
+            rows.sort(key=lambda r: -r["time"])
+            known = {r["id"] for r in rows}
+            waiting = _pending_feed(network)
+            fresh = [{"id": p["txid"], "kind": "post", "parent_id": "", "text": p["text"],
+                      "time": 0} for p in waiting.posts
+                     if p["sender"] == address and p["txid"] not in known]
+            fresh += [{"id": a["txid"], "kind": "reply", "parent_id": a["target"],
+                       "text": a.get("text") or "", "time": 0}
+                      for a in (waiting.acts or [])
+                      if int(a.get("kind") or 0) == feedlib.REPLY
+                      and a.get("author") == address and a["txid"] not in known]
+            out = []
+            for r in (fresh + rows)[:max(1, min(int(limit), 500))]:
+                if r["kind"] == "post":
+                    root, kind, url = r["id"], "post", f"/feed?post={r['id']}"
+                else:
+                    root, kind, url = _thread_shape(store, index, network, r["parent_id"], made)
+                out.append({"id": r["id"], "kind": r["kind"], "author": address,
+                            "parent_id": r["parent_id"], "root_id": root,
+                            "root_kind": kind, "text": r["text"], "time": r["time"],
+                            "url": url})
+        tags = _tags_for([address])
+        for o in out:
+            o["author_tag"] = tags.get(address, name)
+        return contentlib._json({"tag": name, "since": cutoff, "written": out})
 
     @app.get("/u/{tag}", response_class=HTMLResponse)
     def profile_page(request: Request, tag: str, before: int | None = None):
