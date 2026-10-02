@@ -594,6 +594,16 @@ shopkeeper in that wallet without anybody pressing anything, because the
 owner already said yes in writing when they inscribed the shop. The page
 never holds a key and cannot change a price.
 
+**Whose key signs it.** Every offer says, in `signed_by`. One made by a shop's
+own wallet says `"node"`: that wallet's key sits on the machine that made the
+offer, and its answer comes without anybody pressing anything, because the owner
+wrote the terms down when inscribing the shop. An offer or a leg that is waiting
+for **your** key says `"account"` — the node that handed it to you holds neither
+that key nor those coins, which is exactly why your browser is the one being
+asked to sign. Read the field rather than inferring it from the address that
+signs: `signed_from` is an index into `inputs`, not a person, and nothing hashes
+`signed_by` — it is told to you, not committed to.
+
 **Timing.** Every step but the buyer's own yes is a message on the chain, and
 a message is in a block or it is nowhere: on testnet a minute or several,
 twice, then the swap. Say so in the page rather than spin.
@@ -713,6 +723,43 @@ here to switch off.
 
 Useful for greeting a visitor by name (`/r/wallet` gives you *their* tag),
 showing whose shop a page belongs to, or crediting whoever made a piece.
+
+### What a name wrote, and what was written to it
+
+`GET /r/written/<tag>` — everything that name wrote itself, its posts and its
+comments together, newest first:
+
+```json
+{ "tag": "alice", "since": 1789400000,
+  "written": [ { "id": "94570f87…", "kind": "post", "author": "nAlice1…",
+                 "author_tag": "alice", "parent_id": "",
+                 "root_id": "94570f87…", "root_kind": "post",
+                 "text": "made a thing", "time": 1789431022,
+                 "url": "/feed?post=94570f87…" },
+               { "id": "1a61ddea…", "kind": "reply", "author": "nAlice1…",
+                 "author_tag": "alice", "parent_id": "d41ab2…",
+                 "root_id": "2ea169a4…", "root_kind": "mintpad",
+                 "text": "two of these left", "time": 0,
+                 "url": "/launches/2ea169a4…" } ] }
+```
+
+A post and a comment are different rows in different tables, and this reads both
+keyed on the author — which is why it is its own route rather than a flag on the
+profile page. `kind` says which each row was; `root_kind` says what a comment
+hangs on (`post`, `launch`, `mintpad`, `inscription`) and `url` is the page that
+draws it, a comment's pointing at the thread rather than at itself. Something
+still in the mempool has `time` 0 and is always included, so a page can show what
+it just did before the chain has it. `since` is unix seconds or ISO, and
+**two days back when absent** — deliberately a short window, because this is a
+"lately" question and a name's whole history is its profile page; a caller that
+wants more narrows `since`. `limit` up to 500. Likes and shares are not writing
+and are not here. `404` with `no such name` when nobody holds the name.
+
+The other direction is `GET /r/replies/<tag>`: every comment on what that name
+wrote, and every mention of it, same window, same paging, rows carrying `aimed`
+(`"reply"` or `"mention"`) instead of `kind`. So "what has @X written lately" and
+"what have people said about @X" are two calls, and neither one is the other by
+accident.
 
 ### Who is looking
 
