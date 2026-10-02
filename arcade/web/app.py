@@ -8347,7 +8347,7 @@ def create_app(state: AppState) -> FastAPI:
     _flights_spent_by = _flights.spent_by
     _flights.spent_by = lambda pubkey, network="": (
         _flights_spent_by(pubkey, network) | _bids.reserved(pubkey, network)
-        | _standing.reserved(pubkey, network)
+        | _standing.reserved(pubkey, network) | _parts.reserved(network)
         | _answered_coins(network) | _listed_coins(network))
 
     def _listed_coins(network: str) -> frozenset:
@@ -9577,18 +9577,38 @@ def create_app(state: AppState) -> FastAPI:
                                             "and no minute in between them."})
         body = (bytes.fromhex(row["manifest"]) + content if n == 0
                 else content)
+        # The output this piece was to spend may already be gone: a send made
+        # before the split's outputs were held for it (`Parts.reserved`) spent
+        # them, and offering a piece over a spent coin is a refusal the tab
+        # would ask for again and again. With nothing of the file on the chain
+        # yet the clean answer is a new split; with some of it there, this one
+        # piece is paid out of the account's coins instead.
+        with chain.rpc() as rpc:
+            gone = rpc.call("gettxout", row["split_txid"], n, True) is None
+        if gone and not int((_parts.get(job) or {}).get("sent") or 0):
+            _parts.resplit(job)
+            again = _inscribe_again(account, chain, address, _parts.get(job))
+            said_again = json.loads(again.body)
+            said_again["resplit"] = ("its coins were spent by a later send before "
+                                     "any piece went out, so it sets aside new "
+                                     "ones: one new split, then the pieces. "
+                                     "Nothing has been paid for twice.")
+            return JSONResponse(said_again)
         payload = inscriptionlib.Chunk(
             inscription_id=bytes.fromhex(row["inscription_id"]),
             countdown=int(row["chunks"]) - 1 - n, body=body).encode()
-        unsigned = fundinglib.build_one(
-            chain.params, address,
-            {"txid": row["split_txid"], "vout": n,
-             "value": int(row["piece"]), "address": address},
-            _class_c_or_b(chain, address, payload,
-                          _coin_pubkey(account.pubkey, chain)),
-            rate=fees.MIN_FEE_PER_KB,
-            what=f"piece {n + 1:,} of {int(row['chunks']):,} of "
-                 f"{row['name']}, on the chain forever")
+        what = (f"piece {n + 1:,} of {int(row['chunks']):,} of "
+                f"{row['name']}, on the chain forever")
+        outputs = _class_c_or_b(chain, address, payload,
+                                _coin_pubkey(account.pubkey, chain))
+        if gone:
+            unsigned = _spend_now(account, chain, address, outputs, what)
+        else:
+            unsigned = fundinglib.build_one(
+                chain.params, address,
+                {"txid": row["split_txid"], "vout": n,
+                 "value": int(row["piece"]), "address": address},
+                outputs, rate=fees.MIN_FEE_PER_KB, what=what)
         # The pile is checked, the allowance is not: this is the same gesture
         # that was charged for when the split was offered.
         _quota(account, "inscribe", count=False)

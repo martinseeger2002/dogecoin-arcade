@@ -493,3 +493,70 @@ def test_every_account_route_is_one_a_public_node_will_reach(client):
     listed = {path.rstrip("/") or "/" for path in door.PUBLIC_POST}
     assert asked - listed == set(), \
         f"{sorted(asked - listed)} needs adding to door.PUBLIC_POST"
+
+
+def _held(state, address: str) -> list[dict]:
+    import contextlib
+
+    from arcade import utxos
+
+    with contextlib.closing(state.token_index(state.messaging).open()) as db:
+        return utxos.unspent(db, address)
+
+
+def test_a_splits_coins_are_held_for_its_pieces_and_a_lost_split_is_made_again(seated):
+    """The outputs a split makes are the pieces' money, and nothing else spends them.
+
+    They are paid to the account's own address, so they look like any other
+    coin of its -- and the next send took them (2026-10-01: a few small files
+    inscribed right after a 7-piece one spent its split, and every piece came
+    back `bad-txns-inputs-spent`, asked for again and again). So: a send that
+    would need them is refused while the file is unfinished. And a split that
+    WAS spent (by a send from before this rule) is offered again in place of
+    its piece, rather than a piece over a coin that is gone.
+    """
+    app, state, rpc, pubkey, mine = seated
+    _rich(state, rpc, mine)
+    go = _ask(app, BIG, kind="image/png", name="a photograph").json()
+    split = _sign_and_send(app, pubkey, go).json()["txid"]
+    rpc.call("generate", 1)
+    _catch_up(state, rpc)
+    held = _held(state, mine)
+    pieces = [c for c in held if c["txid"] == split and c["vout"] < int(go["chunks"])]
+    owed = {(c["txid"], c["vout"]) for c in pieces}
+    assert len(owed) == int(go["chunks"])
+    free = sum(c["value"] for c in held if (c["txid"], c["vout"]) not in owed)
+    # More than is free, and so much that only every piece's output as well pays it.
+    need = free + sum(c["value"] for c in pieces) - min(c["value"] for c in pieces) // 2
+    everything = f"{need / 1e8:.8f}"
+
+    asked = app.post("/account/send", json={"to": mine, "amount": everything})
+    assert asked.status_code == 400, \
+        "with the split's outputs held, there is not that much to send"
+
+    # A send made while they were not held: the job looks given up for a moment.
+    book = _parts(state)
+    book.set_status(go["part"], "stopped")
+    took = app.post("/account/send", json={"to": mine, "amount": everything}).json()
+    assert {(i["txid"], i["vout"]) for i in took["inputs"]} & owed, took["inputs"]
+    assert _sign_and_send(app, pubkey, took).status_code == 200
+    book.set_status(go["part"], "running")
+    _rich(state, rpc, mine)
+
+    again = _piece(app, go, 0, BIG)
+    assert again.status_code == 200, again.text
+    said = again.json()
+    assert said.get("resplit") and said.get("split") == "offered", said
+    assert "offer" in said and "split into" in said["what"]
+    assert not book.get(go["part"])["split_txid"], "the lost split is forgotten"
+    assert _spent(app) == 1, "the same file, so the allowance is not charged again"
+    new_split = _sign_and_send(app, pubkey, said).json()["txid"]
+    assert book.get(go["part"])["split_txid"] == new_split
+    rpc.call("generate", 1)
+    _catch_up(state, rpc)
+    for n in range(int(go["chunks"])):
+        piece = _piece(app, go, n, BIG)
+        assert piece.status_code == 200 and "offer" in piece.json(), piece.text
+        assert [(i["txid"], i["vout"]) for i in piece.json()["inputs"]] == [(new_split, n)]
+        assert _sign_and_send(app, pubkey, piece.json()).status_code == 200
+    assert book.get(go["part"])["status"] == "done"

@@ -286,12 +286,23 @@ function pieceOf(bytes, n, chunkLen, manifestLen) {
  *  how long that sender will wait for a split at all, and past that the
  *  honest answer is to ask again later with the same file.
  */
-async function pieceOffer(bytes, start, n, until) {
+async function pieceOffer(bytes, start, n, until, held) {
   for (;;) {
     const answer = await ask("/account/inscribe", {
       part: start.part, chunk: n, chain: CHAIN.network,
       content: b64(pieceOf(bytes, n, Number(start.chunk_len || 0),
                            Number(start.manifest_len || 0)))});
+    // The coins set aside for the pieces were spent by another send before any
+    // piece went out: the node offers a new split instead of a piece, and the
+    // file goes on from there. The whole file was already agreed to, and this
+    // costs no more than the split it replaces.
+    if (answer.resplit && answer.offer) {
+      news("This file's " + answer.resplit);
+      await wallet.checked(answer, held);
+      await wallet.confirm(held, answer);
+      until = Date.now() + 15 * 60 * 1000;
+      continue;
+    }
     if (!answer.waiting) return answer;
     if (Date.now() > until) throw new Error(
       "the split has not been mined in fifteen minutes, so nothing further is "
@@ -482,7 +493,7 @@ async function inscribeBytes(bytes, name, type, jsonGiven = "") {
       const giveUp = Date.now() + 15 * 60 * 1000;
       for (let n = Number(start.next ?? 0); n < pieces; n++) {
         news(`Piece ${commas(n + 1)} of ${commas(pieces)}… keep this tab open until the last one.`);
-        const piece = await pieceOffer(bytes, start, n, giveUp);
+        const piece = await pieceOffer(bytes, start, n, giveUp, held);
         const out = await wallet.confirm(held, piece);
         if (n === 0) root = out.txid;
         sent = Math.max(sent + 1, Number(piece.sent || 0));

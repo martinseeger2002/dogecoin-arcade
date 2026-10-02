@@ -289,6 +289,40 @@ class Parts:
             conn.execute("UPDATE part SET split_txid = ?, status = 'running' "
                          "WHERE id = ? AND status != 'done'", (txid, job))
 
+    def reserved(self, network: str = "") -> frozenset:
+        """The split outputs still owed to a piece, as (txid, vout).
+
+        A split pays its outputs to the account's own address, so once it is out
+        they look like any other coin of that account -- and the next send took
+        them (2026-10-01: a script inscribed a few small files right after a
+        7-piece one, the small ones spent its split, and every piece of it came
+        back `bad-txns-inputs-spent`). Every funding choice reads this through
+        `spent_by`, so nothing else is paid out of them until the job is
+        finished or given up.
+        """
+        sql = ("SELECT p.split_txid, c.n FROM part p JOIN chunk c ON c.part_id = p.id "
+               "WHERE p.split_txid != '' AND p.status IN ('open', 'running', 'failed') "
+               "AND c.status != 'sent'")
+        args: list = []
+        if network:
+            sql += " AND p.network = ?"
+            args.append(network)
+        with self._open() as conn:
+            return frozenset((r["split_txid"], int(r["n"]))
+                             for r in conn.execute(sql, args))
+
+    def resplit(self, job: str) -> None:
+        """Forget a split whose outputs are gone, so the job is offered a new one.
+
+        Only for a job with no piece on the chain: every piece then spends an
+        output of the new split, numbered as before."""
+        with self._open() as conn:
+            conn.execute("UPDATE part SET split_txid = '', status = 'open', "
+                         "note = 'its split was spent by another send; split again' "
+                         "WHERE id = ?", (job,))
+            conn.execute("UPDATE chunk SET status = 'pending', error = '' "
+                         "WHERE part_id = ? AND status != 'sent'", (job,))
+
     def offer_chunk(self, job: str, n: int) -> None:
         with self._open() as conn:
             conn.execute("UPDATE chunk SET status = 'sending' WHERE part_id = ? "
