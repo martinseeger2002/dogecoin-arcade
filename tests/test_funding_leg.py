@@ -193,15 +193,30 @@ def test_a_single_that_would_hash_a_constant_is_refused():
 
 
 def test_a_sighash_type_this_does_not_build_is_refused():
-    """Silently implementing the wrong type is the dangerous failure here."""
+    """Silently implementing the wrong type is the dangerous failure here.
+
+    What this builds is ALL, ALL|ANYONECANPAY and SINGLE|ANYONECANPAY -- the
+    second one since 2026-09-27, because a pre-signed OFFER's input has to
+    commit to the outputs without committing to the coin the buyer has not
+    added yet. So the refused list is NONE, SINGLE on its own, and anything
+    with the ANYONECANPAY bit that is not one of those two.
+    """
     piece = {"txid": "ab" * 32, "vout": 0, "value": COIN}
     script = p2pkh_script(SELLER)
     for wrong in (funding.SIGHASH_SINGLE, 0x02,
-                  funding.SIGHASH_ALL | funding.SIGHASH_ANYONECANPAY):
+                  0x02 | funding.SIGHASH_ANYONECANPAY):
         with pytest.raises(funding.FundingError) as refused:
             funding.sighash([piece], [(COIN, script)], 0, script,
                             sighash_type=wrong)
         assert "SINGLE|ANYONECANPAY" in str(refused.value)
+
+    # And the ANYONECANPAY bit has to reach the digest, not just the branch:
+    # an OFFER signed where the plain ALL digest comes out would be a
+    # signature over the finished transaction, before it can be finished.
+    everything = funding.sighash([piece], [(COIN, script)], 0, script)
+    one_input = funding.sighash([piece], [(COIN, script)], 0, script,
+                               sighash_type=funding.ALL_ANYONECANPAY)
+    assert everything != one_input
 
 
 def test_a_leg_prices_a_block_and_refuses_a_price_that_cannot_pay_one():
