@@ -825,7 +825,7 @@ window.arcadePress = function (form, doing) {
 // and never sees a key; the phrase only opens the listing on the node.
 //   parent.postMessage({arcade: "claim", seq, listing, secret}, "*")
 //   answers {arcade: "claim", seq, heard} then {ok, txid} or {error}
-async function claimFor(source, m, page = "") {
+async function claimFor(source, m, page = "", own = false) {
   const answer = (body) => source.postMessage({arcade: "claim", seq: m.seq, ...body}, "*");
   answer({heard: true});
   if (!ARCADE_ME) {
@@ -833,7 +833,8 @@ async function claimFor(source, m, page = "") {
     arcadeSignIn("Claiming this needs your wallet.");
     return;
   }
-  if (minting) { answer({error: "One at a time."}); return; }
+  // One signature at a time; a game that claims as things happen queues here.
+  while (minting) await new Promise((r) => setTimeout(r, 200));
   minting = true;
   try {
     const wallet = await import("/wallet.js");
@@ -868,7 +869,11 @@ async function claimFor(source, m, page = "") {
         const unit = coins === "1" ? "coin" : "coins";
         const seller = offer.seller_tag ? "@" + offer.seller_tag : "its owner";
         const one = offer.kind === "nft";
-        const ok = await arcadeAsk(`Claim ${offer.piece}?`,
+        // A game's own prize, said yes to without a card: a refereed pool bound
+        // to this very page, open as itself, for a few coins at most.
+        const silent = own && !!pool.referee && (!m.pool || pool.game === page)
+          && arcadeAutoSigns(page, shown, AUTO_CLAIM_MOST);
+        const ok = silent || await arcadeAsk(`Claim ${offer.piece}?`,
           `${seller} set ${one ? "it" : "these"} aside for whoever got here. `
           + `${one ? "It costs" : "They cost"} ${coins} ${unit} to ${seller}`
           + ` and a network fee of ${shown.coinsOf(shown.fee)}. The ${one ? "piece" : "tokens"} and the coins move `
@@ -913,11 +918,12 @@ async function claimFor(source, m, page = "") {
 //                       verify: {judge, seed, inputs, params, referee}}, "*")
 //   answers {arcade: "inscribe", seq, heard} then {ok, txid, result} or {error}
 const INSCRIBE_MOST = 7000;
-async function inscribeFor(source, m) {
+async function inscribeFor(source, m, page = "", own = false) {
   const answer = (body) => source.postMessage({arcade: "inscribe", seq: m.seq, ...body}, "*");
   answer({heard: true});
   if (!ARCADE_ME) { answer({error: "Sign in or join first."}); return; }
-  if (minting) { answer({error: "One at a time."}); return; }
+  // One signature at a time; a game that saves as it goes queues here.
+  while (minting) await new Promise((r) => setTimeout(r, 200));
   minting = true;
   try {
     const wallet = await import("/wallet.js");
@@ -963,7 +969,9 @@ async function inscribeFor(source, m) {
     if (offer.part) throw new Error("that needs more than one transaction; a page may inscribe one");
     const shown = await wallet.checked(offer, held);
     const who = m.label ? `"${String(m.label).slice(0, 60)}"` : "This page";
-    const ok = await arcadeAsk(`${who} asks to inscribe ${bytes.length.toLocaleString()} bytes`,
+    // A game saving its own data, said yes to without a card (arcadeAutoSigns).
+    const ok = (own && arcadeAutoSigns(page, shown, AUTO_INSCRIBE_MOST))
+      || await arcadeAsk(`${who} asks to inscribe ${bytes.length.toLocaleString()} bytes`,
       (m.note ? `"${String(m.note).slice(0, 200)}" ` : "")
       + `${type}${json.attested ? ", with its result verified by the game's judge" : ""}. `
       + "It goes on the chain for good, as yours. " + shown.says, "Inscribe it");
@@ -1036,7 +1044,10 @@ window.addEventListener("message", async (e) => {
     return;
   }
   if (m.arcade === "take" && typeof m.seq === "number") { takeFor(e.source, m); return; }
-  if (m.arcade === "inscribe" && typeof m.seq === "number") { inscribeFor(e.source, m); return; }
+  // The page as itself (the viewer, or full screen), not a frame in somebody's post.
+  const pageId = (/\/content\/([0-9a-f]{64})/.exec(frame.getAttribute("src") || "") || [])[1] || "";
+  const own = !!pageId && !frame.classList.contains("postmedia");
+  if (m.arcade === "inscribe" && typeof m.seq === "number") { inscribeFor(e.source, m, pageId, own); return; }
   // A seed for one run at a refereed pool (2026-09-29): the game plays from it,
   // and sends it back with its moves when it claims. Issued to the wallet that
   // is looking, for that pool, once.
@@ -1090,7 +1101,7 @@ window.addEventListener("message", async (e) => {
   }
   if (m.arcade === "claim" && typeof m.seq === "number") {
     const said = /\/content\/([0-9a-f]{64})/.exec(frame.getAttribute("src") || "");
-    claimFor(e.source, m, said ? said[1] : ""); return;
+    claimFor(e.source, m, said ? said[1] : "", own); return;
   }
   if (m.arcade !== "mint" || typeof m.seq !== "number") return;
   const answer = (body) => e.source.postMessage({arcade: "mint", seq: m.seq, ...body}, "*");
@@ -1684,6 +1695,32 @@ function arcadeOfferSizes(file, onReady){
 // the tutorial, 2026-09-25: window.confirm looked foreign, and its one run-on
 // sentence read badly. Resolves true for the first button, false otherwise —
 // including a click outside it, which is a no that somebody meant.
+// A game's own play, without a card (the operator, 2026-10-04: "If it's test
+// net, all signing can be done automatically", narrowed the same day so that a
+// stranger's page cannot empty a wallet that holds names, NFTs and tokens).
+// Where ARCADE_AUTOSIGN is on (the test chain, unless the operator's
+// `page_autosign` setting says otherwise), two things a page asks for go
+// through unasked, and only while the page is open as itself, not framed in a
+// post:
+//   * a claim from a REFEREED prize pool bound to that page (the referee's
+//     verdict is the gate), costing at most AUTO_CLAIM_MOST;
+//   * the page inscribing its own data, costing at most AUTO_INSCRIBE_MOST.
+// A page has AUTO_PAGE_MOST per tab; past it the cards come back. Sends, buys
+// and mints always show their card. The cost is what leaves the wallet, read
+// from the parsed transaction (wallet.checked), never from the node's summary.
+var ARCADE_AUTOSIGN = {{ state.setting("page_autosign", state.messaging.network == "test")|tojson }};
+var AUTO_CLAIM_MOST = 5000000;          // 0.05 coins: a lot's price and its fee
+var AUTO_INSCRIBE_MOST = 200000000;     // 2 coins: a 7 KB save, its fee and data outputs
+var AUTO_PAGE_MOST = 2000000000;        // 20 coins a page, per tab
+var arcadeAutoSpent = new Map();
+function arcadeAutoSigns(page, shown, most){
+  if (!ARCADE_AUTOSIGN || !page || !shown) return false;
+  const leaving = shown.pays.filter((p) => !p.mine).reduce((n, p) => n + p.value, 0) + shown.fee;
+  const spent = arcadeAutoSpent.get(page) || 0;
+  if (leaving > most || spent + leaving > AUTO_PAGE_MOST) return false;
+  arcadeAutoSpent.set(page, spent + leaving);
+  return true;
+}
 function arcadeAsk(title, detail, yes = "Yes"){
   return new Promise(function(answer){
     var back = document.createElement('div');

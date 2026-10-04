@@ -17533,7 +17533,11 @@ def create_app(state: AppState) -> FastAPI:
                 "open": not refusal and bool(free), "listing": None,
                 "lots_left": 0 if refusal else len(free), "free": [] if refusal else free,
                 "what": _lot_words(chain, (chained["property_id"], chained["lot"])),
-                "price": chained["price"]})
+                "price": chained["price"],
+                # Whether a referee judges its claims: the viewer signs a game's
+                # own refereed claims without a card on a test chain (base.html).
+                "referee": ({k: chained["referee"].get(k) for k in ("node", "judge", "require")}
+                            if chained.get("referee") else None)})
         _sweep_book(chain)
         pool = [r for r in state.listings.open_listings(chain.network, limit=1000, claims=True)
                 if r.get("bound") == row["txid"] and r.get("claim_hash")]
