@@ -873,6 +873,7 @@ async function claimFor(source, m, page = "", own = false) {
         // to this very page, open as itself, for a few coins at most.
         const silent = own && !!pool.referee && (!m.pool || pool.game === page)
           && arcadeAutoSigns(page, shown, AUTO_CLAIM_MOST);
+        if (!silent && m.silent === true) throw new Error(ARCADE_SAY_SO);
         const ok = silent || await arcadeAsk(`Claim ${offer.piece}?`,
           `${seller} set ${one ? "it" : "these"} aside for whoever got here. `
           + `${one ? "It costs" : "They cost"} ${coins} ${unit} to ${seller}`
@@ -895,6 +896,7 @@ async function claimFor(source, m, page = "", own = false) {
     const seller = offer.seller_tag ? "@" + offer.seller_tag : "its owner";
     const what = offer.piece || "this piece";
     const lot = !!offer.lot;                     // tokens, not a piece (token claims)
+    if (m.silent === true) throw new Error(ARCADE_SAY_SO);
     const ok = await arcadeAsk(`Claim ${what}?`,
       `${seller} set ${lot ? "these" : "it"} aside for whoever got here. `
       + `${lot ? "They cost" : "It costs"} ${price} to ${seller}`
@@ -970,8 +972,9 @@ async function inscribeFor(source, m, page = "", own = false) {
     const shown = await wallet.checked(offer, held);
     const who = m.label ? `"${String(m.label).slice(0, 60)}"` : "This page";
     // A game saving its own data, said yes to without a card (arcadeAutoSigns).
-    const ok = (own && arcadeAutoSigns(page, shown, AUTO_INSCRIBE_MOST))
-      || await arcadeAsk(`${who} asks to inscribe ${bytes.length.toLocaleString()} bytes`,
+    const auto = own && arcadeAutoSigns(page, shown, AUTO_INSCRIBE_MOST);
+    if (!auto && m.silent === true) throw new Error(ARCADE_SAY_SO);
+    const ok = auto || await arcadeAsk(`${who} asks to inscribe ${bytes.length.toLocaleString()} bytes`,
       (m.note ? `"${String(m.note).slice(0, 200)}" ` : "")
       + `${type}${json.attested ? ", with its result verified by the game's judge" : ""}. `
       + "It goes on the chain for good, as yours. " + shown.says, "Inscribe it");
@@ -1037,6 +1040,10 @@ async function pageSends() {
           || (ask.kind === "inscription" && ask.made_by === ask.creator));
     const silent = !!frame && !frame.classList.contains("postmedia") && gameOwn
       && arcadeAutoSigns(ask.page, shown, AUTO_SEND_MOST);
+    if (!silent && ask.silent === true) {           // the page never raises a card
+      await answer({status: "failed", error: ARCADE_SAY_SO});
+      return;
+    }
     const ok = silent || await arcadeAsk(`${who} asks you to send ${what}`,
       (ask.note ? `"${ask.note}" ` : "") + `To ${ask.to}. ${shown.says}`, "Yes, send it");
     if (!ok) { await answer({status: "denied"}); return; }
@@ -1733,6 +1740,9 @@ var AUTO_CLAIM_MOST = 5000000;          // 0.05 coins: a lot's price and its fee
 var AUTO_INSCRIBE_MOST = 200000000;     // 2 coins: a 7 KB save, its fee and data outputs
 var AUTO_PAGE_MOST = 2000000000;        // 20 coins a page, per tab
 var AUTO_SEND_MOST = 5000000;           // 0.05 coins: a game's asset back to it, fee and dust
+// A page that asks with {silent: true} never raises a card: what the rules above
+// do not let through fails with this, and the page decides what to do about it.
+var ARCADE_SAY_SO = "this needs the player's say-so";
 var arcadeAutoSpent = new Map();
 function arcadeAutoSigns(page, shown, most){
   if (!ARCADE_AUTOSIGN || !page || !shown) return false;

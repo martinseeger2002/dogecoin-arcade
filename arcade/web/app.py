@@ -6185,6 +6185,9 @@ def create_app(state: AppState) -> FastAPI:
             "creator": page_row["creator"] if page_row else "", "to_address": to_address,
             "issuer": issuer, "inscription": piece["txid"] if piece else "",
             "made_by": piece["creator"] if piece else "",
+            # A page that must never raise a card (2026-10-04): what the reader's
+            # tab cannot send unasked fails instead of asking.
+            "silent": body.get("silent") is True,
             "status": "pending", "txid": "", "error": "", "created": now}
         return contentlib._json(_page_send_told(_page_sends[rid]), status=202)
 
@@ -6211,7 +6214,8 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"chain": chain.network, "requests": [
             {k: r.get(k, "") for k in ("id", "kind", "to", "amount", "propertyid", "name",
                                        "label", "note", "page", "creator", "to_address",
-                                       "issuer", "inscription", "made_by")} for r in rows]},
+                                       "issuer", "inscription", "made_by", "silent")}
+            for r in rows]},
             headers={"Cache-Control": "no-store"})
 
     @app.post("/account/pagesends/answer")

@@ -49,7 +49,7 @@ def _asks(pc, game, ticket, sword, stranger_piece, maddr, paddr):
     ref = {"host": "pages.example", "cf-ray": "abc",
            "referer": f"https://pages.example/content/{game}?v={ticket}"}
     back = pc.post("/r/send", headers=ref, json={"kind": "inscription", "inscription": sword,
-                                                 "to": maddr, "label": "a game"})
+                                                 "to": maddr, "label": "a game", "silent": True})
     assert back.status_code == 202, back.text
     mine = pc.post("/r/send", headers=ref, json={"kind": "inscription",
                                                  "inscription": stranger_piece, "to": maddr})
@@ -62,8 +62,10 @@ def _asks(pc, game, ticket, sword, stranger_piece, maddr, paddr):
     a = asks[sword]
     assert (a["page"], a["creator"], a["to_address"], a["made_by"]) == (game, maddr, maddr, maddr), a
     assert a["kind"] == "inscription" and a["name"].startswith("#")
+    assert a["silent"] is True, "a page that never raises a card says so"
     b = asks[stranger_piece]
     assert b["made_by"] == paddr != b["creator"], "the player's own piece is not the game's"
+    assert b["silent"] is False
 
     # Without a ticket for that page the node does not know whose game it is.
     bare = pc.post("/r/send", json={"kind": "inscription", "inscription": sword, "to": maddr},

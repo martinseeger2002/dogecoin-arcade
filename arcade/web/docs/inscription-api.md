@@ -299,6 +299,7 @@ preflight is answered):
 | `from` | optional: which of the wallet's addresses pays. Left out, the wallet chooses |
 | `label` | optional: what your page calls itself, shown in quotes to the person |
 | `note` | optional: why, in a sentence, shown in quotes to the person |
+| `silent` | optional: `true` and the person is never shown a card. What a test chain lets a game do unasked -- a token its creator issued, or a piece its creator inscribed, sent back to that creator, from the page open as itself -- goes through; anything else fails at once with `this needs the player's say-so`. The same flag works on `claim` and `inscribe` messages |
 
 ```js
 const asked = await (await fetch('/r/send', {
