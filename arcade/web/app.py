@@ -6159,7 +6159,7 @@ def create_app(state: AppState) -> FastAPI:
                 _page_sends.pop(rid, None)
         waiting = [r for r in _page_sends.values()
                    if r["address"] == address and r["status"] == "pending"]
-        if len(waiting) >= 20:
+        if len(waiting) >= 20 and not _unlimited_address(address):
             return contentlib._json({"error": "twenty requests are already waiting"},
                                     status=429)
         name, issuer = "", ""
@@ -8616,6 +8616,38 @@ def create_app(state: AppState) -> FastAPI:
             return f"coinkey:{pubkey}"
         return f"coinkey:{chain.network}:{pubkey}"
 
+    def _unlimited_address(address: str) -> bool:
+        """Whether the operator exempted this address from the per-account limits
+        (settings.json `unlimited_accounts`: addresses or @tags, 2026-10-04 --
+        a game's own account that mints and pays continuously)."""
+        listed = state.setting("unlimited_accounts", []) or []
+        if not address or not isinstance(listed, list):
+            return False
+        for item in listed:
+            item = str(item or "").strip()
+            if item == address:
+                return True
+            if item and taglib.looks_like_a_tag(item):
+                for mainnet in (False, True):
+                    try:
+                        if _tag_address(state, item, mainnet=mainnet) == address:
+                            return True
+                    except ValueError:
+                        continue
+        return False
+
+    def _unlimited(account) -> bool:
+        """Whether an account is exempt: its address on any chain is listed."""
+        if not state.setting("unlimited_accounts"):
+            return False
+        for chain in [state.messaging, *state.token_chains]:
+            try:
+                if _unlimited_address(_account_address(account.pubkey, chain) or ""):
+                    return True
+            except Exception:                              # noqa: BLE001
+                continue
+        return False
+
     def _quota(account, kind: str, nbytes: int = 0, count: bool = True) -> None:
         """What this node lets one account do, checked where the work is done.
 
@@ -8654,6 +8686,8 @@ def create_app(state: AppState) -> FastAPI:
         spent -- and it buys no protection, because an offer only exists in the
         pile at all if some earlier ask paid for it.
         """
+        if _unlimited(account):
+            return                     # the operator lifted every limit for it
         if len(_offers.waiting(account.pubkey)) >= accountslib.OFFERS_WAITING:
             raise ValueError(
                 "this node is still waiting to hear about the other offers it "
@@ -13199,7 +13233,8 @@ def create_app(state: AppState) -> FastAPI:
         if session:
             verdict = _referee_session(chain, pool, ref, seed, n, digest, claimer, replay)
         elif not seed["used"]:
-            _referee.pace(claimer)
+            if not _unlimited_address(claimer):
+                _referee.pace(claimer)
             found = state.token_index(chain).inscription_content(ref["judge"])
             if found is None:
                 raise refereelib.RefereeError("this node does not hold the pool's judge")
@@ -13256,7 +13291,8 @@ def create_app(state: AppState) -> FastAPI:
             if len(inputs) < st["upto"] or refereelib.record_sha(inputs[:st["upto"]]) != st["sha"]:
                 raise refereelib.RefereeError("that replay does not continue this session's "
                                               "last one: a session's record only grows")
-            _referee.pace(claimer + " " + seed["seed"], refereelib.SESSION_JUDGED_PER_MINUTE)
+            if not _unlimited_address(claimer):
+                _referee.pace(claimer + " " + seed["seed"], refereelib.SESSION_JUDGED_PER_MINUTE)
             found = state.token_index(chain).inscription_content(ref["judge"])
             if found is None:
                 raise refereelib.RefereeError("this node does not hold the pool's judge")

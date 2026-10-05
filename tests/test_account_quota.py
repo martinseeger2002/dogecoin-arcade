@@ -364,3 +364,25 @@ def test_a_number_nobody_typed_is_clamped(register):
     with pytest.raises(accountslib.AccountError):
         register.charge("ab" * 32, "post",
                         caps=accountslib.limits({"quota:post": -5}))
+
+
+def test_an_account_the_operator_lifted_the_limits_for_is_never_refused(client):
+    """2026-10-04, the operator: "override all limits for them" -- a game's own account
+    that mints and pays as the game is played. The operator lists it, by address
+    or @tag, and it is neither counted nor refused; everybody else still is."""
+    app, state = client
+    _open(app)
+    _coin(app, state, MAIN, "main")
+    state.set_setting("quota:send", 1)
+    try:
+        assert _send(app).status_code == 200
+        assert _send(app).status_code == 400, "the limit holds for an ordinary account"
+        state.set_setting("unlimited_accounts", [TEST])
+        for _ in range(accountslib.OFFERS_WAITING + 2):
+            done = _send(app)
+            assert done.status_code == 200, done.text
+        state.set_setting("unlimited_accounts", ["nSomebodyElse"])
+        assert _send(app).status_code == 400, "only the listed address is exempt"
+    finally:
+        state.set_setting("quota:send", None)
+        state.set_setting("unlimited_accounts", None)
