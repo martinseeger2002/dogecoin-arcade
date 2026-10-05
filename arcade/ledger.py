@@ -100,6 +100,10 @@ _OFFERS_ON_IT = ("(SELECT COUNT(*) FROM nft_offer o "
                  "WHERE o.inscription = i.txid)")
 
 
+#: Index files whose tables this process has installed (LedgerIndex.open).
+_SCHEMA_INSTALLED: set[str] = set()
+
+
 class LedgerIndex:
     """The token index for one chain: sync it, ask it questions."""
 
@@ -126,11 +130,18 @@ class LedgerIndex:
     def open(self) -> Database:
         """A fresh connection with the protocol tables installed.
 
-        Per call, per thread: see the module docstring.
+        Per call, per thread: see the module docstring. The tables and their
+        one-off migrations are installed once per process for each file
+        (2026-10-05): `install_schema` re-filed every inscription's JSON on
+        every open, and a page that opens the index fifty times spent most of
+        its time doing it.
         """
         self.path.parent.mkdir(parents=True, exist_ok=True)
         db = Database(self.path)
-        install_schema(db)
+        key = str(self.path.resolve())
+        if key not in _SCHEMA_INSTALLED:
+            install_schema(db)
+            _SCHEMA_INSTALLED.add(key)
         return db
 
     @property
@@ -492,6 +503,21 @@ class LedgerIndex:
         with no trade is a day with no trade, not a straight line to the next
         one (D-039).
         """
+        from . import inscriptions as I
+
+        # Trades change only when a block is indexed, and this reads the whole
+        # transaction table: kept per indexed tip (2026-10-05, the Exchange
+        # asked twice a load, a quarter of a second each).
+        with self.open() as db:
+            tip = db.conn.execute("SELECT MAX(height) FROM block").fetchone()[0]
+        memo = getattr(self, "_trades_memo", None)
+        if memo and memo[0] == (tip, limit, since_height):
+            return list(memo[1])
+        out = self._trades_uncached(limit, since_height)
+        self._trades_memo = ((tip, limit, since_height), list(out))
+        return out
+
+    def _trades_uncached(self, limit: int, since_height: int) -> list[dict]:
         from . import inscriptions as I
 
         sql = ("SELECT a.txid, a.block_height, a.sender, a.payload_hex, b.time "

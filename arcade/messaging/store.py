@@ -364,6 +364,10 @@ def _unpack_chunks(blob: bytes) -> list[bytes]:
     return chunks
 
 
+#: Store files this process has migrated (MessageStore.__init__).
+_MIGRATED: set[str] = set()
+
+
 class MessageStore:
     """Message and key-announcement storage."""
 
@@ -389,11 +393,18 @@ class MessageStore:
         # Deterministic for the same three arguments: the clock is one of them
         # (`asof`), passed in, never read inside.
         self.conn.create_function("hot", 3, feed.hot, deterministic=True)
-        self.conn.executescript(SCHEMA)
-        add_missing_columns(self.conn, SCHEMA)
+        # The tables and their migrations, once per process for each file
+        # (2026-10-05): a page opens the store about ten times.
+        key = str(Path(self.path).resolve())
+        if key not in _MIGRATED:
+            self.conn.executescript(SCHEMA)
+            add_missing_columns(self.conn, SCHEMA)
+            if self.get_meta("schema_version") is None:
+                self.set_meta("schema_version", str(SCHEMA_VERSION))
+            _MIGRATED.add(key)
+        # Every open, as before: its backfills and repairs fix rows a broken
+        # version may still be writing, and they cost a few milliseconds.
         self._migrate()
-        if self.get_meta("schema_version") is None:
-            self.set_meta("schema_version", str(SCHEMA_VERSION))
 
     #: Columns added to existing tables after the first release, as
     #: (table, column, definition). `CREATE TABLE IF NOT EXISTS` does nothing to

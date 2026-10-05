@@ -2239,8 +2239,13 @@ function arcadeFileCost(bytes){
       .then(function (h) { return new DOMParser().parseFromString(h, 'text/html'); });
   }
 
+  // A tab nobody is looking at does not poll, and a page is fetched again at most
+  // once every 15 s however often the node moves (2026-10-05: with a game settling
+  // all the time the counter moved every 15 s, and every open tab -- hidden ones
+  // too -- fetched its whole page again each time).
+  var lastPage = 0, PAGE_EVERY = 15000;
   function poll() {
-    if (fetching) return;
+    if (fetching || document.hidden) return;
     fetch('/events', {cache: 'no-store'})
       .then(function (r) { return r.json(); })
       .then(function (data) {
@@ -2254,12 +2259,13 @@ function arcadeFileCost(bytes){
           return;
         }
         if (frozen()) { if (el) el.textContent = 'something new — it shows when this finishes'; return; }
+        if (Date.now() - lastPage < PAGE_EVERY) return;   // the next poll after the gap takes it
         if (document.body.dataset.reading) {
           // Far down the feed: the posts above are the server's first page, the rest were
           // added by scrolling. Say what is new rather than move the ground.
           offer('New posts are in — show them'); known = data.generation; return;
         }
-        fetching = true;
+        fetching = true; lastPage = Date.now();
         return page().then(function (doc) {
           if (base && version(doc) !== version(base)) {
             offer('The site was updated — tap to refresh');
@@ -2285,6 +2291,7 @@ function arcadeFileCost(bytes){
   }
   setInterval(poll, 5000);
   setTimeout(poll, 300);   // the baseline, as soon as the page is up
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); });
   // For a page that used to reload itself to show new state: ask for the same update.
   window.arcadeLiveUpdate = function () { known = -1; poll(); };
   window.arcadePatch = apply;   // for tests/test_live_update.py

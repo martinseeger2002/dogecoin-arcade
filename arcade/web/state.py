@@ -922,23 +922,53 @@ class AppState:
     #: wants to know what their wallet is doing without opening a database.
     SETTINGS_FILE = "settings.json"
 
+    #: One writer at a time: a read-modify-write that raced another lost its
+    #: update (2026-10-05).
+    _settings_lock = threading.Lock()
+
     def settings(self) -> dict:
+        """The settings, parsed once per change of the file (2026-10-05).
+
+        Read on every call before, and a page asks a hundred times: with an
+        address and a coin key per account the file is 200 KB, so /feed spent
+        half its time parsing it. The cache is keyed on the file's mtime and
+        size, so a change made by anything (the operator's page, a script, an
+        editor) is picked up on the next call. A copy is handed out, since
+        callers may change what they get."""
+        import json
+        path = self.home / self.SETTINGS_FILE
         try:
-            import json
-            return json.loads((self.home / self.SETTINGS_FILE).read_text())
-        except Exception:
+            st = path.stat()
+        except OSError:
             return {}
+        key = (st.st_mtime_ns, st.st_size)
+        cached = getattr(self, "_settings_cached", None)
+        if cached is None or cached[0] != key:
+            try:
+                cached = (key, json.loads(path.read_text()))
+            except Exception:
+                return dict(cached[1]) if cached else {}
+            self._settings_cached = cached
+        return dict(cached[1])
 
     def setting(self, name: str, default: Any = None) -> Any:
         value = self.settings().get(name)
         return default if value is None else value
 
     def set_setting(self, name: str, value: Any) -> None:
-        import json
-        data = self.settings()
-        data[name] = value
-        self.home.mkdir(parents=True, exist_ok=True)
-        (self.home / self.SETTINGS_FILE).write_text(json.dumps(data, sort_keys=True, indent=1))
+        """Written whole to a temporary file and renamed into place, under a
+        lock: a reader never sees half a file (which read as no settings at
+        all -- every quota and switch at its default for that request), and two
+        writers never lose each other's change."""
+        import json, os
+        with self._settings_lock:
+            data = self.settings()
+            data[name] = value
+            self.home.mkdir(parents=True, exist_ok=True)
+            path = self.home / self.SETTINGS_FILE
+            tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+            tmp.write_text(json.dumps(data, sort_keys=True, indent=1))
+            os.replace(tmp, path)
 
     @property
     def key_path(self) -> Path:
