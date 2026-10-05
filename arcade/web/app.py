@@ -5801,6 +5801,20 @@ def create_app(state: AppState) -> FastAPI:
             return ""                      # one page's ticket, not every page's
         return held[0]
 
+    def _viewer_page(request: Request, chain) -> str:
+        """The page whose ticket this request carries, when `_viewer_of` names a
+        reader: the inscription the reader has open, said by the viewer and not
+        by the page."""
+        from urllib.parse import parse_qs, urlparse
+        if not _viewer_of(request, chain):
+            return ""
+        ticket = request.query_params.get("v", "")
+        refer = request.headers.get("referer", "")
+        if refer:
+            ticket = ticket or (parse_qs(urlparse(refer).query).get("v") or [""])[0]
+        held = _viewer_tickets.get(ticket or "")
+        return str(held[2]) if held else ""
+
     def _wallet_answer(chain, index, addresses: list[str], spendable) -> dict:
         # One query for every address this wallet has, then summed per token:
         # a wallet with coins on fifteen addresses holds one balance of each
@@ -6112,13 +6126,31 @@ def create_app(state: AppState) -> FastAPI:
             return contentlib._json({"error": "sign in to DogecoinArcade and open this "
                                      "page there to be asked"}, status=403)
         kind = str(body.get("kind") or "")
-        if kind not in ("token", "coins"):
-            return contentlib._json({"error": "a page may ask for coins or a token"},
-                                    status=400)
+        if kind not in ("token", "coins", "inscription"):
+            return contentlib._json({"error": "a page may ask for coins, a token or an "
+                                     "inscription"}, status=400)
         to = str(body.get("to") or "").strip()
-        amount = str(body.get("amount") or "").strip()
+        amount = "1" if kind == "inscription" else str(body.get("amount") or "").strip()
         if not to or not amount:
             return contentlib._json({"error": "say who to pay and how much"}, status=400)
+        index = state.token_index(chain)
+        # Whose game it is, and whose these things are (the creator allowance,
+        # 2026-10-04): read here, from the index, so the reader's page can tell
+        # a game's own asset going back to the game from anything else.
+        page = _viewer_page(request, chain)
+        page_row = index.inscription(page) if page else None
+        piece = None
+        if kind == "inscription":
+            piece = index.inscription(contentlib._key(str(body.get("inscription") or "")))
+            if piece is None:
+                return contentlib._json({"error": "there is no such inscription"}, status=400)
+            if piece["owner"] != address:
+                return contentlib._json({"error": "that inscription is not yours to send"},
+                                        status=400)
+        try:
+            to_address = _tag_address(state, to, mainnet=chain.is_mainnet)
+        except ValueError:
+            to_address = ""
         now = time.time()
         for rid, row in list(_page_sends.items()):
             if row["status"] == "pending" and now - row["created"] > PAGE_SEND_FOR:
@@ -6130,7 +6162,7 @@ def create_app(state: AppState) -> FastAPI:
         if len(waiting) >= 20:
             return contentlib._json({"error": "twenty requests are already waiting"},
                                     status=429)
-        name = ""
+        name, issuer = "", ""
         if kind == "token":
             try:
                 prop = state.token_index(chain).property(int(body.get("propertyid") or 0))
@@ -6138,14 +6170,21 @@ def create_app(state: AppState) -> FastAPI:
                 prop = None
             if prop is None:
                 return contentlib._json({"error": "there is no such token"}, status=400)
-            name = prop["name"]
+            name, issuer = prop["name"], str(prop.get("issuer") or "")
+        if piece is not None:
+            name = f"#{piece['number']}" + (f" ({piece['json'].get('name')})"
+                                            if isinstance(piece.get("json"), dict)
+                                            and piece["json"].get("name") else "")
         rid = secrets.token_urlsafe(12)
         _page_sends[rid] = {
             "id": rid, "address": address, "network": chain.network, "kind": kind,
             "to": to[:120], "amount": amount[:40],
             "propertyid": int(body.get("propertyid") or 0) if kind == "token" else None,
             "name": name, "label": str(body.get("label") or "")[:60],
-            "note": str(body.get("note") or "")[:140], "page": "",
+            "note": str(body.get("note") or "")[:140], "page": page,
+            "creator": page_row["creator"] if page_row else "", "to_address": to_address,
+            "issuer": issuer, "inscription": piece["txid"] if piece else "",
+            "made_by": piece["creator"] if piece else "",
             "status": "pending", "txid": "", "error": "", "created": now}
         return contentlib._json(_page_send_told(_page_sends[rid]), status=202)
 
@@ -6170,8 +6209,9 @@ def create_app(state: AppState) -> FastAPI:
                 if r["address"] == address and r["status"] == "pending"
                 and now - r["created"] <= PAGE_SEND_FOR]
         return JSONResponse({"chain": chain.network, "requests": [
-            {k: r[k] for k in ("id", "kind", "to", "amount", "propertyid", "name",
-                               "label", "note")} for r in rows]},
+            {k: r.get(k, "") for k in ("id", "kind", "to", "amount", "propertyid", "name",
+                                       "label", "note", "page", "creator", "to_address",
+                                       "issuer", "inscription", "made_by")} for r in rows]},
             headers={"Cache-Control": "no-store"})
 
     @app.post("/account/pagesends/answer")

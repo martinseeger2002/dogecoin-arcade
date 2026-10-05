@@ -1013,13 +1013,31 @@ async function pageSends() {
                               chain: said.chain})});
       offer = await r.json();
       if (!r.ok) throw new Error(offer.detail || "that cannot be sent");
+    } else if (ask.kind === "inscription") {
+      const r = await fetch("/account/nft/send", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({piece: ask.inscription, to: ask.to, chain: said.chain})});
+      offer = await r.json();
+      if (!r.ok) throw new Error(offer.detail || "that cannot be sent");
     } else {
       offer = await wallet.offerSend(ask.to, ask.amount, said.chain);
     }
     const shown = await wallet.checked(offer, held);
-    const what = ask.kind === "token" ? `${ask.amount} ${ask.name}` : `${ask.amount} coins`;
+    const what = ask.kind === "token" ? `${ask.amount} ${ask.name}`
+      : ask.kind === "inscription" ? (ask.name || "an inscription") : `${ask.amount} coins`;
     const who = ask.label ? `"${ask.label}"` : "This page";
-    const ok = await arcadeAsk(`${who} asks you to send ${what}`,
+    // The creator allowance (2026-10-04): a game's own asset going back to the
+    // game -- a token the page's creator issued, or a piece it inscribed, sent
+    // to that creator -- needs no card, from a page open as itself, within the
+    // budget (arcadeAutoSigns). Coins, and anybody else's things, always ask.
+    const frame = ask.page && [...document.querySelectorAll("iframe.inscription-frame")]
+      .find((f) => (f.getAttribute("src") || "").includes("/content/" + ask.page));
+    const gameOwn = !!ask.creator && ask.to_address === ask.creator
+      && ((ask.kind === "token" && ask.issuer === ask.creator)
+          || (ask.kind === "inscription" && ask.made_by === ask.creator));
+    const silent = !!frame && !frame.classList.contains("postmedia") && gameOwn
+      && arcadeAutoSigns(ask.page, shown, AUTO_SEND_MOST);
+    const ok = silent || await arcadeAsk(`${who} asks you to send ${what}`,
       (ask.note ? `"${ask.note}" ` : "") + `To ${ask.to}. ${shown.says}`, "Yes, send it");
     if (!ok) { await answer({status: "denied"}); return; }
     const done = await wallet.confirm(held, offer);
@@ -1705,13 +1723,16 @@ function arcadeOfferSizes(file, onReady){
 //   * a claim from a REFEREED prize pool bound to that page (the referee's
 //     verdict is the gate), costing at most AUTO_CLAIM_MOST;
 //   * the page inscribing its own data, costing at most AUTO_INSCRIBE_MOST.
-// A page has AUTO_PAGE_MOST per tab; past it the cards come back. Sends, buys
+// And the creator allowance: the page sending a token its creator issued, or
+// a piece its creator inscribed, back to that creator (AUTO_SEND_MOST).
+// A page has AUTO_PAGE_MOST per tab; past it the cards come back. Other sends, buys
 // and mints always show their card. The cost is what leaves the wallet, read
 // from the parsed transaction (wallet.checked), never from the node's summary.
 var ARCADE_AUTOSIGN = {{ state.setting("page_autosign", state.messaging.network == "test")|tojson }};
 var AUTO_CLAIM_MOST = 5000000;          // 0.05 coins: a lot's price and its fee
 var AUTO_INSCRIBE_MOST = 200000000;     // 2 coins: a 7 KB save, its fee and data outputs
 var AUTO_PAGE_MOST = 2000000000;        // 20 coins a page, per tab
+var AUTO_SEND_MOST = 5000000;           // 0.05 coins: a game's asset back to it, fee and dust
 var arcadeAutoSpent = new Map();
 function arcadeAutoSigns(page, shown, most){
   if (!ARCADE_AUTOSIGN || !page || !shown) return false;
