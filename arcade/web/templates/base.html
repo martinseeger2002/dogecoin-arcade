@@ -1120,7 +1120,10 @@ window.addEventListener("message", async (e) => {
         if (!said) throw new Error("this page is not an inscription");
         const r = await fetch("/account/referee/seed", {method: "POST",
           headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({game: said[1], chain: ARCADE_CHAIN.network})});
+          // A SESSION seed (2026-10-04): paid many times, each claim bringing the
+          // whole record so far, by the game's pools that take one.
+          body: JSON.stringify({game: said[1], chain: ARCADE_CHAIN.network,
+                                ...(m.session === true ? {session: true} : {})})});
         const got = await r.json();
         if (!r.ok) throw new Error(got.detail || "no seed");
         answer({seed: got.seed, expires: got.expires, pools: got.pools || []});

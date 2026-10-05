@@ -12917,7 +12917,8 @@ def create_app(state: AppState) -> FastAPI:
                         else {"won": True},
                         "params": ref.get("params") if ref.get("params") is not None else {},
                         "seed_hours": refereelib.seed_seconds(ref) / 3600,
-                        "facts": _facts_spec(ref.get("facts")) if ref.get("facts") else {}}
+                        "facts": _facts_spec(ref.get("facts")) if ref.get("facts") else {},
+                        "session": ref.get("session") is True}
                     pools[r["txid"]]["redeem"] = redeem.hex()
             except (KeyError, TypeError, ValueError):
                 pools.pop(r["txid"], None)
@@ -12987,7 +12988,10 @@ def create_app(state: AppState) -> FastAPI:
         facts = _facts_spec(spec.get("facts"))
         return {"node": node, "pubkey": pubkey, "judge": row["txid"],
                 "require": require, "params": params, "seed_hours": hours,
-                **({"facts": facts} if facts else {})}
+                **({"facts": facts} if facts else {}),
+                # A pool that takes SESSION seeds (2026-10-04): paid many times
+                # from one seed, for what is new in the record each claim brings.
+                **({"session": True} if spec.get("session") is True else {})}
 
     def _facts_spec(raw: Any) -> dict:
         """What a judge is told the player holds (2026-09-30: an RPG whose levels
@@ -13065,7 +13069,8 @@ def create_app(state: AppState) -> FastAPI:
             raise refereelib.RefereeError(f"#{row['number']} is not JavaScript, so it cannot judge")
         return row
 
-    def _referee_seed(chain, key: str, address: str, game: str = "", judge: str = "") -> dict:
+    def _referee_seed(chain, key: str, address: str, game: str = "", judge: str = "",
+                      session: bool = False) -> dict:
         if judge:
             # A run that is only to be recorded, not paid (2026-09-30): its seed
             # is bound to the judge that will score it, and to this address.
@@ -13075,7 +13080,7 @@ def create_app(state: AppState) -> FastAPI:
                 raise refereelib.RefereeError(complaint)
             return _referee.issue_seed("judge:" + row["txid"], address)
         if game:
-            return _referee_game_seed(chain, game, address)
+            return _referee_game_seed(chain, game, address, session=session)
         pool = _chain_pool(chain, key)
         if pool is None or not pool.get("referee"):
             raise refereelib.RefereeError("this pool has no referee")
@@ -13098,7 +13103,7 @@ def create_app(state: AppState) -> FastAPI:
                 if p["game"] == game and not p["deleted"] and p.get("referee")
                 and p["referee"]["pubkey"] == mine and not _pool_refusal(chain, p)]
 
-    def _referee_game_seed(chain, key: str, address: str) -> dict:
+    def _referee_game_seed(chain, key: str, address: str, session: bool = False) -> dict:
         """One seed for a play session that can pay several prizes: every refereed
         pool of the game takes it once (2026-09-30, a tester's RPG: XP from one
         pool, a drop from another, from the same run)."""
@@ -13106,6 +13111,12 @@ def create_app(state: AppState) -> FastAPI:
         if row is None:
             raise refereelib.RefereeError("there is no such game")
         pools = _refereed_pools_of(chain, row["txid"])
+        if session:
+            # A session seed (2026-10-04) is for the pools that take one: each pays
+            # it many times, for what is new in the record each claim brings.
+            pools = [p for p in pools if p["referee"].get("session")]
+            if not pools:
+                raise refereelib.RefereeError("this game has no pool that takes a session seed")
         if not pools:
             raise refereelib.RefereeError("this game has no refereed pool this node referees")
         complaint = _check_address(address, mainnet=chain.is_mainnet)
@@ -13114,7 +13125,8 @@ def create_app(state: AppState) -> FastAPI:
         facts = {p["txid"]: _facts_of(chain, p["referee"], address)
                  for p in pools if p["referee"].get("facts")}
         seconds = max(refereelib.seed_seconds(p["referee"]) for p in pools)
-        said = _referee.issue_seed("", address, seconds, facts=facts or None, game=row["txid"])
+        said = _referee.issue_seed("", address, seconds, facts=facts or None, game=row["txid"],
+                                   session=session)
         return {**said, "pools": [p["txid"] for p in pools]}
 
     def _referee_sign(chain, key: str, n: int, raw: str, replay: Any) -> dict:
@@ -13138,7 +13150,10 @@ def create_app(state: AppState) -> FastAPI:
                                 or (seed.get("game") and seed["game"] == pool["game"])):
             raise refereelib.RefereeError("that seed was not issued for this pool")
         digest = _h.sha256(str(raw).encode()).hexdigest()
-        used = _referee.used_at(seed["seed"], pool["txid"])
+        session = bool(seed.get("session"))
+        if session and not ref.get("session"):
+            raise refereelib.RefereeError("this pool does not take session seeds")
+        used = "" if session else _referee.used_at(seed["seed"], pool["txid"])
         if used and used != digest:
             raise refereelib.RefereeError("that seed was used; a new run needs a new seed")
         seed["used"] = used
@@ -13181,7 +13196,9 @@ def create_app(state: AppState) -> FastAPI:
                                                   "the player's")
         if pool.get("once") and claimer in _pool_claimers(chain, pool):
             raise refereelib.RefereeError("this wallet has already claimed from this prize pool")
-        if not seed["used"]:
+        if session:
+            verdict = _referee_session(chain, pool, ref, seed, n, digest, claimer, replay)
+        elif not seed["used"]:
             _referee.pace(claimer)
             found = state.token_index(chain).inscription_content(ref["judge"])
             if found is None:
@@ -13213,6 +13230,50 @@ def create_app(state: AppState) -> FastAPI:
         sigs = [_referee.sign(fundinglib.sighash(raw_inputs, outputs, i, redeem)).hex()
                 for i in range(2)]
         return {"signatures": sigs, "verdict": verdict}
+
+    def _referee_session(chain, pool: dict, ref: dict, seed: dict, n: int, digest: str,
+                         claimer: str, replay: dict) -> dict:
+        """A claim on a SESSION seed (2026-10-04, "everything must settle right at
+        the time that it is done"): the record so far, which only ever grows.
+
+        It must continue the record this seed was last paid on -- the part already
+        accepted is a prefix of it, byte for byte -- so a run cannot be re-cut to
+        be paid twice. The judge is told where the new part starts (`since`), what
+        this seed has been paid and for what (`paid`, each with the paying pool's
+        params), and what it itself said about the accepted part (`prior`), and
+        answers about what is new. One claim of a session at a time."""
+        inputs = replay.get("inputs")
+        if not isinstance(inputs, list):
+            raise refereelib.RefereeError("a session's replay is the list of what happened, "
+                                          "all of it so far, sent with every claim")
+        with _referee.session_lock(seed["seed"]):
+            done = _referee.session_paid_for(seed["seed"], pool["txid"], n)
+            if done:
+                if done != digest:
+                    raise refereelib.RefereeError("that lot was already paid from this session")
+                return {"won": True, "again": True}
+            st = _referee.session_state(seed["seed"])
+            if len(inputs) < st["upto"] or refereelib.record_sha(inputs[:st["upto"]]) != st["sha"]:
+                raise refereelib.RefereeError("that replay does not continue this session's "
+                                              "last one: a session's record only grows")
+            _referee.pace(claimer + " " + seed["seed"], refereelib.SESSION_JUDGED_PER_MINUTE)
+            found = state.token_index(chain).inscription_content(ref["judge"])
+            if found is None:
+                raise refereelib.RefereeError("this node does not hold the pool's judge")
+            source = found[1].decode("utf-8", "replace")
+            params = ref["params"]
+            params = {**(params if isinstance(params, dict) else {"params": params}),
+                      "claimer": claimer, "since": st["upto"],
+                      "paid": _referee.session_paid(seed["seed"]), "prior": st["prior"]}
+            if ref.get("facts"):
+                params["facts"] = refereelib.both(seed.get("facts"), _facts_of(chain, ref, claimer))
+            verdict = _referee.judge(source, seed["seed"], inputs, params)
+            short = refereelib.meets(verdict, ref["require"])
+            if short:
+                raise refereelib.RefereeError(short)
+            _referee.session_record(seed["seed"], pool["txid"], n, ref["params"], digest,
+                                    len(inputs), refereelib.record_sha(inputs), verdict)
+            return verdict
 
     def _referee_verdict(chain, pool: dict, n: int, raw: str, replay: Any) -> list[bytes]:
         """Ask the pool's referee -- this node, or the one it names -- to sign a claim."""
@@ -13939,7 +14000,8 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse(_referee_seed(chain, str(said.get("pool") or ""),
                                               str(said.get("address") or ""),
                                               game=str(said.get("game") or ""),
-                                              judge=str(said.get("judge") or "")))
+                                              judge=str(said.get("judge") or ""),
+                                              session=said.get("session") is True))
         except (ValueError, refereelib.RefereeError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
 
@@ -13991,12 +14053,14 @@ def create_app(state: AppState) -> FastAPI:
                 raise refereelib.RefereeError("this pool has no referee" if not game
                                               else "this game has no refereed pool")
             node = _referee_node(pool)
+            session = bool(game) and said.get("session") is True
             if not node:
-                return JSONResponse(_referee_seed(chain, pool["txid"], address, game=game))
+                return JSONResponse(_referee_seed(chain, pool["txid"], address, game=game,
+                                                  session=session))
             try:
                 answer = requests.post(node + "/r/referee/seed", timeout=15, json={
                     "chain": chain.network, "pool": pool["txid"], "address": address,
-                    **({"game": game} if game else {})})
+                    **({"game": game} if game else {}), **({"session": True} if session else {})})
                 got = answer.json()
             except Exception:                             # noqa: BLE001
                 raise refereelib.RefereeError("this pool's referee did not answer; "
@@ -14107,7 +14171,8 @@ def create_app(state: AppState) -> FastAPI:
             "txid", "number", "creator", "kind", "pool", "index", "property_id", "lot",
             "count", "price", "game", "deleted", "once", "name", "fee")},
             "referee": ({k: pool["referee"].get(k)
-                         for k in ("node", "judge", "require", "params", "seed_hours", "facts")}
+                         for k in ("node", "judge", "require", "params", "seed_hours", "facts",
+                                   "session")}
                         if pool.get("referee") else None),
             "pool_id": pool["txid"], "total": pool["count"],
             "what": _pool_what(chain, pool), "free": [] if refusal else free,

@@ -902,3 +902,86 @@ def test_a_pool_that_pays_its_own_claims_needs_nothing_of_the_player(node):
     _settled(state, rpc)
     assert _held(state, pool, book["pid"])[0] == 0
     assert _held(state, book["address"], book["pid"])[0] == HELD - 30 * COIN
+
+
+SESSION_JUDGE = """
+function judge(seed, inputs, params) {
+  // A pickup game: every entry of 10 or more is a coin picked up. The record only
+  // grows; a claim wins while more coins were picked up than this session was paid.
+  var picked = 0;
+  for (var i = 0; i < inputs.length; i++) if (inputs[i] >= 10) picked++;
+  return {won: picked > params.paid.length, score: picked, since: params.since,
+          prior: params.prior ? params.prior.score : -1};
+}
+"""
+
+
+def test_a_session_seed_pays_each_pickup_as_the_record_grows(node):
+    """2026-10-04 (settle_now_design.md B): one SESSION seed is paid many times,
+    each claim bringing the whole record so far. The judge is told what is new
+    (`since`), what it said last time (`prior`) and what was paid (`paid`); a
+    record that does not continue the last one is refused, so nothing is paid twice."""
+    import base64
+    from test_account_offer import _pubkey, _inscribed
+    app, state, rpc = node
+    book = _bookcoin(node, 150)
+    who = book["client"]
+    game = _inscribed(who, state, rpc, book["secret"], book["pubkey"], "a pickup game")
+    judged = who.post("/account/inscribe", json={
+        "content": base64.b64encode(SESSION_JUDGE.encode()).decode(),
+        "content_type": "text/javascript"})
+    judge = _signed(who, book["secret"], book["pubkey"], judged).json()["txid"]
+    _settled(state, rpc)
+    pool_secret = int.from_bytes(bytes([0x65, 150]) + bytes(30), "big")
+    pool_pub = _pubkey(pool_secret)
+    opened = who.post("/account/pools/open", json={
+        "index": 4545, "pubkey": pool_pub.hex(), "creator_pubkey": book["pubkey"].hex(),
+        "referee": {"judge": judge, "require": {"won": True}, "params": {"kind": "coin"},
+                    "seed_hours": 3, "session": True}})
+    pool = opened.json()["address"]
+    funding = who.post("/account/pools/fund", json={
+        "pool": pool, "property_id": book["pid"], "lot": "5", "count": 3, "fee": "pool",
+        "bound": game, "claim_hash": hashlib.sha256(PHRASE.encode()).hexdigest()})
+    fund = _signed(who, book["secret"], book["pubkey"], funding).json()["txid"]
+    legs = who.post("/account/pools/legs", json={"pool": pool, "fund": fund}).json()
+    sigs = [[_sign(pool_secret, bytes.fromhex(d), funding_mod.SINGLE_ANYONECANPAY).hex()
+             for d in leg["sighashes"]] for leg in legs["legs"]]
+    made = who.post("/account/inscribe", json={
+        "content": base64.b64encode(b"sealed").decode(),
+        "content_type": "application/vnd.arcade.prizepool",
+        "json": json.dumps({"name": "Pickups", "prizepool": {**legs["prizepool"],
+                                                             "pubkey": pool_pub.hex()}})})
+    pool_txid = _signed(who, book["secret"], book["pubkey"], made).json()["txid"]
+    _settled(state, rpc)
+    assert who.get(f"/r/prizepool/{pool_txid}").json()["referee"]["session"] is True
+
+    player = _seated(app, state, rpc, 151)
+    client, address = player[0], player[3]
+    got = client.post("/account/referee/seed", json={"game": game, "session": True})
+    assert got.status_code == 200, got.text
+    assert got.json()["pools"] == [pool_txid]
+    seed = got.json()["seed"]
+
+    def take(n, record):
+        return client.post("/account/prize/take", json={
+            "pool": pool_txid, "lot": n, "page": game, "signatures": sigs[n],
+            "secret": PHRASE, "replay": {"seed": seed, "inputs": record}})
+
+    first = take(0, [3, 12])
+    assert first.status_code == 200, first.text
+    nothing_new = take(1, [3, 12, 4])
+    assert nothing_new.status_code == 400 and "did not win" in nothing_new.json()["detail"]
+    rewritten = take(1, [3, 15, 12])
+    assert rewritten.status_code == 400 and "does not continue" in rewritten.json()["detail"]
+    second = take(1, [3, 12, 4, 11])
+    assert second.status_code == 200, second.text
+    _settled(state, rpc)
+    assert _held(state, address, book["pid"])[0] == 10 * COIN, "two pickups, paid as they happened"
+
+    from arcade.web import app as _app  # noqa: F401  (the referee's own record)
+    from arcade import referee as refereelib
+    ref = refereelib.Referee(state.home)
+    st = ref.session_state(seed)
+    assert st["upto"] == 4 and st["prior"]["score"] == 2 and st["prior"]["since"] == 2, st
+    assert [p["params"] for p in ref.session_paid(seed)] == [{"kind": "coin"}] * 2
+    assert refereelib.SESSION_JUDGED_PER_MINUTE == 30
