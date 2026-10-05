@@ -287,6 +287,9 @@ TESTNET = Params(
     bid_fills_from=1_496_133,
     take_from=1_496_133,
     cancels_last_from=1_513_300,
+    # Bundles (inscriptions.KIND_BUNDLE) are read from here: switched on 2026-10-05 at
+    # The operator's word ("Enable it right now, we are the only node"), the block after the tip.
+    bundles_from=1_527_064,
     datadir_subdir="testnet3",
     pubkeyhash_version=113,
     scripthash_version=196,
