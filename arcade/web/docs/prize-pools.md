@@ -120,6 +120,32 @@ JSON:
 Writing a judge, the page's side and the limits are in
 [The referee](referee.md).
 
+## A pool that pays its own claims
+
+A refereed pool can pay for its claims itself, so a player collects a prize the
+moment the game says so: no card, no unlocked wallet, no coins of their own.
+Add `"fee": "pool"` beside `referee`; the price is then nothing:
+
+```json
+{"name": "Drops as they happen",
+ "prizepool": {"token": 19, "lot": "1", "lots": 25, "fee": "pool", "game": "#201",
+               "phrase": "<your phrase>",
+               "referee": {"judge": "#<your judge>", "require": {"won": true}}}}
+```
+
+* Each lot keeps back 0.02 coins of the coins it stands on for its claim: the
+  network fee and the player's receiving output. That is what the pool costs
+  you per lot; deleting the pool returns the rest, as always.
+* A claim is built and sent by the arcade: the lot's own coins in, the prize
+  to the player. The referee signs all of it, only after your judge passes the
+  run, and only to the wallet the seed was issued to. The player signs nothing.
+* An NFT lot hands its piece over outright, rather than selling it.
+* It needs a referee. Without one, anybody with the phrase could empty the pool
+  for free.
+
+The page asks exactly as for any refereed claim (`{arcade: "claim", pool,
+replay}`); the answer comes back without the player being asked.
+
 ## Deleting a pool
 
 Inscribe, from the same wallet:

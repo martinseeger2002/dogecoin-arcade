@@ -238,6 +238,13 @@ The player sees the arcade's claim card, which says the referee checks their
 run before it pays. The answers are those of any claim: `heard`, then
 `{ok, txid, piece}` or `{error}`.
 
+### When the pool pays for the claim
+
+A pool with `"fee": "pool"` (see *Prize pools*) needs nothing of the player but
+their run: the claim is made of the lot's own coins, so there is no card and no
+key to unlock, and the prize is in the player's wallet as soon as the block
+lands. Use it for prizes a game pays while it is being played.
+
 ### Refusals
 
 | error | what to tell the player |

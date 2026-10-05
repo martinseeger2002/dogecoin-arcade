@@ -188,7 +188,7 @@ def sign_leg(leg: Leg, signatures: list[str], pubkey: bytes) -> str:
 def listing_row(network: str, owner: str, raw: str, piece: dict,
                 paid: tuple[int, bytes], fee: int, price: int, what: str,
                 seconds: float, coin: dict | None = None,
-                payload: bytes = b"") -> dict:
+                payload: bytes = b"", pool_pays: int = 0) -> dict:
     """A listing in the shape `check_leg` reads, before anybody is told it exists.
 
     One builder, because there are two ways a leg gets here -- handed a `Leg` by
@@ -208,6 +208,8 @@ def listing_row(network: str, owner: str, raw: str, piece: dict,
         "payload": bytes(payload).hex(),
         "output": {"value": int(paid[0]), "script": bytes(paid[1]).hex()},
         "fee": int(fee), "price": int(price), "what": what,
+        # What a lot that pays its own claim keeps back (funding.build_leg).
+        **({"pool_pays": int(pool_pays)} if pool_pays else {}),
         "status": "open", "created": time.time(),
         "expires": time.time() + seconds,
     }
@@ -303,7 +305,7 @@ class Listings:
     def register(self, rpc: Any, *, raw: str, signatures: list[str],
                  pubkey: bytes, network: str, owner: str, price: int,
                  seconds: float = LISTED_FOR, what: str = "",
-                 record: bool = True, claim_hash: str = "", bound: str = "") -> dict:
+                 record: bool = True, claim_hash: str = "", bound: str = "", pool_pays: int = 0) -> dict:
         """File a leg a browser signed, with nothing remembered from before.
 
         A listing is two requests: this node builds a leg and shows it, the tab
@@ -402,6 +404,10 @@ class Listings:
         fee = swap_fee(FEE_FLOOR_PER_KB,
                        op_return_script(payload) if payload else b"")
         behind = coin["value"] if coin else 0
+        if pool_pays:
+            # A lot that pays its own claim keeps back `pool_pays` instead of a
+            # reservation to be repaid (funding.build_leg).
+            fee = int(pool_pays)
         if out_value != held + behind + int(price) - fee:
             raise ListingError(
                 f"a piece worth {held}"
@@ -417,8 +423,8 @@ class Listings:
             ([(0, op_return_script(payload))] if payload else [])
             + [(out_value, script)])
         listing = listing_row(network, owner, signed, {**piece, "value": held},
-                              (out_value, script), fee, int(price), what,
-                              seconds, coin=coin, payload=payload)
+                              (out_value, script), 0 if pool_pays else fee, int(price), what,
+                              seconds, coin=coin, payload=payload, pool_pays=int(pool_pays))
         check_leg(rpc, listing)
         listing["claim_hash"] = str(claim_hash or "")
         listing["bound"] = str(bound or "")
@@ -625,7 +631,7 @@ def check_leg(rpc: Any, listing: dict) -> dict:
     # signed.
     derived = (value - int(piece.get("value", 0))
                - int((coin or {}).get("value", 0))
-               + int(listing.get("fee", 0)))
+               + int(listing.get("fee", 0)) + int(listing.get("pool_pays", 0)))
     if int(listing.get("price", -1)) != derived:
         raise ListingError(
             f"this listing says {int(listing.get('price', -1)) / COIN:.8f} and "
@@ -672,7 +678,8 @@ def piece_held(rpc: Any, listing: dict) -> int | None:
 
 
 def paste_leg(rpc: Any, listing: dict, unsigned: Any, signatures: list[str],
-              pubkey: bytes, referee_sigs: list[bytes] | None = None) -> str:
+              pubkey: bytes, referee_sigs: list[bytes] | None = None,
+              pool_pays: bool = False) -> str:
     """Finish a swap out of a stored leg. Checks first, bytes second.
 
     This is `swap.countersign` with the seller's half turned into something it
@@ -725,7 +732,7 @@ def paste_leg(rpc: Any, listing: dict, unsigned: Any, signatures: list[str],
                 f"of coins it still holds")
 
     signed_at = len(leg["vin"])            # the inputs the seller already signed
-    if len(unsigned.inputs) < signed_at + 1:
+    if len(unsigned.inputs) < signed_at + (0 if pool_pays else 1):
         raise ListingError(
             "a swap has the listed piece"
             + (", the coin behind its second signature" if signed_at > 1 else "")

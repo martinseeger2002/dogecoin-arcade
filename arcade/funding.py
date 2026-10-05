@@ -858,7 +858,8 @@ def swap_fee(rate: int, payload_script: bytes = b"") -> int:
 
 def build_leg(params: Params, address: str, piece: dict, coins: int,
               rate: int, what: str = "", payload: bytes | None = None,
-              coin: dict | None = None, redeem: bytes = b"") -> Leg:
+              coin: dict | None = None, redeem: bytes = b"",
+              pool_pays: int = 0) -> Leg:
     """The transaction a seller signs to LIST: its own coins in, one payment
     out, and -- when it names the thing it is selling -- the bytes that say so.
 
@@ -947,6 +948,12 @@ def build_leg(params: Params, address: str, piece: dict, coins: int,
     fee = swap_fee(rate, payload_script)
     held = sum(spent["value"] for spent in inputs)
     paid = held + coins - fee
+    if pool_pays:
+        # A lot that pays its own claim (a prize pool with "fee": "pool",
+        # 2026-10-04): it keeps back `pool_pays` for the block and for the
+        # claimer's receiving output, which the referee's ALL signature fixes,
+        # so the claimer adds no coin of its own and reserves nothing to repay.
+        fee, paid = 0, held + coins - int(pool_pays)
     if paid <= 0:
         raise FundingError(
             f"the price ({coins} sats) does not cover what a block costs "

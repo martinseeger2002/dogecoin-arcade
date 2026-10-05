@@ -758,6 +758,9 @@ export async function makeChainPool(wallet, spec, chain, onStep = () => {}) {
   return working(async () => {
     const phrase = String(spec.phrase || "").trim();
     if (!phrase) throw new Error("a prize pool needs a \"phrase\"");
+    if (spec.fee === "pool" && !spec.referee) {
+      throw new Error("a pool that pays its own claims (\"fee\": \"pool\") needs a \"referee\"");
+    }
     const nft = spec.kind === "nft";
     let pieces = [];
     if (nft) {
@@ -802,10 +805,11 @@ export async function makeChainPool(wallet, spec, chain, onStep = () => {}) {
     const funding = await askJson("/account/pools/fund", nft ? {
       chain, pool: home, kind: "nft", pieces, price: String(spec.price),
       days: spec.days || 0, bound: spec.game ? String(spec.game) : "", once: !!spec.once,
+      fee: spec.fee === "pool" ? "pool" : "",
       claim_hash: await claimHash(phrase)} : {
       chain, pool: home, property_id: spec.token, lot: String(spec.lot),
       count: Number(spec.lots), price: String(spec.price), days: spec.days || 0,
-      once: !!spec.once,
+      once: !!spec.once, fee: spec.fee === "pool" ? "pool" : "",
       bound: spec.game ? String(spec.game) : "", claim_hash: await claimHash(phrase)});
     if (!funding.ok) throw new Error(funding.said.detail || "the pool could not be funded");
     onStep(nft ? "Putting coins into the pool\u2026" : "Moving the tokens and coins into the pool\u2026");
@@ -844,6 +848,18 @@ export async function offerPrize(pool, lot, sigs, secret, page, chain, replay = 
     if (!r.ok) throw new Error(r.said.detail || "that prize cannot be claimed");
     return {...r.said, _ask: {pool, lot, signatures: sigs, secret, page, chain: chain || "",
                               ...(replay ? {replay} : {})}};
+  });
+}
+
+/** Claim a lot of a pool that pays its own claims ("fee": "pool", 2026-10-04):
+ *  no key, no coins, nothing to sign -- the referee signs the whole claim once
+ *  the pool's judge passes the replay, and the node sends it. */
+export async function takePrize(pool, lot, sigs, secret, page, chain, replay = null) {
+  return working(async () => {
+    const r = await askJson("/account/prize/take", {pool, lot, signatures: sigs, secret, page,
+                                                    chain: chain || "", ...(replay ? {replay} : {})});
+    if (!r.ok) throw new Error(r.said.detail || "that prize cannot be claimed");
+    return r.said;
   });
 }
 

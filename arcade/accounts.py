@@ -112,13 +112,17 @@ DAY = 86400
 #: not be trading, it would be spraying, and two dials would have let it call
 #: that sixty.
 PER_HOUR = {"post": 30, "react": 60, "message": 30, "send": 30, "list": 30,
-            "trade": 30, "name": 5, "inscribe": 10, "issue": 10}
+            "trade": 30, "name": 5, "inscribe": 10, "issue": 10,
+            # Claims a pool pays for (2026-10-04): a game claims each pickup as it
+            # happens, and the referee paces them, so the dial is wide.
+            "claim": 600}
 
 #: What each is called in a sentence, so the refusal and the page cannot
 #: disagree about what ran out.
 LABELS = {"post": "posts", "react": "reactions", "message": "messages",
           "send": "sends", "list": "listings", "trade": "trades",
           "inscribe": "inscriptions", "issue": "token issuances",
+          "claim": "prize claims",
           "name": "name and key claims"}
 
 #: Bytes an account may push onto the chain in a day, whatever carried them --

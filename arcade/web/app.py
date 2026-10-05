@@ -12660,8 +12660,7 @@ def create_app(state: AppState) -> FastAPI:
             count = int(said.get("count") or 0)
             if units <= 0 or not 1 <= count <= LOTS_AT_ONCE:
                 raise ValueError(f"a lot above zero, and between 1 and {LOTS_AT_ONCE} lots")
-            price = parse_amount(str(said.get("price", "")), True)
-            _above_dust(price, "price")
+            price = _pool_price(pool, said)
             claim_hash = str(said.get("claim_hash") or "").strip().lower()
             if not re.fullmatch(r"[0-9a-f]{64}", claim_hash):
                 raise ValueError("a pool needs the sha256 of its phrase")
@@ -12696,11 +12695,25 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         pool.update({"property_id": prop["property_id"], "lot": str(units), "count": count,
                      "price": price, "days": _listing_days(said), "bound": bound,
+                     "fee": "pool" if said.get("fee") == "pool" else "",
                      "claim_hash": claim_hash, "closed": False, "kind": "token",
                      "once": bool(said.get("once")), "first": 1})
         _save_pool(account, pool)
         offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what)
         return JSONResponse({"offer": offer.id, "chain": chain.network, **unsigned.as_json()})
+
+    def _pool_price(pool: dict, said: dict) -> int:
+        """A pool's price per lot. A pool that pays its own claims ("fee": "pool")
+        charges nothing and needs a referee: its lots' fees come out of its own
+        coins, so a claim made from the phrase alone would empty it for free."""
+        if said.get("fee") == "pool":
+            if not pool.get("referee"):
+                raise ValueError('a pool that pays its own claims ("fee": "pool") '
+                                 "needs a referee")
+            return 0
+        price = parse_amount(str(said.get("price", "")), True)
+        _above_dust(price, "price")
+        return price
 
     def _fund_nft_pool(account, chain, main: str, pool: dict, said: dict):
         """An NFT pool's funding: two coins a lot at the pool's address and no
@@ -12718,8 +12731,7 @@ def create_app(state: AppState) -> FastAPI:
                 pieces.append(row["txid"])
         if not 1 <= len(pieces) <= NFT_POOL_MOST:
             raise ValueError(f"a pool holds 1 to {NFT_POOL_MOST} pieces")
-        price = parse_amount(str(said.get("price", "")), True)
-        _above_dust(price, "price")
+        price = _pool_price(pool, said)
         claim_hash = str(said.get("claim_hash") or "").strip().lower()
         if not re.fullmatch(r"[0-9a-f]{64}", claim_hash):
             raise ValueError("a pool needs the sha256 of its phrase")
@@ -12739,6 +12751,7 @@ def create_app(state: AppState) -> FastAPI:
                 extra=_flights.change_for(account.pubkey, chain.network))
         _quota(account, "send")
         pool.update({"kind": "nft", "pieces": pieces, "count": count, "price": price,
+                     "fee": "pool" if said.get("fee") == "pool" else "",
                      "days": _listing_days(said), "bound": bound, "claim_hash": claim_hash,
                      "closed": False, "once": bool(said.get("once")), "first": 0,
                      "property_id": 0, "lot": "0"})
@@ -12882,7 +12895,8 @@ def create_app(state: AppState) -> FastAPI:
                     "price": int(p["price"]), "each": int(p["each"]),
                     "fund": str(p["fund"]).lower(), "game": str(p.get("game") or "").lower(),
                     "claim_hash": str(p["claim_hash"]).lower(), "height": r["block_height"],
-                    "referee": None, "redeem": ""}
+                    "referee": None, "redeem": "",
+                    "fee": "pool" if p.get("fee") == "pool" and p.get("referee") else ""}
                 if p.get("referee"):
                     # The address has to be the two-key one these three keys make,
                     # and the creator key has to be the inscriber's, or it is not a
@@ -13139,7 +13153,7 @@ def create_app(state: AppState) -> FastAPI:
         with chain.rpc() as rpc:
             tx = rpc.call("decoderawtransaction", str(raw))
             vin, vout = tx.get("vin") or [], tx.get("vout") or []
-            if len(vin) < 3 or any(
+            if len(vin) < (2 if pool.get("fee") == "pool" else 3) or any(
                     (vin[i]["txid"], int(vin[i]["vout"])) != (leg.inputs[i]["txid"],
                                                               int(leg.inputs[i]["vout"]))
                     for i in range(2)):
@@ -14027,7 +14041,13 @@ def create_app(state: AppState) -> FastAPI:
         """Lot `n` of a pool, rebuilt from its public JSON: the same bytes its
         creator's pool key signed."""
         from ..encoding import encode_class_c
-        if pool.get("kind") == "nft":
+        pays = POOL_PAYS if pool.get("fee") == "pool" else 0
+        if pool.get("kind") == "nft" and pays:
+            # A lot that pays its own claim hands its piece over outright: a
+            # transfer from the pool to the claimer's output, nothing to price.
+            naming = encode_class_c(P.AnyData(data=inscriptionlib.Transfer(
+                txid=bytes.fromhex(pool["pieces"][n])).encode()).encode())
+        elif pool.get("kind") == "nft":
             # One piece, sold for the pool's price: the swap a listing is.
             naming = _ask_payload({"txid": pool["pieces"][n]},
                                   inscriptionlib.Leg(inscriptionlib.LEG_COINS,
@@ -14042,7 +14062,8 @@ def create_app(state: AppState) -> FastAPI:
                 "address": pool["pool"]}
         return fundinglib.build_leg(chain.params, pool["pool"], piece, coins=pool["price"],
                                     rate=fees.MIN_FEE_PER_KB, payload=naming, coin=coin,
-                                    redeem=bytes.fromhex(pool.get("redeem") or ""))
+                                    redeem=bytes.fromhex(pool.get("redeem") or ""),
+                                    pool_pays=pays)
 
     def _pool_refusal(chain, pool: dict | None, page: str = "") -> str:
         if pool is None:
@@ -14084,7 +14105,7 @@ def create_app(state: AppState) -> FastAPI:
         """A pool as a page sees it: its terms and what is left. Never the phrase."""
         return {**{k: pool[k] for k in (
             "txid", "number", "creator", "kind", "pool", "index", "property_id", "lot",
-            "count", "price", "game", "deleted", "once", "name")},
+            "count", "price", "game", "deleted", "once", "name", "fee")},
             "referee": ({k: pool["referee"].get(k)
                          for k in ("node", "judge", "require", "params", "seed_hours", "facts")}
                         if pool.get("referee") else None),
@@ -14142,7 +14163,7 @@ def create_app(state: AppState) -> FastAPI:
             shape = {"pool": pool["address"], "fund": fund, "each": SPLIT_EACH,
                      "property_id": int(pool["property_id"]), "lot": int(pool["lot"]),
                      "price": int(pool["price"]), "count": count,
-                     "redeem": pool.get("redeem") or ""}
+                     "redeem": pool.get("redeem") or "", "fee": pool.get("fee") or ""}
             prop = state.token_index(chain).property(shape["property_id"])
             legs = []
             for n in range(count):
@@ -14162,6 +14183,7 @@ def create_app(state: AppState) -> FastAPI:
                                            "game": pool.get("bound") or "",
                                            "claim_hash": pool["claim_hash"],
                                            "once": bool(pool.get("once")),
+                                           **({"fee": "pool"} if pool.get("fee") == "pool" else {}),
                                            **_referee_json(account, pool)}})
 
     #: Claims this node broadcast, by pool: who claimed, before their block.
@@ -14184,6 +14206,11 @@ def create_app(state: AppState) -> FastAPI:
 
         def signers(tx: dict) -> set:
             out = set()
+            if len(tx.get("vin") or []) == 2 and tx.get("vout"):
+                # A claim the pool paid for (fee "pool"): no coin of the
+                # claimer's in it, so the claimer is its last output's address.
+                last = (tx["vout"][-1].get("scriptPubKey") or {}).get("addresses") or []
+                out.update(str(a) for a in last[:1])
             for spent in (tx.get("vin") or [])[2:]:
                 asm = str((spent.get("scriptSig") or {}).get("asm") or "").split()
                 if len(asm) == 2 and len(asm[1]) == 66:
@@ -14244,7 +14271,8 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError("that transaction did not fund this pool")
         shape = {"kind": "nft", "pool": pool["address"], "fund": fund, "each": SPLIT_EACH,
                  "pieces": list(pool["pieces"]), "price": int(pool["price"]),
-                 "count": count, "first": 0, "redeem": pool.get("redeem") or ""}
+                 "count": count, "first": 0, "redeem": pool.get("redeem") or "",
+                 "fee": pool.get("fee") or ""}
         legs = [{**_pool_leg(chain, shape, n).as_json(), "chain": chain.network,
                  "price": shape["price"]} for n in range(count)]
         return JSONResponse({"chain": chain.network, "legs": legs, "prizepool": {
@@ -14252,7 +14280,9 @@ def create_app(state: AppState) -> FastAPI:
             "pool": pool["address"], "index": int(pool["index"]), "pieces": shape["pieces"],
             "count": count, "price": shape["price"], "each": SPLIT_EACH, "fund": fund,
             "first": 0, "game": pool.get("bound") or "", "claim_hash": pool["claim_hash"],
-            "once": bool(pool.get("once")), **_referee_json(account, pool)}})
+            "once": bool(pool.get("once")),
+            **({"fee": "pool"} if pool.get("fee") == "pool" else {}),
+            **_referee_json(account, pool)}})
 
     def _close_nft_pool(account, chain, main: str, pool: dict, coins: list):
         """Close an NFT pool: each unclaimed piece goes home on its own lot's two
@@ -14309,14 +14339,29 @@ def create_app(state: AppState) -> FastAPI:
         if pool.get("once") and address in _pool_claimers(chain, pool):
             raise ValueError("this wallet has already claimed from this prize pool")
         leg = _pool_leg(chain, pool, n)
+        pays = POOL_PAYS if pool.get("fee") == "pool" else 0
         with chain.rpc() as rpc:
             listing = state.listings.register(
                 rpc, raw=leg.raw, signatures=[str(s) for s in (said.get("signatures") or [])],
                 pubkey=bytes.fromhex(pool["redeem"] or pool["pubkey"]), network=chain.network,
                 owner=pool["pool"], price=pool["price"], seconds=listingslib.ANSWERED_FOR,
-                record=False, claim_hash=pool["claim_hash"], bound=pool["game"])
+                record=False, claim_hash=pool["claim_hash"], bound=pool["game"],
+                pool_pays=pays)
         listing["parent"] = pool["creator"]
         listing["id"] = ""
+        if pays:
+            # The lot pays for itself: its own two coins in, its outputs, and
+            # the claimer's receiving output last -- where a token lot lands and
+            # an NFT transfer points. No coin of the claimer's, so nothing of
+            # theirs to sign; the referee's ALL signature fixes every output.
+            foreign, outputs = listingslib.leg_terms(listing)
+            outputs = list(outputs) + [(fees.DUST_LIMIT, txbuild.p2pkh_script(address))]
+            raw = txbuild.build_raw_tx([(c["txid"], int(c["vout"])) for c in foreign], outputs)
+            what = f"claim {_piece_called(chain, listing)}, its fee paid by the pool"
+            unsigned = fundinglib.Unsigned(raw=raw, inputs=[dict(c) for c in foreign],
+                                           outputs=outputs, fee=pays - fees.DUST_LIMIT,
+                                           what=what, signed_from=len(foreign))
+            return pool, listing, unsigned, what
         _, unsigned, what = _fill_terms(account, chain, address, listing)
         return pool, listing, unsigned, what
 
@@ -14405,6 +14450,64 @@ def create_app(state: AppState) -> FastAPI:
                                  "piece": _piece_called(chain, listing)})
         finally:
             state.end_send(lane)
+            if piece_lane:
+                state.end_send(piece_lane)
+
+    @app.post("/account/prize/take")
+    def account_prize_take(request: Request, payload: Any = Body(None)):
+        """Claim a lot of a pool that pays its own claims ("fee": "pool",
+        2026-10-04: "everything must settle right at the time that it is done").
+
+        Nothing is shown and nothing is signed by the claimer: the lot's two
+        coins pay the block and the claimer's output, the pool's signatures came
+        sealed with the phrase, and the referee signs the whole transaction only
+        after the pool's judge passes the replay, so the prize can only go to the
+        wallet the seed was issued to. The account has to be signed in -- that
+        is what names the address -- and needs no unlocked key and no coins."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+            address = _account_address(account.pubkey, chain)
+            if not address:
+                raise ValueError("this account has no address yet")
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        piece_lane = ""
+        try:
+            try:
+                pool, listing, unsigned, what = _prize_terms(account, chain, address, said)
+                if pool.get("fee") != "pool" or not pool.get("referee"):
+                    raise ValueError("this pool does not pay its own claims; claim it the "
+                                     "ordinary way")
+            except (fundinglib.FundingError, listingslib.ListingError, swaplib.SwapError,
+                    ValueError) as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=400)
+            piece_lane, refusal = _claim_piece(chain, listing)
+            if refusal:
+                return JSONResponse({"detail": refusal}, status_code=409)
+            try:
+                referee_sigs = _referee_verdict(chain, pool, int(said.get("lot")),
+                                                unsigned.raw, said.get("replay"))
+                with chain.rpc() as rpc:
+                    raw = listingslib.paste_leg(rpc, listing, unsigned, [], b"",
+                                                referee_sigs=referee_sigs, pool_pays=True)
+                _quota(account, "claim")
+                with chain.rpc() as rpc:
+                    txid = rpc.call("sendrawtransaction", raw)
+            except (listingslib.ListingError, fundinglib.FundingError, swaplib.SwapError,
+                    AmountError, ValueError, refereelib.RefereeError) as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=400)
+            except Exception as exc:
+                return JSONResponse({"detail": f"the node refused it: {exc}"}, status_code=409)
+            if pool["kind"] == "token":
+                _lots_flying.setdefault((chain.network, pool["pool"], pool["property_id"]),
+                                        {})[txid] = pool["lot"]
+            _pool_claims.setdefault(pool["txid"], set()).add(address)
+            state.bump_generation()
+            return JSONResponse({"txid": txid, "what": what, "chain": chain.network,
+                                 "piece": _piece_called(chain, listing)})
+        finally:
             if piece_lane:
                 state.end_send(piece_lane)
 
@@ -17464,6 +17567,10 @@ def create_app(state: AppState) -> FastAPI:
     #: What one coin from a split is worth: enough to stand under a listing and
     #: never under the soft-dust limit.
     SPLIT_EACH = 5 * fees.DUST_LIMIT
+    #: What a lot of a pool with "fee": "pool" keeps back from the coins it
+    #: stands on to pay its own claim (2026-10-04, the operator: 0.02 a lot): the
+    #: claimer's receiving output and the block. The rest goes back to the pool.
+    POOL_PAYS = 2 * fees.DUST_LIMIT
 
     @app.get("/restore", response_class=HTMLResponse)
     def restore_page(request: Request):
@@ -17577,7 +17684,7 @@ def create_app(state: AppState) -> FastAPI:
                 "open": not refusal and bool(free), "listing": None,
                 "lots_left": 0 if refusal else len(free), "free": [] if refusal else free,
                 "what": _lot_words(chain, (chained["property_id"], chained["lot"])),
-                "price": chained["price"],
+                "price": chained["price"], "fee": chained.get("fee") or "",
                 # Whether a referee judges its claims: the viewer signs a game's
                 # own refereed claims without a card on a test chain (base.html).
                 "referee": ({k: chained["referee"].get(k) for k in ("node", "judge", "require")}

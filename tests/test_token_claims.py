@@ -797,3 +797,108 @@ def test_a_verified_result_is_inscribed_listed_and_read_by_a_pool(node):
     assert paid.status_code == 200, paid.text
     _settled(state, rpc)
     assert _held(state, address, book["pid"])[0] == 5 * COIN, "the verified racer is paid"
+
+
+def test_a_pool_that_pays_its_own_claims_needs_nothing_of_the_player(node):
+    """2026-10-04, the operator: "Everything must settle right at the time that it is
+    done." A refereed pool with "fee": "pool" pays each claim's fee and the
+    claimer's output out of the coins its lot stands on, so a claim has no input
+    of the player's and nothing for them to sign: the referee signs the whole of
+    it, only for a replay its judge passes and only to the wallet that played."""
+    import base64
+    import contextlib as _cl
+    from test_account_offer import _pubkey, _inscribed
+    from arcade import utxos as _utxos
+    app, state, rpc = node
+    book = _bookcoin(node, 140)
+    who = book["client"]
+    game = _inscribed(who, state, rpc, book["secret"], book["pubkey"], "a game that pays")
+    judged = who.post("/account/inscribe", json={
+        "content": base64.b64encode(JUDGE.encode()).decode(),
+        "content_type": "text/javascript"})
+    judge = _signed(who, book["secret"], book["pubkey"], judged).json()["txid"]
+    _settled(state, rpc)
+
+    # Without a referee a pool cannot pay its own claims: the phrase alone would empty it.
+    plain_secret = int.from_bytes(bytes([0x66, 140]) + bytes(30), "big")
+    plain = who.post("/account/pools/open", json={"index": 4343,
+                                                  "pubkey": _pubkey(plain_secret).hex()})
+    refused = who.post("/account/pools/fund", json={
+        "pool": plain.json()["address"], "property_id": book["pid"], "lot": "30", "count": 1,
+        "fee": "pool", "claim_hash": hashlib.sha256(PHRASE.encode()).hexdigest()})
+    assert refused.status_code == 400 and "needs a referee" in refused.json()["detail"], refused.text
+
+    pool_secret = int.from_bytes(bytes([0x65, 140]) + bytes(30), "big")
+    pool_pub = _pubkey(pool_secret)
+    opened = who.post("/account/pools/open", json={
+        "index": 4344, "pubkey": pool_pub.hex(), "creator_pubkey": book["pubkey"].hex(),
+        "referee": {"judge": judge, "require": {"won": True},
+                    "params": {"bonus": 7, "pid": book["pid"]}, "seed_hours": 24,
+                    "facts": {"tokens": [book["pid"]]}}})
+    pool = opened.json()["address"]
+    funding = who.post("/account/pools/fund", json={
+        "pool": pool, "property_id": book["pid"], "lot": "30", "count": 2, "fee": "pool",
+        "bound": game, "claim_hash": hashlib.sha256(PHRASE.encode()).hexdigest()})
+    assert funding.status_code == 200, funding.text
+    fund = _signed(who, book["secret"], book["pubkey"], funding).json()["txid"]
+    legs = who.post("/account/pools/legs", json={"pool": pool, "fund": fund})
+    assert legs.status_code == 200, legs.text
+    sigs = [[_sign(pool_secret, bytes.fromhex(d), funding_mod.SINGLE_ANYONECANPAY).hex()
+             for d in leg["sighashes"]] for leg in legs.json()["legs"]]
+    public = {**legs.json()["prizepool"], "pubkey": pool_pub.hex()}
+    assert public["fee"] == "pool" and public["price"] == 0, public
+    made = who.post("/account/inscribe", json={
+        "content": base64.b64encode(b"sealed").decode(),
+        "content_type": "application/vnd.arcade.prizepool",
+        "json": json.dumps({"name": "Pays its own", "prizepool": public})})
+    pool_txid = _signed(who, book["secret"], book["pubkey"], made).json()["txid"]
+    _settled(state, rpc)
+    card = who.get(f"/r/prizepool/{pool_txid}").json()
+    assert card["open"] and card["fee"] == "pool", card
+    assert who.get(f"/r/claimpool/{game}").json()["fee"] == "pool"
+
+    player = _seated(app, state, rpc, 141)
+    client, _secret, _pubkey_, address = player
+
+    def take(c, n, replay):
+        return c.post("/account/prize/take", json={
+            "pool": pool_txid, "lot": n, "page": game, "signatures": sigs[n],
+            "secret": PHRASE, "replay": replay})
+
+    with _cl.closing(state.token_index(state.messaging).open()) as db:
+        coins_before = sum(c["value"] for c in _utxos.unspent(db, address))
+    none = take(client, 0, None)
+    assert none.status_code == 400 and "replay" in none.json()["detail"], none.text
+    seed = client.post("/account/referee/seed", json={"pool": pool_txid}).json()["seed"]
+    target = int(seed[:2], 16) + 7
+    lost = take(client, 0, {"seed": seed, "inputs": {"moves": [target - 1]}})
+    assert lost.status_code == 400 and "did not win" in lost.json()["detail"], lost.text
+    thief = _seated(app, state, rpc, 142)
+    stolen = take(thief[0], 0, {"seed": seed, "inputs": {"moves": [target]}})
+    assert stolen.status_code == 400 and "wallet that played" in stolen.json()["detail"], stolen.text
+
+    won = take(client, 0, {"seed": seed, "inputs": {"moves": [target - 2, 2]}})
+    assert won.status_code == 200, won.text
+    tx = rpc.call("getrawtransaction", won.json()["txid"], 1)
+    assert len(tx["vin"]) == 2, "the lot's own two coins, and nothing of the player's"
+    assert tx["vout"][-1]["scriptPubKey"]["addresses"] == [address], "the player's output last"
+    _settled(state, rpc)
+    assert _held(state, address, book["pid"])[0] == 30 * COIN, "the winner holds the prize"
+    with _cl.closing(state.token_index(state.messaging).open()) as db:
+        coins_after = sum(c["value"] for c in _utxos.unspent(db, address))
+    assert coins_after >= coins_before, "the player paid nothing"
+
+    # An ordinary claim of a pool-paid lot is refused rather than charged.
+    plain_claim = client.post("/account/prize/take", json={
+        "pool": pool_txid, "lot": 1, "page": game, "signatures": sigs[1], "secret": "wrong"})
+    assert plain_claim.status_code == 400, plain_claim.text
+
+    # Closing still returns what is left -- the unclaimed lot and the claimed
+    # lot's change -- down the creator's own branch.
+    closing = who.post("/account/pools/close", json={"prize": pool_txid})
+    assert closing.status_code == 200, closing.text
+    closed = _signed(who, book["secret"], book["pubkey"], closing)
+    assert closed.status_code == 200, closed.text
+    _settled(state, rpc)
+    assert _held(state, pool, book["pid"])[0] == 0
+    assert _held(state, book["address"], book["pid"])[0] == HELD - 30 * COIN

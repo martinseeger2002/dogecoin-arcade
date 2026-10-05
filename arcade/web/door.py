@@ -293,7 +293,7 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/pagesends/answer",
                # claiming one lot of a prize pool read off the chain: built here
                # from the pool's own inscription, signed in the claimer's tab.
-               "/account/prize", "/account/prize/sign",
+               "/account/prize", "/account/prize/sign", "/account/prize/take",
                # a refereed pool (2026-09-29): a seed for the player's next run,
                # and the referee's own two, which other nodes call. A seed is a
                # random number; a signature comes only for a replay the judge
