@@ -242,6 +242,21 @@ const set = await (await fetch('/r/collection/' + creator + '/' +
 | `GET /r/blockheight` | a number, or `null` if the node is not reachable |
 | `GET /r/blocktime` | UNIX seconds of the newest block, or `null` |
 
+### What is on its way
+
+`GET /r/pending/<address>` -> `{address, incoming: [...], outgoing: [...]}`: the
+pieces and tokens a transaction in the mempool is moving to or from an address,
+before its block. Each is `{txid, kind, from, to, why}` (`why` is `transfer`,
+`send`, `grant` or `swap`) with `inscription`, `number` and `name` for a piece,
+or `property_id`, `units`, `amount` and `name` for a token. It is read fresh and
+kept nowhere: a dropped transaction simply disappears from it.
+
+`/r/inscriptions/<address>?pending=1` adds what is arriving (`pending:
+"arriving"`) and marks what is leaving (`pending: "leaving"`);
+`/r/balances/<address>?pending=1` adds `arriving` and `leaving` units to each
+token. `owner` and `units` are still what the blocks say -- so a game can show a
+piece the moment it is collected, and say it is on its way.
+
 ### Balances and names
 
 `GET /r/balances/<address>`

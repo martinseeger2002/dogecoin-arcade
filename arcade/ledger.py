@@ -1684,6 +1684,100 @@ class LedgerIndex:
             return {}
         return {piece: txid for txid, piece in self._pool_swaps.items() if piece}
 
+    def pending_moves(self, limit: int = 500) -> list[dict]:
+        """Pieces and tokens a transaction in the mempool is moving (2026-10-04,
+        "if somebody leaves the game, they should be able to just look in their
+        wallet and see what they collected"): transfers, token sends and grants,
+        and both legs of swaps, each as {txid, kind, from, to, why, ...}.
+
+        Read fresh, cached per transaction like `pending_offers`, never written
+        down: the ledger is built from blocks only, and a move that never
+        confirms leaves nothing behind. Checked as far as the pool can answer --
+        an inscription must exist and be the sender's now, a token must exist --
+        and no further: whether it lands is the block's to say, which is why
+        every page that shows these says "arriving", not "yours".
+        """
+        from . import inscriptions as I
+        from .indexer import PrevOutCache
+        from .tx import extract
+
+        try:
+            with self._rpc() as rpc:
+                ids = list(rpc.call("getrawmempool") or [])[:max(0, limit)]
+                known = getattr(self, "_pool_moves", {})
+                cache = PrevOutCache(rpc, self.params)
+                found: dict[str, list] = {}
+                for txid in ids:
+                    if txid in known:
+                        found[txid] = known[txid]
+                        continue
+                    try:
+                        tx = rpc.call("getrawtransaction", txid, True)
+                        rtx = extract(tx, 0, 0, self.params, cache.lookup)
+                        found[txid] = self._move_rows(rtx, I) if rtx else []
+                    except Exception:
+                        found[txid] = []
+                self._pool_moves = found
+        except Exception as exc:
+            log.debug("mempool moves unavailable: %s", exc)
+            return []
+        out = []
+        for rows in self._pool_moves.values():
+            for row in rows:
+                if row["kind"] == "inscription":
+                    # Still the sender's now: a move of something it no longer
+                    # holds is one the block will refuse.
+                    held = self.inscription(row["inscription"])
+                    if held is None or held["owner"] != row["from"]:
+                        continue
+                out.append(row)
+        return out
+
+    def _move_rows(self, rtx, I) -> list[dict]:
+        """One mempool transaction as the moves it makes, or [] when it makes none."""
+        if not rtx.payload:
+            return []
+        try:
+            parsed = P.decode(rtx.payload)
+        except (P.PayloadError, P.UnknownMessageType, P.OutOfScopeMessageType):
+            return []
+        base = {"txid": rtx.txid, "from": rtx.sender}
+        if isinstance(parsed, P.SimpleSend) and rtx.reference:
+            return [{**base, "kind": "token", "property_id": int(parsed.property_id),
+                     "units": int(parsed.amount), "to": rtx.reference, "why": "send"}]
+        if isinstance(parsed, P.Grant):
+            return [{**base, "kind": "token", "property_id": int(parsed.property_id),
+                     "units": int(parsed.amount), "to": rtx.reference or rtx.sender,
+                     "why": "grant"}]
+        data = getattr(parsed, "data", None)
+        if not data or not I.is_inscription(data):
+            return []
+        try:
+            item = I.parse(data)
+        except Exception:
+            return []
+        if isinstance(item, I.Transfer) and rtx.reference:
+            return [{**base, "kind": "inscription", "inscription": item.txid.hex(),
+                     "to": rtx.reference, "why": "transfer"}]
+        if isinstance(item, I.Swap):
+            seller = rtx.sender
+            buyer = next((where for where, _ in getattr(rtx, "inputs", ())
+                          if where is not None and where != seller), None)
+            if buyer is None:
+                return []
+            rows = []
+            for leg, frm, to in ((item.give, seller, buyer), (item.take, buyer, seller)):
+                if leg.kind == I.LEG_INSCRIPTION:
+                    rows.append({"txid": rtx.txid, "kind": "inscription",
+                                 "inscription": leg.txid.hex(), "from": frm, "to": to,
+                                 "why": "swap"})
+                elif leg.kind == I.LEG_TOKEN:
+                    rows.append({"txid": rtx.txid, "kind": "token",
+                                 "property_id": int(leg.property_id), "units": int(leg.amount),
+                                 "from": frm, "to": to, "why": "swap"})
+            return rows
+        return []
+
     def _offer_row(self, rtx) -> dict | None:
         """One mempool transaction as an offer row, or None if it is not one."""
         from . import inscriptions as I

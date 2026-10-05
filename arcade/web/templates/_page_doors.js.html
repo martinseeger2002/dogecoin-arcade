@@ -323,8 +323,10 @@
             address = acct.address;
           }
           if (!address) throw new Error('sign in first: items belong to an account');
-          var pieces = await fetch('/r/inscriptions/' + address).then(function(r){ return r.json(); });
-          var balances = await fetch('/r/balances/' + address).then(function(r){ return r.json(); });
+          // What is on its way counts too (2026-10-04): an arriving piece can be
+          // traded now, and says so with `pending: "arriving"`.
+          var pieces = await fetch('/r/inscriptions/' + address + '?pending=1').then(function(r){ return r.json(); });
+          var balances = await fetch('/r/balances/' + address + '?pending=1').then(function(r){ return r.json(); });
           return answer({ok: true, address: address, inscriptions: pieces, balances: balances});
         }
         if (viewer !== 'account') throw new Error('trades are signed with an account’s own key: sign in as an account');

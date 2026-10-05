@@ -5595,11 +5595,64 @@ def create_app(state: AppState) -> FastAPI:
                 owner=owner or None, creator=creator or None)})
 
     @app.get("/r/inscriptions/{address}")
-    def r_inscriptions_of(address: str, limit: int = 200, offset: int = 0):
-        rows = _content_index().inscriptions(owner=address, limit=limit,
-                                             offset=offset)
+    def r_inscriptions_of(address: str, limit: int = 200, offset: int = 0,
+                          pending: int = 0):
+        index = _content_index()
+        rows = index.inscriptions(owner=address, limit=limit, offset=offset)
         named = _tags_for([r["owner"] for r in rows] + [r["creator"] for r in rows])
-        return contentlib._json([contentlib.describe(row, named) for row in rows])
+        out = [contentlib.describe(row, named) for row in rows]
+        if pending:
+            # What the mempool is moving (2026-10-04): arriving pieces are added,
+            # leaving ones marked. The owner each row names is still the block's.
+            moves = _pending_of(address)
+            leaving = {m["inscription"] for m in moves["outgoing"] if m["kind"] == "inscription"}
+            for row in out:
+                if row.get("id") in leaving:
+                    row["pending"] = "leaving"
+            have = {row.get("id") for row in out}
+            for m in moves["incoming"]:
+                if m["kind"] != "inscription" or m["inscription"] in have:
+                    continue
+                got = index.inscription(m["inscription"])
+                if got is not None:
+                    have.add(m["inscription"])
+                    out.append({**contentlib.describe(got, named), "pending": "arriving",
+                                "pending_txid": m["txid"]})
+        return contentlib._json(out)
+
+    def _pending_of(address: str) -> dict:
+        """What the mempool is moving to and from one address, named for a page."""
+        index = _content_index()
+        moves = index.pending_moves()
+        incoming, outgoing = [], []
+        for m in moves:
+            if address not in (m["from"], m["to"]) or m["from"] == m["to"]:
+                continue
+            row = dict(m)
+            if m["kind"] == "inscription":
+                got = index.inscription(m["inscription"])
+                if got is not None:
+                    row["number"] = got["number"]
+                    j = got.get("json") if isinstance(got.get("json"), dict) else {}
+                    row["name"] = str(j.get("name") or "")[:80]
+            else:
+                prop = index.property(m["property_id"])
+                if prop is None:
+                    continue
+                row["name"] = prop["name"]
+                row["amount"] = format_amount(m["units"], prop["divisible"])
+            (incoming if m["to"] == address else outgoing).append(row)
+        return {"address": address, "incoming": incoming, "outgoing": outgoing}
+
+    @app.get("/r/pending/{address}")
+    def r_pending(address: str):
+        """Pieces and tokens on their way to and from one address, read from the
+        mempool (settle_now_design.md D, 2026-10-04). Gone if their transaction
+        is dropped; the ledger is never changed by any of it."""
+        try:
+            return contentlib._json(_pending_of(address))
+        except Exception:
+            return contentlib._json({"address": address, "incoming": [], "outgoing": []})
 
     @app.get("/r/collections")
     def r_collections(limit: int = 100, offset: int = 0, creator: str = ""):
@@ -5636,15 +5689,40 @@ def create_app(state: AppState) -> FastAPI:
         return contentlib._json(out)
 
     @app.get("/r/balances/{address}")
-    def r_balances(address: str):
+    def r_balances(address: str, pending: int = 0):
         """What one address holds. A list of addresses, because that is what
         `balances` takes -- handing it a string made one SQL placeholder per
-        CHARACTER and matched nothing, silently, for every address there is."""
+        CHARACTER and matched nothing, silently, for every address there is.
+
+        `pending=1` (2026-10-04) adds `arriving` and `leaving` units per token,
+        from the mempool, and a row for a token that is only arriving. `units`
+        is still what the blocks say."""
         try:
             held = _content_index().balances([address])
         except Exception:
             held = []
-        return contentlib._json([contentlib.holding(row) for row in held])
+        out = [contentlib.holding(row) for row in held]
+        if pending:
+            try:
+                moves = _pending_of(address)
+            except Exception:
+                moves = {"incoming": [], "outgoing": []}
+            by = {row["propertyid"]: row for row in out}
+            for key, side in (("arriving", "incoming"), ("leaving", "outgoing")):
+                for m in moves[side]:
+                    if m["kind"] != "token":
+                        continue
+                    row = by.get(m["property_id"])
+                    if row is None:
+                        prop = _content_index().property(m["property_id"])
+                        row = contentlib.holding({"property_id": m["property_id"],
+                                                  "name": prop["name"] if prop else "",
+                                                  "units": 0,
+                                                  "divisible": bool(prop and prop["divisible"])})
+                        by[m["property_id"]] = row
+                        out.append(row)
+                    row[key] = int(row.get(key, 0)) + int(m["units"])
+        return contentlib._json(out)
 
     def _token_json(prop: dict) -> dict:
         """A token as a page reads it: Omni's five issuance strings, who issued it,
@@ -14976,6 +15054,15 @@ def create_app(state: AppState) -> FastAPI:
             raise ValueError(refusal)
         return _fill_terms(account, chain, address, listing)
 
+    def _leg_follows_arrival(chain, index, listing: dict, piece: str) -> bool:
+        """Whether a leg sells a piece still on its way to its seller, and spends
+        the coin that very arrival pays the seller -- so the chain settles the
+        arrival first, or neither (2026-10-04)."""
+        coming = _arriving_output(chain, index, piece, listing["owner"])
+        return (coming is not None
+                and (listing["input"]["txid"], int(listing["input"]["vout"]))
+                == (coming["txid"], coming["vout"]))
+
     def _fill_terms(account, chain, address: str, listing: dict) -> tuple:
         """A leg's trade, and the transaction this account's signature completes.
 
@@ -15015,6 +15102,9 @@ def create_app(state: AppState) -> FastAPI:
         # listing of #25, three minutes before it went to @apple).
         sold = _sold_piece(listing)
         got = index.inscription(sold) if sold else None
+        if (sold and got is not None and got["owner"] != listing["owner"]
+                and _leg_follows_arrival(chain, index, listing, sold)):
+            got = {**got, "owner": listing["owner"]}      # arriving, and settled first
         if sold and (got is None or got["owner"] != listing["owner"]):
             if listing.get("id") and state.listings.get(str(listing["id"])):
                 state.listings.close(listing["id"], "moved")
@@ -15382,6 +15472,26 @@ def create_app(state: AppState) -> FastAPI:
     # /account/fill, naming the terms it agreed to (`expect`). Game-agnostic:
     # these routes know an inscription, a token and an amount, never a game.
 
+    def _arriving_output(chain, index, piece: str, address: str) -> dict | None:
+        """The coin a transaction in the mempool pays `address` while it moves
+        `piece` there, still unspent -- what a trade of an arriving piece spends
+        first, so the chain cannot settle the trade before the arrival. None when
+        the piece is not on its way to that address."""
+        move = next((m for m in index.pending_moves()
+                     if m["kind"] == "inscription" and m["inscription"] == piece
+                     and m["to"] == address), None)
+        if move is None:
+            return None
+        with chain.rpc() as rpc:
+            tx = rpc.call("getrawtransaction", move["txid"], 1)
+            for out in tx.get("vout") or []:
+                if (out.get("scriptPubKey") or {}).get("addresses") == [address]:
+                    n = int(out["n"])
+                    if rpc.call("gettxout", move["txid"], n, True):
+                        return {"txid": move["txid"], "vout": n, "address": address,
+                                "value": int(round(float(out["value"]) * COIN))}
+        return None
+
     def _trade_terms(account, said: dict) -> dict:
         """The trade a request describes, checked: this account gives the piece,
         the buyer can pay, and the buyer can be written to."""
@@ -15397,7 +15507,12 @@ def create_app(state: AppState) -> FastAPI:
         give = swaplib.leg_of(give_spec, index)
         take = swaplib.leg_of(take_spec, index)
         row = index.inscription(give.txid.hex())
-        if row is None or row["owner"] != address:
+        arriving = None
+        if row is not None and row["owner"] != address:
+            # On its way to this account (2026-10-04): tradeable now, as a child
+            # of the transaction bringing it.
+            arriving = _arriving_output(chain, index, row["txid"], address)
+        if row is None or (row["owner"] != address and arriving is None):
             raise swaplib.SwapError("that piece is not this account's to trade")
         buyer = str(said.get("buyer") or "")
         if not buyer or buyer == address:
@@ -15419,7 +15534,7 @@ def create_app(state: AppState) -> FastAPI:
                 f"{swaplib.describe_leg(swaplib.leg_json(take, index))}")
         return {"chain": chain, "address": address, "index": index, "row": row,
                 "give": give, "take": take, "buyer": buyer, "to": to,
-                "price": price, "what": what}
+                "price": price, "what": what, "arriving": arriving}
 
     @app.post("/account/trade/leg")
     def account_trade_leg(request: Request, payload: Any = Body(None)):
@@ -15447,6 +15562,12 @@ def create_app(state: AppState) -> FastAPI:
                     seen.add(key)
                     coins_here.append(c)
                 held = _smallest_two_first(coins_here)
+                if t["arriving"] is not None:
+                    # The arriving piece's own coin first: the trade spends it,
+                    # so it can only settle with or after the arrival.
+                    held = [t["arriving"]] + [c for c in held
+                                              if (c["txid"], int(c["vout"]))
+                                              != (t["arriving"]["txid"], t["arriving"]["vout"])][:1]
                 if len(held) < 2:
                     split = fundinglib.build(
                         db, chain.params, address,

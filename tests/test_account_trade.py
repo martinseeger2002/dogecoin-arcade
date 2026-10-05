@@ -141,3 +141,35 @@ def test_a_leg_signed_for_one_trade_is_not_handed_over_as_another(node):
         "signatures": [_sign(secret, bytes.fromhex(d), funding.SINGLE_ANYONECANPAY).hex()
                        for d in leg["sighashes"]]})
     assert signed.status_code == 400 and "different trade" in signed.text
+
+
+def test_a_piece_still_on_its_way_can_be_traded_and_settles_after_it(node):
+    """2026-10-04, the operator: a piece picked up in a game is tradeable at once. The
+    holder trades a piece that is still in the mempool on its way to them; the
+    trade spends the coin that arrival paid them, so the chain settles the
+    arrival first and the buyer ends up with the piece."""
+    from test_account_offer import _seated, _signed
+    pair = _pair(node, 172, 173)
+    state, rpc = pair["state"], pair["rpc"]
+    maker = _seated(*node, 174)
+    gift = _inscribed(maker[0], state, rpc, maker[1], maker[2], "a ring picked up a moment ago")
+    sent = maker[0].post("/account/nft/send", json={"piece": gift, "to": pair["holder"][3]})
+    assert sent.status_code == 200, sent.text
+    arrival = _signed(maker[0], maker[1], maker[2], sent.json())
+    assert arrival.status_code == 200, arrival.text
+    index = state.token_index(state.messaging)
+    assert index.inscription(gift)["owner"] == maker[3], "not landed yet"
+
+    pid = _priced_in(state, pair["bidder"][3], 50 * COIN, 140)
+    take = {"token": pid, "amount": "5"}
+    pair = {**pair, "piece": gift}
+    leg, signed = _leg(pair, take)
+    assert signed.status_code == 200, signed.text
+    assert (leg["inputs"][0]["txid"], leg["inputs"][0]["vout"])[0] == arrival.json()["txid"], \
+        "the trade spends what the arrival paid the holder"
+    done = _finish(pair, signed.json()["leg"], {"give": {"inscription": gift}, "take": take})
+    assert done.status_code == 200, done.text
+    _settled(state, rpc)
+    _valid(pair, done.json()["txid"])
+    assert index.inscription(gift)["owner"] == pair["bidder"][3], "the buyer holds it"
+    assert int(index.balance(pair["holder"][3], pid)) == 5 * COIN
