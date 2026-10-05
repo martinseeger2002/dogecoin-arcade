@@ -2515,6 +2515,106 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
 {% endif %}
 {% if not embed and not fullscreen %}
 <script>
+// Add to Home Screen (2026-10-05, the operator: "add a pop-up ... when it is not opened as
+// a PWA telling them to add it to their home screen ... or just a button that will
+// add it ... on both android and Apple phones and whatever other cell phones").
+// Where the browser can install (Chrome, Edge, Samsung Internet on Android) the
+// button asks it to; where it cannot (every iPhone browser, Firefox, the rest)
+// the card says the steps for THAT browser. Phones only, never inside the
+// installed app, never over a card or a game in full screen; "Not now" for a
+// week; a link in the footer for later.
+(function(){
+  var standalone = window.navigator.standalone === true ||
+    (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+  if (standalone) return;
+  var ua = navigator.userAgent || '';
+  var ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  var android = /Android/i.test(ua);
+  if (!ios && !android && !/Mobile|Mobi|Tablet/i.test(ua)) return;   // a computer: not here
+  var KEY = 'arcade.a2hs', ask = null;
+  function said(){ try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { return {}; } }
+  function say(v){ try { localStorage.setItem(KEY, JSON.stringify(v)); } catch (e) {} }
+  window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); ask = e; });
+  window.addEventListener('appinstalled', function () { say({installed: true}); close(); });
+
+  var inApp = /FBAN|FBAV|Instagram|Line\/|Twitter|TikTok|Snapchat|Pinterest|; wv\)/i.test(ua);
+  var share = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="2" style="vertical-align:-3px"><path d="M12 3v12M8 7l4-4 4 4"/>' +
+    '<path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>';
+  function steps(){
+    if (inApp) return 'This page is open inside another app. Open it in ' + (ios ? 'Safari' : 'Chrome') +
+      ' first (the &#8943; menu, then <b>Open in browser</b>), then add it from there.';
+    if (ios && /CriOS/.test(ua)) return 'Tap ' + share + ' <b>Share</b> in the address bar, then <b>Add to Home Screen</b>.';
+    if (ios && /FxiOS/.test(ua)) return 'Tap the menu &#9776;, then <b>Share</b>, then <b>Add to Home Screen</b>.';
+    if (ios) return 'Tap ' + share + ' <b>Share</b> at the bottom of Safari, scroll down, and tap <b>Add to Home Screen</b>.';
+    if (/SamsungBrowser/.test(ua)) return 'Tap the menu &#9776;, then <b>Add page to</b>, then <b>Home screen</b>.';
+    if (/Firefox/.test(ua)) return 'Tap the menu &#8942;, then <b>Install</b> (or <b>Add to Home screen</b>).';
+    return 'Open your browser&#8217;s menu &#8942; and tap <b>Install app</b> or <b>Add to Home screen</b>.';
+  }
+  var card = null;
+  function close(){ if (card) { card.remove(); card = null; } }
+  function open(fromLink){
+    if (card) return;
+    if (!fromLink && (document.querySelector('.askcard') || document.querySelector('.askcard-back'))) return;
+    card = document.createElement('div');
+    card.setAttribute('role', 'dialog');
+    card.style.cssText = 'position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 12px);' +
+      'z-index:55;max-width:460px;margin:0 auto;padding:14px 16px;border-radius:14px;' +
+      'background:var(--panel);color:var(--fg);border:1px solid var(--line);' +
+      'box-shadow:0 8px 28px rgba(0,0,0,.28);font-size:.95rem;line-height:1.4';
+    card.innerHTML = '<div style="display:flex;gap:12px;align-items:flex-start">' +
+      '<img src="/icon-192.png" alt="" width="44" height="44" style="border-radius:10px;flex:none">' +
+      '<div style="flex:1"><b>Add DogecoinArcade to your home screen</b>' +
+      '<div style="color:var(--muted);margin-top:4px">It opens full screen like an app, with nothing to download.</div>' +
+      '<div class="a2hs-how" style="margin-top:8px"></div></div></div>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">' +
+      '<button type="button" class="btn ghost small a2hs-later">Not now</button>' +
+      '<button type="button" class="btn small a2hs-go"></button></div>';
+    var how = card.querySelector('.a2hs-how'), go = card.querySelector('.a2hs-go');
+    if (ask) {
+      how.textContent = '';
+      go.textContent = 'Add to Home Screen';
+      go.onclick = function () {
+        var e = ask; ask = null;
+        e.prompt();
+        (e.userChoice || Promise.resolve({})).then(function (r) {
+          if (r && r.outcome === 'accepted') say({installed: true});
+          close();
+        });
+      };
+    } else {
+      how.innerHTML = steps();
+      if (inApp && navigator.clipboard) {
+        go.textContent = 'Copy the link';
+        go.onclick = function () { navigator.clipboard.writeText(location.href).then(function(){ go.textContent = 'Copied'; }); };
+      } else {
+        go.textContent = 'Got it';
+        go.onclick = function () { say({later: Date.now()}); close(); };
+      }
+    }
+    card.querySelector('.a2hs-later').onclick = function () { say({later: Date.now()}); close(); };
+    document.body.appendChild(card);
+  }
+  window.arcadeAddToHome = function () { open(true); };
+  // The footer keeps a way back to it after "Not now".
+  var foot = document.querySelector('footer.version');
+  if (foot) {
+    var link = document.createElement('a');
+    link.href = '#'; link.textContent = 'add to home screen';
+    link.onclick = function (e) { e.preventDefault(); open(true); };
+    foot.appendChild(document.createTextNode(' · '));
+    foot.appendChild(link);
+  }
+  var was = said();
+  if (was.installed || (was.later && Date.now() - was.later < 7 * 86400 * 1000)) return;
+  // A moment after the page settles, so the browser has had its chance to offer
+  // an install (beforeinstallprompt) and the page is not covered while it loads.
+  setTimeout(function () { open(false); }, 4000);
+})();
+</script>
+{% endif %}
+{% if not embed and not fullscreen %}
+<script>
 // Pull to refresh in the installed app (2026-09-27: "When I'm in the
 // PWA on my iPhone, if I scroll all the way to the top and I pull down ... it
 // would refresh the page. I would like it to have the same behavior in the
