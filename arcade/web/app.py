@@ -12128,6 +12128,16 @@ def create_app(state: AppState) -> FastAPI:
                              "swapv": swaplib.PROTOCOL,
                              "fee": unsigned.fee, "signed": True})
 
+    def _swap_payload(give: inscriptionlib.Leg, take: inscriptionlib.Leg) -> bytes:
+        """A trade's swap bytes for any leg given -- an NFT or a token -- in one
+        OP_RETURN, as `_ask_payload` writes them for a piece."""
+        from ..encoding import EncodingError, encode_class_c
+        body = inscriptionlib.Swap(give=give, take=take).encode()
+        try:
+            return encode_class_c(P.AnyData(data=body).encode())
+        except EncodingError as exc:
+            raise ValueError(f"{exc} A trade is written in one OP_RETURN.") from None
+
     def _ask_payload(row: dict, take: inscriptionlib.Leg) -> bytes:
         """What a listing writes at output 0: the trade the finished swap IS.
 
@@ -15502,10 +15512,34 @@ def create_app(state: AppState) -> FastAPI:
         index = state.token_index(chain)
         give_spec = said.get("give") if isinstance(said.get("give"), dict) else {}
         take_spec = said.get("take") if isinstance(said.get("take"), dict) else {}
-        if "inscription" not in give_spec:
-            raise ValueError("the side that signs first gives an NFT: {\"inscription\": id}")
+        if "inscription" not in give_spec and "token" not in give_spec:
+            raise ValueError("the side that signs first gives an NFT or a token: "
+                             "{\"inscription\": id} or {\"token\": id, \"amount\": \"5\"}")
         give = swaplib.leg_of(give_spec, index)
         take = swaplib.leg_of(take_spec, index)
+        if give.kind == inscriptionlib.LEG_TOKEN:
+            # A token given (2026-10-04, token for token): held now, counting
+            # what is already leaving in the pool; the block checks it again.
+            room = index.balance(address, give.property_id) - index.pending_out(
+                address, give.property_id)
+            if room < give.amount:
+                raise swaplib.SwapError("this account does not hold that much of that "
+                                        "token, counting what is already on its way out")
+            buyer = str(said.get("buyer") or "")
+            if not buyer or buyer == address:
+                raise ValueError("a trade needs another player")
+            with chain.rpc() as rpc:
+                problem = swaplib.holds(index, rpc, buyer, take)
+            if problem:
+                raise swaplib.SwapError("the other player cannot pay "
+                                        f"{swaplib.describe_leg(swaplib.leg_json(take, index))}: "
+                                        f"{problem}")
+            price = int(take.amount) if take.kind == inscriptionlib.LEG_COINS else 0
+            return {"chain": chain, "address": address, "index": index, "row": None,
+                    "give": give, "take": take, "buyer": buyer, "to": _key_at(buyer),
+                    "price": price, "arriving": None,
+                    "what": (f"trade {swaplib.describe_leg(swaplib.leg_json(give, index))} for "
+                             f"{swaplib.describe_leg(swaplib.leg_json(take, index))}")}
         row = index.inscription(give.txid.hex())
         arriving = None
         if row is not None and row["owner"] != address:
@@ -15582,7 +15616,7 @@ def create_app(state: AppState) -> FastAPI:
                 leg = fundinglib.build_leg(
                     chain.params, address, held[0], coins=t["price"],
                     rate=fees.MIN_FEE_PER_KB, what=t["what"],
-                    payload=_ask_payload(t["row"], t["take"]), coin=held[1])
+                    payload=_swap_payload(t["give"], t["take"]), coin=held[1])
         except (fundinglib.FundingError, listingslib.ListingError,
                 swaplib.SwapError, inscriptionlib.InscriptionError,
                 tokenlib.TokenError, AmountError, ValueError) as exc:
@@ -15627,14 +15661,15 @@ def create_app(state: AppState) -> FastAPI:
             committed.append((listing["coin"]["txid"], listing["coin"]["vout"]))
         _flights.note_committed(account.pubkey, tuple(committed), network=chain.network)
         now = time.time()
-        state.offers.add_bid({
-            "id": secrets.token_hex(8), "network": chain.network,
-            "direction": "in", "inscription": t["row"]["txid"],
-            "number": t["row"]["number"], "owner": address, "buyer": t["buyer"],
-            "peer_pubkey": t["to"].hex(), "take": swaplib.leg_json(t["take"], index),
-            "note": "a trade in a game", "created": now,
-            "expires": now + ACCOUNT_ANSWER_HOLD,
-            "coins": [{"txid": tx, "vout": v} for tx, v in committed]})
+        if t["row"] is not None:
+            state.offers.add_bid({
+                "id": secrets.token_hex(8), "network": chain.network,
+                "direction": "in", "inscription": t["row"]["txid"],
+                "number": t["row"]["number"], "owner": address, "buyer": t["buyer"],
+                "peer_pubkey": t["to"].hex(), "take": swaplib.leg_json(t["take"], index),
+                "note": "a trade in a game", "created": now,
+                "expires": now + ACCOUNT_ANSWER_HOLD,
+                "coins": [{"txid": tx, "vout": v} for tx, v in committed]})
         state.bump_generation()
         return JSONResponse({
             "chain": chain.network, "ok": True, "buyer": t["buyer"],

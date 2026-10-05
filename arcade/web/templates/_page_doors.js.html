@@ -177,7 +177,12 @@
     // neither does.
     var TRADE = '\u001farcade-trade:', trades = {}, tradeFrame = null;
     function nftSide(l){ return !!(l && l.inscription); }
-    function iSign(t){ return nftSide(t.give) && (t.role === 'proposer' || !nftSide(t.get)); }
+    // Who signs the leg: the side giving an NFT; when both do, the proposer; when
+    // neither does (token for token, 2026-10-04), the proposer.
+    function iSign(t){
+      if (nftSide(t.give)) return t.role === 'proposer' || !nftSide(t.get);
+      return !nftSide(t.get) && t.role === 'proposer';
+    }
     function roomWith(id){ for (var k in rt) if (rt[k].members && rt[k].members[id]) return k; return ''; }
     function sideWords(l){
       if (!l) return Promise.resolve('nothing');
@@ -256,7 +261,7 @@
     }
     function tradeWatch(t, txid){
       var until = Date.now() + 30 * 60 * 1000;
-      var nft = nftSide(t.give) ? t.give.inscription : t.get.inscription;
+      var nft = nftSide(t.give) ? t.give.inscription : nftSide(t.get) ? t.get.inscription : '';
       var owner = nftSide(t.give) ? t.peer.address : (rt[t.room] && rt[t.room].me.address);
       (function tick(){
         fetch('/r/tx/' + txid, {cache: 'no-store'}).then(function(r){ return r.ok ? r.json() : {}; })
@@ -266,6 +271,8 @@
               if (Date.now() < until) setTimeout(tick, 10000);
               return;
             }
+            // Token for token: no piece to look at; its block is the answer.
+            if (!nft) return tradeSay(t, 'settled', {txid: txid});
             return fetch('/r/inscription/' + nft, {cache: 'no-store'})
               .then(function(r){ return r.ok ? r.json() : {}; })
               .then(function(row){
@@ -336,7 +343,7 @@
           var meNow = rt[room2].me, peer = rt[room2].members[peerId];
           if (meNow.guest || !meNow.address) throw new Error('sign in to trade');
           if (peer.guest || !peer.address) throw new Error('that player is a guest and cannot trade');
-          if (!nftSide(m.give) && !nftSide(m.get)) throw new Error('a trade needs an NFT on at least one side');
+          if (!m.give || !m.get) throw new Error('a trade needs something on each side');
           var t = {id: Math.random().toString(36).slice(2) + Date.now().toString(36),
                    role: 'proposer', room: room2, peer: peer, give: m.give, get: m.get, parts: []};
           // The signed half travels sealed to whoever finishes the trade, so that
