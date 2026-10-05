@@ -24,6 +24,11 @@ from .watcher import BlockWatcher
 
 DEFAULT_HOME = Path.home() / ".dogecoinarcade"
 
+#: Seconds a request that is still running is given to finish before a restart
+#: cancels it. The number is small on purpose; why it has to be there at all is
+#: at the run, at the end of main().
+GRACEFUL_STOP = 5.0
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="arcade-web", description=__doc__)
@@ -212,7 +217,14 @@ def main(argv: list[str] | None = None) -> int:
         print("  PUBLIC: only the feed, the collections and the chain are "
               "served; every form is refused")
     print(f"DogecoinArcade  ->  http://{args.host}:{args.port}")
-    uvicorn.run(create_app(state), host=args.host, port=args.port, log_level="warning")
+    # Without a timeout here uvicorn waits for every request to finish before it
+    # stops, and a game room's event stream is a request that never finishes --
+    # so a restart while anyone was playing ran into the stop timeout and the
+    # process was killed mid-request rather than shutting down. Whatever was
+    # being written was written by a killed process, not by the careful
+    # shutdown in the lifespan, which never got its turn.
+    uvicorn.run(create_app(state), host=args.host, port=args.port, log_level="warning",
+                timeout_graceful_shutdown=GRACEFUL_STOP)
     return 0
 
 

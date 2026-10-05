@@ -2878,6 +2878,70 @@ def test_the_package_s_own_diagnostics_reach_the_journal():
         "uvicorn's config must not take the package's own logging away"
 
 
+def test_a_restart_while_someone_is_in_a_room_stops_by_itself():
+    """The live service was KILLED rather than stopped at every restart for a
+    month -- 28 kills in thirty days, and every deploy on 2026-10-05 among them.
+    uvicorn waits for the requests still running before it exits, and a game
+    room's event stream is a request that never ends, so a restart during play
+    sat in systemd's stop timeout until systemd gave up and sent SIGKILL. The
+    careful shutdown in the lifespan -- the one that waits for a send in flight
+    so a restart cannot land in the middle of a wallet operation -- never got
+    its turn. (2026-10-05)
+
+    Asserted twice because the two halves fail apart from each other: the run at
+    the end of main() is the only place the live service sets this, and the
+    number only helps if it is a number well under the stop timeout. Every test
+    server in this suite already passes a timeout; that is why the bug was
+    invisible to the suite and obvious in the journal.
+    """
+    import asyncio
+    import socket
+    import threading
+
+    import uvicorn
+    from fastapi import FastAPI
+    from fastapi.responses import StreamingResponse
+
+    from arcade.web import __main__ as entry
+
+    assert "timeout_graceful_shutdown" in inspect.getsource(entry.main), \
+        "the real service gets this nowhere else"
+    assert 0 < entry.GRACEFUL_STOP < 90, \
+        "at or above the stop timeout this is the SIGKILL again"
+
+    app = FastAPI()
+
+    @app.get("/stream")
+    async def stream():
+        async def events():
+            yield "data: here\n\n"
+            while True:
+                await asyncio.sleep(0.2)
+        return StreamingResponse(events(), media_type="text/event-stream")
+
+    server = uvicorn.Server(uvicorn.Config(
+        app, host="127.0.0.1", port=0, log_level="error",
+        timeout_graceful_shutdown=entry.GRACEFUL_STOP))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    end = time.monotonic() + 10
+    while not server.started and time.monotonic() < end:
+        time.sleep(0.02)
+    port = server.servers[0].sockets[0].getsockname()[1]
+
+    held = socket.create_connection(("127.0.0.1", port), timeout=5)
+    held.sendall(b"GET /stream HTTP/1.1\r\nHost: x\r\n\r\n")
+    time.sleep(0.5)                       # the handler is inside the stream now
+    started = time.monotonic()
+    server.should_exit = True
+    thread.join(timeout=45)
+    held.close()
+    assert not thread.is_alive(), \
+        "the server is still waiting for a stream that will not end"
+    assert time.monotonic() - started < 30, \
+        "it stopped, but not fast enough to beat being killed"
+
+
 def test_a_tag_is_a_name(client):
     """A contact the chain has named should not be drawn as "Unnamed" beside
     the name it was just read under. A name you typed wins, because it is
