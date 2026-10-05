@@ -870,8 +870,9 @@ async function claimFor(source, m, page = "", own = false) {
           // and it can only pay the wallet the seed was issued to.
           const out = await wallet.takePrize(pool.pool, n, lots[n], String(m.secret || ""),
                                              page, ARCADE_CHAIN.network, replay);
+          // Nothing was asked, so nothing is announced (2026-10-04, the operator: "Get rid
+          // of the transaction notifications"): the page is told, the wallet shows it.
           answer({ok: true, txid: out.txid || "", piece: out.piece || ""});
-          arcadeToast(`You got ${out.piece || "a prize"}. It is in your wallet when the block lands.`);
           return;
         }
         held = held || (await wallet.opened(ARCADE_CHAIN)) || await arcadeKeys(ARCADE_CHAIN);
@@ -897,7 +898,7 @@ async function claimFor(source, m, page = "", own = false) {
         if (!ok) { answer({error: "Cancelled."}); return; }
         const out = await wallet.claimPrize(held, offer);
         answer({ok: true, txid: out.txid || "", piece: out.piece || offer.piece || ""});
-        arcadeToast(`You claimed ${offer.piece}. ${one ? "It's" : "They're"} yours when the block lands.`);
+        if (!silent) arcadeToast(`You claimed ${offer.piece}. ${one ? "It's" : "They're"} yours when the block lands.`);
         return;
       }
       listing = pool.listing;
@@ -996,7 +997,7 @@ async function inscribeFor(source, m, page = "", own = false) {
     const done = await wallet.confirm(held, offer);
     answer({ok: true, txid: done.txid || "",
             ...(json.attested ? {result: json.attested.result} : {})});
-    arcadeToast("Inscribed. It is on the chain when the block lands.");
+    if (!auto) arcadeToast("Inscribed. It is on the chain when the block lands.");
   } catch (err) {
     answer({error: String(err.message || err)});
   } finally { minting = false; }
@@ -1063,10 +1064,10 @@ async function pageSends() {
     if (!ok) { await answer({status: "denied"}); return; }
     const done = await wallet.confirm(held, offer);
     await answer({status: "sent", txid: done.txid});
-    arcadeToast(`Sent ${what}. It counts when its block lands.`);
+    if (!silent) arcadeToast(`Sent ${what}. It counts when its block lands.`);
   } catch (err) {
     await answer({status: "failed", error: String(err.message || err)});
-    arcadeToast(String(err.message || err));
+    if (ask.silent !== true) arcadeToast(String(err.message || err));   // a silent page hears it itself
   } finally { pageSendBusy = false; }
 }
 setInterval(pageSends, 2500);
