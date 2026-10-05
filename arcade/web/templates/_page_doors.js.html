@@ -180,11 +180,13 @@
     // Who signs the leg: the side giving an NFT; when both do, the proposer; when
     // neither does (token for token, 2026-10-04), the proposer.
     function iSign(t){
+      if (t.bundle) return t.role === 'proposer';     // a bundle: the proposer builds and signs first
       if (nftSide(t.give)) return t.role === 'proposer' || !nftSide(t.get);
       return !nftSide(t.get) && t.role === 'proposer';
     }
     function roomWith(id){ for (var k in rt) if (rt[k].members && rt[k].members[id]) return k; return ''; }
     function sideWords(l){
+      if (Array.isArray(l)) return Promise.all(l.map(sideWords)).then(function(w){ return w.join(', '); });
       if (!l) return Promise.resolve('nothing');
       if (l.inscription) return fetch('/r/inscription/' + encodeURIComponent(l.inscription))
         .then(function(r){ return r.ok ? r.json() : {}; })
@@ -227,9 +229,16 @@
     async function tradeSign(t){
       try {
         var k = await tradeKeys('Sign your half of this trade.');
-        var r = await k.w.tradeLeg(k.keys, {chain: CHAIN.network, give: t.give,
-                                            take: t.get, buyer: t.peer.address});
-        var sealed = await k.w.sealTrade(k.keys, r.seal_to, {leg: r.leg});
+        var sealed;
+        if (t.bundle) {
+          var built = await k.w.bundleBuild(k.keys, {chain: CHAIN.network, with: t.peer.address,
+                                                     give: t.give, get: t.get});
+          sealed = await k.w.sealTrade(k.keys, built.seal_to, {bundle: built.handoff});
+        } else {
+          var r = await k.w.tradeLeg(k.keys, {chain: CHAIN.network, give: t.give,
+                                              take: t.get, buyer: t.peer.address});
+          sealed = await k.w.sealTrade(k.keys, r.seal_to, {leg: r.leg});
+        }
         var parts = sealed.match(/.{1,360}/g) || [];
         for (var i = 0; i < parts.length; i++) {
           await tradeSend(t, {t: 'leg', n: i, of: parts.length, part: parts[i]});
@@ -242,6 +251,20 @@
       try {
         var k = await tradeKeys('Finish this trade with your key.');
         var got = await k.w.openTrade(k.keys, t.parts.join(''));
+        if (t.bundle) {
+          var hand = got && got.bundle;
+          if (!hand || hand.a !== t.peer.address)
+            throw new Error('that trade is not from the player you are trading with');
+          var bexpect = {give: t.give, get: t.get};
+          var boffer = await k.w.bundleOffer(hand, bexpect, CHAIN.network);
+          var bshown = await k.w.checked(boffer, k.keys);
+          if (!(await tradeAsk(t, 'Finish the trade?', 'Finish'))) throw new Error('cancelled');
+          var bdone = await k.w.bundleFill(k.keys, hand, boffer, bexpect);
+          await tradeSend(t, {t: 'done', txid: bdone.txid}).catch(function(){});
+          tradeSay(t, 'broadcast', {txid: bdone.txid});
+          tradeWatch(t, bdone.txid);
+          return;
+        }
         var leg = got && got.leg;
         if (!leg || leg.seller !== t.peer.address)
           throw new Error('that leg is not from the player you are trading with');
@@ -263,6 +286,11 @@
       var until = Date.now() + 30 * 60 * 1000;
       var nft = nftSide(t.give) ? t.give.inscription : nftSide(t.get) ? t.get.inscription : '';
       var owner = nftSide(t.give) ? t.peer.address : (rt[t.room] && rt[t.room].me.address);
+      if (t.bundle) {                                  // one piece of a bundle answers for all of it
+        var mineOut = (t.give || []).filter(nftSide)[0], theirsOut = (t.get || []).filter(nftSide)[0];
+        nft = mineOut ? mineOut.inscription : theirsOut ? theirsOut.inscription : '';
+        owner = mineOut ? t.peer.address : (rt[t.room] && rt[t.room].me.address);
+      }
       (function tick(){
         fetch('/r/tx/' + txid, {cache: 'no-store'}).then(function(r){ return r.ok ? r.json() : {}; })
           .then(function(j){
@@ -290,10 +318,23 @@
       var me = rt[room] && rt[room].me;
       if (!me || !msg || msg.to !== me.id || !from) return;     // not for this player
       var t = trades[msg.id];
+      if (msg.t === 'propose-part') {                  // a big bundle comes in parts
+        if (t || me.guest || from.guest) return;
+        var held = (tradeHeard.parts = tradeHeard.parts || {});
+        var got = held[msg.id] = held[msg.id] || [];
+        var pn = parseInt(msg.n, 10), pof = parseInt(msg.of, 10);
+        if (!(pof > 0 && pof <= 64 && pn >= 0 && pn < pof)) return;
+        got[pn] = String(msg.part || '');
+        for (var pi = 0; pi < pof; pi++) if (typeof got[pi] !== 'string') return;
+        delete held[msg.id];
+        try { msg = Object.assign(JSON.parse(got.join('')), {id: msg.id, t: 'propose'}); }
+        catch (err) { return; }
+      }
       if (msg.t === 'propose') {
         if (t || me.guest || from.guest) return;
         t = trades[msg.id] = {id: msg.id, role: 'responder', room: room, peer: from,
-                              give: msg.get, get: msg.give, parts: []};
+                              give: msg.get, get: msg.give, parts: [],
+                              bundle: Array.isArray(msg.give) || Array.isArray(msg.get)};
         tradeSay(t, 'incoming');
         return;
       }
@@ -344,8 +385,11 @@
           if (meNow.guest || !meNow.address) throw new Error('sign in to trade');
           if (peer.guest || !peer.address) throw new Error('that player is a guest and cannot trade');
           if (!m.give || !m.get) throw new Error('a trade needs something on each side');
+          var isBundle = Array.isArray(m.give) || Array.isArray(m.get);
           var t = {id: Math.random().toString(36).slice(2) + Date.now().toString(36),
-                   role: 'proposer', room: room2, peer: peer, give: m.give, get: m.get, parts: []};
+                   role: 'proposer', room: room2, peer: peer, parts: [], bundle: isBundle,
+                   give: isBundle ? [].concat(m.give) : m.give,
+                   get: isBundle ? [].concat(m.get) : m.get};
           // The signed half travels sealed to whoever finishes the trade, so that
           // player needs a published messaging key: said now, not after a yes.
           var reader = iSign(t) ? peer : meNow;
@@ -357,7 +401,16 @@
           }
           if (!(await tradeAsk(t, 'Offer this trade?', 'Offer'))) throw new Error('cancelled');
           trades[t.id] = t;
-          await tradeSend(t, {t: 'propose', give: t.give, get: t.get});
+          var said = JSON.stringify({give: t.give, get: t.get});
+          if (said.length <= 300) {
+            await tradeSend(t, {t: 'propose', give: t.give, get: t.get});
+          } else {                                     // a big bundle goes in parts
+            var bits = said.match(/.{1,300}/g) || [];
+            for (var bi = 0; bi < bits.length; bi++) {
+              await tradeSend(t, {t: 'propose-part', n: bi, of: bits.length, part: bits[bi]});
+              await new Promise(function(ok){ setTimeout(ok, 250); });
+            }
+          }
           tradeSay(t, 'proposed');
           return answer({ok: true, id: t.id});
         }

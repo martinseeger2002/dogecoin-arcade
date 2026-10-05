@@ -1759,6 +1759,23 @@ class LedgerIndex:
         if isinstance(item, I.Transfer) and rtx.reference:
             return [{**base, "kind": "inscription", "inscription": item.txid.hex(),
                      "to": rtx.reference, "why": "transfer"}]
+        if isinstance(item, I.Bundle):
+            from .script import b58check_encode
+            a = b58check_encode(item.a[0], item.a[1:])
+            b = b58check_encode(item.b[0], item.b[1:])
+            rows = []
+            for legs, frm, to in ((item.give, a, b), (item.take, b, a)):
+                for leg in legs:
+                    if leg.kind == I.LEG_INSCRIPTION:
+                        rows.append({"txid": rtx.txid, "kind": "inscription",
+                                     "inscription": leg.txid.hex(), "from": frm, "to": to,
+                                     "why": "bundle"})
+                    elif leg.kind == I.LEG_TOKEN:
+                        rows.append({"txid": rtx.txid, "kind": "token",
+                                     "property_id": int(leg.property_id),
+                                     "units": int(leg.amount), "from": frm, "to": to,
+                                     "why": "bundle"})
+            return rows
         if isinstance(item, I.Swap):
             seller = rtx.sender
             buyer = next((where for where, _ in getattr(rtx, "inputs", ())

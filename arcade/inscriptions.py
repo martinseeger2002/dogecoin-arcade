@@ -58,6 +58,10 @@ KIND_TRANSFER = 2     # hand an inscription to the reference address
 KIND_SWAP = 5         # two parties trade in one transaction (3 and 4 are tags)
 KIND_OFFER = 6        # an offer for somebody's inscription, said out loud
 KIND_ASK = 7          # the holder's own price for one, said out loud
+KIND_BUNDLE = 8       # two NAMED parties trade several things each way, in one transaction
+
+#: Legs a bundle may carry each way.
+BUNDLE_MOST = 64
 
 #: What one side of a swap hands over.
 LEG_NONE = 0
@@ -368,6 +372,35 @@ class Transfer:
 
 
 @dataclass(frozen=True)
+class Bundle:
+    """Two parties trade several things each way in one transaction (2026-10-04).
+
+    A Swap has room for one leg each way in one OP_RETURN, and names neither
+    party: the seller is the first input, which only Class C can promise. A
+    bundle is too big for that, so it is carried Class B and NAMES both parties
+    instead -- `a` gives `give` to `b`, and `b` gives `take` to `a` -- and the
+    engine requires each of them to have signed an input and nobody else to
+    have. Every leg is checked before any moves: all of it or none.
+    Addresses are 21 bytes each: the version byte and the hash160.
+    """
+
+    a: bytes
+    b: bytes
+    give: tuple
+    take: tuple
+
+    def encode(self) -> bytes:
+        if len(self.a) != 21 or len(self.b) != 21:
+            raise InscriptionError("a bundle names its parties by 21-byte addresses")
+        if not (1 <= len(self.give) <= BUNDLE_MOST and 1 <= len(self.take) <= BUNDLE_MOST):
+            raise InscriptionError(f"a bundle has 1 to {BUNDLE_MOST} legs each way")
+        out = MAGIC + bytes([VERSION, KIND_BUNDLE]) + self.a + self.b
+        for side in (self.give, self.take):
+            out += bytes([len(side)]) + b"".join(leg.encode() for leg in side)
+        return out
+
+
+@dataclass(frozen=True)
 class Leg:
     """One side of a swap: what one party gives the other."""
 
@@ -538,7 +571,7 @@ class Ask:
         return body + (bytes([LEG_NONE]) if self.cancelled else self.take.encode())
 
 
-def parse(payload: bytes) -> Chunk | Transfer | Swap | Offer | Ask:
+def parse(payload: bytes) -> Chunk | Transfer | Swap | Offer | Ask | Bundle:
     """Read one inscription payload. Raises `InscriptionError` if malformed."""
     if not is_inscription(payload):
         raise InscriptionError("not an inscription payload")
@@ -561,6 +594,28 @@ def parse(payload: bytes) -> Chunk | Transfer | Swap | Offer | Ask:
             raise InscriptionError(
                 "a swap has nothing after its two legs but the order it fills")
         return Swap(give=give, take=take, order=payload[at:at + 32])
+
+    if kind == KIND_BUNDLE:
+        if len(payload) < 6 + 42 + 2:
+            raise InscriptionError("truncated bundle")
+        a, b, at = payload[6:27], payload[27:48], 48
+        sides = []
+        for _ in range(2):
+            if at >= len(payload):
+                raise InscriptionError("truncated bundle")
+            n, at = payload[at], at + 1
+            if not 1 <= n <= BUNDLE_MOST:
+                raise InscriptionError(f"a bundle has 1 to {BUNDLE_MOST} legs each way")
+            legs = []
+            for _ in range(n):
+                leg, at = Leg.decode(payload, at)
+                legs.append(leg)
+            sides.append(tuple(legs))
+        # Class B pads its last packet with zeros (M1 notes): what follows the
+        # legs may only be that padding.
+        if any(payload[at:]):
+            raise InscriptionError("a bundle has nothing after its legs")
+        return Bundle(a=a, b=b, give=sides[0], take=sides[1])
 
     if kind == KIND_OFFER:
         if len(payload) < 38:

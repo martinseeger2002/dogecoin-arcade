@@ -15682,6 +15682,231 @@ def create_app(state: AppState) -> FastAPI:
                     "take": swaplib.leg_json(t["take"], index),
                     "give": swaplib.leg_json(t["give"], index)}})
 
+    # --- a BUNDLE: several things each way, in one transaction (2026-10-04) ---------
+    #
+    # The proposer builds it: one coin of the other player's in front (so they sign,
+    # and the engine sees both parties), its own coins after, the bundle payload
+    # (Class B: it names both parties), any coin legs, and the fee, which the
+    # proposer pays. The proposer signs its inputs SIGHASH_ALL in its tab and hands
+    # the half-signed transaction to the other player sealed; that player's node
+    # reads the bundle back out of the bytes, checks it is what was agreed, and the
+    # player signs theirs and broadcasts. Nothing is kept between the two halves:
+    # the handoff carries everything, so the two players may be on different nodes.
+
+    def _bundle_legs(specs: Any, index) -> list:
+        if not isinstance(specs, list) or not 1 <= len(specs) <= inscriptionlib.BUNDLE_MOST:
+            raise ValueError(f"a bundle side is a list of 1 to {inscriptionlib.BUNDLE_MOST} "
+                             "things: {inscription}, {token, amount} or {coins}")
+        return [swaplib.leg_of(s if isinstance(s, dict) else {}, index) for s in specs]
+
+    def _bundle_holds(index, rpc, address: str, legs: list) -> str | None:
+        """Why `address` cannot give all of `legs`, or None. Token legs summed."""
+        seen, tokens = set(), {}
+        for leg in legs:
+            if leg.kind == inscriptionlib.LEG_INSCRIPTION:
+                if leg.txid in seen:
+                    return "one piece is named twice"
+                seen.add(leg.txid)
+                problem = swaplib.holds(index, rpc, address, leg)
+                if problem:
+                    return problem
+            elif leg.kind == inscriptionlib.LEG_TOKEN:
+                tokens[leg.property_id] = tokens.get(leg.property_id, 0) + leg.amount
+        for pid, total in tokens.items():
+            if index.balance(address, pid) - index.pending_out(address, pid) < total:
+                prop = index.property(pid)
+                return f"not enough {prop['name'] if prop else pid}"
+        return None
+
+    def _raw_address(address: str) -> bytes:
+        version, body = b58check_decode(address)
+        return bytes([version]) + body
+
+    @app.post("/account/bundle/build")
+    def account_bundle_build(request: Request, payload: Any = Body(None)):
+        """The proposer's half of a bundle: {chain, with, give: [...], get: [...]}
+        -> the transaction, with sighashes for this account's own inputs only."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+            if chain.params.bundles_from is None:
+                raise ValueError("this chain does not read bundles yet")
+            a = _account_address(account.pubkey, chain)
+            b = str(said.get("with") or "")
+            if not a or not b or a == b:
+                raise ValueError("a bundle needs this account and another player")
+            index = state.token_index(chain)
+            give = _bundle_legs(said.get("give"), index)
+            take = _bundle_legs(said.get("get"), index)
+            to_b = sum(l.amount for l in give if l.kind == inscriptionlib.LEG_COINS)
+            to_a = sum(l.amount for l in take if l.kind == inscriptionlib.LEG_COINS)
+            if to_a and to_b:
+                raise ValueError("a bundle pays coins one way only")
+            with chain.rpc() as rpc:
+                for who_, legs, whose in ((a, give, "you"), (b, take, "the other player")):
+                    problem = _bundle_holds(index, rpc, who_, legs)
+                    if problem:
+                        raise swaplib.SwapError(f"{whose} cannot give that: {problem}")
+            body = inscriptionlib.Bundle(a=_raw_address(a), b=_raw_address(b),
+                                         give=tuple(give), take=tuple(take)).encode()
+            payload_outputs = _class_c_or_b(chain, a, body,
+                                            coin_pubkey=_coin_pubkey(account.pubkey, chain))
+            with contextlib.closing(index.open()) as db:
+                theirs = sorted(utxoslib.unspent(db, b), key=lambda c: int(c["value"]))
+                need, picked = max(to_a, 1), []
+                for c in theirs:
+                    if sum(int(x["value"]) for x in picked) >= need:
+                        break
+                    picked.append(c)
+                if not picked or sum(int(x["value"]) for x in picked) < need:
+                    raise swaplib.SwapError("the other player needs a coin of their own to "
+                                            "sign this with" + (", and enough to pay it"
+                                                                if to_a else ""))
+                their_in = sum(int(x["value"]) for x in picked)
+                outputs = list(payload_outputs)
+                if to_a:
+                    outputs.append((to_a, txbuild.p2pkh_script(a)))
+                if to_b:
+                    outputs.append((to_b, txbuild.p2pkh_script(b)))
+                if their_in - to_a > 0:
+                    outputs.append((their_in - to_a, txbuild.p2pkh_script(b)))
+                foreign = [{"txid": c["txid"], "vout": int(c["vout"]), "value": int(c["value"]),
+                            "address": b} for c in picked]
+                unsigned = fundinglib.build_partial(
+                    db, chain.params, a, foreign, outputs, rate=fees.MIN_FEE_PER_KB,
+                    what="a trade of several things each way",
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+            # Class B is read with its SENDER's address, and the sender is whoever
+            # put in the most (omnicore.cpp's rule; ties to the smaller address).
+            # The bundle names its parties, so it does not care which one that is,
+            # but the bytes must be written with it: when it is the other player,
+            # write them again keyed to them. Same size, so the same coins.
+            mine_in = sum(int(c["value"]) for c in unsigned.inputs[len(foreign):])
+            sender = a if (mine_in > their_in or (mine_in == their_in and a < b)) else b
+            if sender != a:
+                keyed = _class_c_or_b(chain, sender, body,
+                                      coin_pubkey=_coin_pubkey(account.pubkey, chain))
+                outputs = keyed + outputs[len(payload_outputs):]
+                with contextlib.closing(index.open()) as db:
+                    unsigned = fundinglib.build_partial(
+                        db, chain.params, a, foreign, outputs, rate=fees.MIN_FEE_PER_KB,
+                        what="a trade of several things each way",
+                        exclude=_flights.spent_by(account.pubkey, chain.network),
+                        extra=_flights.change_for(account.pubkey, chain.network))
+                again = sum(int(c["value"]) for c in unsigned.inputs[len(foreign):])
+                if (again > their_in or (again == their_in and a < b)):
+                    raise swaplib.SwapError("this trade could not be written; ask again")
+            _quota(account, "trade")
+        except (fundinglib.FundingError, swaplib.SwapError, inscriptionlib.InscriptionError,
+                tokenlib.TokenError, AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"chain": chain.network, "a": a, "b": b,
+                             "seal_to": _key_at(b).hex(),
+                             "give": [swaplib.leg_json(l, index) for l in give],
+                             "get": [swaplib.leg_json(l, index) for l in take],
+                             **unsigned.as_json()})
+
+    def _bundle_terms(account, said: dict) -> dict:
+        """The other player's half: read the bundle back out of the bytes and check
+        it is what this account agreed to, from its own side."""
+        from ..indexer import PrevOutCache
+        from ..tx import extract
+        chain = _chain_asked(said)
+        me = _account_address(account.pubkey, chain)
+        hand = said.get("handoff") if isinstance(said.get("handoff"), dict) else {}
+        expect = said.get("expect") if isinstance(said.get("expect"), dict) else {}
+        raw = str(hand.get("raw") or "")
+        index = state.token_index(chain)
+        with chain.rpc() as rpc:
+            tx = rpc.call("decoderawtransaction", raw)
+            rtx = extract(tx, 0, 0, chain.params, PrevOutCache(rpc, chain.params).lookup)
+            parsed = inscriptionlib.parse(P.decode(rtx.payload).data) if rtx and rtx.payload else None
+            if not isinstance(parsed, inscriptionlib.Bundle):
+                raise ValueError("that is not a bundle")
+            a = b58check_encode(parsed.a[0], parsed.a[1:])
+            b = b58check_encode(parsed.b[0], parsed.b[1:])
+            if b != me or a != str(hand.get("a") or ""):
+                raise ValueError("that bundle is not between you and that player")
+            # From this account's side: what it gives is the bundle's `take`.
+            if (list(parsed.take) != _bundle_legs(expect.get("give"), index)
+                    or list(parsed.give) != _bundle_legs(expect.get("get"), index)):
+                raise swaplib.SwapError("that bundle is not the trade you agreed to")
+            problem = _bundle_holds(index, rpc, me, list(parsed.take))
+            if problem:
+                raise swaplib.SwapError(f"you cannot give that: {problem}")
+            inputs = []
+            for vin in tx.get("vin") or []:
+                prev = rpc.call("gettxout", vin["txid"], int(vin["vout"]), True)
+                if not prev:
+                    raise ValueError("a coin in that trade is spent already; ask for it again")
+                where = ((prev.get("scriptPubKey") or {}).get("addresses") or [""])[0]
+                inputs.append({"txid": vin["txid"], "vout": int(vin["vout"]),
+                               "value": int(round(float(prev["value"]) * COIN)), "address": where})
+        mine = [n for n, c in enumerate(inputs) if c["address"] == me]
+        if not mine or mine != list(range(len(mine))):
+            raise ValueError("that bundle does not put your coins first, as one is built")
+        if any(c["address"] != a for c in inputs[len(mine):]):
+            raise ValueError("that bundle spends coins of somebody else's")
+        outputs = [(int(round(float(o["value"]) * COIN)), bytes.fromhex(o["scriptPubKey"]["hex"]))
+                   for o in tx.get("vout") or []]
+        pays = sum(l.amount for l in parsed.take if l.kind == inscriptionlib.LEG_COINS)
+        if rtx.paid_to(me) < -pays:
+            raise swaplib.SwapError("that bundle takes more of your coins than the trade says")
+        script = txbuild.p2pkh_script(me)
+        hashes = [fundinglib.sighash(inputs, outputs, n, script).hex() for n in mine]
+        return {"chain": chain, "me": me, "a": a, "raw": raw, "inputs": inputs,
+                "outputs": outputs, "mine": len(mine), "hashes": hashes, "hand": hand,
+                "parsed": parsed, "index": index}
+
+    @app.post("/account/bundle/fill")
+    def account_bundle_fill(request: Request, payload: Any = Body(None)):
+        """{chain, handoff, expect: {give, get}} -> what this account signs."""
+        account = _signed_in_account(request)
+        try:
+            t = _bundle_terms(account, payload if isinstance(payload, dict) else {})
+        except (fundinglib.FundingError, swaplib.SwapError, inscriptionlib.InscriptionError,
+                ValueError, KeyError, TypeError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"chain": t["chain"].network, "raw": t["raw"], "inputs": t["inputs"],
+                             "sighashes": t["hashes"], "signed_from": 0,
+                             "signed_to": t["mine"], "what": "a trade of several things each way"})
+
+    @app.post("/account/bundle/fill/sign")
+    def account_bundle_fill_sign(request: Request, payload: Any = Body(None)):
+        """Both halves pasted together, and the bundle sent."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            t = _bundle_terms(account, said)
+            pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
+            if hash160(pubkey) != b58check_decode(t["me"])[1]:
+                raise ValueError("that public key is not this account's")
+            hand = t["hand"]
+            a_pub = bytes.fromhex(str(hand.get("a_pubkey") or ""))
+            if hash160(a_pub) != b58check_decode(t["a"])[1]:
+                raise ValueError("the other half was not signed by the other player's key")
+            mine = [bytes.fromhex(str(s)) for s in (said.get("signatures") or [])]
+            theirs = [bytes.fromhex(str(s)) for s in (hand.get("a_sigs") or [])]
+            if len(mine) != t["mine"] or len(theirs) != len(t["inputs"]) - t["mine"]:
+                raise ValueError("the signatures do not match the coins in that trade")
+            from ..txbuild import push
+            signed = [(c["txid"], c["vout"], push(sig) + push(key))
+                      for c, sig, key in zip(t["inputs"], mine + theirs,
+                                             [pubkey] * len(mine) + [a_pub] * len(theirs))]
+            raw = listingslib._serialise(signed, t["outputs"])
+            _quota(account, "trade")
+            with t["chain"].rpc() as rpc:
+                txid = rpc.call("sendrawtransaction", raw)
+        except (fundinglib.FundingError, swaplib.SwapError, inscriptionlib.InscriptionError,
+                ValueError, KeyError, TypeError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:                          # noqa: BLE001
+            return JSONResponse({"detail": f"the node refused it: {exc}"}, status_code=409)
+        state.bump_generation()
+        return JSONResponse({"ok": True, "txid": txid, "chain": t["chain"].network})
+
     def _trade_expected(said: dict, listing: dict, chain, buyer: str) -> None:
         """When the buyer names the trade it agreed to (`expect`, from a game's
         trade window), the leg must say exactly that, and the buyer must still

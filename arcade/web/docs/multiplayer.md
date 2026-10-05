@@ -129,8 +129,7 @@ A side is one of:
   string,
 * `{coins: '1.5'}`: coins.
 
-At least one side must be an NFT. Both players must be signed in; guests
-cannot trade.
+Both players must be signed in; guests cannot trade.
 
 ### Calls
 
@@ -155,6 +154,25 @@ and `get` are always from the point of view of the page that hears it, and
 | `broadcast` | the trade is sent; `txid` names it |
 | `settled` | it is in a block and the NFT really moved: both sides moved |
 | `declined`, `cancelled`, `failed` | it is over; `why` says why when there is a reason |
+
+### Several things each way
+
+Pass lists to trade several things at once -- two swords and 50 Gold for a
+ring, a stack of 20 of one token, two copies of the same piece:
+
+```js
+arcade.swap.trade({with: player.id,
+                   give: [{inscription: swordA}, {inscription: swordB},
+                          {token: 26, amount: '50'}],
+                   get:  [{inscription: ring}]});
+```
+
+* Up to 64 things each way: NFTs, token amounts, and coins (coins one way only).
+* It is still ONE transaction both players sign: everything moves, or nothing.
+* No NFT is needed on either side; a single `{token, amount}` each way works too.
+* Trade events carry `give` and `get` as lists for a trade made this way.
+* A trade of lists is read from an announced block (`bundles_from`) on each
+  chain; before it, `trade` says the chain does not read them yet.
 
 ### What players see
 

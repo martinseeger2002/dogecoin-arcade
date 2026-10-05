@@ -1308,6 +1308,45 @@ export async function tradeLeg(wallet, t) {
   });
 }
 
+/** A bundle, the proposer's half (2026-10-04): built by the node, this key's
+ *  inputs signed here, everything the other player needs handed back to seal. */
+export async function bundleBuild(wallet, t) {
+  return working(async () => {
+    const r = await askJson("/account/bundle/build", t);
+    if (!r.ok) throw new Error(r.said.detail || "that trade cannot be built");
+    const keys = keysOn(wallet, r.said.chain);
+    const shown = await coins.verifyOffer(r.said, keys);
+    const sigs = [];
+    for (const h of shown.hashes) sigs.push(coinsHex(await coins.signInput(keys.key, unhex(h))));
+    return {seal_to: r.said.seal_to, fee: shown.fee, coinsOf: shown.coinsOf, says: shown.says,
+            handoff: {raw: r.said.raw, a: r.said.a, b: r.said.b, a_sigs: sigs,
+                      a_pubkey: coinsHex(keys.pubkey), give: t.give, get: t.get}};
+  });
+}
+
+/** A bundle, the other player's half: what this key is asked to sign. */
+export async function bundleOffer(handoff, expect, chain) {
+  return working(async () => {
+    const r = await askJson("/account/bundle/fill", {handoff, expect, chain: chain || ""});
+    if (!r.ok) throw new Error(r.said.detail || "that trade cannot be finished");
+    return r.said;
+  });
+}
+
+/** Sign this key's inputs of a bundle and send it. */
+export async function bundleFill(wallet, handoff, offer, expect) {
+  return working(async () => {
+    const keys = keysOn(wallet, offer.chain || (wallet.on && Object.keys(wallet.on)[0]));
+    const shown = await coins.verifyOffer(offer, keys);
+    const signatures = [];
+    for (const h of shown.hashes) signatures.push(coinsHex(await coins.signInput(keys.key, unhex(h))));
+    const r = await askJson("/account/bundle/fill/sign", {handoff, expect, chain: offer.chain || "",
+                                                          signatures, pubkey: coinsHex(keys.pubkey)});
+    if (!r.ok) throw new Error(r.said.detail || "the node would not send it");
+    return r.said;
+  });
+}
+
 export async function sealTrade(wallet, toKeyHex, value) {
   const {mail, me} = await messenger(wallet);
   const sealed = mail.sealEnvelope(new TextEncoder().encode(JSON.stringify(value)),

@@ -931,6 +931,8 @@ class Engine:
             self._inscription_transfer(rtx, parsed)
         elif isinstance(parsed, I.Swap):
             self._swap(rtx, parsed)
+        elif isinstance(parsed, I.Bundle):
+            self._bundle(rtx, parsed)
         elif isinstance(parsed, I.Offer):
             self._offer(rtx, parsed)
         elif isinstance(parsed, I.Ask):
@@ -1404,6 +1406,64 @@ class Engine:
         })
 
     # --- swaps ----------------------------------------------------------------
+
+    def _bundle(self, rtx: ArcadeTransaction, bundle: I.Bundle) -> None:
+        """Two named parties trade several things each way, or nothing moves
+        (2026-10-04). `a` gives `give` to `b`; `b` gives `take` to `a`.
+
+        Who the parties are is said, not inferred: a bundle is Class B, whose
+        sender is whoever put in the most, so it names them, and the inputs
+        prove them -- each must have signed one, and nobody else may have. Every
+        leg is checked against what its giver holds, token legs summed per token
+        first so two legs of one token cannot each count the same balance, and
+        coin legs against what the transaction actually leaves the taker. Then
+        everything moves.
+        """
+        from .script import b58check_encode
+        since = self.params.bundles_from
+        if since is None:
+            raise InvalidTransaction("bundles are not read on this chain")
+        if rtx.block_height < since:
+            raise InvalidTransaction(f"bundles are read from block {since}")
+        a = b58check_encode(bundle.a[0], bundle.a[1:])
+        b = b58check_encode(bundle.b[0], bundle.b[1:])
+        if a == b:
+            raise InvalidTransaction("a bundle needs two different parties")
+        if not (rtx.signed_by(a) and rtx.signed_by(b)):
+            raise InvalidTransaction("both parties of a bundle must sign it")
+        if any(where not in (a, b) for where, _ in rtx.inputs):
+            raise InvalidTransaction("a bundle is signed by its two parties and nobody else")
+        seen: set[bytes] = set()
+        coins = {a: 0, b: 0}
+        tokens: dict[tuple[str, int], int] = {}
+        for legs, giver, taker in ((bundle.give, a, b), (bundle.take, b, a)):
+            for leg in legs:
+                if leg.kind == I.LEG_INSCRIPTION:
+                    if leg.txid in seen:
+                        raise InvalidTransaction("a bundle names one inscription twice")
+                    seen.add(leg.txid)
+                    self._check_leg(rtx, leg, giver, taker)
+                elif leg.kind == I.LEG_TOKEN:
+                    key = (giver, leg.property_id)
+                    tokens[key] = tokens.get(key, 0) + leg.amount
+                elif leg.kind == I.LEG_COINS:
+                    coins[taker] += leg.amount
+                else:
+                    raise InvalidTransaction(f"unknown bundle leg {leg.kind}")
+        for (giver, pid), total in tokens.items():
+            self._check_leg(rtx, I.Leg(I.LEG_TOKEN, property_id=pid, amount=total),
+                            giver, b if giver == a else a)
+        if coins[a] and coins[b]:
+            raise InvalidTransaction("a bundle pays coins one way only")
+        for taker, owed in coins.items():
+            if owed and rtx.paid_to(taker) < owed:
+                raise InvalidTransaction(
+                    f"{taker} is paid {rtx.paid_to(taker)} satoshis by this transaction, "
+                    f"the bundle says {owed}")
+        for legs, giver, taker in ((bundle.give, a, b), (bundle.take, b, a)):
+            for leg in legs:
+                if leg.kind != I.LEG_COINS:
+                    self._move_leg(leg, giver, taker, rtx)
 
     def _swap(self, rtx: ArcadeTransaction, swap: I.Swap) -> None:
         """Two parties trade in one transaction, or nothing moves.

@@ -70,6 +70,12 @@ class Params:
     # what. A height every node has updated before is how they stay agreed.
     # None means swaps are not read on this chain at all yet.
     swaps_from: int | None = None
+    #: Height from which a BUNDLE (inscriptions.KIND_BUNDLE: two named parties,
+    #: several legs each way) is read (2026-10-04). Announced before it is set,
+    #: for the reason swaps_from gives: a node that predates bundles records one
+    #: as an invalid inscription, so the two would disagree about who owns what.
+    #: None: not read on this chain yet.
+    bundles_from: int | None = None
     #: From this block a swap may take tokens out of the reserve a standing
     #: order holds, and reduce that order by what it took. Before it, those
     #: tokens are locked and an ask can only be filled after it is cancelled.
@@ -293,6 +299,7 @@ REGTEST = Params(
     p2p_port=18444,
     activation_height=0,
     swaps_from=0,
+    bundles_from=0,
     asks_from=0,
     bid_fills_from=0,
     fills_from=0,

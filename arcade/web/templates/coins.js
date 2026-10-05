@@ -632,9 +632,15 @@ export async function verifyOffer(offer, keys) {
   }
 
   const from = Number(offer.signed_from || 0);
+  // `signed_to` (2026-10-04, a bundle): this key's inputs may be a run in the
+  // middle -- the other player signed theirs, after it, already.
+  const to = offer.signed_to != null ? Number(offer.signed_to) : tx.inputs.length;
+  if (!(from >= 0 && to >= from && to <= tx.inputs.length)) {
+    throw new Error("that offer names inputs this transaction does not have. Nothing was signed.");
+  }
   const asked = (offer.sighashes || []).map((h) => String(h).toLowerCase());
-  if (tx.inputs.length - from !== asked.length) {
-    throw new Error(`that transaction has ${tx.inputs.length - from} coins `
+  if (to - from !== asked.length) {
+    throw new Error(`that transaction has ${to - from} coins `
       + `for this key to sign and asks for ${asked.length} signatures. `
       + "Nothing was signed.");
   }
@@ -642,7 +648,7 @@ export async function verifyOffer(offer, keys) {
   const mine = p2pkh(await hash160(keys.pubkey));
   const own = keys.address || await address(keys.pubkey, keys.version);
   const hashes = [];
-  for (let n = from; n < tx.inputs.length; n++) {
+  for (let n = from; n < to; n++) {
     // A refereed prize pool's coin, closed by its creator (2026-09-29): signed
     // over the pool's script, and only if this key is the one that closes it.
     const redeem = named[n].redeem ? unhex(String(named[n].redeem)) : null;
