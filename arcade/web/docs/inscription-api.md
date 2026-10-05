@@ -278,6 +278,19 @@ issuer's text: read it as data, never as markup or code. `GET /r/tokens?ids=20,2
 answers up to 100 at once, which is enough to classify a whole wallet in one
 request; unknown ids are left out.
 
+`GET /r/holders?token=<id>` → `{ "holders": ["nAddr1…", …] }` — who holds that
+token now, largest holding first, addresses only. For the pieces of a
+collection, `GET /r/holders?creator=<address>&collection=<name>` answers who
+owns them. `?ids=<id>` is taken as `?token=<id>` (one id; several tokens at once
+is what `/r/tokens` is for).
+
+An empty list means **nobody holds it**, and nothing else. A call that names
+nobody, and a node that cannot look right now, come back as an error
+(`{ "error": … }`, status 404 / 503) rather than an empty list — treat an empty
+list as a fact about the token, and an error as "ask again", because a holders'
+list you read as empty is a list that removes everyone from the asset's group
+chat.
+
 ### Asking the wallet to send
 
 A page cannot spend. It can **ask**: file a request naming what should move

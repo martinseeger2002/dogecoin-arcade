@@ -292,6 +292,7 @@ meaning matches.
 | `/r/swap.js` | `arcade.swap`: a shop page's listings, and a buy button that ends in one transaction both sides signed |
 | `/r/owner.js` | `arcade.owner`: a page sending, unasked, from the wallet that created it and holds it |
 | `/r/token/<id>`, `/r/tokens?ids=` | a token's issuance fields, its issuer, and its `data` parsed when it is JSON |
+| `/r/holders?token=<id>`, `/r/holders?creator=&collection=` | who holds a token now, or who owns a collection's pieces — addresses only. An empty list means nobody holds it; a call that names nobody, or a node that cannot look, answers an error instead |
 | `/r/realtime.js` | `arcade.realtime`: rooms where players on any node meet, over the node mesh |
 | `/r/escrow.js` | `arcade.escrow`: a player's NFTs and tokens held for a game, released by its judge |
 | `/r/state.js`, `/r/state/<piece>` | `arcade.state`: a game's own record on each NFT (condition, charges, counts) |

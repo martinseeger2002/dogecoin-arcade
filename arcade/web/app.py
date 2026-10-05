@@ -5690,20 +5690,43 @@ def create_app(state: AppState) -> FastAPI:
         return contentlib._json(out)
 
     @app.get("/r/holders")
-    def r_holders(token: int = 0, creator: str = "", collection: str = ""):
+    def r_holders(token: int = 0, ids: str = "", creator: str = "",
+                  collection: str = ""):
         """Who holds a token, or any piece of a collection: addresses only.
 
         Public already -- the token page lists holders and every piece page its
         owner -- and asked for by the creator's browser, which keeps the
         holders' group chat in step with the chain (messaging.js
         tendHolderChats, 2026-09-25).
+
+        An empty list here means "nobody holds it", so it is answered only when
+        that is what the node knows. A call that named nobody was answered empty
+        like everything else (2026-10-05), which is the one reading that must not
+        be free: the creator's browser moves a holders' chat to a fresh key when
+        the list comes back without them in it. `ids` is taken as `token` because
+        that is how the token routes beside this one name their argument.
         """
         index = _content_index()
+        asked = [p.strip() for p in str(ids or "").split(",") if p.strip()]
+        if not token and asked:
+            if len(asked) > 1:
+                return contentlib._missing(
+                    "one token at a time here; /r/tokens?ids= answers several at once")
+            if not asked[0].isdigit():
+                return contentlib._missing(f"'{asked[0]}' is not a token id")
+            token = int(asked[0])
+        if not token and not (creator and collection):
+            if creator:
+                return contentlib._missing(
+                    "a collection needs its name too: "
+                    "?creator=<address>&collection=<name>")
+            return contentlib._missing(
+                "say whose holders to list: ?token=<id>, or "
+                "?creator=<address>&collection=<name>")
         try:
             if token:
-                rows = index.holders(int(token))
-                return contentlib._json({"holders": [r["address"] for r in rows]})
-            if creator and collection:
+                found = [r["address"] for r in index.holders(int(token))]
+            else:
                 owners: list[str] = []
                 for offset in range(0, 5000, 500):
                     page = index.collection_items(creator, collection, limit=500,
@@ -5711,10 +5734,11 @@ def create_app(state: AppState) -> FastAPI:
                     owners += [r["owner"] for r in page]
                     if len(page) < 500:
                         break
-                return contentlib._json({"holders": sorted(set(owners))})
+                found = sorted(set(owners))
         except Exception:
-            pass
-        return contentlib._json({"holders": []})
+            return contentlib._json({"error": "this node could not list holders"},
+                                    status=503)
+        return contentlib._json({"holders": found})
 
     @app.get("/r/tag/{name}")
     def r_tag(name: str):

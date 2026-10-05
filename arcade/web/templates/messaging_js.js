@@ -1665,7 +1665,12 @@ function holdersQuery(asset) {
 }
 
 async function holdersNow(asset) {
-  const said = await (await fetch(`/r/holders?${holdersQuery(asset)}`)).json();
+  const got = await fetch(`/r/holders?${holdersQuery(asset)}`);
+  const said = await got.json().catch(() => ({}));
+  // A node that could not answer is not a token that nobody holds. Throwing is
+  // the whole point: tendHolderChats rotates the chat's key on an empty list, so
+  // a failed read has to stop the round rather than be read as "everyone sold".
+  if (!got.ok || said.error) throw new Error(said.error || "the node did not answer");
   return new Set((said.holders || []).map(String));
 }
 
@@ -1717,7 +1722,14 @@ export async function tendHolderChats(wallet, me) {
   for (const group of await holderChats()) {
     if (group.creator !== hex(me.publicKey)) continue;
     if (now - (group.tended || 0) < 600) continue;
-    const holding = await holdersNow(group.holders_of);
+    let holding;
+    try {
+      holding = await holdersNow(group.holders_of);
+    } catch (e) {
+      // Nothing was learned, so nothing is changed: the round is skipped and
+      // tried again, rather than the members being read as everyone having sold.
+      continue;
+    }
     const staying = group.members.filter((m) =>
       m.key === hex(me.publicKey) || holding.has(m.address));
     const inside = new Set(group.members.map((m) => m.key));
