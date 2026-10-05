@@ -351,6 +351,14 @@ A request nobody answers within an hour expires. What is approved is priced
 against the wallet as it is when the person looks, not when you asked; a
 balance that was there and is not by then fails then, not silently.
 
+What went through without a card is not announced to the player either: the
+page is told the outcome and the wallet shows it, and only what the person
+said yes to on a card gets a message. A game that settles as it is played --
+a thing sent back to its creator, a claim from a refereed pool, a save of its
+own data -- therefore stays quiet while it is played. A failure is still said
+out loud unless the page asked with `silent`, in which case the page hears it
+and deals with it.
+
 **On a public arcade,** the request goes to whoever is signed in and looking
 at your page, never to the node's own wallet. They see it on their own
 confirmation card (your `label` and `note`, the amount, who it pays, the fee),
