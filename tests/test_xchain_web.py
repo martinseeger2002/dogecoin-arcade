@@ -34,9 +34,15 @@ def test_the_operator_opens_the_book_and_its_markets_join_the_list(client, monke
     monkeypatch.setattr(L.LedgerIndex, "property", lambda self, pid: {"property_id": 59, "name": "LOGS",
                                                                       "divisible": True, "managed": 0})
     monkeypatch.setattr(type(state.xchain), "address", lambda self, which: f"n{which}Exchange")
+    from test_admin import LOCAL, WRITE
     page = app.get("/exchange/x/token/59").text
-    app.post("/exchange/x/enable", data={"on": "1", "csrf_token": _csrf(page)})
+    assert "admin panel" in page, "the market page sends the operator to the admin panel"
+    said = app.post("/admin/api/settings", headers={**LOCAL, **WRITE}, json={"xchain_enabled": True})
+    assert said.status_code == 200, said.text
     assert state.setting("xchain:enabled")
+    status = app.get("/admin/api/state", headers=LOCAL).json()["xchain"]
+    assert status["enabled"] and status["addresses"]["mainnet"] == "nmainExchange"
+    assert "Not trustless" in status["trust"]
     assert app.get("/exchange/pairs?base=59&quote=main", follow_redirects=False).headers["location"] == "/exchange/x/token/59"
     assert app.get("/exchange/pairs?base=coin&quote=main", follow_redirects=False).headers["location"] == "/exchange/x/coin/coin"
     book = state.xchain.book
@@ -49,4 +55,4 @@ def test_the_operator_opens_the_book_and_its_markets_join_the_list(client, monke
     row = listing[listing.index("/exchange/x/token/59"):][:2500]
     assert "MAINNET" in row and "PEPE" in row
     market = app.get("/exchange/x/token/59").text
-    assert "0.5" in market and "Exchange addresses" in market, "the operator sees where deposits go"
+    assert "0.5" in market and "Not trustless" in market

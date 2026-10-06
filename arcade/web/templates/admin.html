@@ -95,6 +95,18 @@
   <button type="button" class="small" id="saveswitches">Save switches</button>
 </section>
 
+<section class="panel" id="xchain">
+  <h2>Mainnet PEPE swap</h2>
+  <p class="muted" style="margin-top:0">Trade testnet assets (tokens, testnet coins, NFTs) for Pepecoin on
+    <strong>mainnet</strong>. This node holds both sides while an order stands and pays them out itself,
+    taking 0.5% of the PEPE of each trade. <strong>Not trustless</strong>: every page that offers it tells
+    people they are trusting you, the operator.</p>
+  <label class="switch"><input type="checkbox" id="xchain_enabled"> Open the mainnet PEPE swap on this node</label>
+  <div id="xchainstate" class="muted" style="font-size:.86rem;margin:8px 0"></div>
+  <p class="muted" style="font-size:.8rem">Keep 1 to 2 PEPE of your own in the mainnet wallet for network fees:
+    a payout waits rather than spend what is held for somebody else. Saved with <em>Save switches</em>.</p>
+</section>
+
 {% if local %}
 <section class="panel" id="tunnel">
   <h2>Put this arcade online</h2>
@@ -289,6 +301,21 @@ section.panel h2{margin-top:0}
     $('faucet_topoff').checked = d.faucet.topoff !== false;
     $('faucet_mine').checked = d.faucet.mine !== false;
     ['auto_update', 'auto_sell', 'auto_fill'].forEach(function (k) { $(k).checked = !!d.selling[k]; });
+    // the mainnet PEPE swap: its switch and how it stands
+    var x = d.xchain || {}, xs = $('xchainstate');
+    $('xchain_enabled').checked = !!x.enabled;
+    var lines = [];
+    if (x.error) lines.push('Could not read the swap: ' + x.error);
+    if (x.enabled && x.addresses) {
+      lines.push('Deposits go to: testnet ' + x.addresses.testnet + ' and mainnet ' + x.addresses.mainnet + '.');
+      lines.push('Mainnet wallet ' + (x.main_balance || 0).toFixed(4) + ' PEPE; owed to people ' + (x.owed_pepe || 0).toFixed(4)
+                 + ' PEPE' + (x.covered ? ' (covered, with room for fees).' : ' -- NOT covered: payouts wait until you top it up.'));
+    }
+    lines.push((x.open_orders || 0) + ' orders standing, ' + (x.waiting || 0) + ' payouts on their way, '
+               + (x.stuck || []).length + ' stuck; ' + (x.fees_pepe || 0).toFixed(4) + ' PEPE earned in fees.');
+    (x.stuck || []).forEach(function (p) { lines.push('Stuck ' + p.id + ': ' + p.error); });
+    xs.textContent = '';
+    lines.forEach(function (l) { var div = document.createElement('div'); div.textContent = l; xs.appendChild(div); });
     $('modurl').value = (d.moderation && d.moderation.url) || '';
     $('modmodel').value = (d.moderation && d.moderation.model) || '';
     $('modkey').value = '';
@@ -335,6 +362,7 @@ section.panel h2{margin-top:0}
   $('saveswitches').onclick = function () {
     call('/admin/api/settings', {auto_update: $('auto_update').checked, auto_sell: $('auto_sell').checked,
       auto_fill: $('auto_fill').checked,
+      xchain_enabled: $('xchain_enabled').checked,
       moderation: {url: $('modurl').value.trim(), model: $('modmodel').value.trim(),
                    key: $('modkey').value.trim(), clear_key: $('modclear').checked}})
       .then(function () { say('Switches saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });

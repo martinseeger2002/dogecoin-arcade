@@ -30,19 +30,9 @@
 
 {% if not live %}
 <div class="panel"><p class="msg err" style="margin:0">The cross-chain book is not open on this node.</p>
-  {% if viewer == 'wallet' %}
-  <form method="post" action="/exchange/x/enable" style="margin:8px 0 0">
-    <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="on" value="1">
-    <button type="submit">Open it</button>
-    <span class="muted" style="font-size:.8rem">This node will hold deposits on both chains and pay trades out
-      from its mainnet wallet, which needs a little PEPE of the operator's own for network fees.</span>
-  </form>
-  {% endif %}
+  {% if viewer == 'wallet' %}<p class="muted" style="font-size:.8rem;margin:6px 0 0">The operator opens it on the
+    <a href="/admin#xchain">admin panel</a>, under Mainnet PEPE swap.</p>{% endif %}
 </div>
-{% elif addresses %}
-<div class="panel muted" style="font-size:.8rem">Exchange addresses &mdash; testnet: <code>{{ addresses.testnet }}</code>
-  &middot; mainnet: <code>{{ addresses.main }}</code>. Keep a little PEPE of your own in the mainnet wallet for
-  network fees: a payout waits rather than spend what is held for somebody else.</div>
 {% endif %}
 
 <div class="panel">

@@ -19461,7 +19461,35 @@ def create_app(state: AppState) -> FastAPI:
                         "trade_cut": state.setting("trade_cut")},
             "node": {"version": state.running_version,
                      "public_hosts": list(state.public_hosts)},
+            "xchain": _admin_xchain(),
         }, headers={"Cache-Control": "no-store"})
+
+    def _admin_xchain() -> dict:
+        """The mainnet PEPE swap (arcade/xchain.py) as the operator needs to see it:
+        whether it is open, where deposits go, whether the mainnet wallet covers what is
+        owed plus fees, and anything waiting or stuck (2026-10-06: "the option
+        to enable main net should be on the admin panel")."""
+        out: dict = {"enabled": _x_open(), "trust": XCHAIN_TRUST}
+        try:
+            book = state.xchain.book
+            owed = book.owed()
+            out["owed_pepe"] = owed.get(("main", "pepe", "pepe"), 0) / COIN
+            out["open_orders"] = sum(m["orders"] for m in book.markets())
+            pays = book.payouts()
+            out["waiting"] = sum(1 for p in pays if p["status"] in ("queued", "built"))
+            out["stuck"] = [{"id": p["id"], "error": p["error"]} for p in pays if p["status"] == "stuck"][:20]
+            out["latest_error"] = next((p["error"] for p in reversed(pays) if p["error"]), "")
+            with book._open() as conn:
+                out["fees_pepe"] = (conn.execute("SELECT COALESCE(SUM(fee),0) FROM xfill").fetchone()[0]) / COIN
+            if out["enabled"]:
+                out["addresses"] = {"testnet": state.xchain.address("testnet"),
+                                    "mainnet": state.xchain.address("main")}
+                with state.ledger.rpc() as rpc:
+                    out["main_balance"] = float(rpc.call("getbalance") or 0)
+                out["covered"] = out["main_balance"] >= out["owed_pepe"] + 0.1
+        except Exception as exc:
+            out["error"] = str(exc)[:200]
+        return out
 
     @app.post("/admin/api/seats")
     def admin_seats(request: Request, payload: Any = Body(None)):
@@ -19538,6 +19566,8 @@ def create_app(state: AppState) -> FastAPI:
             for flag in ("auto_update", "auto_sell", "auto_fill"):
                 if flag in said:
                     state.set_setting(flag, bool(said[flag]))
+            if "xchain_enabled" in said:      # the mainnet PEPE swap (arcade/xchain.py)
+                state.set_setting("xchain:enabled", bool(said["xchain_enabled"]))
             if "moderation" in said:
                 mod = said["moderation"] or {}
                 if mod.get("url") and mod.get("model"):
@@ -21095,15 +21125,6 @@ def create_app(state: AppState) -> FastAPI:
                       fee_permille=__import__("arcade.xchain", fromlist=["FEE_PERMILLE"]).FEE_PERMILLE,
                       addresses=({"testnet": state.xchain.address("testnet"),
                                   "main": state.xchain.address("main")} if viewer == "wallet" and _x_open() else None))
-
-    @app.post("/exchange/x/enable")
-    def xchain_enable(on: str = Form(""), csrf_token: str = Form("")):
-        """The operator opens (or closes) this node's cross-chain book."""
-        check_csrf(csrf_token)
-        state.set_setting("xchain:enabled", on == "1")
-        state.flash("The cross-chain book is " + ("open." if on == "1" else "closed: nothing new is "
-                    "accepted, and what is owed is still paid out."), "ok")
-        return RedirectResponse("/exchange?tab=tokens", status_code=303)
 
     @app.post("/exchange/x/order")
     def xchain_node_order(kind: str = Form(""), asset: str = Form(""), side: str = Form(""),
