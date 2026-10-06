@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% import "_chart.html" as chart %}
+{% set aname = wall_text(a.name, 'an asset') %}
+{% block title %}{{ aname }}/PEPE (mainnet) · Exchange · DogecoinArcade{% endblock %}
+{% block body %}
+{# One cross-chain market (arcade/xchain.py, 2026-10-06): an asset on testnet against
+   Pepecoin on mainnet, held and paid out by this node. #}
+<a class="back-link" href="/exchange?tab=tokens">&#8592; All markets</a>
+
+<div class="markethead">
+  <div style="min-width:0;overflow-wrap:anywhere">
+    <h1 style="margin:0;font-size:1.3rem">{{ wall(a.name, 'token name') }} {{ net_badge(chain) }}
+      <span class="muted">/</span> PEPE {{ net_badge(main) }}</h1>
+    <div class="muted" style="font-size:.78rem">
+      {% if a.kind == 'token' %}#{{ a.asset }} {{ supply_badge(a.prop) }} &middot; <a href="/tokens/{{ a.asset }}">token page</a>
+      {% elif a.kind == 'nft' %}<a href="/inscriptions/{{ a.asset }}">{{ aname }}</a>
+      {% else %}testnet coins{% endif %}
+      &middot; buy and sell for Pepecoin on mainnet</div>
+  </div>
+</div>
+
+<div class="panel" style="border:1px solid var(--warn)">
+  <p class="msg err" style="margin:0"><strong>{{ trust }}</strong></p>
+  <p class="muted" style="font-size:.8rem;margin:6px 0 0">A sell deposits the {{ 'NFT' if a.kind == 'nft' else 'asset' }}
+    to this node on testnet; a buy deposits PEPE to it on mainnet. An order counts once its deposit has its
+    confirmations (6 on testnet, 2 on mainnet), then trades automatically with anything it crosses, at the resting
+    order's price. The node takes {{ fee_permille / 10 }}% of the PEPE of each trade, from what the seller receives.
+    Testnet assets have no guaranteed value, and the testnet chain can be reset.</p>
+</div>
+
+{% if not live %}
+<div class="panel"><p class="msg err" style="margin:0">The cross-chain book is not open on this node.</p>
+  {% if viewer == 'wallet' %}
+  <form method="post" action="/exchange/x/enable" style="margin:8px 0 0">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="on" value="1">
+    <button type="submit">Open it</button>
+    <span class="muted" style="font-size:.8rem">This node will hold deposits on both chains and pay trades out
+      from its mainnet wallet, which needs a little PEPE of the operator's own for network fees.</span>
+  </form>
+  {% endif %}
+</div>
+{% elif addresses %}
+<div class="panel muted" style="font-size:.8rem">Exchange addresses &mdash; testnet: <code>{{ addresses.testnet }}</code>
+  &middot; mainnet: <code>{{ addresses.main }}</code>. Keep a little PEPE of your own in the mainnet wallet for
+  network fees: a payout waits rather than spend what is held for somebody else.</div>
+{% endif %}
+
+<div class="panel">
+  {{ chart.headline(stats, 'PEPE each') }}
+  {% set periods = {'15m': '15-minute period', '1h': 'hour', '4h': '4-hour period', '1d': 'day'} %}
+  <div class="row tfs" style="gap:4px;margin:6px 0 8px" role="group" aria-label="Candle size">
+    {% for t in timeframes %}<a class="btn small {{ '' if t == tf else 'ghost' }}" href="?tf={{ t }}"
+       {% if t == tf %}aria-current="true"{% endif %}>{{ t }}</a>{% endfor %}
+  </div>
+  {{ chart.candles(slots, 'PEPE each', period=periods[tf]) }}
+</div>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">
+  <div class="panel">
+    <h3 style="margin:0 0 8px">Book</h3>
+    <table style="width:100%;font-size:.86rem">
+      <tr class="muted"><th style="text-align:left">PEPE each</th><th style="text-align:right">{{ aname }}</th></tr>
+      {% for o in book.sells|reverse %}
+      <tr><td style="color:var(--bad)">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}</td><td style="text-align:right">{{ o.units_shown }}</td></tr>
+      {% endfor %}
+      <tr><td colspan="2" class="muted" style="text-align:center;font-size:.76rem;padding:4px 0">
+        {% if not book.sells and not book.buys %}No orders yet{% else %}sells above, buys below{% endif %}</td></tr>
+      {% for o in book.buys %}
+      <tr><td style="color:var(--ok)">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}</td><td style="text-align:right">{{ o.units_shown }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  <div class="panel">
+    <h3 style="margin:0 0 8px">Recent trades</h3>
+    {% if fills %}
+    <table style="width:100%;font-size:.86rem">
+      <tr class="muted"><th style="text-align:left">PEPE each</th><th style="text-align:right">{{ aname }}</th></tr>
+      {% for f in fills %}<tr><td>{{ "%.8f"|format(f.each)|trim('0')|trim('.') }}</td><td style="text-align:right">{{ f.units_shown }}</td></tr>{% endfor %}
+    </table>
+    {% else %}<p class="muted" style="margin:0">Nothing has traded here yet.</p>{% endif %}
+  </div>
+</div>
+
+<div class="panel">
+  <h3 style="margin:0 0 10px">Trade {{ aname }} for mainnet PEPE</h3>
+  {% if not live %}<p class="muted" style="margin:0">Opens when the operator opens the cross-chain book.</p>
+  {% elif viewer == 'nobody' %}<p class="muted" style="margin:0">Sign in to trade.</p>
+  {% elif viewer == 'account' and not (account_test and account_main) %}
+    <p class="muted" style="margin:0">This account needs an address on mainnet as well: open mainnet on the Backup page first.</p>
+  {% else %}
+  <form method="post" action="/exchange/x/order" id="x-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="kind" value="{{ a.kind }}"><input type="hidden" name="asset" value="{{ a.asset }}">
+    <div class="sides">
+      <label><input type="radio" name="side" value="buy" checked><span>Buy with PEPE</span></label>
+      <label><input type="radio" name="side" value="sell"><span>Sell for PEPE</span></label>
+    </div>
+    <div class="row" style="gap:10px;align-items:flex-end">
+      {% if a.kind != 'nft' %}
+      <div class="field" style="flex:1 1 150px;margin:0"><label>Amount of {{ aname }}</label>
+        <input autocomplete="off" name="amount" id="x-amount" inputmode="decimal" placeholder="0"></div>
+      {% else %}<input type="hidden" name="amount" id="x-amount" value="1">{% endif %}
+      <div class="field" style="flex:1 1 150px;margin:0"><label>Price, mainnet PEPE {{ 'for it' if a.kind == 'nft' else 'each' }}</label>
+        <input autocomplete="off" name="price" id="x-price" inputmode="decimal" placeholder="0"></div>
+      <button {% if viewer == 'account' %}type="button" id="x-order"{% else %}type="submit"{% endif %} class="danger" style="flex:0 0 auto">Place order</button>
+    </div>
+  </form>
+  <p class="msg err" id="x-trouble" hidden></p><p class="msg ok" id="x-news" hidden></p>
+  {% endif %}
+</div>
+
+{% if mine %}
+<div class="panel">
+  <h3 style="margin:0 0 8px">Your orders here</h3>
+  <table style="width:100%;font-size:.86rem">
+    <tr class="muted"><th style="text-align:left">Side</th><th style="text-align:right">{{ aname }}</th><th style="text-align:right">PEPE each</th><th style="text-align:right">Status</th><th></th></tr>
+    {% for o in mine %}
+    <tr><td>{{ o.side }}</td><td style="text-align:right">{{ o.units_shown }}</td>
+      <td style="text-align:right">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}</td>
+      <td style="text-align:right" title="{{ o.note }}">{{ 'waiting for its deposit' if o.status == 'awaiting' else o.status }}</td>
+      <td style="text-align:right">{% if o.status in ('open', 'awaiting') %}
+        {% if viewer == 'account' %}<button type="button" class="secondary small" data-x-cancel="{{ o.id }}">Cancel</button>
+        {% else %}<form method="post" action="/exchange/x/cancel" style="margin:0">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="order" value="{{ o.id }}">
+          <input type="hidden" name="back" value="/exchange/x/{{ a.kind }}/{{ a.asset }}">
+          <button type="submit" class="secondary small">Cancel</button></form>{% endif %}
+      {% endif %}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+{% if viewer == 'account' and live %}
+<script type="module">
+/* An account's cross-chain order: the node writes it down and builds its deposit (a sell
+   from this account's testnet address, a buy from its mainnet one); this tab signs it. */
+import * as wallet from "/wallet.js";
+const $ = (id) => document.getElementById(id);
+const say = (t) => { $("x-trouble").textContent = t; $("x-trouble").hidden = !t; if (t) $("x-news").hidden = true; };
+const news = (t) => { $("x-news").textContent = t; $("x-news").hidden = !t; if (t) $("x-trouble").hidden = true; };
+const NETS = {test: {network: "{{ chain.network }}", version: {{ chain.params.pubkeyhash_version }}},
+              main: {network: "{{ main.network }}", version: {{ main.params.pubkeyhash_version }}}};
+const btn = $("x-order");
+if (btn) btn.onclick = async () => {
+  const side = (document.querySelector("input[name=side]:checked") || {value: "buy"}).value;
+  const net = side === "sell" ? NETS.test : NETS.main;
+  btn.disabled = true;
+  try {
+    const held = (await wallet.opened(net)) || await arcadeKeys(net);
+    if (!held) throw new Error("your wallet is not open in this tab");
+    const asked = await fetch("/account/x/order", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({kind: "{{ a.kind }}", asset: "{{ a.asset }}", side,
+                            amount: $("x-amount").value.trim(), price: $("x-price").value.trim()})});
+    const offer = await asked.json();
+    if (!asked.ok) throw new Error(offer.detail || "that cannot be ordered");
+    const shown = await wallet.checked(offer, held);
+    if (!(await arcadeAsk(shown.what, offer.trust + " It costs " + shown.coinsOf(shown.fee)
+        + " in network fees. " + shown.says, "Deposit and place it"))) return;
+    await wallet.confirm(held, offer);
+    news("Deposit sent. The order meets the book once the deposit has its confirmations.");
+  } catch (e) { say(String(e.message || e)); } finally { btn.disabled = false; }
+};
+document.querySelectorAll("[data-x-cancel]").forEach((b) => b.onclick = async () => {
+  b.disabled = true;
+  try {
+    const r = await fetch("/account/x/cancel", {method: "POST", headers: {"Content-Type": "application/json"},
+                                                body: JSON.stringify({order: b.dataset.xCancel})});
+    const said = await r.json();
+    if (!r.ok) throw new Error(said.detail || "that cannot be cancelled");
+    news("Cancelled: what was left of it is on its way back to you.");
+    b.closest("tr").querySelector("td:nth-child(4)").textContent = "cancelled";
+  } catch (e) { say(String(e.message || e)); b.disabled = false; }
+});
+</script>
+{% endif %}
+<style>
+  .sides{display:flex;flex-wrap:wrap;gap:8px 16px;margin-bottom:12px}
+  .sides label{display:inline-flex;align-items:center;gap:6px;margin:0;font-size:.95rem;color:var(--fg);cursor:pointer}
+  .sides input{width:auto;margin:0}
+</style>
+{% endblock %}

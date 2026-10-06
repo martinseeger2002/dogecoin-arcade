@@ -483,7 +483,7 @@
             {%- else %}<span class="coinface"></span>{% endif %}</a></td>
         <td><a href="{{ p.href }}"><strong>{{ wall(p.name, 'token name') }}</strong></a><span
              class="muted">/{% if p.quote_label %}{{ wall(p.quote_label, 'token name') }}{% else %}{{ chain.label|upper }}{% endif %}</span>
-          {{ net_badge(chain) }}{{ supply_badge(p) }}
+          {{ net_badge(chain) }}{% if p.quote_main %}<span class="muted">/</span>{{ net_badge(true) }}{% endif %}{% if p.property_id %}{{ supply_badge(p) }}{% endif %}
           {# The whole description goes behind the wall, not the first 40 characters
              of it: a verdict is kept per text, so asking about a cut-off prefix asks
              about a different sentence than the one that was judged. The truncating
@@ -557,7 +557,8 @@
     {% macro pair_options(selected_first) -%}
       {%- for t in held_tokens %}<option value="{{ t.property_id }}"{% if selected_first and loop.first %} selected{% endif %}>{{ wall_text(t.name, 'token') }} (#{{ t.property_id }}){{ ' · managed' if t.managed }}</option>{% endfor %}
       <option value="coin"{% if not selected_first %} selected{% endif %}>Pepecoin, testnet (PEP)</option>
-      <option value="main" disabled>Pepecoin, mainnet (PEPE): coming with the cross-chain swap</option>
+      {% if xchain_open %}<option value="main">Pepecoin, mainnet (PEPE): held by this node while it trades</option>
+      {% else %}<option value="main" disabled>Pepecoin, mainnet (PEPE): not open on this node</option>{% endif %}
     {%- endmacro %}
     <form method="get" action="/exchange/pairs" class="row" style="gap:8px;align-items:flex-end;margin:0">
       <div class="field" style="flex:1 1 160px;margin:0"><label>You have</label>

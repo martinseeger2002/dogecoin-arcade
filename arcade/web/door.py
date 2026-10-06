@@ -138,6 +138,7 @@ PUBLIC_TREES = (
     "/mintpad/",              # an account's mintpad: pre-signed listings, read-only here
     "/exchange/pair/",
     "/exchange/pairs/",       # a token/token pair's page (2026-10-06)
+    "/exchange/x/",           # a cross-chain market: a testnet asset for mainnet PEPE (2026-10-06)
 )
 
 #: Whole paths with something variable in the middle of them, where a tree
@@ -343,6 +344,9 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # cancel above, one message and a fee from the account's own
                # address, signed in its tab; the engine matches it in its block.
                "/account/pair-order", "/account/pair-order/cancel",
+               # the cross-chain book (2026-10-06): the account's deposit, signed in
+               # its tab like any send, and a cancel of its own order
+               "/account/x/order", "/account/x/cancel",
                # and the one read that makes the book takeable by a tab: it
                # builds nothing and sends nothing, it only says which order the
                # queue chose, what it prices to, and which key the question has

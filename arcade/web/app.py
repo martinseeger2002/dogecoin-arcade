@@ -7264,6 +7264,7 @@ def create_app(state: AppState) -> FastAPI:
         ticket = _viewer_ticket(here, chain.network, row["txid"]) \
             if viewer == "account" and here else ""
         return render(request, "inscription_view.html", row=row, chain=chain,
+                      xchain_open=_x_open(),
                       my_offers=my_offers, swap_waiting=swap_waiting,
                       ticket=ticket,
                       listed=listed,
@@ -20061,6 +20062,11 @@ def create_app(state: AppState) -> FastAPI:
         # pairs should be listed in the exact same place as token test net
         # pairs"), each priced in its own quote token.
         out += _token_pair_markets(index, faces_for=_faces_for)
+        # and the cross-chain book's markets: an asset here against PEPE on mainnet
+        try:
+            out += _xchain_markets(index, faces_for=_faces_for)
+        except Exception:
+            log.debug("cross-chain markets unavailable", exc_info=True)
         # Most popular first (2026-10-06: "pairings should be sorted by
         # popularity"): the day's trades, then all the trades it has ever had,
         # then how many orders stand on it. Trades and not volume, because a
@@ -20068,6 +20074,38 @@ def create_app(state: AppState) -> FastAPI:
         out.sort(key=lambda p: (-(p["trades"] or 0), -p["all_trades"], -p["orders"],
                                 p["name"].lower()))
         return out
+
+    def _xchain_markets(index, faces_for) -> list[dict[str, Any]]:
+        """Every cross-chain market with an order standing or a trade done, as a
+        row of the same table: the asset here, priced in mainnet PEPE."""
+        rows = []
+        day_ago = time.time() - 86400
+        for m in state.xchain.book.markets():
+            try:
+                a = _x_asset(m["kind"], m["asset"])
+            except ValueError:
+                continue
+            fills = state.xchain.book.fills(m["kind"], m["asset"], limit=5000)
+            unit = (lambda f: (f["amount"] / COIN) if a["divisible"] else f["amount"])
+            points = [{"when": f["created"], "height": 0, "txid": str(f["id"]),
+                       "price": (f["pepe"] / COIN) / unit(f), "size": unit(f)} for f in fills if f["amount"]]
+            stats = chartlib.day(points)
+            change, new = chartlib.table_move(points, stats["change"])
+            book = state.xchain.book.book(m["kind"], m["asset"])
+            scale = (COIN if a["divisible"] else 1) / COIN
+            face = faces_for(index, [a["prop"]])[a["prop"]["property_id"]] if a["prop"] else {"icon": None, "about": ""}
+            rows.append({
+                "property_id": a["asset"] if m["kind"] == "token" else "", "name": a["name"],
+                "divisible": a["divisible"], "managed": (a["prop"] or {}).get("managed", 0),
+                "href": f"/exchange/x/{m['kind']}/{m['asset']}", "quote_label": "PEPE", "quote_main": True,
+                "icon": face["icon"], "about": face["about"],
+                "last": stats["last"], "change": change, "new": new, "high": stats["high"], "low": stats["low"],
+                "trades": sum(1 for f in fills if f["created"] >= day_ago), "volume": stats["volume"],
+                "coins": stats["coins"], "all_trades": len(fills), "orders": m["orders"],
+                "ask": float(book["sells"][0]["price"]) * scale if book["sells"] else None,
+                "bid": float(book["buys"][0]["price"]) * scale if book["buys"] else None,
+            })
+        return rows
 
     def _token_pair_markets(index, faces_for) -> list[dict[str, Any]]:
         """Every token/token pair as a row of the markets table: BASE/QUOTE with
@@ -20792,8 +20830,19 @@ def create_app(state: AppState) -> FastAPI:
         (a token/token pair), or the testnet coin (that token's coin market)."""
         back = RedirectResponse("/exchange?tab=tokens", status_code=303)
         if "main" in (base, quote):
-            state.flash("Trading for mainnet Pepecoin comes with the cross-chain swap.", "err")
-            return back
+            other = quote if base == "main" else base
+            if not _x_open():
+                state.flash("Trading for mainnet Pepecoin is not open on this node.", "err")
+                return back
+            if other == "main":
+                state.flash("A pair is two different things: pick another one to trade it for.", "err")
+                return back
+            if other == "coin":
+                return RedirectResponse("/exchange/x/coin/coin", status_code=303)
+            try:
+                return RedirectResponse(f"/exchange/x/token/{int(other)}", status_code=303)
+            except ValueError:
+                return back
         if base == quote:
             state.flash("A pair is two different things: pick another one to trade it for.", "err")
             return back
@@ -20953,6 +21002,225 @@ def create_app(state: AppState) -> FastAPI:
                     f"cancel your {side} orders on {wall_plain(b['name'], 'this')}/"
                     f"{wall_plain(q['name'], 'that')}")
         return _account_pair_offer(request, payload, build)
+
+    # --- the cross-chain book: testnet assets for mainnet Pepecoin (2026-10-06) ---
+    #
+    # The operator: "add a swap where you can exchange test net assets for main net
+    # Pepecoin" -> this node holds both sides while an order stands (xchain.py), so
+    # "nobody has to stay online" and trades "happen automatically once you place an
+    # order". Not trustless, and every page that offers it says so in those words.
+
+    XCHAIN_TRUST = ("Not trustless: this node's operator holds your deposit until it "
+                    "trades or you cancel, and pays both sides out. Only trade here if "
+                    "you trust the operator of this node.")
+
+    def _x_open() -> bool:
+        return bool(state.setting("xchain:enabled"))
+
+    def _x_asset(kind: str, asset: str) -> dict:
+        """What is being sold: its name, whether it divides, and how the page names it."""
+        index = state.token_index(state.messaging)
+        if kind == "token":
+            prop = index.property(int(asset))
+            if prop is None:
+                raise ValueError(f"there is no token {asset}")
+            return {"kind": kind, "asset": str(prop["property_id"]), "name": prop["name"],
+                    "divisible": bool(prop["divisible"]), "prop": prop}
+        if kind == "coin":
+            return {"kind": kind, "asset": "coin", "name": "Pepecoin (testnet)", "divisible": True,
+                    "prop": None}
+        if kind == "nft":
+            row = index.inscription(contentlib._key(str(asset)))
+            if row is None:
+                raise ValueError("no such inscription on this node")
+            return {"kind": kind, "asset": row["txid"], "name": f"inscription #{row['number']}",
+                    "divisible": False, "prop": None, "row": row}
+        raise ValueError("an asset is a token, testnet coin or NFT")
+
+    def _x_terms(a: dict, amount: str, price: str) -> tuple[int, int]:
+        """(raw units, total PEPE satoshis): `price` is PEPE per whole unit."""
+        units = 1 if a["kind"] == "nft" else parse_amount(str(amount or ""), a["divisible"])
+        each = parse_amount(str(price or ""), True)
+        if units <= 0 or each <= 0:
+            raise ValueError("an amount and a price, both above zero")
+        raw = units * each
+        scale = COIN if a["divisible"] else 1
+        if raw % scale:
+            raise ValueError("that price does not come out in whole satoshis of PEPE; change "
+                             "the price or the amount until it divides even")
+        return units, raw // scale
+
+    @app.get("/exchange/x/{kind}/{asset}", response_class=HTMLResponse)
+    def exchange_xchain(request: Request, kind: str, asset: str):
+        """One cross-chain market: an asset on testnet against Pepecoin on mainnet."""
+        try:
+            a = _x_asset(kind, asset)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        book = state.xchain.book
+        rows = book.book(a["kind"], a["asset"])
+        scale = (COIN if a["divisible"] else 1) / COIN
+        shown = lambda units: format_amount(units, a["divisible"]) if a["kind"] != "nft" else "1"
+        for r in rows["sells"] + rows["buys"]:
+            r["each"] = float(r["price"]) * scale
+            r["units_shown"] = shown(r["left_amount"])
+        fills = book.fills(a["kind"], a["asset"], limit=40)
+        points = [{"when": f["created"], "height": 0, "txid": str(f["id"]),
+                   "price": (f["pepe"] / COIN) / ((f["amount"] / COIN) if a["divisible"] else f["amount"]),
+                   "size": (f["amount"] / COIN) if a["divisible"] else f["amount"]} for f in fills if f["amount"]]
+        asked = request.query_params.get("tf", "")
+        frame = chartlib.timeframe(asked if asked in {t[0] for t in chartlib.TIMEFRAMES}
+                                   else chartlib.pick_timeframe(points))
+        public = _account_view(request)
+        viewer = "wallet" if not public else ("account" if signed_in(request) is not None else "nobody")
+        owner = "node" if viewer == "wallet" else (signed_in(request).pubkey.lower() if viewer == "account" else "")
+        mine = [o for o in book.orders_of(owner) if o["kind"] == a["kind"] and o["asset"] == a["asset"]] if owner else []
+        for o in mine:
+            o["units_shown"] = shown(o["left_amount"] if o["status"] == "open" else o["amount"])
+            o["each"] = (o["pepe"] / COIN) / ((o["amount"] / COIN) if a["divisible"] else o["amount"])
+        held, holds_main = "", ""
+        if viewer == "account":
+            acct = signed_in(request)
+            held = _account_address(acct.pubkey, state.messaging) or ""
+            holds_main = _account_address(acct.pubkey, state.ledger) or ""
+        return render(request, "xchain.html", chain=state.messaging, main=state.ledger, a=a,
+                      book=rows, fills=[dict(f, units_shown=shown(f["amount"]),
+                                             each=(f["pepe"] / COIN) / ((f["amount"] / COIN) if a["divisible"] else f["amount"]))
+                                        for f in fills[:20]],
+                      stats=chartlib.last_and_change(points),
+                      slots=chartlib.candles(points, buckets=frame[2], span=frame[1]),
+                      tf=frame[0], timeframes=[t[0] for t in chartlib.TIMEFRAMES],
+                      viewer=viewer, mine=mine, trust=XCHAIN_TRUST, live=_x_open(),
+                      account_test=held, account_main=holds_main,
+                      fee_permille=__import__("arcade.xchain", fromlist=["FEE_PERMILLE"]).FEE_PERMILLE,
+                      addresses=({"testnet": state.xchain.address("testnet"),
+                                  "main": state.xchain.address("main")} if viewer == "wallet" and _x_open() else None))
+
+    @app.post("/exchange/x/enable")
+    def xchain_enable(on: str = Form(""), csrf_token: str = Form("")):
+        """The operator opens (or closes) this node's cross-chain book."""
+        check_csrf(csrf_token)
+        state.set_setting("xchain:enabled", on == "1")
+        state.flash("The cross-chain book is " + ("open." if on == "1" else "closed: nothing new is "
+                    "accepted, and what is owed is still paid out."), "ok")
+        return RedirectResponse("/exchange?tab=tokens", status_code=303)
+
+    @app.post("/exchange/x/order")
+    def xchain_node_order(kind: str = Form(""), asset: str = Form(""), side: str = Form(""),
+                          amount: str = Form(""), price: str = Form(""), csrf_token: str = Form("")):
+        """The node's own wallet trades on the cross-chain book: it deposits from its
+        home address on each chain and is paid back to them."""
+        check_csrf(csrf_token)
+        back = RedirectResponse(f"/exchange/x/{kind}/{asset}", status_code=303)
+        try:
+            if not _x_open():
+                raise ValueError("the cross-chain book is not open on this node")
+            a = _x_asset(kind, asset)
+            units, pepe = _x_terms(a, amount, price)
+            clerk, book = state.xchain, state.xchain.book
+            test_home, main_home = state.home_address(state.messaging), state.home_address(state.ledger)
+            order = book.place(owner="node", side=side, kind=a["kind"], asset=a["asset"], amount=units,
+                               pepe=pepe, pay_test=test_home, pay_main=main_home)
+            if side == "sell":
+                with state.messaging.rpc() as rpc:
+                    sender = tokenlib.TokenSender(rpc, state.messaging.params)
+                    if a["kind"] == "token":
+                        prepared = sender.prepare(test_home, tokenlib.send_payload(int(a["asset"]), units),
+                                                  clerk.address("testnet"))
+                        txid = sender.broadcast(prepared)
+                    elif a["kind"] == "nft":
+                        body = P.AnyData(data=inscriptionlib.Transfer(
+                            txid=bytes.fromhex(a["asset"])).encode()).encode()
+                        txid = sender.broadcast(sender.prepare(a["row"]["owner"], body, clerk.address("testnet")))
+                    else:
+                        txid = walletlib.broadcast(rpc, walletlib.prepare_send(rpc, clerk.address("testnet"), units))
+            else:
+                with state.ledger.rpc() as rpc:
+                    txid = walletlib.broadcast(rpc, walletlib.prepare_send(rpc, clerk.address("main"), pepe))
+            book.deposited(order["id"], txid)
+            state.flash(f"Order placed; its deposit is {txid}. It meets the book once the deposit has "
+                        f"its confirmations.", "ok")
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return back
+
+    @app.post("/exchange/x/cancel")
+    def xchain_node_cancel(order: str = Form(""), csrf_token: str = Form(""), back: str = Form("/exchange?tab=tokens")):
+        check_csrf(csrf_token)
+        try:
+            state.xchain.book.cancel(order, "node")
+            state.flash("Cancelled: what was left of it is on its way back.", "ok")
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse(back if back.startswith("/exchange") else "/exchange?tab=tokens", status_code=303)
+
+    @app.post("/account/x/order")
+    def xchain_account_order(request: Request, payload: Any = Body(None)):
+        """An account's order: written down, then its deposit built for its own tab to
+        sign. A sell deposits the testnet asset; a buy deposits mainnet PEPE."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            if not _x_open():
+                raise ValueError("the cross-chain book is not open on this node")
+            a = _x_asset(str(said.get("kind") or ""), str(said.get("asset") or ""))
+            side = str(said.get("side") or "")
+            units, pepe = _x_terms(a, said.get("amount"), said.get("price"))
+            test_addr = _account_address(account.pubkey, state.messaging)
+            main_addr = _account_address(account.pubkey, state.ledger)
+            if not test_addr or not main_addr:
+                raise ValueError("this account needs an address on testnet and on mainnet: "
+                                 "open mainnet on the Backup page first")
+            _real_coins_gate(account, state.ledger)
+            clerk, book = state.xchain, state.xchain.book
+            chain = state.messaging if side == "sell" else state.ledger
+            address = test_addr if side == "sell" else main_addr
+            if side == "sell":
+                to = clerk.address("testnet")
+                index = state.token_index(chain)
+                if a["kind"] == "token":
+                    held = index.balance(address, int(a["asset"])) - index.pending_out(address, int(a["asset"]))
+                    if units > held:
+                        raise ValueError(f"this account holds {format_amount(max(0, held), a['divisible'])} "
+                                         f"of {a['name']}, not {format_amount(units, a['divisible'])}")
+                    outputs = _class_c_or_b(chain, address, tokenlib.send_payload(int(a["asset"]), units),
+                                            _coin_pubkey(account.pubkey, chain), wrap=False)
+                    outputs.append((sendermod.OUTPUT_VALUE, txbuild.p2pkh_script(to)))
+                elif a["kind"] == "nft":
+                    if a["row"]["owner"] != address:
+                        raise ValueError("that piece is not this account's to sell")
+                    outputs = _class_c_or_b(chain, address, inscriptionlib.Transfer(
+                        txid=bytes.fromhex(a["asset"])).encode(), _coin_pubkey(account.pubkey, chain))
+                    outputs.append((sendermod.OUTPUT_VALUE, txbuild.p2pkh_script(to)))
+                else:
+                    outputs = [(units, txbuild.p2pkh_script(to))]
+            elif side == "buy":
+                outputs = [(pepe, txbuild.p2pkh_script(clerk.address("main")))]
+            else:
+                raise ValueError("an order buys or sells")
+            what = (f"{side} {format_amount(units, a['divisible']) if a['kind'] != 'nft' else a['name']} "
+                    f"{a['name'] if a['kind'] != 'nft' else ''} for {format_amount(pepe, True)} mainnet PEPE "
+                    f"(deposit to this node)").replace("  ", " ")
+            unsigned = _spend_now(account, chain, address, outputs, what)
+            order = book.place(owner=account.pubkey.lower(), side=side, kind=a["kind"], asset=a["asset"],
+                               amount=units, pepe=pepe, pay_test=test_addr, pay_main=main_addr)
+            _quota(account, "trade")
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned, what,
+                            done=lambda txid, oid=order["id"]: state.xchain.book.deposited(oid, txid))
+        return JSONResponse({"offer": offer.id, "order": order["id"], "what": what, "chain": chain.network,
+                             "trust": XCHAIN_TRUST, **unsigned.as_json()})
+
+    @app.post("/account/x/cancel")
+    def xchain_account_cancel(request: Request, payload: Any = Body(None)):
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            done = state.xchain.book.cancel(str(said.get("order") or ""), account.pubkey.lower())
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"cancelled": done["id"], "status": done["status"]})
 
     @app.post("/exchange/order")
     def place_order(request: Request, property_id: str = Form(""),
@@ -21773,6 +22041,7 @@ def create_app(state: AppState) -> FastAPI:
             # drop-down should only list assets that you have in your wallet"):
             # what this reader holds on one side, any token on the other.
             data["held_tokens"], data["pair_viewer"] = [], "nobody"
+            data["xchain_open"] = _x_open()
             try:
                 held_at: list[str] = []
                 if not _account_view(request):
