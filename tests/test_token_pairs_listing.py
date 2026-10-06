@@ -42,17 +42,18 @@ def test_a_token_pair_is_a_row_of_the_markets_table_and_popularity_orders_them(c
     assert "/GOLD" in text and "/ORE" in text, "a pair's row names its quote token, not the coin"
 
 
-def test_opening_a_pair_starts_from_a_token_you_hold(client, monkeypatch):
-    """2026-10-06: "When creating a pair the drop-down should only list
-    assets that you have in your wallet". "You have" lists what this wallet holds;
-    "Trade it for" lists every token."""
+def test_opening_a_pair_offers_only_what_you_hold_and_the_two_coins(client, monkeypatch):
+    """2026-10-06: "both drop downs should only show tokens that you own plus
+    test net plus main net Pepecoin. That way the list isn't 1 million items long"."""
     app, state = client
     import arcade.ledger as L
     import arcade.web.app as W
     held = [{"address": "nWalletAddress", "property_id": 8, "balance": 5, "name": "GOLD",
              "property_type": 2, "ecosystem": 2, "issuer": "x"}]
     monkeypatch.setattr(L.LedgerIndex, "balances", lambda self, addresses: held if addresses else [])
-    # this node's wallet, as far as the page asks it: one address of its own
+    monkeypatch.setattr(L.LedgerIndex, "properties", lambda self: [
+        {"property_id": 7, "name": "LOGS", "divisible": True}, {"property_id": 8, "name": "GOLD", "divisible": True},
+        {"property_id": 9, "name": "ORE", "divisible": True}])
     import contextlib
     @contextlib.contextmanager
     def fake_rpc():
@@ -60,15 +61,21 @@ def test_opening_a_pair_starts_from_a_token_you_hold(client, monkeypatch):
     monkeypatch.setattr(W, "_ledger_addresses", lambda rpc: ["nWalletAddress"])
     for ch in {id(state.messaging): state.messaging, **{id(c): c for c in getattr(state, "chains", {}).values()}}.values():
         monkeypatch.setattr(ch, "rpc", fake_rpc)
-    monkeypatch.setattr(L.LedgerIndex, "properties", lambda self: [
-        {"property_id": 7, "name": "LOGS", "divisible": True}, {"property_id": 8, "name": "GOLD", "divisible": True}, {"property_id": 9, "name": "ORE", "divisible": True}])
     page = app.get("/exchange?tab=tokens").text
-    assert "You have" in page, "the wallet's own tokens are offered"
-    if True:
-        have = page[page.index("You have"):page.index("Trade it for")]
-        assert "GOLD (#8)" in have and "LOGS (#7)" not in have and "ORE (#9)" not in have
-        rest = page[page.index("Trade it for"):]
-        assert "LOGS (#7)" in rest and "ORE (#9)" in rest
+    assert "You have" in page
+    for side in (page[page.index("You have"):page.index("Trade it for")], page[page.index("Trade it for"):]):
+        side = side[:side.index("</select>")]
+        assert "GOLD (#8)" in side, "what this wallet holds"
+        assert "LOGS (#7)" not in side and "ORE (#9)" not in side, "and nothing it does not"
+        assert 'value="coin"' in side and 'value="main" disabled' in side, "plus both Pepecoins"
+
+
+def test_the_testnet_coin_opens_the_tokens_coin_market(client):
+    app, state = client
+    assert app.get("/exchange/pairs?base=8&quote=coin", follow_redirects=False).headers["location"] == "/exchange/pair/8"
+    assert app.get("/exchange/pairs?base=coin&quote=8", follow_redirects=False).headers["location"] == "/exchange/pair/8"
+    assert app.get("/exchange/pairs?base=8&quote=9", follow_redirects=False).headers["location"] == "/exchange/pairs/8/9"
+    assert app.get("/exchange/pairs?base=8&quote=main", follow_redirects=False).headers["location"].startswith("/exchange?tab=tokens")
 
 
 def test_a_pair_of_one_token_is_sent_back_to_pick_again(client):

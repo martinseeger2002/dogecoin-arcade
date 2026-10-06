@@ -20788,15 +20788,23 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/exchange/pairs")
     def exchange_pairs_open(base: str = "", quote: str = ""):
-        """The "open a pair" box: two token ids to the pair's own page."""
+        """The "open a pair" box: a token and what to trade it for -- another token
+        (a token/token pair), or the testnet coin (that token's coin market)."""
+        back = RedirectResponse("/exchange?tab=tokens", status_code=303)
+        if "main" in (base, quote):
+            state.flash("Trading for mainnet Pepecoin comes with the cross-chain swap.", "err")
+            return back
+        if base == quote:
+            state.flash("A pair is two different things: pick another one to trade it for.", "err")
+            return back
         try:
-            b, q = int(base), int(quote)
+            if base == "coin":
+                return RedirectResponse(f"/exchange/pair/{int(quote)}", status_code=303)
+            if quote == "coin":
+                return RedirectResponse(f"/exchange/pair/{int(base)}", status_code=303)
+            return RedirectResponse(f"/exchange/pairs/{int(base)}/{int(quote)}", status_code=303)
         except ValueError:
-            return RedirectResponse("/exchange?tab=tokens", status_code=303)
-        if b == q:
-            state.flash("A pair is two different tokens: pick another one to trade it for.", "err")
-            return RedirectResponse("/exchange?tab=tokens", status_code=303)
-        return RedirectResponse(f"/exchange/pairs/{b}/{q}", status_code=303)
+            return back
 
     @app.get("/exchange/pairs/{base}/{quote}", response_class=HTMLResponse)
     def exchange_token_pair(request: Request, base: int, quote: int):
@@ -21764,10 +21772,6 @@ def create_app(state: AppState) -> FastAPI:
             # The open-a-pair box (2026-10-06: "When creating a pair the
             # drop-down should only list assets that you have in your wallet"):
             # what this reader holds on one side, any token on the other.
-            try:
-                data["pair_tokens"] = [dict(r) for r in index.properties()][:500]
-            except Exception:
-                data["pair_tokens"] = []
             data["held_tokens"], data["pair_viewer"] = [], "nobody"
             try:
                 held_at: list[str] = []
@@ -21781,7 +21785,10 @@ def create_app(state: AppState) -> FastAPI:
                     held_at = [mine] if mine else []
                 held: dict[int, dict] = {}
                 for row in index.balances(held_at):
-                    held.setdefault(row["property_id"], {"property_id": row["property_id"], "name": row["name"]})
+                    if row["property_id"] not in held:
+                        prop = index.property(row["property_id"]) or {}
+                        held[row["property_id"]] = {"property_id": row["property_id"], "name": row["name"],
+                                                    "managed": prop.get("managed", 0)}
                 data["held_tokens"] = sorted(held.values(), key=lambda t: str(t["name"]).lower())
             except HTTPException:
                 raise
