@@ -11,7 +11,6 @@ import sys
 import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from test_account_offer import node                                     # noqa: F401,E402
 from test_account_claim import _catch_up                                # noqa: E402
 from arcade.regtest import RegtestNode                                  # noqa: E402
 from arcade.tokens import TokenSender, issuance_payload, send_payload  # noqa: E402
@@ -20,34 +19,53 @@ from arcade.xchain import FILLED, OPEN, SENT, fee_of                    # noqa: 
 COIN = 100_000_000
 
 
-@pytest.fixture
-def two_chains(node):
-    """The app's mainnet pointed at a second, throwaway regtest node."""
-    app, state, rpc = node
-    from arcade.web.state import ChainContext
-    if float(rpc.call("getbalance") or 0) < 50:          # a fresh session node has nothing spendable yet
-        rpc.call("generate", 110)
-        _catch_up(state, rpc)
-    other = RegtestNode()
+def _fresh(keypool: str = "-keypool=1") -> RegtestNode:
+    """A throwaway node of our own with a one-key pool: on a busy machine a new
+    wallet's hundred keys alone outlast the 60 s a node is given to come up."""
+    n = RegtestNode(extra_args=(keypool,))
     try:
-        other.start()
+        n.start()
     except RuntimeError as exc:
-        pytest.skip(f"a second regtest node is unavailable: {exc}")
+        n.stop()
+        pytest.skip(f"a regtest node is unavailable: {exc}")
+    return n
 
-    class Main(ChainContext):
-        def credentials(self):
-            return other.rpc._creds
 
-        @property
-        def params(self):
-            return other.params
+@pytest.fixture
+def two_chains(tmp_path):
+    """The application with BOTH chains pointed at throwaway regtest nodes: one
+    plays testnet (messaging, tokens), the other mainnet (the ledger)."""
+    from fastapi.testclient import TestClient
 
-    state.ledger = Main(network="regtest", role="ledger", label="Mainnet", datadir=other.datadir)
-    other.rpc.call("generate", 120)                        # spendable "mainnet" coins
+    from arcade.web.app import create_app
+    from arcade.web.state import AppState, ChainContext
+
+    test, main = _fresh(), None
     try:
-        yield app, state, rpc, other.rpc
+        main = _fresh()
+
+        def pointed(node, role, label):
+            class Pointed(ChainContext):
+                def credentials(self):
+                    return node.rpc._creds
+
+                @property
+                def params(self):
+                    return node.params
+            return Pointed(network="regtest", role=role, label=label, datadir=node.datadir)
+
+        state = AppState(home=tmp_path, messaging=pointed(test, "messaging", "Testnet"),
+                         ledger=pointed(main, "ledger", "Mainnet"))
+        (tmp_path / "tokens-chain").write_text("regtest\n")
+        app = TestClient(create_app(state))
+        test.rpc.call("generate", 110)
+        main.rpc.call("generate", 110)
+        _catch_up(state, test.rpc)
+        yield app, state, test.rpc, main.rpc
     finally:
-        other.stop()
+        for n in (test, main):
+            if n is not None:
+                n.stop()
 
 
 def _mined(state, rpc, n=1):
