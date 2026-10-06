@@ -19991,6 +19991,9 @@ def create_app(state: AppState) -> FastAPI:
             out.append({
                 "property_id": pid, "name": prop["name"],
                 "divisible": prop["divisible"],
+                "href": f"/exchange/pair/{pid}", "quote_label": None,
+                "all_trades": len(points),
+                "orders": len(book["asks"]) + len(book["bids"]),
                 "icon": faces[pid]["icon"], "about": faces[pid]["about"],
                 "last": stats["last"], "change": change, "new": new,
                 "high": stats["high"], "low": stats["low"],
@@ -20004,10 +20007,44 @@ def create_app(state: AppState) -> FastAPI:
                 "bid": (_coins_each(book["bids"][0]["price"], prop["divisible"])
                         if book["bids"] else None),
             })
-        # The market people are actually trading, first -- a table of pairs
-        # is read from the top, and the top should be where the trading is.
-        out.sort(key=lambda p: (-p["coins"], -p["trades"], p["name"].lower()))
+        # Token/token pairs in the same list (2026-10-06: "Token token
+        # pairs should be listed in the exact same place as token test net
+        # pairs"), each priced in its own quote token.
+        out += _token_pair_markets(index, faces_for=_faces_for)
+        # Most popular first (2026-10-06: "pairings should be sorted by
+        # popularity"): the day's trades, then all the trades it has ever had,
+        # then how many orders stand on it. Trades and not volume, because a
+        # coin pair's volume and a token pair's are in different units.
+        out.sort(key=lambda p: (-(p["trades"] or 0), -p["all_trades"], -p["orders"],
+                                p["name"].lower()))
         return out
+
+    def _token_pair_markets(index, faces_for) -> list[dict[str, Any]]:
+        """Every token/token pair as a row of the markets table: BASE/QUOTE with
+        the lower property id as BASE, prices in QUOTE per BASE."""
+        rows = []
+        for a, b in index.token_pairs():
+            base, quote = index.property(a), index.property(b)
+            if base is None or quote is None:
+                continue
+            face = faces_for(index, [base])[a]
+            points = chartlib.pair_prices(index.pair_trades(a, b), base["divisible"], quote["divisible"])
+            book = index.pair_book(a, b)
+            scale = ((COIN if base["divisible"] else 1) / (COIN if quote["divisible"] else 1))
+            stats = chartlib.day(points)
+            change, new = chartlib.table_move(points, stats["change"])
+            rows.append({
+                "property_id": a, "name": base["name"], "divisible": base["divisible"],
+                "href": f"/exchange/pairs/{a}/{b}", "quote_label": quote["name"], "quote_id": b,
+                "icon": face["icon"], "about": face["about"],
+                "last": stats["last"], "change": change, "new": new,
+                "high": stats["high"], "low": stats["low"],
+                "trades": stats["trades"], "volume": stats["volume"], "coins": stats["coins"],
+                "all_trades": len(points), "orders": len(book["asks"]) + len(book["bids"]),
+                "ask": float(book["asks"][0]["price"]) * scale if book["asks"] else None,
+                "bid": float(book["bids"][0]["price"]) * scale if book["bids"] else None,
+            })
+        return rows
 
     def _token_props(index) -> list[dict[str, Any]]:
         try:
@@ -20695,26 +20732,6 @@ def create_app(state: AppState) -> FastAPI:
         sale, want = ((base_prop, quote_prop) if side == "sell" else (quote_prop, base_prop))
         return P.MetaDExCancelPair(property_id_for_sale=sale["property_id"],
                                    property_id_desired=want["property_id"])
-
-    def _token_pair_rows(index, chain) -> list[dict]:
-        """The Tokens tab's pairs: every two-token market, its last price and
-        the best of each side, BASE/QUOTE with the lower property id first."""
-        out = []
-        for a, b in index.token_pairs():
-            base, quote = index.property(a), index.property(b)
-            if base is None or quote is None:
-                continue
-            book = index.pair_book(a, b, limit=1)
-            done = index.pair_trades(a, b, limit=1)
-            to = lambda fr: float(fr) * ((COIN if base["divisible"] else 1)
-                                         / (COIN if quote["divisible"] else 1))
-            out.append({"base": base, "quote": quote,
-                        "ask": to(book["asks"][0]["price"]) if book["asks"] else None,
-                        "bid": to(book["bids"][0]["price"]) if book["bids"] else None,
-                        "last": (chartlib.pair_prices(done, base["divisible"], quote["divisible"])
-                                 or [{}])[0].get("price"),
-                        "trades": len(index.pair_trades(a, b, limit=5000))})
-        return out
 
     @app.get("/exchange/pairs")
     def exchange_pairs_open(base: str = "", quote: str = ""):
@@ -21683,11 +21700,9 @@ def create_app(state: AppState) -> FastAPI:
             # (D-048). Clicking one opens its own page.
             data["pairs"] = _pairs(index, trades)
             try:
-                data["token_pairs"] = _token_pair_rows(index, chain)
-                data["pair_tokens"] = [dict(r) for r in index.properties()][:500] \
-                    if hasattr(index, "properties") else []
+                data["pair_tokens"] = [dict(r) for r in index.properties()][:500]
             except Exception:
-                data["token_pairs"], data["pair_tokens"] = [], []
+                data["pair_tokens"] = []
         elif tab == "market":
             # A collection is a market of its own, and the marketplace is the
             # list of them -- the same table the Tokens tab draws for pairs.

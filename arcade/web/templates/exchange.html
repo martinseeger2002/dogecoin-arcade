@@ -425,8 +425,9 @@
   {% endif %}
 
 {% elif tab == 'tokens' %}
-  <p class="sub">Every token paired against {{ chain.label }} coins. Click a
-    market for its chart, its book and the form that adds to it.</p>
+  <p class="sub">Every market on {{ chain.label|lower }}: tokens against coins and tokens
+    against each other, the most popular first. Click a market for its chart, its book
+    and the form that adds to it.</p>
 
   {% if pairs %}
   <div class="panel">
@@ -473,14 +474,15 @@
          would keep the words in the clear in an attribute while the drawn text
          says "Sensitive". Such a token is then found by its number rather than
          its name until the reader taps the cover. #}
-      <tr data-market="{{ wall_text(p.name, '')|lower }}/{{ chain.label|lower }} #{{ p.property_id }}">
+      {% set quote_text = wall_text(p.quote_label, 'a token') if p.quote_label else chain.label|upper %}
+      <tr data-market="{{ wall_text(p.name, '')|lower }}/{{ quote_text|lower }} #{{ p.property_id }}">
         <td style="width:40px">
-          <a href="/exchange/pair/{{ p.property_id }}">
+          <a href="{{ p.href }}">
             {%- if p.icon %}<img src="/content/{{ p.icon }}" alt="{{ wall_text(p.name, 'A token') }}" loading="lazy"
               style="width:32px;height:32px;object-fit:cover;border-radius:50%;display:block">
             {%- else %}<span class="coinface"></span>{% endif %}</a></td>
-        <td><a href="/exchange/pair/{{ p.property_id }}"><strong>{{ wall(p.name, 'token name') }}</strong></a><span
-             class="muted">/{{ chain.label|upper }}</span>
+        <td><a href="{{ p.href }}"><strong>{{ wall(p.name, 'token name') }}</strong></a><span
+             class="muted">/{% if p.quote_label %}{{ wall(p.quote_label, 'token name') }}{% else %}{{ chain.label|upper }}{% endif %}</span>
           {# The whole description goes behind the wall, not the first 40 characters
              of it: a verdict is kept per text, so asking about a cut-off prefix asks
              about a different sentence than the one that was judged. The truncating
@@ -505,7 +507,7 @@
         <td class="mono muted wide" style="text-align:right">
           {%- if p.low is not none %}{{ px(p.low) }}{% else %}—{% endif %}</td>
         <td class="mono wide" style="text-align:right">
-          {%- if p.coins %}{{ "%.4f"|format(p.coins) }}
+          {%- if p.coins %}{{ "%.4f"|format(p.coins) }}{% if p.quote_label %} <span class="muted">{{ wall(p.quote_label, 'token name') }}</span>{% endif %}
             <div class="muted" style="font-size:.74rem">{{ p.trades }} trade{{ '' if p.trades == 1 else 's' }}</div>
           {%- else %}<span class="muted">—</span>{% endif %}</td>
         <td class="mono muted wide" style="text-align:right;font-size:.82rem">
@@ -539,22 +541,10 @@
   {# Token/token pairs (Params.token_pairs_from, 2026-10-06): one token priced in
      another, matched by the chain itself when two orders cross. #}
   <div class="panel">
-    <h3 style="margin:0 0 6px">Token pairs</h3>
-    <p class="muted" style="font-size:.84rem;margin:0 0 10px">Trade one token straight for another.
-      An order that meets the book trades in the block it lands in; nobody has to be online to fill it.</p>
-    {% if token_pairs %}
-    <table class="markets" style="width:100%;font-size:.88rem;margin-bottom:10px">
-      <tr class="muted"><th style="text-align:left">Pair</th><th style="text-align:right">Last</th>
-        <th style="text-align:right">Bid</th><th style="text-align:right">Ask</th><th style="text-align:right">Trades</th></tr>
-      {% for p in token_pairs %}
-      <tr><td><a href="/exchange/pairs/{{ p.base.property_id }}/{{ p.quote.property_id }}">{{ wall(p.base.name, 'token name') }}/{{ wall(p.quote.name, 'token name') }}</a></td>
-        <td style="text-align:right">{{ "%.8f"|format(p.last)|trim('0')|trim('.') if p.last is not none else '—' }}</td>
-        <td style="text-align:right">{{ "%.8f"|format(p.bid)|trim('0')|trim('.') if p.bid is not none else '—' }}</td>
-        <td style="text-align:right">{{ "%.8f"|format(p.ask)|trim('0')|trim('.') if p.ask is not none else '—' }}</td>
-        <td style="text-align:right">{{ p.trades }}</td></tr>
-      {% endfor %}
-    </table>
-    {% endif %}
+    <h3 style="margin:0 0 6px">Trade one token for another</h3>
+    <p class="muted" style="font-size:.84rem;margin:0 0 10px">Pick any two tokens to open their market; once it has
+      an order it is listed above with the rest. An order that meets the book trades in the block it lands in;
+      nobody has to be online to fill it.</p>
     <form method="get" action="/exchange/pairs" class="row" style="gap:8px;align-items:flex-end;margin:0">
       <div class="field" style="flex:1 1 160px;margin:0"><label>Buy or sell</label>
         <select name="base">{% for t in pair_tokens %}<option value="{{ t.property_id }}">{{ wall_text(t.name, 'token') }} (#{{ t.property_id }})</option>{% endfor %}</select></div>
