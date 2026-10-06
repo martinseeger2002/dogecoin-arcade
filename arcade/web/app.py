@@ -20616,6 +20616,257 @@ def create_app(state: AppState) -> FastAPI:
                       height=index.indexed_height(),
                       tags=_tags_for([o["address"] for o in book["asks"] + book["bids"]]))
 
+    # --- token/token pairs (Params.token_pairs_from, 2026-10-06) ----------------
+    #
+    # The operator: "token to token pairs on the token exchange so that people can
+    # exchange one token for another token. Instead of only test net coins."
+    # A pair is BASE/QUOTE: an amount of BASE at a price in QUOTE per whole
+    # BASE. Both sides are ledger balances, so the engine matches a crossing
+    # order in its own block (state.Engine._pair_order): nobody has to be
+    # online to fill it, and a buy holds its QUOTE back exactly as a sell holds
+    # its BASE.
+
+    def _pairs_live(chain, index) -> None:
+        since = getattr(chain.params, "token_pairs_from", None)
+        if since is None:
+            raise tokenlib.TokenError(
+                f"token-for-token pairs are not switched on on {chain.label} yet.")
+        if (index.indexed_height() or 0) + 1 < since:
+            raise tokenlib.TokenError(
+                f"token-for-token pairs start at block {since:,} on {chain.label}; "
+                f"this node is at {index.indexed_height() or 0:,}.")
+
+    def _pair_props(index, base, quote):
+        b, q = index.property(int(base or 0)), index.property(int(quote or 0))
+        if b is None or q is None:
+            raise tokenlib.TokenError("a pair is two tokens this chain has.")
+        if b["property_id"] == q["property_id"]:
+            raise tokenlib.TokenError("a pair is two different tokens.")
+        return b, q
+
+    def _pair_message(index, base_prop, quote_prop, side, amount, price, address):
+        """(MetaDExTrade, what) for `side` ("buy" or "sell" BASE) of `amount`
+        BASE at `price` QUOTE per whole BASE. Two whole numbers go on the
+        chain and the price is their ratio, so a price that does not divide
+        even is refused rather than rounded into one nobody typed."""
+        if side not in ("buy", "sell"):
+            raise ValueError("an order buys or sells, and says which")
+        units = parse_amount(str(amount or ""), base_prop["divisible"])
+        each = parse_amount(str(price or ""), quote_prop["divisible"])
+        if units <= 0 or each <= 0:
+            raise tokenlib.TokenError("an amount and a price, both above zero.")
+        raw = units * each
+        scale = COIN if base_prop["divisible"] else 1
+        if raw % scale:
+            raise tokenlib.TokenError(
+                f"that price does not come out in whole units of "
+                f"{wall_plain(quote_prop['name'], 'the price token')}; change the "
+                f"price or the amount until it divides even.")
+        total = raw // scale
+        if total <= 0:
+            raise tokenlib.TokenError("that comes to less than one unit of the price token.")
+        sold, sold_amount = (base_prop, units) if side == "sell" else (quote_prop, total)
+        held = index.balance(address, sold["property_id"]) - index.pending_sends(address, sold["property_id"])
+        if held < sold_amount:
+            raise tokenlib.TokenError(
+                f"{address} holds {format_amount(max(0, held), sold['divisible'])} "
+                f"{wall_plain(sold['name'], 'of it')}, not "
+                f"{format_amount(sold_amount, sold['divisible'])}. An order holds "
+                f"what it sells back from the block it lands in.")
+        if side == "sell":
+            message = P.MetaDExTrade(property_id_for_sale=base_prop["property_id"],
+                                     amount_for_sale=units,
+                                     property_id_desired=quote_prop["property_id"],
+                                     amount_desired=total)
+        else:
+            message = P.MetaDExTrade(property_id_for_sale=quote_prop["property_id"],
+                                     amount_for_sale=total,
+                                     property_id_desired=base_prop["property_id"],
+                                     amount_desired=units)
+        what = (f"{side} {format_amount(units, base_prop['divisible'])} "
+                f"{wall_plain(base_prop['name'], 'tokens')} for "
+                f"{format_amount(total, quote_prop['divisible'])} "
+                f"{wall_plain(quote_prop['name'], 'tokens')}")
+        return message, what
+
+    def _pair_cancel_message(base_prop, quote_prop, side):
+        if side not in ("buy", "sell"):
+            raise ValueError("a cancel names buys or sells")
+        sale, want = ((base_prop, quote_prop) if side == "sell" else (quote_prop, base_prop))
+        return P.MetaDExCancelPair(property_id_for_sale=sale["property_id"],
+                                   property_id_desired=want["property_id"])
+
+    def _token_pair_rows(index, chain) -> list[dict]:
+        """The Tokens tab's pairs: every two-token market, its last price and
+        the best of each side, BASE/QUOTE with the lower property id first."""
+        out = []
+        for a, b in index.token_pairs():
+            base, quote = index.property(a), index.property(b)
+            if base is None or quote is None:
+                continue
+            book = index.pair_book(a, b, limit=1)
+            done = index.pair_trades(a, b, limit=1)
+            to = lambda fr: float(fr) * ((COIN if base["divisible"] else 1)
+                                         / (COIN if quote["divisible"] else 1))
+            out.append({"base": base, "quote": quote,
+                        "ask": to(book["asks"][0]["price"]) if book["asks"] else None,
+                        "bid": to(book["bids"][0]["price"]) if book["bids"] else None,
+                        "last": (chartlib.pair_prices(done, base["divisible"], quote["divisible"])
+                                 or [{}])[0].get("price"),
+                        "trades": len(index.pair_trades(a, b, limit=5000))})
+        return out
+
+    @app.get("/exchange/pairs")
+    def exchange_pairs_open(base: str = "", quote: str = ""):
+        """The "open a pair" box: two token ids to the pair's own page."""
+        try:
+            return RedirectResponse(f"/exchange/pairs/{int(base)}/{int(quote)}", status_code=303)
+        except ValueError:
+            return RedirectResponse("/exchange?tab=tokens", status_code=303)
+
+    @app.get("/exchange/pairs/{base}/{quote}", response_class=HTMLResponse)
+    def exchange_token_pair(request: Request, base: int, quote: int):
+        """BASE/QUOTE: its book, what traded, the chart, and the order form."""
+        chain, index = _token_chain()
+        base_prop, quote_prop = index.property(base), index.property(quote)
+        if base_prop is None or quote_prop is None or base == quote:
+            raise HTTPException(status_code=404, detail="a pair is two different tokens this node knows")
+        book = index.pair_book(base, quote)
+        done = index.pair_trades(base, quote)
+        points = chartlib.pair_prices(done, base_prop["divisible"], quote_prop["divisible"])
+        frame = chartlib.timeframe(chartlib.pick_timeframe(points))
+        scale = ((COIN if base_prop["divisible"] else 1) / (COIN if quote_prop["divisible"] else 1))
+        for row in book["asks"] + book["bids"]:
+            row["each"] = float(row["price"]) * scale
+            row["base_shown"] = format_amount(row["base"], base_prop["divisible"])
+            row["quote_shown"] = format_amount(row["quote"], quote_prop["divisible"])
+        public = _account_view(request)
+        viewer = "wallet"
+        if public:
+            viewer = "account" if signed_in(request) is not None else "nobody"
+        owned, account_address = set(), ""
+        try:
+            if viewer == "wallet":
+                with chain.rpc() as rpc:
+                    owned = set(_ledger_addresses(rpc))
+            elif viewer == "account":
+                account_address = _account_address(signed_in(request).pubkey, chain) or ""
+                owned = {account_address} if account_address else set()
+        except HTTPException:
+            raise
+        except Exception:
+            owned = set()
+        for row in book["asks"] + book["bids"]:
+            row["mine"] = row["address"] in owned
+        held_base = sum(index.balance(a, base) for a in owned)
+        held_quote = sum(index.balance(a, quote) for a in owned)
+        since = getattr(chain.params, "token_pairs_from", None)
+        return render(request, "pair_tokens.html", chain=chain, base=base_prop, quote=quote_prop,
+                      book=book, trades=[dict(t, base_shown=format_amount(t["base"], base_prop["divisible"]),
+                                              quote_shown=format_amount(t["quote"], quote_prop["divisible"]),
+                                              each=(t["quote"] / t["base"]) * scale if t["base"] else None)
+                                         for t in done[:20]],
+                      stats=chartlib.last_and_change(points),
+                      slots=chartlib.candles(points, buckets=frame[2], span=frame[1]),
+                      viewer=viewer, account_address=account_address,
+                      held_base=format_amount(held_base, base_prop["divisible"]),
+                      held_quote=format_amount(held_quote, quote_prop["divisible"]),
+                      live=since is not None and (index.indexed_height() or 0) + 1 >= since,
+                      since=since, height=index.indexed_height())
+
+    @app.post("/exchange/pair-order")
+    def place_pair_order(base: str = Form(""), quote: str = Form(""), side: str = Form("buy"),
+                         amount: str = Form(""), price: str = Form(""), csrf_token: str = Form("")):
+        """The node's own wallet puts an order on a token/token pair."""
+        check_csrf(csrf_token)
+        chain, index = _token_chain()
+        try:
+            _pairs_live(chain, index)
+            base_prop, quote_prop = _pair_props(index, base, quote)
+            with chain.rpc() as rpc:
+                home = state.home_address(chain)
+                message, what = _pair_message(index, base_prop, quote_prop, side, amount, price, home)
+                sender = tokenlib.TokenSender(rpc, chain.params)
+                txid = sender.broadcast(sender.prepare(home, message.encode()))
+            state.flash(f"Order sent in {txid}: {what}. It meets the book when its block "
+                        f"lands; what is not matched then stands until you cancel it.", "ok")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse(f"/exchange/pairs/{base}/{quote}", status_code=303)
+
+    @app.post("/exchange/pair-order/cancel")
+    def cancel_pair_order(base: str = Form(""), quote: str = Form(""), side: str = Form("sell"),
+                          csrf_token: str = Form("")):
+        """The node's own wallet takes every buy (or every sell) it has on a pair off the book."""
+        check_csrf(csrf_token)
+        chain, index = _token_chain()
+        try:
+            base_prop, quote_prop = _pair_props(index, base, quote)
+            message = _pair_cancel_message(base_prop, quote_prop, side)
+            with chain.rpc() as rpc:
+                home = state.home_address(chain)
+                sender = tokenlib.TokenSender(rpc, chain.params)
+                txid = sender.broadcast(sender.prepare(home, message.encode()))
+            state.flash(f"Cancel sent in {txid}: your {side} orders on this pair come off the "
+                        f"book, and what they held comes back, when its block lands.", "ok")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse(f"/exchange/pairs/{base}/{quote}", status_code=303)
+
+    def _account_pair_offer(request: Request, payload: Any, build):
+        """An account's pair order or cancel: built here, signed in its own tab
+        (the same road /account/order takes)."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse({"detail": f"this account has no {chain.label.lower()} address yet"},
+                                status_code=400)
+        try:
+            index = state.token_index(chain)
+            base_prop, quote_prop = _pair_props(index, said.get("base"), said.get("quote"))
+            message, what = build(chain, index, base_prop, quote_prop, said, address)
+            outputs = _class_c_or_b(chain, address, message.encode(),
+                                    _coin_pubkey(account.pubkey, chain), wrap=False)
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address, outputs, rate=fees.MIN_FEE_PER_KB, what=what,
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "trade")
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned, what)
+        return JSONResponse({"offer": offer.id, "what": what, "chain": chain.network,
+                             **unsigned.as_json()})
+
+    @app.post("/account/pair-order")
+    def account_pair_order(request: Request, payload: Any = Body(None)):
+        """An account's order on a token/token pair, for its own tab to sign."""
+        def build(chain, index, b, q, said, address):
+            _pairs_live(chain, index)
+            return _pair_message(index, b, q, str(said.get("side") or ""), said.get("amount"),
+                                 said.get("price"), address)
+        return _account_pair_offer(request, payload, build)
+
+    @app.post("/account/pair-order/cancel")
+    def account_pair_cancel(request: Request, payload: Any = Body(None)):
+        """An account takes every buy (or sell) it has on a pair off the book."""
+        def build(chain, index, b, q, said, address):
+            side = str(said.get("side") or "")
+            return (_pair_cancel_message(b, q, side),
+                    f"cancel your {side} orders on {wall_plain(b['name'], 'this')}/"
+                    f"{wall_plain(q['name'], 'that')}")
+        return _account_pair_offer(request, payload, build)
+
     @app.post("/exchange/order")
     def place_order(request: Request, property_id: str = Form(""),
                     side: str = Form("ask"), amount: str = Form(""),
@@ -21431,6 +21682,12 @@ def create_app(state: AppState) -> FastAPI:
             # the ones that have traded, last price and the day's move
             # (D-048). Clicking one opens its own page.
             data["pairs"] = _pairs(index, trades)
+            try:
+                data["token_pairs"] = _token_pair_rows(index, chain)
+                data["pair_tokens"] = [dict(r) for r in index.properties()][:500] \
+                    if hasattr(index, "properties") else []
+            except Exception:
+                data["token_pairs"], data["pair_tokens"] = [], []
         elif tab == "market":
             # A collection is a market of its own, and the marketplace is the
             # list of them -- the same table the Tokens tab draws for pairs.

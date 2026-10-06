@@ -78,6 +78,15 @@ class Params:
     #: as an invalid inscription, so the two would disagree about who owns what.
     #: None: not read on this chain yet.
     bundles_from: int | None = None
+    #: From this block an order (type 25) may pair two TOKENS, neither side the
+    #: coin, and the engine MATCHES it (2026-10-06, the operator: "token to token pairs
+    #: on the token exchange so that people can exchange one token for another").
+    #: Both sides are balances the ledger holds, so a crossing order settles in
+    #: its own block with no second signature: the new order takes the resting
+    #: ones at their price, best price first, then the oldest. Before this
+    #: height such an order is invalid, so it gets its own height (D-062's
+    #: reason). None: not on this chain yet.
+    token_pairs_from: int | None = None
     #: From this block a swap may take tokens out of the reserve a standing
     #: order holds, and reduce that order by what it took. Before it, those
     #: tokens are locked and an ask can only be filled after it is cancelled.
@@ -305,6 +314,7 @@ REGTEST = Params(
     activation_height=0,
     swaps_from=0,
     bundles_from=0,
+    token_pairs_from=0,
     asks_from=0,
     bid_fills_from=0,
     fills_from=0,

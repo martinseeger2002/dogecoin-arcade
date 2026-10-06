@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% import "_chart.html" as chart %}
+{% set bname = wall_text(base.name, 'a token') %}{% set qname = wall_text(quote.name, 'a token') %}
+{% block title %}{{ bname }}/{{ qname }} · Exchange · DogecoinArcade{% endblock %}
+{% block body %}
+{# A token/token pair (Params.token_pairs_from, 2026-10-06). BASE/QUOTE: an amount
+   of BASE at a price in QUOTE per whole BASE. Both sides are ledger balances, so
+   the chain matches a crossing order in its own block -- nobody has to be online
+   to fill it, and a buy holds its QUOTE back exactly as a sell holds its BASE. #}
+<a class="back-link" href="/exchange?tab=tokens">&#8592; All markets</a>
+
+<div class="markethead">
+  <div style="min-width:0;overflow-wrap:anywhere">
+    <h1 style="margin:0;font-size:1.3rem">{{ wall(base.name, 'token name') }}<span class="muted">/{{ wall(quote.name, 'token name') }}</span></h1>
+    <div class="muted" style="font-size:.78rem">#{{ base.property_id }} priced in #{{ quote.property_id }}
+      &middot; <a href="/exchange/pairs/{{ quote.property_id }}/{{ base.property_id }}">flip to {{ qname }}/{{ bname }}</a>
+      &middot; <a href="/tokens/{{ base.property_id }}">{{ bname }}</a>
+      &middot; <a href="/tokens/{{ quote.property_id }}">{{ qname }}</a></div>
+  </div>
+</div>
+
+{% if not live %}
+<div class="panel"><p class="msg err" style="margin:0">Token-for-token pairs are
+  {% if since is none %}not switched on on {{ chain.label }} yet{% else %}switched on from block
+  {{ "{:,}".format(since) }}; this node is at {{ "{:,}".format(height or 0) }}{% endif %}.
+  The book below fills in once they are.</p></div>
+{% endif %}
+
+<div class="panel">
+  {{ chart.headline(stats, qname ~ ' per ' ~ bname) }}
+  {{ chart.candles(slots, qname ~ ' each') }}
+</div>
+
+<div class="grid2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">
+  <div class="panel">
+    <h3 style="margin:0 0 8px">Book</h3>
+    <table class="book" style="width:100%;font-size:.86rem">
+      <tr class="muted"><th style="text-align:left">Price ({{ qname }})</th><th style="text-align:right">{{ bname }}</th><th style="text-align:right">{{ qname }}</th></tr>
+      {% for o in book.asks|reverse %}
+      <tr><td style="color:var(--bad)">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}{% if o.mine %} <span class="muted">(yours)</span>{% endif %}</td>
+          <td style="text-align:right">{{ o.base_shown }}</td><td style="text-align:right">{{ o.quote_shown }}</td></tr>
+      {% endfor %}
+      <tr><td colspan="3" class="muted" style="text-align:center;font-size:.76rem;padding:4px 0">
+        {% if not book.asks and not book.bids %}No orders yet{% else %}asks above, bids below{% endif %}</td></tr>
+      {% for o in book.bids %}
+      <tr><td style="color:var(--ok)">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}{% if o.mine %} <span class="muted">(yours)</span>{% endif %}</td>
+          <td style="text-align:right">{{ o.base_shown }}</td><td style="text-align:right">{{ o.quote_shown }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <div class="panel">
+    <h3 style="margin:0 0 8px">Recent trades</h3>
+    {% if trades %}
+    <table style="width:100%;font-size:.86rem">
+      <tr class="muted"><th style="text-align:left">Price</th><th style="text-align:right">{{ bname }}</th><th style="text-align:right">Block</th></tr>
+      {% for t in trades %}
+      <tr><td style="color:{{ 'var(--ok)' if t.side == 'buy' else 'var(--bad)' }}">{{ "%.8f"|format(t.each)|trim('0')|trim('.') if t.each is not none else '—' }}</td>
+          <td style="text-align:right">{{ t.base_shown }}</td><td style="text-align:right">{{ "{:,}".format(t.height) }}</td></tr>
+      {% endfor %}
+    </table>
+    {% else %}<p class="muted" style="margin:0">Nothing has traded on this pair yet.</p>{% endif %}
+  </div>
+</div>
+
+<div class="panel">
+  <h3 style="margin:0 0 10px">Trade {{ bname }} for {{ qname }}</h3>
+  {% if viewer == 'nobody' %}
+    <p class="muted" style="margin:0">Sign in to put an order on this pair.</p>
+  {% elif viewer == 'account' and not account_address %}
+    <p class="muted" style="margin:0">This account has no {{ chain.label|lower }} address yet.</p>
+  {% else %}
+  <form method="post" action="/exchange/pair-order" id="pair-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="base" value="{{ base.property_id }}">
+    <input type="hidden" name="quote" value="{{ quote.property_id }}">
+    <div class="sides">
+      <label><input type="radio" name="side" value="buy" checked><span>Buy {{ bname }}</span></label>
+      <label><input type="radio" name="side" value="sell"><span>Sell {{ bname }}</span></label>
+    </div>
+    <div class="row" style="gap:10px;align-items:flex-end">
+      <div class="field" style="flex:1 1 150px;margin:0"><label>Amount of {{ bname }}</label>
+        <input autocomplete="off" name="amount" id="pair-amount" inputmode="decimal" placeholder="0"></div>
+      <div class="field" style="flex:1 1 150px;margin:0"><label>Price, {{ qname }} each</label>
+        <input autocomplete="off" name="price" id="pair-price" inputmode="decimal" placeholder="0"></div>
+      <button {% if viewer == 'account' %}type="button" id="pair-order"{% else %}type="submit"{% endif %}
+              class="{{ 'danger' if chain.is_mainnet }}" style="flex:0 0 auto" {% if not live %}disabled{% endif %}>Place order</button>
+    </div>
+  </form>
+  <p class="msg err" id="pair-trouble" hidden></p>
+  <p class="msg ok" id="pair-news" hidden></p>
+  <p class="muted" style="font-size:.78rem;margin:10px 0 0">You hold {{ held_base }} {{ bname }} and
+    {{ held_quote }} {{ qname }}. An order that meets the book trades in the block it lands in, at the
+    resting orders' prices, best first; whatever is not matched stands at your price, its tokens held
+    back, until it fills or you cancel it.</p>
+  <div class="row" style="gap:8px;margin-top:10px">
+    {% for which in ('buy', 'sell') %}
+    <form method="post" action="/exchange/pair-order/cancel" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="base" value="{{ base.property_id }}">
+      <input type="hidden" name="quote" value="{{ quote.property_id }}">
+      <input type="hidden" name="side" value="{{ which }}">
+      <button {% if viewer == 'account' %}type="button" data-cancel="{{ which }}"{% else %}type="submit"{% endif %}
+              class="secondary">Cancel my {{ which }} orders</button>
+    </form>
+    {% endfor %}
+  </div>
+  {% if viewer == 'account' %}
+  <script type="module">
+  /* An account's pair order: built by /account/pair-order out of this account's own
+     address, read back out of its bytes by wallet.checked, and signed in this tab. */
+  import * as wallet from "/wallet.js";
+  const $ = (id) => document.getElementById(id);
+  const say = (t) => { $("pair-trouble").textContent = t; $("pair-trouble").hidden = !t; if (t) $("pair-news").hidden = true; };
+  const news = (t) => { $("pair-news").textContent = t; $("pair-news").hidden = !t; if (t) $("pair-trouble").hidden = true; };
+  const CHAIN = {network: "{{ chain.network }}", version: {{ chain.params.pubkeyhash_version }}};
+  const PAIR = {base: {{ base.property_id }}, quote: {{ quote.property_id }}};
+  async function send(route, body, verb, after) {
+    const held = (await wallet.opened(CHAIN)) || await arcadeKeys(CHAIN);
+    if (!held) throw new Error("your wallet is not open in this tab");
+    const asked = await fetch(route, {method: "POST", headers: {"Content-Type": "application/json"},
+                                      body: JSON.stringify({...body, ...PAIR, chain: CHAIN.network})});
+    const offer = await asked.json();
+    if (!asked.ok) throw new Error(offer.detail || "that cannot be done");
+    const shown = await wallet.checked(offer, held);
+    if (!(await arcadeAsk(shown.what, `It costs ${shown.coinsOf(shown.fee)} in fees. ` + shown.says, verb))) return;
+    await wallet.confirm(held, offer);
+    news(after);
+  }
+  const btn = $("pair-order");
+  if (btn) btn.onclick = async () => {
+    const side = (document.querySelector("input[name=side]:checked") || {value: "buy"}).value;
+    btn.disabled = true;
+    try {
+      await send("/account/pair-order", {side, amount: $("pair-amount").value.trim(), price: $("pair-price").value.trim()},
+                 "Place it", "Sent. It meets the book when its block lands; what is not matched then stands until you cancel it.");
+    } catch (e) { say(String(e.message || e)); } finally { btn.disabled = false; }
+  };
+  document.querySelectorAll("[data-cancel]").forEach((b) => b.onclick = async () => {
+    b.disabled = true;
+    try { await send("/account/pair-order/cancel", {side: b.dataset.cancel}, "Cancel them",
+                     "Sent. Your orders come off the book, and what they held comes back, when its block lands."); }
+    catch (e) { say(String(e.message || e)); } finally { b.disabled = false; }
+  });
+  </script>
+  {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

@@ -209,6 +209,25 @@ CREATE TABLE IF NOT EXISTS take_trade (
     maker         TEXT    NOT NULL
 );
 
+-- A match between two token/token orders (Params.token_pairs_from): the
+-- taker's order (txid) met a resting one (maker_txid). `gave` of property
+-- `gave_property` went from taker to maker and `got` of `got_property` came
+-- back, at the maker's price. One row per resting order it met, in order.
+CREATE TABLE IF NOT EXISTS pair_trade (
+    txid          TEXT    NOT NULL,
+    seq           INTEGER NOT NULL,
+    block_height  INTEGER NOT NULL,
+    position      INTEGER NOT NULL,
+    taker         TEXT    NOT NULL,
+    maker         TEXT    NOT NULL,
+    maker_txid    TEXT    NOT NULL,
+    gave_property INTEGER NOT NULL,
+    gave          INTEGER NOT NULL,
+    got_property  INTEGER NOT NULL,
+    got           INTEGER NOT NULL,
+    PRIMARY KEY (txid, seq)
+);
+
 CREATE TABLE IF NOT EXISTS book_order (
     txid          TEXT    PRIMARY KEY,
     block_height  INTEGER NOT NULL,
@@ -306,6 +325,7 @@ def install_schema(db: Database) -> None:
     register_journalled_table("nft_ask", ("txid",))
     register_journalled_table("inscription_move", ("txid", "inscription"))
     register_journalled_table("take_trade", ("txid",))
+    register_journalled_table("pair_trade", ("txid", "seq"))
     register_journalled_table("book_order", ("txid",))
     register_journalled_table("inscription_chunk",
                               ("sender", "inscription_id", "countdown"))
@@ -965,8 +985,11 @@ class Engine:
         if sale == want:
             raise InvalidTransaction("an order has two different sides")
         if self.COIN_PROPERTY not in (sale, want):
-            raise InvalidTransaction(
-                "one side of an order is this chain's coin (property 0)")
+            since = getattr(self.params, "token_pairs_from", None)
+            if since is None or rtx.block_height < since:
+                raise InvalidTransaction(
+                    "one side of an order is this chain's coin (property 0)")
+            return self._pair_order(rtx, msg)
         if not 0 < msg.amount_for_sale <= MAX_AMOUNT:
             raise InvalidTransaction(f"amount {msg.amount_for_sale} out of range")
         if not 0 < msg.amount_desired <= MAX_AMOUNT:
@@ -994,6 +1017,90 @@ class Engine:
             "want_property": want, "want_amount": msg.amount_desired,
             "reserved": reserved,
         })
+
+    def _pair_order(self, rtx: ArcadeTransaction, msg: P.MetaDExTrade) -> None:
+        """Type 25 with two tokens (Params.token_pairs_from): sell `a` of A for
+        `b` of B, matched against the book at once.
+
+        Both sides are balances the ledger holds, so unlike a coin pair the
+        engine can settle a cross itself: the new order (the taker) meets the
+        resting orders selling B for A whose price is at or better than its
+        own, best price first and then the oldest, and trades at THEIR price.
+        It gets as much B as its A buys there; the maker is never paid less
+        than its price (amounts round in the maker's favour). What is left of
+        the new order rests on the book, its A held back, at its own price.
+        A sender's own resting orders are passed over, never traded against.
+        """
+        from fractions import Fraction
+        sale, want = msg.property_id_for_sale, msg.property_id_desired
+        a, b = msg.amount_for_sale, msg.amount_desired
+        if not 0 < a <= MAX_AMOUNT:
+            raise InvalidTransaction(f"amount {a} out of range")
+        if not 0 < b <= MAX_AMOUNT:
+            raise InvalidTransaction(f"amount {b} out of range")
+        for pid in (sale, want):
+            if self.get_property(pid) is None:
+                raise InvalidTransaction(f"property {pid} does not exist")
+        available = self.get_balance(rtx.sender, sale)["balance"]
+        if available < a:
+            raise InvalidTransaction(
+                f"{rtx.sender} holds {available} of property {sale}, not {a}")
+        self._move_to_reserve(rtx.sender, sale, a, "metadex_reserve")
+
+        rows = [dict(r) for r in self.state.db.conn.execute(
+            "SELECT * FROM book_order WHERE sale_property=? AND want_property=? "
+            "AND address<>? AND sale_amount>0 AND want_amount>0",
+            (want, sale, rtx.sender)).fetchall()]
+        # the maker's price in A per B; cheapest first, then first on the book
+        rows.sort(key=lambda r: (Fraction(r["want_amount"], r["sale_amount"]),
+                                 r["block_height"], r["position"], r["txid"]))
+        left, seq = a, 0
+        for r in rows:
+            if left <= 0:
+                break
+            ma, mb = r["want_amount"], r["sale_amount"]      # maker wants ma A for mb B
+            if ma * b > a * mb:                              # dearer than the taker's price
+                break
+            got = min(mb, left * mb // ma)                   # B the taker's A buys there
+            gave = -(-got * ma // mb)                        # A for it, rounded up for the maker
+            while got > 0 and gave > left:
+                got -= 1
+                gave = -(-got * ma // mb)
+            if got <= 0:
+                continue
+            # taker's A: from its reserve to the maker
+            self.debit(rtx.sender, sale, gave, "metadex_reserve")
+            self.credit(r["address"], sale, gave)
+            # maker's B: from its reserve to the taker
+            self.debit(r["address"], want, got, "metadex_reserve")
+            self.credit(rtx.sender, want, got)
+            rest = mb - got
+            if rest <= 0:
+                self.state.delete("book_order", {"txid": r["txid"]})
+            else:
+                rest_want = -(-rest * ma // mb)              # same price for what is left
+                self.state.update("book_order", {"txid": r["txid"]}, {
+                    "sale_amount": rest, "want_amount": max(1, rest_want),
+                    "reserved": r["reserved"] - got})
+            self.state.insert("pair_trade", {
+                "txid": rtx.txid, "seq": seq, "block_height": rtx.block_height,
+                "position": rtx.position, "taker": rtx.sender,
+                "maker": r["address"], "maker_txid": r["txid"],
+                "gave_property": sale, "gave": gave,
+                "got_property": want, "got": got})
+            seq += 1
+            left -= gave
+
+        rest_want = -(-left * b // a) if left > 0 else 0     # the taker's own price
+        if left > 0 and rest_want > 0:
+            self.state.insert("book_order", {
+                "txid": rtx.txid, "block_height": rtx.block_height,
+                "position": rtx.position, "address": rtx.sender,
+                "sale_property": sale, "sale_amount": left,
+                "want_property": want, "want_amount": rest_want,
+                "reserved": left})
+        elif left > 0:
+            self._move_from_reserve(rtx.sender, sale, left, "metadex_reserve")
 
     def _book_cancel_price(self, rtx: ArcadeTransaction,
                            msg: P.MetaDExCancelPrice) -> None:

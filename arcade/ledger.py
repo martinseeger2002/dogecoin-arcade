@@ -1163,7 +1163,8 @@ class LedgerIndex:
 
         with self.open() as db:
             rows = [dict(r) for r in db.conn.execute(
-                "SELECT * FROM book_order WHERE sale_property = ? OR want_property = ?",
+                "SELECT * FROM book_order WHERE (sale_property = ? AND want_property = 0) "
+                "OR (want_property = ? AND sale_property = 0)",
                 (property_id, property_id))]
         if pool:
             fresh, cancelled = self.pending_orders()
@@ -1368,13 +1369,94 @@ class LedgerIndex:
         with self.open() as db:
             rows = db.conn.execute(
                 "SELECT DISTINCT CASE WHEN sale_property = 0 THEN want_property "
-                "ELSE sale_property END AS pid FROM book_order").fetchall()
+                "ELSE sale_property END AS pid FROM book_order "
+                "WHERE sale_property = 0 OR want_property = 0").fetchall()
         pairs = {int(r["pid"]) for r in rows if r["pid"]}
         if pool:
             fresh, _ = self.pending_orders()
             pairs |= {o["want_property"] if o["sale_property"] == 0
                       else o["sale_property"] for o in fresh}
         return sorted(p for p in pairs if p)
+
+    # --- token/token pairs (Params.token_pairs_from) -------------------------
+    #
+    # A pair is written BASE/QUOTE: what is bought and sold, and what it is
+    # priced in. Either way round is the same market -- an order selling LOGS
+    # for GOLD is an ask on LOGS/GOLD and a bid on GOLD/LOGS -- so every reader
+    # takes the two ids and answers in that orientation.
+
+    def token_pairs(self) -> list[tuple[int, int]]:
+        """Every two-token market with an order on it or a trade in it, each
+        once, lower property id first."""
+        with self.open() as db:
+            rows = db.conn.execute(
+                "SELECT sale_property AS a, want_property AS b FROM book_order "
+                "WHERE sale_property <> 0 AND want_property <> 0").fetchall()
+            try:
+                rows += db.conn.execute(
+                    "SELECT gave_property AS a, got_property AS b FROM pair_trade").fetchall()
+            except Exception:
+                pass                  # a ledger from before pairs
+        return sorted({(min(r["a"], r["b"]), max(r["a"], r["b"])) for r in rows})
+
+    def pair_book(self, base: int, quote: int, limit: int = 50) -> dict[str, list[dict]]:
+        """BASE/QUOTE's book. An ask sells BASE for QUOTE, a bid sells QUOTE for
+        BASE; each row carries `base` and `quote` amounts and `price` (QUOTE per
+        BASE, a Fraction of raw units). Asks cheapest first, bids dearest first,
+        then oldest. Mined orders only: the engine matches a pair order the
+        block it lands, so an unmined one may never rest at all."""
+        from fractions import Fraction
+        with self.open() as db:
+            rows = [dict(r) for r in db.conn.execute(
+                "SELECT * FROM book_order WHERE (sale_property=? AND want_property=?) "
+                "OR (sale_property=? AND want_property=?)", (base, quote, quote, base))]
+        asks, bids = [], []
+        for r in rows:
+            if r["sale_property"] == base:
+                r["base"], r["quote"] = r["sale_amount"], r["want_amount"]
+                if r["base"]: asks.append(r)
+            else:
+                r["base"], r["quote"] = r["want_amount"], r["sale_amount"]
+                if r["base"]: bids.append(r)
+            if r["base"]:
+                r["price"] = Fraction(r["quote"], r["base"])
+        when = lambda r: (r["block_height"], r["position"])
+        asks.sort(key=lambda r: (r["price"], when(r)))
+        bids.sort(key=lambda r: (-r["price"], when(r)))
+        return {"asks": asks[:limit], "bids": bids[:limit]}
+
+    def pair_trades(self, base: int, quote: int, limit: int = 500) -> list[dict]:
+        """What traded on BASE/QUOTE, newest first: book matches (pair_trade)
+        and two-person token-for-token swaps alike, as {when, height, txid,
+        base, quote} raw amounts, `side` "buy" when the taker bought BASE."""
+        from . import inscriptions as I
+        out = []
+        with self.open() as db:
+            try:
+                rows = db.conn.execute(
+                    "SELECT t.*, b.time FROM pair_trade t JOIN block b ON b.height = t.block_height "
+                    "WHERE (t.gave_property=? AND t.got_property=?) OR (t.gave_property=? AND t.got_property=?)",
+                    (base, quote, quote, base)).fetchall()
+            except Exception:
+                rows = []
+        for r in rows:
+            buy = r["got_property"] == base
+            out.append({"when": r["time"], "height": r["block_height"], "txid": r["txid"],
+                        "base": r["got"] if buy else r["gave"], "quote": r["gave"] if buy else r["got"],
+                        "side": "buy" if buy else "sell", "taker": r["taker"], "maker": r["maker"]})
+        for t in self.trades(limit=5000):
+            g, k = t["give"], t["take"]
+            if g.kind != I.LEG_TOKEN or k.kind != I.LEG_TOKEN or not g.amount or not k.amount:
+                continue
+            if {g.property_id, k.property_id} != {base, quote}:
+                continue
+            sold_base = g.property_id == base
+            out.append({"when": t["when"], "height": t["height"], "txid": t["txid"],
+                        "base": g.amount if sold_base else k.amount,
+                        "quote": k.amount if sold_base else g.amount,
+                        "side": "sell" if sold_base else "buy", "taker": None, "maker": t["seller"]})
+        out.sort(key=lambda t: (t["height"], t["txid"]), reverse=True)
+        return out[:limit]
 
     def order(self, txid: str) -> dict | None:
         """One standing order, by the transaction that placed it.
@@ -1388,7 +1470,8 @@ class LedgerIndex:
                                   (str(txid),)).fetchone()
             return dict(row) if row else None
 
-    def orders_of(self, addresses: list[str], pool: bool = True) -> list[dict]:
+    def orders_of(self, addresses: list[str], pool: bool = True,
+                  pairs: bool = False) -> list[dict]:
         """This wallet's own standing orders, newest first.
 
         The pool first: an order you have just placed is yours whether or not
@@ -1402,7 +1485,12 @@ class LedgerIndex:
             mine = [dict(r) for r in db.conn.execute(
                 f"SELECT * FROM book_order WHERE address IN ({marks}) "
                 f"ORDER BY block_height DESC, position DESC", tuple(addresses))]
-        if not pool:
+        # Token/token orders (Params.token_pairs_from) have no coin side; every
+        # older reader of this list prices against the coin, so they are left
+        # out unless asked for: `pairs=True` gives ONLY those.
+        is_pair = lambda o: o["sale_property"] != 0 and o["want_property"] != 0
+        mine = [o for o in mine if is_pair(o) == pairs]
+        if not pool or pairs:
             return mine
         fresh, cancelled = self.pending_orders()
         here = set(addresses)
