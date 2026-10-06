@@ -37,13 +37,13 @@
     <table class="book" style="width:100%;font-size:.86rem">
       <tr class="muted"><th style="text-align:left">Price ({{ qname }})</th><th style="text-align:right">{{ bname }}</th><th style="text-align:right">{{ qname }}</th></tr>
       {% for o in book.asks|reverse %}
-      <tr><td style="color:var(--bad)">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}{% if o.mine %} <span class="muted">(yours)</span>{% endif %}</td>
+      <tr><td style="color:var(--bad)">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}{% if o.mine %} <span class="muted">(yours)</span>{% endif %}{% if o.pending %} <span class="muted" title="Broadcast, not in a block yet{{ ': it meets the book and trades when its block lands' if o.crosses }}">{{ '(trades when its block lands)' if o.crosses else '(pending)' }}</span>{% endif %}</td>
           <td style="text-align:right">{{ o.base_shown }}</td><td style="text-align:right">{{ o.quote_shown }}</td></tr>
       {% endfor %}
       <tr><td colspan="3" class="muted" style="text-align:center;font-size:.76rem;padding:4px 0">
         {% if not book.asks and not book.bids %}No orders yet{% else %}asks above, bids below{% endif %}</td></tr>
       {% for o in book.bids %}
-      <tr><td style="color:var(--ok)">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}{% if o.mine %} <span class="muted">(yours)</span>{% endif %}</td>
+      <tr><td style="color:var(--ok)">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}{% if o.mine %} <span class="muted">(yours)</span>{% endif %}{% if o.pending %} <span class="muted" title="Broadcast, not in a block yet{{ ': it meets the book and trades when its block lands' if o.crosses }}">{{ '(trades when its block lands)' if o.crosses else '(pending)' }}</span>{% endif %}</td>
           <td style="text-align:right">{{ o.base_shown }}</td><td style="text-align:right">{{ o.quote_shown }}</td></tr>
       {% endfor %}
     </table>

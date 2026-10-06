@@ -1170,7 +1170,8 @@ class LedgerIndex:
             fresh, cancelled = self.pending_orders()
             rows = [r for r in rows if r["txid"] not in cancelled]
             rows += [r for r in fresh
-                     if property_id in (r["sale_property"], r["want_property"])]
+                     if property_id in (r["sale_property"], r["want_property"])
+                     and 0 in (r["sale_property"], r["want_property"])]
         asks, bids = [], []
         for row in rows:
             selling_token = row["sale_property"] == property_id
@@ -1349,11 +1350,19 @@ class LedgerIndex:
             return None
 
         sale, want = msg.property_id_for_sale, msg.property_id_desired
-        if sale == want or 0 not in (sale, want):
+        if sale == want:
             return None
+        if 0 not in (sale, want):
+            # a token/token order (Params.token_pairs_from): shown from the pool
+            # like any other, one confirmation early (2026-10-06, the operator: "Can't
+            # the bid and ask orders be read from mempool?")
+            if getattr(self.params, "token_pairs_from", None) is None:
+                return None
+            if self.property(sale) is None or self.property(want) is None:
+                return None
         if not 0 < msg.amount_for_sale < 2 ** 63 or not 0 < msg.amount_desired < 2 ** 63:
             return None
-        if self.property(want if sale == 0 else sale) is None:
+        if 0 in (sale, want) and self.property(want if sale == 0 else sale) is None:
             return None
         return {**base, "cancels": "", "sale_property": sale,
                 "sale_amount": msg.amount_for_sale, "want_property": want,
@@ -1375,7 +1384,8 @@ class LedgerIndex:
         if pool:
             fresh, _ = self.pending_orders()
             pairs |= {o["want_property"] if o["sale_property"] == 0
-                      else o["sale_property"] for o in fresh}
+                      else o["sale_property"] for o in fresh
+                      if 0 in (o["sale_property"], o["want_property"])}
         return sorted(p for p in pairs if p)
 
     # --- token/token pairs (Params.token_pairs_from) -------------------------
@@ -1385,9 +1395,23 @@ class LedgerIndex:
     # for GOLD is an ask on LOGS/GOLD and a bid on GOLD/LOGS -- so every reader
     # takes the two ids and answers in that orientation.
 
-    def token_pairs(self) -> list[tuple[int, int]]:
-        """Every two-token market with an order on it or a trade in it, each
-        once, lower property id first."""
+    def pending_pair_sales(self, address: str, property_id: int) -> int:
+        """How much of a token this address has put on token/token orders that
+        are still in the pool: spoken for, though nothing is reserved until
+        their block lands, so a second order cannot sell the same tokens."""
+        fresh, _ = self.pending_orders()
+        return sum(o["sale_amount"] for o in fresh
+                   if o["address"] == address and o["sale_property"] == property_id
+                   and o["want_property"] != 0 and o["sale_property"] != 0)
+
+    def token_pairs(self, pool: bool = True) -> list[tuple[int, int]]:
+        """Every two-token market with an order on it (mined or in the pool) or
+        a trade in it, each once, lower property id first."""
+        extra = []
+        if pool:
+            fresh, _ = self.pending_orders()
+            extra = [{"a": o["sale_property"], "b": o["want_property"]} for o in fresh
+                     if o["sale_property"] and o["want_property"]]
         with self.open() as db:
             rows = db.conn.execute(
                 "SELECT sale_property AS a, want_property AS b FROM book_order "
@@ -1397,19 +1421,30 @@ class LedgerIndex:
                     "SELECT gave_property AS a, got_property AS b FROM pair_trade").fetchall()
             except Exception:
                 pass                  # a ledger from before pairs
-        return sorted({(min(r["a"], r["b"]), max(r["a"], r["b"])) for r in rows})
+        return sorted({(min(r["a"], r["b"]), max(r["a"], r["b"])) for r in list(rows) + extra})
 
-    def pair_book(self, base: int, quote: int, limit: int = 50) -> dict[str, list[dict]]:
+    def pair_book(self, base: int, quote: int, limit: int = 50,
+                  pool: bool = True) -> dict[str, list[dict]]:
         """BASE/QUOTE's book. An ask sells BASE for QUOTE, a bid sells QUOTE for
         BASE; each row carries `base` and `quote` amounts and `price` (QUOTE per
         BASE, a Fraction of raw units). Asks cheapest first, bids dearest first,
-        then oldest. Mined orders only: the engine matches a pair order the
-        block it lands, so an unmined one may never rest at all."""
+        then oldest.
+
+        `pool` adds what is broadcast and not mined yet, marked `pending`, after
+        the mined orders at its price, and drops what a pool cancel withdraws --
+        the coin book's rule (D-061). A pending order that crosses the mined
+        book is marked `crosses`: the engine will trade it when its block lands
+        rather than let it rest, so it is a price that is about to fill."""
         from fractions import Fraction
         with self.open() as db:
             rows = [dict(r) for r in db.conn.execute(
                 "SELECT * FROM book_order WHERE (sale_property=? AND want_property=?) "
                 "OR (sale_property=? AND want_property=?)", (base, quote, quote, base))]
+        if pool:
+            fresh, cancelled = self.pending_orders()
+            rows = [r for r in rows if r["txid"] not in cancelled]
+            rows += [dict(o) for o in fresh
+                     if {o["sale_property"], o["want_property"]} == {base, quote}]
         asks, bids = [], []
         for r in rows:
             if r["sale_property"] == base:
@@ -1420,9 +1455,15 @@ class LedgerIndex:
                 if r["base"]: bids.append(r)
             if r["base"]:
                 r["price"] = Fraction(r["quote"], r["base"])
-        when = lambda r: (r["block_height"], r["position"])
+        when = lambda r: (1, 0, 0) if r.get("pending") else (0, r["block_height"], r["position"])
         asks.sort(key=lambda r: (r["price"], when(r)))
         bids.sort(key=lambda r: (-r["price"], when(r)))
+        best_ask = next((r["price"] for r in asks if not r.get("pending")), None)
+        best_bid = next((r["price"] for r in bids if not r.get("pending")), None)
+        for r in asks:
+            r["crosses"] = bool(r.get("pending") and best_bid is not None and best_bid >= r["price"])
+        for r in bids:
+            r["crosses"] = bool(r.get("pending") and best_ask is not None and best_ask <= r["price"])
         return {"asks": asks[:limit], "bids": bids[:limit]}
 
     def pair_trades(self, base: int, quote: int, limit: int = 500) -> list[dict]:
@@ -1490,11 +1531,11 @@ class LedgerIndex:
         # out unless asked for: `pairs=True` gives ONLY those.
         is_pair = lambda o: o["sale_property"] != 0 and o["want_property"] != 0
         mine = [o for o in mine if is_pair(o) == pairs]
-        if not pool or pairs:
+        if not pool:
             return mine
         fresh, cancelled = self.pending_orders()
         here = set(addresses)
-        return ([o for o in fresh if o["address"] in here]
+        return ([o for o in fresh if o["address"] in here and is_pair(o) == pairs]
                 + [o for o in mine if o["txid"] not in cancelled])
 
     def swaps_of(self, addresses: list[str], limit: int = 100) -> list[dict]:

@@ -11165,6 +11165,8 @@ def create_app(state: AppState) -> FastAPI:
                               if o["address"] == address and o.get("pending"))
                 # And sends in the pool: the same tokens cannot also be sold.
                 resting += index.pending_sends(address, prop["property_id"])
+                # nor sold again on a token/token order that is still in the pool
+                resting += index.pending_pair_sales(address, prop["property_id"])
                 if held - resting < units:
                     raise tokenlib.TokenError(
                         f"this account holds "
@@ -20703,7 +20705,9 @@ def create_app(state: AppState) -> FastAPI:
         if total <= 0:
             raise tokenlib.TokenError("that comes to less than one unit of the price token.")
         sold, sold_amount = (base_prop, units) if side == "sell" else (quote_prop, total)
-        held = index.balance(address, sold["property_id"]) - index.pending_sends(address, sold["property_id"])
+        # what is already spoken for in the pool: sends, and other pair orders not mined yet
+        held = (index.balance(address, sold["property_id"]) - index.pending_sends(address, sold["property_id"])
+                - index.pending_pair_sales(address, sold["property_id"]))
         if held < sold_amount:
             raise tokenlib.TokenError(
                 f"{address} holds {format_amount(max(0, held), sold['divisible'])} "
