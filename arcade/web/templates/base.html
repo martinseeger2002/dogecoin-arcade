@@ -828,7 +828,7 @@ window.arcadePress = function (form, doing) {
 async function claimFor(source, m, page = "", own = false) {
   const answer = (body) => source.postMessage({arcade: "claim", seq: m.seq, ...body}, "*");
   answer({heard: true});
-  if (!ARCADE_ME) {
+  if (!ARCADE_ME && !ARCADE_NODE_PLAYER) {
     answer({error: "Sign in or join first, then claim."});
     arcadeSignIn("Claiming this needs your wallet.");
     return;
@@ -875,6 +875,8 @@ async function claimFor(source, m, page = "", own = false) {
           answer({ok: true, txid: out.txid || "", piece: out.piece || ""});
           return;
         }
+        if (!ARCADE_ME) throw new Error("the node claims only prizes a pool pays for itself; "
+                                        + "sign in as a player for this one");
         held = held || (await wallet.opened(ARCADE_CHAIN)) || await arcadeKeys(ARCADE_CHAIN);
         const offer = await wallet.offerPrize(pool.pool, n, lots[n], String(m.secret || ""),
                                               page, ARCADE_CHAIN.network, replay);
@@ -903,6 +905,8 @@ async function claimFor(source, m, page = "", own = false) {
       }
       listing = pool.listing;
     }
+    if (!ARCADE_ME) throw new Error("the node claims only prizes a pool pays for itself; "
+                                    + "sign in as a player for this one");
     held = held || await arcadeKeys(ARCADE_CHAIN);
     const offer = await wallet.offerBuy(listing, ARCADE_CHAIN.network,
                                         String(m.secret || ""), page);
@@ -1095,7 +1099,7 @@ window.addEventListener("message", async (e) => {
   //   answers {arcade: "seed", seq, seed, expires} or {error}
   if (m.arcade === "seed" && typeof m.seq === "number") {
     const answer = (body) => e.source.postMessage({arcade: "seed", seq: m.seq, ...body}, "*");
-    if (!ARCADE_ME) {
+    if (!ARCADE_ME && !ARCADE_NODE_PLAYER) {
       answer({error: "Sign in or join first."});
       arcadeSignIn("Playing for a prize needs your wallet.");
       return;
@@ -1807,6 +1811,10 @@ function arcadeAsk(title, detail, yes = "Yes"){
 // other tab of this site), otherwise this sheet, and the action carries on once
 // the password opens it -- instead of sending somebody to their own page first.
 var ARCADE_ME = {{ (account_name or '')|tojson }};
+// The node itself is the player (2026-10-05): its own machine, or its operator
+// signed in from outside, with the node's view. Games' seeds and the claims a pool
+// pays for itself work for it with no sign-in; the server says which address.
+var ARCADE_NODE_PLAYER = {{ ((not public) and (operator_here or false))|tojson }};
 var ARCADE_CHAIN = {network: {{ state.messaging.network|tojson }},
                     version: {{ state.messaging.params.pubkeyhash_version }}};
 function arcadeUnlockSheet(why){

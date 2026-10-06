@@ -753,6 +753,14 @@ def create_app(state: AppState) -> FastAPI:
         return bool(account is not None and state.operator
                     and account.pubkey.lower() == state.operator)
 
+    def _node_player(request: Request) -> str:
+        """The node's own address when the node is the one playing: its own
+        machine, or its operator signed in from outside, with the node's view
+        (2026-10-05). "" for everybody else."""
+        if _account_view(request) or not _reads_the_plans(request):
+            return ""
+        return str(state.derived_address or "")
+
     def _reads_the_plans(request: Request) -> bool:
         """The operator's own machine, or the operator signed in from outside."""
         return not _public_request(request) or _is_operator(request)
@@ -6215,6 +6223,8 @@ def create_app(state: AppState) -> FastAPI:
         if state.public or doorlib.from_outside(request.headers, request.headers.get("host", ""),
                                                 state.public_hosts):
             return _ask_the_reader(request, chain, body)
+        if body.get("silent") is True:
+            return _node_silent_send(request, chain, body)
         try:
             filed = _file_request("page", body)
         except approvalslib.RequestError as exc:
@@ -6223,6 +6233,60 @@ def create_app(state: AppState) -> FastAPI:
             return contentlib._json({"error": f"could not file the request: {exc}"},
                                     status=503)
         return contentlib._json(filed, status=202)
+
+    def _node_silent_send(request: Request, chain, body: dict):
+        """A page asks the node's own wallet to send with {silent: true}: the node
+        is playing, so no card -- a game's own asset going back to the game is
+        sent at once, signed by the node's wallet; anything else fails at once
+        (2026-10-05). The rule is the one an account's tab applies: a test chain,
+        not coins, the page's own creator receiving, and a token that creator
+        issued or a piece that creator inscribed."""
+        from urllib.parse import urlparse
+        index = state.token_index(chain)
+        refer = urlparse(request.headers.get("referer", ""))
+        page = ""
+        if refer.path.startswith("/content/"):
+            page = refer.path[len("/content/"):].split("/")[0].split("?")[0]
+        page_row = index.inscription(page) if page else None
+        creator = page_row["creator"] if page_row else ""
+        kind = str(body.get("kind") or "")
+        try:
+            to = _tag_address(state, str(body.get("to") or ""), mainnet=chain.is_mainnet)
+        except ValueError:
+            to = ""
+        own = False
+        if creator and to == creator and not chain.is_mainnet:
+            if kind == "token":
+                prop = index.property(int(body.get("propertyid") or 0))
+                own = bool(prop and prop.get("issuer") == creator)
+            elif kind == "inscription":
+                piece = index.inscription(contentlib._key(str(body.get("inscription") or "")))
+                own = bool(piece and piece["creator"] == creator)
+        try:
+            told = _file_request("page", body)
+        except approvalslib.RequestError as exc:
+            return contentlib._json({"error": str(exc)}, status=400)
+        queue = state.approvals
+        if not own:
+            queue.decide(told["id"], "failed", error="this needs the player's say-so")
+            return contentlib._json({**told, "status": "failed",
+                                     "error": "this needs the player's say-so"}, status=202)
+        try:
+            with chain.rpc() as rpc:
+                prepared = approvalslib.prepare(queue.get(told["id"]), rpc, chain.params, index,
+                                                _ledger_addresses(rpc))
+                if prepared.fee_coins > 0.05:
+                    raise approvalslib.RequestError("that would cost more than a game's own "
+                                                    "return may without asking")
+                sent = approvalslib.broadcast(rpc, prepared)
+        except Exception as exc:                          # noqa: BLE001
+            queue.decide(told["id"], "failed", error=str(exc))
+            return contentlib._json({**told, "status": "failed", "error": str(exc)}, status=202)
+        queue.decide(told["id"], "sent", txid=sent)
+        state.pending_tokens.append({"txid": sent, "what": prepared.what,
+                                     "at": time.time(), "network": chain.network})
+        state.bump_generation()
+        return contentlib._json({**told, "status": "sent", "txid": sent}, status=202)
 
     # The pages-host guard (the_door) sits outside this function and asks here.
     state.viewer_of = lambda request: _viewer_of(request, _token_chain()[0])
@@ -14182,12 +14246,14 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/account/referee/seed")
     def account_referee_seed(request: Request, payload: Any = Body(None)):
-        """A seed for the signed-in player's next run, from the pool's referee."""
-        account = _signed_in_account(request)
+        """A seed for the signed-in player's next run, from the pool's referee --
+        or the node's, when the node is the one playing (_node_player)."""
+        node = _node_player(request)
+        account = None if node else _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         try:
             chain = _chain_asked(said)
-            address = _account_address(account.pubkey, chain)
+            address = node or _account_address(account.pubkey, chain)
             if not address:
                 raise ValueError("this account has no address yet")
             if said.get("judge"):
@@ -14691,12 +14757,14 @@ def create_app(state: AppState) -> FastAPI:
         sealed with the phrase, and the referee signs the whole transaction only
         after the pool's judge passes the replay, so the prize can only go to the
         wallet the seed was issued to. The account has to be signed in -- that
-        is what names the address -- and needs no unlocked key and no coins."""
-        account = _signed_in_account(request)
+        is what names the address -- and needs no unlocked key and no coins. The
+        node playing (_node_player) claims to its own address the same way."""
+        node = _node_player(request)
+        account = None if node else _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         try:
             chain = _chain_asked(said)
-            address = _account_address(account.pubkey, chain)
+            address = node or _account_address(account.pubkey, chain)
             if not address:
                 raise ValueError("this account has no address yet")
         except ValueError as exc:
@@ -14720,7 +14788,8 @@ def create_app(state: AppState) -> FastAPI:
                 with chain.rpc() as rpc:
                     raw = listingslib.paste_leg(rpc, listing, unsigned, [], b"",
                                                 referee_sigs=referee_sigs, pool_pays=True)
-                _quota(account, "claim")
+                if account is not None:
+                    _quota(account, "claim")
                 with chain.rpc() as rpc:
                     txid = rpc.call("sendrawtransaction", raw)
             except (listingslib.ListingError, fundinglib.FundingError, swaplib.SwapError,
