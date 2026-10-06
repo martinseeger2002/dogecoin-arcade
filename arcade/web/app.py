@@ -20759,7 +20759,11 @@ def create_app(state: AppState) -> FastAPI:
         book = index.pair_book(base, quote)
         done = index.pair_trades(base, quote)
         points = chartlib.pair_prices(done, base_prop["divisible"], quote_prop["divisible"])
-        frame = chartlib.timeframe(chartlib.pick_timeframe(points))
+        # ?tf= as on the coin pair page (15m / 1h / 4h / 1d); without it the
+        # timeframe that tells the history best (charts.pick_timeframe)
+        asked = request.query_params.get("tf", "")
+        frame = chartlib.timeframe(asked if asked in {t[0] for t in chartlib.TIMEFRAMES}
+                                   else chartlib.pick_timeframe(points))
         scale = ((COIN if base_prop["divisible"] else 1) / (COIN if quote_prop["divisible"] else 1))
         for row in book["asks"] + book["bids"]:
             row["each"] = float(row["price"]) * scale
@@ -20793,6 +20797,7 @@ def create_app(state: AppState) -> FastAPI:
                                          for t in done[:20]],
                       stats=chartlib.last_and_change(points),
                       slots=chartlib.candles(points, buckets=frame[2], span=frame[1]),
+                      tf=frame[0], timeframes=[t[0] for t in chartlib.TIMEFRAMES],
                       viewer=viewer, account_address=account_address,
                       held_base=format_amount(held_base, base_prop["divisible"]),
                       held_quote=format_amount(held_quote, quote_prop["divisible"]),

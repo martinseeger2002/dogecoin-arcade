@@ -75,3 +75,23 @@ def test_a_pair_of_one_token_is_sent_back_to_pick_again(client):
     app, state = client
     went = app.get("/exchange/pairs?base=8&quote=8", follow_redirects=False)
     assert went.status_code == 303 and went.headers["location"].startswith("/exchange?tab=tokens")
+
+
+def test_a_pair_page_draws_the_candles_asked_for(client, monkeypatch):
+    """?tf= as on the coin pair page; without it, a short history is drawn in the
+    finest timeframe (a promo's run of trades over an hour, 2026-10-06)."""
+    app, state = client
+    import arcade.ledger as L
+    props = {7: {"property_id": 7, "name": "LOGS", "divisible": True},
+             8: {"property_id": 8, "name": "GOLD", "divisible": True}}
+    now = time.time()
+    done = [{"when": now - 300 * i, "height": 100 + i, "txid": f"{i:064x}", "base": COIN,
+             "quote": (2 + i % 3) * COIN, "side": "buy", "taker": "a", "maker": "b"} for i in range(12)]
+    monkeypatch.setattr(L.LedgerIndex, "pair_trades", lambda self, a, b, limit=500: done, raising=False)
+    monkeypatch.setattr(L.LedgerIndex, "pair_book", lambda self, a, b, limit=50, pool=True: {"asks": [], "bids": []}, raising=False)
+    real_property = L.LedgerIndex.property
+    monkeypatch.setattr(L.LedgerIndex, "property", lambda self, pid: props.get(pid) or real_property(self, pid))
+    page = app.get("/exchange/pairs/7/8").text
+    assert 'href="?tf=15m"' in page and 'aria-current="true">15m<' in page, "an hour of trades: 15-minute candles"
+    page = app.get("/exchange/pairs/7/8?tf=4h").text
+    assert 'aria-current="true">4h<' in page
