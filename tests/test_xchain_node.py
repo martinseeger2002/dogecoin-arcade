@@ -187,6 +187,45 @@ def test_a_payout_waits_rather_than_pay_one_person_from_anothers_deposit(two_cha
     assert pepe and all(p["status"] == "queued" and "top it up" in p["error"] for p in pepe)
 
 
+from fastapi.testclient import TestClient                               # noqa: E402
+from test_account_claim import _sign_in                                 # noqa: E402
+from test_funding import _pubkey, _sign                                 # noqa: E402
+from arcade.script import b58check_encode, hash160                      # noqa: E402
+
+
+def person(app, state, which):
+    who = TestClient(app.app)
+    _sign_in(who)
+    secret = int.from_bytes(bytes([0x71, which]) + bytes(30), "big")
+    pub = _pubkey(secret)
+    test_addr = b58check_encode(state.messaging.params.pubkeyhash_version, hash160(pub))
+    main_addr = b58check_encode(state.ledger.params.pubkeyhash_version, hash160(pub))
+    said = who.post("/account/address", json={"address": test_addr, "coin_pubkey": pub.hex()})
+    assert said.status_code == 200, said.text
+    # the stand-in mainnet runs regtest's address versions, which /account/address rightly
+    # refuses as a mainnet address: written where that route writes a real one
+    account = next(k[len("address:"):] for k, v in state.settings().items()
+                   if k.startswith("address:") and k.count(":") == 1 and v == test_addr)
+    state.set_setting(f"address:main:{account}", main_addr)
+    state.set_setting(f"coinkey:main:{account}", pub.hex())
+    state.set_setting(f"mainnet:{account}", "yes")      # said yes to real coins (the Backup page's check)
+    import contextlib
+    from arcade import utxos as utxoslib
+    index = state.token_index(state.ledger)                # and its coins followed, as the route does
+    with contextlib.closing(index.open()) as db:
+        utxoslib.watch(db, main_addr, index.indexed_height() or 0, "xchain test")
+    account_key = who.get("/account/me").json().get("pubkey") if who.get("/account/me").status_code == 200 else None
+    return who, secret, pub, test_addr, main_addr, account_key
+
+def signed(who, secret, pub, offer):
+    done = who.post("/account/sign", json={"offer": offer["offer"], "pubkey": pub.hex(),
+                                           "signatures": [_sign(secret, bytes.fromhex(d)).hex()
+                                                          for d in offer["sighashes"]]})
+    assert done.status_code == 200, done.text
+    return done.json()["txid"]
+
+
+
 def _ledger_caught_up(state, rpc):
     index = state.token_index(state.ledger)
     for _ in range(200):
@@ -198,48 +237,12 @@ def _ledger_caught_up(state, rpc):
 def test_an_account_sells_a_token_and_another_buys_it_with_mainnet_pepe_through_the_pages(two_chains):
     """The whole road a person takes: the page builds the deposit, the account signs
     it in its own tab, the node broadcasts it, and the rest happens with nobody there."""
-    from fastapi.testclient import TestClient
-    from test_account_claim import _sign_in
-    from test_funding import _pubkey, _sign
-    from arcade.script import b58check_encode, hash160
-
     app, state, test_rpc, main_rpc = two_chains
     state.set_setting("xchain:enabled", True)
     clerk, book = state.xchain, state.xchain.book
 
-    def person(which):
-        who = TestClient(app.app)
-        _sign_in(who)
-        secret = int.from_bytes(bytes([0x71, which]) + bytes(30), "big")
-        pub = _pubkey(secret)
-        test_addr = b58check_encode(state.messaging.params.pubkeyhash_version, hash160(pub))
-        main_addr = b58check_encode(state.ledger.params.pubkeyhash_version, hash160(pub))
-        said = who.post("/account/address", json={"address": test_addr, "coin_pubkey": pub.hex()})
-        assert said.status_code == 200, said.text
-        # the stand-in mainnet runs regtest's address versions, which /account/address rightly
-        # refuses as a mainnet address: written where that route writes a real one
-        account = next(k[len("address:"):] for k, v in state.settings().items()
-                       if k.startswith("address:") and k.count(":") == 1 and v == test_addr)
-        state.set_setting(f"address:main:{account}", main_addr)
-        state.set_setting(f"coinkey:main:{account}", pub.hex())
-        state.set_setting(f"mainnet:{account}", "yes")      # said yes to real coins (the Backup page's check)
-        import contextlib
-        from arcade import utxos as utxoslib
-        index = state.token_index(state.ledger)                # and its coins followed, as the route does
-        with contextlib.closing(index.open()) as db:
-            utxoslib.watch(db, main_addr, index.indexed_height() or 0, "xchain test")
-        account_key = who.get("/account/me").json().get("pubkey") if who.get("/account/me").status_code == 200 else None
-        return who, secret, pub, test_addr, main_addr, account_key
-
-    def signed(who, secret, pub, offer):
-        done = who.post("/account/sign", json={"offer": offer["offer"], "pubkey": pub.hex(),
-                                               "signatures": [_sign(secret, bytes.fromhex(d)).hex()
-                                                              for d in offer["sighashes"]]})
-        assert done.status_code == 200, done.text
-        return done.json()["txid"]
-
-    seller, s_secret, s_pub, s_test, s_main, _ = person(1)
-    buyer, b_secret, b_pub, b_test, b_main, _ = person(2)
+    seller, s_secret, s_pub, s_test, s_main, _ = person(app, state, 1)
+    buyer, b_secret, b_pub, b_test, b_main, _ = person(app, state, 2)
 
     issuer, pid = _token(state, test_rpc, "Xchain Logs 3")
     sender = TokenSender(test_rpc, state.messaging.params)
@@ -277,3 +280,69 @@ def test_an_account_sells_a_token_and_another_buys_it_with_mainnet_pepe_through_
     got = sum(int(round(o["value"] * COIN)) for o in tx["vout"]
               if s_main in ((o.get("scriptPubKey") or {}).get("addresses") or []))
     assert got == 5 * COIN - fee_of(5 * COIN), "the seller's account was paid on mainnet, less 0.5%"
+
+
+def _ready(two_chains):
+    app, state, test_rpc, main_rpc = two_chains
+    state.set_setting("xchain:enabled", True)
+    seller = person(app, state, 3)
+    buyer = person(app, state, 4)
+    test_rpc.call("sendtoaddress", seller[3], 5.0)
+    main_rpc.call("sendtoaddress", buyer[4], 20.0)
+    _mined(state, test_rpc, 1)
+    main_rpc.call("generate", 1)
+    _ledger_caught_up(state, main_rpc)
+    return app, state, test_rpc, main_rpc, seller, buyer
+
+
+def _settle(state, test_rpc, main_rpc, passes=3):
+    _mined(state, test_rpc, 6)
+    main_rpc.call("generate", 2)
+    for _ in range(passes):
+        state.xchain.tick()
+        _mined(state, test_rpc, 1)
+        main_rpc.call("generate", 1)
+
+
+def test_an_nft_is_sold_for_mainnet_pepe(two_chains):
+    from test_account_offer import _inscribed
+    app, state, test_rpc, main_rpc, seller, buyer = _ready(two_chains)
+    who, secret, pub, s_test, s_main, _ = seller
+    piece = _inscribed(who, state, test_rpc, secret, pub, "a frog worth a coin")
+    sold = who.post("/account/x/order", json={"kind": "nft", "asset": piece, "side": "sell", "price": "3"})
+    assert sold.status_code == 200, sold.text
+    signed(who, secret, pub, sold.json())
+    b = buyer
+    bought = b[0].post("/account/x/order", json={"kind": "nft", "asset": piece, "side": "buy", "price": "3"})
+    assert bought.status_code == 200, bought.text
+    signed(b[0], b[1], b[2], bought.json())
+    _settle(state, test_rpc, main_rpc)
+    book = state.xchain.book
+    assert all(p["status"] == "sent" for p in book.payouts()), [(p["id"], p["error"]) for p in book.payouts()]
+    _mined(state, test_rpc, 1)
+    assert state.token_index(state.messaging).inscription(piece)["owner"] == b[3], "the buyer owns the piece"
+
+
+def test_testnet_coins_are_sold_for_mainnet_pepe_and_a_cancel_refunds_on_chain(two_chains):
+    app, state, test_rpc, main_rpc, seller, buyer = _ready(two_chains)
+    who, secret, pub, s_test, s_main, _ = seller
+    sold = who.post("/account/x/order", json={"kind": "coin", "asset": "coin", "side": "sell",
+                                              "amount": "2", "price": "0.25"})
+    assert sold.status_code == 200, sold.text
+    signed(who, secret, pub, sold.json())
+    b = buyer
+    bought = b[0].post("/account/x/order", json={"kind": "coin", "asset": "coin", "side": "buy",
+                                                 "amount": "1", "price": "0.25"})
+    signed(b[0], b[1], b[2], bought.json())
+    _settle(state, test_rpc, main_rpc)
+    book = state.xchain.book
+    sell = book.get(sold.json()["order"])
+    assert sell["status"] == "open" and sell["left_amount"] == COIN, "half sold, half still standing"
+    cancel = who.post("/account/x/cancel", json={"order": sell["id"]})
+    assert cancel.status_code == 200, cancel.text
+    _settle(state, test_rpc, main_rpc, passes=2)
+    refund = next(p for p in book.payouts() if p["id"] == f"refund:{sell['id']}")
+    assert refund["status"] == "sent" and refund["amount"] == COIN and refund["to_addr"] == s_test
+    tx = test_rpc.call("getrawtransaction", refund["txid"], 1)
+    assert sum(int(round(o["value"] * COIN)) for o in tx["vout"]
+               if s_test in ((o.get("scriptPubKey") or {}).get("addresses") or [])) == COIN

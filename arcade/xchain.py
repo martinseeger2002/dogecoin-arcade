@@ -188,9 +188,11 @@ class Book:
             return dict(row) if row else None
 
     def orders_of(self, owner: str, limit: int = 100) -> list[dict]:
+        """An owner's orders, newest first -- not the ones whose deposit it never signed."""
         with self._open() as conn:
             return [dict(r) for r in conn.execute(
-                "SELECT * FROM xorder WHERE owner=? ORDER BY created DESC LIMIT ?", (owner, limit))]
+                "SELECT * FROM xorder WHERE owner=? AND NOT (status IN (?,?) AND deposit_txid='') "
+                "ORDER BY created DESC LIMIT ?", (owner, AWAITING, CANCELLED, limit))]
 
     def awaiting(self) -> list[dict]:
         with self._open() as conn:
@@ -367,6 +369,14 @@ class Book:
                             row["amount"], row["pay_test"])
             else:
                 self._queue(conn, f"refund:{order_id}", "main", "pepe", "pepe", row["pepe"], row["pay_main"])
+
+    def sweep_unsigned(self, older_than: float = 3600, now: float | None = None) -> int:
+        """Orders written down whose deposit was never signed: nothing was deposited,
+        so nothing is owed; they are closed after an hour."""
+        cut = (now or time.time()) - older_than
+        with self._open(write=True) as conn:
+            return conn.execute("UPDATE xorder SET status=?, note=? WHERE status=? AND deposit_txid='' "
+                                "AND created<?", (CANCELLED, "its deposit was never signed", AWAITING, cut)).rowcount
 
     def cancelled_with_deposit(self) -> list[dict]:
         """Orders cancelled while their deposit waited, not yet refunded."""

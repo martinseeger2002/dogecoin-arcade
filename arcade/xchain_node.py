@@ -237,6 +237,7 @@ class Clerk:
                     raise exc from None
 
     def tick(self) -> dict:
+        self.book.sweep_unsigned()
         opened = self.watch_deposits()
         sent = self.book.pay(self.build, self.broadcast)
         return {"opened": opened, "sent": len(sent)}

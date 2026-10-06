@@ -209,3 +209,12 @@ def test_nobody_is_paid_off_their_price(book):
             assert each <= Fraction(b["pepe"], b["amount"]), "a buyer never pays above its price"
             # a seller is never paid below its price by more than the rounding of one satoshi
             assert f["pepe"] + 1 >= Fraction(s["pepe"], s["amount"]) * f["amount"]
+
+
+def test_an_order_whose_deposit_was_never_signed_is_closed_after_an_hour(book):
+    o = book.place(owner="a", side="buy", kind="token", asset="59", amount=T, pepe=PEPE, pay_test="n", pay_main="P")
+    assert [x["id"] for x in book.orders_of("a")] == [o["id"]] or book.orders_of("a") == [], "not listed as an order"
+    assert book.sweep_unsigned(now=o["created"] + 60) == 0
+    assert book.sweep_unsigned(now=o["created"] + 3601) == 1
+    assert book.get(o["id"])["status"] == CANCELLED and book.payouts() == [], "nothing was deposited, nothing owed"
+    assert book.orders_of("a") == []
