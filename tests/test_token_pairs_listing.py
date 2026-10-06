@@ -40,3 +40,38 @@ def test_a_token_pair_is_a_row_of_the_markets_table_and_popularity_orders_them(c
     assert text.index("/exchange/pairs/7/8") < text.index("/exchange/pairs/7/9"), \
         "three trades today come before one"
     assert "/GOLD" in text and "/ORE" in text, "a pair's row names its quote token, not the coin"
+
+
+def test_opening_a_pair_starts_from_a_token_you_hold(client, monkeypatch):
+    """2026-10-06: "When creating a pair the drop-down should only list
+    assets that you have in your wallet". "You have" lists what this wallet holds;
+    "Trade it for" lists every token."""
+    app, state = client
+    import arcade.ledger as L
+    import arcade.web.app as W
+    held = [{"address": "nWalletAddress", "property_id": 8, "balance": 5, "name": "GOLD",
+             "property_type": 2, "ecosystem": 2, "issuer": "x"}]
+    monkeypatch.setattr(L.LedgerIndex, "balances", lambda self, addresses: held if addresses else [])
+    # this node's wallet, as far as the page asks it: one address of its own
+    import contextlib
+    @contextlib.contextmanager
+    def fake_rpc():
+        yield object()
+    monkeypatch.setattr(W, "_ledger_addresses", lambda rpc: ["nWalletAddress"])
+    for ch in {id(state.messaging): state.messaging, **{id(c): c for c in getattr(state, "chains", {}).values()}}.values():
+        monkeypatch.setattr(ch, "rpc", fake_rpc)
+    monkeypatch.setattr(L.LedgerIndex, "properties", lambda self: [
+        {"property_id": 7, "name": "LOGS", "divisible": True}, {"property_id": 8, "name": "GOLD", "divisible": True}, {"property_id": 9, "name": "ORE", "divisible": True}])
+    page = app.get("/exchange?tab=tokens").text
+    assert "You have" in page, "the wallet's own tokens are offered"
+    if True:
+        have = page[page.index("You have"):page.index("Trade it for")]
+        assert "GOLD (#8)" in have and "LOGS (#7)" not in have and "ORE (#9)" not in have
+        rest = page[page.index("Trade it for"):]
+        assert "LOGS (#7)" in rest and "ORE (#9)" in rest
+
+
+def test_a_pair_of_one_token_is_sent_back_to_pick_again(client):
+    app, state = client
+    went = app.get("/exchange/pairs?base=8&quote=8", follow_redirects=False)
+    assert went.status_code == 303 and went.headers["location"].startswith("/exchange?tab=tokens")

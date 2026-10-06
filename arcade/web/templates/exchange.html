@@ -542,16 +542,22 @@
      another, matched by the chain itself when two orders cross. #}
   <div class="panel">
     <h3 style="margin:0 0 6px">Trade one token for another</h3>
-    <p class="muted" style="font-size:.84rem;margin:0 0 10px">Pick any two tokens to open their market; once it has
-      an order it is listed above with the rest. An order that meets the book trades in the block it lands in;
+    <p class="muted" style="font-size:.84rem;margin:0 0 10px">Pick a token you hold and the token you want for it to
+      open their market; once it has an order it is listed above with the rest. An order that meets the book trades in the block it lands in;
       nobody has to be online to fill it.</p>
+    {% if pair_viewer == 'nobody' %}
+    <p class="muted" style="margin:0">Sign in to open a pair with a token you hold.</p>
+    {% elif not held_tokens %}
+    <p class="muted" style="margin:0">Your wallet holds no tokens yet. A pair starts from one you have.</p>
+    {% else %}
     <form method="get" action="/exchange/pairs" class="row" style="gap:8px;align-items:flex-end;margin:0">
-      <div class="field" style="flex:1 1 160px;margin:0"><label>Buy or sell</label>
-        <select name="base">{% for t in pair_tokens %}<option value="{{ t.property_id }}">{{ wall_text(t.name, 'token') }} (#{{ t.property_id }})</option>{% endfor %}</select></div>
-      <div class="field" style="flex:1 1 160px;margin:0"><label>Priced in</label>
-        <select name="quote">{% for t in pair_tokens %}<option value="{{ t.property_id }}"{% if loop.index == 2 %} selected{% endif %}>{{ wall_text(t.name, 'token') }} (#{{ t.property_id }})</option>{% endfor %}</select></div>
+      <div class="field" style="flex:1 1 160px;margin:0"><label>You have</label>
+        <select name="base">{% for t in held_tokens %}<option value="{{ t.property_id }}">{{ wall_text(t.name, 'token') }} (#{{ t.property_id }})</option>{% endfor %}</select></div>
+      <div class="field" style="flex:1 1 160px;margin:0"><label>Trade it for</label>
+        <select name="quote">{% for t in pair_tokens %}<option value="{{ t.property_id }}">{{ wall_text(t.name, 'token') }} (#{{ t.property_id }})</option>{% endfor %}</select></div>
       <button type="submit" style="flex:0 0 auto">Open the pair</button>
     </form>
+    {% endif %}
   </div>
 
 

@@ -20737,9 +20737,13 @@ def create_app(state: AppState) -> FastAPI:
     def exchange_pairs_open(base: str = "", quote: str = ""):
         """The "open a pair" box: two token ids to the pair's own page."""
         try:
-            return RedirectResponse(f"/exchange/pairs/{int(base)}/{int(quote)}", status_code=303)
+            b, q = int(base), int(quote)
         except ValueError:
             return RedirectResponse("/exchange?tab=tokens", status_code=303)
+        if b == q:
+            state.flash("A pair is two different tokens: pick another one to trade it for.", "err")
+            return RedirectResponse("/exchange?tab=tokens", status_code=303)
+        return RedirectResponse(f"/exchange/pairs/{b}/{q}", status_code=303)
 
     @app.get("/exchange/pairs/{base}/{quote}", response_class=HTMLResponse)
     def exchange_token_pair(request: Request, base: int, quote: int):
@@ -21699,10 +21703,32 @@ def create_app(state: AppState) -> FastAPI:
             # the ones that have traded, last price and the day's move
             # (D-048). Clicking one opens its own page.
             data["pairs"] = _pairs(index, trades)
+            # The open-a-pair box (2026-10-06: "When creating a pair the
+            # drop-down should only list assets that you have in your wallet"):
+            # what this reader holds on one side, any token on the other.
             try:
                 data["pair_tokens"] = [dict(r) for r in index.properties()][:500]
             except Exception:
                 data["pair_tokens"] = []
+            data["held_tokens"], data["pair_viewer"] = [], "nobody"
+            try:
+                held_at: list[str] = []
+                if not _account_view(request):
+                    data["pair_viewer"] = "wallet"
+                    with chain.rpc() as rpc:
+                        held_at = list(_ledger_addresses(rpc))
+                elif signed_in(request) is not None:
+                    data["pair_viewer"] = "account"
+                    mine = _account_address(signed_in(request).pubkey, chain)
+                    held_at = [mine] if mine else []
+                held: dict[int, dict] = {}
+                for row in index.balances(held_at):
+                    held.setdefault(row["property_id"], {"property_id": row["property_id"], "name": row["name"]})
+                data["held_tokens"] = sorted(held.values(), key=lambda t: str(t["name"]).lower())
+            except HTTPException:
+                raise
+            except Exception:
+                data["held_tokens"] = []
         elif tab == "market":
             # A collection is a market of its own, and the marketplace is the
             # list of them -- the same table the Tokens tab draws for pairs.
