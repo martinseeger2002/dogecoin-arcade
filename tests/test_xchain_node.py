@@ -25,8 +25,14 @@ def two_chains(node):
     """The app's mainnet pointed at a second, throwaway regtest node."""
     app, state, rpc = node
     from arcade.web.state import ChainContext
+    if float(rpc.call("getbalance") or 0) < 50:          # a fresh session node has nothing spendable yet
+        rpc.call("generate", 110)
+        _catch_up(state, rpc)
     other = RegtestNode()
-    other.start()
+    try:
+        other.start()
+    except RuntimeError as exc:
+        pytest.skip(f"a second regtest node is unavailable: {exc}")
 
     class Main(ChainContext):
         def credentials(self):
@@ -38,8 +44,10 @@ def two_chains(node):
 
     state.ledger = Main(network="regtest", role="ledger", label="Mainnet", datadir=other.datadir)
     other.rpc.call("generate", 120)                        # spendable "mainnet" coins
-    yield app, state, rpc, other.rpc
-    other.stop()
+    try:
+        yield app, state, rpc, other.rpc
+    finally:
+        other.stop()
 
 
 def _mined(state, rpc, n=1):
