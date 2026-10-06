@@ -173,6 +173,26 @@ class Clerk:
             if row is None or row["owner"] != self.address("testnet"):
                 raise RuntimeError("the exchange address does not hold that NFT")
 
+    FUEL = 2 * COIN                  # testnet coins the exchange address keeps for its own fees
+    TOP_UP = 5.0
+
+    def _fuelled(self, rpc) -> None:
+        """A token or NFT payout is sent FROM the exchange address, which pays its own
+        fee: keep testnet coins there, topped up from this node's wallet (found by the
+        end-to-end test: a fresh exchange address could not pay out at all). Raises,
+        so the payout waits a pass, while a top-up confirms."""
+        addr = self.address("testnet")
+        spendable = sum(int(round(float(u.get("amount", 0)) * COIN))
+                        for u in rpc.call("listunspent", 1, 9_999_999, [addr]) or [])
+        if spendable >= self.FUEL:
+            return
+        pending = sum(int(round(float(u.get("amount", 0)) * COIN))
+                      for u in rpc.call("listunspent", 0, 0, [addr]) or [])
+        if pending < self.FUEL:
+            rpc.call("sendtoaddress", addr, self.TOP_UP)
+        raise RuntimeError("topping up the exchange address with testnet coins for fees; "
+                           "the payout goes out once that confirms")
+
     def build(self, payout: dict) -> tuple[str, str]:
         which = payout["chain"]
         chain = self.chain(which)
@@ -182,11 +202,13 @@ class Clerk:
                 prepared = walletlib.prepare_send(rpc, payout["to_addr"], int(payout["amount"]))
             elif payout["kind"] == "token":
                 self._solvent(payout, 0)
+                self._fuelled(rpc)
                 prepared = tokenlib.TokenSender(rpc, chain.params).prepare(
                     self.address("testnet"), tokenlib.send_payload(int(payout["asset"]), int(payout["amount"])),
                     payout["to_addr"])
             elif payout["kind"] == "nft":
                 self._solvent(payout, 0)
+                self._fuelled(rpc)
                 body = P.AnyData(data=inscriptionlib.Transfer(
                     txid=bytes.fromhex(payout["asset"])).encode()).encode()
                 prepared = tokenlib.TokenSender(rpc, chain.params).prepare(

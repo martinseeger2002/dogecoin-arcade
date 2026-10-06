@@ -44,7 +44,7 @@ def two_chains(tmp_path):
     try:
         main = _fresh()
 
-        def pointed(node, role, label):
+        def pointed(node, role, label, network):
             class Pointed(ChainContext):
                 def credentials(self):
                     return node.rpc._creds
@@ -52,10 +52,12 @@ def two_chains(tmp_path):
                 @property
                 def params(self):
                     return node.params
-            return Pointed(network="regtest", role=role, label=label, datadir=node.datadir)
+            return Pointed(network=network, role=role, label=label, datadir=node.datadir)
 
-        state = AppState(home=tmp_path, messaging=pointed(test, "messaging", "Testnet"),
-                         ledger=pointed(main, "ledger", "Mainnet"))
+        # the stand-in mainnet is NAMED main (is_mainnet, its own address keys, its own
+        # offers) while running regtest's rules, so the two chains are never mistaken
+        state = AppState(home=tmp_path, messaging=pointed(test, "messaging", "Testnet", "regtest"),
+                         ledger=pointed(main, "ledger", "Mainnet", "main"))
         (tmp_path / "tokens-chain").write_text("regtest\n")
         app = TestClient(create_app(state))
         test.rpc.call("generate", 110)
@@ -118,9 +120,12 @@ def test_a_token_sells_for_mainnet_pepe_and_both_sides_are_paid(two_chains, monk
     real = clerk.broadcast
     monkeypatch.setattr(clerk, "broadcast", lambda p: (_ for _ in ()).throw(RuntimeError("power cut")))
     clerk.tick()
+    _mined(state, test_rpc, 1)        # the exchange address's fee coins, topped up on the first pass
+    clerk.tick()
     assert book.get(buy["id"])["status"] == FILLED and book.get(sell["id"])["status"] == FILLED
     built = {p["id"]: p["txid"] for p in book.payouts()}
-    assert len(built) == 3 and all(built.values()), "built and saved, not sent"
+    assert len(built) == 3 and all(built.values()), ("built and saved, not sent",
+                                                     {p["id"]: p["error"] for p in book.payouts()})
     monkeypatch.setattr(clerk, "broadcast", real)
     clerk.tick()
     assert {p["id"]: p["txid"] for p in book.payouts()} == built, "the same transactions, not new ones"
@@ -180,3 +185,95 @@ def test_a_payout_waits_rather_than_pay_one_person_from_anothers_deposit(two_cha
     clerk.tick()
     pepe = [p for p in book.payouts() if p["chain"] == "main"]
     assert pepe and all(p["status"] == "queued" and "top it up" in p["error"] for p in pepe)
+
+
+def _ledger_caught_up(state, rpc):
+    index = state.token_index(state.ledger)
+    for _ in range(200):
+        if index.status(rpc.call("getblockcount"))["current"]:
+            return
+        index.sync()
+
+
+def test_an_account_sells_a_token_and_another_buys_it_with_mainnet_pepe_through_the_pages(two_chains):
+    """The whole road a person takes: the page builds the deposit, the account signs
+    it in its own tab, the node broadcasts it, and the rest happens with nobody there."""
+    from fastapi.testclient import TestClient
+    from test_account_claim import _sign_in
+    from test_funding import _pubkey, _sign
+    from arcade.script import b58check_encode, hash160
+
+    app, state, test_rpc, main_rpc = two_chains
+    state.set_setting("xchain:enabled", True)
+    clerk, book = state.xchain, state.xchain.book
+
+    def person(which):
+        who = TestClient(app.app)
+        _sign_in(who)
+        secret = int.from_bytes(bytes([0x71, which]) + bytes(30), "big")
+        pub = _pubkey(secret)
+        test_addr = b58check_encode(state.messaging.params.pubkeyhash_version, hash160(pub))
+        main_addr = b58check_encode(state.ledger.params.pubkeyhash_version, hash160(pub))
+        said = who.post("/account/address", json={"address": test_addr, "coin_pubkey": pub.hex()})
+        assert said.status_code == 200, said.text
+        # the stand-in mainnet runs regtest's address versions, which /account/address rightly
+        # refuses as a mainnet address: written where that route writes a real one
+        account = next(k[len("address:"):] for k, v in state.settings().items()
+                       if k.startswith("address:") and k.count(":") == 1 and v == test_addr)
+        state.set_setting(f"address:main:{account}", main_addr)
+        state.set_setting(f"coinkey:main:{account}", pub.hex())
+        state.set_setting(f"mainnet:{account}", "yes")      # said yes to real coins (the Backup page's check)
+        import contextlib
+        from arcade import utxos as utxoslib
+        index = state.token_index(state.ledger)                # and its coins followed, as the route does
+        with contextlib.closing(index.open()) as db:
+            utxoslib.watch(db, main_addr, index.indexed_height() or 0, "xchain test")
+        account_key = who.get("/account/me").json().get("pubkey") if who.get("/account/me").status_code == 200 else None
+        return who, secret, pub, test_addr, main_addr, account_key
+
+    def signed(who, secret, pub, offer):
+        done = who.post("/account/sign", json={"offer": offer["offer"], "pubkey": pub.hex(),
+                                               "signatures": [_sign(secret, bytes.fromhex(d)).hex()
+                                                              for d in offer["sighashes"]]})
+        assert done.status_code == 200, done.text
+        return done.json()["txid"]
+
+    seller, s_secret, s_pub, s_test, s_main, _ = person(1)
+    buyer, b_secret, b_pub, b_test, b_main, _ = person(2)
+
+    issuer, pid = _token(state, test_rpc, "Xchain Logs 3")
+    sender = TokenSender(test_rpc, state.messaging.params)
+    sender.broadcast(sender.prepare(issuer, send_payload(pid, 50 * COIN), s_test))
+    test_rpc.call("sendtoaddress", s_test, 2.0)
+    main_rpc.call("sendtoaddress", b_main, 20.0)
+    _mined(state, test_rpc, 1)
+    main_rpc.call("generate", 1)
+    _ledger_caught_up(state, main_rpc)
+
+    sold = seller.post("/account/x/order", json={"kind": "token", "asset": str(pid), "side": "sell",
+                                                 "amount": "10", "price": "0.5"})
+    assert sold.status_code == 200, sold.text
+    assert "Not trustless" in sold.json()["trust"]
+    signed(seller, s_secret, s_pub, sold.json())
+    bought = buyer.post("/account/x/order", json={"kind": "token", "asset": str(pid), "side": "buy",
+                                                  "amount": "10", "price": "0.5"})
+    assert bought.status_code == 200, bought.text
+    signed(buyer, b_secret, b_pub, bought.json())
+
+    _mined(state, test_rpc, 6)
+    main_rpc.call("generate", 2)
+    clerk.tick()                       # both deposits count; the book matches them
+    _mined(state, test_rpc, 1)         # the exchange address's fee coins
+    clerk.tick()
+    clerk.tick()
+    assert all(p["status"] == "sent" for p in book.payouts()), [(p["id"], p["error"]) for p in book.payouts()]
+    _mined(state, test_rpc, 1)
+    main_rpc.call("generate", 1)
+    index = state.token_index(state.messaging)
+    assert index.balance(b_test, pid) == 10 * COIN, "the buyer's account holds the tokens on testnet"
+    paid = next(p for p in book.payouts() if p["id"].endswith(":pepe"))
+    tx = main_rpc.call("getrawtransaction", paid["txid"], 1)
+    assert tx.get("confirmations", 0) >= 1, "the payout is in a mainnet block"
+    got = sum(int(round(o["value"] * COIN)) for o in tx["vout"]
+              if s_main in ((o.get("scriptPubKey") or {}).get("addresses") or []))
+    assert got == 5 * COIN - fee_of(5 * COIN), "the seller's account was paid on mainnet, less 0.5%"
