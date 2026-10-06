@@ -146,4 +146,12 @@
   {% endif %}
   {% endif %}
 </div>
+<style>
+  /* the Buy/Sell choice, as the coin pair page draws it (pair.html): radios beside
+     their labels, and wrapping as a pair on a phone rather than one above the other */
+  .sides{display:flex;flex-wrap:wrap;gap:8px 16px;margin-bottom:12px}
+  .sides label{display:inline-flex;align-items:center;gap:6px;margin:0;
+    font-size:.95rem;color:var(--fg);cursor:pointer}
+  .sides input{width:auto;margin:0}
+</style>
 {% endblock %}
