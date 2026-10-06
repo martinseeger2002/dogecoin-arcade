@@ -22737,10 +22737,20 @@ def _on_a_real_chain(address: str) -> bool:
 _LEDGER_ADDRESSES: dict = {}
 
 
-def _ledger_addresses(rpc) -> list[str]:
+def _ledger_addresses(rpc, fresh: bool = False) -> list[str]:
+    """Kept for fifteen seconds, unless `fresh` asks the node right now.
+
+    `fresh` is for a caller about to act on an address being missing. The kept
+    list cannot know about one the wallet made after it was written, and
+    `swap.make_offer` reads a missing address as "this wallet did not create
+    this shop, or no longer holds it". A page saying nothing about a new
+    address for a quarter minute is nothing; an order refused that way is
+    refused for good, since the order is consumed by the answer it gets.
+    Either way the node is asked, so what is kept afterwards is the newer list.
+    """
     creds = getattr(rpc, "_creds", None)
     key = (getattr(creds, "host", ""), getattr(creds, "port", 0))
-    held = _LEDGER_ADDRESSES.get(key)
+    held = None if fresh else _LEDGER_ADDRESSES.get(key)
     if held and held[0] > time.time():
         return list(held[1])
     found = _ledger_addresses_uncached(rpc)

@@ -80,7 +80,7 @@ from arcade.messaging.sender import funded_address          # noqa: E402
 from arcade.script import b58check_encode, hash160          # noqa: E402
 from arcade.shopkeeper import Shopkeeper                    # noqa: E402
 from arcade.tokens import TokenSender                       # noqa: E402
-from arcade.web.app import create_app                       # noqa: E402
+from arcade.web.app import _ledger_addresses, create_app    # noqa: E402
 from arcade.web.state import AppState                       # noqa: E402
 from arcade.web.watcher import BlockWatcher                 # noqa: E402
 
@@ -908,6 +908,14 @@ def _a_shop_on_the_node(*node, name: str, price: str) -> tuple[str, str, str]:
     cannot see maple's key.
     """
     daemon, state = node[0], node[1]
+    # Ask which addresses the wallet holds before there is a new one to hold,
+    # so the answer the node keeps of that question cannot include the address
+    # made below. `swap.make_offer` decides out of exactly that answer whether
+    # this wallet holds the shop an order came to, and an order answered
+    # against a list older than the shop is refused and consumed -- which the
+    # suite only caught at 02:30 on 2026-10-06 because it needs the kept answer
+    # to still be young. So it is made young here, not left to the timing.
+    _ledger_addresses(daemon.rpc)
     keeper = daemon.rpc.call("getnewaddress")
     daemon.rpc.call("sendtoaddress", keeper, 12.0)
     _settle(*node, blocks=2)

@@ -494,6 +494,12 @@ class Shopkeeper:
             return self._bid(rpc, index, offers, chain, row, question)
         if kind == "fill" and "ok" in question:
             return self._fill(rpc, index, offers, chain, row, question)
+        # Which addresses this wallet holds is asked of the node, not from the
+        # fifteen-second answer a page can afford. An order gets one answer and
+        # no second try, and a shop standing on an address the wallet made in
+        # the last quarter minute is in nobody's kept list yet -- which reads
+        # as "this wallet did not create this shop" and throws the order away
+        # (the nightly, 2026-10-06).
         try:
             if kind == "fill":
                 # Somebody taking a price off this wallet's book. What they
@@ -505,7 +511,8 @@ class Shopkeeper:
                     rpc, index, offers, chain.network,
                     str(question.get("order") or ""), int(question.get("tokens", 0)),
                     str(question.get("buyer") or ""),
-                    bytes(row["sender_pubkey"]).hex(), own=_ledger_addresses(rpc),
+                    bytes(row["sender_pubkey"]).hex(),
+                    own=_ledger_addresses(rpc, fresh=True),
                     cut=_node_cut(state))
                 reply.update(ok=True, offer=offer)
             elif kind == "offer":
@@ -516,7 +523,8 @@ class Shopkeeper:
                 offer = swaplib.make_offer(
                     rpc, index, offers, chain.network, shop,
                     int(question.get("listing", -1)), str(question.get("buyer") or ""),
-                    bytes(row["sender_pubkey"]).hex(), own=_ledger_addresses(rpc),
+                    bytes(row["sender_pubkey"]).hex(),
+                    own=_ledger_addresses(rpc, fresh=True),
                     cut=_node_cut(state))
                 reply.update(ok=True, offer=offer)
             else:
