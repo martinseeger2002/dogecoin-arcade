@@ -1167,6 +1167,16 @@ class AppState:
         return self._talk
 
     @property
+    def xchain(self):
+        """The cross-chain book (arcade/xchain.py) and its clerk (xchain_node.py):
+        testnet assets for mainnet Pepecoin, held by this node while they stand."""
+        if getattr(self, "_xchain", None) is None:
+            from ..xchain import Book
+            from ..xchain_node import Clerk
+            self._xchain = Clerk(self, Book(self.home / "xchain.sqlite"))
+        return self._xchain
+
+    @property
     def offers(self):
         """The shops' book: every offer this wallet has made (arcade/swap.py)."""
         if self._offers is None:

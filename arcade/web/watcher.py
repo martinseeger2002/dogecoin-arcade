@@ -121,6 +121,7 @@ class BlockWatcher:
                       self._check_release_notices,
                       self._announce_release,
                       self._keep_shop,
+                      self._run_xchain,
                       self._import_listings,
                       self._walk_home):
             try:
@@ -189,6 +190,18 @@ class BlockWatcher:
                 log.debug("listing import on %s failed", chain.network, exc_info=True)
         if filed:
             self.state.bump_generation()
+
+    def _run_xchain(self) -> None:
+        """The cross-chain book (arcade/xchain_node.py): deposits that have their
+        confirmations open their orders, and what is owed is paid. Every 20 s;
+        only when this node has opened the book (a setting the operator turns on)."""
+        if not self.state.setting("xchain:enabled"):
+            return
+        now = time.monotonic()
+        if now - getattr(self, "_xchain_at", 0.0) < 20.0:
+            return
+        self._xchain_at = now
+        self.state.xchain.tick()
 
     def _keep_shop(self) -> None:
         """Answer orders at this wallet's shops (arcade/shopkeeper.py).
