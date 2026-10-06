@@ -63,6 +63,7 @@ PUBLIC_PAGES = frozenset({
     "/create",
     "/inscriptions",
     "/exchange",
+    "/exchange/pairs",            # the "open a pair" box: two token ids to a token/token pair's page
     "/games",                 # every inscribed game (arcade/games.py)
     "/account/escrows",       # an account's own escrows (needs a session)
     "/launch",
@@ -136,6 +137,7 @@ PUBLIC_TREES = (
     "/exchange/collection/",
     "/mintpad/",              # an account's mintpad: pre-signed listings, read-only here
     "/exchange/pair/",
+    "/exchange/pairs/",       # a token/token pair's page (2026-10-06)
 )
 
 #: Whole paths with something variable in the middle of them, where a tree
@@ -337,6 +339,10 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # with the reason in it, not a 404 that leaves them guessing
                # whether the route exists (S-work-3).
                "/account/order/list",
+               # token/token pairs (2026-10-06): the same as an order and a
+               # cancel above, one message and a fee from the account's own
+               # address, signed in its tab; the engine matches it in its block.
+               "/account/pair-order", "/account/pair-order/cancel",
                # and the one read that makes the book takeable by a tab: it
                # builds nothing and sends nothing, it only says which order the
                # queue chose, what it prices to, and which key the question has
