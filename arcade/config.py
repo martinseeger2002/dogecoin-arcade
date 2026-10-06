@@ -301,6 +301,9 @@ TESTNET = Params(
     # Bundles (inscriptions.KIND_BUNDLE) are read from here: switched on 2026-10-05 at
     # The operator's word ("Enable it right now, we are the only node"), the block after the tip.
     bundles_from=1_527_064,
+    # Token/token pairs (Params.token_pairs_from), switched on 2026-10-06 at the operator's word
+    # ("get token pairs live"), two blocks after the tip: this is the only node.
+    token_pairs_from=1_529_092,
     datadir_subdir="testnet3",
     pubkeyhash_version=113,
     scripthash_version=196,
