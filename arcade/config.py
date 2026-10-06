@@ -9,6 +9,8 @@ out of the Pepecoin Core v1.1.0 tree at /home/you/reference/pepecoin.
 
 from __future__ import annotations
 
+import time
+
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -473,6 +475,10 @@ class WrongChain(Exception):
     """The connected node is not on the chain we asked for."""
 
 
+#: (host, port, chain) -> until when a verified match is trusted (verify_connected_chain).
+_CHAIN_SEEN: dict = {}
+
+
 def verify_connected_chain(rpc, params: "Params") -> None:
     """Confirm the node we reached is actually on the expected chain.
 
@@ -482,6 +488,14 @@ def verify_connected_chain(rpc, params: "Params") -> None:
     This checks what we are actually talking to, which is the property that
     matters before anything is signed or broadcast.
     """
+    # Once per node and chain for five minutes (2026-10-05): which node a set of
+    # credentials reaches does not change between two calls a page makes, and a
+    # page made thirteen of them. A wrong chain is still refused at once: only a
+    # match is remembered.
+    creds = getattr(rpc, "_creds", None)
+    key = (getattr(creds, "host", ""), getattr(creds, "port", 0), params.name)
+    if creds is not None and _CHAIN_SEEN.get(key, 0) > time.time():
+        return
     actual = rpc.call("getblockchaininfo").get("chain")
     expected = CHAIN_NAMES.get(params.name)
     if actual != expected:
@@ -490,6 +504,8 @@ def verify_connected_chain(rpc, params: "Params") -> None:
             f"(expected chain {expected!r}). Refusing to continue -- check --datadir "
             f"and --conf."
         )
+    if creds is not None:
+        _CHAIN_SEEN[key] = time.time() + 300
 
 
 def derive_marker_address(params: "Params") -> str:

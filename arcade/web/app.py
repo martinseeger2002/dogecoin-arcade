@@ -3998,8 +3998,23 @@ def create_app(state: AppState) -> FastAPI:
     # as sending coins is, because on mainnet each one spends real coins and,
     # once a token exists, moves real value.
 
+    _funded_memo: dict = {}
+
     def _funded_addresses(rpc) -> list[dict[str, Any]]:
-        """Addresses with coins to pay a fee from, largest first."""
+        """Addresses with coins to pay a fee from, largest first. Remembered for
+        fifteen seconds and only while nothing has happened on this node
+        (`state.generation` moves with every send and every block)."""
+        creds = getattr(rpc, "_creds", None)
+        key = (getattr(creds, "host", ""), getattr(creds, "port", 0), state.generation)
+        held = _funded_memo.get(key)
+        if held and held[0] > time.time():
+            return [dict(r) for r in held[1]]
+        found = _funded_addresses_uncached(rpc)
+        _funded_memo.clear()
+        _funded_memo[key] = (time.time() + 15, [dict(r) for r in found])
+        return found
+
+    def _funded_addresses_uncached(rpc) -> list[dict[str, Any]]:
         sums: dict[str, int] = {}
         for utxo in rpc.call("listunspent", 0, 9_999_999):
             if utxo.get("address") and utxo.get("spendable", True):
@@ -21714,7 +21729,23 @@ def _on_a_real_chain(address: str) -> bool:
     return version in _MAINNET_VERSIONS
 
 
+#: (node) -> (until, addresses): _ledger_addresses for fifteen seconds (2026-10-05:
+#: about a tenth of a second, on most pages of the operator's wallet).
+_LEDGER_ADDRESSES: dict = {}
+
+
 def _ledger_addresses(rpc) -> list[str]:
+    creds = getattr(rpc, "_creds", None)
+    key = (getattr(creds, "host", ""), getattr(creds, "port", 0))
+    held = _LEDGER_ADDRESSES.get(key)
+    if held and held[0] > time.time():
+        return list(held[1])
+    found = _ledger_addresses_uncached(rpc)
+    _LEDGER_ADDRESSES[key] = (time.time() + 15, list(found))
+    return found
+
+
+def _ledger_addresses_uncached(rpc) -> list[str]:
     """The addresses this wallet owns on a chain, funded or not.
 
     On a test chain, every address in the node's wallet was made by this
