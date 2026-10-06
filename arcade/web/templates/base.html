@@ -146,6 +146,15 @@ button.danger{background:var(--bad);border-color:var(--bad);color:#fff}
   border-radius:4px;margin-left:6px;vertical-align:1px;font-weight:600}
 .tag.testnet{background:color-mix(in srgb,var(--ok) 22%,transparent);color:var(--ok)}
 .tag.mainnet{background:color-mix(in srgb,var(--bad) 20%,transparent);color:var(--bad)}
+/* what an asset is, at a glance (2026-10-06): its chain, with an icon, and its supply */
+.netbadge,.supplybadge{display:inline-flex;align-items:center;gap:3px;font-size:.6rem;font-weight:700;
+  letter-spacing:.05em;padding:1px 6px;border-radius:999px;vertical-align:2px;white-space:nowrap;
+  line-height:1.6;margin-left:4px}
+.netbadge.test{background:color-mix(in srgb,#e8a33d 20%,transparent);color:#e8a33d}
+.netbadge.main{background:color-mix(in srgb,#3dbb6c 22%,transparent);color:#3dbb6c}
+.supplybadge{font-weight:600;letter-spacing:.02em;text-transform:none}
+.supplybadge.fixed{border:1px solid color-mix(in srgb,var(--muted) 45%,transparent);color:var(--muted)}
+.supplybadge.managed{border:1px solid color-mix(in srgb,var(--warn) 60%,transparent);color:var(--warn)}
 button.tag.switch{border:0;cursor:pointer;font-family:inherit;line-height:1.5;
   outline-offset:2px}
 button.tag.switch:hover{filter:brightness(.85)}

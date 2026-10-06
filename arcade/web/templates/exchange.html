@@ -483,6 +483,7 @@
             {%- else %}<span class="coinface"></span>{% endif %}</a></td>
         <td><a href="{{ p.href }}"><strong>{{ wall(p.name, 'token name') }}</strong></a><span
              class="muted">/{% if p.quote_label %}{{ wall(p.quote_label, 'token name') }}{% else %}{{ chain.label|upper }}{% endif %}</span>
+          {{ net_badge(chain) }}{{ supply_badge(p) }}
           {# The whole description goes behind the wall, not the first 40 characters
              of it: a verdict is kept per text, so asking about a cut-off prefix asks
              about a different sentence than the one that was judged. The truncating
@@ -552,9 +553,9 @@
     {% else %}
     <form method="get" action="/exchange/pairs" class="row" style="gap:8px;align-items:flex-end;margin:0">
       <div class="field" style="flex:1 1 160px;margin:0"><label>You have</label>
-        <select name="base">{% for t in held_tokens %}<option value="{{ t.property_id }}">{{ wall_text(t.name, 'token') }} (#{{ t.property_id }})</option>{% endfor %}</select></div>
+        <select name="base">{% for t in held_tokens %}<option value="{{ t.property_id }}">{{ wall_text(t.name, 'token') }} (#{{ t.property_id }}){{ ' · managed' if t.managed }}</option>{% endfor %}</select></div>
       <div class="field" style="flex:1 1 160px;margin:0"><label>Trade it for</label>
-        <select name="quote">{% for t in pair_tokens %}<option value="{{ t.property_id }}">{{ wall_text(t.name, 'token') }} (#{{ t.property_id }})</option>{% endfor %}</select></div>
+        <select name="quote">{% for t in pair_tokens %}<option value="{{ t.property_id }}">{{ wall_text(t.name, 'token') }} (#{{ t.property_id }}){{ ' · managed' if t.managed }}</option>{% endfor %}</select></div>
       <button type="submit" style="flex:0 0 auto">Open the pair</button>
     </form>
     {% endif %}

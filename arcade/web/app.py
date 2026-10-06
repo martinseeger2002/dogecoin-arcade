@@ -5194,6 +5194,54 @@ def create_app(state: AppState) -> FastAPI:
                       'Sensitive {l} &mdash; tap to show</button>'
                       '<template>{b}</template></span>').format(l=label, b=Markup(body))
 
+    # What a person is buying, at a glance (2026-10-06): which chain an asset
+    # lives on -- "an icon or indicator that an asset is on test net or on main net"
+    # -- and whether its issuer can mint more -- "whether it is a managed token or a
+    # fixed supply". Inline SVG, so no request and nothing the CSP has to allow.
+    _ICON_TEST = ('<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" fill="none" '
+                  'stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">'
+                  '<path d="M6 1.5h4M6.5 1.5v4.2L2.6 12.6A1.3 1.3 0 0 0 3.8 14.5h8.4a1.3 1.3 0 0 0 '
+                  '1.2-1.9L9.5 5.7V1.5"/><path d="M4.3 10h7.4"/></svg>')
+    _ICON_MAIN = ('<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">'
+                  '<circle cx="8" cy="8" r="6.6" fill="currentColor"/><circle cx="8" cy="8" r="4" '
+                  'fill="none" stroke="var(--bg,#111)" stroke-width="1.4"/></svg>')
+    _ICON_FIXED = ('<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true" fill="none" '
+                   'stroke="currentColor" stroke-width="1.7"><rect x="3" y="7" width="10" height="7.5" '
+                   'rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>')
+    _ICON_MANAGED = ('<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true" fill="none" '
+                     'stroke="currentColor" stroke-width="1.8" stroke-linecap="round">'
+                     '<path d="M8 2.5v11M2.5 8h11"/></svg>')
+
+    def _net_badge(where: Any = None) -> Markup:
+        """TESTNET or MAINNET, with its icon. `where` is a chain, a network name, or
+        a bool meaning mainnet."""
+        if isinstance(where, bool):
+            main = where
+        elif isinstance(where, str):
+            main = where.lower() in ("main", "mainnet")
+        else:
+            main = bool(getattr(where, "is_mainnet", False))
+        if main:
+            return Markup('<span class="netbadge main" title="Mainnet: real coins with real value">'
+                          + _ICON_MAIN + ' MAINNET</span>')
+        return Markup('<span class="netbadge test" title="Testnet: test assets, no guaranteed '
+                      'value; the chain can be reset">' + _ICON_TEST + ' TESTNET</span>')
+
+    def _supply_badge(prop: Any) -> Markup:
+        """Fixed supply, or managed (the issuer can mint more whenever it likes)."""
+        try:
+            managed = bool(prop["managed"]) if prop is not None else False
+        except (KeyError, IndexError, TypeError):
+            managed = bool(getattr(prop, "managed", False))
+        if managed:
+            return Markup('<span class="supplybadge managed" title="Managed supply: the issuer can '
+                          'create more of this token at any time, so the amount in existence can grow">'
+                          + _ICON_MANAGED + ' Managed</span>')
+        return Markup('<span class="supplybadge fixed" title="Fixed supply: every one of these tokens '
+                      'was created at issuance; nobody can make more">' + _ICON_FIXED + ' Fixed supply</span>')
+
+    TEMPLATES.env.globals["net_badge"] = _net_badge
+    TEMPLATES.env.globals["supply_badge"] = _supply_badge
     TEMPLATES.env.globals["wall"] = lambda text, label="name": _walled(
         str(text or ""), None, label)
 
@@ -19992,7 +20040,7 @@ def create_app(state: AppState) -> FastAPI:
             change, new = chartlib.table_move(points, stats["change"])
             out.append({
                 "property_id": pid, "name": prop["name"],
-                "divisible": prop["divisible"],
+                "divisible": prop["divisible"], "managed": prop.get("managed", 0),
                 "href": f"/exchange/pair/{pid}", "quote_label": None,
                 "all_trades": len(points),
                 "orders": len(book["asks"]) + len(book["bids"]),
@@ -20037,6 +20085,7 @@ def create_app(state: AppState) -> FastAPI:
             change, new = chartlib.table_move(points, stats["change"])
             rows.append({
                 "property_id": a, "name": base["name"], "divisible": base["divisible"],
+                "managed": base.get("managed", 0), "quote_managed": quote.get("managed", 0),
                 "href": f"/exchange/pairs/{a}/{b}", "quote_label": quote["name"], "quote_id": b,
                 "icon": face["icon"], "about": face["about"],
                 "last": stats["last"], "change": change, "new": new,

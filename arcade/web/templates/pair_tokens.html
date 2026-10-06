@@ -11,7 +11,9 @@
 
 <div class="markethead">
   <div style="min-width:0;overflow-wrap:anywhere">
-    <h1 style="margin:0;font-size:1.3rem">{{ wall(base.name, 'token name') }}<span class="muted">/{{ wall(quote.name, 'token name') }}</span></h1>
+    <h1 style="margin:0;font-size:1.3rem">{{ wall(base.name, 'token name') }}<span class="muted">/{{ wall(quote.name, 'token name') }}</span>
+      {{ net_badge(chain) }}</h1>
+    <div style="font-size:.78rem;margin:2px 0">{{ bname }} {{ supply_badge(base) }} &middot; {{ qname }} {{ supply_badge(quote) }}</div>
     <div class="muted" style="font-size:.78rem">#{{ base.property_id }} priced in #{{ quote.property_id }}
       &middot; <a href="/exchange/pairs/{{ quote.property_id }}/{{ base.property_id }}">flip to {{ qname }}/{{ bname }}</a>
       &middot; <a href="/tokens/{{ base.property_id }}">{{ bname }}</a>
