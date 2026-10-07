@@ -6534,6 +6534,14 @@ def create_app(state: AppState) -> FastAPI:
             return contentlib._missing("no such request")
         return contentlib._json(_described(row))
 
+    @app.get("/r/contacts.js")
+    def r_contacts_js():
+        """The contacts shim an inscribed page loads: arcade.contacts.list(), the
+        signed-in player's address book, read-only, asked once per game (2026-10-06)."""
+        body = (TEMPLATE_DIR / "contacts.js").read_text()
+        return Response(body, media_type="application/javascript",
+                        headers={**contentlib.CORS, "Cache-Control": "public, max-age=3600"})
+
     @app.get("/r/storage.js")
     def r_storage_js():
         """The storage shim an inscribed page loads (see pagestore.py).

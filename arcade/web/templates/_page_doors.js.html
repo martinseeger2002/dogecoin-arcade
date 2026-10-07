@@ -16,7 +16,7 @@
     var holder = {{ row.owner|tojson }}, maker = {{ row.creator|tojson }};
     var CHAIN = {network: "{{chain.network}}",
                  version: {{chain.params.pubkeyhash_version}}};
-    var doors = {storage: '/storage/', node: '/node/', swap: '/swap/', owner: '/owner/',
+    var doors = {contacts: 'viewer', storage: '/storage/', node: '/node/', swap: '/swap/', owner: '/owner/',
                  realtime: '/realtime/', escrow: '/r/escrow/', state: '/r/state/'};
 
     // Realtime rooms (arcade/web/realtime.py, templates/realtime.js): this page
@@ -544,6 +544,33 @@
       });
     }
 
+    // arcade.contacts (2026-10-06, asked for by ASHVALE: the Atlas shows where your
+    // MUTUAL contacts are while they play). The address book of the account signed
+    // in here, read-only: [{address, tag}] -- nothing else of it. It lives only in
+    // this browser (D-137, D-155: a book on the node would be the list of everybody
+    // you know), so handing it to a page is the person's own decision, asked once
+    // per inscription and remembered in this browser; a "no" is remembered too.
+    // A guest, a node's own wallet view, or a refusal: [].
+    function contactsDoor(m, answer){
+      if ((m.op || 'list') !== 'list') { answer({ok: false, error: 'contacts are read-only: op is list'}); return; }
+      if (viewer !== 'account') { answer({ok: true, contacts: []}); return; }
+      var slot = 'arcade.contacts.allow:' + here, said = null;
+      try { said = localStorage.getItem(slot); } catch (err) {}
+      var asked = said === 'yes' ? Promise.resolve(true) : said === 'no' ? Promise.resolve(false)
+        : arcadeAsk('Let this game see your contacts?',
+            'It will get the names and addresses in your address book, and nothing else of it. '
+            + 'A game can send what it gets to its own server: only say yes to a game you trust. '
+            + 'This browser remembers your answer for this game.', 'Allow')
+          .then(function(yes){ try { localStorage.setItem(slot, yes ? 'yes' : 'no'); } catch (err) {} return !!yes; });
+      asked.then(function(yes){
+        if (!yes) { answer({ok: true, contacts: []}); return; }
+        return import('/messaging.js').then(function(mail){ return mail.book(); }).then(function(all){
+          answer({ok: true, contacts: (all || []).filter(function(c){ return c && c.address; })
+                  .map(function(c){ return {address: c.address, tag: c.tag || ''}; })});
+        });
+      }).catch(function(){ answer({ok: true, contacts: []}); });
+    }
+
     window.addEventListener('message', function(e){
       if (!sandbox || e.source !== sandbox.contentWindow) return;
       var m = e.data || {};
@@ -553,6 +580,7 @@
         e.source.postMessage(body, '*');   // an opaque origin cannot be named
       }
       if (m.arcade === 'realtime') { realtimeDoor(m, answer, e.source); return; }
+      if (m.arcade === 'contacts') { contactsDoor(m, answer); return; }
       if (m.arcade === 'escrow') { escrowDoor(m, answer); return; }
       if (m.arcade === 'state' && m.op === 'update') {
         // Game state (arcade.state): anybody asks, the game's judge decides, so
