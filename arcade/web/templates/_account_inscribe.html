@@ -1230,17 +1230,49 @@ $("run-start").onclick = async () => {
   const extra = (typeof wizardFiles === "function") ? wizardFiles() : [];
   const all = wanted.filter((f) => !(extra.length && /\.json$/i.test(f.name))).concat(extra);
   let upload = "", batch = [], size = 0, done = 0;
+  // One batch, with its bytes counted as they leave (XMLHttpRequest, not fetch: fetch
+  // says nothing until the whole batch is in, and on a home connection that looked like
+  // "stuck at 0%" -- 2026-10-08). A batch that fails or goes quiet for two minutes is sent
+  // again, three times; the node keeps what earlier batches brought either way.
+  const post = (part) => new Promise((ok, no) => {
+    const x = new XMLHttpRequest();
+    x.open("POST", "/account/run/upload");
+    x.timeout = 0;
+    let quiet = setTimeout(() => x.abort(), 120000);
+    x.upload.onprogress = (e) => {
+      clearTimeout(quiet); quiet = setTimeout(() => x.abort(), 120000);
+      inFlight = e.loaded; shownUp();
+    };
+    x.onload = () => {
+      clearTimeout(quiet);
+      let said = {};
+      try { said = JSON.parse(x.responseText); } catch (e) {}
+      if (x.status >= 200 && x.status < 300) ok(said);
+      else no(new Error(said.detail || (x.status === 413
+        ? "that batch was too big for the way to this node" : `the node answered ${x.status}`)));
+    };
+    x.onerror = () => { clearTimeout(quiet); no(new Error("the connection dropped")); };
+    x.onabort = () => no(new Error("nothing moved for two minutes"));
+    x.send(part);
+  });
+  let inFlight = 0;
   const send = async () => {
     if (!batch.length) return;
-    const part = new FormData();
-    for (const f of batch) part.append("files", f);
-    part.append("upload", upload);
-    const answer = await fetch("/account/run/upload", {method: "POST", body: part});
-    let said = {};
-    try { said = await answer.json(); } catch (e) {}
-    if (!answer.ok) throw new Error(said.detail || (answer.status === 413
-      ? "that batch was too big for the way to this node" : "the upload stopped"));
-    upload = said.upload; done += batch.length; sentBytes += size; batch = []; size = 0;
+    for (let tries = 1; ; tries++) {
+      const part = new FormData();
+      for (const f of batch) part.append("files", f);
+      part.append("upload", upload);
+      try {
+        const said = await post(part);
+        upload = said.upload; break;
+      } catch (e) {
+        inFlight = 0;
+        if (tries >= 3 || /not this account|sign in/.test(String(e.message))) throw e;
+        runNote(`A batch did not go through (${e.message}): sending it again\u2026`, "info");
+        await new Promise((later) => setTimeout(later, 5000 * tries));
+      }
+    }
+    done += batch.length; sentBytes += size; inFlight = 0; batch = []; size = 0;
     shownUp();
   };
   // Said in this panel, under the button, not in the page's message line at the top
@@ -1249,13 +1281,14 @@ $("run-start").onclick = async () => {
   const totalBytes = all.reduce((n, f) => n + f.size, 0);
   let sentBytes = 0;
   const shownUp = () => runNote(`Uploading your folder\u2026 ${commas(done)} of ${commas(all.length)} files, `
-    + `${arcadeSize(sentBytes)} of ${arcadeSize(totalBytes)} (${Math.floor(100 * sentBytes / Math.max(1, totalBytes))}%). `
+    + `${arcadeSize(sentBytes + inFlight)} of ${arcadeSize(totalBytes)} `
+    + `(${Math.floor(100 * (sentBytes + inFlight) / Math.max(1, totalBytes))}%). `
     + "Keep this tab open. Nothing is paid for until you start the run.", "info");
   $("run-start").disabled = true;
   shownUp();
   try {
     for (const f of all) {
-      if (batch.length && size + f.size > 10 * 1024 * 1024) await send();
+      if (batch.length && size + f.size > 4 * 1024 * 1024) await send();
       batch.push(f); size += f.size;
     }
     await send();
