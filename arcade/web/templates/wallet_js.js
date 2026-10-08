@@ -2063,6 +2063,7 @@ if (TABS) {
   };
 }
 
+let _noTabUntil = 0;   // nobody answered just now: opened() does not wait again for a while
 function fromAnotherTab(ms = 400) {
   if (!TABS) return Promise.resolve(null);
   return new Promise((resolve) => {
@@ -2144,7 +2145,13 @@ export async function opened(chain) {
   let phrase = null;
   try { phrase = sessionStorage.getItem(OPEN_WALLET); } catch (e) {}
   if (!phrase) {
-    phrase = await fromAnotherTab();
+    // a second, longer ask before giving up (2026-10-08, asked to sign in two or
+    // three times): a phone wakes a backgrounded tab slower than 400 ms, and the page
+    // then asked for a password another tab already had open
+    if (Date.now() >= _noTabUntil) {
+      phrase = (await fromAnotherTab()) || (TABS ? await fromAnotherTab(1500) : null);
+      if (!phrase) _noTabUntil = Date.now() + 30000;   // a tab that unlocks later sends it anyway
+    }
     if (phrase) { try { sessionStorage.setItem(OPEN_WALLET, phrase); } catch (e) {} }
   }
   if (!phrase) return null;

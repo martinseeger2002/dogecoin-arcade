@@ -8413,6 +8413,12 @@ def create_app(state: AppState) -> FastAPI:
     # implying an account does more than it does.
 
     SESSION_COOKIE = SESSION
+    # The session cookie is SameSite=Lax, not Strict (2026-10-08: "Sometimes
+    # when I open a game in Dogecoin arcade, I have to login two or three times"):
+    # with Strict, a game opened from a link in Discord, Telegram or an email loaded
+    # signed out and asked for a sign-in the account already had. Lax still keeps the
+    # cookie off every cross-site POST and every cross-site fetch, which is what
+    # Strict was protecting here; the admin cookie stays Strict.
 
     def _origin(request: Request) -> str:
         """What the browser thinks it is talking to, which is what gets signed.
@@ -8574,7 +8580,7 @@ def create_app(state: AppState) -> FastAPI:
         answer.set_cookie(
             SESSION_COOKIE, token,
             max_age=accountslib.SESSION_DAYS * 86400,
-            httponly=True, samesite="strict",
+            httponly=True, samesite="lax",
             # Secure only where the browser would keep it: marking a cookie
             # Secure on plain http means the browser drops it, and the
             # symptom is a login that appears to work and then does not.
@@ -8637,7 +8643,7 @@ def create_app(state: AppState) -> FastAPI:
         _set_others(answer, [t for t in ([now] if now and state.account_for(now) else [])
                              + [t for t in others if t != token]][:OTHERS_MOST])
         answer.set_cookie(SESSION_COOKIE, token, max_age=accountslib.SESSION_DAYS * 86400,
-                          httponly=True, samesite="strict", secure=_over_https(request))
+                          httponly=True, samesite="lax", secure=_over_https(request))
         answer.delete_cookie(VIEW_COOKIE)
         return answer
 
@@ -9353,7 +9359,7 @@ def create_app(state: AppState) -> FastAPI:
         if tokens:
             answer.set_cookie(OTHERS_COOKIE, ",".join(tokens),
                               max_age=accountslib.SESSION_DAYS * 86400,
-                              httponly=True, samesite="strict")
+                              httponly=True, samesite="lax")
         else:
             answer.delete_cookie(OTHERS_COOKIE)
 
@@ -9362,7 +9368,7 @@ def create_app(state: AppState) -> FastAPI:
         answer.set_cookie(
             SESSION_COOKIE, token,
             max_age=accountslib.SESSION_DAYS * 86400,
-            httponly=True, samesite="strict", secure=_over_https(request))
+            httponly=True, samesite="lax", secure=_over_https(request))
 
     @app.get("/account")
     def account_state(request: Request):
@@ -19270,7 +19276,7 @@ def create_app(state: AppState) -> FastAPI:
         answer.set_cookie(
             SESSION_COOKIE, token,
             max_age=accountslib.SESSION_DAYS * 86400,
-            httponly=True, samesite="strict", secure=_over_https(request))
+            httponly=True, samesite="lax", secure=_over_https(request))
         # The operator's password IS the admin password (arcade/admin.py): having
         # just proved it, the admin panel opens too, without asking twice.
         if account.pubkey.lower() == state.operator:

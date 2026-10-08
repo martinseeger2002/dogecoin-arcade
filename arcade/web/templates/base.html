@@ -1820,6 +1820,10 @@ function arcadeAsk(title, detail, yes = "Yes"){
 // other tab of this site), otherwise this sheet, and the action carries on once
 // the password opens it -- instead of sending somebody to their own page first.
 var ARCADE_ME = {{ (account_name or '')|tojson }};
+// Signed in at all -- with or without a wallet kept here under a name. An account
+// signed in by its twelve words (/join/keys) has a session but no ARCADE_ME, and
+// was told to sign in again and again (2026-10-08).
+var ARCADE_SIGNED = {{ (account_here or False)|tojson }};
 // The node itself is the player (2026-10-05): its own machine, or its operator
 // signed in from outside, with the node's view. Games' seeds and the claims a pool
 // pays for itself work for it with no sign-in; the server says which address.
@@ -1955,10 +1959,15 @@ var _arcadeSignInOpen = null, _arcadeUnlockOpen = null;
 function arcadeSignIn(why){
   if (_arcadeSignInOpen) return _arcadeSignInOpen;
   _arcadeSignInOpen = (async function(){
-    var go = await arcadeAsk('Sign in to continue',
-      (why || 'This needs your wallet.') + ' Sign in or join, and you come straight back here.',
-      'Sign in');
-    if (go) location.href = '/join?next=' + encodeURIComponent(location.pathname + location.search);
+    // signed in by its words, no wallet kept here: the words open it, and only on the
+    // words page -- the name-and-password one has nothing to unlock
+    var words = ARCADE_SIGNED && !ARCADE_ME;
+    var go = await arcadeAsk(words ? 'Open your wallet' : 'Sign in to continue',
+      (why || 'This needs your wallet.') + (words
+        ? ' This account signs in with its words: type them once and this tab keeps the wallet open.'
+        : ' Sign in or join, and you come straight back here.'),
+      words ? 'Open it' : 'Sign in');
+    if (go) location.href = (words ? '/join/keys?next=' : '/join?next=') + encodeURIComponent(location.pathname + location.search);
     return false;
   })().finally(function(){ _arcadeSignInOpen = null; });
   return _arcadeSignInOpen;

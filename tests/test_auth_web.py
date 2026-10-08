@@ -183,7 +183,9 @@ def test_the_cookie_is_httponly_and_not_secure_on_localhost(client):
     app, _ = client
     answer = _sign_in(app, SigningKey.generate())
     cookie = answer.headers["set-cookie"]
-    assert "HttpOnly" in cookie and "SameSite=strict" in cookie.replace("Strict", "strict")
+    # Lax, not Strict: a game opened from a link on another site must arrive signed in
+    # (2026-10-08); Lax still keeps the cookie off cross-site POSTs and fetches
+    assert "HttpOnly" in cookie and "SameSite=lax" in cookie.replace("Lax", "lax")
     assert "Secure" not in cookie
 
 
