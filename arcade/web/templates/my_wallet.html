@@ -159,7 +159,7 @@ function drawWallets(said) {
       card.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); showAddress(chain); } };
       const hint = document.createElement("div");
       hint.className = "n addrhint";
-      hint.textContent = "Show QR code and copy";
+      hint.textContent = "QR code · copy";
       note.after(hint);
     }
     if (chain.incoming) {
