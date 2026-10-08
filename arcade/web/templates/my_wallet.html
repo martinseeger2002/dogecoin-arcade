@@ -56,7 +56,17 @@
   <button class="btn" id="send">Send</button>
 </div>
 
-<style>.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}</style>
+<style>.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.addrcard{cursor:pointer}
+.addrcard:hover,.addrcard:focus-visible{border-color:var(--accent)}
+.addrhint{color:var(--accent)!important}
+.addrsheet{max-width:360px;text-align:center}
+.addrsheet .row{justify-content:center}
+/* White under the code in both themes: a scanner wants dark on light. */
+.qrbox{background:#fff;border-radius:10px;padding:6px;margin:4px auto 10px;max-width:260px}
+.qrbox svg{display:block;width:100%;height:auto}
+.addrtext{font-size:.86rem;word-break:break-all;user-select:all;margin:0 auto;max-width:300px}</style>
+<script src="/vendor/qrcode.js"></script>
 
 <script type="module">
 import * as wallet from "/wallet.js";
@@ -138,6 +148,20 @@ function drawWallets(said) {
     note.style.cssText = "font-size:.72rem;word-break:break-all";
     note.textContent = chain.address || "no address yet";
     card.append(what, much, note);
+    if (chain.address) {
+      // Press the card for the address as a QR code and a copy button
+      // (2026-10-08), for paying it from a phone.
+      card.classList.add("addrcard");
+      card.tabIndex = 0;
+      card.setAttribute("role", "button");
+      card.setAttribute("aria-label", `${chain.label} address: show its QR code`);
+      card.onclick = () => showAddress(chain);
+      card.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); showAddress(chain); } };
+      const hint = document.createElement("div");
+      hint.className = "n addrhint";
+      hint.textContent = "Show QR code and copy";
+      note.after(hint);
+    }
     if (chain.incoming) {
       const coming = document.createElement("div");
       coming.className = "n";
@@ -172,6 +196,82 @@ function drawWallets(said) {
   }
   if (had) choose.value = had;
   sayWhich();
+}
+
+// The address, large enough to scan, and a button that copies it. The QR code
+// is drawn here by the vendored encoder (vendor/qrcode.js), from the same
+// string printed under it.
+function showAddress(chain) {
+  const back = document.createElement("div");
+  back.className = "askcard-back";
+  const card = document.createElement("div");
+  card.className = "panel askcard addrsheet";
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-label", `Your ${chain.label} address`);
+  const h = document.createElement("h3");
+  h.textContent = `Your ${chain.label.toLowerCase()} address`;
+  const pic = document.createElement("div");
+  pic.className = "qrbox";
+  try {
+    const qr = qrcode(0, "M");
+    qr.addData(chain.address);
+    qr.make();
+    pic.innerHTML = qr.createSvgTag({cellSize: 4, margin: 4, scalable: true});
+  } catch (e) {
+    pic.textContent = "The QR code could not be drawn; the address is below.";
+  }
+  const addr = document.createElement("div");
+  addr.className = "mono addrtext";
+  addr.textContent = chain.address;
+  const warn = document.createElement("p");
+  warn.className = "muted";
+  warn.style.cssText = "font-size:.82rem;margin:8px 0 0";
+  warn.textContent = chain.mainnet
+    ? `Send only ${chain.label.toLowerCase()} coins here: real coins, on that chain.`
+    : `Send only ${chain.label.toLowerCase()} coins here. They have no value.`;
+  const row = document.createElement("div");
+  row.className = "row";
+  const copy = document.createElement("button");
+  copy.type = "button"; copy.textContent = "Copy address";
+  const close = document.createElement("button");
+  close.type = "button"; close.className = "ghost"; close.textContent = "Close";
+  row.append(copy, close);
+  card.append(h, pic, addr, warn, row);
+  back.append(card);
+  document.body.append(back);
+  const done = () => { back.remove(); document.removeEventListener("keydown", esc); };
+  const esc = (e) => { if (e.key === "Escape") done(); };
+  document.addEventListener("keydown", esc);
+  close.onclick = done;
+  back.onclick = (e) => { if (e.target === back) done(); };
+  copy.onclick = async () => {
+    const ok = await copyText(chain.address);
+    copy.textContent = ok ? "Copied" : "Select it above and copy";
+    if (!ok) getSelection().selectAllChildren(addr);
+    setTimeout(() => { copy.textContent = "Copy address"; }, 2500);
+  };
+  copy.focus();
+}
+
+// navigator.clipboard is only there on https (and localhost); the node's own
+// machine on the LAN is plain http, so the old way stays as the fallback.
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (e) { /* fall through */ }
+  const t = document.createElement("textarea");
+  t.value = text;
+  t.setAttribute("readonly", "");
+  t.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+  document.body.append(t);
+  t.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+  t.remove();
+  return ok;
 }
 
 function sayWhich() {

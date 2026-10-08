@@ -41,6 +41,11 @@ PINNED = {
     # X25519 and XSalsa20-Poly1305, for the box itself.
     "tweetnacl.js":
         "6bcd37a3b20dce913f82d4b23e4e2b661058b4b953df8a3f8c45d56ac4f72447",
+    # The QR code of a wallet's address (Wallet tab, 2026-10-08). Not
+    # cryptography, but a swapped encoder could draw somebody else's address
+    # under yours, so it is pinned like the rest.
+    "qrcode.js":
+        "18ae399f81182bc9de916e9c77b195df20cc58d6f2d55a62b085a299f1bf1780",
 }
 
 
