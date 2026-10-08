@@ -1175,6 +1175,17 @@ async function measureBuild() {
        + "transaction: each of those goes up as its own small job, a transaction that "
        + "splits your coins for it and then its pieces after the next block (about a "
        + "minute an item)." : "");
+  // Enough coins for all of it? Said now, not after the upload (2026-10-08: a
+  // 6,480-picture set needs about 20,000 test coins, and a short account found out late).
+  try {
+    const me = await (await fetch("/account", {cache: "no-store"})).json();
+    const have = Number(me.balance || 0) / 1e8;
+    if ($("build").files.length && have < coins) {
+      text.innerHTML += ` <strong>Your account holds ${arcadeCoins(have)}</strong>, so it can pay `
+        + "for part of this: the run goes until the coins run out, and carries on when more "
+        + "arrive.";
+    }
+  } catch (e) { /* the balance is a courtesy here */ }
 }
 
 /** The bytes this upload will carry for one file of the chosen folder.
