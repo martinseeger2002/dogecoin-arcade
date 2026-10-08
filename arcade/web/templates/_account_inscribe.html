@@ -1240,16 +1240,32 @@ $("run-start").onclick = async () => {
     try { said = await answer.json(); } catch (e) {}
     if (!answer.ok) throw new Error(said.detail || (answer.status === 413
       ? "that batch was too big for the way to this node" : "the upload stopped"));
-    upload = said.upload; done += batch.length; batch = []; size = 0;
-    news(`Uploading\u2026 ${commas(done)} of ${commas(all.length)} files.`);
+    upload = said.upload; done += batch.length; sentBytes += size; batch = []; size = 0;
+    shownUp();
   };
+  // Said in this panel, under the button, not in the page's message line at the top
+  // (2026-10-08: "How can I tell if it's uploading?" -- "Nothing yet", while 125 MB
+  // went up in 40 MB requests with nothing on the screen).
+  const totalBytes = all.reduce((n, f) => n + f.size, 0);
+  let sentBytes = 0;
+  const shownUp = () => runNote(`Uploading your folder\u2026 ${commas(done)} of ${commas(all.length)} files, `
+    + `${arcadeSize(sentBytes)} of ${arcadeSize(totalBytes)} (${Math.floor(100 * sentBytes / Math.max(1, totalBytes))}%). `
+    + "Keep this tab open. Nothing is paid for until you start the run.", "info");
+  $("run-start").disabled = true;
+  shownUp();
   try {
     for (const f of all) {
-      if (batch.length && size + f.size > 40 * 1024 * 1024) await send();
+      if (batch.length && size + f.size > 10 * 1024 * 1024) await send();
       batch.push(f); size += f.size;
     }
     await send();
-  } catch (e) { say(String(e.message || e)); return; }
+  } catch (e) {
+    runNote(`The upload stopped at ${commas(done)} of ${commas(all.length)} files: ${String(e.message || e)}. `
+            + "Press Upload it to try again.");
+    $("run-start").disabled = false;
+    return;
+  }
+  runNote("Uploaded. Reading the collection\u2026", "info");
   const form = new FormData();
   form.append("upload", upload);
   form.append("run_chain", CHAIN.network);
@@ -1270,14 +1286,15 @@ $("run-start").onclick = async () => {
         + `so about ${Math.ceil(start.items / room.limit)} hours.`
       : "";
     setCap = start.supply || 0;
-    news((start.continues ? `Added to ${start.name}, after the ${commas(start.on_chain)} `
+    runNote((start.continues ? `Added to ${start.name}, after the ${commas(start.on_chain)} `
           + "already on the chain. " : "")
-      + `Written down: ${start.name}, ${commas(start.items)} items, one `
-      + `transaction each, about ${(start.fee / 100000000).toFixed(8)} in `
-      + "fees. Nothing is on the chain yet." + pace);
+      + `Uploaded and written down: ${start.name}, ${commas(start.items)} items. Nothing is on `
+      + "the chain yet: press Inscribe them all below to start." + pace
+      + (start.note ? " " + start.note : ""), "ok");
     showed({run: start.run, name: start.name, items: start.items, sent: 0,
             next: start.next});
-  } catch (e) { say(String(e.message || e)); }
+  } catch (e) { runNote(String(e.message || e)); }
+  finally { $("run-start").disabled = false; }
 };
 
 // Approve once, then it runs by itself (2026-09-25). The same button
