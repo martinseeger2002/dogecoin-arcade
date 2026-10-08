@@ -1946,12 +1946,22 @@ function arcadeToast(text){
 // that takes them to sign in and straight back to where they were -- the game
 // in full screen included. Answers false either way: the page's request ends
 // here, and the person comes back to try it again signed in.
-async function arcadeSignIn(why){
-  var go = await arcadeAsk('Sign in to continue',
-    (why || 'This needs your wallet.') + ' Sign in or join, and you come straight back here.',
-    'Sign in');
-  if (go) location.href = '/join?next=' + encodeURIComponent(location.pathname + location.search);
-  return false;
+// One card, one sheet at a time (2026-10-08: "Sometimes when I open a game
+// in Dogecoin arcade, I have to login two or three times"): a game asks for a
+// seed, a take and a key as it starts, and each caller that found no open wallet
+// drew its own sign-in card or password sheet on top of the last. Callers that
+// arrive while one is open now wait for it and share its answer.
+var _arcadeSignInOpen = null, _arcadeUnlockOpen = null;
+function arcadeSignIn(why){
+  if (_arcadeSignInOpen) return _arcadeSignInOpen;
+  _arcadeSignInOpen = (async function(){
+    var go = await arcadeAsk('Sign in to continue',
+      (why || 'This needs your wallet.') + ' Sign in or join, and you come straight back here.',
+      'Sign in');
+    if (go) location.href = '/join?next=' + encodeURIComponent(location.pathname + location.search);
+    return false;
+  })().finally(function(){ _arcadeSignInOpen = null; });
+  return _arcadeSignInOpen;
 }
 
 async function arcadeKeys(chain, why){
@@ -1962,7 +1972,11 @@ async function arcadeKeys(chain, why){
     arcadeSignIn(why);
     throw new Error('Sign in first: this action needs your wallet.');
   }
-  var opened = await arcadeUnlockSheet(why || 'This needs your key.');
+  if (!_arcadeUnlockOpen) {
+    _arcadeUnlockOpen = Promise.resolve(arcadeUnlockSheet(why || 'This needs your key.'))
+      .finally(function(){ _arcadeUnlockOpen = null; });
+  }
+  var opened = await _arcadeUnlockOpen;
   if (!opened) throw new Error('Unlock your wallet to do that.');
   return chain ? await w.opened(chain) : opened;
 }
