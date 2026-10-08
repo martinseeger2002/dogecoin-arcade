@@ -4660,7 +4660,14 @@ def create_app(state: AppState) -> FastAPI:
             return _again("/inscriptions/collection",
                           error=str(exc), folder=folder)
 
-    def _save_upload(files: list[UploadFile]) -> Path:
+    # A folder can be bigger than one request may be: Cloudflare refuses a body over
+    # 100 MB, and a 6,480-picture collection is 112 MB (2026-10-08, "i cant get this
+    # to upload"). So the page sends it in batches into one upload, and starts the
+    # run from that upload. Which account an upload belongs to is kept here; a node
+    # restart forgets it, and the page then uploads again.
+    _uploads: dict[str, str] = {}
+
+    def _save_upload(files: list[UploadFile], root: Path | None = None) -> Path:
         """Lay uploaded files out the way HashLips does, by name.
 
         A browser sends a chosen folder as a flat list of files, so the
@@ -4668,9 +4675,10 @@ def create_app(state: AppState) -> FastAPI:
         under json/, pictures under images/. Anything else is not part of a
         build and is left out.
         """
-        root = _collection_upload_dir() / secrets.token_hex(4)
-        (root / "json").mkdir(parents=True)
-        (root / "images").mkdir()
+        if root is None:
+            root = _collection_upload_dir() / secrets.token_hex(4)
+        (root / "json").mkdir(parents=True, exist_ok=True)
+        (root / "images").mkdir(exist_ok=True)
         kept = 0
         for upload in files:
             name = Path(upload.filename or "").name
@@ -10110,12 +10118,35 @@ def create_app(state: AppState) -> FastAPI:
             f"{left:,}. A second copy joins nothing and costs again.")
         return out
 
+    @app.post("/account/run/upload")
+    def account_run_upload(request: Request, files: list[UploadFile] = File([]),
+                           upload: str = Form("")):
+        """One batch of a collection's files, into one upload (a new one when
+        `upload` is blank). Nothing is written down as a run and nothing is paid
+        for: `/account/run/start` with this `upload` does that."""
+        account = _signed_in_account(request)
+        if upload:
+            if not re.fullmatch(r"[0-9a-f]{8}", upload) or _uploads.get(upload) != account.pubkey.lower():
+                return JSONResponse({"detail": "that upload is not this account's (the node "
+                                     "may have restarted): choose the folder again"}, status_code=400)
+            root = _collection_upload_dir() / upload
+        else:
+            upload = secrets.token_hex(4)
+            root = _collection_upload_dir() / upload
+            _uploads[upload] = account.pubkey.lower()
+        try:
+            _save_upload(files, root)
+        except (ValueError, OSError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"upload": upload})
+
     @app.post("/account/run/start")
     def account_run_start(request: Request, files: list[UploadFile] = File([]),
                           name: str = Form(""), run_chain: str = Form(""),
                           max_supply: str = Form(""), numbering: str = Form("continue"),
                           description: str = Form(""), url: str = Form(""),
-                          artist: str = Form(""), icon: str = Form("")):
+                          artist: str = Form(""), icon: str = Form(""),
+                          upload: str = Form("")):
         """Write a collection down as this account's run. Nothing is inscribed.
 
         One upload, one run, and no transaction in it. The pieces are asked
@@ -10161,8 +10192,14 @@ def create_app(state: AppState) -> FastAPI:
                            "before starting another. Nothing has been paid "
                            "for."}, status_code=400)
         try:
-            build = collectionlib.read_build(
-                collectionlib.find_build(_save_upload(files)))
+            if upload:   # sent in batches to /account/run/upload first
+                if not re.fullmatch(r"[0-9a-f]{8}", upload) or _uploads.get(upload) != account.pubkey.lower():
+                    raise ValueError("that upload is not this account's (the node may have "
+                                     "restarted): choose the folder again")
+                folder = _collection_upload_dir() / upload
+            else:
+                folder = _save_upload(files)
+            build = collectionlib.read_build(collectionlib.find_build(folder))
         except (collectionlib.CollectionError, ValueError, OSError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         # The set's rules are #1's (2026-09-25): a NEW collection writes
@@ -10509,6 +10546,26 @@ def create_app(state: AppState) -> FastAPI:
                                "still missing."}, status_code=400)
             return JSONResponse({"run": run["id"], "sent": run["sent"],
                                  "items": run["items"], "finished": True})
+        if int(piece.get("chunks") or 1) > 1:
+            # More than one transaction (2026-10-08: never shrink a collection's
+            # pictures): the page takes this item's bytes from /account/run/item and
+            # sends it the way one big file goes -- a split, a block, its pieces,
+            # counted by accountparts -- then reports its first txid to
+            # /account/run/done. `sending` until then, so a closed tab comes back here.
+            if not (Path(run["folder"]) / piece["image"]).is_file():
+                _runs.piece_failed(run["id"], piece["edition"], "the picture is not in the build this node kept")
+                return JSONResponse({"detail": f"{piece['name']}: the picture is not in the "
+                                     "build this node kept. Nothing has been paid for."},
+                                    status_code=400)
+            if run["status"] == "stopped":
+                _runs.set_status(run["id"], "running")
+            _runs.offer_piece(run["id"], piece["edition"])
+            return JSONResponse({"big": True, "run": run["id"], "piece": piece["edition"],
+                                 "items": run["items"], "sent": run["sent"],
+                                 "name": piece["name"], "bytes": int(piece["size"]),
+                                 "chunks": int(piece["chunks"]),
+                                 "content_type": piece["content_type"],
+                                 "json": piece["json"], "chain": chain.network})
         try:
             content = (Path(run["folder"]) / piece["image"]).read_bytes()
             plan = inscribelib.plan(content, piece["content_type"],
@@ -10577,6 +10634,53 @@ def create_app(state: AppState) -> FastAPI:
                              "sent": run["sent"], "name": piece["name"],
                              "bytes": plan.content_len,
                              "chain": chain.network, **unsigned.as_json()})
+
+    def _own_run(request: Request, run_id: str):
+        account = _signed_in_account(request)
+        run = _runs.get(str(run_id or ""))
+        if run is None:
+            raise HTTPException(404, "there is no run of that id")
+        if run["account"] != account.pubkey.lower():
+            raise HTTPException(403, "that run belongs to somebody else")
+        return run
+
+    @app.get("/account/run/item")
+    def account_run_item(request: Request, run: str = "", edition: int = 0):
+        """The bytes of one item of this account's own run, exactly as uploaded --
+        for an item of more than one transaction, which the page sends the way
+        one big file goes. Only files the run lists, never an arbitrary path."""
+        row = _own_run(request, run)
+        piece = _runs.piece(row["id"], int(edition))
+        if piece is None:
+            raise HTTPException(404, "that run has no such item")
+        path = Path(row["folder"]) / piece["image"]
+        if not path.is_file() or Path(row["folder"]).resolve() not in path.resolve().parents:
+            raise HTTPException(404, "the picture is not in the build this node kept")
+        return Response(path.read_bytes(), media_type=piece["content_type"],
+                        headers={"Cache-Control": "no-store"})
+
+    @app.post("/account/run/done")
+    def account_run_done(request: Request, payload: Any = Body(None)):
+        """An item of more than one transaction is on the chain: its first
+        transaction (the one `/content` answers on) goes on its row, and the run
+        moves on. Only an item the page was handed as big, and only `sending`."""
+        said = payload if isinstance(payload, dict) else {}
+        row = _own_run(request, said.get("run", ""))
+        txid = str(said.get("txid", "")).lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", txid):
+            return JSONResponse({"detail": "that is not a transaction id"}, status_code=400)
+        try:
+            edition = int(said.get("piece"))
+        except (TypeError, ValueError):
+            return JSONResponse({"detail": "which item?"}, status_code=400)
+        piece = _runs.piece(row["id"], edition)
+        if piece is None or int(piece.get("chunks") or 1) < 2:
+            return JSONResponse({"detail": "that is not an item of more than one transaction"},
+                                status_code=400)
+        if piece["status"] == "sent":
+            return JSONResponse({"run": row["id"], "piece": edition, "sent": True})
+        _runs.record_piece(row["id"], edition, txid)
+        return JSONResponse({"run": row["id"], "piece": edition, "sent": True})
 
     @app.post("/account/nft/send")
     def account_nft_send(request: Request, payload: Any = Body(None)):

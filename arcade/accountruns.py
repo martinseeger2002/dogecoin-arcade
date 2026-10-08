@@ -22,19 +22,20 @@ question a request asks, and the answer is the same run the account started
 before it closed the tab. That is the whole resume story -- no thread to resume,
 and the same piece rebuilt identically when the offer it was offered has expired.
 
-One piece per item
-------------------
-`create` refuses a build with an item that needs more than one chunk rather than
-accepting it and failing forty pieces in. The reason is not that several
-transactions cannot go out in one pass -- they can, one block after a split that
-funds them, and `accountparts.py` now does exactly that for one big file. It is
-that a run is one transaction per item, which is the sentence the page gives and
-the shape the folder is laid out in, and
-an item spread over three transactions needs a countdown PER ITEM that this book
-does not have: a `piece` row holds one txid and one status, which is enough for
-an item and not enough for an item's third transaction. A collection that
-half-inscribes is worse than one that has not started, so the refusal happens at
-the review, before anything is paid for, naming the items.
+Items of more than one piece
+----------------------------
+A `piece` row is one ITEM, and it holds one txid and one status. An item that
+fits in one transaction is offered by `/account/run/piece` as before. An item
+that does not -- most real art: a 17 KB picture is three transactions -- used to
+be refused here, which pushed people into shrinking their pictures (the operator
+2026-10-08: "when inscribing a collection the files should never be
+compressed"). Now its row carries `chunks`, and the page sends that one item
+through the one-big-file path (`accountparts.py`: a split, a block, then its
+pieces), whose own book keeps the countdown per transaction that this one does
+not have. When the file is up, the page reports its first transaction and the
+row is `sent` like any other. Until then the row is `sending`, which
+`next_piece` puts first again, so a closed tab comes back to the same item and
+`accountparts.find()` continues the same file rather than starting it twice.
 
 Retention
 ---------
@@ -98,6 +99,9 @@ CREATE TABLE IF NOT EXISTS piece (
     status       TEXT NOT NULL,
     txid         TEXT NOT NULL DEFAULT '',
     error        TEXT NOT NULL DEFAULT '',
+    -- how many transactions this item takes: 1 goes out as one offer, more
+    -- goes through the one-big-file path (see "Items of more than one piece")
+    chunks       INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (run_id, edition)
 );
 CREATE INDEX IF NOT EXISTS piece_status_idx ON piece(run_id, status);
@@ -158,14 +162,6 @@ class Runs:
         fields read off it are `folder`, `collection`, and the five fields of
         each item, so a run can be written from a folder or from a test.
         """
-        too_big = []
-        for item in build.items:
-            est = inscribelib.estimate(item.size, item.content_type, item.json)
-            if int(est.chunks) > 1:
-                too_big.append(item.name)
-        if too_big:
-            raise TooBig(too_big)
-
         fee = dust = 0.0
         run_id = secrets.token_hex(6)
         with self._open() as conn:
@@ -176,9 +172,10 @@ class Runs:
                 dust += est.dust
                 conn.execute(
                     "INSERT INTO piece (run_id, edition, name, image, content_type, "
-                    "size, json, inscription_id, status) VALUES (?,?,?,?,?,?,?,?,?)",
+                    "size, json, inscription_id, status, chunks) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (run_id, item.edition, item.name, item.image, item.content_type,
-                     item.size, item.json, secrets.token_bytes(8).hex(), "pending"))
+                     item.size, item.json, secrets.token_bytes(8).hex(), "pending",
+                     max(1, int(est.chunks))))
             conn.execute(
                 "INSERT INTO run (id, created, network, account, address, name, "
                 "folder, status, items, fee, dust, floor) "
@@ -265,6 +262,13 @@ class Runs:
                 "SELECT txid FROM piece WHERE run_id = ? AND status = 'sent' "
                 "ORDER BY edition DESC LIMIT 1", (run_id,)).fetchone()
             return "" if row is None else row["txid"]
+
+    def piece(self, run_id: str, edition: int) -> dict | None:
+        """One item of a run, by edition."""
+        with self._open() as conn:
+            row = conn.execute("SELECT * FROM piece WHERE run_id = ? AND edition = ?",
+                               (run_id, int(edition))).fetchone()
+            return dict(row) if row else None
 
     def pieces(self, run_id: str, status: str | None = None,
                limit: int | None = None, offset: int = 0) -> list[dict]:

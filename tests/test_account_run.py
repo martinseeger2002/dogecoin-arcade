@@ -169,21 +169,64 @@ def test_an_expired_offer_builds_the_same_piece_not_a_new_one(seated, tmp_path):
                     json={"run": run_id}).json()["finished"]
 
 
-def test_a_build_needing_two_transactions_for_one_item_is_refused(seated, tmp_path):
-    """Refused at the upload, naming the item, with nothing paid for.
-
-    The alternative is a run that inscribes forty pieces and stops on the
-    forty-first because it cannot be built -- half a collection, the money
-    spent, and no way to finish it.
-    """
+def test_an_item_of_more_than_one_transaction_goes_up_as_it_is(seated, tmp_path):
+    """Never shrunk (2026-10-08: "when inscribing a collection the files should
+    never be compressed"). An item bigger than one transaction is written down, not
+    refused; the run hands it to the page as `big`, with its bytes exactly as uploaded,
+    and the page sends it the one-big-file way and reports its first transaction."""
     app, state, rpc, pubkey, mine = seated
-    answer = _start(app, hashlips(tmp_path, count=2, prefix="Doge Punks Vast",
-                                  sizes={2: 30_000}))
-    assert answer.status_code == 400, answer.text
-    assert "Doge Punks Vast #2" in answer.json()["detail"]
-    assert rpc.call("getrawmempool") == []
-    assert app.get("/account").json()["balance"] == int(4.0 * COIN), \
-        "a refusal costs nothing"
+    build = hashlips(tmp_path, count=2, prefix="Doge Punks Vast", sizes={2: 30_000})
+    answer = _start(app, build)
+    assert answer.status_code == 200, answer.text
+    run_id = answer.json()["run"]
+    assert answer.json()["items"] == 2
+    _next(app, pubkey, run_id)                       # #1 is one transaction, as before
+    rpc.call("generate", 1)
+    _catch_up(state, rpc)
+
+    big = app.post("/account/run/piece", json={"run": run_id})
+    assert big.status_code == 200, big.text
+    big = big.json()
+    assert big["big"] and big["piece"] == 2 and big["chunks"] > 1
+    assert "offer" not in big, "nothing is offered for a big item: the page sends it"
+    got = app.get(f"/account/run/item?run={run_id}&edition=2")
+    assert got.status_code == 200
+    assert got.content == (build / "images" / "2.png").read_bytes(), "the bytes as uploaded"
+    # asked again before it is done: the same item, still owed
+    assert app.post("/account/run/piece", json={"run": run_id}).json()["piece"] == 2
+
+    assert app.post("/account/run/done", json={"run": run_id, "piece": 1,
+                                               "txid": "ab" * 32}).status_code == 400
+    assert app.post("/account/run/done", json={"run": run_id, "piece": 2,
+                                               "txid": "not a txid"}).status_code == 400
+    done = app.post("/account/run/done", json={"run": run_id, "piece": 2, "txid": "ab" * 32})
+    assert done.status_code == 200, done.text
+    over = app.post("/account/run/piece", json={"run": run_id}).json()
+    assert over["finished"] and over["sent"] == 2
+
+
+def test_a_folder_too_big_for_one_request_goes_up_in_batches(seated, tmp_path):
+    """Cloudflare refuses a body over 100 MB, and a 6,480-picture folder is 112 MB
+    (2026-10-08): the page sends batches into one upload and starts from it."""
+    app, state, rpc, pubkey, mine = seated
+    build = hashlips(tmp_path, count=3, prefix="Doge Punks Batched")
+    paths = [p for p in sorted(build.rglob("*")) if p.is_file()]
+    first = app.post("/account/run/upload", files=[("files", (p.name, p.read_bytes())) for p in paths[:3]],
+                     data={"upload": ""})
+    assert first.status_code == 200, first.text
+    upload = first.json()["upload"]
+    rest = app.post("/account/run/upload", files=[("files", (p.name, p.read_bytes())) for p in paths[3:]],
+                    data={"upload": upload})
+    assert rest.status_code == 200 and rest.json()["upload"] == upload
+    started = app.post("/account/run/start", data={"run_chain": "regtest", "upload": upload})
+    assert started.status_code == 200, started.text
+    assert started.json()["items"] == 3 and started.json()["name"] == "Doge Punks Batched"
+    # an upload id that is not this account's is not a way into somebody's folder
+    assert app.post("/account/run/start", data={"run_chain": "regtest",
+                                                "upload": "0" * 8}).status_code == 400
+    assert app.post("/account/run/upload", files=[("files", (paths[0].name, b"x"))],
+                    data={"upload": "../../etc"}).status_code == 400
+    app.post("/account/run/stop", json={"run": started.json()["run"]})
 
 
 def test_a_run_an_operator_closed_costs_nothing(seated, tmp_path):

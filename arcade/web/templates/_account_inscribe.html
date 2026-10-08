@@ -47,13 +47,32 @@
 <div class="panel" id="running">
   <h3 style="margin:0 0 6px">Run a collection</h3>
   <p class="muted" style="font-size:.86rem;margin:0 0 10px">
-    A folder laid out the way the Art Engine leaves one &mdash;
-    <code>json/_metadata.json</code> and the pictures. Each item goes up in
-    its own transaction, signed here, one at a time: this tab stays open while
-    the run is going, and if it closes the run is still there when you come
-    back, at the piece it stopped on. Your node paces it by the inscriptions it
-    will take in an hour, and it keeps the pictures you uploaded &mdash;
-    nothing throws them away yet.</p>
+    Choose the folder your collection is in. A HashLips Art Engine
+    <code>build</code> folder works as it is (its <code>images</code> and
+    <code>json</code>, with <code>json/_metadata.json</code>), and so does any folder of
+    your own pictures. Every picture goes up exactly as it is &mdash; never shrunk.
+    Each piece is its own inscription, signed here, one after another: this tab stays
+    open while the run is going, and if it closes the run is still there when you come
+    back, at the piece it stopped on. Your node paces it by the inscriptions it will take
+    in an hour, and it keeps the pictures you uploaded &mdash; nothing throws them away
+    yet.</p>
+  <details class="muted" style="font-size:.84rem;margin:0 0 10px">
+    <summary style="cursor:pointer">What the JSON is, and what traits are</summary>
+    <p style="margin:6px 0 0">Every piece of a collection carries a little JSON beside its
+      picture, on the chain with it. It says which collection the piece belongs to and
+      its number &mdash; <code>"name": "Sad Pho #12"</code> and <code>"edition": 12</code>
+      &mdash; and that is how every node files the pieces into one set. It can also carry
+      <strong>traits</strong> (<code>"attributes"</code>): what this piece is made of, like
+      <code>{"trait_type": "Background", "value": "Blue"}</code>. Traits are what
+      collectors filter and compare by, and how rare a trait is comes from how many
+      pieces share it.</p>
+    <p style="margin:6px 0 0">The HashLips Art Engine writes all of this for you, one
+      <code>&lt;number&gt;.json</code> per picture and all of them together in
+      <code>_metadata.json</code>. A folder of your own pictures has none: choose it
+      anyway, and the wizard below writes it, with your collection's name, a description,
+      and traits &mdash; the same for every piece, or each piece's own from a
+      spreadsheet.</p>
+  </details>
   <div class="row">
     <div style="flex:1"><input type="file" id="build" webkitdirectory
       directory multiple></div>
@@ -64,6 +83,51 @@
     <span id="picked-build-text"></span>
     <span id="build-pace" style="display:block;margin-top:4px"></span>
     <span id="build-sizes" class="sizes" hidden></span></p>
+  {# The JSON check and the wizard (2026-10-08, the operator: "If the json is incomplete or
+     missing. Prompt the user and allow them the option to use a wizard to create json
+     for their collection" -- and asked before the wizard writes anything). #}
+  <div id="json-check" class="setbox msg info" hidden>
+    <p id="json-says" style="margin:0 0 8px"></p>
+    <button type="button" class="small" id="wiz-open">Make the JSON with the wizard</button>
+  </div>
+  <div id="wizard" class="setbox" hidden>
+    <h4 style="margin:0 0 6px">The JSON wizard</h4>
+    <p class="muted" style="font-size:.85rem;margin:0 0 8px" id="wiz-intro"></p>
+    <div class="setgrid">
+      <input autocomplete="off" id="wiz-name" placeholder="collection name (every piece is &quot;name #number&quot;)" maxlength="60">
+      <input autocomplete="off" id="wiz-description" placeholder="description of the collection" maxlength="400">
+    </div>
+    <label style="display:flex;gap:8px;align-items:center;font-size:.9rem;margin-top:8px">
+      <input type="checkbox" id="wiz-keep" checked> Keep the JSON that is already there, and write
+      only what is missing</label>
+    <p style="margin:10px 0 4px"><strong>Traits</strong></p>
+    <label style="display:block;font-size:.9rem"><input type="radio" name="wiz-traits" value="none" checked>
+      None for now</label>
+    <label style="display:block;font-size:.9rem"><input type="radio" name="wiz-traits" value="same">
+      The same traits on every piece</label>
+    <div id="wiz-same" hidden style="margin:4px 0 6px 22px">
+      <div id="wiz-rows"></div>
+      <button type="button" class="ghost small" id="wiz-add">Add a trait</button>
+    </div>
+    <label style="display:block;font-size:.9rem"><input type="radio" name="wiz-traits" value="sheet">
+      Each piece its own, from a spreadsheet (CSV)</label>
+    <div id="wiz-sheet" hidden style="margin:4px 0 6px 22px" class="muted">
+      <p style="margin:0 0 6px;font-size:.84rem">One row per picture. The first column is the
+        picture's file name (<code>sunset.png</code>) or its number; every other column is a
+        trait, with the trait's name in the first row:<br>
+        <code>file,Background,Eyes</code><br><code>sunset.png,Blue,Laser</code></p>
+      <input type="file" id="wiz-csv" accept=".csv,text/csv">
+    </div>
+    <p class="muted" style="font-size:.84rem;margin:10px 0 4px">The pieces are numbered in the
+      order of their file names (<code>1.png</code>, <code>2.png</code> &hellip; keep their own
+      numbers). Piece #1 will read:</p>
+    <pre id="wiz-preview" style="font-size:.78rem;white-space:pre-wrap;max-height:200px;overflow:auto;margin:0"></pre>
+    <div class="row" style="gap:8px;margin-top:8px">
+      <button type="button" id="wiz-make">Write the JSON</button>
+      <button type="button" class="ghost" id="wiz-cancel">Cancel</button>
+    </div>
+    <p class="msg ok" id="wiz-done" hidden style="margin:8px 0 0"></p>
+  </div>
   {# The set's rules, set by its #1 (2026-09-25): a new collection says
      them here; a batch added to one already on the chain inherits them. #}
   <div id="set-new" class="setbox" hidden>
@@ -109,6 +173,7 @@ import * as wallet from "/wallet.js";
 const $ = (id) => document.getElementById(id);
 const say = (t) => { $("trouble").textContent = t; $("trouble").hidden = !t; };
 const news = (t) => { $("news").textContent = t; $("news").hidden = !t; };
+const newsOuter = news;
 const commas = (n) => Number(n || 0).toLocaleString();
 const CHAIN = {network: "{{ chain.network }}",
                version: {{ chain.params.pubkeyhash_version }}};
@@ -181,6 +246,7 @@ const take = async () => keys || (keys = await opening);
  *  the caller says otherwise.
  */
 const askYes = (title, detail, yes = "Inscribe") => arcadeAsk(title, detail, yes);
+const askYesOuter = askYes;
 
 async function offerAndConfirm(where, body, says, done) {
   say(""); news("");
@@ -421,14 +487,23 @@ async function deletePrizePool(which) {
   } catch (e) { say(String(e.message || e)); }
 }
 
-async function inscribeBytes(bytes, name, type, jsonGiven = "") {
+/* `quiet` is a collection run's item of more than one transaction (2026-10-08):
+ * the run was approved once, so nothing is asked here, the receipt and the news
+ * line are the run's, and a failure is thrown to the run rather than said. It
+ * answers the first transaction's id, which is the key the item is read back on. */
+async function inscribeBytes(bytes, name, type, jsonGiven = "", {quiet = false, held: given = null} = {}) {
   const file = {name, type};
-  const typed = jsonGiven || ($("json-field") && $("json-field").value.trim()) || "";
+  const typed = jsonGiven || (!quiet && $("json-field") && $("json-field").value.trim()) || "";
   if (typed) {
     try { JSON.parse(typed); }
-    catch (e) { say("the JSON beside the file does not parse: " + e.message); return; }
+    catch (e) {
+      if (quiet) throw new Error(`${name}: its JSON does not parse: ${e.message}`);
+      say("the JSON beside the file does not parse: " + e.message); return;
+    }
   }
-  const held = (await take()) || await arcadeKeys(CHAIN);
+  const askYes = quiet ? (async () => true) : askYesOuter;
+  const news = quiet ? ((t) => { $("run-says").textContent = `${name}: ${t}`; }) : newsOuter;
+  const held = given || (await take()) || await arcadeKeys(CHAIN);
   try {
     const start = await ask("/account/inscribe", {
       content: b64(bytes),
@@ -448,6 +523,7 @@ async function inscribeBytes(bytes, name, type, jsonGiven = "") {
           + `transaction, for ${shown.coinsOf(shown.fee)} in fees.`)))
         return;
       const out = await wallet.confirm(held, start);
+      if (quiet) return out.txid;
       const says = `Inscribed: ${file.name}, ${out.txid.slice(0, 16)}… It `
           + "shows up when its block is mined.";
       remember({says, root: out.txid, bytes: bytes.length,
@@ -532,19 +608,20 @@ async function inscribeBytes(bytes, name, type, jsonGiven = "") {
       // the six transactions had finished. The hold only covers the job,
       // though -- this sentence has to outlive the reloads, so it goes to the
       // receipt too, and `tellItAgain` says it again on every page after.
+      await keep(sha, null);
+      if (quiet) return root;
       const says = `Inscribed: ${file.name}, ${commas(pieces)} transactions, `
           + "one file, on the chain for ever. It appears when its last block "
           + "is mined.";
       remember({says, root, bytes: bytes.length, chain: CHAIN.network,
                 at: Date.now()});
       news(says);
-      await keep(sha, null);
     } finally {
       delete document.body.dataset.inscribing;
       window.removeEventListener("beforeunload", stay);
-      drawUnfinished();
+      if (!quiet) drawUnfinished();
     }
-  } catch (e) { say(String(e.message || e)); }
+  } catch (e) { if (quiet) throw e; say(String(e.message || e)); }
 }
 
 /* -- inscriptions left half-done: say so, and finish or give up -- */
@@ -698,6 +775,29 @@ function runButtons(run) {
                  : state.paused ? "Resume" : "Pause";
 }
 
+/** An item of more than one transaction (2026-10-08: a collection's pictures are
+ *  never shrunk to fit one): its bytes exactly as uploaded, sent the one-big-file
+ *  way -- a split, its block, then its pieces -- and its first transaction told to
+ *  the run. A tab that closes part way comes back to the same item, and the node
+ *  continues the same file (accountparts.find) rather than paying for it twice. */
+async function bigItem(run, offer, held) {
+  const got = await fetch(`/account/run/item?run=${encodeURIComponent(run)}&edition=${offer.piece}`,
+                          {cache: "no-store"});
+  if (!got.ok) {
+    let why = "";
+    try { why = (await got.json()).detail; } catch (e) {}
+    throw new Error(`${offer.name}: ${why || "the node could not hand over its picture"}`);
+  }
+  const bytes = new Uint8Array(await got.arrayBuffer());
+  $("run-says").textContent = `${offer.name}: ${commas(offer.chunks)} transactions `
+    + `(item ${commas(offer.piece)} of ${commas(offer.items)}, ${commas(offer.sent)} on the chain)\u2026`;
+  const root = await inscribeBytes(bytes, offer.name, offer.content_type, offer.json,
+                                   {quiet: true, held});
+  if (!root) throw new Error(`${offer.name}: its first transaction is not known here, so the `
+                             + "run is waiting on it. Press Resume to pick it up again.");
+  await ask("/account/run/done", {run, piece: offer.piece, txid: root});
+}
+
 /** Work through a run until it is finished, paused, or out of room this hour.
  *  Out of room is not the end: it waits the minutes the node names and goes on. */
 async function autoRun(run) {
@@ -748,6 +848,7 @@ async function autoRun(run) {
       }
       $("run-says").textContent = `${offer.name}: piece ${offer.piece} of `
         + `${commas(offer.items)}\u2026 (${commas(offer.sent)} on the chain)`;
+      if (offer.big) { await bigItem(run, offer, held); continue; }
       await wallet.checked(offer, held);
       await wallet.confirm(held, offer);
     }
@@ -831,6 +932,195 @@ $("build").onchange = () => measureBuild();
  *  pictures in it, or a browser that cannot re-encode one, is offered no
  *  buttons at all.
  */
+/* ---- the JSON: is every picture's there, and the wizard that writes what is not ----
+ * (2026-10-08, the operator: "It needs to look at the hash lips build folder and use the json
+ * and image directories ... If the json is incomplete or missing. Prompt the user and
+ * allow them the option to use a wizard"; "it should also work for people who just
+ * have a folder with a collection. Not made with hash lips".) Read here, in the tab,
+ * so the question comes before anything is uploaded or paid for. */
+let jsonState = null;        // what checkJson found, for the wizard and the Start button
+let wizardMade = null;       // the _metadata.json the wizard wrote, as a File
+const stemOf = (name) => name.replace(/^.*\//, "").replace(/\.[^.]+$/, "");
+const natural = (a, b) => a.localeCompare(b, undefined, {numeric: true, sensitivity: "base"});
+function wizardFiles() { return wizardMade ? [wizardMade] : []; }
+
+async function checkJson(files) {
+  wizardMade = null; jsonState = null;
+  $("json-check").hidden = true; $("wizard").hidden = true; $("wiz-done").hidden = true;
+  const pictures = files.filter(arcadeIsImage).sort((a, b) => natural(a.name, b.name));
+  if (!pictures.length) return;
+  const meta = files.find((f) => f.name === "_metadata.json");
+  const singles = files.filter((f) => /^\d+\.json$/i.test(f.name));
+  let entries = [], broken = [];
+  if (meta) {
+    try {
+      const list = JSON.parse(await meta.text());
+      if (Array.isArray(list)) entries = list; else broken.push("_metadata.json is not a list");
+    } catch (e) { broken.push(`_metadata.json does not parse (${e.message})`); }
+  }
+  if (!entries.length && singles.length) {
+    for (const f of singles) {
+      try { entries.push(JSON.parse(await f.text())); }
+      catch (e) { broken.push(`${f.name} does not parse`); }
+    }
+  }
+  // Which picture each entry is: its edition number, or the file its "image" names.
+  const byStem = new Map(pictures.map((p) => [stemOf(p.name), p]));
+  const has = new Map();       // picture name -> its entry
+  let nameless = 0;
+  for (const e of entries) {
+    if (!e || typeof e !== "object") { nameless += 1; continue; }
+    const img = typeof e.image === "string" ? stemOf(e.image.split("?")[0]) : "";
+    const pic = (Number.isInteger(e.edition) && byStem.get(String(e.edition))) || byStem.get(img);
+    if (!pic) continue;
+    if (typeof e.name !== "string" || !e.name.trim()) nameless += 1;
+    has.set(pic.name, e);
+  }
+  const missing = pictures.filter((p) => !has.has(p.name));
+  jsonState = {pictures, has, missing, entries, hashlips: !!(meta || singles.length)};
+  if (!missing.length && !broken.length && !nameless) return;
+  const n = pictures.length;
+  $("json-says").innerHTML = !entries.length
+    ? `This folder has ${commas(n)} picture${n === 1 ? "" : "s"} and no JSON for them`
+      + (broken.length ? ` (${broken.slice(0, 2).join("; ")})` : "")
+      + ". Without it nothing says these pieces are one collection, or what they are: each "
+      + "would go up as a picture on its own. The wizard can write it &mdash; your "
+      + "collection's name, a description, and traits if you have them."
+    : `The JSON is not complete: ${commas(missing.length)} of the ${commas(n)} pictures have `
+      + "none" + (nameless ? `, ${commas(nameless)} entries have no name` : "")
+      + (broken.length ? `, and ${broken.slice(0, 2).join("; ")}` : "")
+      + ". A picture with no JSON is left out of the collection. The wizard can write "
+      + "what is missing, keeping what is already there.";
+  $("wiz-keep").parentElement.hidden = !entries.length;
+  $("json-check").hidden = false;
+}
+
+function wizTraitRow(type = "", value = "") {
+  const row = document.createElement("div");
+  row.className = "row"; row.style.cssText = "gap:6px;margin-bottom:4px";
+  row.innerHTML = '<input autocomplete="off" class="wt" placeholder="trait (e.g. Background)" maxlength="40">'
+    + '<input autocomplete="off" class="wv" placeholder="value (e.g. Blue)" maxlength="60">'
+    + '<button type="button" class="ghost small">&times;</button>';
+  row.querySelector(".wt").value = type; row.querySelector(".wv").value = value;
+  row.querySelector("button").onclick = () => { row.remove(); wizPreview(); };
+  row.querySelectorAll("input").forEach((i) => i.oninput = wizPreview);
+  $("wiz-rows").append(row);
+}
+
+let wizSheet = null;         // file name or number -> [{trait_type, value}]
+function parseCsv(text) {
+  const rows = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const cells = []; let cur = "", q = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (q) { if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; } else if (c === '"') q = false; else cur += c; }
+      else if (c === '"') q = true; else if (c === ",") { cells.push(cur); cur = ""; } else cur += c;
+    }
+    cells.push(cur); rows.push(cells.map((x) => x.trim()));
+  }
+  return rows;
+}
+
+function wizTraitsFor(pic, edition) {
+  const how = (document.querySelector('input[name="wiz-traits"]:checked') || {}).value;
+  if (how === "same") {
+    return [...$("wiz-rows").children].map((r) => ({trait_type: r.querySelector(".wt").value.trim(),
+                                                     value: r.querySelector(".wv").value.trim()}))
+      .filter((t) => t.trait_type && t.value);
+  }
+  if (how === "sheet" && wizSheet) {
+    return wizSheet.get(pic.name.toLowerCase()) || wizSheet.get(stemOf(pic.name).toLowerCase())
+      || wizSheet.get(String(edition)) || [];
+  }
+  return [];
+}
+
+/** Every picture's entry, HashLips-shaped, in file-name order. Pictures named by a
+ *  number keep it; the rest take the free numbers in order. */
+function wizEntries() {
+  const st = jsonState; if (!st) return [];
+  const keep = !$("wiz-keep").parentElement.hidden && $("wiz-keep").checked;
+  const name = $("wiz-name").value.trim(), description = $("wiz-description").value.trim();
+  const used = new Set(), out = [];
+  if (keep) for (const e of st.has.values()) if (Number.isInteger(e.edition)) used.add(e.edition);
+  for (const p of st.pictures) { const s = stemOf(p.name); if (/^\d+$/.test(s)) used.add(Number(s)); }
+  let next = 1;
+  for (const p of st.pictures) {
+    if (keep && st.has.has(p.name)) { out.push(st.has.get(p.name)); continue; }
+    const s = stemOf(p.name);
+    let edition = /^\d+$/.test(s) ? Number(s) : null;
+    if (edition === null) { while (used.has(next)) next++; edition = next; used.add(next); }
+    const entry = {name: `${name} #${edition}`, description, image: p.name, edition};
+    const traits = wizTraitsFor(p, edition);
+    if (traits.length) entry.attributes = traits;
+    entry.compiler = "DogecoinArcade JSON wizard";
+    out.push(entry);
+  }
+  return out.sort((a, b) => (a.edition || 0) - (b.edition || 0));
+}
+
+function wizPreview() {
+  const all = wizEntries();
+  $("wiz-preview").textContent = all.length && $("wiz-name").value.trim()
+    ? JSON.stringify(all[0], null, 2) : "(give the collection a name first)";
+}
+
+$("wiz-open").onclick = () => {
+  const st = jsonState; if (!st) return;
+  $("wiz-intro").textContent = `${commas(st.pictures.length)} pictures. Each gets a name of the `
+    + "form “your collection #number” and its number (that is what makes them one "
+    + "collection on every node), the description, and traits if you add them. Nothing is "
+    + "written until you press Write the JSON, and nothing on your computer is changed: "
+    + "the JSON goes up with the pictures.";
+  if (!$("wiz-rows").children.length) wizTraitRow();
+  $("wizard").hidden = false; $("json-check").hidden = true;
+  wizPreview();
+};
+$("wiz-cancel").onclick = () => { $("wizard").hidden = true; if (jsonState && !wizardMade) $("json-check").hidden = false; };
+$("wiz-add").onclick = () => { wizTraitRow(); };
+document.querySelectorAll('input[name="wiz-traits"]').forEach((r) => r.onchange = () => {
+  const how = document.querySelector('input[name="wiz-traits"]:checked').value;
+  $("wiz-same").hidden = how !== "same"; $("wiz-sheet").hidden = how !== "sheet"; wizPreview();
+});
+["wiz-name", "wiz-description"].forEach((id) => $(id).oninput = wizPreview);
+$("wiz-keep").onchange = wizPreview;
+$("wiz-csv").onchange = async () => {
+  wizSheet = null;
+  const f = $("wiz-csv").files[0]; if (!f) return;
+  const rows = parseCsv(await f.text());
+  if (rows.length < 2) { say("that spreadsheet has no rows under its header"); return; }
+  const head = rows[0];
+  wizSheet = new Map();
+  for (const r of rows.slice(1)) {
+    const key = String(r[0] || "").toLowerCase(); if (!key) continue;
+    wizSheet.set(key, head.slice(1).map((t, i) => ({trait_type: t, value: r[i + 1] || ""}))
+                          .filter((t) => t.trait_type && t.value));
+  }
+  say(""); wizPreview();
+};
+$("wiz-make").onclick = async () => {
+  const name = $("wiz-name").value.trim();
+  if (!name) { say("give the collection a name first"); return; }
+  const all = wizEntries();
+  const fresh = all.filter((e) => e.compiler === "DogecoinArcade JSON wizard").length;
+  const withTraits = all.filter((e) => Array.isArray(e.attributes) && e.attributes.length).length;
+  // Asked before anything is written (the operator: "they should be prompted before the wizard
+  // ... will create a JSON").
+  if (!(await askYesOuter(`Write the JSON for ${name}?`,
+      `The wizard writes JSON for ${commas(fresh)} piece${fresh === 1 ? "" : "s"}`
+      + (all.length > fresh ? ` and keeps the ${commas(all.length - fresh)} that already had it` : "")
+      + `: “${name} #1” onwards, ${withTraits ? commas(withTraits) + " with traits" : "no traits"}. `
+      + "It goes up with the pictures as _metadata.json, and what is on your computer is not "
+      + "changed. Check piece #1 below it first: once a piece is on the chain, its JSON is "
+      + "there for good.", "Write it"))) return;
+  wizardMade = new File([JSON.stringify(all, null, 1)], "_metadata.json", {type: "application/json"});
+  $("wiz-done").textContent = `Written: JSON for ${commas(all.length)} pieces of ${name}. `
+    + "Press Upload it to send the folder with it.";
+  $("wiz-done").hidden = false;
+};
+
 async function measureBuild() {
   const picked = $("build").files;
   const files = [...picked];
@@ -848,6 +1138,7 @@ async function measureBuild() {
   const meta = jsons.some((f) => f.name === "_metadata.json");
   const pics = files.filter(arcadeIsImage).length;
   lookUpSet(files);
+  checkJson(files);
   // The pace, said when the folder is chosen rather than after it is uploaded
   // (filming, 2026-09-25: the line came later and Start cleared it).
   $("build-pace").textContent = "";
@@ -866,86 +1157,24 @@ async function measureBuild() {
   const pictures = files.filter(arcadeIsImage);
   const bytes = pictures.reduce((n, file) => n + file.size, 0);
   if (!pictures.length) {
-    text.textContent = `${commas(files.length)} files, and not one of them a `
-      + "picture, so there is nothing here to re-encode.";
+    text.textContent = `${commas(files.length)} files, and not one of them a picture.`;
     return;
   }
-  text.innerHTML = '<span class="muted">measuring sizes&hellip;</span>';
-  // Both bounds are there because encoding a picture takes a phone a third of
-  // a second, and a page that is quiet for two minutes looks broken. The count
-  // covers an ordinary Art Engine folder (hundreds of small files, all of them
-  // measured, so the number is exact); the bytes cover one of huge photographs,
-  // where twenty megabytes says what a megabyte of noise does.
-  const sample = [];
-  let sampleBytes = 0;
-  for (const file of pictures) {
-    if (sample.length >= SAMPLE_PICTURES || sampleBytes >= SAMPLE_BYTES) break;
-    sample.push(file);
-    sampleBytes += file.size;
+  // As they are, always (2026-10-08: "when inscribing a collection the files
+  // should never be compressed"). What a picture costs is counted per picture,
+  // because each is its own inscription: a 17 KB picture is three transactions.
+  let coins = 0, chunks = 0, multi = 0;
+  for (const f of pictures) {
+    const c = arcadeFileCost(f.size);
+    coins += c.coins; chunks += c.chunks; if (c.chunks > 1) multi += 1;
   }
-  // A run is one transaction per item and an item cannot be more than one
-  // piece, so the number that decides whether a folder can go up at all is not
-  // the total but how many of its pictures are still over a piece at the size
-  // in question. Counted on the sample, scaled like the bytes.
-  const moreThanOne = (n) => arcadeFileCost(n).chunks > 1;
-  const results = [{key: "large", label: "Large", hint: "as they are",
-                    bytes: bytes,
-                    over: pictures.filter((f) => moreThanOne(f.size)).length}];
-  for (const spec of ARCADE_SIZES.slice(1)) {
-    let shrunk = 0;
-    let over = 0;
-    for (const file of sample) {
-      const one = await arcadeShrink(file, spec.max, spec.quality);
-      if (!one) { shrunk = -1; break; }     // this browser cannot re-encode
-      shrunk += one.blob.size;
-      if (moreThanOne(one.blob.size)) over += 1;
-    }
-    if (shrunk < 0) continue;
-    if (sample.length < pictures.length) {
-      shrunk = Math.round(shrunk * bytes / sampleBytes);
-      over = Math.round(over * pictures.length / sample.length);
-    }
-    if (shrunk >= bytes) continue;         // smaller setting, bigger folder
-    results.push({key: spec.key, label: spec.label, hint: spec.hint,
-                  bytes: shrunk, over: over});
-  }
-  if (sample.length < pictures.length) {
-    buildMeasured = `measured from ${commas(sample.length)} of `
-      + `${commas(pictures.length)} pictures`;
-  }
-  if ($("build").files !== picked) return;   // superseded by a newer folder
-  const medium = results.filter((r) => r.key === "medium")[0];
-  buildSize = medium ? "medium" : results[results.length - 1].key;
-  drawBuildSizes(results);
-}
-
-function drawBuildSizes(results) {
-  const text = $("picked-build-text"), sizes = $("build-sizes");
-  const chosen = results.filter((r) => r.key === buildSize)[0] || results[0];
-  buildSize = chosen.key;
-  text.innerHTML = `<strong>${arcadeSize(chosen.bytes)}</strong> of pictures`
-    + `, about <strong>${arcadeCoins(arcadeFileCost(chosen.bytes).coins)}</strong>`
-    + " in dust and fees" + (buildMeasured ? ` (${buildMeasured})` : "") + "."
-    + (chosen.over ? ` ${commas(chosen.over)} of them are still more than a `
-        + "piece at this size, and one item cannot be more than a piece: a run "
-        + "is one transaction per item, so the node refuses those. Smaller "
-        + "art is what a run carries." : "");
-  sizes.innerHTML = "";
-  if (results.length < 2) { sizes.hidden = true; return; }   // nothing to choose
-  sizes.hidden = false;
-  for (const r of results) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "ghost small size" + (r.key === buildSize ? " on" : "");
-    const cost = arcadeFileCost(r.bytes);
-    button.innerHTML = `<strong>${r.label}</strong> ${arcadeSize(r.bytes)}`
-      + ` &middot; ${arcadeCoins(cost.coins)}`
-      + (cost.chunks > 1 ? ` &middot; ${commas(cost.chunks)} pieces` : "");
-    button.title = r.hint;
-    button.addEventListener("click",
-                            () => { buildSize = r.key; drawBuildSizes(results); });
-    sizes.appendChild(button);
-  }
+  text.innerHTML = `<strong>${arcadeSize(bytes)}</strong> of pictures, exactly as they are `
+    + `(never shrunk), about <strong>${arcadeCoins(coins)}</strong> in dust and fees, `
+    + `${commas(chunks)} transactions.`
+    + (multi ? ` ${commas(multi)} of the ${commas(pictures.length)} are bigger than one `
+       + "transaction: each of those goes up as its own small job, a transaction that "
+       + "splits your coins for it and then its pieces after the next block (about a "
+       + "minute an item)." : "");
 }
 
 /** The bytes this upload will carry for one file of the chosen folder.
@@ -961,27 +1190,57 @@ function drawBuildSizes(results) {
  *  whichever of the two is smaller. A picture that re-encodes bigger than it
  *  already is goes up as it was.
  */
-async function buildFile(file) {
-  const spec = ARCADE_SIZES.filter((s) => s.key === buildSize)[0];
-  if (!spec || !spec.max || !arcadeIsImage(file)) return file;
-  const shrunk = await arcadeShrink(file, spec.max, spec.quality);
-  if (!shrunk || shrunk.blob.size >= file.size) return file;
-  return new File([shrunk.blob], arcadeJpegName(file.name, shrunk.type),
-                  {type: shrunk.type});
-}
+function buildFile(file) { return file; }   // never re-encoded (2026-10-08)
 
 $("run-start").onclick = async () => {
   const files = $("build").files;
   if (!files.length) { say("choose the folder the Art Engine left"); return; }
   say(""); news("");
+  // Pictures with no JSON are left out of a run: asked, not found out afterwards
+  // (2026-10-08), with the wizard as the other answer.
+  if (jsonState && jsonState.missing.length && !wizardMade) {
+    const m = jsonState.missing.length, all = jsonState.pictures.length;
+    const go = await askYesOuter(m === all ? "No JSON for these pictures" : `${commas(m)} pictures have no JSON`,
+      m === all
+        ? "Nothing in this folder says these pictures are one collection, so there is nothing to "
+          + "run yet. The wizard writes the JSON: the collection's name, a description, traits."
+        : `${commas(m)} of the ${commas(all)} pictures have no JSON, and a run leaves them out. `
+          + "Upload the others without them, or let the wizard write what is missing?",
+      m === all ? "Open the wizard" : "Upload without them");
+    if (m === all || !go) { if (m === all ? go : true) $("wiz-open").click(); return; }
+  }
   // The bytes go up because the node has to read them again for every one of
   // the forty-odd transactions a run is, and it cannot ask a tab that will be
   // closed by the third one. Nothing is inscribed by this request.
+  // In batches of about 40 MB: one request over 100 MB is refused before it reaches
+  // this node (Cloudflare), and a 6,480-picture folder is 112 MB (2026-10-08).
+  // Only what a build is made of goes: pictures and their JSON.
+  const wanted = [...files].filter((f) => arcadeIsImage(f) || /\.json$/i.test(f.name));
+  const extra = (typeof wizardFiles === "function") ? wizardFiles() : [];
+  const all = wanted.filter((f) => !(extra.length && /\.json$/i.test(f.name))).concat(extra);
+  let upload = "", batch = [], size = 0, done = 0;
+  const send = async () => {
+    if (!batch.length) return;
+    const part = new FormData();
+    for (const f of batch) part.append("files", f);
+    part.append("upload", upload);
+    const answer = await fetch("/account/run/upload", {method: "POST", body: part});
+    let said = {};
+    try { said = await answer.json(); } catch (e) {}
+    if (!answer.ok) throw new Error(said.detail || (answer.status === 413
+      ? "that batch was too big for the way to this node" : "the upload stopped"));
+    upload = said.upload; done += batch.length; batch = []; size = 0;
+    news(`Uploading\u2026 ${commas(done)} of ${commas(all.length)} files.`);
+  };
+  try {
+    for (const f of all) {
+      if (batch.length && size + f.size > 40 * 1024 * 1024) await send();
+      batch.push(f); size += f.size;
+    }
+    await send();
+  } catch (e) { say(String(e.message || e)); return; }
   const form = new FormData();
-  // At the chosen size, and encoded again on the way: the measurement above
-  // was a sample, and holding every converted picture in memory until a person
-  // presses the button would cost more than re-encoding it a second time.
-  for (const file of files) form.append("files", await buildFile(file));
+  form.append("upload", upload);
   form.append("run_chain", CHAIN.network);
   if (!$("set-new").hidden) {
     form.append("max_supply", $("set-max").value.trim() || "0");
@@ -1035,7 +1294,7 @@ $("run-piece").onclick = async () => {
     }
     const left = Number(first.items) - Number(first.sent);
     const room = await allowance();
-    const shown = await wallet.checked(first, held);
+    const shown = first.big ? null : await wallet.checked(first, held);
     // The run's name, not the first piece's: "…of Skull Squad", not "…of Skull
     // Squad #1" (filming, 2026-09-25).
     const setName = (shownRun && shownRun.name) || first.name;
@@ -1044,9 +1303,13 @@ $("run-piece").onclick = async () => {
         ? `${commas(first.sent)} of ${commas(first.items)} are on the chain already. The `
           + `other ${commas(left)}`
         : `None are on the chain yet. All ${commas(left)}`)
-      + ` go up one transaction each (this one is ${commas(first.bytes)} `
-      + `bytes for ${shown.coinsOf(shown.fee)} in fees), signed here by themselves, `
-      + "one after another."
+      + (shown
+         ? ` go up one after another, signed here by themselves (this one is `
+           + `${commas(first.bytes)} bytes for ${shown.coinsOf(shown.fee)} in fees).`
+         : ` go up one after another, signed here by themselves.`)
+      + " A picture bigger than one transaction goes up as it is, never shrunk: first a "
+      + "transaction that splits your coins for it, then (after its block, about a minute) "
+      + "its pieces together."
       + (room && room.limit > 0 && left > room.left
          ? ` This node takes ${commas(room.limit)} an hour per account, so it pauses when `
            + `the hour's are used and carries on by itself \u2014 about `

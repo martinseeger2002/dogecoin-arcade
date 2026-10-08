@@ -116,6 +116,7 @@ PUBLIC_PAGES = frozenset({
     "/account/standing/fillable",     # this account's buy orders a sell order meets
     "/account/claimpools",            # this account's own prize pools, to withdraw
     "/account/pagesends",             # what pages have asked this account to send
+    "/account/run/item",              # one item of this account's own run, as uploaded
 })
 
 #: Prefixes a stranger may read. Everything under them is public, so each
@@ -264,6 +265,10 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/claim", "/account/send", "/account/inscribe", "/account/inscribe/abandon",
                "/account/run/start", "/account/run", "/account/run/piece",
                "/account/run/stop",
+               # a folder bigger than one request, in batches; and an item of
+               # more than one transaction, sent the one-big-file way, reported
+               # done. None of the three broadcasts or spends anything.
+               "/account/run/upload", "/account/run/done",
                # the two ends of a run that stopped by itself: the refused
                # pieces put back in line, and a run this node has been keeping
                # pictures for forgotten for good. Neither broadcasts, and both
