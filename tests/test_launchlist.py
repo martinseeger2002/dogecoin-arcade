@@ -94,7 +94,7 @@ def test_launches_is_folded_into_the_mintpads_tab(client):
     page = app.get("/exchange").text
     assert 'href="/launches"' not in page, "no Launches button"
     assert f'class="inscription-frame postmedia padframe" src="/content/{PAD}"' in page
-    assert "NFT mintpad" in page and "Doge Punks" in page
+    assert "NFT collection" in page and "Doge Punks" in page   # the Launchpad's tag (2026-10-09)
     assert f'action="/feed/{PAD}/like"' in page, "the like is aimed at the pad"
     assert 'href="/exchange?tab=mintpads&amp;sort=new"' in page
 

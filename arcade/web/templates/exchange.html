@@ -93,7 +93,7 @@
         {% if b.settled %}<span class="ex-pill done">Sold</span>
         {% elif b.busy %}<span class="ex-pill wait">Selling, waiting for its block</span>
         {% elif b.accepted %}
-          <span class="ex-pill wait">Accepted, waiting for them</span>
+          <span class="ex-pill wait">accepted, waiting for them</span>
           <button type="button" class="ghost small" data-takeback
                   data-piece="{{ b.inscription }}" data-buyer="{{ b.buyer|who_text }}">Take it back</button>
         {% elif b.held_for %}<span class="ex-pill off">You accepted someone else</span>
@@ -266,7 +266,7 @@
   {% endif %}
 
   {% if token_bids %}
-  <div class="ex-h">Buyers for tokens you made {{ net_badge(chain) }}</div>
+  <div class="ex-h">Buy orders on your tokens {{ net_badge(chain) }}</div>
   <script>
   /* Decline hides it from this list only: the order stays on the book, and
      anybody may still sell into it (2026-09-28). */
@@ -317,8 +317,8 @@
   {% set acts = viewer == 'wallet' or (mine_tag) %}
   <div class="row" style="gap:8px;margin:0 0 12px;flex-wrap:wrap;align-items:center">
     <span class="ex-modes" style="margin:0">
-      <button type="button" aria-pressed="{{ 'true' if sort != 'new' else 'false' }}" onclick="location.href='/exchange?tab=mintpads'">Popular</button>
-      <button type="button" aria-pressed="{{ 'true' if sort == 'new' else 'false' }}" onclick="location.href='/exchange?tab=mintpads&amp;sort=new'">Latest</button></span>
+      <a class="ex-chip{{ ' on' if sort != 'new' }}" href="/exchange?tab=mintpads"{% if sort != 'new' %} aria-current="true"{% endif %}>Popular</a>
+      <a class="ex-chip{{ ' on' if sort == 'new' }}" href="/exchange?tab=mintpads&amp;sort=new"{% if sort == 'new' %} aria-current="true"{% endif %}>Latest</a></span>
     <a class="btn small" style="margin-left:auto" href="/mintpad/new">Start a launch</a>
   </div>
   <p class="msg" id="pad-news" hidden></p>
@@ -345,9 +345,10 @@
       </div>
     </div>
     <div class="ex-stats" style="margin:0 0 4px">
-      {%- if it.lot %}<span><b>{{ it.lot }}</b> per mint</span>{% endif %}
-      {%- if it.kind != 'token' %}<span><b>{{ '{:,}'.format(it.trades) }}</b> minted</span>{% endif %}
-      {%- if it.mints %}<span><b>{{ '{:,}'.format(it.mints) }}</b> {{ ('mint' if it.kind == 'token' else 'piece') ~ ('' if it.mints == 1 else 's') }} left</span>{% endif %}
+      <span>{{ 'Mint it' if not (it.lot or it.kind != 'token' or it.mints) else '' }}
+      {%- if it.lot %}{{ it.lot }} per mint{% endif %}
+      {%- if it.kind != 'token' %}{{ ' &middot; '|safe if it.lot }}{{ '{:,}'.format(it.trades) }} minted{% endif %}
+      {%- if it.mints %} &middot; {{ '{:,}'.format(it.mints) }} {{ ('mint' if it.kind == 'token' else 'piece') ~ ('' if it.mints == 1 else 's') }} left{% endif %}</span>
     </div>
     {% if it.kind != 'token' and it.mints is not none and total %}
     <div class="ex-bar" role="progressbar" aria-label="Minted" aria-valuemin="0" aria-valuemax="{{ total }}" aria-valuenow="{{ it.trades }}">
@@ -358,8 +359,9 @@
               data-pad-src="{{ pad_frames.get(it.txid) or ('/content/' ~ it.txid) }}" aria-expanded="false">Mint</button>
       <a class="btn ghost" href="/inscriptions/{{ it.txid }}/view" style="flex:0 0 auto">Open</a>
     </div>
-    <iframe class="inscription-frame postmedia padframe" id="pad-{{ it.txid }}" hidden title="{{ wall_text(it.name, 'mintpad') }}"
-            loading="lazy" sandbox="allow-scripts allow-pointer-lock"></iframe>
+    {# Hidden until Mint, and lazy, so a list of pads loads none of them until one is wanted. #}
+    <iframe class="inscription-frame postmedia padframe" src="{{ pad_frames.get(it.txid) or ('/content/' ~ it.txid) }}" id="pad-{{ it.txid }}" hidden
+            title="{{ wall_text(it.name, 'mintpad') }}" loading="lazy" sandbox="allow-scripts allow-pointer-lock"></iframe>
     <div class="row lacts" style="gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
       {% if acts %}
       <form method="post" action="/feed/{{ it.txid }}/{{ 'unlike' if it.liked else 'like' }}" style="display:inline">
@@ -400,7 +402,6 @@
   document.querySelectorAll("[data-pad-open]").forEach(function (b) {
     b.onclick = function () {
       var f = document.getElementById("pad-" + b.dataset.padOpen);
-      if (!f.getAttribute("src")) f.setAttribute("src", b.dataset.padSrc);
       f.hidden = !f.hidden;
       b.setAttribute("aria-expanded", String(!f.hidden));
       b.textContent = f.hidden ? "Mint" : "Close";
@@ -486,6 +487,8 @@
       {# Each row still says which chain and what supply (2026-10-06): the badges, small. #}
       <span class="ex-mid"><b>{{ wall(p.name, 'token name') }}<span class="muted" style="font-weight:500">/{% if p.quote_label %}{{ wall(p.quote_label, 'token name') }}{% else %}{{ coin_name }}{% endif %}</span></b>
         <small>{{ net_badge(chain) }}{% if p.quote_main %}<span class="muted">/</span>{{ net_badge(true) }}{% endif %}{% if p.property_id %}{{ supply_badge(p) }}{% endif %}
+          {#- The whole description, behind its wall (a verdict is kept per text): CSS cuts it short. -#}
+          {%- if p.about %}<span class="about" style="display:block;width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ wall(p.about, 'description') }}</span>{% endif %}
           {%- if p.coins %} &middot; {{ p.trades }} trade{{ '' if p.trades == 1 else 's' }} today{% elif p.bid or p.ask %} &middot; {{ p.orders }} order{{ '' if p.orders == 1 else 's' }}{% endif %}</small></span>
       {{ ex.spark(p.spark) }}
       <span class="ex-px">
