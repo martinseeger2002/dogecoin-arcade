@@ -17476,7 +17476,11 @@ def create_app(state: AppState) -> FastAPI:
                 # What it issues, even holding none: a managed token starts at
                 # zero, and its issuer has to be able to find it to grant any.
                 have = {row["property_id"] for row in held}
-                issued = [p for p in index.properties()
+                props = index.properties()
+                # Whether each is managed, so the Wallet can offer Manage on the
+                # ones this account issues (2026-10-08).
+                managed = {p["property_id"] for p in props if p.get("managed")}
+                issued = [p for p in props
                           if p["issuer"] == address and p["property_id"] not in have]
             except Exception:
                 continue
@@ -17491,6 +17495,7 @@ def create_app(state: AppState) -> FastAPI:
                     "issuer": row["issuer"], "divisible": row["divisible"],
                     "balance": row["balance"], "display": row["display"],
                     "issuer_is_me": row["issuer"] == address,
+                    "managed": row["property_id"] in managed,
                 } for row in held] + [{
                     "property_id": p["property_id"], "name": p["name"],
                     "issuer": p["issuer"], "divisible": p["divisible"],

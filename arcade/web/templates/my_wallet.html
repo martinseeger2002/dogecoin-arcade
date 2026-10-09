@@ -128,6 +128,8 @@ a.wl-act:hover{text-decoration:none}
 .wl-more{width:100%;margin-top:10px}
 .wl-tok{display:flex;align-items:center;gap:12px;padding:12px 6px;border-bottom:1px solid var(--line);width:100%;text-align:left;border-radius:10px}
 .wl-tok:hover{background:var(--code)}
+.wl-tokrow{display:flex;align-items:center;gap:6px}
+.wl-tokrow .wl-tok{flex:1;min-width:0}
 .wl-tok.on{background:color-mix(in srgb,var(--accent) 12%,transparent);box-shadow:inset 3px 0 0 var(--accent)}
 .wl-backcoin{margin-left:4px;font-size:.8rem;font-weight:700;color:var(--accent);padding:2px 8px;border-radius:999px;background:var(--code);box-shadow:none}
 .wl-piececard{display:flex;flex-direction:column;gap:5px;min-width:0}
@@ -349,6 +351,13 @@ function drawHead() {
     const back = el("button", "wl-backcoin", `Back to ${COIN()}`); back.type = "button";
     back.onclick = () => { asset = null; drawHead(); if (tab === "tokens") drawTokens(); };
     sub.append(back);
+    // A managed token of yours: grant, revoke and hand over are one press away
+    // (2026-10-08: "if you have a managed token, then you should be able to click
+    // the manage token button right from your wallet").
+    if (asset.manage) {
+      const manage = el("a", "wl-backcoin", "Manage"); manage.href = `/tokens/${asset.property_id}`;
+      sub.append(" ", manage);
+    }
     bits.length = 0;
   } else if (!bits.length) sub.textContent = c.mainnet ? "Real coins: a send cannot be taken back."
     : "Testnet coins pay message and game fees.";
@@ -455,7 +464,7 @@ function dayOf(seconds) {
 
 function amountCell(net) {
   const cell = el("span", "wl-amt" + (net > 0 ? " in" : ""), (net > 0 ? "+" : "−") + coinsOf(Math.abs(net)));
-  cell.append(el("small", "", UNIT));
+  cell.append(el("small", "", COIN()));
   return cell;
 }
 
@@ -554,13 +563,13 @@ function openRow(r) {
   const s = sheet();
   const body = s.set(rowTitle(r));
   const head = el("div", "wl-review");
-  head.append(el("div", "big", (r.net > 0 ? "+" : "−") + coinsOf(Math.abs(r.net)) + " " + UNIT));
+  head.append(el("div", "big", (r.net > 0 ? "+" : "−") + coinsOf(Math.abs(r.net)) + " " + COIN()));
   head.append(r.confirmations >= 6 ? el("span", "wl-pill ok", "Confirmed")
                                    : el("span", "wl-pill wait", `${r.confirmations} of 6 confirmations`));
   body.append(head);
   if (r.net < 0 && r.other) body.append(kv("To", (r.other_tag ? "@" + r.other_tag + " · " : "") + r.other, !r.other_tag));
   body.append(kv("When", r.time ? new Date(r.time * 1000).toLocaleString() : `block ${r.height}`));
-  if (r.fee) body.append(kv("Network fee", `${coinsOf(r.fee)} ${UNIT}`));
+  if (r.fee) body.append(kv("Network fee", `${coinsOf(r.fee)} ${COIN()}`));
   body.append(kv("Block", r.height.toLocaleString()));
   body.append(copyRow("Copy transaction ID", r.txid));
   const tag = r.other_tag || (kept(SENT, []).find((x) => x.txid === r.txid) || {}).tag;
@@ -1023,7 +1032,7 @@ async function drawTokens() {
     row.onclick = () => {
       asset = {network: c.network, property_id: t.property_id, divisible: !!t.divisible,
                name: t.sensitive ? `Token ${t.property_id}` : (t.name || `Token ${t.property_id}`),
-               balance: Number(t.balance || 0)};
+               balance: Number(t.balance || 0), manage: !!(t.managed && t.issuer_is_me)};
       drawHead(); drawTokens();
       window.scrollTo({top: 0, behavior: "smooth"});
       toast(`${asset.name}: Send and Receive are for it now`);
@@ -1034,12 +1043,16 @@ async function drawTokens() {
     mid.append(el("b", "", t.sensitive ? "Hidden name" : (t.name || `Token ${t.property_id}`)),
                el("small", "", `#${t.property_id}${t.issuer_is_me ? " · you made it" : ""}`));
     row.append(av, mid, el("span", "wl-amt", t.display ?? String(t.balance)));
-    box.append(row);
+    if (t.managed && t.issuer_is_me) {
+      const wrap = el("div", "wl-tokrow");
+      const manage = el("a", "wl-backcoin", "Manage"); manage.href = `/tokens/${t.property_id}`;
+      manage.setAttribute("aria-label", `Manage ${t.name || "token " + t.property_id}`);
+      wrap.append(row, manage);
+      box.append(wrap);
+    } else box.append(row);
   }
   if (held.length) box.prepend(el("p", "wl-note", "Tap a token to send or receive it from the card above."));
-  const more = el("a", "btn ghost wl-more", "Manage tokens");
-  more.href = "/me/wallet/tokens"; more.style.cssText = "display:block;text-align:center";
-  box.append(more);
+  // Sending is the card's Send now, so no link away to do it (2026-10-08).
 }
 
 /* --- NFTs ----------------------------------------------------------------
