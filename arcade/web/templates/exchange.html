@@ -79,10 +79,10 @@
   </style>
 
   <div class="ex-h">Offers for your things {{ net_badge(chain) }}</div>
-  {% if not offers_in %}
+  {% if not offers_in and not x_in %}
     <div class="panel empty"><p>No offers yet. When somebody offers for one of your
       NFTs, it shows up here.</p></div>
-  {% else %}
+  {% elif offers_in %}
   <div class="ex-card" style="padding:4px 14px">
     {% for b in offers_in %}
     <div class="offerrow">
