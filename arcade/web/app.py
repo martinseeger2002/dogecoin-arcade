@@ -10842,7 +10842,7 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         offer = _offers.add(account.pubkey, chain.network, unsigned,
                             unsigned.what)
-        return JSONResponse({"offer": offer.id, "to": to,
+        return JSONResponse({"offer": offer.id, "to": to, "to_tag": to_tag,
                              "number": row["number"], "chain": chain.network,
                              **unsigned.as_json()})
 
@@ -17582,7 +17582,10 @@ def create_app(state: AppState) -> FastAPI:
                     "waiting for its block. Nothing was sent.")
         offer = _offers.add(account.pubkey, chain.network, unsigned,
                             unsigned.what, check=still_here)
-        return JSONResponse({"offer": offer.id, "to": to,
+        # `amount` and `to_tag` so the page can check the offer is the send that
+        # was typed before it signs (the Wallet tab, 2026-10-08).
+        return JSONResponse({"offer": offer.id, "to": to, "to_tag": to_tag,
+                             "amount": amount, "divisible": bool(prop["divisible"]),
                              "property_id": property_id, "name": prop["name"],
                              "chain": chain.network, **unsigned.as_json()})
 
