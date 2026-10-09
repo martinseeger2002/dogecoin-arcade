@@ -286,7 +286,7 @@ def test_recent_sales_say_what_went_for_what_and_when(client):
     assert "Recently sold" in body
     feed = body[body.index("Recently sold"):]
     assert "Doge Punks #1" in feed
-    assert "2.5 coins" in feed, "what was paid, in words"
+    assert "2.5 PEP" in feed, "what was paid, in words, in PEP (2026-10-09)"
     assert "5m ago" in feed, "and when, in words"
     assert "@punkseller" in feed, "and who sold it"
 
@@ -340,7 +340,7 @@ def test_a_piece_for_sale_says_its_price_and_a_way_to_buy(client):
     sell(state.home, PIECES[0], price="7")
 
     body = app.get("/exchange/collection/nMe/Doge%20Punks").text
-    assert "for sale" in body and "7 coins" in body
+    assert "for sale" in body and "7 PEP" in body
     assert f"/inscriptions/{SHOP}/view" in body, "the listing is where it is bought"
 
 
@@ -368,7 +368,7 @@ def test_the_collection_page_lists_what_you_hold_of_it(client, monkeypatch):
     band = body[body.index("Yours in this collection"):body.index('<div class="tiles">')]
     assert "Yours in this collection &mdash; 5" in body
     assert band.count("Sell it") == 4, "the four with no price on them yet"
-    assert "9 coins" in band, "and the one that is says its price"
+    assert "9 PEP" in band, "and the one that is says its price"
     assert "for sale" in band
 
 
@@ -563,7 +563,7 @@ def test_the_marketplace_sends_a_buyer_to_the_collection(client):
         "the collection's row carries the floor, and the way to it"
 
     page = app.get("/exchange/collection/nMe/Doge%20Punks").text
-    assert "1.25 coins" in page, "the piece is for sale where its collection is"
+    assert "1.25 PEP" in page, "the piece is for sale where its collection is"
 
 
 def test_the_last_eight_sales_and_no_more(client):

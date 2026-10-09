@@ -78,7 +78,7 @@
     @media(max-width:560px){.offerrow{flex-wrap:wrap}.ofdo{width:100%;justify-content:flex-start;padding-left:60px}}
   </style>
 
-  <div class="ex-h">Offers for your things</div>
+  <div class="ex-h">Offers for your things {{ net_badge(chain) }}</div>
   {% if not offers_in %}
     <div class="panel empty"><p>No offers yet. When somebody offers for one of your
       NFTs, it shows up here.</p></div>
@@ -87,7 +87,7 @@
     {% for b in offers_in %}
     <div class="offerrow">
       {{ thumb(b) }}
-      <div class="oftext"><strong>{{ b.buyer|who }}</strong> offers <strong>{{ b.price }}</strong>
+      <div class="oftext"><strong>{{ b.buyer|who }}</strong> offers <strong>{{ b.price|replace(' coins', ' ' ~ ('PEP' if chain.is_mainnet else 'PEP TEST')) }}</strong>
         for {{ piece(b) }}</div>
       <div class="ofdo">
         {% if b.settled %}<span class="ex-pill done">Sold</span>
@@ -100,12 +100,12 @@
         {% elif viewer == 'account' %}
           <button type="button" class="small" data-accept
                   data-offer="{{ b.txid }}" data-piece="{{ b.inscription }}"
-                  data-give="{{ b.give }}" data-price="{{ b.price }}"
+                  data-give="{{ b.give }}" data-price="{{ b.price|replace(' coins', ' ' ~ ('PEP' if chain.is_mainnet else 'PEP TEST')) }}"
                   {% if b.presigned %}data-presigned="1"{% endif %}
                   data-buyer="{{ b.buyer|who_text }}">Accept</button>
           <button type="button" class="ghost small" data-refuse
                   data-offer="{{ b.txid }}" data-piece="{{ b.inscription }}"
-                  data-give="{{ b.give }}" data-price="{{ b.price }}"
+                  data-give="{{ b.give }}" data-price="{{ b.price|replace(' coins', ' ' ~ ('PEP' if chain.is_mainnet else 'PEP TEST')) }}"
                   data-buyer="{{ b.buyer|who_text }}">Decline</button>
         {% else %}
           <form method="post" action="/exchange/offers/{{ b.txid }}" style="margin:0">
@@ -205,7 +205,7 @@
   </div>
   {% endif %}
 
-  <div class="ex-h">Your offers</div>
+  <div class="ex-h">Your offers {{ net_badge(chain) }}</div>
   {% if not offers_out %}
     <div class="panel empty"><p>You haven't made any offers. Open any NFT and press
       <strong>Make offer</strong>.</p></div>
@@ -214,7 +214,7 @@
     {% for b in offers_out %}
     <div class="offerrow">
       {{ thumb(b) }}
-      <div class="oftext">You offered <strong>{{ b.price }}</strong> for {{ piece(b) }}
+      <div class="oftext">You offered <strong>{{ b.price|replace(' coins', ' ' ~ ('PEP' if chain.is_mainnet else 'PEP TEST')) }}</strong> for {{ piece(b) }}
         <span class="muted" style="font-size:.84rem">&middot; owned by {{ b.owner|who }}</span></div>
       <div class="ofdo">
         {% if viewer == 'account' and b.presigned %}
@@ -222,7 +222,7 @@
           <button type="button" class="ghost small" data-withdraw="{{ b.txid }}">Withdraw</button>
         {% elif viewer == 'account' %}
           <span data-answer-for="{{ b.txid }}" {% if b.busy %}data-busy="1"{% endif %}
-                data-piece="{{ b.inscription }}" data-price="{{ b.price }}"
+                data-piece="{{ b.inscription }}" data-price="{{ b.price|replace(' coins', ' ' ~ ('PEP' if chain.is_mainnet else 'PEP TEST')) }}"
                 data-number="{{ b.number if b.number is not none else '' }}"></span>
         {% else %}<span class="ex-pill wait">Waiting for the owner</span>{% endif %}
       </div>
@@ -266,7 +266,7 @@
   {% endif %}
 
   {% if token_bids %}
-  <div class="ex-h">Buyers for tokens you made</div>
+  <div class="ex-h">Buyers for tokens you made {{ net_badge(chain) }}</div>
   <script>
   /* Decline hides it from this list only: the order stays on the book, and
      anybody may still sell into it (2026-09-28). */
@@ -283,7 +283,7 @@
     {% for b in token_bids %}
     <div class="offerrow">
       <div class="oftext"><strong>{{ b.buyer|who }}</strong> wants <strong>{{ b.amount }}
-        {{ wall(b.name) }}</strong> at <strong>{{ b.price }}</strong> each
+        {{ wall(b.name) }}</strong> at <strong>{{ b.price }} {{ 'PEP' if chain.is_mainnet else 'PEP TEST' }}</strong> each
         {%- if b.mode %} <span class="muted" style="font-size:.8rem">&middot;
           {{ 'fills at once' if b.mode == 'away' else 'fills when they are back' }}</span>{% endif %}</div>
       <div class="ofdo"><a class="btn small" href="/exchange/pair/{{ b.property_id }}?sell={{ b.price|urlencode }}&amp;amount={{ b.amount|urlencode }}">Sell to them</a>
@@ -339,7 +339,7 @@
       <span class="ex-tic" style="width:44px;height:44px;border-radius:12px;background:hsl({{ (it.number or 0) * 47 % 360 }} 45% 42%)">{{ (wall_text(it.name, '?') or '?')[:1]|upper }}</span>
       <div class="ex-mid" style="white-space:normal">
         <b>{{ wall(it.name) }}</b>
-        <small><span class="ex-pill done">Live</span>
+        <small>{{ net_badge(chain) }} <span class="ex-pill done">Live</span>
           <span class="ex-pill off">{{ 'Token' if it.kind == 'token' else 'NFT collection' }}</span>
           by {{ it.creator|who }} &middot; &#9829; {{ it.likes }} &middot; {{ when(it.time) if it.time else 'just now' }}</small>
       </div>
@@ -459,7 +459,7 @@
       <img src="/content/{{ pad.cover }}" alt="" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px">
       <strong>{{ pad.name }}</strong>
       <div class="muted" style="font-size:.84rem">by {{ pad.seller|who_text }} &middot; {{ pad.left }} pieces left
-        &middot; {{ '%g' % (pad.price / 100000000) }} coins</div>
+        &middot; {{ '%g' % (pad.price / 100000000) }} {{ 'PEP' if chain.is_mainnet else 'PEP TEST' }} {{ net_badge(chain) }}</div>
     </a>
     {% endfor %}
   </div>
@@ -493,6 +493,7 @@
         {%- elif p.ask %}{{ ex.px(p.ask) }}<div class="muted" style="font-size:.7rem;font-weight:500">asking</div>
         {%- elif p.bid %}{{ ex.px(p.bid) }}<div class="muted" style="font-size:.7rem;font-weight:500">bid</div>
         {%- else %}<span class="muted">&mdash;</span>{% endif %}
+        <div class="muted" style="font-size:.66rem;font-weight:600">{% if p.quote_label %}{{ wall_text(p.quote_label, 'token') }}{% else %}{{ coin_name }}{% endif %}</div>
         {%- if p.last is not none %}<div>{{ ex.chg(p.change, p.new) }}</div>{% endif %}</span>
     </a>
     {% endfor %}
@@ -563,11 +564,11 @@
       <span class="art" {% if c.cover %}style="background-image:url(/content/{{ c.cover }})"{% endif %}
             role="img" aria-label="{{ wall_text(c.name, 'collection') }}">{% if not c.cover %}no art{% endif %}</span>
       <b>{{ wall(c.name, 'collection name') }}</b>
-      <small>{{ "{:,}".format(c.count) }} pieces &middot; {{ c.creator|who_text }}</small>
-      <span class="nums"><span>Floor</span><strong>{% if c.floor %}{{ "%.4f"|format(c.floor / 100000000) }}{% else %}&mdash;{% endif %}</strong></span>
+      <small>{{ net_badge(chain) }} {{ "{:,}".format(c.count) }} pieces &middot; {{ c.creator|who_text }}</small>
+      <span class="nums"><span>Floor</span><strong>{% if c.floor %}{{ "%.4f"|format(c.floor / 100000000) }} <small>{{ coin_name }}</small>{% else %}&mdash;{% endif %}</strong></span>
       <span class="nums"><span>24h</span>{% if c.change is defined and c.change is not none %}{{ ex.chg(c.change) }}{% else %}<span>&mdash;</span>{% endif %}</span>
       <span class="nums"><span>For sale</span><strong>{{ c.for_sale or 0 }}</strong></span>
-      {%- if c.day_coins %}<span class="nums"><span>Volume today</span><span>{{ "%.2f"|format(c.day_coins) }}</span></span>{% endif %}
+      {%- if c.day_coins %}<span class="nums"><span>Volume today</span><span>{{ "%.2f"|format(c.day_coins) }} {{ coin_name }}</span></span>{% endif %}
     </a>
   {%- endmacro %}
 
@@ -602,7 +603,7 @@
       <td><a href="/inscriptions/{{ t.txid }}/view"><b>{{ wall(t.name) }}</b></a>
         <small>{% if t.collection %}{{ t.collection }}{% if t.edition is not none %} #{{ t.edition }}{% endif %} &middot; {% endif %}{{ t.when|ago }}
           &middot; from {{ t.seller|who }}</small></td>
-      <td class="ex-px">{{ t.price }}</td></tr>
+      <td class="ex-px">{{ t.price|replace(' coins', ' ' ~ coin_name) }}<div>{{ net_badge(chain) }}</div></td></tr>
     {% endfor %}
   </table></div>
   {% endif %}

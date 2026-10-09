@@ -22,7 +22,7 @@
     <img src="/content/{{ cover }}" alt="{{ wall_text(summary.collection, 'A collection') }} #1" loading="lazy">
   {% endif %}
   <div class="who">
-    <h1>{{ wall(summary.collection, 'collection name') }}</h1>
+    <h1>{{ wall(summary.collection, 'collection name') }} {{ net_badge(chain) }}</h1>
     <p class="muted" style="margin:0 0 6px">
       by  {{ summary.creator|who }}
       &middot; {{ chain.label }}
@@ -91,7 +91,7 @@
       <td style="text-align:right;white-space:nowrap">
         {% if row.listing %}
           <span class="pill {{ '' if row.listing.pending else 'ok' }}">{{ 'listing sent' if row.listing.pending else 'for sale' }}</span>
-          <strong>{{ row.listing.price }}</strong>
+          <strong>{{ row.listing.price|replace(' coins', ' ' ~ coin_name) }}</strong>
         {% endif %}
         {% if account_view %}
           {# The two links below belong to the node's wallet. An account session
@@ -124,7 +124,7 @@
     <option value="">For sale first</option><option value="low">Price: low to high</option>
     <option value="high">Price: high to low</option><option value="edition">Edition</option></select>
 </div>
-<div class="tiles" id="pieces">
+<div class="tiles">
   {% for row in rows %}
   {% set data = row.json|fromjson %}
   <div class="tile" data-sale="{{ '1' if row.listing else '' }}" data-edition="{{ row.edition or 0 }}"
@@ -144,7 +144,7 @@
         {%- if row.mine %} <strong>you</strong>
         {%- else %} {{ row.owner|who }}{% endif %}</div>
       <div class="price">
-        {%- if row.listing %}<strong>{{ row.listing.price }}</strong>
+        {%- if row.listing %}<strong>{{ row.listing.price|replace(' coins', ' ' ~ coin_name) }}</strong>
         {%- if row.listing.pending %} <span class="pill" title="broadcast, not yet in a block">pool</span>{% endif %}
         {%- else %}<span class="muted">not for sale</span>{% endif %}
         {%- if row.offers %} <span class="muted">&middot; {{ row.offers }} offer{{ '' if row.offers == 1 else 's' }}</span>{% endif %}</div>
@@ -160,10 +160,10 @@
           {% elif row.listing and row.listing.listing %}
             {# One press and the trade happens (2026-09-27). #}
             <button type="button" class="small" data-buy-listing="{{ row.listing.listing }}"
-                    data-piece="{{ wall_text(summary.collection) }} #{{ row.edition }}">Buy {{ row.listing.price }}</button>
+                    data-piece="{{ wall_text(summary.collection) }} #{{ row.edition }}">Buy {{ row.listing.price|replace(' coins', ' ' ~ coin_name) }}</button>
             <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view#make-offer">Make offer</a>
           {% elif row.listing %}
-            <a class="btn small" href="/inscriptions/{{ row.txid }}/view#for-sale">Buy {{ row.listing.price }}</a>
+            <a class="btn small" href="/inscriptions/{{ row.txid }}/view#for-sale">Buy {{ row.listing.price|replace(' coins', ' ' ~ coin_name) }}</a>
             <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view#make-offer">Make offer</a>
           {% else %}
             <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view#make-offer">Make offer</a>
@@ -188,7 +188,7 @@
               {% if row.listing.take.kind == 'token' %}
               <input type="hidden" name="property_id" value="{{ row.listing.take.propertyid }}">
               {% endif %}
-              <button type="submit" class="small">Buy for {{ row.listing.price }}</button>
+              <button type="submit" class="small">Buy for {{ row.listing.price|replace(' coins', ' ' ~ coin_name) }}</button>
             </form>
           {% elif row.listing %}
             <a class="btn small" href="/inscriptions/{{ row.listing.shop }}/view">Buy it</a>
@@ -204,7 +204,7 @@
                      placeholder="amount" style="flex:1 1 76px;min-width:0">
               <select autocomplete="off" name="kind" style="flex:1 1 90px"
                       onchange="var t=this.form.querySelector('[name=property_id]'); if(t) t.hidden = this.value !== 'token'">
-                <option value="coins">coins</option>
+                <option value="coins">{{ coin_name }}</option>
                 {% if tokens %}<option value="token">a token</option>{% endif %}
               </select>
               {% if tokens %}
@@ -229,7 +229,8 @@
 {% endif %}
 <script>
 (function () {
-  var box = document.getElementById("pieces"), only = document.getElementById("only-sale"),
+  var bar = document.getElementById("piece-sort").parentNode;
+  var box = bar && bar.nextElementSibling, only = document.getElementById("only-sale"),
       sort = document.getElementById("piece-sort");
   if (!box) return;
   var tiles = Array.prototype.slice.call(box.children);

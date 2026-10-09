@@ -44,7 +44,7 @@
            {% if t == tf %}aria-current="true"{% endif %}>{{ t }}</a>
         {% endfor %}
       </div>
-      {{ chart.candles(slots, 'coins each', period=periods[tf]) }}
+      {{ chart.candles(slots, coin_name ~ ' each', period=periods[tf]) }}
     </div>
 
     <div class="panel">
@@ -587,7 +587,7 @@
     {% endif %}
 
     <div class="panel">
-      <h3 style="margin:0 0 4px">Order book</h3>
+      <h3 style="margin:0 0 4px">Order book <span class="muted" style="font-weight:500;font-size:.8rem">prices in {{ coin_name }}</span> {{ net_badge(chain) }}</h3>
       {% if viewer != 'nobody' and fills_ready and (book.asks or book.bids) %}
       <p class="muted" style="font-size:.78rem;margin:0 0 8px">Press Buy or Sell on a row to take it.</p>{% endif %}
       {% if not book.asks and not book.bids %}
@@ -684,11 +684,11 @@
 
     {% if recent %}
     <div class="panel">
-      <h3 style="margin:0 0 8px">Recent trades</h3>
+      <h3 style="margin:0 0 8px">Recent trades <span class="muted" style="font-weight:500;font-size:.8rem">in {{ coin_name }}</span></h3>
       <table>
         <tr class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.06em">
           <td>Price</td><td style="text-align:right">Amount</td>
-          <td style="text-align:right">Coins</td><td style="text-align:right">Block</td></tr>
+          <td style="text-align:right">{{ coin_name }}</td><td style="text-align:right">Block</td></tr>
         {% for t in recent %}
         <tr><td class="mono">{{ "%.8f"|format(t.price) }}</td>
             <td class="mono" style="text-align:right">{{ "{:,.8f}".format(t.size).rstrip('0').rstrip('.') }}</td>
