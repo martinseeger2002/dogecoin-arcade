@@ -1,36 +1,65 @@
 {% extends "base.html" %}
-{% import "_account_wallettabs.html" as wt %}
 {% import "_not_ordinals.html" as notord %}
 {% block title %}Wallet · DogecoinArcade{% endblock %}
 {% block body %}
+{# The Wallet tab, redone (2026-10-08: "our wallet tab is trash. It
+   needs to work a lot better. It needs to give feedback when transactions are
+   sent it should have a history. The address should auto complete if somebody
+   is in your address book and it should just look a lot cleaner"). Built from
+   the prototype he approved ("I love the wallet make that change"), which took
+   its shape from Xverse, Leather and UniSat: a balance card with Send /
+   Receive / Exchange under it, pending sends pinned above a dated history, a
+   success screen with the transaction id, and NFTs by collection first. #}
 <div class="row" style="align-items:baseline;gap:10px">
   <h1 style="margin:0">Wallet</h1>
   {# Backup lives here now, not as a tab (2026-09-27). #}
   <a class="btn ghost small" href="/me/backup" style="margin-left:auto">Back up your wallet</a>
 </div>
-{{ wt.tabs('coins') }}
-<p class="sub">Coins, one wallet per chain, from the same twelve words.
-  Testnet coins pay message fees; mainnet coins are real.</p>
 
-<p class="muted" id="shut" hidden style="font-size:.86rem">
-  Your wallet is locked. Press Unlock at the top of the page, or just carry on: anything that needs your key asks for your password first.
-  <a href="/me">Open it</a> and come back.</p>
+<p class="muted" id="shut" hidden style="font-size:.86rem;margin:10px 0 0">
+  Your wallet is locked. Press Unlock at the top of the page, or just carry on: anything that needs your key asks for your password first.</p>
+<div class="msg err" id="trouble" hidden style="margin-top:12px"></div>
+<div class="msg ok" id="news" hidden style="margin-top:12px"></div>
 
-<div class="msg err" id="trouble" hidden></div>
-<div class="msg ok" id="news" hidden></div>
+<section class="wl-hero" aria-label="Balance">
+  <div class="wl-top">
+    <span class="wl-who" id="who"></span>
+    <div class="wl-seg" role="group" aria-label="Network" id="nets"></div>
+  </div>
+  <div class="wl-bal"><b id="bal">—</b><span id="unit">PEP</span>
+    <span class="wl-chip" id="netchip"></span></div>
+  <div class="wl-sub" id="sub"></div>
+  <button type="button" class="wl-addr" id="addrchip" title="Copy your address"></button>
+  <div class="wl-actions">
+    <button type="button" class="wl-act" id="do-send"><i aria-hidden="true">&#8593;</i>Send</button>
+    <button type="button" class="wl-act" id="do-recv"><i aria-hidden="true">&#8595;</i>Receive</button>
+    <a class="wl-act" href="/exchange"><i aria-hidden="true">&#8646;</i>Exchange</a>
+  </div>
+</section>
 
 {# Not backed up: said, not enforced (2026-10-08: "If they don't back them up,
-   that's on them give them a notice"). Shown once the wallet state says so. #}
-<div class="msg err" id="not-backed-up" hidden>
-  <strong>Your twelve words are not backed up.</strong> You can spend your
-  coins, but if you lose your password without the words written down, they
-  are gone for good and nobody can get them back.
-  <a href="/me/backup">Show my twelve words</a></div>
-{{ notord.receiving() }}
-<div class="grid" id="wallets" style="margin-bottom:18px"></div>
+   that's on them give them a notice"). Dismissed for this tab only. #}
+<div class="wl-banner" id="not-backed-up" hidden>
+  <span aria-hidden="true">&#9888;</span>
+  <span><strong>Your twelve words are not backed up.</strong> You can spend your
+    coins, but if you lose your password without the words written down, they
+    are gone for good and nobody can get them back.
+    <a href="/me/backup">Show my twelve words</a></span>
+  <button type="button" class="wl-x" id="backup-x" aria-label="Dismiss">&times;</button>
+</div>
+
+<div class="wl-tabs" role="tablist">
+  <button type="button" role="tab" id="tab-activity" aria-selected="true">Activity</button>
+  <button type="button" role="tab" id="tab-tokens" aria-selected="false">Tokens</button>
+  <button type="button" role="tab" id="tab-nfts" aria-selected="false">NFTs</button>
+</div>
+<div id="panel-activity" role="tabpanel"></div>
+<div id="panel-tokens" role="tabpanel" hidden></div>
+<div id="panel-nfts" role="tabpanel" hidden></div>
+
 {# Coins in the small outputs this account's messages, posts and files left on
    the chain (2026-09-28): still yours, and one press brings them back. #}
-<div class="panel" id="dust-panel" hidden style="margin-bottom:18px"></div>
+<div class="panel" id="dust-panel" hidden style="margin:22px 0 18px"></div>
 {# Things a game holds for this account in a refereed escrow (arcade/escrow.py):
    the game's judge decides who gets them until the unlock time, and after it
    one press brings them all home -- whatever the game, or its referee, says. #}
@@ -40,39 +69,140 @@
    shows here at once, marked as arriving, and becomes simply yours when it lands. #}
 <div class="panel" id="pending-panel" hidden style="margin-bottom:18px"></div>
 
-<div class="panel" id="send-panel">
-  <h2 style="margin-top:0">Send coins</h2>
-  <div class="row" style="gap:8px;align-items:center">
-    <select id="which" style="flex:0 0 auto"></select>
-    <input type="text" id="to" placeholder="@name or address"
-           autocomplete="off" style="flex:2">
-    <input type="text" id="amount" placeholder="how much" inputmode="decimal"
-           autocomplete="off" style="flex:1">
-  </div>
-  <p class="muted" id="which-note" style="font-size:.82rem;margin:4px 0 0"></p>
-  <p class="muted" id="which-lock" hidden
-     style="font-size:.82rem;margin:4px 0 0">
-    These are real coins and your twelve words are not backed up. If you lose
-    your password, nobody can bring them back.
-    <a href="/me/backup">See your words on Backup</a>.</p>
-  <div id="confirm" class="confirm" hidden>
-    <p id="confirm-says"></p>
-    <button class="btn primary" id="confirm-yes">Send it</button>
-    <button class="btn" id="confirm-no">Cancel</button>
-  </div>
-  <button class="btn" id="send">Send</button>
-</div>
+<template id="receive-note">{{ notord.receiving() }}</template>
 
-<style>.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.addrcard{cursor:pointer}
-.addrcard:hover,.addrcard:focus-visible{border-color:var(--accent)}
-.addrhint{color:var(--accent)!important}
-.addrsheet{max-width:360px;text-align:center}
-.addrsheet .row{justify-content:center}
-/* White under the code in both themes: a scanner wants dark on light. */
-.qrbox{background:#fff;border-radius:10px;padding:6px;margin:4px auto 10px;max-width:260px}
-.qrbox svg{display:block;width:100%;height:auto}
-.addrtext{font-size:.86rem;word-break:break-all;user-select:all;margin:0 auto;max-width:300px}</style>
+<style>
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.wl-hero{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:18px;
+  box-shadow:var(--shadow);margin:16px 0 0;max-width:620px}
+.wl-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.wl-who{color:var(--muted);font-size:.9rem;font-weight:600}
+.wl-seg{margin-left:auto;display:flex;background:var(--code);border-radius:999px;padding:3px}
+.wl-seg button{padding:5px 12px;border-radius:999px;font-size:.8rem;font-weight:650;color:var(--muted);
+  background:none;box-shadow:none;border:0}
+.wl-seg button[aria-pressed="true"]{background:var(--panel);color:var(--fg);box-shadow:var(--shadow)}
+.wl-bal{margin:12px 0 0;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.wl-bal b{font-size:2.4rem;font-weight:750;letter-spacing:-.03em;font-variant-numeric:tabular-nums;line-height:1.1}
+.wl-bal span{font-weight:650;color:var(--muted)}
+.wl-chip{font-size:.68rem!important;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;
+  border-radius:999px;border:1px solid var(--line)}
+.wl-chip.real{border-color:var(--accent);color:var(--accent)!important}
+.wl-sub{font-size:.88rem;color:var(--muted);min-height:1.3em;margin-top:2px}
+.wl-sub .in{color:var(--ok);font-weight:600}.wl-sub .out{color:var(--warn);font-weight:600}
+.wl-addr{margin-top:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem;
+  background:var(--code);color:var(--fg);border:0;box-shadow:none;padding:4px 10px;border-radius:999px;
+  max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.wl-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+.wl-act{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:.82rem;font-weight:650;
+  padding:10px 4px;border-radius:14px;background:var(--code);color:var(--fg);border:0;box-shadow:none}
+a.wl-act:hover{text-decoration:none}
+.wl-act i{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;background:var(--accent);
+  color:var(--accent-fg);font-style:normal;font-size:1.15rem}
+.wl-banner{display:flex;gap:10px;align-items:flex-start;margin:12px 0 0;padding:11px 13px;border-radius:14px;
+  border:1px solid var(--bad);background:color-mix(in srgb,var(--bad) 8%,transparent);font-size:.88rem;max-width:620px}
+.wl-x{margin-left:auto;background:none;border:0;box-shadow:none;color:var(--muted);font-size:1.2rem;padding:0 4px;line-height:1}
+.wl-tabs{display:flex;gap:4px;margin:22px 0 4px;border-bottom:1px solid var(--line);max-width:620px}
+.wl-tabs button{padding:9px 12px;font-weight:650;font-size:.92rem;color:var(--muted);background:none;border:0;
+  box-shadow:none;border-radius:0;border-bottom:2px solid transparent;margin-bottom:-1px}
+.wl-tabs button[aria-selected="true"]{color:var(--fg);border-color:var(--accent)}
+#panel-activity,#panel-tokens,#panel-nfts{max-width:620px}
+.wl-day{font-size:.72rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:16px 2px 4px}
+.wl-row{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:10px 6px;border-radius:12px;
+  background:none;border:0;box-shadow:none;color:var(--fg);font-weight:400}
+.wl-row:hover{background:var(--code)}
+.wl-ic{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;flex:none;background:var(--code);font-size:1rem}
+.wl-ic.in{color:var(--ok)}
+.wl-mid{flex:1;min-width:0}
+.wl-mid b{display:block;font-weight:600;font-size:.95rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wl-mid small{color:var(--muted);font-size:.8rem}
+.wl-amt{text-align:right;font-variant-numeric:tabular-nums;font-weight:650;font-size:.95rem;white-space:nowrap}
+.wl-amt.in{color:var(--ok)}
+.wl-amt small{display:block;color:var(--muted);font-weight:500;font-size:.75rem}
+.wl-pill{display:inline-flex;align-items:center;gap:5px;font-size:.7rem;font-weight:700;padding:1px 7px;border-radius:999px;margin-top:2px}
+.wl-pill.wait{color:var(--warn);background:color-mix(in srgb,var(--warn) 13%,transparent)}
+.wl-pill.ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent)}
+.wl-spin{width:9px;height:9px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:wlsp .8s linear infinite}
+@keyframes wlsp{to{transform:rotate(360deg)}}
+.wl-empty{color:var(--muted);text-align:center;padding:26px 10px;font-size:.9rem}
+.wl-since{color:var(--muted);font-size:.78rem;text-align:center;margin:14px 0 0}
+.wl-more{width:100%;margin-top:10px}
+.wl-tok{display:flex;align-items:center;gap:12px;padding:12px 6px;border-bottom:1px solid var(--line)}
+.wl-av{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;font-weight:700;color:#fff;flex:none}
+/* NFTs: collections first, then the pieces of the one opened */
+.wl-tools{display:flex;gap:8px;margin:12px 0 10px}
+.wl-tools input{flex:1;min-width:0}
+.wl-tools select{width:auto;flex:none;max-width:44%}
+.wl-count{font-size:.82rem;color:var(--muted);margin:10px 0 0}
+.wl-colls{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.wl-coll{display:flex;flex-direction:column;gap:2px;text-align:left;padding:8px;border-radius:16px;background:var(--panel);
+  border:1px solid var(--line);box-shadow:var(--shadow);min-width:0;color:var(--fg);font-weight:400}
+.wl-coll b{font-size:.92rem;margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wl-coll small{color:var(--muted);font-size:.78rem}
+.wl-mosaic{display:grid;grid-template-columns:1fr 1fr;gap:3px;aspect-ratio:1;border-radius:11px;overflow:hidden;width:100%;background:var(--code)}
+.wl-mosaic span{display:grid;place-items:center;background:var(--code);color:var(--muted);font-size:.6rem;overflow:hidden}
+.wl-mosaic img,.wl-piece img{width:100%;height:100%;object-fit:cover;display:block;image-rendering:pixelated}
+.wl-back{background:none;border:0;box-shadow:none;color:var(--accent);font-weight:650;font-size:.9rem;padding:8px 0}
+.wl-collhead{display:flex;align-items:center;gap:12px;margin:4px 0 4px}
+.wl-collhead .wl-mosaic{width:60px;flex:none}
+.wl-collhead b{font-size:1.1rem;display:block}
+.wl-pieces{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px;margin-top:8px}
+.wl-piece{display:block;aspect-ratio:1;border-radius:12px;overflow:hidden;position:relative;background:var(--code);max-width:100%}
+.wl-piece em{position:absolute;left:0;right:0;bottom:0;padding:4px 6px;font-style:normal;font-size:.7rem;font-weight:700;color:#fff;
+  background:linear-gradient(transparent,rgba(0,0,0,.6));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wl-piece .wl-kind{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);font-size:.72rem}
+/* the sheet: from the bottom on a phone, a card in the middle elsewhere */
+.wl-scrim{position:fixed;inset:0;z-index:60;background:rgba(20,18,14,.45);display:flex;align-items:flex-end;justify-content:center}
+.wl-sheet{background:var(--panel);width:100%;max-width:460px;border-radius:22px 22px 0 0;padding:10px 18px calc(22px + env(safe-area-inset-bottom,0px));
+  max-height:92vh;overflow:auto;animation:wlup .2s ease}
+@media (min-width:700px){.wl-scrim{align-items:center}.wl-sheet{border-radius:22px}}
+@keyframes wlup{from{transform:translateY(30px);opacity:.5}}
+@media (prefers-reduced-motion:reduce){.wl-sheet,.wl-spin{animation:none}}
+.wl-grab{width:40px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 10px}
+.wl-sheet h2{margin:0 0 12px;font-size:1.12rem;display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;color:var(--fg)}
+.wl-sheet h2 .wl-x{font-size:1.4rem}
+.wl-sheet label.l{display:block;font-size:.78rem;font-weight:650;color:var(--muted);margin:14px 0 6px}
+.wl-field{position:relative}
+.wl-field input{width:100%;font-size:16px}
+.wl-sugg{position:absolute;left:0;right:0;top:calc(100% + 4px);background:var(--panel);border:1px solid var(--line);
+  border-radius:12px;box-shadow:var(--shadow);z-index:5;overflow:hidden}
+.wl-sugg button{display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;text-align:left;background:none;
+  border:0;box-shadow:none;border-radius:0;color:var(--fg);font-weight:500}
+.wl-sugg button:hover,.wl-sugg button.hi{background:var(--code)}
+.wl-sugg small{display:block;color:var(--muted);font-family:ui-monospace,monospace;font-size:.72rem}
+.wl-recent{display:flex;gap:8px;overflow-x:auto;padding:2px 0 4px}
+.wl-recent button{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);
+  min-width:62px;background:none;border:0;box-shadow:none;padding:4px;font-weight:500}
+.wl-note{font-size:.8rem;margin-top:6px;color:var(--muted);word-break:break-all}
+.wl-note.bad{color:var(--bad);word-break:normal}
+.wl-amtrow{display:flex;gap:8px;align-items:center}
+.wl-amtrow input{flex:1;min-width:0;font-size:16px}
+.wl-max{font-size:.8rem;font-weight:700;padding:11px 12px;border-radius:12px;background:var(--code);color:var(--accent);border:0;box-shadow:none}
+.wl-go{width:100%;margin-top:18px;padding:14px;border-radius:14px;font-weight:700;font-size:1rem}
+.wl-go:disabled{opacity:.45;cursor:not-allowed}
+.wl-second{width:100%;margin-top:10px}
+.wl-review{text-align:center;padding:4px 0}
+.wl-review .big{font-size:2rem;font-weight:750;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.wl-kv{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:.9rem}
+.wl-kv span:first-child{color:var(--muted);flex:none}
+.wl-kv span:last-child{text-align:right;min-width:0;word-break:break-all}
+.wl-kv.total{font-weight:700;border-bottom:0}
+.wl-warn{margin-top:12px;padding:10px 12px;border-radius:12px;font-size:.84rem;
+  background:color-mix(in srgb,var(--accent) 10%,transparent);border:1px solid var(--accent)}
+.wl-steps{list-style:none;padding:0;margin:14px 0 0;display:grid;gap:12px}
+.wl-steps li{display:flex;align-items:center;gap:10px;font-size:.92rem;color:var(--muted)}
+.wl-steps li.now{color:var(--fg);font-weight:600}.wl-steps li.done{color:var(--ok)}
+.wl-dot{width:20px;height:20px;border-radius:50%;border:2px solid var(--line);display:grid;place-items:center;font-size:.7rem;flex:none}
+.wl-steps li.now .wl-dot{border-color:var(--accent);border-right-color:transparent;animation:wlsp .8s linear infinite}
+.wl-steps li.done .wl-dot{border-color:var(--ok);background:var(--ok);color:#fff}
+.wl-done{text-align:center;padding:6px 0}
+.wl-check{width:64px;height:64px;border-radius:50%;background:var(--ok);color:#fff;display:grid;place-items:center;font-size:2rem;margin:4px auto 12px}
+.wl-txid{display:flex;gap:8px;align-items:center;justify-content:center;font-family:ui-monospace,monospace;font-size:.8rem;margin-top:10px;color:var(--muted);flex-wrap:wrap}
+.wl-save{margin-top:16px;text-align:left;padding:12px;border:1px dashed var(--line);border-radius:12px}
+.wl-qr{background:#fff;border-radius:16px;padding:10px;width:min(240px,100%);margin:0 auto}
+.wl-qr svg{display:block;width:100%;height:auto}
+.wl-addrbig{font-family:ui-monospace,monospace;font-size:.86rem;text-align:center;word-break:break-all;margin:12px auto 0;max-width:300px;user-select:all}
+.wl-link{background:none;border:0;box-shadow:none;color:var(--accent);font-weight:700;font-size:.8rem;padding:2px 4px}
+</style>
 <script src="/vendor/qrcode.js"></script>
 
 <script type="module">
@@ -124,140 +254,335 @@ drawDust();
 
 <script type="module">
 import * as wallet from "/wallet.js";
+import * as mail from "/messaging.js";
 
 const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+};
 const say = (t) => { $("trouble").textContent = t; $("trouble").hidden = !t; };
-const news = (t) => { $("news").textContent = t; $("news").hidden = !t; };
-const CHAIN = {network: "{{ chain.network }}",
-               version: {{ chain.params.pubkeyhash_version }}};
-
-let keys = null, lastSaid = {};
-const coinsOf = (n) => (n / 100000000).toLocaleString(undefined,
+const coinsOf = (n) => (Number(n || 0) / 100000000).toLocaleString(undefined,
   {minimumFractionDigits: 0, maximumFractionDigits: 8});
+const short = (a) => (a && a.length > 14) ? a.slice(0, 7) + "…" + a.slice(-5) : (a || "");
+const UNIT = "PEP";
+const TAGCHAIN = {network: "{{ chain.network }}",
+                  version: {{ chain.params.pubkeyhash_version }}};
+const ME = (typeof ARCADE_ME === "string" && ARCADE_ME) || "me";
+const toast = (t) => { try { arcadeToast(t); } catch (e) { /* the page still says it */ } };
 
-function drawWallets(said) {
-  const chains = said.chains || [];
-  $("not-backed-up").hidden = !chains.some((c) => c.backed_up === false);
-  $("wallets").innerHTML = "";
-  for (const chain of chains) {
-    const card = document.createElement("div");
-    card.className = "stat";
-    const what = document.createElement("div");
-    what.className = "k";
-    what.textContent = chain.label + " coins";
-    const much = document.createElement("div");
-    much.className = "v";
-    // What can be spent now (Order item 4): the index's balance, less what a
-    // transaction in the pool has taken, plus change on its way back.
-    much.textContent = chain.address
-      ? coinsOf(chain.spendable ?? chain.balance) : "—";
-    const note = document.createElement("div");
-    note.className = "n mono";
-    note.style.cssText = "font-size:.72rem;word-break:break-all";
-    note.textContent = chain.address || "no address yet";
-    card.append(what, much, note);
-    if (chain.address) {
-      // Press the card for the address as a QR code and a copy button
-      // (2026-10-08), for paying it from a phone.
-      card.classList.add("addrcard");
-      card.tabIndex = 0;
-      card.setAttribute("role", "button");
-      card.setAttribute("aria-label", `${chain.label} address: show its QR code`);
-      card.onclick = () => showAddress(chain);
-      card.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); showAddress(chain); } };
-      const hint = document.createElement("div");
-      hint.className = "n addrhint";
-      hint.textContent = "QR code · copy";
-      note.after(hint);
-    }
-    if (chain.incoming) {
-      const coming = document.createElement("div");
-      coming.className = "n";
-      coming.textContent = `${coinsOf(chain.incoming)} on its way to you`;
-      card.appendChild(coming);
-    }
-    if (chain.leaving) {
-      const going = document.createElement("div");
-      going.className = "n";
-      going.textContent = `${coinsOf(chain.leaving)} leaving, in a transaction `
-        + "waiting for its block";
-      card.appendChild(going);
-    }
-    if (chain.mainnet) {
-      const real = document.createElement("div");
-      real.className = "n";
-      real.textContent = "real coins — a send cannot be taken back";
-      card.appendChild(real);
-    }
-    $("wallets").appendChild(card);
-  }
+/* What this browser remembers for the Wallet tab, and only for it: what it
+ * sent (to name a send before its block lands, and to offer recent people
+ * back), the addresses somebody chose to save under a name, and which chain
+ * was showing. Per account, because one browser can hold several. */
+const SENT = `arcade.wallet.sent.${ME}`, SAVED = `arcade.wallet.saved.${ME}`;
+const NET = `arcade.wallet.net.${ME}`;
+function kept(key, empty) {
+  try { return JSON.parse(localStorage.getItem(key) || "null") || empty; } catch (e) { return empty; }
+}
+function keep(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {} }
 
-  const choose = $("which");
-  const had = choose.value;
-  choose.innerHTML = "";
-  for (const chain of chains) {
-    if (!chain.address) continue;
-    const option = document.createElement("option");
-    option.value = chain.network;
-    option.textContent = chain.label;
-    choose.appendChild(option);
+let said = {chains: []}, net = null, keys = null, tab = "activity";
+
+const chains = () => (said.chains || []).filter((c) => c.address);
+const chainNow = () => chains().find((c) => c.network === net) || chains()[0] || null;
+const mine = (address) => (said.chains || []).some((c) => c.address && c.address === address);
+
+/* --- the balance card --------------------------------------------------- */
+
+function drawHead() {
+  const c = chainNow();
+  $("who").textContent = said.name ? "@" + said.name : "";
+  const nets = $("nets");
+  nets.replaceChildren();
+  if (chains().length > 1) {
+    for (const one of chains()) {
+      const b = el("button", "", one.label);
+      b.type = "button";
+      b.setAttribute("aria-pressed", String(one.network === (c && c.network)));
+      b.onclick = () => { net = one.network; keep(NET, net); drawAll(); };
+      nets.append(b);
+    }
   }
-  if (had) choose.value = had;
-  sayWhich();
+  if (!c) {
+    $("bal").textContent = "—";
+    $("sub").textContent = "This account has no address yet. It gets one the first time the wallet opens.";
+    return;
+  }
+  $("bal").textContent = coinsOf(c.spendable ?? c.balance);
+  $("unit").textContent = UNIT;
+  const chip = $("netchip");
+  chip.textContent = c.mainnet ? "real coins" : "test coins, no value";
+  chip.className = "wl-chip" + (c.mainnet ? " real" : "");
+  const sub = $("sub");
+  sub.replaceChildren();
+  const bits = [];
+  if (c.incoming) bits.push(["in", `${coinsOf(c.incoming)} arriving`]);
+  if (c.leaving) bits.push(["out", `${coinsOf(c.leaving)} leaving`]);
+  if (!bits.length) sub.textContent = c.mainnet ? "Real coins: a send cannot be taken back."
+    : "Testnet coins pay message and game fees.";
+  bits.forEach(([cls, text], i) => {
+    if (i) sub.append(" · ");
+    sub.append(el("span", cls, text));
+  });
+  $("addrchip").textContent = short(c.address);
+  $("addrchip").onclick = async () => toast(await copyText(c.address)
+    ? "Address copied" : "Copy blocked here: press Receive and copy it from there");
+  let dismissed = false;
+  try { dismissed = sessionStorage.getItem("arcade.wallet.backupx") === "yes"; } catch (e) {}
+  $("not-backed-up").hidden = dismissed || !chains().some((one) => one.backed_up === false);
+}
+$("backup-x").onclick = () => {
+  try { sessionStorage.setItem("arcade.wallet.backupx", "yes"); } catch (e) {}
+  $("not-backed-up").hidden = true;
+};
+
+/* --- tabs --------------------------------------------------------------- */
+
+function showTab(which) {
+  tab = which;
+  for (const name of ["activity", "tokens", "nfts"]) {
+    $("tab-" + name).setAttribute("aria-selected", String(name === which));
+    $("panel-" + name).hidden = name !== which;
+  }
+  try { sessionStorage.setItem("arcade.wallet.tab", which); } catch (e) {}
+  if (which === "activity") loadActivity().catch(showError("panel-activity"));
+  if (which === "tokens") drawTokens().catch(showError("panel-tokens"));
+  if (which === "nfts") drawNfts().catch(showError("panel-nfts"));
+}
+for (const name of ["activity", "tokens", "nfts"]) $("tab-" + name).onclick = () => showTab(name);
+const showError = (id) => (e) => { $(id).replaceChildren(el("div", "wl-empty", String(e.message || e))); };
+
+/* --- activity ------------------------------------------------------------
+ *
+ * The chain's record (/account/activity, one row per transaction, read from
+ * the index as blocks arrive) under what this browser sent and no block has
+ * carried yet: those are pinned on top as "Waiting for a block", the way
+ * Xverse and Leather do it, and leave that list by themselves when their
+ * block lands -- with a toast, because that is the feedback a send owes.
+ */
+
+let act = {net: null, rows: [], since: null, tip: 0, more: false};
+
+async function loadActivity(older = false) {
+  const c = chainNow();
+  if (!c) { $("panel-activity").replaceChildren(el("div", "wl-empty", "No address yet, so nothing has happened.")); return; }
+  if (act.net !== c.network) older = false;
+  const before = older && act.rows.length ? `&before=${act.rows[act.rows.length - 1].height}` : "";
+  const answer = await fetch(`/account/activity?chain=${encodeURIComponent(c.network)}${before}`, {cache: "no-store"});
+  const got = await answer.json();
+  if (!answer.ok) throw new Error(got.detail || "the node would not say");
+  if (!older) act = {net: c.network, rows: [], since: null, tip: 0, more: false};
+  act.rows = act.rows.concat(got.rows || []);
+  act.since = got.since; act.tip = got.tip; act.more = !!got.more;
+  landed();
+  drawActivity();
 }
 
-// The address, large enough to scan, and a button that copies it. The QR code
-// is drawn here by the vendored encoder (vendor/qrcode.js), from the same
-// string printed under it.
-function showAddress(chain) {
-  const back = document.createElement("div");
-  back.className = "askcard-back";
-  const card = document.createElement("div");
-  card.className = "panel askcard addrsheet";
-  card.setAttribute("role", "dialog");
-  card.setAttribute("aria-label", `Your ${chain.label} address`);
-  const h = document.createElement("h3");
-  h.textContent = `Your ${chain.label.toLowerCase()} address`;
-  const pic = document.createElement("div");
-  pic.className = "qrbox";
-  try {
-    const qr = qrcode(0, "M");
-    qr.addData(chain.address);
-    qr.make();
-    pic.innerHTML = qr.createSvgTag({cellSize: 4, margin: 4, scalable: true});
-  } catch (e) {
-    pic.textContent = "The QR code could not be drawn; the address is below.";
+function waiting() {
+  const seen = new Set(act.rows.map((r) => r.txid));
+  const day = Date.now() - 2 * 86400e3;
+  return kept(SENT, []).filter((s) => s.network === act.net && !s.landed && !seen.has(s.txid) && s.at > day);
+}
+
+function landed() {
+  const seen = new Set(act.rows.map((r) => r.txid));
+  const sent = kept(SENT, []);
+  let changed = false;
+  for (const s of sent) {
+    if (s.network === act.net && !s.landed && seen.has(s.txid)) {
+      s.landed = true; changed = true;
+      toast(`Your send of ${coinsOf(s.amount)} ${UNIT} to ${s.tag ? "@" + s.tag : short(s.to)} is in a block.`);
+    }
   }
-  const addr = document.createElement("div");
-  addr.className = "mono addrtext";
-  addr.textContent = chain.address;
-  const warn = document.createElement("p");
-  warn.className = "muted";
-  warn.style.cssText = "font-size:.82rem;margin:8px 0 0";
-  warn.textContent = chain.mainnet
-    ? `Send only ${chain.label.toLowerCase()} coins here: real coins, on that chain.`
-    : `Send only ${chain.label.toLowerCase()} coins here. They have no value.`;
-  const row = document.createElement("div");
-  row.className = "row";
-  const copy = document.createElement("button");
-  copy.type = "button"; copy.textContent = "Copy address";
-  const close = document.createElement("button");
-  close.type = "button"; close.className = "ghost"; close.textContent = "Close";
-  row.append(copy, close);
-  card.append(h, pic, addr, warn, row);
-  back.append(card);
-  document.body.append(back);
-  const done = () => { back.remove(); document.removeEventListener("keydown", esc); };
-  const esc = (e) => { if (e.key === "Escape") done(); };
-  document.addEventListener("keydown", esc);
-  close.onclick = done;
-  back.onclick = (e) => { if (e.target === back) done(); };
+  if (changed) keep(SENT, sent);
+}
+
+function rowTitle(r) {
+  const record = kept(SENT, []).find((s) => s.txid === r.txid);
+  if (r.net >= 0) return r.spent ? "Moved within your wallet" : "Received";
+  const tag = r.other_tag || (record && record.tag);
+  if (tag) return `Sent to @${tag}`;
+  if (r.other && mine(r.other)) return "Sent to yourself";
+  if (r.other) return `Sent to ${short(r.other)}`;
+  return "A message, post or inscription";
+}
+
+function when(seconds) {
+  if (!seconds) return "";
+  return new Date(seconds * 1000).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"});
+}
+function dayOf(seconds) {
+  if (!seconds) return "Earlier";
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const at = seconds * 1000;
+  if (at >= today) return "Today";
+  if (at >= today - 86400e3) return "Yesterday";
+  return new Date(at).toLocaleDateString([], {month: "short", day: "numeric", year:
+    new Date(at).getFullYear() === today.getFullYear() ? undefined : "numeric"});
+}
+
+function amountCell(net) {
+  const cell = el("span", "wl-amt" + (net > 0 ? " in" : ""), (net > 0 ? "+" : "−") + coinsOf(Math.abs(net)));
+  cell.append(el("small", "", UNIT));
+  return cell;
+}
+
+function drawActivity() {
+  const box = $("panel-activity");
+  box.replaceChildren();
+  const pending = waiting();
+  if (pending.length) box.append(el("div", "wl-day", "Waiting for a block"));
+  for (const s of pending.sort((a, b) => b.at - a.at)) {
+    const b = el("button", "wl-row"); b.type = "button";
+    const mid = el("span", "wl-mid");
+    mid.append(el("b", "", s.tag ? `Sent to @${s.tag}` : `Sent to ${short(s.to)}`),
+               el("small", "", new Date(s.at).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})));
+    const pill = el("span", "wl-pill wait"); pill.append(el("span", "wl-spin"), "Pending");
+    mid.append(el("br"), pill);
+    b.append(el("span", "wl-ic", "↑"), mid, amountCell(-(s.amount + (s.fee || 0))));
+    b.onclick = () => openPending(s);
+    box.append(b);
+  }
+  let last = "";
+  for (const r of act.rows) {
+    const day = dayOf(r.time);
+    if (day !== last) { box.append(el("div", "wl-day", day)); last = day; }
+    const b = el("button", "wl-row"); b.type = "button";
+    const mid = el("span", "wl-mid");
+    mid.append(el("b", "", rowTitle(r)), el("small", "", when(r.time)));
+    if (r.confirmations < 6) {
+      mid.append(el("br"), el("span", "wl-pill wait", `${r.confirmations} of 6 confirmations`));
+    }
+    b.append(el("span", "wl-ic" + (r.net > 0 ? " in" : ""), r.net > 0 ? "↓" : r.other ? "↑" : "★"),
+             mid, amountCell(r.net));
+    b.onclick = () => openRow(r);
+    box.append(b);
+  }
+  if (!pending.length && !act.rows.length) {
+    box.append(el("div", "wl-empty", "Nothing yet. Coins you send and receive show up here."));
+  }
+  if (act.more) {
+    const more = el("button", "ghost wl-more", "Show older");
+    more.type = "button";
+    more.onclick = () => { more.disabled = true; loadActivity(true).catch(showError("panel-activity")); };
+    box.append(more);
+  }
+  // Said rather than implied: the index files an address's history from the
+  // block it began watching it (arcade/utxos.py), never further back.
+  if (act.since != null && !act.more) {
+    box.append(el("p", "wl-since", `This list starts at block ${act.since.toLocaleString()}, when this node began following your address. Coins already there are counted in the balance.`));
+  }
+}
+
+/* --- the sheet ---------------------------------------------------------- */
+
+function sheet() {
+  const scrim = el("div", "wl-scrim"), card = el("div", "wl-sheet");
+  card.setAttribute("role", "dialog"); card.setAttribute("aria-modal", "true");
+  scrim.append(card); document.body.append(scrim);
+  let locked = false;
+  const close = () => { if (locked) return; scrim.remove(); document.removeEventListener("keydown", key); };
+  const key = (e) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", key);
+  scrim.addEventListener("click", (e) => { if (e.target === scrim) close(); });
+  return {
+    close, lock(on) { locked = on; },
+    set(title, back) {
+      card.replaceChildren(el("div", "wl-grab"));
+      const h = el("h2");
+      if (back) { const b = el("button", "wl-x", "←"); b.type = "button"; b.setAttribute("aria-label", "Back"); b.onclick = back; h.append(b); }
+      h.append(el("span", "", title));
+      const x = el("button", "wl-x", "×"); x.type = "button"; x.setAttribute("aria-label", "Close");
+      x.style.marginLeft = "auto"; x.onclick = close; h.append(x);
+      const body = el("div");
+      card.append(h, body);
+      return body;
+    },
+  };
+}
+
+function kv(label, value, mono = false) {
+  const row = el("div", "wl-kv");
+  const v = el("span", mono ? "mono" : "", value);
+  if (mono) v.style.fontSize = ".8rem";
+  row.append(el("span", "", label), v);
+  return row;
+}
+
+function copyRow(label, text) {
+  const row = el("div", "wl-txid");
+  row.append(el("span", "", short(text)));
+  const b = el("button", "wl-link", label); b.type = "button";
+  b.onclick = async () => { b.textContent = (await copyText(text)) ? "Copied" : "Press and hold to copy"; };
+  row.append(b);
+  return row;
+}
+
+function openRow(r) {
+  const s = sheet();
+  const body = s.set(rowTitle(r));
+  const head = el("div", "wl-review");
+  head.append(el("div", "big", (r.net > 0 ? "+" : "−") + coinsOf(Math.abs(r.net)) + " " + UNIT));
+  head.append(r.confirmations >= 6 ? el("span", "wl-pill ok", "Confirmed")
+                                   : el("span", "wl-pill wait", `${r.confirmations} of 6 confirmations`));
+  body.append(head);
+  if (r.net < 0 && r.other) body.append(kv("To", (r.other_tag ? "@" + r.other_tag + " · " : "") + r.other, !r.other_tag));
+  body.append(kv("When", r.time ? new Date(r.time * 1000).toLocaleString() : `block ${r.height}`));
+  if (r.fee) body.append(kv("Network fee", `${coinsOf(r.fee)} ${UNIT}`));
+  body.append(kv("Block", r.height.toLocaleString()));
+  body.append(copyRow("Copy transaction ID", r.txid));
+  const tag = r.other_tag || (kept(SENT, []).find((x) => x.txid === r.txid) || {}).tag;
+  if (r.net < 0 && tag) {
+    const again = el("button", "ghost wl-second", `Send to @${tag} again`); again.type = "button";
+    again.onclick = () => { s.close(); openSend("@" + tag); };
+    body.append(again);
+  }
+}
+
+function openPending(p) {
+  const s = sheet();
+  const body = s.set(p.tag ? `Sent to @${p.tag}` : "Sent");
+  const head = el("div", "wl-review");
+  head.append(el("div", "big", "−" + coinsOf(p.amount) + " " + UNIT));
+  const pill = el("span", "wl-pill wait"); pill.append(el("span", "wl-spin"), "Waiting for its block");
+  head.append(pill);
+  body.append(head, kv("To", p.to, true));
+  if (p.fee) body.append(kv("Network fee", `${coinsOf(p.fee)} ${UNIT}`));
+  body.append(kv("Sent", new Date(p.at).toLocaleString()), copyRow("Copy transaction ID", p.txid));
+  body.append(el("p", "wl-note", "The network has it. A block usually carries it within a few minutes, and it moves into your history then."));
+}
+
+/* --- receive ------------------------------------------------------------ */
+
+function openReceive() {
+  const c = chainNow();
+  if (!c) return;
+  const s = sheet();
+  const body = s.set(`Receive ${c.mainnet ? "real" : "testnet"} ${UNIT}`);
+  const pic = el("div", "wl-qr");
+  try {
+    const qr = qrcode(0, "M"); qr.addData(c.address); qr.make();
+    pic.innerHTML = qr.createSvgTag({cellSize: 4, margin: 2, scalable: true});
+  } catch (e) { pic.textContent = "The QR code could not be drawn; the address is below."; }
+  const addr = el("div", "wl-addrbig", c.address);
+  const note = el("p", "wl-note", c.mainnet
+    ? `Send only ${c.label.toLowerCase()} ${UNIT} here: real coins, on that chain.`
+    : `Send only ${c.label.toLowerCase()} ${UNIT} here. They have no value.`);
+  note.style.textAlign = "center";
+  const copy = el("button", "wl-go", "Copy address"); copy.type = "button";
   copy.onclick = async () => {
-    const ok = await copyText(chain.address);
-    copy.textContent = ok ? "Copied" : "Select it above and copy";
+    const ok = await copyText(c.address);
+    copy.textContent = ok ? "Copied" : "Select the address above and copy it";
     if (!ok) getSelection().selectAllChildren(addr);
     setTimeout(() => { copy.textContent = "Copy address"; }, 2500);
   };
+  body.append(pic, addr, note, copy);
+  const warn = $("receive-note").content.cloneNode(true);
+  const holder = el("div"); holder.style.marginTop = "14px"; holder.append(warn);
+  body.append(holder);
   copy.focus();
 }
 
@@ -282,87 +607,514 @@ async function copyText(text) {
   return ok;
 }
 
-function sayWhich() {
-  const chains = lastSaid.chains || [];
-  const chain = chains.find((c) => c.network === $("which").value);
-  $("which-note").textContent = !chain ? ""
-    : chain.mainnet
-      ? `Real ${chain.label.toLowerCase()} coins, from `
-        + `${coinsOf(chain.spendable ?? chain.balance)} in your wallet. Permanent once sent.`
-      : `${chain.label} coins, from ${coinsOf(chain.spendable ?? chain.balance)} in your wallet.`;
-  $("which-lock").hidden = !(chain && chain.mainnet && chain.backed_up === false);
+/* --- send ----------------------------------------------------------------
+ *
+ * Who, how much, a review that is the browser's own reading of the
+ * transaction (wallet.checked -- the fee printed is the one the signature
+ * covers), then the send with each step said, and a screen that says it went
+ * and hands over the transaction id. Every refusal stays in the sheet, next
+ * to what caused it, instead of in a box somewhere behind it.
+ */
+
+const ADDRESSY = /^[1-9A-HJ-NP-Za-km-z]{26,35}$/;
+const TAGGY = /^@?[a-z0-9_]{1,32}$/i;
+
+async function people() {
+  // The address book (by @name, kept in this browser by messaging.js), the
+  // addresses saved from a send, and whoever this browser sent to lately.
+  const c = chainNow();
+  const out = [], seen = new Set();
+  const add = (value, label, sub) => {
+    const k = value.toLowerCase();
+    if (seen.has(k)) return;
+    seen.add(k); out.push({value, label, sub});
+  };
+  for (const s of kept(SENT, []).filter((x) => x.network === c.network).sort((a, b) => b.at - a.at)) {
+    if (s.tag) add("@" + s.tag, "@" + s.tag, "sent to lately");
+    else if (!mine(s.to)) add(s.to, short(s.to), "sent to lately");
+  }
+  for (const s of kept(SAVED, []).filter((x) => x.network === c.network)) add(s.address, s.name, short(s.address));
+  try { for (const e of await mail.book()) add("@" + e.tag, "@" + e.tag, "in your address book"); } catch (e) {}
+  return out;
 }
 
-async function draw() {
-  const said = await wallet.state();
-  lastSaid = said;
-  drawWallets(said);
-  return said;
+function openSend(prefill = "") {
+  const c = chainNow();
+  if (!c) return;
+  const s = sheet();
+  step1(s, {to: prefill, amount: ""});
 }
 
-$("which").onchange = sayWhich;
-
-$("send").onclick = async () => {
-  say(""); news("");
-  try {
-    if (!keys) keys = await arcadeKeys(CHAIN);
-    const offer = await wallet.offerSend($("to").value.trim(),
-                                         $("amount").value.trim(),
-                                         $("which").value);
-    const shown = await wallet.checked(offer, keys);
-    // Said as a question, by name, with the address small under it (filming,
-    // 2026-09-26: "send 2 testnet to nUpPb7…" read as a run-on and hid the name).
-    const who = offer.to_tag ? "@" + offer.to_tag : String(offer.to || "");
-    $("confirm-says").replaceChildren();
-    const q = document.createElement("strong");
-    const coins = String(Number(offer.amount) / 1e8);
-    q.textContent = `Send ${coins} ${String(offer.label || "").toLowerCase()} coins to ${who}?`;
-    const addr = document.createElement("div");
-    addr.className = "muted mono";
-    addr.style.cssText = "font-size:.78rem;word-break:break-all;margin:4px 0";
-    addr.textContent = offer.to_tag ? offer.to : "";
-    const fee = document.createElement("div");
-    fee.className = "muted";
-    fee.style.fontSize = ".84rem";
-    fee.textContent = `The network fee is ${shown.coinsOf(shown.fee)}`
-      + (shown.change ? `, and ${shown.coinsOf(shown.change)} comes back to you.` : ".")
-      + " Worked out in this browser from the transaction's own bytes.";
-    $("confirm-says").append(q, addr, fee);
-    // To yourself is allowed on purpose -- it is how a coin is split so there are
-    // two to sell or answer offers with -- but it is said (a tester, 2026-09-26).
-    const mine = (lastSaid.chains || []).some((c) => c.address && c.address === offer.to);
-    if (mine) {
-      const note = document.createElement("div");
-      note.className = "msg info";
-      note.style.margin = "6px 0 0";
-      note.textContent = "That's your own address. Nothing leaves your wallet but the "
-        + "fee: this splits a coin into two, which selling and answering offers need.";
-      $("confirm-says").append(note);
+async function step1(s, d) {
+  const c = chainNow();
+  const body = s.set(`Send ${c.mainnet ? "real" : "testnet"} ${UNIT}`);
+  const all = await people();
+  const recent = all.filter((p) => p.sub === "sent to lately").slice(0, 5);
+  if (recent.length) {
+    body.append(Object.assign(el("label", "l", "Recent"), {}));
+    const row = el("div", "wl-recent");
+    for (const p of recent) {
+      const b = el("button"); b.type = "button";
+      const av = el("span", "wl-av", p.label.replace(/^@/, "").slice(0, 1).toUpperCase());
+      av.style.cssText = "width:30px;height:30px;background:var(--accent);color:var(--accent-fg);font-size:.8rem";
+      b.append(av, p.label);
+      b.onclick = () => { to.value = p.value; check(); amount.focus(); };
+      row.append(b);
     }
-    $("confirm").hidden = false;
-    $("confirm-yes").onclick = async () => {
-      $("confirm").hidden = true;
-      try {
-        const out = await wallet.confirm(keys, offer);
-        news(`Sent: ${out.txid.slice(0, 16)}…`);
-        await draw();
-      } catch (e) { say(String(e.message || e)); }
-    };
-    $("confirm-no").onclick = () => { $("confirm").hidden = true; };
-  } catch (e) { say(String(e.message || e)); }
-};
+    body.append(row);
+  }
+  const lt = el("label", "l", "To"); lt.htmlFor = "send-to";
+  const field = el("div", "wl-field");
+  const to = el("input"); to.id = "send-to"; to.autocomplete = "off"; to.spellcheck = false;
+  to.setAttribute("autocapitalize", "off");
+  to.placeholder = "@name or address"; to.value = d.to || "";
+  const sugg = el("div", "wl-sugg"); sugg.hidden = true;
+  field.append(to, sugg);
+  const toNote = el("div", "wl-note");
+  const la = el("label", "l", "Amount"); la.htmlFor = "send-amount";
+  const arow = el("div", "wl-amtrow");
+  const amount = el("input"); amount.id = "send-amount"; amount.inputMode = "decimal";
+  amount.autocomplete = "off"; amount.placeholder = "0"; amount.value = d.amount || "";
+  const max = el("button", "wl-max", "Max"); max.type = "button";
+  arow.append(amount, max);
+  const avail = el("div", "wl-note");
+  const problem = el("div", "msg err"); problem.hidden = true; problem.style.marginTop = "12px";
+  const go = el("button", "wl-go", "Review"); go.type = "button";
+  body.append(lt, field, toNote, la, arow, avail, problem, go);
 
-keys = await wallet.opened(CHAIN);
+  const spendable = Number(c.spendable ?? c.balance ?? 0);
+  let shown = [], hi = -1;
+  function check() {
+    d.to = to.value.trim(); d.amount = amount.value.trim();
+    toNote.className = "wl-note";
+    if (!d.to) toNote.textContent = "";
+    else if (ADDRESSY.test(d.to)) {
+      toNote.textContent = mine(d.to) ? "That's your own address: only the fee leaves, and a coin is split in two."
+        : (all.find((p) => p.value === d.to) || {}).label !== short(d.to)
+          ? `${(all.find((p) => p.value === d.to) || {}).label || "An address"} · checked when you review`
+          : "An address · checked when you review";
+    } else if (TAGGY.test(d.to)) {
+      toNote.textContent = `@${d.to.replace(/^@/, "")} · their ${c.label.toLowerCase()} address is looked up when you review`;
+    } else {
+      toNote.className = "wl-note bad";
+      toNote.textContent = "Type an @name or paste an address.";
+    }
+    const n = Number(d.amount);
+    let bad = "";
+    if (d.amount && !(n > 0)) bad = "Type an amount above zero.";
+    else if (n * 1e8 > spendable) bad = `That's more than you have: ${coinsOf(spendable)} ${UNIT}.`;
+    avail.className = "wl-note" + (bad ? " bad" : "");
+    avail.textContent = bad || `Available: ${coinsOf(spendable)} ${UNIT}`;
+    go.disabled = !(d.to && (ADDRESSY.test(d.to) || TAGGY.test(d.to)) && n > 0 && !bad);
+  }
+  function suggest() {
+    const q = to.value.trim().replace(/^@/, "").toLowerCase();
+    shown = q ? all.filter((p) => p.value.toLowerCase().replace(/^@/, "").startsWith(q)
+                              || p.label.toLowerCase().replace(/^@/, "").includes(q)).slice(0, 6) : [];
+    if (shown.length === 1 && shown[0].value === to.value.trim()) shown = [];
+    hi = shown.length ? 0 : -1;
+    sugg.replaceChildren();
+    shown.forEach((p, i) => {
+      const b = el("button", i === hi ? "hi" : ""); b.type = "button";
+      const av = el("span", "wl-av", p.label.replace(/^@/, "").slice(0, 1).toUpperCase());
+      av.style.cssText = "width:28px;height:28px;background:var(--accent);color:var(--accent-fg);font-size:.78rem";
+      const words = el("span"); words.append(p.label, el("small", "", p.sub));
+      b.append(av, words);
+      b.onmousedown = (e) => { e.preventDefault(); pick(p); };
+      sugg.append(b);
+    });
+    sugg.hidden = !shown.length;
+  }
+  function pick(p) { to.value = p.value; sugg.hidden = true; check(); amount.focus(); }
+  to.oninput = () => { suggest(); check(); };
+  to.onfocus = suggest;
+  to.onblur = () => setTimeout(() => { sugg.hidden = true; }, 150);
+  to.onkeydown = (e) => {
+    if (sugg.hidden || !shown.length) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      hi = (hi + (e.key === "ArrowDown" ? 1 : shown.length - 1)) % shown.length;
+      [...sugg.children].forEach((x, i) => x.classList.toggle("hi", i === hi));
+    } else if (e.key === "Enter" && hi >= 0) { e.preventDefault(); pick(shown[hi]); }
+  };
+  amount.oninput = check;
+  // The fee is not known until the node builds the transaction, so Max keeps
+  // a little back for it; the review says what it really is.
+  max.onclick = () => {
+    const room = Math.max(0, spendable - 1000000);
+    amount.value = String(room / 1e8); check();
+    avail.textContent = `Max keeps 0.01 ${UNIT} back for the network fee.`;
+  };
+  go.onclick = async () => {
+    problem.hidden = true;
+    // Read the boxes again, now, rather than trusting what an earlier event
+    // left in `d` (2026-10-08: two sends of 5 to @yourfirstname went out when
+    // the second was typed as 500 to @bigchiefenergy). What is asked for is
+    // what is in the boxes at the moment Review is pressed, and the offer
+    // that comes back has to be for exactly that before anything is signed.
+    const typedTo = to.value.trim(), typedAmount = amount.value.trim();
+    d.to = typedTo; d.amount = typedAmount;
+    go.disabled = true; go.textContent = "Checking…";
+    try {
+      if (!keys) keys = await arcadeKeys(TAGCHAIN);
+      const offer = await wallet.offerSend(typedTo, typedAmount, c.network);
+      const wrong = mismatch(offer, typedTo, typedAmount);
+      if (wrong) throw new Error(wrong);
+      const read = await wallet.checked(offer, keys);
+      step2(s, d, offer, read, {to: typedTo, amount: typedAmount});
+    } catch (e) {
+      problem.textContent = String(e.message || e); problem.hidden = false;
+      go.disabled = false; go.textContent = "Review";
+    }
+  };
+  check();
+  if (!d.to) to.focus(); else amount.focus();
+}
+
+/** Satoshis from what was typed, by the digits, never through a float. */
+function satsOf(text) {
+  const m = /^(\d*)(?:\.(\d{0,8}))?$/.exec(String(text).trim());
+  if (!m || (!m[1] && !m[2])) return null;
+  return Number(m[1] || "0") * 1e8 + Number((m[2] || "").padEnd(8, "0"));
+}
+
+/** Why an offer is not the send that was typed, or "" when it is. */
+function mismatch(offer, typedTo, typedAmount) {
+  const want = satsOf(typedAmount);
+  if (want == null || Number(offer.amount) !== want) {
+    return `The node built a send of ${coinsOf(offer.amount)} ${UNIT}, and you typed ${typedAmount}. `
+      + "Nothing was signed. Check the amount and press Review again.";
+  }
+  if (ADDRESSY.test(typedTo)) {
+    if (offer.to !== typedTo) return `The node built a send to ${offer.to}, not ${typedTo}. Nothing was signed.`;
+  } else {
+    const tag = typedTo.replace(/^@/, "").toLowerCase();
+    if (String(offer.to_tag || "").toLowerCase() !== tag) {
+      return `The node built a send to ${offer.to_tag ? "@" + offer.to_tag : offer.to}, not @${tag}. Nothing was signed.`;
+    }
+  }
+  return "";
+}
+
+function step2(s, d, offer, read, typed) {
+  const c = chainNow();
+  const body = s.set("Review", () => step1(s, d));
+  const amount = Number(offer.amount);
+  const head = el("div", "wl-review");
+  head.append(el("div", "wl-note", "You're sending"), el("div", "big", `${coinsOf(amount)} ${UNIT}`));
+  body.append(head);
+  const who = el("span");
+  if (offer.to_tag) { who.append("@" + offer.to_tag, el("br")); }
+  const at = el("span", "mono", offer.to); at.style.cssText = "font-size:.78rem;color:var(--muted)";
+  who.append(at);
+  const row = el("div", "wl-kv"); row.append(el("span", "", "To"), who);
+  body.append(row, kv("Network fee", `${read.coinsOf(read.fee)} ${UNIT}`));
+  if (read.change) body.append(kv("Comes back to you", `${read.coinsOf(read.change)} ${UNIT}`));
+  const total = el("div", "wl-kv total");
+  total.append(el("span", "", "Leaves your wallet"), el("span", "", `${coinsOf(amount + Number(read.fee || 0))} ${UNIT}`));
+  body.append(total);
+  if (mine(offer.to)) body.append(el("div", "wl-warn", "That's your own address. Nothing leaves your wallet but the fee: this splits a coin into two, which selling and answering offers need."));
+  else if (c.mainnet) {
+    const w = el("div", "wl-warn"); w.append(el("strong", "", "Real coins. "), "A send can't be taken back. Check the name and the address.");
+    body.append(w);
+  }
+  body.append(el("p", "wl-note", "Worked out in this browser from the transaction's own bytes."));
+  const go = el("button", "wl-go", `Send ${coinsOf(amount)} ${UNIT}`); go.type = "button";
+  const problem = el("div", "msg err"); problem.hidden = true; problem.style.marginTop = "12px";
+  body.append(problem);
+  let pressed = false;
+  go.onclick = () => {
+    if (pressed) return;               // one press, one send: a double tap is not two
+    const wrong = mismatch(offer, typed.to, typed.amount);
+    if (wrong) { problem.textContent = wrong; problem.hidden = false; return; }
+    pressed = true; go.disabled = true;
+    step3(s, d, offer, read);
+  };
+  body.append(go);
+  go.focus();
+}
+
+async function step3(s, d, offer, read) {
+  const body = s.set("Sending…");
+  const list = el("ul", "wl-steps");
+  const one = el("li", "now"), two = el("li");
+  one.append(el("span", "wl-dot"), "Signing in this browser and sending");
+  two.append(el("span", "wl-dot"), "Taken by the network");
+  list.append(one, two);
+  body.append(list, el("p", "wl-note", "Keep this open for a moment."));
+  s.lock(true);
+  try {
+    const out = await wallet.confirm(keys, offer);
+    one.className = "done"; one.firstChild.textContent = "✓";
+    two.className = "done"; two.firstChild.textContent = "✓";
+    s.lock(false);
+    const record = {txid: out.txid, network: offer.chain || chainNow().network, to: offer.to,
+                    tag: offer.to_tag || "", amount: Number(offer.amount), fee: Number(read.fee || 0),
+                    at: Date.now()};
+    const sent = kept(SENT, []);
+    sent.unshift(record);
+    keep(SENT, sent.slice(0, 40));
+    d.to = ""; d.amount = "";            // the next send starts from empty boxes
+    done(s, d, record);
+    refresh();
+  } catch (e) {
+    s.lock(false);
+    one.className = ""; one.firstChild.textContent = "!";
+    const problem = el("div", "msg err", String(e.message || e)); problem.style.marginTop = "14px";
+    const again = el("button", "wl-go", "Start again"); again.type = "button";
+    again.onclick = () => step1(s, d);
+    body.append(problem, again);
+  }
+}
+
+function done(s, d, record) {
+  const body = s.set("");
+  const box = el("div", "wl-done");
+  box.append(el("div", "wl-check", "✓"));
+  const head = el("div", "", `Sent ${coinsOf(record.amount)} ${UNIT}`);
+  head.style.cssText = "font-size:1.25rem;font-weight:700";
+  box.append(head, el("div", "wl-note", `to ${record.tag ? "@" + record.tag : record.to}`));
+  const pill = el("span", "wl-pill wait"); pill.append(el("span", "wl-spin"), "Waiting for its block");
+  const p = el("div"); p.style.marginTop = "12px"; p.append(pill);
+  box.append(p, copyRow("Copy transaction ID", record.txid));
+  body.append(box);
+  // A raw address, nobody's @name: offer to keep it under one (2026-10-08:
+  // "The address should auto complete if somebody is in your address book").
+  const saved = kept(SAVED, []);
+  if (!record.tag && !mine(record.to) && !saved.some((x) => x.address === record.to)) {
+    const save = el("div", "wl-save");
+    save.append(el("strong", "", "Save this address?"),
+                el("div", "wl-note", "Next time, start typing its name and it comes up."));
+    const row = el("div", "wl-amtrow"); row.style.marginTop = "8px";
+    const name = el("input"); name.placeholder = "a name, e.g. my exchange"; name.autocomplete = "off";
+    const ok = el("button", "wl-max", "Save"); ok.type = "button";
+    ok.onclick = () => {
+      const label = name.value.trim().slice(0, 40);
+      if (!label) { name.focus(); return; }
+      const all = kept(SAVED, []);
+      all.push({name: label, address: record.to, network: record.network});
+      keep(SAVED, all);
+      save.replaceChildren(el("strong", "", `Saved as “${label}”`));
+    };
+    row.append(name, ok);
+    save.append(row);
+    body.append(save);
+  }
+  const close = el("button", "wl-go", "Done"); close.type = "button";
+  close.onclick = s.close;
+  body.append(close);
+}
+
+$("do-send").onclick = () => openSend();
+$("do-recv").onclick = openReceive;
+
+/* --- tokens --------------------------------------------------------------- */
+
+let tokens = null;
+async function drawTokens() {
+  const box = $("panel-tokens");
+  if (!tokens) {
+    box.replaceChildren(el("div", "wl-empty", "Reading your tokens…"));
+    tokens = await (await fetch("/account/tokens", {cache: "no-store"})).json();
+  }
+  const c = chainNow();
+  const here = ((tokens.chains || []).find((x) => x.network === (c && c.network)) || {}).tokens || [];
+  box.replaceChildren();
+  const held = here.filter((t) => Number(t.balance) > 0 || t.issuer_is_me);
+  if (!held.length) box.append(el("div", "wl-empty", `No tokens on ${c ? c.label.toLowerCase() : "this chain"} yet.`));
+  for (const t of held) {
+    const row = el("div", "wl-tok");
+    const av = el("span", "wl-av", String(t.name || "?").slice(0, 1).toUpperCase());
+    av.style.background = `hsl(${(Number(t.property_id) * 47) % 360} 45% 42%)`;
+    const mid = el("span", "wl-mid");
+    mid.append(el("b", "", t.sensitive ? "Hidden name" : (t.name || `Token ${t.property_id}`)),
+               el("small", "", `#${t.property_id}${t.issuer_is_me ? " · you made it" : ""}`));
+    row.append(av, mid, el("span", "wl-amt", t.display ?? String(t.balance)));
+    box.append(row);
+  }
+  const more = el("a", "btn ghost wl-more", "Send or manage tokens");
+  more.href = "/me/wallet/tokens"; more.style.cssText = "display:block;text-align:center";
+  box.append(more);
+}
+
+/* --- NFTs ----------------------------------------------------------------
+ *
+ * Collections first, then the pieces of the one that is opened (2026-10-08:
+ * "we have collections that have thousands of items and we need to be able to
+ * sort through our collections before we look at the items"). The node groups
+ * and pages (/account/nfts/collections, /account/nfts/pieces); a collection of
+ * six thousand is sixty pieces at a time.
+ */
+
+let nft = {net: null, colls: null, open: null, cq: "", csort: "most", iq: "", isort: "number",
+           pieces: [], total: 0};
+const isImage = (type) => String(type || "").startsWith("image/");
+function thumb(piece) {
+  if (isImage(piece.content_type)) {
+    const img = el("img"); img.loading = "lazy"; img.alt = ""; img.src = "/content/" + piece.txid;
+    return img;
+  }
+  return el("span", "", String(piece.content_type || "file").split("/").pop().split(";")[0].slice(0, 8));
+}
+function mosaic(cover) {
+  const box = el("span", "wl-mosaic");
+  for (let i = 0; i < 4; i++) {
+    const cell = el("span");
+    if (cover[i]) cell.append(thumb(cover[i]));
+    box.append(cell);
+  }
+  return box;
+}
+
+async function drawNfts() {
+  const c = chainNow();
+  const box = $("panel-nfts");
+  if (!c) { box.replaceChildren(el("div", "wl-empty", "No address yet.")); return; }
+  if (nft.net !== c.network) nft = {...nft, net: c.network, colls: null, open: null};
+  if (nft.open != null) return drawCollection();
+  if (!nft.colls) {
+    box.replaceChildren(el("div", "wl-empty", "Reading what you hold…"));
+    const answer = await fetch(`/account/nfts/collections?chain=${encodeURIComponent(c.network)}`, {cache: "no-store"});
+    const got = await answer.json();
+    if (!answer.ok) throw new Error(got.detail || "the node would not say");
+    nft.colls = got.collections || [];
+  }
+  box.replaceChildren();
+  const total = nft.colls.reduce((n, x) => n + x.count, 0);
+  if (!total) {
+    box.append(el("div", "wl-empty", `No NFTs on ${c.label.toLowerCase()} yet.`));
+    const make = el("a", "btn ghost wl-more", "Open your NFTs page"); make.href = "/me/nfts";
+    make.style.cssText = "display:block;text-align:center"; box.append(make);
+    return;
+  }
+  const named = nft.colls.filter((x) => x.collection).length;
+  box.append(el("div", "wl-count", `${named} collection${named === 1 ? "" : "s"} · ${total.toLocaleString()} piece${total === 1 ? "" : "s"}`));
+  const tools = el("div", "wl-tools");
+  const q = el("input"); q.type = "search"; q.id = "coll-q"; q.placeholder = "Search your collections"; q.value = nft.cq;
+  q.setAttribute("aria-label", "Search your collections");
+  const sort = el("select"); sort.id = "coll-sort"; sort.setAttribute("aria-label", "Sort collections");
+  for (const [v, t] of [["most", "Most pieces"], ["recent", "Recently received"], ["az", "A–Z"]]) {
+    const o = el("option", "", t); o.value = v; sort.append(o);
+  }
+  sort.value = nft.csort;
+  tools.append(q, sort);
+  const grid = el("div", "wl-colls");
+  box.append(tools, grid);
+  const fill = () => {
+    const text = nft.cq.trim().toLowerCase();
+    const list = nft.colls.filter((x) => (x.collection || "not in a collection").toLowerCase().includes(text));
+    list.sort((a, b) => (a.collection === "") - (b.collection === "")
+      || (nft.csort === "az" ? a.collection.localeCompare(b.collection)
+          : nft.csort === "recent" ? b.latest - a.latest : b.count - a.count));
+    grid.replaceChildren();
+    if (!list.length) grid.append(el("div", "wl-empty", "No collection by that name."));
+    for (const x of list) {
+      const card = el("button", "wl-coll"); card.type = "button";
+      card.append(mosaic(x.cover || []), el("b", "", x.collection || "Not in a collection"),
+                  el("small", "", `${x.count.toLocaleString()} piece${x.count === 1 ? "" : "s"}`));
+      card.onclick = () => { nft.open = x.collection; nft.iq = ""; drawCollection(); };
+      grid.append(card);
+    }
+  };
+  q.oninput = () => { nft.cq = q.value; fill(); };
+  sort.onchange = () => { nft.csort = sort.value; fill(); };
+  fill();
+}
+
+let typing = null;
+async function drawCollection() {
+  const c = chainNow();
+  const x = (nft.colls || []).find((one) => one.collection === nft.open) || {collection: nft.open, count: 0, cover: []};
+  const box = $("panel-nfts");
+  box.replaceChildren();
+  const back = el("button", "wl-back", "← Collections"); back.type = "button";
+  back.onclick = () => { nft.open = null; drawNfts(); };
+  const head = el("div", "wl-collhead");
+  const words = el("span", "wl-mid");
+  words.append(el("b", "", x.collection || "Not in a collection"),
+               el("small", "", `${x.count.toLocaleString()} piece${x.count === 1 ? "" : "s"} in this wallet`));
+  head.append(mosaic(x.cover || []), words);
+  const tools = el("div", "wl-tools");
+  const q = el("input"); q.type = "search"; q.id = "piece-q"; q.placeholder = "Search by name or #number"; q.value = nft.iq;
+  q.setAttribute("aria-label", "Search this collection");
+  const sort = el("select"); sort.id = "piece-sort"; sort.setAttribute("aria-label", "Sort pieces");
+  for (const [v, t] of [["number", "Number"], ["recent", "Newest"], ["name", "Name"]]) {
+    const o = el("option", "", t); o.value = v; sort.append(o);
+  }
+  sort.value = nft.isort;
+  tools.append(q, sort);
+  const count = el("div", "wl-count");
+  const grid = el("div", "wl-pieces");
+  const more = el("button", "ghost wl-more", "Show more"); more.type = "button"; more.hidden = true;
+  box.append(back, head, tools, count, grid, more);
+  const load = async (append) => {
+    const offset = append ? nft.pieces.length : 0;
+    const answer = await fetch(`/account/nfts/pieces?chain=${encodeURIComponent(c.network)}`
+      + `&collection=${encodeURIComponent(nft.open)}&q=${encodeURIComponent(nft.iq)}`
+      + `&sort=${nft.isort}&offset=${offset}&limit=60`, {cache: "no-store"});
+    const got = await answer.json();
+    if (!answer.ok) throw new Error(got.detail || "the node would not say");
+    nft.pieces = append ? nft.pieces.concat(got.pieces) : got.pieces;
+    nft.total = got.total;
+    if (!append) grid.replaceChildren();
+    for (const p of got.pieces) {
+      const a = el("a", "wl-piece"); a.href = `/inscriptions/${p.txid}/view`;
+      const pic = thumb(p);
+      if (!isImage(p.content_type)) pic.className = "wl-kind";
+      a.append(pic, el("em", "", p.name || `#${p.number}`));
+      grid.append(a);
+    }
+    if (!nft.pieces.length) grid.append(el("div", "wl-empty", nft.iq ? "Nothing here matches. Try a number like 42." : "Nothing here."));
+    count.textContent = nft.iq
+      ? `${nft.total.toLocaleString()} of ${x.count.toLocaleString()} match`
+      : `Showing ${nft.pieces.length.toLocaleString()} of ${nft.total.toLocaleString()}`;
+    more.hidden = nft.pieces.length >= nft.total;
+    more.textContent = `Show ${Math.min(60, nft.total - nft.pieces.length)} more`;
+  };
+  more.onclick = () => { more.disabled = true; load(true).finally(() => { more.disabled = false; }); };
+  q.oninput = () => { nft.iq = q.value; clearTimeout(typing); typing = setTimeout(() => load(false), 250); };
+  sort.onchange = () => { nft.isort = sort.value; load(false); };
+  await load(false);
+  window.scrollTo({top: Math.max(0, $("panel-nfts").getBoundingClientRect().top + scrollY - 120)});
+}
+
+/* --- drawing it all ----------------------------------------------------- */
+
+function drawAll() {
+  drawHead();
+  showTab(tab);
+}
+
+async function refresh() {
+  said = await wallet.state();
+  if (!chainNow()) net = null;
+  drawHead();
+  if (tab === "activity") await loadActivity();
+}
+
+keys = await wallet.opened(TAGCHAIN);
 $("shut").hidden = !!keys;
-await draw();
+said = await wallet.state();
+net = kept(NET, null);
+if (!chains().some((c) => c.network === net)) {
+  net = (chains().find((c) => c.mainnet) || chains()[0] || {}).network || null;
+}
+try { tab = sessionStorage.getItem("arcade.wallet.tab") || "activity"; } catch (e) {}
+drawAll();
 document.body.dataset.walletReady = "yes";
 
-// Balances and "on its way" are drawn here from the keys in this tab, so the
-// server's copy of the page has only placeholders for them: they redraw
-// themselves when a block brings something (base.html's `arcade:changed`), and
-// the page says so, so no "tap to refresh" is offered for them.
+// Balances and the history are drawn here from what the node says, so the
+// server's copy of the page has only placeholders: they redraw themselves when
+// a block brings something (base.html's `arcade:changed`), and while a send of
+// ours waits for its block the history is asked again every 20 seconds, so
+// "Pending" turns into a row without anybody pressing anything.
 document.body.dataset.selfRefreshing = "yes";
-document.addEventListener("arcade:changed", () => { draw().catch(() => {}); });
+document.addEventListener("arcade:changed", () => { refresh().catch(() => {}); });
+setInterval(() => {
+  if (!document.hidden && kept(SENT, []).some((s) => !s.landed && s.at > Date.now() - 2 * 86400e3)) {
+    refresh().catch(() => {});
+  }
+}, 20000);
 </script>
 <script type="module">
 import * as wallet from "/wallet.js";

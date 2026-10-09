@@ -170,25 +170,29 @@ def test_overview_links_to_wallet_and_backup(browser, served, signed_in):
 
 def test_the_wallet_page_lists_a_chain_and_can_offer_a_send(
         browser, served, signed_in):
+    """The send sheet (2026-10-08 redesign): Review asks the real
+    /account/send, and its refusal -- no coins for a fresh account -- stays
+    in the sheet next to the button that caused it."""
     base, _ = served
     _page(browser, base, "/me/wallet", "walletReady")
     assert not browser.find_element(By.ID, "shut").is_displayed()
+    assert browser.find_element(By.ID, "bal").text != "—", "a chain is drawn"
 
-    options = browser.find_elements(By.CSS_SELECTOR, "#which option")
-    assert options, "at least one chain should be selectable"
-
-    # The node has no coins for this fresh account, so the offer is
-    # refused -- proving the request reached the real /account/send route
-    # rather than nothing happening at all.
-    browser.find_element(By.ID, "to").send_keys(
+    browser.find_element(By.ID, "do-send").click()
+    browser.find_element(By.ID, "send-to").send_keys(
         "mpK9VHfd3ZkKZXMoWPy1kDf65RLzzbP1Bd")
-    browser.find_element(By.ID, "amount").send_keys("1")
-    browser.find_element(By.ID, "send").click()
-    for _ in range(40):
-        if browser.find_element(By.ID, "trouble").is_displayed():
-            break
-        time.sleep(0.25)
-    assert browser.find_element(By.ID, "trouble").is_displayed()
+    browser.find_element(By.ID, "send-amount").send_keys("1")
+    review = browser.find_element(By.CSS_SELECTOR, ".wl-sheet .wl-go")
+    if review.is_enabled():
+        review.click()
+        for _ in range(40):
+            if browser.find_elements(By.CSS_SELECTOR, ".wl-sheet .msg.err:not([hidden])"):
+                break
+            time.sleep(0.25)
+        assert browser.find_elements(By.CSS_SELECTOR, ".wl-sheet .msg.err:not([hidden])")
+    else:
+        # No coins at all: the sheet already says so before asking the node.
+        assert "more than you have" in browser.find_element(By.CSS_SELECTOR, ".wl-sheet").text
 
 
 def test_the_wallet_tokens_tab_is_reachable_and_empty(

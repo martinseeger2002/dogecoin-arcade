@@ -110,6 +110,8 @@ PUBLIC_PAGES = frozenset({
     "/account/mailbox",
     "/account/find",
     "/account/nfts",
+    "/account/nfts/collections",      # what this account holds, by collection
+    "/account/nfts/pieces",           # one page of one of those collections
     "/account/tokens",
     "/account/inscribe/unfinished",
     "/account/dust",                  # coins in this account's own payload outputs

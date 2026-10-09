@@ -524,6 +524,59 @@ class LedgerIndex:
         with self.open() as db:
             return [dict(row) for row in db.conn.execute(sql, args)]
 
+    def held_collections(self, owner: str, cover: int = 4) -> list[dict]:
+        """What `owner` holds, as collections: name, how many, newest height,
+        and the newest few pieces to draw a cover from.
+
+        The Wallet tab's NFTs (2026-10-08: "we have collections that have
+        thousands of items and we need to be able to sort through our
+        collections before we look at the items"), so it is one GROUP BY, not
+        every piece sent to the browser to be counted there. Pieces in no
+        collection come back as the collection "".
+        """
+        with self.open() as db:
+            groups = [dict(row) for row in db.conn.execute(
+                "SELECT COALESCE(c.collection, '') AS collection, COUNT(*) AS count, "
+                "MAX(i.block_height) AS latest "
+                "FROM inscription i LEFT JOIN collection_item c ON c.txid = i.txid "
+                "WHERE i.owner = ? GROUP BY COALESCE(c.collection, '')", (owner,))]
+            for group in groups:
+                group["cover"] = [dict(row) for row in db.conn.execute(
+                    "SELECT i.txid, i.content_type FROM inscription i "
+                    "LEFT JOIN collection_item c ON c.txid = i.txid "
+                    "WHERE i.owner = ? AND COALESCE(c.collection, '') = ? "
+                    "ORDER BY (i.content_type LIKE 'image/%') DESC, i.number DESC LIMIT ?",
+                    (owner, group["collection"], int(cover)))]
+        return groups
+
+    def held_pieces(self, owner: str, collection: str, query: str = "",
+                    sort: str = "number", offset: int = 0,
+                    limit: int = 60) -> tuple[list[dict], int]:
+        """One page of what `owner` holds in one collection ("" for none),
+        searched by #number/edition or by name, and how many match in all."""
+        where = ["i.owner = ?", "COALESCE(c.collection, '') = ?"]
+        args: list = [owner, collection]
+        text = (query or "").strip().lstrip("#")
+        if text.isdigit():
+            where.append("(CAST(c.edition AS TEXT) LIKE ? OR CAST(i.number AS TEXT) LIKE ?)")
+            args += [text + "%", text + "%"]
+        elif text:
+            where.append("COALESCE(c.name, '') LIKE ?")
+            args.append("%" + text.replace("%", "").replace("_", "") + "%")
+        order = {"recent": "i.block_height DESC, i.number DESC",
+                 "name": "COALESCE(c.name, '') COLLATE NOCASE, c.edition, i.number"
+                 }.get(sort, "COALESCE(c.edition, i.number), i.number")
+        clause = " WHERE " + " AND ".join(where)
+        join = " FROM inscription i LEFT JOIN collection_item c ON c.txid = i.txid"
+        with self.open() as db:
+            total = int(db.conn.execute("SELECT COUNT(*)" + join + clause, args).fetchone()[0])
+            rows = [dict(row) for row in db.conn.execute(
+                "SELECT i.txid, i.number, i.content_type, i.block_height, "
+                "c.edition, COALESCE(c.name, '') AS name" + join + clause
+                + f" ORDER BY {order} LIMIT ? OFFSET ?",
+                args + [max(1, min(int(limit), 200)), max(0, int(offset))])]
+        return rows, total
+
     #: A swap, as it sits in `arcade_tx`: the AnyData type, then INSC, then
     #: version 1 and kind 5 (inscriptions.KIND_SWAP). Matching on the prefix
     #: is what makes a price history cheap -- messages are type 200 too, and

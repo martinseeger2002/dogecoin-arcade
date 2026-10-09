@@ -270,3 +270,49 @@ def test_taking_the_price_off_is_the_same_handshake(client):
     said = answer.json()["detail"]
     assert "only whoever holds" not in said
     assert "no such inscription" not in said
+
+
+def _in_collection(state, txid, collection, edition, name):
+    index = state.token_index(state.messaging)
+    with index.open() as db:
+        db.conn.execute("INSERT OR REPLACE INTO collection_item(txid, creator, collection, edition, name) "
+                        "VALUES(?,?,?,?,?)", (txid, TEST, collection, edition, name))
+        db.conn.commit()
+
+
+def test_the_wallet_tab_reads_collections_then_pages_one(client):
+    """2026-10-08: "we have collections that have thousands of items and we
+    need to be able to sort through our collections before we look at the
+    items in our collections". Grouped and counted by the node, then paged."""
+    app, state = client
+    _seat(app)
+    app.post("/account/address", json={"address": TEST})
+    for n in range(1, 6):
+        txid = f"{n:02x}" * 32
+        _inscribed(state, TEST, number=n, txid=txid)
+        if n <= 4:
+            _in_collection(state, txid, "Frogs", n, f"Frog #{n}")
+    chain = state.messaging.network
+    said = app.get(f"/account/nfts/collections?chain={chain}").json()
+    counts = {c["collection"]: c["count"] for c in said["collections"]}
+    assert counts == {"Frogs": 4, "": 1}, "and one in no collection"
+    frogs = next(c for c in said["collections"] if c["collection"] == "Frogs")
+    assert len(frogs["cover"]) == 4
+
+    page = app.get(f"/account/nfts/pieces?chain={chain}&collection=Frogs&limit=2").json()
+    assert page["total"] == 4 and [p["name"] for p in page["pieces"]] == ["Frog #1", "Frog #2"]
+    found = app.get(f"/account/nfts/pieces?chain={chain}&collection=Frogs&q=%233").json()
+    assert [p["name"] for p in found["pieces"]] == ["Frog #3"]
+    named = app.get(f"/account/nfts/pieces?chain={chain}&collection=Frogs&q=frog&sort=recent").json()
+    assert named["total"] == 4
+    loose = app.get(f"/account/nfts/pieces?chain={chain}&collection=").json()
+    assert [p["number"] for p in loose["pieces"]] == [5]
+
+
+def test_nobody_elses_pieces_are_in_the_collections(client):
+    app, state = client
+    _seat(app)
+    app.post("/account/address", json={"address": TEST})
+    _inscribed(state, SOMEBODY, number=9, txid="77" * 32)
+    said = app.get(f"/account/nfts/collections?chain={state.messaging.network}").json()
+    assert said["collections"] == []

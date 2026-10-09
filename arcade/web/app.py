@@ -9695,6 +9695,52 @@ def create_app(state: AppState) -> FastAPI:
             })
         return JSONResponse({"chains": out})
 
+    def _nft_chain(account, chain: str):
+        picked = next((one for one in _account_chains()
+                       if one.network == chain), None) if chain else _account_chain()
+        address = _account_address(account.pubkey, picked) if picked else ""
+        return picked, address
+
+    @app.get("/account/nfts/collections")
+    def account_nft_collections(request: Request, chain: str = ""):
+        """What this account holds on one chain, grouped into collections.
+
+        The Wallet tab draws these first and the pieces of one only when it is
+        opened (2026-10-08: "Thumbnails for each collection and then when you
+        open a collection, it shows you the items in that collection").
+        """
+        account = _signed_in_account(request)
+        picked, address = _nft_chain(account, chain)
+        if picked is None:
+            return JSONResponse({"detail": f"no chain called {chain} here"}, status_code=404)
+        groups = []
+        if address:
+            try:
+                groups = state.token_index(picked).held_collections(address)
+            except Exception:
+                groups = []            # a chain this node has no index for
+        return JSONResponse({"chain": picked.network, "label": picked.label,
+                             "address": address, "collections": groups})
+
+    @app.get("/account/nfts/pieces")
+    def account_nft_pieces(request: Request, chain: str = "", collection: str = "",
+                           q: str = "", sort: str = "number", offset: int = 0,
+                           limit: int = 60):
+        """One page of the pieces this account holds in one collection."""
+        account = _signed_in_account(request)
+        picked, address = _nft_chain(account, chain)
+        if picked is None:
+            return JSONResponse({"detail": f"no chain called {chain} here"}, status_code=404)
+        rows, total = ([], 0)
+        if address:
+            try:
+                rows, total = state.token_index(picked).held_pieces(
+                    address, collection, q, sort, offset, limit)
+            except Exception:
+                rows, total = ([], 0)
+        return JSONResponse({"chain": picked.network, "collection": collection,
+                             "total": total, "offset": offset, "pieces": rows})
+
     @app.post("/account/inscribe")
     def account_inscribe(request: Request, payload: Any = Body(None)):
         """Offer the next transaction of an inscription, as this account.

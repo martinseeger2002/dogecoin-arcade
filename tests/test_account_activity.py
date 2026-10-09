@@ -23,8 +23,8 @@ def test_a_payment_in_is_a_row_with_what_arrived(db):
     utxos.watch(db, MINE, 100)
     connect(db, 101, paying("aa" * 32, (MINE, 500), (THEIRS, 700)))
     [row] = utxos.activity(db, [MINE])
-    assert row == {"txid": "aa" * 32, "height": 101, "received": 500, "spent": 0,
-                   "net": 500, "fee": 0, "other": ""}
+    assert row == {"txid": "aa" * 32, "height": 101, "time": 101, "received": 500,
+                   "spent": 0, "net": 500, "fee": 0, "other": ""}
 
 
 def test_a_send_says_who_it_paid_and_what_it_cost(db):

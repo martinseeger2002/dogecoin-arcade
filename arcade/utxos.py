@@ -261,12 +261,14 @@ def activity(db, addresses: list[str], before: int | None = None,
     args: list[Any] = list(addresses) + ([int(before)] if before is not None else [])
     rows = db.conn.execute(
         f"SELECT txid, MAX(height) AS height, SUM(received) AS received, "
-        f"SUM(spent) AS spent, MAX(paid_out) AS paid_out, MAX(other) AS other "
+        f"SUM(spent) AS spent, MAX(paid_out) AS paid_out, MAX(other) AS other, "
+        f"(SELECT time FROM block WHERE block.height = MAX(activity.height)) AS time "
         f"FROM activity WHERE {where} GROUP BY txid "
         f"ORDER BY height DESC, txid LIMIT ?", args + [int(limit)]).fetchall()
     out = []
-    for txid, height, got, gave, paid, other in rows:
-        out.append({"txid": txid, "height": int(height), "received": int(got),
+    for txid, height, got, gave, paid, other, when in rows:
+        out.append({"txid": txid, "height": int(height), "time": int(when or 0),
+                    "received": int(got),
                      "spent": int(gave), "net": int(got) - int(gave),
                      "fee": max(0, int(gave) - int(got) - int(paid)) if gave else 0,
                      "other": other or ""})
