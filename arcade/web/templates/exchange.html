@@ -222,7 +222,7 @@
       {{ xthumb(b) }}
       <div class="oftext">Somebody offers <strong>{{ b.pep }} PEP</strong> {{ net_badge(true) }} for your {{ xpiece(b) }}
         <div class="muted" style="font-size:.8rem">Real coins, held by this node until you sell. It takes 0.5%.</div></div>
-      <div class="ofdo"><a class="btn small" href="/exchange/x/nft/{{ b.inscription }}#x-form">Sell for {{ b.pep }} PEP</a></div>
+      <div class="ofdo"><a class="btn small" href="/exchange/x/nft/{{ b.inscription }}?side=sell&amp;price={{ b.pep }}#x-form">Sell for {{ b.pep }} PEP</a></div>
     </div>
     {% endfor %}
   </div>

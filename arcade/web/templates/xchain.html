@@ -84,6 +84,17 @@
     bids: [{% for o in book.buys if o.owner != owner %}[{{ o.each|tojson }}, {{ o.units_shown|tojson }}],{% endfor %}]
       .map(function (l) { return [Number(l[0]), Number(String(l[1]).replace(/,/g, ""))]; }),
     coin: "PEP", token: {{ aname|tojson }}, feePermille: {{ fee_permille }}, piece: {{ (a.kind == 'nft')|tojson }}});
+  // Arriving from an offer's "Sell for X PEP" (2026-10-09): that side and price, filled in.
+  (function () {
+    var q = new URLSearchParams(location.search), side = q.get("side"), price = q.get("price");
+    if (side !== "buy" && side !== "sell") return;
+    var radio = document.querySelector("#x-form input[name=side][value=" + side + "]");
+    if (radio) { radio.checked = true; radio.dispatchEvent(new Event("change", {bubbles: true})); }
+    var box = document.getElementById("x-price");
+    if (box && price && /^[0-9]+(\.[0-9]{1,8})?$/.test(price)) {
+      box.value = price; box.dispatchEvent(new Event("input", {bubbles: true}));
+    }
+  })();
   </script>
   {% endif %}
 </div>

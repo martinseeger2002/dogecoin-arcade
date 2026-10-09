@@ -602,7 +602,7 @@
   <p style="margin:0 0 10px">The best is <strong>{{ "%.8f"|format(xbest)|trim('0')|trim('.') }} PEP</strong>
     (real coins){% if x_bids|length > 1 %}, from {{ x_bids|length }} offers{% endif %}. This node holds
     the buyer's PEP; sell into it and the PEP is paid to your mainnet address when your piece arrives.</p>
-  <a class="btn" href="/exchange/x/nft/{{ row.txid }}#x-form">Sell it for {{ "%.8f"|format(xbest)|trim('0')|trim('.') }} PEP</a>
+  <a class="btn" href="/exchange/x/nft/{{ row.txid }}?side=sell&amp;price={{ "%.8f"|format(xbest)|trim('0')|trim('.') }}#x-form">Sell it for {{ "%.8f"|format(xbest)|trim('0')|trim('.') }} PEP</a>
 </div>
 {% endif %}
 {% endif %}
@@ -616,7 +616,7 @@
   <p class="muted" style="margin:0 0 10px;font-size:.88rem">Your mainnet PEP is held by this node, not by
     the piece's holder, until they sell it to you; cancel any time before and it comes back. The node takes
     0.5%.{% if x_bids %} The best offer standing is {{ "%.8f"|format(x_bids[0].pep)|trim('0')|trim('.') }} PEP.{% endif %}</p>
-  <a class="btn" href="/exchange/x/nft/{{ row.txid }}#x-form">Offer mainnet PEP</a>
+  <a class="btn" href="/exchange/x/nft/{{ row.txid }}?side=buy#x-form">Offer mainnet PEP</a>
 </div>
 <h3 style="margin:14px 0 6px">Or offer PEP TEST {{ net_badge(false) }}</h3>
 {% endif %}
