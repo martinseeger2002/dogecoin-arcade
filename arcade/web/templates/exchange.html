@@ -205,13 +205,22 @@
   </div>
   {% endif %}
 
+  {% macro xpiece(b) -%}
+    <a href="/inscriptions/{{ b.inscription }}/view"><strong>{{ b.name or (b.collection ~ (' #' ~ b.edition if b.edition is not none else '')) or ('#' ~ "{:,}".format(b.number) if b.number is not none else b.inscription[:10] ~ '…') }}</strong></a>
+    {{- ' ' }}{{ net_badge(false) }}
+    {%- if b.name and b.collection %}<div class="muted" style="font-size:.8rem">{{ b.collection }}</div>{% endif %}
+  {%- endmacro %}
+  {% macro xthumb(b) -%}
+    <a class="ofthumb" href="/inscriptions/{{ b.inscription }}/view">{% if b.content_type.startswith('image/') %}<img src="/content/{{ b.inscription }}"
+       alt="{{ b.name }}" loading="lazy" onerror="this.remove()">{% else %}<span class="muted" style="display:grid;place-items:center;height:100%;font-size:.7rem">{{ (b.content_type.split('/')[-1] or 'file')[:6] }}</span>{% endif %}</a>
+  {%- endmacro %}
   {% if x_in %}
   <div class="ex-h">Offers in mainnet PEP for your things {{ net_badge(true) }}</div>
   <div class="ex-card" style="padding:4px 14px">
     {% for b in x_in %}
     <div class="offerrow">
-      {{ thumb(b) }}
-      <div class="oftext">Somebody offers <strong>{{ b.pep }} PEP</strong> {{ net_badge(true) }} for {{ piece(b) }}
+      {{ xthumb(b) }}
+      <div class="oftext">Somebody offers <strong>{{ b.pep }} PEP</strong> {{ net_badge(true) }} for your {{ xpiece(b) }}
         <div class="muted" style="font-size:.8rem">Real coins, held by this node until you sell. It takes 0.5%.</div></div>
       <div class="ofdo"><a class="btn small" href="/exchange/x/nft/{{ b.inscription }}#x-form">Sell for {{ b.pep }} PEP</a></div>
     </div>
@@ -224,8 +233,8 @@
   <div class="ex-card" style="padding:4px 14px;margin-bottom:10px">
     {% for b in x_out %}
     <div class="offerrow">
-      {{ thumb(b) }}
-      <div class="oftext">You offer <strong>{{ b.pep }} PEP</strong> {{ net_badge(true) }} for {{ piece(b) }}
+      {{ xthumb(b) }}
+      <div class="oftext">You offer <strong>{{ b.pep }} PEP</strong> {{ net_badge(true) }} for {{ xpiece(b) }}
         <div style="margin-top:3px">{% if b.status == 'awaiting' %}<span class="ex-pill wait">Checking deposit</span>
           {% else %}<span class="ex-pill open">Waiting for the owner</span>{% endif %}</div></div>
       <div class="ofdo"><a class="btn ghost small" href="/exchange/x/nft/{{ b.inscription }}">Manage</a></div>

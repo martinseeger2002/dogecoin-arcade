@@ -21455,6 +21455,16 @@ def create_app(state: AppState) -> FastAPI:
                     "trades or you cancel, and pays both sides out. Only trade here if "
                     "you trust the operator of this node.")
 
+    def _piece_name(piece: dict) -> str:
+        """What a piece is called, as a person would say it: the name in its
+        metadata ("Mithril platelegs #7"), or "" (2026-10-09: an offer has to show
+        what it is for, not only a number)."""
+        try:
+            said = json.loads(piece.get("json") or "{}")
+            return str(said.get("name") or "").strip()[:80] if isinstance(said, dict) else ""
+        except Exception:
+            return ""
+
     def _x_open() -> bool:
         return bool(state.setting("xchain:enabled"))
 
@@ -22570,7 +22580,8 @@ def create_app(state: AppState) -> FastAPI:
                     for b in xbook.book("nft", m["asset"])["buys"]:
                         data["x_in"].append({"inscription": m["asset"], "number": piece.get("number"),
                                              "collection": piece.get("collection"),
-                                             "edition": piece.get("edition"),
+                                             "edition": piece.get("edition"), "name": _piece_name(piece),
+                                             "content_type": piece.get("content_type") or "",
                                              "pep": f"{b['left_pepe'] / COIN:.8f}".rstrip("0").rstrip(".")})
                 x_owner = ("node" if data["viewer"] == "wallet" else
                            signed_in(request).pubkey.lower() if data["viewer"] == "account" else "")
@@ -22581,6 +22592,8 @@ def create_app(state: AppState) -> FastAPI:
                     data["x_out"].append({"inscription": o["asset"], "number": piece.get("number"),
                                           "collection": piece.get("collection"),
                                           "edition": piece.get("edition"), "status": o["status"],
+                                          "name": _piece_name(piece),
+                                          "content_type": piece.get("content_type") or "",
                                           "pep": f"{o['pepe'] / COIN:.8f}".rstrip("0").rstrip(".")})
             # Buy orders on the tokens this account made (2026-09-28:
             # "where does the creator of a token see if someone puts in an order
