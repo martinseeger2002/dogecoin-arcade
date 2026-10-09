@@ -1106,6 +1106,14 @@ if (!chains().some((c) => c.network === net)) {
 }
 try { tab = sessionStorage.getItem("arcade.wallet.tab") || "activity"; } catch (e) {}
 drawAll();
+// Pay buttons elsewhere (the address book, a profile) land here as
+// /me/wallet?to=@name: the Send sheet opens with that name in To, and the
+// address leaves the URL so a reload does not open it again.
+const asked = new URLSearchParams(location.search).get("to");
+if (asked && chainNow()) {
+  history.replaceState(null, "", location.pathname + location.hash);
+  openSend(asked.trim().slice(0, 64));
+}
 document.body.dataset.walletReady = "yes";
 
 // Balances and the history are drawn here from what the node says, so the
