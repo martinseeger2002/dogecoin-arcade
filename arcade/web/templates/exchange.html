@@ -474,7 +474,9 @@
          would keep the words in the clear in an attribute while the drawn text
          says "Sensitive". Such a token is then found by its number rather than
          its name until the reader taps the cover. #}
-      {% set quote_text = wall_text(p.quote_label, 'a token') if p.quote_label else chain.label|upper %}
+      {# The coin side is said as the coin, not the chain (2026-10-08: PEP, and PEP TEST on testnet). #}
+      {% set coin_name = 'PEP' if chain.is_mainnet else 'PEP TEST' %}
+      {% set quote_text = wall_text(p.quote_label, 'a token') if p.quote_label else coin_name %}
       <tr data-market="{{ wall_text(p.name, '')|lower }}/{{ quote_text|lower }} #{{ p.property_id }}">
         <td style="width:40px">
           <a href="{{ p.href }}">
@@ -482,7 +484,7 @@
               style="width:32px;height:32px;object-fit:cover;border-radius:50%;display:block">
             {%- else %}<span class="coinface"></span>{% endif %}</a></td>
         <td><a href="{{ p.href }}"><strong>{{ wall(p.name, 'token name') }}</strong></a><span
-             class="muted">/{% if p.quote_label %}{{ wall(p.quote_label, 'token name') }}{% else %}{{ chain.label|upper }}{% endif %}</span>
+             class="muted">/{% if p.quote_label %}{{ wall(p.quote_label, 'token name') }}{% else %}{{ coin_name }}{% endif %}</span>
           {{ net_badge(chain) }}{% if p.quote_main %}<span class="muted">/</span>{{ net_badge(true) }}{% endif %}{% if p.property_id %}{{ supply_badge(p) }}{% endif %}
           {# The whole description goes behind the wall, not the first 40 characters
              of it: a verdict is kept per text, so asking about a cut-off prefix asks
@@ -556,9 +558,9 @@
        the list isn't 1 million items long"). #}
     {% macro pair_options(selected_first) -%}
       {%- for t in held_tokens %}<option value="{{ t.property_id }}"{% if selected_first and loop.first %} selected{% endif %}>{{ wall_text(t.name, 'token') }} (#{{ t.property_id }}){{ ' · managed' if t.managed }}</option>{% endfor %}
-      <option value="coin"{% if not selected_first %} selected{% endif %}>Pepecoin, testnet (PEP)</option>
-      {% if xchain_open %}<option value="main">Pepecoin, mainnet (PEPE): held by this node while it trades</option>
-      {% else %}<option value="main" disabled>Pepecoin, mainnet (PEPE): not open on this node</option>{% endif %}
+      <option value="coin"{% if not selected_first %} selected{% endif %}>Pepecoin, testnet (PEP TEST)</option>
+      {% if xchain_open %}<option value="main">Pepecoin, mainnet (PEP): held by this node while it trades</option>
+      {% else %}<option value="main" disabled>Pepecoin, mainnet (PEP): not open on this node</option>{% endif %}
     {%- endmacro %}
     <form method="get" action="/exchange/pairs" class="row" style="gap:8px;align-items:flex-end;margin:0">
       <div class="field" style="flex:1 1 160px;margin:0"><label>You have</label>

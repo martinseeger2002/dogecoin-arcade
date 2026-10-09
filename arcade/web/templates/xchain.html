@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "_chart.html" as chart %}
 {% set aname = wall_text(a.name, 'an asset') %}
-{% block title %}{{ aname }}/PEPE (mainnet) · Exchange · DogecoinArcade{% endblock %}
+{% block title %}{{ aname }}/PEP (mainnet) · Exchange · DogecoinArcade{% endblock %}
 {% block body %}
 {# One cross-chain market (arcade/xchain.py, 2026-10-06): an asset on testnet against
    Pepecoin on mainnet, held and paid out by this node. #}
@@ -10,7 +10,7 @@
 <div class="markethead">
   <div style="min-width:0;overflow-wrap:anywhere">
     <h1 style="margin:0;font-size:1.3rem">{{ wall(a.name, 'token name') }} {{ net_badge(chain) }}
-      <span class="muted">/</span> PEPE {{ net_badge(main) }}</h1>
+      <span class="muted">/</span> PEP {{ net_badge(main) }}</h1>
     <div class="muted" style="font-size:.78rem">
       {% if a.kind == 'token' %}#{{ a.asset }} {{ supply_badge(a.prop) }} &middot; <a href="/tokens/{{ a.asset }}">token page</a>
       {% elif a.kind == 'nft' %}<a href="/inscriptions/{{ a.asset }}">{{ aname }}</a>
@@ -22,34 +22,34 @@
 <div class="panel" style="border:1px solid var(--warn)">
   <p class="msg err" style="margin:0"><strong>{{ trust }}</strong></p>
   <p class="muted" style="font-size:.8rem;margin:6px 0 0">A sell deposits the {{ 'NFT' if a.kind == 'nft' else 'asset' }}
-    to this node on testnet; a buy deposits PEPE to it on mainnet. An order counts once its deposit has its
+    to this node on testnet; a buy deposits PEP to it on mainnet. An order counts once its deposit has its
     confirmations (6 on testnet, 2 on mainnet), then trades automatically with anything it crosses, at the resting
-    order's price. The node takes {{ fee_permille / 10 }}% of the PEPE of each trade, from what the seller receives.
+    order's price. The node takes {{ fee_permille / 10 }}% of the PEP of each trade, from what the seller receives.
     Testnet assets have no guaranteed value, and the testnet chain can be reset.</p>
 </div>
 
 {% if not live %}
 <div class="panel"><p class="msg err" style="margin:0">The cross-chain book is not open on this node.</p>
   {% if viewer == 'wallet' %}<p class="muted" style="font-size:.8rem;margin:6px 0 0">The operator opens it on the
-    <a href="/admin#xchain">admin panel</a>, under Mainnet PEPE swap.</p>{% endif %}
+    <a href="/admin#xchain">admin panel</a>, under Mainnet PEP swap.</p>{% endif %}
 </div>
 {% endif %}
 
 <div class="panel">
-  {{ chart.headline(stats, 'PEPE each') }}
+  {{ chart.headline(stats, 'PEP each') }}
   {% set periods = {'15m': '15-minute period', '1h': 'hour', '4h': '4-hour period', '1d': 'day'} %}
   <div class="row tfs" style="gap:4px;margin:6px 0 8px" role="group" aria-label="Candle size">
     {% for t in timeframes %}<a class="btn small {{ '' if t == tf else 'ghost' }}" href="?tf={{ t }}"
        {% if t == tf %}aria-current="true"{% endif %}>{{ t }}</a>{% endfor %}
   </div>
-  {{ chart.candles(slots, 'PEPE each', period=periods[tf]) }}
+  {{ chart.candles(slots, 'PEP each', period=periods[tf]) }}
 </div>
 
 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">
   <div class="panel">
     <h3 style="margin:0 0 8px">Book</h3>
     <table style="width:100%;font-size:.86rem">
-      <tr class="muted"><th style="text-align:left">PEPE each</th><th style="text-align:right">{{ aname }}</th></tr>
+      <tr class="muted"><th style="text-align:left">PEP each</th><th style="text-align:right">{{ aname }}</th></tr>
       {% for o in book.sells|reverse %}
       <tr><td style="color:var(--bad)">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}</td><td style="text-align:right">{{ o.units_shown }}</td></tr>
       {% endfor %}
@@ -64,7 +64,7 @@
     <h3 style="margin:0 0 8px">Recent trades</h3>
     {% if fills %}
     <table style="width:100%;font-size:.86rem">
-      <tr class="muted"><th style="text-align:left">PEPE each</th><th style="text-align:right">{{ aname }}</th></tr>
+      <tr class="muted"><th style="text-align:left">PEP each</th><th style="text-align:right">{{ aname }}</th></tr>
       {% for f in fills %}<tr><td>{{ "%.8f"|format(f.each)|trim('0')|trim('.') }}</td><td style="text-align:right">{{ f.units_shown }}</td></tr>{% endfor %}
     </table>
     {% else %}<p class="muted" style="margin:0">Nothing has traded here yet.</p>{% endif %}
@@ -72,7 +72,7 @@
 </div>
 
 <div class="panel">
-  <h3 style="margin:0 0 10px">Trade {{ aname }} for mainnet PEPE</h3>
+  <h3 style="margin:0 0 10px">Trade {{ aname }} for mainnet PEP</h3>
   {% if not live %}<p class="muted" style="margin:0">Opens when the operator opens the cross-chain book.</p>
   {% elif viewer == 'nobody' %}<p class="muted" style="margin:0">Sign in to trade.</p>
   {% elif viewer == 'account' and not (account_test and account_main) %}
@@ -82,15 +82,15 @@
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
     <input type="hidden" name="kind" value="{{ a.kind }}"><input type="hidden" name="asset" value="{{ a.asset }}">
     <div class="sides">
-      <label><input type="radio" name="side" value="buy" checked><span>Buy with PEPE</span></label>
-      <label><input type="radio" name="side" value="sell"><span>Sell for PEPE</span></label>
+      <label><input type="radio" name="side" value="buy" checked><span>Buy with PEP</span></label>
+      <label><input type="radio" name="side" value="sell"><span>Sell for PEP</span></label>
     </div>
     <div class="row" style="gap:10px;align-items:flex-end">
       {% if a.kind != 'nft' %}
       <div class="field" style="flex:1 1 150px;margin:0"><label>Amount of {{ aname }}</label>
         <input autocomplete="off" name="amount" id="x-amount" inputmode="decimal" placeholder="0"></div>
       {% else %}<input type="hidden" name="amount" id="x-amount" value="1">{% endif %}
-      <div class="field" style="flex:1 1 150px;margin:0"><label>Price, mainnet PEPE {{ 'for it' if a.kind == 'nft' else 'each' }}</label>
+      <div class="field" style="flex:1 1 150px;margin:0"><label>Price, mainnet PEP {{ 'for it' if a.kind == 'nft' else 'each' }}</label>
         <input autocomplete="off" name="price" id="x-price" inputmode="decimal" placeholder="0"></div>
       <button {% if viewer == 'account' %}type="button" id="x-order"{% else %}type="submit"{% endif %} class="danger" style="flex:0 0 auto">Place order</button>
     </div>
@@ -103,7 +103,7 @@
 <div class="panel">
   <h3 style="margin:0 0 8px">Your orders here</h3>
   <table style="width:100%;font-size:.86rem">
-    <tr class="muted"><th style="text-align:left">Side</th><th style="text-align:right">{{ aname }}</th><th style="text-align:right">PEPE each</th><th style="text-align:right">Status</th><th></th></tr>
+    <tr class="muted"><th style="text-align:left">Side</th><th style="text-align:right">{{ aname }}</th><th style="text-align:right">PEP each</th><th style="text-align:right">Status</th><th></th></tr>
     {% for o in mine %}
     <tr><td>{{ o.side }}</td><td style="text-align:right">{{ o.units_shown }}</td>
       <td style="text-align:right">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}</td>

@@ -267,7 +267,8 @@ const say = (t) => { $("trouble").textContent = t; $("trouble").hidden = !t; };
 const coinsOf = (n) => (Number(n || 0) / 100000000).toLocaleString(undefined,
   {minimumFractionDigits: 0, maximumFractionDigits: 8});
 const short = (a) => (a && a.length > 14) ? a.slice(0, 7) + "…" + a.slice(-5) : (a || "");
-const UNIT = "PEP";
+// What the coins are called (2026-10-08): mainnet "PEP", testnet "PEP TEST".
+let UNIT = "PEP";
 const TAGCHAIN = {network: "{{ chain.network }}",
                   version: {{ chain.params.pubkeyhash_version }}};
 const ME = (typeof ARCADE_ME === "string" && ARCADE_ME) || "me";
@@ -312,6 +313,7 @@ function drawHead() {
     return;
   }
   $("bal").textContent = coinsOf(c.spendable ?? c.balance);
+  UNIT = c.mainnet ? "PEP" : "PEP TEST";
   $("unit").textContent = UNIT;
   const chip = $("netchip");
   chip.textContent = c.mainnet ? "real coins" : "test coins, no value";
@@ -561,7 +563,7 @@ function openReceive() {
   const c = chainNow();
   if (!c) return;
   const s = sheet();
-  const body = s.set(`Receive ${c.mainnet ? "real" : "testnet"} ${UNIT}`);
+  const body = s.set(`Receive ${UNIT}`);
   const pic = el("div", "wl-qr");
   try {
     const qr = qrcode(0, "M"); qr.addData(c.address); qr.make();
@@ -569,8 +571,8 @@ function openReceive() {
   } catch (e) { pic.textContent = "The QR code could not be drawn; the address is below."; }
   const addr = el("div", "wl-addrbig", c.address);
   const note = el("p", "wl-note", c.mainnet
-    ? `Send only ${c.label.toLowerCase()} ${UNIT} here: real coins, on that chain.`
-    : `Send only ${c.label.toLowerCase()} ${UNIT} here. They have no value.`);
+    ? `Send only ${UNIT} here: real coins, on mainnet.`
+    : `Send only ${UNIT} here. Test coins have no value.`);
   note.style.textAlign = "center";
   const copy = el("button", "wl-go", "Copy address"); copy.type = "button";
   copy.onclick = async () => {
@@ -647,7 +649,7 @@ function openSend(prefill = "") {
 
 async function step1(s, d) {
   const c = chainNow();
-  const body = s.set(`Send ${c.mainnet ? "real" : "testnet"} ${UNIT}`);
+  const body = s.set(`Send ${UNIT}`);
   const all = await people();
   const recent = all.filter((p) => p.sub === "sent to lately").slice(0, 5);
   if (recent.length) {

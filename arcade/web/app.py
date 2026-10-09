@@ -20392,7 +20392,7 @@ def create_app(state: AppState) -> FastAPI:
             rows.append({
                 "property_id": a["asset"] if m["kind"] == "token" else "", "name": a["name"],
                 "divisible": a["divisible"], "managed": (a["prop"] or {}).get("managed", 0),
-                "href": f"/exchange/x/{m['kind']}/{m['asset']}", "quote_label": "PEPE", "quote_main": True,
+                "href": f"/exchange/x/{m['kind']}/{m['asset']}", "quote_label": "PEP", "quote_main": True,
                 "icon": face["icon"], "about": face["about"],
                 "last": stats["last"], "change": change, "new": new, "high": stats["high"], "low": stats["low"],
                 "trades": sum(1 for f in fills if f["created"] >= day_ago), "volume": stats["volume"],
@@ -21341,7 +21341,7 @@ def create_app(state: AppState) -> FastAPI:
         raw = units * each
         scale = COIN if a["divisible"] else 1
         if raw % scale:
-            raise ValueError("that price does not come out in whole satoshis of PEPE; change "
+            raise ValueError("that price does not come out in whole satoshis of PEP; change "
                              "the price or the amount until it divides even")
         return units, raw // scale
 
@@ -21484,7 +21484,7 @@ def create_app(state: AppState) -> FastAPI:
             else:
                 raise ValueError("an order buys or sells")
             what = (f"{side} {format_amount(units, a['divisible']) if a['kind'] != 'nft' else a['name']} "
-                    f"{a['name'] if a['kind'] != 'nft' else ''} for {format_amount(pepe, True)} mainnet PEPE "
+                    f"{a['name'] if a['kind'] != 'nft' else ''} for {format_amount(pepe, True)} mainnet PEP "
                     f"(deposit to this node)").replace("  ", " ")
             unsigned = _spend_now(account, chain, address, outputs, what)
             order = book.place(owner=account.pubkey.lower(), side=side, kind=a["kind"], asset=a["asset"],

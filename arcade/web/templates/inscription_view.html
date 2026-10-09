@@ -192,7 +192,7 @@
     {% if xchain_open and not chain.is_mainnet %}
     {# the cross-chain book (2026-10-06): this piece for Pepecoin on mainnet #}
     <a class="btn ghost small" href="/exchange/x/nft/{{ row.txid }}"
-       title="Buy or sell it for mainnet PEPE, held by this node while it trades">For mainnet PEPE {{ net_badge(true) }}</a>
+       title="Buy or sell it for mainnet PEP, held by this node while it trades">For mainnet PEP {{ net_badge(true) }}</a>
     {% endif %}
     {% if mine %}
       {% if sale and sale.kind == 'ask' %}
