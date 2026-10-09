@@ -103,12 +103,11 @@ def test_a_token_sells_for_mainnet_pepe_and_both_sides_are_paid(two_chains, monk
     sender = TokenSender(test_rpc, state.messaging.params)
     dep = sender.broadcast(sender.prepare(seller, send_payload(pid, 10 * COIN), clerk.address("testnet")))
     book.deposited(sell["id"], dep)
-    _mined(state, test_rpc, 3)
+    # Counted from the mempool (2026-10-09: "This should be instant from the
+    # mempool"): the deposit opens the order before any block carries it.
     clerk.tick()
-    assert book.get(sell["id"])["status"] == "awaiting", "three confirmations are not six"
-    _mined(state, test_rpc, 3)
-    clerk.tick()
-    assert book.get(sell["id"])["status"] == OPEN
+    assert book.get(sell["id"])["status"] == OPEN, "a deposit in the mempool counts"
+    _mined(state, test_rpc, 1)
 
     # the buyer's order: 8 PEPE for the 10 tokens, deposited on "mainnet"
     buy = book.place(owner="buyer", side="buy", kind="token", asset=str(pid), amount=10 * COIN,
