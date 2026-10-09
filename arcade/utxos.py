@@ -260,11 +260,13 @@ def activity(db, addresses: list[str], before: int | None = None,
     where = f"address IN ({marks})" + (" AND height < ?" if before is not None else "")
     args: list[Any] = list(addresses) + ([int(before)] if before is not None else [])
     rows = db.conn.execute(
+        f"SELECT a.txid, a.height, a.received, a.spent, a.paid_out, a.other, "
+        f"COALESCE(b.time, 0) FROM ("
         f"SELECT txid, MAX(height) AS height, SUM(received) AS received, "
-        f"SUM(spent) AS spent, MAX(paid_out) AS paid_out, MAX(other) AS other, "
-        f"(SELECT time FROM block WHERE block.height = MAX(activity.height)) AS time "
-        f"FROM activity WHERE {where} GROUP BY txid "
-        f"ORDER BY height DESC, txid LIMIT ?", args + [int(limit)]).fetchall()
+        f"SUM(spent) AS spent, MAX(paid_out) AS paid_out, MAX(other) AS other "
+        f"FROM activity WHERE {where} GROUP BY txid) a "
+        f"LEFT JOIN block b ON b.height = a.height "
+        f"ORDER BY a.height DESC, a.txid LIMIT ?", args + [int(limit)]).fetchall()
     out = []
     for txid, height, got, gave, paid, other, when in rows:
         out.append({"txid": txid, "height": int(height), "time": int(when or 0),
