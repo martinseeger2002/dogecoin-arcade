@@ -65,8 +65,10 @@
 
 {% if prices %}
 <div class="panel" style="margin-bottom:16px">
-  {{ chart.headline(prices.stats, prices.unit) }}
-  {{ chart.candles(prices.slots, prices.unit) }}
+  {# The chart's unit is the coin, by its name (2026-10-08): PEP, or PEP TEST. #}
+  {% set unit = prices.unit|replace('Testnet coins', 'PEP TEST')|replace('Mainnet coins', 'PEP')|replace('coins', coin_name) %}
+  {{ chart.headline(prices.stats, unit) }}
+  {{ chart.candles(prices.slots, unit) }}
 </div>
 {% endif %}
 

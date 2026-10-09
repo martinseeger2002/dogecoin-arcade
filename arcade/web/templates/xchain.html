@@ -14,8 +14,7 @@
 <div class="ex-hero">
   <span class="ex-tic" style="width:46px;height:46px">{{ (aname or '?')[:1]|upper }}</span>
   <div style="min-width:0">
-    <h1>{{ wall(a.name, 'token name') }}<span class="muted" style="font-weight:600"> / PEP</span>
-      {{ net_badge(chain) }}<span class="muted">/</span>{{ net_badge(main) }}</h1>
+    <h1>{{ wall(a.name, 'token name') }}<span class="muted" style="font-weight:600"> / PEP</span></h1>
     <div class="muted" style="font-size:.78rem">
       {% if a.kind == 'token' %}#{{ a.asset }} {{ supply_badge(a.prop) }} &middot; <a href="/tokens/{{ a.asset }}">token page</a>
       {% elif a.kind == 'nft' %}<a href="/inscriptions/{{ a.asset }}">{{ aname }}</a>
