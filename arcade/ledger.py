@@ -457,9 +457,40 @@ class LedgerIndex:
 
     # --- inscriptions ---------------------------------------------------------
 
+    def collections_held(self, owner: str) -> list[dict]:
+        """What one address holds, by collection: the name, how many, the
+        newest block one arrived in, and up to four pictures for a cover.
+
+        The profile's Collections tab (2026-10-08: "we have collections that
+        have thousands of items and we need to be able to sort through our
+        collections before we look at the items"). Counted by the database,
+        so a holder of six thousand pieces costs one GROUP BY, not six
+        thousand rows. Pieces in no collection come back under "".
+        """
+        with self.open() as db:
+            rows = db.conn.execute(
+                "SELECT COALESCE(c.collection, '') AS collection, COUNT(*) AS n, "
+                "MAX(i.block_height) AS newest FROM inscription i "
+                "LEFT JOIN collection_item c ON c.txid = i.txid "
+                "WHERE i.owner = ? GROUP BY COALESCE(c.collection, '')", (owner,)).fetchall()
+            out = []
+            for r in rows:
+                covers = [x[0] for x in db.conn.execute(
+                    "SELECT i.txid FROM inscription i "
+                    "LEFT JOIN collection_item c ON c.txid = i.txid "
+                    "WHERE i.owner = ? AND COALESCE(c.collection, '') = ? "
+                    "AND i.content_type LIKE 'image/%' "
+                    "ORDER BY i.number DESC LIMIT 4", (owner, r["collection"]))]
+                out.append({"collection": r["collection"], "count": int(r["n"]),
+                            "newest": int(r["newest"] or 0), "covers": covers})
+        # Most pieces first, and the loose ones last whatever their number.
+        out.sort(key=lambda c: (c["collection"] == "", -c["count"], c["collection"].lower()))
+        return out
+
     def inscriptions(self, owner: str | None = None, creator: str | None = None,
                      limit: int = 100, after: int = -1,
-                     offset: int = 0, owners: list[str] | None = None) -> list[dict]:
+                     offset: int = 0, owners: list[str] | None = None,
+                     collection: str | None = None) -> list[dict]:
         """One page, newest first. Never the content: a listing of a hundred
         files would be a hundred files.
 
@@ -480,6 +511,9 @@ class LedgerIndex:
             args.extend(owners)
         if creator:
             where.append("i.creator = ?"); args.append(creator)
+        if collection is not None:
+            # "" is the pieces that belong to no collection (collections_held).
+            where.append("COALESCE(c.collection, '') = ?"); args.append(collection)
         if after >= 0:
             where.append("i.number > ?"); args.append(after)
         if where:

@@ -3111,10 +3111,69 @@ def create_app(state: AppState) -> FastAPI:
                              "claiming": claiming,
                              "face": _face_for(address),
                              **{k: v for k, v in _profile_of(address, waiting).items()
-                                if k in ("bio", "url")}},
+                                if k in ("bio", "url", "name", "mainnet")},
+                             **_profile_facts(chain, address)},
                       here=f"/u/{wanted}",
                       mine=mine, kinds=feedlib.BY_NAME, when=_when,
                       node=chain.status())
+
+    def _profile_facts(chain, address: str) -> dict[str, Any]:
+        """The rest of a profile's header (2026-10-08, the redesign the operator
+        approved): when they joined, how many posts, their games, and what
+        they hold by collection. Everything here is the chain's, read from
+        this node's indexes; a part that fails to read is left out rather
+        than taking the page down with it."""
+        out: dict[str, Any] = {"joined": 0, "joined_text": "", "posts": 0, "games": [],
+                               "collections": [], "pieces": 0, "hue": 0}
+        if not address:
+            return out
+        # A banner colour of their own, the same on every node: from the address.
+        out["hue"] = sum(address.encode()) % 360
+        try:
+            with state.store() as store:
+                out["joined"] = store.first_announced(address)
+                out["posts"] = store.feed_post_count(chain.network, address)
+            if out["joined"]:
+                out["joined_text"] = time.strftime("%b %Y", time.gmtime(out["joined"]))
+        except Exception:
+            pass
+        try:
+            _tchain, index = _token_chain()
+            every = _game_rows(index, newest=False)
+            mine = [r for r in every if r["creator"] == address]
+            if mine:
+                acts = _game_acts([r["txid"] for r in mine])
+                makers = _makers(address)
+                live = [r for r in gameslib.newest_per_game(mine)
+                        if not _game_removed(acts, r["txid"], makers)]
+                out["games"] = [{"txid": r["txid"], "name": r["game"]["name"],
+                                 "cover": r["game"].get("cover") or "",
+                                 "opens": _game_opens(index, r["creator"], r["txid"], r["game"]),
+                                 "version": r["game"].get("version") or ""} for r in live]
+            out["collections"] = index.collections_held(address)
+            out["pieces"] = sum(c["count"] for c in out["collections"])
+        except Exception:
+            pass
+        return out
+
+    @app.get("/u/{tag}/pieces")
+    def profile_pieces(tag: str, collection: str = "", offset: int = 0):
+        """One collection of what somebody holds, sixty at a time, for the
+        profile's Collections tab. Public, as the chain is: the same pieces
+        /u/{tag}/wallet lists, cut by collection ("" for the loose ones)."""
+        wanted = (tag or "").strip().lstrip("@").lower()
+        address, _claiming = _address_of_tag(wanted)
+        if not address:
+            return JSONResponse({"detail": f"nobody holds @{wanted} on this chain"},
+                                status_code=404)
+        _tchain, index = _token_chain()
+        rows = index.inscriptions(owner=address, collection=collection,
+                                  limit=61, offset=max(0, int(offset)))
+        return JSONResponse({
+            "pieces": [{"txid": r["txid"], "number": r["number"],
+                        "content_type": r["content_type"],
+                        "edition": r.get("edition")} for r in rows[:60]],
+            "more": len(rows) > 60})
 
     #: How many transactions a picture posted to the feed may take. A post
     #: should feel like a post: this is inscribed while the request waits,
@@ -3313,7 +3372,7 @@ def create_app(state: AppState) -> FastAPI:
         by accident is a page showing the profile from before the one this
         account just paid to publish.
         """
-        out = {"bio": "", "url": "", "pfp": "", "tag": "", "mainnet": ""}
+        out = {"bio": "", "url": "", "pfp": "", "tag": "", "mainnet": "", "name": ""}
         if not address:
             return out
         if waiting is _POOL:
@@ -3324,7 +3383,8 @@ def create_app(state: AppState) -> FastAPI:
                     out.update({"bio": row.get("bio", ""),
                                 "url": row.get("url", ""),
                                 "pfp": row.get("pfp", ""),
-                                "tag": row.get("tag", "")})
+                                "tag": row.get("tag", ""),
+                                "name": row.get("name", "") or ""})
                     break
         if not any((out["bio"], out["url"], out["pfp"])):
             try:
@@ -3336,7 +3396,8 @@ def create_app(state: AppState) -> FastAPI:
                 out.update({"bio": said["bio"] or "", "url": said["url"] or "",
                             "pfp": said["pfp"] or "",
                             "tag": said["tag"] or "",
-                            "mainnet": said["other_address"] or ""})
+                            "mainnet": said["other_address"] or "",
+                            "name": said["name"] or ""})
         return out
 
     @app.get("/u/{tag}/wallet", response_class=HTMLResponse)
@@ -9564,7 +9625,15 @@ def create_app(state: AppState) -> FastAPI:
         try:
             index = state.token_index(chain)
             for row in index.search_tags(wanted, limit=20):
-                out.append({"tag": row["tag"], "address": row["address"]})
+                found = {"tag": row["tag"], "address": row["address"], "name": "", "face": ""}
+                try:
+                    with state.store() as store:
+                        said = store.key_for(row["address"])
+                    found["name"] = (said["name"] or "") if said is not None else ""
+                    found["face"] = _face_for(row["address"])
+                except Exception:
+                    pass
+                out.append(found)
         except Exception:
             pass
         return JSONResponse({"matches": out})
@@ -17849,9 +17918,15 @@ def create_app(state: AppState) -> FastAPI:
                 "detail": "they have not published a messaging key, so "
                           "there is nowhere to send it. Ask them to publish "
                           "their tag -- it is one button."}, status_code=404)
+        # The published name and picture ride along (2026-10-08) so the
+        # address book can draw a face, kept with the entry when it is added:
+        # asked about the one person being added, not the whole book, which
+        # this node is never shown.
         return JSONResponse({"address": address, "tag": tag,
                              "key": bytes(said["pubkey"]).hex(),
-                             "fingerprint": said["fingerprint"]})
+                             "fingerprint": said["fingerprint"],
+                             "name": (said["name"] if "name" in said.keys() else "") or "",
+                             "face": _face_for(address)})
 
     @app.post("/account/write")
     def account_write(request: Request, payload: Any = Body(None)):

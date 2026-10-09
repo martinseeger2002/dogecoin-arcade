@@ -1,108 +1,153 @@
 {% extends "base.html" %}
 {% block title %}Address book · DogecoinArcade{% endblock %}
 {% block body %}
-<h1>Address book</h1>
-<p class="sub">People you know, by the name they claimed on the chain. Kept
-  encrypted with your own key, so it follows you to any browser you sign in on.</p>
+{# The address book, redone (2026-10-08, the prototype the operator approved: "I
+   like it"; "things need to be clean and intuitive"). Search first, then
+   favorites, then everyone A-Z; a name opens their profile. The explanations
+   that used to fill this page are a sentence each now, where they are needed:
+   in the add sheet, and in the banner that only shows until your name is on
+   the chain. What is stored did not change: the book is this browser's,
+   encrypted to follow the account, and this node never reads it. #}
+<div class="bookhead">
+  <h1>Address book</h1>
+  <button type="button" class="roundadd" id="add" aria-label="Add someone by @tag">+</button>
+</div>
 
 <div class="msg err" id="trouble" hidden></div>
 <div class="msg ok" id="news" hidden></div>
 
-{# --- you ------------------------------------------------------------------
-   The same shape as the wallet's own address book: the name people look you
-   up by, and the one button that puts it on the chain (D-137). The wallet
-   does that with a form this node signs; an account does it with a key this
-   node has never seen, so the button is the same and the signing is not. #}
-<div class="panel" style="margin-bottom:18px">
-  <div class="row" style="align-items:center;gap:10px">
-    <div>
-      <div class="muted" style="font-size:.8rem">You are</div>
-      <div style="font-size:1.25rem;font-weight:600" id="me">
-        <span class="muted" style="font-weight:400">nobody yet</span></div>
-    </div>
-    <span class="pill warn" id="published" title="Until this is published,
-      somebody who has only your tag has nothing to encrypt to">not published</span>
-    <div style="margin-left:auto">
-      <button type="button" class="btn" id="claim" hidden>Claim my name</button>
-      <button type="button" class="btn" id="announce" hidden>Publish my key</button>
-      <a class="muted" href="/me" id="shut" hidden style="font-size:.84rem"
-         >Open your wallet to publish</a>
-    </div>
+{# Until your name and key are on the chain nobody can find, pay or message
+   you by name: said once, with the one button, and gone once it is done. #}
+<div class="msg info" id="unpublished" hidden>
+  <div><strong id="unpub-title">Claim your name</strong>
+    <span id="unpub-why">so people can find, pay and message you as <b id="me">you</b>.</span></div>
+  <div class="row" style="gap:8px;margin-top:8px">
+    <button type="button" class="btn small" id="claim" hidden>Claim my name</button>
+    <button type="button" class="btn small" id="announce" hidden>Publish my key</button>
+    <a class="muted" href="/me" id="shut" hidden style="font-size:.84rem">Open your wallet to publish</a>
+    <span class="pill warn" id="published" hidden>not published</span>
   </div>
-  <p class="muted" style="font-size:.84rem;margin:10px 0 0" id="mine-says">
-    Publishing puts two things on the chain under your name: your
-    <strong>{{ chain.label|lower }} address</strong> and your
-    <strong>key</strong>, so anybody who searches for you can pay you and
-    message you without asking for anything. First claim wins, and what goes
-    on the chain is public and permanent.</p>
-
-  <details style="margin-top:10px">
-    <summary class="muted" style="cursor:pointer;font-size:.84rem">What a tag
-      does and does not promise</summary>
-    <div class="msg info" style="margin:10px 0 0;font-size:.84rem">
-      <strong>A tag points where its holder points it, and nowhere else.</strong>
-      Nobody can move <span id="mine-tag">your tag</span> to their own address
-      while you hold it. What you can do is let go of it: claiming a different
-      name frees the one you have now the moment the change is mined, and the
-      next person to claim it gets it &mdash; along with anything anyone sends
-      to that name from then on. That is worth knowing before you change it,
-      because the people who have your tag written down will not hear that you
-      did. Somebody who saved you here is safe: this book stores the address a
-      tag named, not the name.
-      <div style="margin-top:8px">What is published is
-        <span class="mono" style="font-size:.78rem" id="mine-address">—</span>.</div>
-    </div>
-  </details>
 </div>
 
-{# --- the way in ----------------------------------------------------------- #}
-<div class="panel" style="margin-bottom:18px">
-  <h3 style="margin:0 0 10px">Add somebody by @tag</h3>
-  <div class="row">
-    <div style="flex:1"><input type="search" autocomplete="off" data-lpignore="true" data-1p-ignore data-form-type="other" data-not-me name="tag-search" id="find" class="mono"
-      spellcheck="false" placeholder="their name"></div>
-    <button type="button" id="search">Search</button>
-    <a class="muted" href="#" id="clear" hidden style="font-size:.88rem">Clear</a>
-  </div>
-  <div id="matches"></div>
-  <p class="muted" style="font-size:.88rem;margin:12px 0 0" id="how">A name you
-    can check beats a name you typed, so this is the only way in: everybody in
-    this book has said who they are where anybody can look. Somebody who has
-    not claimed a tag cannot be added &mdash; ask them to publish one from
-    their own address book, which is one button.</p>
-  {# Said here, where somebody is deciding to trust a name: a claim proves
-     control of an address and nothing else. #}
-  <p class="muted" style="font-size:.82rem;margin:10px 0 0">
-    <strong>First claim wins.</strong> A tag belongs to whoever claimed it
-    first and nobody else can take it. What a claim proves is control of an
-    address at that moment &mdash; it says nothing about who they are, so
-    confirm a name with the person before you trust it with anything that
-    matters.</p>
+<div class="booksearch">
+  <span aria-hidden="true">&#8981;</span>
+  <input type="search" id="q" autocomplete="off" spellcheck="false" autocapitalize="off"
+         data-lpignore="true" data-1p-ignore data-form-type="other"
+         placeholder="Search names, @tags and notes" aria-label="Search your address book">
 </div>
 
-{# --- the book ------------------------------------------------------------- #}
-<div class="cards" id="book"></div>
+<button type="button" class="mecard" id="mecard" hidden>
+  <span class="av" id="me-av"></span>
+  <span class="mid"><b id="me-tag"></b><small>Your profile</small></span>
+  <span class="share" id="share">Share</span>
+</button>
+
+<div id="favs-box" hidden>
+  <div class="booklabel">Favorites</div>
+  <div class="favs" id="favs"></div>
+</div>
+<div class="booklabel" id="everyone-label" hidden></div>
+<div id="book"></div>
+<div id="found"></div>
 <div class="panel empty" id="nobody" hidden>
-  <p>The address book is empty.</p>
-  <p class="muted">Search for somebody's @tag above. What gets saved is what
-     their name points at &mdash; their address and their key &mdash; so you
-     choose a name rather than checking a string of characters.</p>
+  <p>Your address book is empty.</p>
+  <p class="muted">Press <b>+</b> and type somebody's @tag. Only names claimed on the
+    chain can be added, so a name here always points where its owner says.</p>
+  <p><button type="button" class="btn" id="add-first">Add someone</button></p>
 </div>
 
-<div class="note" style="margin-top:20px">
-  This book is not published, not on any chain, and not visible to anyone you
-  message. A copy follows your account to other browsers, encrypted with a key
-  only your words can make, so this node keeps it without being able to read
-  it: a node that could read everybody's address book would know who talks to
-  whom without opening a single message.
+{# The add sheet: the only way in, by a claimed @tag (D-137). #}
+<div class="sheetback" id="addsheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="add-title">
+    <div class="grab"></div>
+    <h2 id="add-title">Add someone <button type="button" class="x" id="add-x" aria-label="Close">&times;</button></h2>
+    <div class="row" style="gap:8px">
+      <div style="flex:1"><input type="search" autocomplete="off" data-lpignore="true" data-1p-ignore
+        data-form-type="other" data-not-me name="tag-search" id="find" class="mono"
+        spellcheck="false" autocapitalize="off" placeholder="their @tag"></div>
+      <button type="button" id="search">Search</button>
+    </div>
+    <div id="matches"></div>
+    <p class="muted" style="font-size:.82rem;margin:12px 0 0" id="how">Only names
+      claimed on the chain can be added. A claim proves who controls an address,
+      not who a person is, so check a name with them before you trust it with
+      anything that matters.</p>
+  </div>
 </div>
 
+{# Share your profile: its link as a QR code, and Copy. #}
+<div class="sheetback" id="sharesheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="share-title" style="text-align:center">
+    <div class="grab"></div>
+    <h2 id="share-title" style="text-align:left">Share your profile <button type="button" class="x" id="share-x" aria-label="Close">&times;</button></h2>
+    <div class="qrbox" id="share-qr"></div>
+    <p class="mono" id="share-link" style="font-size:.84rem;word-break:break-all;margin:10px 0 0;user-select:all"></p>
+    <button type="button" class="btn" id="share-copy" style="margin-top:12px">Copy link</button>
+  </div>
+</div>
+
+<p class="muted bookfoot">Your address book is kept in this browser and follows
+  your account encrypted. This node can't read it.</p>
+
+<script src="/vendor/qrcode.js"></script>
 <style>
+.bookhead{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.bookhead h1{margin:0}
+.bookhead .roundadd{margin-left:auto;width:44px;height:44px;min-height:0;border-radius:50%;padding:0;
+  font-size:1.6rem;line-height:1;display:grid;place-items:center}
+.booksearch{position:relative;margin-bottom:12px}
+.booksearch span{position:absolute;left:13px;top:50%;transform:translateY(-50%);color:var(--muted)}
+.booksearch input{width:100%;padding-left:38px}
 #find{width:100%;padding:10px 12px;border:1px solid var(--line);
-  border-radius:8px;background:var(--panel);color:var(--fg);font:inherit}
+  border-radius:10px;background:var(--panel);color:var(--fg);font:inherit}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-#matches table{width:100%;border-collapse:collapse;margin-top:12px}
-#matches td{padding:6px 0;border-bottom:1px solid var(--line)}
+button.mecard{min-height:0;display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:12px;
+  border-radius:16px;background:var(--panel);border:1px solid var(--line);box-shadow:none;
+  color:var(--fg);font-weight:400;margin-bottom:6px}
+.mecard small,.person small{display:block;color:var(--muted);font-size:.82rem;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mecard .share{margin-left:auto;font-size:.82rem;font-weight:700;color:var(--accent);
+  padding:6px 11px;border-radius:999px;background:var(--code)}
+.av{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;flex:none;
+  font-weight:700;color:#fff;overflow:hidden;font-size:1.05rem}
+.av img{width:100%;height:100%;object-fit:cover}
+.mid{flex:1;min-width:0}
+.mid b{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.booklabel{font-size:.72rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--muted);margin:18px 2px 8px}
+.favs{display:flex;gap:14px;overflow-x:auto;padding:2px 2px 6px}
+.favs a{display:flex;flex-direction:column;align-items:center;gap:5px;font-size:.76rem;
+  min-width:58px;max-width:72px;color:var(--fg);text-align:center}
+.favs a span:last-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.favs .av{width:54px;height:54px;font-size:1.3rem}
+.letter{font-size:.78rem;font-weight:700;color:var(--accent);margin:12px 6px 2px}
+.person{display:flex;align-items:center;gap:12px;padding:8px 6px;border-radius:12px}
+.person:hover{background:var(--code)}
+.person > a{display:flex;align-items:center;gap:12px;flex:1;min-width:0;color:var(--fg)}
+.person > a:hover{text-decoration:none}
+.claimed{display:inline-grid;place-items:center;width:15px;height:15px;border-radius:50%;
+  background:var(--accent);color:var(--accent-fg);font-size:.6rem;font-weight:800;
+  vertical-align:1px;margin-left:4px}
+.quick{display:flex;gap:6px}
+.quick a{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;
+  background:var(--code);color:var(--accent);font-size:.95rem}
+.quick a:hover{text-decoration:none;filter:brightness(.97)}
+.quick a.off{opacity:.35;pointer-events:none}
+.foundrow{display:flex;align-items:center;gap:12px;padding:12px;border-radius:14px;
+  border:1px dashed var(--accent);margin-top:6px}
+.foundrow .mid a{color:var(--fg)}
+#matches .foundrow{border-style:solid;border-color:var(--line)}
+.sheetback{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.45);display:flex;
+  align-items:flex-end;justify-content:center}
+.sheet{background:var(--panel);width:100%;max-width:520px;border-radius:20px 20px 0 0;
+  padding:10px 18px calc(22px + env(safe-area-inset-bottom,0px));max-height:90vh;overflow:auto}
+.grab{width:40px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 12px}
+.sheet h2{display:flex;align-items:center;margin:0 0 12px;font-size:1.1rem;text-transform:none;
+  letter-spacing:0;color:var(--fg)}
+.sheet .x{min-height:0;border:0;margin-left:auto;box-shadow:none;background:none;color:var(--muted);font-size:1.4rem;padding:0 6px}
+.qrbox{background:#fff;border-radius:14px;padding:8px;width:min(220px,100%);margin:0 auto}
+.qrbox svg{display:block;width:100%;height:auto}
+.bookfoot{font-size:.8rem;text-align:center;margin:22px 0 0}
 </style>
 
 <script type="module">
@@ -115,30 +160,61 @@ const news = (t) => { $("news").textContent = t; $("news").hidden = !t; };
 const CHAIN = {network: "{{ chain.network }}",
                version: {{ chain.params.pubkeyhash_version }}};
 
-let keys = null, me = null;
+let keys = null, me = null, myTag = "", people = [];
+
+// A face: the picture they publish (an inscription they still hold, checked by
+// the node when they were added or their profile was last opened), or their
+// initial on a colour of their own.
+const COLOURS = ["#2f7cf6", "#2d7a4f", "#a83232", "#7a4fd1", "#c2410c", "#0e7490", "#b8860b"];
+function face(entry, size) {
+  const box = document.createElement("span");
+  box.className = "av";
+  if (size) { box.style.width = box.style.height = size + "px"; }
+  const label = entry.name || entry.tag || "?";
+  if (entry.face) {
+    const img = document.createElement("img");
+    img.src = "/content/" + encodeURIComponent(entry.face);
+    img.alt = ""; img.loading = "lazy";
+    box.appendChild(img);
+  } else {
+    // The same colour their profile's banner and face use: from the address
+    // (app._profile_facts), so a person looks the same in both places.
+    box.style.background = entry.address
+      ? `hsl(${[...new TextEncoder().encode(entry.address)].reduce((n, c) => n + c, 0) % 360} 45% 38%)`
+      : COLOURS[[...(entry.tag || "")].reduce((n, c) => n + c.charCodeAt(0), 0) % COLOURS.length];
+    box.textContent = label.replace(/^@/, "")[0].toUpperCase();
+  }
+  return box;
+}
+const shown = (entry) => entry.name || "@" + entry.tag;
+const isBlocked = (entry) => !!(window.arcadeBlocked && entry.address
+                                && window.arcadeBlocked.has(entry.address));
 
 async function drawMe() {
   const said = await wallet.state();
+  myTag = said.tag || "";
   const name = said.tag || said.name || "";
-  $("me").textContent = name ? "@" + name : "";
-  if (!name) {
-    $("me").innerHTML =
-      '<span class="muted" style="font-weight:400">nobody yet</span>';
+  $("me").textContent = name ? "@" + name : "you";
+  $("mecard").hidden = !myTag;
+  if (myTag) {
+    $("me-tag").textContent = "@" + myTag;
+    $("me-av").replaceWith(Object.assign(face({tag: myTag}, 44), {id: "me-av"}));
   }
-  $("mine-tag").textContent = said.tag ? "@" + said.tag : "your tag";
-  $("mine-address").textContent = said.address || "—";
   // Claimed on the chain is the only "published" worth showing: a name this
   // node has written down and not yet mined is a note, not a claim.
   const out = $("published");
-  out.textContent = said.tag ? "published"
-                  : said.claiming ? "on its way" : "not published";
+  out.textContent = said.tag ? "published" : said.claiming ? "on its way" : "not published";
   out.className = said.tag ? "pill ok" : "pill warn";
   $("claim").hidden = !!said.tag || !keys;
-  // Same on this page as on your arcade: a key that is on the chain, or on
-  // its way there inside a profile publish, does not need this button again.
+  // A key that is on the chain, or on its way there, needs no button again.
   $("announce").hidden = !keys || !!said.announced || !!said.announcing;
-  // Said rather than left blank: a row of missing buttons explains nothing.
+  const keyed = !!said.announced || !!said.announcing;
   $("shut").hidden = !!keys;
+  $("unpublished").hidden = !!said.tag && keyed;
+  $("unpub-title").textContent = said.tag ? "Publish your key" : "Claim your name";
+  $("unpub-why").innerHTML = said.tag
+    ? "so people can message you. It goes on the chain under your name, with your address."
+    : 'so people can find, pay and message you. First claim wins, and it is public.';
   return said;
 }
 
@@ -156,163 +232,192 @@ $("claim").onclick = () => acting(
 $("announce").onclick = () => acting(
   () => mail.announce(keys, me), () => "Your key is on its way to the chain.");
 
-function card(entry) {
-  const box = document.createElement("div");
-  box.className = "card";
-
-  const top = document.createElement("div");
-  top.className = "row";
-  top.style.alignItems = "baseline";
-  const name = document.createElement("h3");
-  name.className = "row-title";
-  name.textContent = "@" + entry.tag;
-  const pill = document.createElement("span");
-  pill.className = entry.key ? "pill ok" : "pill warn";
-  pill.textContent = entry.key ? "messaging" : "no key";
-  pill.title = entry.key ? "You can message this contact"
-    : "They have not published a key, so there is nothing to encrypt to";
-  top.append(name, pill);
-
-  const more = document.createElement("details");
-  more.style.marginTop = "8px";
-  const sum = document.createElement("summary");
-  sum.className = "muted";
-  sum.style.cssText = "cursor:pointer;font-size:.84rem";
-  sum.textContent = "Address and key";
-  const what = document.createElement("dl");
-  what.className = "addrs";
-  what.style.marginTop = "8px";
-  const line = (label, value, small) => {
-    const dt = document.createElement("dt");
-    dt.className = "muted";
-    dt.style.fontSize = ".8rem";
-    dt.textContent = label;
-    const dd = document.createElement("dd");
-    if (value) {
-      const code = document.createElement("code");
-      code.className = "addr";
-      code.title = "Click to copy";
-      if (small) code.style.fontSize = ".72rem";
-      code.textContent = value;
-      code.onclick = () => copy(code);
-      dd.appendChild(code);
-    } else {
-      const none = document.createElement("span");
-      none.className = "muted";
-      none.textContent = "not published";
-      dd.appendChild(none);
-    }
-    what.append(dt, dd);
-  };
-  line("{{ chain.label|lower }}", entry.address, false);
-  line("key", entry.key, true);
-  more.append(sum, what);
-
-  const doing = document.createElement("div");
-  doing.className = "row";
-  doing.style.cssText = "margin-top:12px;gap:6px";
-  if (entry.key) {
-    const write = document.createElement("a");
-    write.className = "ghost btn";
-    write.href = "/me/messages?to=" + encodeURIComponent(entry.tag);
-    write.textContent = "Message";
-    doing.appendChild(write);
-  }
-  const drop = document.createElement("button");
-  drop.className = "ghost btn";
-  drop.style.marginLeft = "auto";
-  drop.textContent = "Remove";
-  drop.onclick = async () => {
-    if (!(await arcadeAsk(`Remove @${entry.tag} from your address book?`,
-                 "Messages already received are kept.", "Remove"))) return;
-    await mail.removeFromBook(entry.tag);
-    await drawBook();
-  };
-  doing.appendChild(drop);
-
-  box.append(top, more, doing);
-  return box;
+function personRow(entry) {
+  const row = document.createElement("div");
+  row.className = "person";
+  const open = document.createElement("a");
+  open.href = `/u/${encodeURIComponent(entry.tag)}`;
+  const mid = document.createElement("span");
+  mid.className = "mid";
+  const title = document.createElement("b");
+  title.textContent = shown(entry);
+  const tick = document.createElement("span");
+  tick.className = "claimed"; tick.textContent = "✓";
+  tick.title = "A name claimed on the chain";
+  title.appendChild(tick);
+  const sub = document.createElement("small");
+  sub.textContent = (entry.name ? "@" + entry.tag : "") + (entry.note ? (entry.name ? " · " : "") + entry.note : "")
+    || (entry.address ? entry.address.slice(0, 10) + "…" : "");
+  mid.append(title, sub);
+  open.append(face(entry), mid);
+  const quick = document.createElement("span");
+  quick.className = "quick";
+  const write = document.createElement("a");
+  write.className = "q-msg" + (entry.key ? "" : " off");
+  write.href = `/me/messages?to=${encodeURIComponent(entry.tag)}`;
+  write.title = entry.key ? `Message @${entry.tag}` : `@${entry.tag} has not published a key yet`;
+  write.setAttribute("aria-label", write.title);
+  write.textContent = "✉";
+  const pay = document.createElement("a");
+  pay.className = "q-pay";
+  pay.href = `/me/wallet?to=${encodeURIComponent("@" + entry.tag)}`;
+  pay.title = `Pay @${entry.tag}`; pay.setAttribute("aria-label", pay.title);
+  pay.textContent = "↑";
+  quick.append(write, pay);
+  row.append(open, quick);
+  return row;
 }
 
-function copy(el) {
-  navigator.clipboard.writeText(el.textContent.trim()).then(() => {
-    el.classList.add("copied");
-    setTimeout(() => el.classList.remove("copied"), 1200);
-  });
-}
-
+let finding = 0;
 async function drawBook() {
-  const people = await mail.book();
-  $("book").innerHTML = "";
-  $("nobody").hidden = people.length > 0;
-  for (const entry of people) $("book").appendChild(card(entry));
+  people = (await mail.book()).filter((e) => !isBlocked(e));
+  const q = $("q").value.trim().replace(/^@/, "").toLowerCase();
+  const hit = (e) => !q || e.tag.includes(q) || (e.name || "").toLowerCase().includes(q)
+                     || (e.note || "").toLowerCase().includes(q);
+  const list = people.filter(hit)
+    .sort((a, b) => shown(a).replace(/^@/, "").localeCompare(shown(b).replace(/^@/, ""),
+                                                              undefined, {sensitivity: "base"}));
+  $("nobody").hidden = people.length > 0 || !!q;
+  $("mecard").style.display = q ? "none" : "";
+  const favs = people.filter((e) => e.fav);
+  $("favs-box").hidden = !!q || !favs.length;
+  $("favs").replaceChildren(...favs.map((e) => {
+    const a = document.createElement("a");
+    a.href = `/u/${encodeURIComponent(e.tag)}`;
+    const n = document.createElement("span"); n.textContent = e.name || "@" + e.tag;
+    a.append(face(e, 54), n);
+    return a;
+  }));
+  const label = $("everyone-label");
+  label.hidden = !people.length;
+  label.textContent = q ? `${list.length} of ${people.length}` : `Everyone · ${people.length}`;
+  const box = $("book");
+  box.replaceChildren();
+  let letter = "";
+  for (const e of list) {
+    const L = shown(e).replace(/^@/, "")[0].toUpperCase();
+    if (!q && L !== letter) {
+      const h = document.createElement("div"); h.className = "letter"; h.textContent = L;
+      box.appendChild(h); letter = L;
+    }
+    box.appendChild(personRow(e));
+  }
+  // Not in the book: is it a name on the chain? Asked only when somebody
+  // has typed a name and stopped -- a search they made, not a list of the book.
+  const found = $("found");
+  found.replaceChildren();
+  if (q && !list.length && /^[a-z0-9_]{2,}$/.test(q)) {
+    const mine = ++finding;
+    await new Promise((r) => setTimeout(r, 350));
+    if (mine !== finding) return;
+    let matches = [];
+    try { matches = await mail.findNames(q); } catch (e) { matches = []; }
+    if (mine !== finding) return;
+    const exact = matches.find((m) => m.tag === q) || matches[0];
+    if (exact && !people.some((p) => p.tag === exact.tag)) {
+      const l = document.createElement("div"); l.className = "booklabel"; l.textContent = "On the chain";
+      found.append(l, foundRow(exact));
+    } else {
+      const none = document.createElement("p");
+      none.className = "muted"; none.style.cssText = "text-align:center;margin:18px 0";
+      none.textContent = `Nobody has claimed @${q}. Check the spelling with them.`;
+      found.appendChild(none);
+    }
+  }
 }
+
+function foundRow(match, after) {
+  const row = document.createElement("div");
+  row.className = "foundrow";
+  const mid = document.createElement("span"); mid.className = "mid";
+  const name = document.createElement("a");
+  name.href = `/u/${encodeURIComponent(match.tag)}`;
+  const b = document.createElement("b"); b.textContent = match.name || "@" + match.tag;
+  name.appendChild(b);
+  const small = document.createElement("small");
+  small.textContent = match.name ? "@" + match.tag : (match.address || "").slice(0, 10) + "…";
+  mid.append(name, small);
+  const add = document.createElement("button");
+  add.className = "small"; add.type = "button";
+  const had = people.some((p) => p.tag === match.tag);
+  add.textContent = had ? "Added" : "Add"; add.disabled = had;
+  add.onclick = async () => {
+    say(""); add.disabled = true;
+    try {
+      await mail.addToBook(match.tag);
+      add.textContent = "Added";
+      $("q").value = "";
+      await drawBook();
+      if (after) after();
+      news(`Added @${match.tag}.`);
+    } catch (e) { say(String(e.message || e)); add.disabled = false; }
+  };
+  row.append(face(match), mid, add);
+  return row;
+}
+
+$("q").addEventListener("input", () => drawBook());
+
+// --- sheets ----------------------------------------------------------------
+function sheet(id, open) {
+  $(id).hidden = !open;
+  if (open) document.body.style.overflow = "hidden"; else document.body.style.overflow = "";
+}
+for (const id of ["addsheet", "sharesheet"]) {
+  $(id).addEventListener("click", (e) => { if (e.target === $(id)) sheet(id, false); });
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { sheet("addsheet", false); sheet("sharesheet", false); }
+});
+$("add-x").onclick = () => sheet("addsheet", false);
+$("share-x").onclick = () => sheet("sharesheet", false);
+const openAdd = () => { sheet("addsheet", true); $("find").value = ""; $("matches").replaceChildren(); $("how").hidden = false; $("find").focus(); };
+$("add").onclick = openAdd;
+$("add-first").onclick = openAdd;
 
 async function search() {
   say(""); news("");
   const wanted = $("find").value.trim();
-  $("matches").innerHTML = "";
-  $("clear").hidden = !wanted;
+  $("matches").replaceChildren();
   $("how").hidden = !!wanted;
-  if (!wanted) return;
-  const known = new Set((await mail.book()).map((e) => e.tag));
+  if (!wanted) { $("how").hidden = false; return; }
   const found = await mail.findNames(wanted);
   if (!found.length) {
     const none = document.createElement("p");
     none.className = "muted";
     none.style.cssText = "font-size:.88rem;margin:12px 0 0";
     none.textContent = `Nothing claimed matching ${wanted} on this node. `
-      + "A tag exists here once its claim is in a block this node has read.";
+      + "A name exists here once its claim is in a block this node has read.";
     $("matches").appendChild(none);
     return;
   }
-  const table = document.createElement("table");
-  for (const match of found) {
-    const tr = document.createElement("tr");
-    const left = document.createElement("td");
-    const name = document.createElement("strong");
-    name.textContent = "@" + match.tag;
-    left.appendChild(name);
-    const right = document.createElement("td");
-    right.style.cssText = "text-align:right;white-space:nowrap";
-    if (known.has(match.tag)) {
-      const had = document.createElement("span");
-      had.className = "muted";
-      had.style.fontSize = ".84rem";
-      had.textContent = "already in your book";
-      right.appendChild(had);
-    } else {
-      const add = document.createElement("button");
-      add.className = "small";
-      add.textContent = "Add";
-      add.onclick = async () => {
-        say("");
-        add.disabled = true;
-        try { await mail.addToBook(match.tag); await drawBook(); await search(); }
-        catch (e) { say(String(e.message || e)); add.disabled = false; }
-      };
-      right.appendChild(add);
-    }
-    tr.append(left, right);
-    table.appendChild(tr);
-  }
-  $("matches").appendChild(table);
-  const note = document.createElement("p");
-  note.className = "muted";
-  note.style.cssText = "font-size:.8rem;margin:10px 0 0";
-  note.textContent = "Adding one saves what that name points at right now "
-    + "— the address and the key, if they have published. If they later "
-    + "claim a different name you still pay the same person.";
-  $("matches").appendChild(note);
+  for (const match of found) $("matches").appendChild(foundRow(match, () => sheet("addsheet", false)));
 }
-
 $("search").onclick = search;
-$("clear").onclick = (e) => {
-  e.preventDefault(); $("find").value = ""; search();
-};
 $("find").addEventListener("keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); search(); }
 });
+
+$("mecard").onclick = (e) => {
+  if (e.target === $("share") || !myTag) {
+    const link = `${location.origin}/u/${myTag}`;
+    $("share-link").textContent = link;
+    try {
+      const qr = qrcode(0, "M"); qr.addData(link); qr.make();
+      $("share-qr").innerHTML = qr.createSvgTag({cellSize: 4, margin: 2, scalable: true});
+    } catch (err) { $("share-qr").textContent = ""; }
+    sheet("sharesheet", true);
+    return;
+  }
+  location.href = `/u/${encodeURIComponent(myTag)}`;
+};
+$("share-copy").onclick = async () => {
+  const link = $("share-link").textContent;
+  try { await navigator.clipboard.writeText(link); $("share-copy").textContent = "Copied"; }
+  catch (e) { getSelection().selectAllChildren($("share-link")); $("share-copy").textContent = "Select it above and copy"; }
+  setTimeout(() => { $("share-copy").textContent = "Copy link"; }, 2200);
+};
+document.addEventListener("arcade:blocked", () => drawBook());
 
 // The book is this browser's, so it draws whether or not the wallet is open.
 // Only claiming and publishing need a key, and those buttons stay hidden

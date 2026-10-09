@@ -179,8 +179,9 @@ def _add_robin(browser, base):
     """The add flow, by hand, for the tests that need somebody in the book
     without being about the adding."""
     _book_page(browser, base)
-    if browser.find_elements(By.CSS_SELECTOR, "#book .card"):
+    if browser.find_elements(By.CSS_SELECTOR, "#book .person"):
         return
+    browser.find_element(By.ID, "add").click()
     box = browser.find_element(By.ID, "find")
     box.clear()
     box.send_keys("robin")
@@ -192,7 +193,7 @@ def _add_robin(browser, base):
         time.sleep(0.25)
     buttons[0].click()
     for _ in range(40):
-        if browser.find_elements(By.CSS_SELECTOR, "#book .card"):
+        if browser.find_elements(By.CSS_SELECTOR, "#book .person"):
             return
         time.sleep(0.25)
     raise AssertionError("could not put anybody in the book")
@@ -212,6 +213,7 @@ def test_a_name_nobody_claimed_is_not_offered(browser, served):
     _book_page(browser, base)
     _wipe_book(browser)
     _book_page(browser, base)
+    browser.find_element(By.ID, "add").click()
     box = browser.find_element(By.ID, "find")
     box.clear()
     box.send_keys("nobodyatall")
@@ -230,6 +232,7 @@ def test_adding_somebody_keeps_them_across_a_reload(browser, served):
     _book_page(browser, base)
     _wipe_book(browser)
     _book_page(browser, base)
+    browser.find_element(By.ID, "add").click()
     box = browser.find_element(By.ID, "find")
     box.clear()
     box.send_keys("robin")
@@ -243,7 +246,7 @@ def test_adding_somebody_keeps_them_across_a_reload(browser, served):
     buttons[0].click()
 
     for _ in range(40):
-        cards = browser.find_elements(By.CSS_SELECTOR, "#book .card")
+        cards = browser.find_elements(By.CSS_SELECTOR, "#book .person")
         if cards:
             break
         time.sleep(0.25)
@@ -251,11 +254,13 @@ def test_adding_somebody_keeps_them_across_a_reload(browser, served):
 
     # And again from cold, which is the only version of this that matters.
     _book_page(browser, base)
-    cards = browser.find_elements(By.CSS_SELECTOR, "#book .card")
+    cards = browser.find_elements(By.CSS_SELECTOR, "#book .person")
     assert len(cards) == 1 and "@robin" in cards[0].text
     assert not browser.find_element(By.ID, "nobody").is_displayed()
-    # What was saved is what the chain said, address and key both.
-    assert "messaging" in cards[0].text
+    # What was saved is what the chain said, key included: Message is live.
+    assert "off" not in cards[0].find_element(By.CSS_SELECTOR, "a.q-msg").get_attribute("class")
+    # And the name opens their profile (2026-10-08).
+    assert cards[0].find_element(By.CSS_SELECTOR, "a").get_attribute("href").endswith("/u/robin")
 
 
 def test_the_book_is_in_the_browser_and_not_on_the_node(browser, served):
@@ -285,7 +290,7 @@ def test_writing_to_somebody_arrives_with_them_already_chosen(browser, served):
     name to type back in."""
     base, _ = served
     _add_robin(browser, base)
-    link = browser.find_element(By.CSS_SELECTOR, "#book .card a.btn")
+    link = browser.find_element(By.CSS_SELECTOR, "#book .person a.q-msg")
     assert link.get_attribute("href").endswith("/me/messages?to=robin")
     link.click()
     browser.execute_script(PRETEND)
@@ -302,24 +307,29 @@ def test_writing_to_somebody_arrives_with_them_already_chosen(browser, served):
 
 
 def test_removing_somebody_removes_them(browser, served):
+    """Removed from their profile now: Saved is the button that undoes it
+    (2026-10-08, the address book redesign)."""
     base, _ = served
     _add_robin(browser, base)
-    browser.execute_script("window.confirm = () => true;")
-    buttons = [b for b in browser.find_elements(By.CSS_SELECTOR, "#book button")
-               if b.text == "Remove"]
-    assert buttons
-    buttons[0].click()
-    # The page asks with its own card now (arcadeAsk), not window.confirm:
-    # press the card's first button, which is the yes.
+    browser.get(f"{base}/u/robin")
+    browser.execute_script(PRETEND)
+    for _ in range(80):
+        save = browser.find_elements(By.ID, "save-them")
+        if save and "Saved" in save[0].text:
+            break
+        time.sleep(0.25)
+    save[0].click()
+    # The page asks with its own card (arcadeAsk): its first button is the yes.
     for _ in range(40):
         yes = browser.find_elements(By.CSS_SELECTOR, ".askcard button")
         if yes:
             yes[0].click()
             break
         time.sleep(0.25)
+    _book_page(browser, base)
     for _ in range(40):
         if browser.find_element(By.ID, "nobody").is_displayed():
             break
         time.sleep(0.25)
     assert browser.find_element(By.ID, "nobody").is_displayed()
-    assert not browser.find_elements(By.CSS_SELECTOR, "#book .card")
+    assert not browser.find_elements(By.CSS_SELECTOR, "#book .person")

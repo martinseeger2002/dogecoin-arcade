@@ -1155,7 +1155,26 @@ export async function addToBook(tag) {
   const them = await lookUp(tag);
   const entry = {tag: them.tag || String(tag).replace(/^@/, ""),
                  address: them.address, key: them.key || "",
-                 fingerprint: them.fingerprint || "", added: Date.now()};
+                 fingerprint: them.fingerprint || "", added: Date.now(),
+                 // What they published about themselves when they were added, so the
+                 // book draws a face without asking the node about everybody in it.
+                 name: them.name || "", face: them.face || ""};
+  await awaited((await bookShelf("readwrite")).objectStore(BOOK).put(entry));
+  return entry;
+}
+
+/** Change what this book says about somebody already in it (2026-10-08, the
+ *  address book redesign): `fav`, a private `note`, and the `name`/`face` they
+ *  publish, refreshed when their profile is opened. Stamped `edited`, so the
+ *  newer edit wins when another browser's copy is merged (syncMailbox). The
+ *  address and key are the chain's and are never changed here. */
+export async function updateBookEntry(tag, fields) {
+  const store = (await bookShelf("readwrite")).objectStore(BOOK);
+  const had = await awaited(store.get(tag));
+  if (!had) return null;
+  const allowed = {};
+  for (const k of ["fav", "note", "name", "face"]) if (k in fields) allowed[k] = fields[k];
+  const entry = {...had, ...allowed, edited: Date.now()};
   await awaited((await bookShelf("readwrite")).objectStore(BOOK).put(entry));
   return entry;
 }
@@ -1599,7 +1618,18 @@ async function _syncMailbox(me) {
     const shelf = await book();
     const onShelf = new Map(shelf.map((e) => [e.tag, e]));
     for (const entry of theirs.book || []) {
-      if (!entry || !entry.tag || onShelf.has(entry.tag)) continue;
+      if (!entry || !entry.tag) continue;
+      const ours = onShelf.get(entry.tag);
+      if (ours) {
+        // Both have them: the newer favorite, note or name wins (updateBookEntry).
+        if ((entry.edited || 0) > (ours.edited || 0)) {
+          const merged = {...ours, fav: entry.fav, note: entry.note, name: entry.name,
+                          face: entry.face, edited: entry.edited};
+          await awaited((await bookShelf("readwrite")).objectStore(BOOK).put(merged));
+          onShelf.set(entry.tag, merged); restored += 1;
+        }
+        continue;
+      }
       if ((bookGone[entry.tag] || 0) >= (entry.added || 0)) continue;
       await awaited((await bookShelf("readwrite")).objectStore(BOOK).put(entry));
       onShelf.set(entry.tag, entry); restored += 1;
@@ -1630,6 +1660,8 @@ async function _syncMailbox(me) {
     const newer = mine.some((l) => !keptIds.has(l.txid))
                || held.some((g) => !keptGroups.has(g.id))
                || [...onShelf.keys()].some((t) => !keptBook.has(t))
+               || [...onShelf.values()].some((e) => (e.edited || 0)
+                    > ((((theirs.book || []).find((x) => x && x.tag === e.tag)) || {}).edited || 0))
                || [...blocked.keys()].some((a) => !keptBlocked.has(a))
                || JSON.stringify(allGone.book) !== JSON.stringify(theirs.bookGone || {})
                || JSON.stringify(allGone.blocked) !== JSON.stringify(theirs.blockedGone || {});

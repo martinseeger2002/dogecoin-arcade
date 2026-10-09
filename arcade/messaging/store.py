@@ -952,6 +952,26 @@ class MessageStore:
             "ORDER BY stated DESC, height DESC, rowid DESC LIMIT 1", (address,),
         ).fetchone()
 
+    def first_announced(self, address: str) -> int:
+        """When this address first said who it is, as a block time, or 0.
+
+        The profile's "Joined" (2026-10-08): the earliest announcement in a
+        block, because that is the first moment anybody could look the person
+        up. A pool row (height 0) has no block time yet and does not count.
+        """
+        row = self.conn.execute(
+            "SELECT MIN(block_time) FROM key_announcement "
+            "WHERE address=? AND height > 0 AND block_time > 0", (address,)).fetchone()
+        return int(row[0] or 0) if row else 0
+
+    def feed_post_count(self, network: str, author: str) -> int:
+        """How many posts one author has on this chain, replies included --
+        the same rows their profile pages through (feed_posts)."""
+        row = self.conn.execute(
+            "SELECT COUNT(*) FROM group_post WHERE network=? AND sender=?",
+            (network, author)).fetchone()
+        return int(row[0] or 0) if row else 0
+
     def address_for_other(self, other: str) -> str:
         """The messaging-chain address an announcement binds to `other`, an
         address on the other chain (D-032), or ''. The newest stated binding."""

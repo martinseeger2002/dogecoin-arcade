@@ -270,84 +270,366 @@
       border-radius:10px;margin:8px 0;height:min(78vh,640px)}
 </style>
 {% if whose %}
-  {# Wraps on a phone instead of pushing the page sideways (a tester,
-     2026-09-26: /u/someone was 9px too wide at 540px). #}
-  <div class="row" style="align-items:center;gap:12px;flex-wrap:wrap;min-width:0">
-    {% if whose.face %}
-      <img src="/content/{{ whose.face }}" alt=""
-           style="width:64px;height:64px;border-radius:50%;object-fit:cover">
-    {% endif %}
-    <div style="min-width:0;flex:1 1 200px;overflow-wrap:anywhere">
-      <h1 style="margin:0;overflow-wrap:anywhere">{{ wall('@' ~ whose.tag) }}{% if whose.claiming %}
-        <span class="pill warn" style="font-size:.6em;vertical-align:middle"
-              title="Their claim is in the mempool: every node can see it, and it is theirs when its block lands"
-          >claiming</span>{% endif %}</h1>
-      {% if whose.bio %}<p style="margin:2px 0 0;max-width:60ch">{{ whose.bio }}</p>{% endif %}
-      <div class="row" style="gap:10px;margin-top:2px;flex-wrap:wrap;min-width:0">
-        {% if whose.address %}
-          <a class="muted" style="font-size:.86rem"
-             href="/u/{{ whose.tag }}/wallet">{{ wall('@' ~ whose.tag) }}'s wallet</a>
-        {% endif %}
-        {# Their link, as words. NOT an anchor, and that is a decision rather
-           than a loose end (2026-09-22): a stranger's clickable link
-           inside a wallet is the one-tap delivery path for "claim your
-           airdrop" onto a lookalike arcade, which is the attack
-           docs/multi-user.md § "The rule that does protect a user" is
-           written against. Shown in full so the domain can be READ before
-           anybody goes anywhere, and `user-select:all` so one click picks the
-           whole thing up to paste. If this is ever revisited the replacement
-           is an interstitial naming the destination — never a bare anchor. #}
-        {% if whose.url %}
-          <span class="muted mono" style="font-size:.86rem;overflow-wrap:anywhere;min-width:0"
-                title="their link, published by them — copy it, do not click it"
-                >{{ whose.url }}</span>
-        {% endif %}
-      </div>
+{# A profile, redone (2026-10-08, the prototype the operator approved: "things need
+   to be clean and intuitive"). A banner and a face, the name they publish
+   with the @tag the chain vouches for under it, their own words, a few
+   counts, one row of buttons, and everything else behind the ⋯. Below it
+   Posts / Games / Collections; Posts is the feed this page always was. #}
+{% set own = whose.address and mine.address and whose.address == mine.address %}
+{% set account = public and mine.address %}
+<div class="profile">
+  <div class="pbanner" style="background:linear-gradient(120deg,hsl({{ whose.hue }} 45% 30%),hsl({{ (whose.hue + 40) % 360 }} 55% 45%))"></div>
+  <section class="pcard">
+    <div class="ptop">
+      {% if whose.face %}
+        <img class="pav" src="/content/{{ whose.face }}" alt="">
+      {% else %}
+        <span class="pav pinit" style="background:hsl({{ whose.hue }} 45% 38%)">{{ (whose.name or whose.tag)[:1]|upper }}</span>
+      {% endif %}
+      {% if whose.address %}
+      <button type="button" class="pmore" id="pmore" aria-label="More">&#8943;</button>
+      {% endif %}
     </div>
-    {% if whose.address and whose.address != mine.address %}
-    {# Straight to your conversation with them (2026-09-26). #}
-    <a class="btn small" style="margin-left:auto"
-       href="{% if not public %}/compose?to=@{{ whose.tag }}{% elif mine.address %}/me/messages?to=@{{ whose.tag }}{% else %}/me{% endif %}"
-       {% if public and not mine.address %}title="Sign in to message {{ wall_text('@' ~ whose.tag, 'someone') }}"{% endif %}>Message</a>
-    <button type="button" class="ghost small" id="block-them"
-            {# The name stays whole here, where the drawn text above it is covered:
-               this is the address of the thing the button acts on, not a copy of
-               it for a person to read. Blank it and Block would block nobody. #}
-            data-tag="{{ whose.tag }}" data-address="{{ whose.address }}">Block</button>
+    {# The published name is theirs to choose and nobody checks it; the @tag
+       under it is the part the chain vouches for, so the tick sits there. #}
+    {% set tick %}{% if whose.address and not whose.claiming %}<span class="claimed" title="This @name is claimed on the chain by the address below">&#10003;</span>{% endif %}{% endset %}
+    <h1 class="pname">{% if whose.name %}{{ wall(whose.name) }}{% else %}{{ wall('@' ~ whose.tag) }}{{ tick }}{% endif %}{% if whose.claiming %}
+      <span class="pill warn" style="font-size:.55em;vertical-align:middle"
+            title="Their claim is in the mempool: every node can see it, and it is theirs when its block lands"
+        >claiming</span>{% endif %}</h1>
+    <div class="ptag">{% if whose.name %}{{ wall('@' ~ whose.tag) }}{{ tick }}{% endif %}<span id="my-note" class="pnote{{ ' first' if not whose.name }}" hidden></span></div>
+    {% if whose.bio %}<p class="pbio">{{ whose.bio }}</p>{% endif %}
+    <div class="pmeta">
+      {# Their link, as words. NOT an anchor, and that is a decision rather
+         than a loose end (2026-09-22): a stranger's clickable link
+         inside a wallet is the one-tap delivery path for "claim your
+         airdrop" onto a lookalike arcade, which is the attack
+         docs/multi-user.md § "The rule that does protect a user" is
+         written against. Shown in full so the domain can be READ before
+         anybody goes anywhere, and `user-select:all` so one click picks the
+         whole thing up to paste. If this is ever revisited the replacement
+         is an interstitial naming the destination — never a bare anchor. #}
+      {% if whose.url %}
+        <span class="mono" style="overflow-wrap:anywhere;min-width:0;user-select:all"
+              title="their link, published by them — copy it, do not click it"
+              >{{ whose.url }}</span>
+      {% endif %}
+      {% if whose.joined_text %}<span>Joined {{ whose.joined_text }}</span>{% endif %}
+      {% if whose.address %}
+        <button type="button" class="paddr mono" id="copy-addr" data-address="{{ whose.address }}"
+                title="Copy their {{ chain.label|lower }} address">{{ whose.address[:8] }}… <b>Copy</b></button>
+      {% endif %}
+    </div>
+    {% if whose.address %}
+    <div class="pstats">
+      <a href="#posts" data-tab="posts"><b>{{ whose.posts }}</b> posts</a>
+      <a href="#games" data-tab="games"><b>{{ whose.games|length }}</b> {{ 'game' if whose.games|length == 1 else 'games' }}</a>
+      <a href="#collections" data-tab="collections"><b>{{ '{:,}'.format(whose.pieces) }}</b> pieces</a>
+    </div>
+    <div class="pacts">
+      {% if own %}
+        <a class="pmain" href="/me">Edit profile</a>
+        <button type="button" id="share-me">Share</button>
+      {% else %}
+        {# Straight to your conversation with them (2026-09-26). Signed out,
+           Message is the way to sign in, as it always was. #}
+        <a class="pmain" id="msg-them"
+           href="{% if not public %}/compose?to=@{{ whose.tag }}{% elif mine.address %}/me/messages?to=@{{ whose.tag }}{% else %}/me{% endif %}"
+           {% if public and not mine.address %}title="Sign in to message {{ wall_text('@' ~ whose.tag, 'someone') }}"{% endif %}>Message</a>
+        {% if account %}
+          <a href="/me/wallet?to=@{{ whose.tag }}">Pay</a>
+          <button type="button" id="save-them" data-tag="{{ whose.tag }}">+ Save</button>
+        {% else %}
+          <a href="/u/{{ whose.tag }}/wallet">Wallet</a>
+        {% endif %}
+      {% endif %}
+    </div>
     {% endif %}
-  </div>
+  </section>
   <p class="msg info" id="blocked-says" hidden>You blocked {{ wall('@' ~ whose.tag) }}: their
-    posts and messages are hidden from you. Undo it here or
+    posts and messages are hidden from you. Undo it from the ⋯ menu here or
     under Blocked in your <a href="{{ '/me/contacts' if public else '/contacts' }}">address book</a>.</p>
-  <script>
-  // After the page: window.arcadeBlocked is defined at the foot of base.html, below
-  // this block, and a check made here ran before it existed -- the button did nothing
-  // (a tester, 2026-09-26).
-  document.addEventListener('DOMContentLoaded', function () {
-    var b = document.getElementById('block-them');
-    if (!b || !window.arcadeBlocked) return;
-    var said = document.getElementById('blocked-says');
-    function draw() {
-      var on = window.arcadeBlocked.has(b.dataset.address);
-      b.textContent = on ? 'Unblock' : 'Block';
-      said.hidden = !on;
+
+  {% if whose.address %}
+  <nav class="ptabs" role="tablist">
+    <button type="button" role="tab" data-tab="posts" aria-selected="true">Posts</button>
+    <button type="button" role="tab" data-tab="games" aria-selected="false">Games</button>
+    <button type="button" role="tab" data-tab="collections" aria-selected="false">Collections</button>
+  </nav>
+  {% endif %}
+</div>
+
+{# The ⋯ sheet: the rest of what can be done about somebody. #}
+<div class="psheetback" id="psheet" hidden>
+  <div class="psheet" role="dialog" aria-modal="true" aria-labelledby="psheet-title">
+    <div class="pgrab"></div>
+    <h2 id="psheet-title">{{ wall('@' ~ whose.tag) }}<button type="button" class="px" id="psheet-x" aria-label="Close">&times;</button></h2>
+    <div class="pmenu" id="pmenu">
+      <button type="button" id="m-fav" hidden>&#9734; Add to favorites</button>
+      <button type="button" id="m-note" hidden>&#9998; Add a private note</button>
+      <div id="m-noteform" hidden>
+        <input id="m-notein" maxlength="60" placeholder="Only you see this" autocomplete="off">
+        <button type="button" class="btn" id="m-notesave">Save note</button>
+      </div>
+      <button type="button" id="m-link">&#128279; Copy profile link</button>
+      <button type="button" id="m-addr">&#128203; Copy {{ chain.label|lower }} address</button>
+      <a href="/u/{{ whose.tag }}/wallet">&#128176; What they hold</a>
+      {% if whose.address and not own %}
+      <button type="button" id="block-them" class="pdanger"
+              {# The name stays whole here, where the drawn text above it is covered:
+                 this is the address of the thing the button acts on, not a copy of
+                 it for a person to read. Blank it and Block would block nobody. #}
+              data-tag="{{ whose.tag }}" data-address="{{ whose.address }}">Block</button>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<style>
+.pbanner{height:110px;border-radius:18px 18px 0 0}
+.pcard{background:var(--panel);border:1px solid var(--line);border-top:0;border-radius:0 0 18px 18px;
+  padding:0 16px 16px;box-shadow:var(--shadow)}
+.ptop{display:flex;align-items:flex-end;gap:10px;margin-top:-40px}
+.pav{width:84px;height:84px;border-radius:50%;border:4px solid var(--panel);object-fit:cover;flex:none;
+  background:var(--code)}
+.pinit{display:grid;place-items:center;color:#fff;font-weight:750;font-size:2rem}
+.pcard .pmore{margin-left:auto;width:40px;height:40px;min-height:0;border-radius:50%;padding:0;font-size:1.2rem;
+  background:var(--panel);color:var(--muted);border:1px solid var(--line);box-shadow:none}
+.pname{font-size:1.4rem;margin:8px 0 0;overflow-wrap:anywhere}
+.ptag{color:var(--muted);font-size:.92rem;overflow-wrap:anywhere}
+.claimed{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:50%;
+  background:var(--accent);color:var(--accent-fg);font-size:.62rem;font-weight:800;vertical-align:1px;margin-left:4px}
+.pnote{color:var(--accent);margin-left:6px}
+.pnote::before{content:"· "}
+.pnote.first{margin-left:0}
+.pnote.first::before{content:""}
+.pbio{margin:10px 0 6px;max-width:60ch;overflow-wrap:anywhere}
+.pmeta{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:.84rem;color:var(--muted);align-items:center;margin-top:4px}
+.pcard .paddr{background:none;box-shadow:none;border:0;padding:0;min-height:0;color:var(--muted);
+  font-size:.8rem;font-weight:400}
+.paddr b{color:var(--accent);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.pstats{display:flex;gap:18px;margin:12px 0 2px;font-size:.88rem}
+.pstats a{color:var(--muted)}
+.pstats b{color:var(--fg);font-variant-numeric:tabular-nums}
+.pacts{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px;margin-top:14px}
+.pcard .pacts > a,.pcard .pacts > button{display:flex;align-items:center;justify-content:center;margin:0;
+  min-height:44px;padding:10px 6px;border:0;border-radius:12px;box-shadow:none;background:var(--code);
+  color:var(--fg);font-weight:700;font-size:.92rem;line-height:1.2}
+.pcard .pacts > .pmain{background:var(--accent);color:var(--accent-fg)}
+.pcard .pacts > a:hover{text-decoration:none;filter:brightness(.97)}
+.pcard .pacts > .saved{color:var(--ok)}
+.ptabs{display:flex;gap:4px;margin:18px 0 12px;border-bottom:1px solid var(--line)}
+.ptabs button{padding:9px 12px;font-weight:600;font-size:.92rem;color:var(--muted);background:none;
+  box-shadow:none;border:0;border-radius:0;border-bottom:2px solid transparent;margin-bottom:-1px;min-height:0}
+.ptabs button[aria-selected="true"]{color:var(--fg);border-bottom-color:var(--accent)}
+.psheetback{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center}
+.psheet{background:var(--panel);width:100%;max-width:520px;border-radius:20px 20px 0 0;
+  padding:10px 18px calc(22px + env(safe-area-inset-bottom,0px))}
+.pgrab{width:40px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 12px}
+.psheet h2{display:flex;align-items:center;margin:0 0 6px;font-size:1.05rem;text-transform:none;letter-spacing:0;color:var(--fg)}
+.psheet .px{margin-left:auto;background:none;box-shadow:none;border:0;min-height:0;color:var(--muted);font-size:1.4rem;padding:0 6px}
+.pmenu > button,.pmenu > a{min-height:0;display:flex;gap:12px;align-items:center;width:100%;padding:13px 4px;border:0;
+  border-bottom:1px solid var(--line);border-radius:0;background:none;box-shadow:none;color:var(--fg);
+  font-weight:600;text-align:left}
+.pmenu > a:hover{text-decoration:none}
+.pmenu > :last-child{border-bottom:0}
+.pmenu .pdanger{color:var(--bad)}
+#m-noteform{display:flex;gap:8px;padding:10px 0}
+#m-noteform input{flex:1;min-width:0}
+.ptab[hidden]{display:none!important}
+.pgames{display:grid;gap:10px}
+.pgame{display:flex;gap:12px;align-items:center;padding:10px}
+.pgame .thumb{width:72px;height:54px;border-radius:10px;flex:none;object-fit:cover;background:var(--code);
+  display:grid;place-items:center;font-weight:700;color:var(--muted);overflow:hidden}
+.pcolls{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+@media(min-width:640px){.pcolls{grid-template-columns:repeat(3,1fr)}}
+.pcolls .pcoll{min-height:0;display:flex;flex-direction:column;gap:2px;text-align:left;padding:8px;border-radius:16px;background:var(--panel);
+  border:1px solid var(--line);color:var(--fg);font-weight:400;box-shadow:none;min-width:0}
+.pcoll b{margin-top:6px;font-size:.92rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pcoll small{color:var(--muted);font-size:.78rem}
+.mosaic{display:grid;grid-template-columns:1fr 1fr;gap:3px;aspect-ratio:1;border-radius:11px;overflow:hidden;width:100%;background:var(--code)}
+.mosaic img,.mosaic i{display:block;width:100%;height:100%;object-fit:cover;background:var(--code)}
+.pgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+.pgrid a{aspect-ratio:1;border-radius:12px;overflow:hidden;background:var(--code);display:grid;place-items:center;
+  color:var(--muted);font-size:.8rem;font-weight:700}
+.pgrid img{width:100%;height:100%;object-fit:cover}
+</style>
+<script type="module">
+// The profile's buttons. The book, the note and favorites are this browser's
+// (messaging.js, encrypted to follow the account); the block list is too
+// (window.arcadeBlocked). Nothing here tells the node who you saved.
+const $ = (id) => document.getElementById(id);
+const TAG = {{ whose.tag|tojson }}, ADDR = {{ (whose.address or '')|tojson }};
+const ACCOUNT = {{ (account or False)|tojson }};
+const toast = (t) => (window.arcadeToast ? arcadeToast(t) : alert(t));
+async function copy(text, said) {
+  try { await navigator.clipboard.writeText(text); toast(said); }
+  catch (e) { toast("Copy is blocked here: " + text); }
+}
+const sheet = (open) => { $("psheet").hidden = !open; if (!open) $("m-noteform").hidden = true; };
+if ($("pmore")) $("pmore").onclick = () => sheet(true);
+$("psheet-x").onclick = () => sheet(false);
+$("psheet").addEventListener("click", (e) => { if (e.target === $("psheet")) sheet(false); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") sheet(false); });
+$("m-link").onclick = () => { copy(`${location.origin}/u/${TAG}`, "Profile link copied"); sheet(false); };
+$("m-addr").onclick = () => { copy(ADDR, "Address copied"); sheet(false); };
+if ($("copy-addr")) $("copy-addr").onclick = () => copy(ADDR, "Address copied");
+if ($("share-me")) $("share-me").onclick = () => copy(`${location.origin}/u/${TAG}`, "Profile link copied");
+
+// Tabs: Posts is the page as it always was; Games and Collections are drawn
+// on the server and shown in place. #games / #collections open one directly.
+function tab(name) {
+  for (const b of document.querySelectorAll(".ptabs button"))
+    b.setAttribute("aria-selected", String(b.dataset.tab === name));
+  for (const t of document.querySelectorAll(".ptab")) t.hidden = t.id !== "ptab-" + name;
+  if (name === "collections") drawColls();
+}
+for (const b of document.querySelectorAll("[data-tab]"))
+  b.addEventListener("click", (e) => { e.preventDefault(); tab(b.dataset.tab); history.replaceState(null, "", "#" + b.dataset.tab); });
+if (["#games", "#collections"].includes(location.hash)) tab(location.hash.slice(1));
+
+// Collections: cards first, then one collection's pieces, sixty at a time.
+const COLLS = {{ (whose.collections or [])|tojson }};
+function drawColls() {
+  const box = $("pcolls-box");
+  if (!box || box.dataset.drawn) return;
+  box.dataset.drawn = "1";
+  showCards();
+}
+function showCards() {
+  const box = $("pcolls-box");
+  box.replaceChildren();
+  if (!COLLS.length) {
+    const p = document.createElement("div"); p.className = "panel empty";
+    p.textContent = `@${TAG} doesn't hold any pieces yet.`; box.appendChild(p); return;
+  }
+  const grid = document.createElement("div"); grid.className = "pcolls";
+  for (const c of COLLS) {
+    const b = document.createElement("button"); b.type = "button"; b.className = "pcoll";
+    const m = document.createElement("span"); m.className = "mosaic";
+    for (let i = 0; i < 4; i++) {
+      if (c.covers[i]) { const im = document.createElement("img"); im.loading = "lazy"; im.alt = "";
+        im.src = "/content/" + c.covers[i]; m.appendChild(im); }
+      else m.appendChild(document.createElement("i"));
     }
-    b.onclick = async function () {
-      if (window.arcadeBlocked.has(b.dataset.address)) {
-        window.arcadeBlocked.remove(b.dataset.address);
-      } else {
-        var words = 'Their posts and messages are hidden from you. Nothing is put on '
-                    + 'the chain and they are not told.';
-        var ok = window.arcadeAsk ? await window.arcadeAsk('Block @' + b.dataset.tag + '?', words, 'Block')
-                                  : confirm('Block @' + b.dataset.tag + '? ' + words);
-        if (!ok) return;
-        window.arcadeBlocked.add(b.dataset.tag, b.dataset.address);
-      }
-      draw();
-    };
-    draw();
-  });
-  </script>
+    const n = document.createElement("b"); n.textContent = c.collection || "Not in a collection";
+    const k = document.createElement("small"); k.textContent = `${c.count.toLocaleString()} ${c.count === 1 ? "piece" : "pieces"}`;
+    b.append(m, n, k);
+    b.onclick = () => openColl(c);
+    grid.appendChild(b);
+  }
+  box.appendChild(grid);
+}
+async function openColl(c) {
+  const box = $("pcolls-box");
+  box.replaceChildren();
+  const back = document.createElement("button"); back.type = "button"; back.className = "ghost small";
+  back.textContent = "← Collections"; back.onclick = showCards;
+  const h = document.createElement("h3"); h.style.margin = "10px 0 0";
+  h.textContent = c.collection || "Not in a collection";
+  const n = document.createElement("div"); n.className = "muted"; n.style.fontSize = ".86rem";
+  n.textContent = `${c.count.toLocaleString()} pieces`;
+  const grid = document.createElement("div"); grid.className = "pgrid";
+  const more = document.createElement("button"); more.type = "button"; more.className = "ghost";
+  more.style.cssText = "width:100%;margin-top:12px"; more.textContent = "Show more"; more.hidden = true;
+  box.append(back, h, n, grid, more);
+  let offset = 0;
+  const page = async () => {
+    more.disabled = true;
+    const r = await fetch(`/u/${encodeURIComponent(TAG)}/pieces?collection=${encodeURIComponent(c.collection)}&offset=${offset}`);
+    const said = await r.json().catch(() => ({pieces: []}));
+    for (const it of said.pieces || []) {
+      const a = document.createElement("a"); a.href = `/inscriptions/${it.txid}`;
+      a.title = `#${it.number}`;
+      if (String(it.content_type || "").startsWith("image/")) {
+        const im = document.createElement("img"); im.loading = "lazy"; im.alt = `#${it.number}`;
+        im.src = "/content/" + it.txid; a.appendChild(im);
+      } else a.textContent = `#${it.number}`;
+      grid.appendChild(a);
+    }
+    offset += (said.pieces || []).length;
+    more.hidden = !said.more; more.disabled = false;
+  };
+  more.onclick = page;
+  await page();
+}
+
+// Block / unblock, with the same card it always asked with.
+const blockBtn = $("block-them");
+function drawBlocked() {
+  if (!blockBtn || !window.arcadeBlocked) return;
+  const on = window.arcadeBlocked.has(ADDR);
+  blockBtn.textContent = on ? "⊘ Unblock @" + TAG : "⊘ Block @" + TAG;
+  $("blocked-says").hidden = !on;
+}
+if (blockBtn) blockBtn.onclick = async () => {
+  if (!window.arcadeBlocked) return;
+  sheet(false);
+  if (window.arcadeBlocked.has(ADDR)) window.arcadeBlocked.remove(ADDR);
+  else {
+    const words = "Their posts and messages are hidden from you. Nothing is put on "
+                + "the chain and they are not told.";
+    if (!(await arcadeAsk("Block @" + TAG + "?", words, "Block"))) return;
+    window.arcadeBlocked.add(TAG, ADDR);
+  }
+  drawBlocked();
+};
+document.addEventListener("arcade:blocked", drawBlocked);
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", drawBlocked);
+else drawBlocked();
+
+// Saved, favorite and note: an account's own book.
+if (ACCOUNT && $("save-them")) {
+  const mail = await import("/messaging.js");
+  const find = async () => (await mail.book()).find((e) => e.tag === TAG) || null;
+  async function draw() {
+    const e = await find();
+    const save = $("save-them");
+    save.textContent = e ? "✓ Saved" : "+ Save";
+    save.classList.toggle("saved", !!e);
+    $("m-fav").hidden = $("m-note").hidden = !e;
+    if (e) {
+      $("m-fav").textContent = e.fav ? "★ Remove from favorites" : "☆ Add to favorites";
+      $("m-note").textContent = e.note ? "✎ Edit your note" : "✎ Add a private note";
+      $("my-note").textContent = e.note || ""; $("my-note").hidden = !e.note;
+    } else $("my-note").hidden = true;
+    return e;
+  }
+  let entry = await draw();
+  // Keep the book's copy of their face and name current: this page just
+  // asked the node about them anyway.
+  if (entry) {
+    const name = {{ (whose.name or '')|tojson }}, faceId = {{ (whose.face or '')|tojson }};
+    if ((entry.name || "") !== name || (entry.face || "") !== faceId)
+      mail.updateBookEntry(TAG, {name, face: faceId}).catch(() => {});
+  }
+  $("save-them").onclick = async () => {
+    const e = await find();
+    try {
+      if (e) {
+        if (!(await arcadeAsk(`Remove @${TAG} from your address book?`,
+                              "Messages already received are kept.", "Remove"))) return;
+        await mail.removeFromBook(TAG); toast(`Removed @${TAG}`);
+      } else { await mail.addToBook(TAG); toast(`Saved @${TAG} to your address book`); }
+    } catch (err) { toast(String(err.message || err)); }
+    entry = await draw();
+  };
+  $("m-fav").onclick = async () => {
+    const e = await find(); if (!e) return;
+    await mail.updateBookEntry(TAG, {fav: !e.fav}); sheet(false);
+    toast(e.fav ? "Removed from favorites" : "Added to favorites"); entry = await draw();
+  };
+  $("m-note").onclick = async () => {
+    const e = await find(); $("m-noteform").hidden = false;
+    $("m-notein").value = (e && e.note) || ""; $("m-notein").focus();
+  };
+  $("m-notesave").onclick = async () => {
+    await mail.updateBookEntry(TAG, {note: $("m-notein").value.trim().slice(0, 60)});
+    sheet(false); toast("Note saved"); entry = await draw();
+  };
+}
+document.body.dataset.profileReady = "yes";
+</script>
   {% if not whose.address %}
     <div class="panel empty" style="margin-top:16px">
       <p>Nobody holds <strong>{{ wall('@' ~ whose.tag) }}</strong> on this chain.</p>
@@ -687,6 +969,7 @@
 </script>
 {% endif %}
 
+{% if whose and whose.address %}<div class="ptab" id="ptab-posts">{% endif %}
 {% if posts %}
   {% for p in posts %}{{ card(p) }}{% endfor %}
   {% if cursor %}
@@ -721,6 +1004,26 @@
       chain.{% else %}Be the first: say something above.{% endif %}</p>
     {% endif %}
   </div>
+{% endif %}
+{% if whose and whose.address %}</div>
+<div class="ptab" id="ptab-games" hidden>
+  {% if whose.games %}
+  <div class="pgames">
+    {% for g in whose.games %}
+    <div class="panel pgame">
+      {% if g.cover %}<img class="thumb" src="/content/{{ g.cover }}" alt="" loading="lazy">
+      {% else %}<span class="thumb">{{ (g.name or '?')[:1]|upper }}</span>{% endif %}
+      <div style="flex:1;min-width:0"><strong style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ wall(g.name, 'name') }}</strong>
+        <span class="muted" style="font-size:.84rem">{% if g.version %}v{{ g.version }}{% endif %}</span></div>
+      <a class="btn small" href="/inscriptions/{{ g.opens or g.txid }}/full">Play</a>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="panel empty"><p>{{ wall('@' ~ whose.tag) }} hasn't inscribed a game yet.</p></div>
+  {% endif %}
+</div>
+<div class="ptab" id="ptab-collections" hidden><div id="pcolls-box"></div></div>
 {% endif %}
 
 <script>
