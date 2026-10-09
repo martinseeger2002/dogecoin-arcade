@@ -172,7 +172,7 @@ a.wl-act:hover{text-decoration:none}
 .wl-recent{display:flex;gap:8px;overflow-x:auto;padding:2px 0 4px}
 .wl-recent button{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:.72rem;color:var(--muted);
   min-width:62px;background:none;border:0;box-shadow:none;padding:4px;font-weight:500}
-.wl-note{font-size:.8rem;margin-top:6px;color:var(--muted);word-break:break-all}
+.wl-note{font-size:.8rem;margin-top:6px;color:var(--muted);overflow-wrap:anywhere}
 .wl-note.bad{color:var(--bad);word-break:normal}
 .wl-amtrow{display:flex;gap:8px;align-items:center}
 .wl-amtrow input{flex:1;min-width:0;font-size:16px}
@@ -689,7 +689,11 @@ async function step1(s, d) {
     toNote.className = "wl-note";
     if (!d.to) toNote.textContent = "";
     else if (ADDRESSY.test(d.to)) {
-      toNote.textContent = mine(d.to) ? "That's your own address: only the fee leaves, and a coin is split in two."
+      const other = chains().find((x) => x.address === d.to && x.network !== c.network);
+      if (other) {
+        toNote.className = "wl-note bad";
+        toNote.textContent = `That's your ${other.label.toLowerCase()} address, and this is a ${c.label.toLowerCase()} send. Switch at the top to send ${other.label.toLowerCase()} coins.`;
+      } else toNote.textContent = d.to === c.address ? "That's your own address: only the fee leaves, and a coin is split in two."
         : (all.find((p) => p.value === d.to) || {}).label !== short(d.to)
           ? `${(all.find((p) => p.value === d.to) || {}).label || "An address"} · checked when you review`
           : "An address · checked when you review";
@@ -705,7 +709,8 @@ async function step1(s, d) {
     else if (n * 1e8 > spendable) bad = `That's more than you have: ${coinsOf(spendable)} ${UNIT}.`;
     avail.className = "wl-note" + (bad ? " bad" : "");
     avail.textContent = bad || `Available: ${coinsOf(spendable)} ${UNIT}`;
-    go.disabled = !(d.to && (ADDRESSY.test(d.to) || TAGGY.test(d.to)) && n > 0 && !bad);
+    go.disabled = !(d.to && (ADDRESSY.test(d.to) || TAGGY.test(d.to)) && n > 0 && !bad
+                    && !toNote.classList.contains("bad"));
   }
   function suggest() {
     const q = to.value.trim().replace(/^@/, "").toLowerCase();
