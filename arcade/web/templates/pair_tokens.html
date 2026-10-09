@@ -142,7 +142,8 @@
 
 <div class="grid2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">
   <div class="panel">
-    <h3 style="margin:0 0 8px">Book <span class="muted" style="font-weight:500;font-size:.8rem">prices in {{ qname }}</span> {{ net_badge(chain) }}</h3>
+    <h3 style="margin:0 0 2px">Book</h3>
+    <p class="muted" style="font-size:.78rem;margin:0 0 6px">Prices in {{ qname }} {{ net_badge(chain) }}</p>
     <table class="book" style="width:100%;font-size:.86rem">
       {% set takes = live and viewer != 'nobody' %}
       <tr class="muted"><th style="text-align:left">Price ({{ qname }})</th><th style="text-align:right">{{ bname }}</th><th style="text-align:right">{{ qname }}</th>{% if takes %}<th></th>{% endif %}</tr>
