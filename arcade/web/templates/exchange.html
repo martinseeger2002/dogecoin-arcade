@@ -78,7 +78,7 @@
     @media(max-width:560px){.offerrow{flex-wrap:wrap}.ofdo{width:100%;justify-content:flex-start;padding-left:60px}}
   </style>
 
-  <div class="ex-h">Offers for your things {{ net_badge(chain) }}</div>
+  {% if offers_in or not x_in %}<div class="ex-h">Offers for your things {{ net_badge(chain) }}</div>{% endif %}
   {% if not offers_in and not x_in %}
     <div class="panel empty"><p>No offers yet. When somebody offers for one of your
       NFTs, it shows up here.</p></div>
