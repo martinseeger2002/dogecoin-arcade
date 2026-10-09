@@ -461,6 +461,7 @@
 const $ = (id) => document.getElementById(id);
 const TAG = {{ whose.tag|tojson }}, ADDR = {{ (whose.address or '')|tojson }};
 const ACCOUNT = {{ (account or False)|tojson }};
+const MINE = {{ (own or False)|tojson }};
 const toast = (t) => (window.arcadeToast ? arcadeToast(t) : alert(t));
 async function copy(text, said) {
   try { await navigator.clipboard.writeText(text); toast(said); }
@@ -539,7 +540,9 @@ async function openColl(c) {
     const r = await fetch(`/u/${encodeURIComponent(TAG)}/pieces?collection=${encodeURIComponent(c.collection)}&offset=${offset}`);
     const said = await r.json().catch(() => ({pieces: []}));
     for (const it of said.pieces || []) {
-      const a = document.createElement("a"); a.href = `/inscriptions/${it.txid}`;
+      // Somebody else's piece opens where an offer is made (2026-10-09: "I want to
+      // be able to make an offer on the piece").
+      const a = document.createElement("a"); a.href = `/inscriptions/${it.txid}/view${MINE ? "" : "#make-offer"}`;
       a.title = `#${it.number}`;
       if (String(it.content_type || "").startsWith("image/")) {
         const im = document.createElement("img"); im.loading = "lazy"; im.alt = `#${it.number}`;

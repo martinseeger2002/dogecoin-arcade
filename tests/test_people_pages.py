@@ -12,6 +12,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_collection_web import index_with_a_collection          # noqa: E402
+from test_web import app_state, client                           # noqa: F401,E402
 
 from arcade.messaging.store import MessageStore                   # noqa: E402
 
@@ -72,3 +73,13 @@ def test_a_profile_counts_its_authors_posts_and_nobody_elses(tmp_path):
     assert store.feed_post_count("test", "nMe") == 3
     assert store.feed_post_count("test", "nYou") == 1
     assert store.feed_post_count("test", "nobody") == 0
+
+
+def test_a_bare_piece_link_opens_the_piece_page(client):
+    """/inscriptions/<id> had no page, so a friend's piece opened "Not here"
+    instead of the page where an offer is made (2026-10-09)."""
+    app, _ = client
+    txid = "ab" * 32
+    r = app.get(f"/inscriptions/{txid}", follow_redirects=False)
+    assert r.status_code == 307 and r.headers["location"] == f"/inscriptions/{txid}/view"
+    assert app.get("/inscriptions/not-a-piece", follow_redirects=False).status_code == 404

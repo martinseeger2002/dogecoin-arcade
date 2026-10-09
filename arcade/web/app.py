@@ -7225,6 +7225,19 @@ def create_app(state: AppState) -> FastAPI:
                       txid=row["txid"], title=str(title)[:80], row=row, chain=chain,
                       viewer=viewer, back=f"/inscriptions/{row['txid']}/view")
 
+    @app.get("/inscriptions/{key}")
+    def inscription_bare(key: str):
+        """A piece's address without a page on the end: its page.
+
+        Linked as a bare /inscriptions/<id> from a profile's Collections tab, the
+        cross-chain market and an approval, and nothing answered it -- a friend's
+        piece opened "Not here" instead of the page where an offer is made
+        (2026-10-09). Anything already posted with that link works now too.
+        """
+        if not re.fullmatch(r"[0-9a-fA-F]{64}(i\d+)?|\d+", key or ""):
+            raise HTTPException(status_code=404, detail="no such piece")
+        return RedirectResponse(f"/inscriptions/{key}/view", status_code=307)
+
     @app.get("/inscriptions/{key}/view", response_class=HTMLResponse)
     def inscription_view(request: Request, key: str):
         """Look at an inscription, including one that is a page of its own.
