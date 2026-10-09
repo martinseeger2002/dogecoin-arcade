@@ -5,6 +5,23 @@
    tab into one tab called Create", with buttons to each and to the launchpad
    wizard). #}
 <h1>Create</h1>
+{# Testnet or mainnet, chosen here (2026-10-09: "enable the ability for people to
+   create tokens NFT's and NFT collections on main net. It should be an option on
+   the create tab"). The choice is this browser's own; the pages it opens carry it. #}
+{% if public %}
+<div class="chainpick" role="group" aria-label="Which chain to create on">
+  {% for c in state.token_chains|sort(attribute="is_mainnet") %}
+  <a href="/create/chain?to={{ c.network }}&amp;back=/create" class="{{ 'on' if c is sameas chain }}"
+     aria-pressed="{{ 'true' if c is sameas chain else 'false' }}">
+    <span class="tag {{ 'mainnet' if c.is_mainnet else 'testnet' }}">{{ 'mainnet' if c.is_mainnet else 'testnet' }}</span>
+    <strong>{{ 'Mainnet: real PEP' if c.is_mainnet else 'Testnet: PEP TEST' }}</strong>
+    <span class="muted">{{ 'Permanent and worth money. Every transaction shows its full cost, the operator’s 0.5% fee included, before you say yes.' if c.is_mainnet else 'Free test coins to try things with. Nothing here is worth anything.' }}</span>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+{% import "_chain_line.html" as cl with context %}{{ cl.line(chain, "/create") }}
+{% endif %}
 <div class="createpick">
   <a class="panel" href="/nfts">
     <span class="ico" aria-hidden="true">&#128444;</span>
@@ -23,6 +40,12 @@
   </a>
 </div>
 <style>
+.chainpick{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin:6px 0 16px}
+.chainpick a{display:flex;flex-direction:column;gap:4px;padding:14px;border-radius:14px;border:2px solid var(--line);color:var(--fg);text-decoration:none;background:var(--panel)}
+.chainpick a .tag{align-self:flex-start}
+.chainpick a .muted{font-size:.84rem}
+.chainpick a.on{border-color:var(--accent);box-shadow:var(--shadow)}
+.chainpick a.on:has(.mainnet){border-color:var(--bad)}
 .createpick{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));margin-top:10px}
 .createpick a{display:flex;flex-direction:column;gap:6px;color:var(--fg);text-decoration:none;padding:20px}
 .createpick a:hover{border-color:var(--accent);text-decoration:none}

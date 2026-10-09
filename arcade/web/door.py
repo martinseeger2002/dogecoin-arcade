@@ -61,6 +61,7 @@ PUBLIC_PAGES = frozenset({
     "/tokens",
     "/nfts",
     "/create",
+    "/create/chain",          # which chain this browser creates on (a cookie, no spending)
     "/inscriptions",
     "/exchange",
     "/exchange/pairs",            # the "open a pair" box: two token ids to a token/token pair's page

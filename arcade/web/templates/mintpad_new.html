@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_chain_line.html" as cl with context %}
 {% block title %}New mintpad · DogecoinArcade{% endblock %}
 {% block body %}
 {# The mintpad wizard (2026-09-26: "should be really easy ... you would just
@@ -9,6 +10,19 @@
    Listing costs nothing -- signatures, not transactions; the one fee is a split, if
    the account needs more coins to stand the listings on (two each). #}
 <h1>New mintpad</h1>
+{{ cl.line(chain, "/mintpad/new") }}
+{% if chain.params.swaps_from is none %}
+{# Mainnet (2026-10-09): a mintpad sells by listings, and this node reads listings
+   on testnet only (Params.swaps_from is unset on mainnet), so a mainnet mintpad would
+   take signatures nobody could ever buy with. Said, not half-built. #}
+<div class="panel">
+  <p style="margin-top:0"><strong>Launchpads are testnet only for now.</strong> A launchpad sells
+    your pieces through listings, and this node only reads listings on testnet, so on mainnet
+    nobody could buy from one.</p>
+  <p class="muted" style="margin-bottom:0">You can still make a token, an NFT or a whole collection
+    on mainnet from <a href="/create">Create</a>, and sell pieces one at a time once listings open there.</p>
+</div>
+{% else %}
 <p class="sub" id="mp-intro">Sell one of your collections piece by piece at one price
   (buyers get a random piece; listing is free, your signature rather than a transaction,
   and it stays open for 30 days), or one of your tokens a few at a time.</p>
@@ -399,4 +413,5 @@ $("tp-go").onclick = async () => {
   }
 };
 </script>
+{% endif %}
 {% endblock %}

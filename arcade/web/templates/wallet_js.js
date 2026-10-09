@@ -503,10 +503,76 @@ export async function offerSend(to, amount, chain) {
  * key is used -- which is the only place the refusal can be effective. A
  * node that can choose what you sign does not need your key.
  */
-async function signOffer(wallet, offer, given = null) {
-  const keys = given || keysOn(wallet, offer.chain
-                      || (wallet.on && Object.keys(wallet.on)[0]));
+/* --- real coins: every mainnet transaction is said before it is signed -------
+ *
+ * 2026-10-09: "make sure any main net transactions are verified by the
+ * user ... Just a prompt with what their fees and costs are going to be being
+ * very honest". Every path that broadcasts goes through `signOffer`, so it is
+ * here: on mainnet, the costs are read off the transaction's own bytes (the
+ * same `verifyOffer` the signature covers) -- the network fee, the coins locked
+ * into data outputs, anything paid to somebody else, the operator's fee -- and
+ * `arcadeMainnetReview` (base.html) shows them with one button. Nothing is
+ * signed without a yes.
+ *
+ * A collection is asked once for the whole run ("Show total confirm once"):
+ * `approveMainnet` leaves an allowance in this tab that each of its pieces
+ * draws down without asking; a piece that would go past it asks again.
+ */
+let mainnetNets = null;
+async function isMainnet(network) {
+  if (!network) return false;
+  if (!mainnetNets) {
+    mainnetNets = new Set((await chains()).filter((c) => c.mainnet).map((c) => c.network));
+  }
+  return mainnetNets.has(network);
+}
+const ALLOWANCE = "arcade.mainnet.allowance";
+/** Let up to `sats` of mainnet spending through without asking, for `minutes`. */
+export function approveMainnet(sats, label = "", minutes = 180) {
+  try {
+    sessionStorage.setItem(ALLOWANCE, JSON.stringify(
+      {left: Math.max(0, Math.round(Number(sats) || 0)), label, until: Date.now() + minutes * 60e3}));
+  } catch (e) { /* without storage every transaction asks, which is the safe way */ }
+}
+export function endMainnetApproval() {
+  try { sessionStorage.removeItem(ALLOWANCE); } catch (e) {}
+}
+/** What a transaction costs, by kind, from its own bytes. */
+export function mainnetCosts(offer, shown) {
+  const opAddr = offer.operator_fee && offer.operator_fee.address;
+  let operator = 0, data = 0, others = 0;
+  for (const p of shown.pays || []) {
+    if (p.mine) continue;
+    if (p.bytes !== undefined) data += Number(p.value);
+    else if (opAddr && p.to === opAddr) operator += Number(p.value);
+    else others += Number(p.value);
+  }
+  const network = Number(shown.fee || 0);
+  return {network, data, others, operator, total: network + data + others + operator,
+          fee: offer.operator_fee || null, what: shown.what || offer.what || ""};
+}
+async function mainnetOk(offer, shown, network, options) {
+  if (!(await isMainnet(network))) return;
+  const costs = mainnetCosts(offer, shown);
+  if (options && options.reviewed) return;     // the page's own review listed these costs
+  let allowed = null;
+  try { allowed = JSON.parse(sessionStorage.getItem(ALLOWANCE) || "null"); } catch (e) {}
+  if (allowed && allowed.until > Date.now() && costs.total <= allowed.left) {
+    allowed.left -= costs.total;
+    try { sessionStorage.setItem(ALLOWANCE, JSON.stringify(allowed)); } catch (e) {}
+    return;
+  }
+  const ask = globalThis.arcadeMainnetReview;
+  if (typeof ask !== "function" || !(await ask(costs))) {
+    throw new Error("Not sent: this mainnet transaction was not confirmed. Nothing was signed.");
+  }
+}
+
+async function signOffer(wallet, offer, given = null, options = null) {
+  const network = offer.chain || (wallet.on && Object.keys(wallet.on)[0]);
+  const keys = given || keysOn(wallet, network);
   const shown = await coins.verifyOffer(offer, keys);
+  await mainnetOk(offer, shown, network, options);
   const signatures = [];
   for (const sighash of shown.hashes) {
     signatures.push(coinsHex(await coins.signInput(keys.key, unhex(sighash))));
@@ -540,8 +606,10 @@ export async function checked(offer, wallet) {
   return coins.verifyOffer(offer, keys);
 }
 
-export async function confirm(wallet, offer) {
-  return working(() => signOffer(wallet, offer));
+/** Sign and send. `{reviewed: true}` only from a page whose own review already
+ *  listed every cost of this mainnet transaction from `checked` (the Wallet's). */
+export async function confirm(wallet, offer, options = null) {
+  return working(() => signOffer(wallet, offer, null, options));
 }
 
 /* --- listing a piece ----------------------------------------------------

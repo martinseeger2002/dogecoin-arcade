@@ -8,6 +8,7 @@ that pretends otherwise would be worse than one that says so.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import base64
 import dataclasses
 import datetime as dt
@@ -376,6 +377,16 @@ VIEW_COOKIE = "arcade_view"
 #: multiple wallets imported into the local web ui").
 OTHERS_COOKIE = "arcade_others"
 OTHERS_MOST = 5
+#: The chain this browser makes and browses things on, when it is an account's
+#: view (2026-10-09: "enable the ability for people to create tokens NFT's and NFT
+#: collections on main net. It should be an option on the create tab"). Per
+#: browser, never the node-wide `state.token_chain`, which is the operator's.
+CHAIN_COOKIE = "arcade_chain"
+_BROWSER_CHAIN: "contextvars.ContextVar[str | None]" = contextvars.ContextVar(
+    "arcade_browser_chain", default=None)
+#: The operator's fee on a mainnet creation, in thousandths of what it costs
+#: (`mainnet_create_fee_permille` in settings.json): 0.5%, the exchange's own cut.
+MAINNET_CREATE_FEE_PERMILLE = 5
 
 NAV = [
     ("/",             "Overview",     None,        True),
@@ -4093,9 +4104,50 @@ def create_app(state: AppState) -> FastAPI:
                 for a, v in sorted(sums.items(), key=lambda kv: -kv[1])]
 
     def _token_chain() -> tuple[Any, Any]:
-        """The chain the Tokens page is on, and its index."""
+        """The chain the Tokens page is on, and its index.
+
+        For an account's view, the chain its own browser picked on the Create
+        tab (CHAIN_COOKIE, set for the request by `_per_browser_chain`);
+        otherwise the node's own choice.
+        """
+        wanted = _BROWSER_CHAIN.get()
+        if wanted:
+            for chain in state.token_chains:
+                if chain.network == wanted:
+                    return chain, state.token_index(chain)
         chain = state.token_chain
         return chain, state.token_index(chain)
+
+    async def _per_browser_chain(request: Request, call_next):
+        """Set the chain an account's browser picked, for this request only."""
+        wanted = request.cookies.get(CHAIN_COOKIE, "")
+        token = None
+        if wanted and any(c.network == wanted for c in state.token_chains):
+            try:
+                mine = _account_view(request)
+            except Exception:
+                mine = False
+            if mine:
+                token = _BROWSER_CHAIN.set(wanted)
+        try:
+            return await call_next(request)
+        finally:
+            if token is not None:
+                _BROWSER_CHAIN.reset(token)
+
+    app.middleware("http")(_per_browser_chain)
+
+    @app.get("/create/chain")
+    def create_chain(request: Request, to: str = "", back: str = "/create"):
+        """Pick the chain this browser creates on: Testnet or Mainnet."""
+        chosen = next((c for c in state.token_chains
+                       if to in (c.network, "main" if c.is_mainnet else "test")), None)
+        where = back if back.startswith("/") and not back.startswith("//") else "/create"
+        answer = RedirectResponse(where, status_code=303)
+        if chosen is not None:
+            answer.set_cookie(CHAIN_COOKIE, chosen.network, max_age=365 * 86400,
+                              samesite="lax", secure=_over_https(request), path="/")
+        return answer
 
     def _purses(holdings: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """One row per token, not one per address.
@@ -4293,7 +4345,7 @@ def create_app(state: AppState) -> FastAPI:
     def create_page(request: Request):
         """One tab for making things (2026-09-27): NFTs, tokens, and
         the launchpad wizard, each a button to the page that does it."""
-        return render(request, "create.html")
+        return render(request, "create.html", chain=_token_chain()[0])
 
     @app.get("/nfts", response_class=HTMLResponse)
     def nfts_page(request: Request, page: int = 1):
@@ -9860,6 +9912,40 @@ def create_app(state: AppState) -> FastAPI:
         return (stream[:at], at, size,
                 [b[max(0, at - n * size):] for n, b in enumerate(bodies)])
 
+    def _operator_fee(chain, payer: str, cost: int) -> tuple[list, dict | None]:
+        """The operator's fee for one creation on mainnet: (outputs, said).
+
+        2026-10-09: "include a inscription fee for the operator", ".5% same
+        as our exchange fee". `mainnet_create_fee_permille` thousandths (default 5,
+        arcade/xchain.py's FEE_PERMILLE) of what the creation costs -- its network fee
+        and the coins in its data outputs, from the plan's own estimate -- rounded up
+        to a whole satoshi, and never below the dust limit, because an output under
+        it cannot exist. Paid to the node's own mainnet address as one more output
+        of the first transaction, so the review in the tab reads it off the bytes
+        and names it on its own line. Testnet never pays it, nor does the operator
+        creating from its own address.
+        """
+        if not chain.is_mainnet:
+            return [], None
+        try:
+            permille = int(state.setting("mainnet_create_fee_permille",
+                                         MAINNET_CREATE_FEE_PERMILLE))
+        except (TypeError, ValueError):
+            permille = MAINNET_CREATE_FEE_PERMILLE
+        if permille <= 0:
+            return [], None
+        try:
+            to = state.home_address(state.ledger)
+        except Exception:
+            return [], None
+        if not to or to == payer:
+            return [], None
+        share = -(-max(0, int(cost)) * permille // 1000)
+        sats = max(share, fees.DUST_LIMIT)
+        return ([(sats, txbuild.p2pkh_script(to))],
+                {"address": to, "value": sats, "permille": permille,
+                 "minimum": fees.DUST_LIMIT, "at_minimum": share < fees.DUST_LIMIT})
+
     def _inscribe_start(account, chain, address: str, said: dict,
                         content: bytes, kind: str):
         """The first transaction of an inscription: the piece, or the split.
@@ -9874,11 +9960,13 @@ def create_app(state: AppState) -> FastAPI:
         tag = secrets.token_bytes(8)
         plan = inscribelib.plan(content, kind, str(said.get("json", "")),
                                 inscription_id=tag)
+        fee_out, fee_said = _operator_fee(chain, address,
+                                          plan.estimate.fee + plan.estimate.dust)
         if plan.chunks == 1:
             unsigned = _spend_now(
                 account, chain, address,
                 _class_c_or_b(chain, address, plan.payloads[0],
-                              _coin_pubkey(account.pubkey, chain)),
+                              _coin_pubkey(account.pubkey, chain)) + fee_out,
                 f"inscribe {label}")
             # A file this node already has an unsigned offer for is one
             # gesture asked twice -- the confirmation dismissed, the tab
@@ -9894,13 +9982,13 @@ def create_app(state: AppState) -> FastAPI:
                                 unsigned.what, digest=digest)
             return JSONResponse({"offer": offer.id, "bytes": plan.content_len,
                                  "chunks": 1, "chain": chain.network,
-                                 **unsigned.as_json()})
+                                 "operator_fee": fee_said, **unsigned.as_json()})
 
         manifest, at, chunk_len, contents = _how_it_is_split(plan)
         piece = inscribelib.piece_size(plan)
         unsigned = _spend_now(
             account, chain, address,
-            [(piece, txbuild.p2pkh_script(address))] * plan.chunks,
+            [(piece, txbuild.p2pkh_script(address))] * plan.chunks + fee_out,
             f"split into {plan.chunks:,} outputs, to inscribe {label} "
             f"in {plan.chunks:,} transactions")
         _quota(account, "inscribe", len(content))
@@ -9920,7 +10008,8 @@ def create_app(state: AppState) -> FastAPI:
                              "chunks": plan.chunks,
                              "chunk_len": chunk_len,
                              "manifest_len": at, "sent": 0, "next": 0,
-                             "chain": chain.network, **unsigned.as_json()})
+                             "chain": chain.network, "operator_fee": fee_said,
+                             **unsigned.as_json()})
 
     @app.get("/account/inscribe/unfinished")
     def account_inscribe_unfinished(request: Request):
@@ -10682,9 +10771,11 @@ def create_app(state: AppState) -> FastAPI:
                            f"this node kept: {exc}. Nothing has been paid for, "
                            "and the pieces after it are still here to ask "
                            "for."}, status_code=400)
+        fee_out, fee_said = _operator_fee(chain, run["address"],
+                                          plan.estimate.fee + plan.estimate.dust)
         try:
             outputs = _class_c_or_b(chain, run["address"], plan.payloads[0],
-                                    _coin_pubkey(account.pubkey, chain))
+                                    _coin_pubkey(account.pubkey, chain)) + fee_out
             index = state.token_index(chain)
             with contextlib.closing(index.open()) as db:
                 unsigned = fundinglib.build(
@@ -10731,7 +10822,7 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"offer": offer.id, "run": run["id"],
                              "piece": piece["edition"], "items": run["items"],
                              "sent": run["sent"], "name": piece["name"],
-                             "bytes": plan.content_len,
+                             "bytes": plan.content_len, "operator_fee": fee_said,
                              "chain": chain.network, **unsigned.as_json()})
 
     def _own_run(request: Request, run_id: str):
@@ -17662,13 +17753,22 @@ def create_app(state: AppState) -> FastAPI:
                                     _coin_pubkey(account.pubkey, chain),
                                     wrap=False)
             index = state.token_index(chain)
+            build = lambda outs: fundinglib.build(
+                db, chain.params, address, outs,
+                rate=fees.MIN_FEE_PER_KB,
+                what=f"create the token {name.strip()}",
+                exclude=_flights.spent_by(account.pubkey, chain.network),
+                extra=_flights.change_for(account.pubkey, chain.network))
+            fee_said = None
             with contextlib.closing(index.open()) as db:
-                unsigned = fundinglib.build(
-                    db, chain.params, address, outputs,
-                    rate=fees.MIN_FEE_PER_KB,
-                    what=f"create the token {name.strip()}",
-                    exclude=_flights.spent_by(account.pubkey, chain.network),
-                    extra=_flights.change_for(account.pubkey, chain.network))
+                unsigned = build(outputs)
+                # On mainnet the operator's 0.5% (`_operator_fee`) of what this
+                # costs, priced from the transaction just built, then built again
+                # with it as one more output after the token's own.
+                fee_out, fee_said = _operator_fee(
+                    chain, address, unsigned.fee + sum(v for v, _ in outputs))
+                if fee_out:
+                    unsigned = build(outputs + fee_out)
             _quota(account, "issue", len(body))
         except (tokenlib.TokenError, fundinglib.FundingError, AmountError,
                 ValueError) as exc:
@@ -17677,6 +17777,7 @@ def create_app(state: AppState) -> FastAPI:
                             unsigned.what)
         return JSONResponse({"offer": offer.id, "name": name.strip(),
                              "managed": managed, "chain": chain.network,
+                             "operator_fee": fee_said,
                              "class": ("B" if len(outputs) > 1 else "C"),
                              **unsigned.as_json()})
 

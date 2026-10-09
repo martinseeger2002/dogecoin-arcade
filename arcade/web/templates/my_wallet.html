@@ -944,7 +944,8 @@ async function step3(s, d, offer, read) {
   body.append(list, el("p", "wl-note", "Keep this open for a moment."));
   s.lock(true);
   try {
-    const out = await wallet.confirm(keys, offer);
+    // Its own Review listed every cost from wallet.checked, so not asked twice.
+    const out = await wallet.confirm(keys, offer, {reviewed: true});
     one.className = "done"; one.firstChild.textContent = "✓";
     two.className = "done"; two.firstChild.textContent = "✓";
     s.lock(false);

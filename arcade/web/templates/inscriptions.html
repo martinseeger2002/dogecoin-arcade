@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_chain_line.html" as cl with context %}
 {% import "_chains.html" as chains %}
 {% import "_token_confirm.html" as tk %}
 {% block title %}NFTs · DogecoinArcade{% endblock %}
@@ -50,6 +51,7 @@
 {% from "_pager.html" import pager %}
 
 <h1>NFTs {{ tk.chain_switch(chain, other_chains, csrf, "/inscriptions", public) }}</h1>
+{{ cl.line(chain, "/nfts") }}
 <p class="sub">A file written onto the chain in full, owned by an address.
   The ones <em>you</em> hold, and the way to send them, are on the
   <a href="{{ '/me/nfts' if public else '/wallet/nfts' }}">wallet's NFTs tab</a>.</p>

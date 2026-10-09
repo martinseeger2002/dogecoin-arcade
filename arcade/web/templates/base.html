@@ -137,6 +137,13 @@ button.danger{background:var(--bad);border-color:var(--bad);color:#fff}
   display:flex;align-items:center;justify-content:center;padding:16px}
 .askcard{max-width:440px;width:100%;margin:0}
 .askcard h3{margin-top:0}
+.mainnet-review{border:2px solid var(--bad)}
+.mainnet-review h3{display:flex;align-items:center;gap:8px}
+.mr-rows{margin:6px 0 10px}
+.mr-row{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--line);font-size:.9rem}
+.mr-row span:last-child{white-space:nowrap;font-variant-numeric:tabular-nums}
+.mr-row.total{font-weight:700;border-bottom:0}
+.mr-warn{color:var(--bad);font-weight:600;font-size:.88rem;margin:0 0 12px}
 .askcard .row{gap:8px;justify-content:flex-end}
 .pill{font-size:.72rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
 .pill.ok{color:var(--ok);border-color:var(--ok)}
@@ -1810,6 +1817,60 @@ function arcadeAsk(title, detail, yes = "Yes"){
     no.onclick = function(){ done(false); };
     back.onclick = function(e){ if (e.target === back) done(false); };
     ok.focus();
+  });
+}
+
+// Real PEP, said honestly, before anything on mainnet is signed (the operator,
+// 2026-10-09: "Just a prompt with what their fees and costs are going to be being
+// very honest"). wallet.js calls this for every mainnet transaction with its costs
+// read off the transaction's own bytes; a collection run calls it once with the
+// whole run's estimate (`costs.count`, `costs.estimate`). One button.
+function arcadeMainnetReview(costs){
+  var pep = function(sats){ return (Number(sats || 0) / 1e8).toLocaleString(undefined,
+    {minimumFractionDigits: 2, maximumFractionDigits: 8}) + ' PEP'; };
+  return new Promise(function(answer){
+    var back = document.createElement('div'); back.className = 'askcard-back';
+    var card = document.createElement('div'); card.className = 'panel askcard mainnet-review';
+    card.setAttribute('role', 'dialog'); card.setAttribute('aria-modal', 'true');
+    var h = document.createElement('h3');
+    h.innerHTML = '<span class="tag mainnet">mainnet</span> Real PEP';
+    var what = document.createElement('p'); what.className = 'muted';
+    what.textContent = costs.label ? costs.label : costs.count
+      ? 'Inscribe ' + costs.count.toLocaleString() + ' pieces' + (costs.what ? ' of ' + costs.what : '')
+        + '. This is an estimate from the first piece; each one is read from its own transaction as it goes.'
+      : (costs.what || 'A mainnet transaction');
+    var rows = document.createElement('div'); rows.className = 'mr-rows';
+    var line = function(label, sats, strong){
+      if (!sats && !strong) return;
+      var r = document.createElement('div'); r.className = 'mr-row' + (strong ? ' total' : '');
+      var a = document.createElement('span'); a.textContent = label;
+      var b = document.createElement('span'); b.textContent = (costs.estimate ? 'about ' : '') + pep(sats);
+      r.append(a, b); rows.append(r);
+    };
+    line('Network fee', costs.network);
+    line('Coins written into the inscription or token outputs', costs.data);
+    line('Paid to others', costs.others);
+    if (costs.operator) {
+      var f = costs.fee || {};
+      line('Operator fee (' + ((f.permille || 5) / 10) + '%' + (f.minimum ? ', minimum ' + pep(f.minimum) : '')
+           + (costs.count ? ' a piece' : '') + ')', costs.operator);
+    }
+    line(costs.count ? 'Total for the run' : 'Total leaving your wallet', costs.total, true);
+    var warn = document.createElement('p'); warn.className = 'mr-warn';
+    warn.textContent = 'These are real coins on mainnet. Once sent this cannot be undone.';
+    var row = document.createElement('div'); row.className = 'row';
+    var ok = document.createElement('button'); ok.type = 'button'; ok.className = 'danger';
+    ok.textContent = (costs.count ? 'Start: about ' : 'Pay ') + pep(costs.total);
+    var no = document.createElement('button'); no.type = 'button'; no.className = 'ghost'; no.textContent = 'Cancel';
+    row.append(ok, no);
+    card.append(h, what, rows, warn, row); back.append(card); document.body.append(back);
+    var done = function(v){ back.remove(); document.removeEventListener('keydown', esc); answer(v); };
+    var esc = function(e){ if (e.key === 'Escape') done(false); };
+    document.addEventListener('keydown', esc);
+    ok.onclick = function(){ done(true); };
+    no.onclick = function(){ done(false); };
+    back.onclick = function(e){ if (e.target === back) done(false); };
+    no.focus();
   });
 }
 
