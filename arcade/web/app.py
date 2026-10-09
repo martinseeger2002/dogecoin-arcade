@@ -11106,6 +11106,67 @@ def create_app(state: AppState) -> FastAPI:
                     coin["asked"] = now
         return sorted(memo["coins"].values(), key=lambda c: (c["txid"], c["vout"]))
 
+    @app.get("/account/activity")
+    def account_activity(request: Request, chain: str = "", before: int | None = None,
+                         limit: int = 50):
+        """What happened to this account's coins on one chain, newest first.
+
+        The Wallet tab's history (2026-10-08: "It needs to give feedback when
+        transactions are sent it should have a history"). Read from the
+        index's `activity` rows (arcade/utxos.py), which begin when this node
+        began watching the address -- `since` says where, so the page can say
+        the list starts there instead of implying an account had no past.
+        Only ever the signed-in account's own addresses.
+
+        A row's `other` is who a send went to; it is named where the chain
+        names it -- a @tag on the tag chain, or the mainnet address a holder
+        published with their key -- and left as an address otherwise.
+        """
+        account = _signed_in_account(request)
+        picked = next((one for one in _account_chains()
+                       if one.network == chain), None) if chain else _account_chain()
+        if picked is None:
+            return JSONResponse({"detail": f"no chain called {chain} here"},
+                                status_code=404)
+        address = _account_address(account.pubkey, picked)
+        said: dict[str, Any] = {"chain": picked.network, "label": picked.label,
+                                "address": address, "since": None, "tip": 0,
+                                "rows": [], "more": False}
+        if not address:
+            return JSONResponse(said)
+        limit = max(1, min(int(limit), 200))
+        index = state.token_index(picked)
+        with contextlib.closing(index.open()) as db:
+            said["since"] = utxoslib.since(db, address)
+            tip = db.conn.execute("SELECT MAX(height) FROM block").fetchone()
+            said["tip"] = int((tip and tip[0]) or 0)
+            rows = utxoslib.activity(db, [address], before, limit + 1)
+        said["more"] = len(rows) > limit
+        rows = rows[:limit]
+        names: dict[str, str] = {}
+        for row in rows:
+            other = row["other"]
+            if other and other not in names:
+                names[other] = _name_for_address(other, picked)
+            row["other_tag"] = names.get(other, "") if other else ""
+            row["confirmations"] = max(0, said["tip"] - row["height"] + 1)
+        said["rows"] = rows
+        return JSONResponse(said)
+
+    def _name_for_address(address: str, chain) -> str:
+        """The @tag behind an address, where the chain says one, else ""."""
+        try:
+            home = _account_chain()
+            if chain.network == home.network:
+                return state.token_index(home).tag_of(address) or ""
+            with state.store() as store:
+                row = store.conn.execute(
+                    "SELECT tag FROM key_announcement WHERE other_address = ? "
+                    "AND tag != '' ORDER BY height DESC LIMIT 1", (address,)).fetchone()
+            return str(row[0]) if row else ""
+        except Exception:                                # noqa: BLE001 -- a label, not a page
+            return ""
+
     @app.get("/account/dust")
     def account_dust(request: Request):
         """How much of this account's money sits in its own payload outputs."""

@@ -113,6 +113,7 @@ PUBLIC_PAGES = frozenset({
     "/account/tokens",
     "/account/inscribe/unfinished",
     "/account/dust",                  # coins in this account's own payload outputs
+    "/account/activity",              # this account's own coin history (signed in)
     "/account/standing/fillable",     # this account's buy orders a sell order meets
     "/account/claimpools",            # this account's own prize pools, to withdraw
     "/account/pagesends",             # what pages have asked this account to send

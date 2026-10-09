@@ -51,6 +51,26 @@ CREATE TABLE IF NOT EXISTS utxo (
 );
 CREATE INDEX IF NOT EXISTS utxo_address ON utxo(address, value DESC);
 
+-- What each transaction did to a watched address: the Wallet tab's history
+-- (2026-10-08: "it should have a history"). `utxo` forgets a coin the moment
+-- it is spent, which is right for "what can be spent" and leaves nothing to
+-- answer "what happened", so this keeps one row per (transaction, address):
+-- what the transaction paid the address, what it took from it, and, for a
+-- spend, what went to everybody else and the first of them. The net is
+-- received - spent; a send's fee is spent - received - paid_out.
+-- Like `watched`, it starts when watching did and is not retroactive.
+CREATE TABLE IF NOT EXISTS activity (
+    txid     TEXT    NOT NULL,
+    address  TEXT    NOT NULL,
+    height   INTEGER NOT NULL,
+    received INTEGER NOT NULL DEFAULT 0,
+    spent    INTEGER NOT NULL DEFAULT 0,
+    paid_out INTEGER NOT NULL DEFAULT 0,
+    other    TEXT    NOT NULL DEFAULT '',
+    PRIMARY KEY (txid, address)
+);
+CREATE INDEX IF NOT EXISTS activity_address ON activity(address, height DESC);
+
 -- The addresses worth the rows. `since` is the height watching began, so a
 -- balance can say whether it is the whole story or only what has happened
 -- since somebody asked.
@@ -66,6 +86,7 @@ def install(db) -> None:
     """Add the tables and register them for the undo journal."""
     db.conn.executescript(SCHEMA)
     register_journalled_table("utxo", ("txid", "vout"))
+    register_journalled_table("activity", ("txid", "address"))
 
 
 def watch(db, address: str, height: int, why: str = "") -> None:
@@ -168,6 +189,10 @@ def on_block(state, height: int, block: dict[str, Any], params,
         return {"added": 0, "spent": 0}
     added = spent = 0
     txs = block.get("tx") or []
+    # (txid, address) -> [received, spent], and every transaction's outputs as
+    # (address or "", value), for the history rows written at the end.
+    moved: dict[tuple[str, str], list[int]] = {}
+    outputs: dict[str, list[tuple[str, int]]] = {}
 
     for tx in txs:
         for out in tx.get("vout", []):
@@ -182,13 +207,16 @@ def on_block(state, height: int, block: dict[str, Any], params,
             # time. Script hashes since 2026-09-30: a refereed prize pool lives
             # at one, and its claims, its "once per wallet" and its close all
             # read what the pool holds from here.
+            value = int(round(float(out.get("value", 0)) * 100_000_000))
+            outputs.setdefault(tx["txid"], []).append(
+                (parsed.address if parsed.type in SPENDABLE else "", value))
             if parsed.type not in SPENDABLE:
                 continue
             if parsed.address not in addresses:
                 continue
-            value = int(round(float(out.get("value", 0)) * 100_000_000))
             if value <= 0:
                 continue
+            moved.setdefault((tx["txid"], parsed.address), [0, 0])[0] += value
             state.insert("utxo", {
                 "txid": tx["txid"], "vout": int(out.get("n", 0)),
                 "address": parsed.address, "value": value, "height": height})
@@ -200,9 +228,46 @@ def on_block(state, height: int, block: dict[str, Any], params,
             if previous is None or index is None:
                 continue                      # a coinbase spends nothing
             row = state.db.conn.execute(
-                "SELECT 1 FROM utxo WHERE txid = ? AND vout = ?",
+                "SELECT address, value FROM utxo WHERE txid = ? AND vout = ?",
                 (previous, int(index))).fetchone()
             if row is not None:
+                moved.setdefault((tx["txid"], row[0]), [0, 0])[1] += int(row[1])
                 state.delete("utxo", {"txid": previous, "vout": int(index)})
                 spent += 1
+
+    for (txid, address), (got, gave) in moved.items():
+        others = [(a, v) for a, v in outputs.get(txid, []) if a != address]
+        state.insert("activity", {
+            "txid": txid, "address": address, "height": height,
+            "received": got, "spent": gave,
+            "paid_out": sum(v for _, v in others) if gave else 0,
+            "other": next((a for a, v in others if a and v > 0), "") if gave else ""})
     return {"added": added, "spent": spent}
+
+
+def activity(db, addresses: list[str], before: int | None = None,
+             limit: int = 50) -> list[dict[str, Any]]:
+    """What happened to these addresses, newest first, `limit` rows at a time.
+
+    One row per transaction: a transaction that touched two of the addresses
+    (testnet and mainnet cannot, but an account's tag address and coin address
+    on one chain can) is summed into one, because a person sent one thing.
+    `before` pages by height.
+    """
+    if not addresses:
+        return []
+    marks = ",".join("?" for _ in addresses)
+    where = f"address IN ({marks})" + (" AND height < ?" if before is not None else "")
+    args: list[Any] = list(addresses) + ([int(before)] if before is not None else [])
+    rows = db.conn.execute(
+        f"SELECT txid, MAX(height) AS height, SUM(received) AS received, "
+        f"SUM(spent) AS spent, MAX(paid_out) AS paid_out, MAX(other) AS other "
+        f"FROM activity WHERE {where} GROUP BY txid "
+        f"ORDER BY height DESC, txid LIMIT ?", args + [int(limit)]).fetchall()
+    out = []
+    for txid, height, got, gave, paid, other in rows:
+        out.append({"txid": txid, "height": int(height), "received": int(got),
+                     "spent": int(gave), "net": int(got) - int(gave),
+                     "fee": max(0, int(gave) - int(got) - int(paid)) if gave else 0,
+                     "other": other or ""})
+    return out
