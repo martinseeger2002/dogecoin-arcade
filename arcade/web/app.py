@@ -7234,7 +7234,7 @@ def create_app(state: AppState) -> FastAPI:
         piece opened "Not here" instead of the page where an offer is made
         (2026-10-09). Anything already posted with that link works now too.
         """
-        if not re.fullmatch(r"[0-9a-fA-F]{64}(i\d+)?|\d+", key or ""):
+        if not re.fullmatch(r"[0-9a-fA-F]{64}|[0-9]{1,12}", key or ""):
             raise HTTPException(status_code=404, detail="no such piece")
         return RedirectResponse(f"/inscriptions/{key}/view", status_code=307)
 
@@ -7408,8 +7408,18 @@ def create_app(state: AppState) -> FastAPI:
         # URL, since the frame itself carries no cookie.
         ticket = _viewer_ticket(here, chain.network, row["txid"]) \
             if viewer == "account" and here else ""
+        # Bids for this piece in mainnet PEP on the cross-chain book (2026-10-09:
+        # "I want to be able to offer pep main chain for a test net NFT"): the
+        # best few, so its holder sees them here and a buyer sees what stands.
+        x_bids = []
+        if _x_open() and not chain.is_mainnet:
+            try:
+                x_bids = [{"pep": b["left_pepe"] / COIN, "id": b["id"]}
+                          for b in state.xchain.book.book("nft", row["txid"])["buys"]][:5]
+            except Exception:
+                x_bids = []
         return render(request, "inscription_view.html", row=row, chain=chain,
-                      xchain_open=_x_open(),
+                      xchain_open=_x_open(), x_bids=x_bids,
                       my_offers=my_offers, swap_waiting=swap_waiting,
                       ticket=ticket,
                       listed=listed,

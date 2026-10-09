@@ -591,8 +591,35 @@
 </div>
 {% endif %}
 
+{# Mainnet PEP for a testnet piece, through the cross-chain book: the buyer's PEP
+   is held by this node until the holder sells into the bid (2026-10-09). #}
+{% if xchain_open and not chain.is_mainnet %}
+{% set xbest = x_bids[0].pep if x_bids else None %}
+{% if mine or mine_account %}
+{% if x_bids %}
+<div class="panel" id="mainnet-bids" style="border-color:var(--accent)">
+  <h3 style="margin:0 0 6px">Offers in mainnet PEP {{ net_badge(true) }}</h3>
+  <p style="margin:0 0 10px">The best is <strong>{{ "%.8f"|format(xbest)|trim('0')|trim('.') }} PEP</strong>
+    (real coins){% if x_bids|length > 1 %}, from {{ x_bids|length }} offers{% endif %}. This node holds
+    the buyer's PEP; sell into it and the PEP is paid to your mainnet address when your piece arrives.</p>
+  <a class="btn" href="/exchange/x/nft/{{ row.txid }}#x-form">Sell it for {{ "%.8f"|format(xbest)|trim('0')|trim('.') }} PEP</a>
+</div>
+{% endif %}
+{% endif %}
+{% endif %}
+
 {% if not mine and not mine_account %}
 <h2 id="make-offer">Make an offer</h2>
+{% if xchain_open and not chain.is_mainnet %}
+<div class="panel" style="margin-bottom:12px">
+  <h3 style="margin:0 0 6px">Offer real PEP {{ net_badge(true) }} for this testnet piece</h3>
+  <p class="muted" style="margin:0 0 10px;font-size:.88rem">Your mainnet PEP is held by this node, not by
+    the piece's holder, until they sell it to you; cancel any time before and it comes back. The node takes
+    0.5%.{% if x_bids %} The best offer standing is {{ "%.8f"|format(x_bids[0].pep)|trim('0')|trim('.') }} PEP.{% endif %}</p>
+  <a class="btn" href="/exchange/x/nft/{{ row.txid }}#x-form">Offer mainnet PEP</a>
+</div>
+<h3 style="margin:14px 0 6px">Or offer PEP TEST {{ net_badge(false) }}</h3>
+{% endif %}
 <div class="panel">
   {% if offer_error %}<div class="msg err">{{ offer_error }}</div>{% endif %}
   {% if viewer == 'account' %}

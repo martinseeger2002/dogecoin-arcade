@@ -83,3 +83,13 @@ def test_a_bare_piece_link_opens_the_piece_page(client):
     r = app.get(f"/inscriptions/{txid}", follow_redirects=False)
     assert r.status_code == 307 and r.headers["location"] == f"/inscriptions/{txid}/view"
     assert app.get("/inscriptions/not-a-piece", follow_redirects=False).status_code == 404
+
+
+def test_a_stranger_may_open_a_bare_piece_address():
+    """The door has to let the bare address through, or the redirect behind it
+    is never reached from outside (2026-10-09)."""
+    from arcade.web import door
+    assert door.public_path("/inscriptions/" + "ab" * 32)
+    assert door.public_path("/inscriptions/2095")
+    assert not door.public_path("/inscriptions/create")
+    assert not door.public_path("/inscriptions/collection")
