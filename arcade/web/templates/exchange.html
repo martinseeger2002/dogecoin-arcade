@@ -7,11 +7,15 @@
 {% macro tabs(current) %}
 <div id="live" data-generation="{{ state.generation }}" class="live"></div>
 {# The markets first, then what is yours (the Exchange redesign, 2026-10-09). #}
+{# Tokens, NFTs, Launchpad (the mintpads, by the name people know them by), and
+   Offers with a count of what waits for an answer (the Exchange redesign, 2026-10-09). #}
+{% set waiting_offers = offers_in | rejectattr('settled') | list | length %}
 <nav class="ex-seg" aria-label="Exchange">
   <a class="{{ 'on' if current == 'tokens' }}" href="/exchange?tab=tokens"{% if current == 'tokens' %} aria-current="page"{% endif %}>Tokens</a>
   <a class="{{ 'on' if current == 'market' }}" href="/exchange?tab=market"{% if current == 'market' %} aria-current="page"{% endif %}>NFTs</a>
-  <a class="{{ 'on' if current == 'offers' }}" href="/exchange?tab=offers"{% if current == 'offers' %} aria-current="page"{% endif %}>Offers</a>
-  <a class="{{ 'on' if current == 'mintpads' }}" href="/exchange?tab=mintpads"{% if current == 'mintpads' %} aria-current="page"{% endif %}>Mintpads</a>
+  <a class="{{ 'on' if current == 'mintpads' }}" href="/exchange?tab=mintpads"{% if current == 'mintpads' %} aria-current="page"{% endif %}>Launchpad</a>
+  <a class="{{ 'on' if current == 'offers' }}" href="/exchange?tab=offers"{% if current == 'offers' %} aria-current="page"{% endif %}>Offers
+    {%- if waiting_offers %}<span class="nav-count" aria-label="{{ waiting_offers }} waiting">{{ waiting_offers if waiting_offers < 100 else '99+' }}</span>{% endif %}</a>
 </nav>
 {% endmacro %}
 
@@ -74,25 +78,25 @@
     @media(max-width:560px){.offerrow{flex-wrap:wrap}.ofdo{width:100%;justify-content:flex-start;padding-left:60px}}
   </style>
 
-  <div class="ex-h">Offers for your NFTs</div>
+  <div class="ex-h">Offers for your things</div>
   {% if not offers_in %}
     <div class="panel empty"><p>No offers yet. When somebody offers for one of your
       NFTs, it shows up here.</p></div>
   {% else %}
-  <div class="panel">
+  <div class="ex-card" style="padding:4px 14px">
     {% for b in offers_in %}
     <div class="offerrow">
       {{ thumb(b) }}
       <div class="oftext"><strong>{{ b.buyer|who }}</strong> offers <strong>{{ b.price }}</strong>
         for {{ piece(b) }}</div>
       <div class="ofdo">
-        {% if b.settled %}<span class="pill ok">sold</span>
-        {% elif b.busy %}<span class="muted">selling&hellip; waiting for the block</span>
+        {% if b.settled %}<span class="ex-pill done">Sold</span>
+        {% elif b.busy %}<span class="ex-pill wait">Selling, waiting for its block</span>
         {% elif b.accepted %}
-          <span class="muted">accepted, waiting for them</span>
+          <span class="ex-pill wait">Accepted, waiting for them</span>
           <button type="button" class="ghost small" data-takeback
                   data-piece="{{ b.inscription }}" data-buyer="{{ b.buyer|who_text }}">Take it back</button>
-        {% elif b.held_for %}<span class="muted">you accepted someone else</span>
+        {% elif b.held_for %}<span class="ex-pill off">You accepted someone else</span>
         {% elif viewer == 'account' %}
           <button type="button" class="small" data-accept
                   data-offer="{{ b.txid }}" data-piece="{{ b.inscription }}"
@@ -206,7 +210,7 @@
     <div class="panel empty"><p>You haven't made any offers. Open any NFT and press
       <strong>Make offer</strong>.</p></div>
   {% else %}
-  <div class="panel">
+  <div class="ex-card" style="padding:4px 14px">
     {% for b in offers_out %}
     <div class="offerrow">
       {{ thumb(b) }}
@@ -214,13 +218,13 @@
         <span class="muted" style="font-size:.84rem">&middot; owned by {{ b.owner|who }}</span></div>
       <div class="ofdo">
         {% if viewer == 'account' and b.presigned %}
-          <span class="muted" style="font-size:.84rem">buys it the moment they accept</span>
-          <button type="button" class="ghost small" data-withdraw="{{ b.txid }}">Cancel</button>
+          <span class="ex-pill wait" title="It buys the piece the moment they accept">Waiting for the owner</span>
+          <button type="button" class="ghost small" data-withdraw="{{ b.txid }}">Withdraw</button>
         {% elif viewer == 'account' %}
           <span data-answer-for="{{ b.txid }}" {% if b.busy %}data-busy="1"{% endif %}
                 data-piece="{{ b.inscription }}" data-price="{{ b.price }}"
                 data-number="{{ b.number if b.number is not none else '' }}"></span>
-        {% else %}<span class="muted">waiting for them</span>{% endif %}
+        {% else %}<span class="ex-pill wait">Waiting for the owner</span>{% endif %}
       </div>
     </div>
     {% endfor %}
@@ -262,7 +266,7 @@
   {% endif %}
 
   {% if token_bids %}
-  <div class="ex-h">Buy orders on your tokens</div>
+  <div class="ex-h">Buyers for tokens you made</div>
   <script>
   /* Decline hides it from this list only: the order stays on the book, and
      anybody may still sell into it (2026-09-28). */
@@ -275,7 +279,7 @@
     if (r.ok) { var row = b.closest(".offerrow"); if (row) row.remove(); } else { b.disabled = false; }
   });
   </script>
-  <div class="panel">
+  <div class="ex-card" style="padding:4px 14px">
     {% for b in token_bids %}
     <div class="offerrow">
       <div class="oftext"><strong>{{ b.buyer|who }}</strong> wants <strong>{{ b.amount }}
@@ -291,7 +295,7 @@
 
   {% if offer_history %}
   <div class="ex-h">History</div>
-  <div class="panel">
+  <div class="ex-card" style="padding:4px 14px">
     {% for h in offer_history %}
     <div class="offerrow">
       {{ thumb(h) }}
@@ -312,9 +316,10 @@
      forms aimed at the pad's txid; an account's tab signs them (script below). #}
   {% set acts = viewer == 'wallet' or (mine_tag) %}
   <div class="row" style="gap:8px;margin:0 0 12px;flex-wrap:wrap;align-items:center">
-    <a class="btn small {{ 'on' if sort != 'new' else 'ghost' }}" href="/exchange?tab=mintpads">Popular</a>
-    <a class="btn small {{ 'on' if sort == 'new' else 'ghost' }}" href="/exchange?tab=mintpads&amp;sort=new">Latest</a>
-    <a class="btn small" style="margin-left:auto" href="/mintpad/new">Open a mintpad</a>
+    <span class="ex-modes" style="margin:0">
+      <button type="button" aria-pressed="{{ 'true' if sort != 'new' else 'false' }}" onclick="location.href='/exchange?tab=mintpads'">Popular</button>
+      <button type="button" aria-pressed="{{ 'true' if sort == 'new' else 'false' }}" onclick="location.href='/exchange?tab=mintpads&amp;sort=new'">Latest</button></span>
+    <a class="btn small" style="margin-left:auto" href="/mintpad/new">Start a launch</a>
   </div>
   <p class="msg" id="pad-news" hidden></p>
   {% if not pads %}
@@ -323,17 +328,39 @@
       collection or a token you made.</p></div>
   {% endif %}
   {% for it in pads %}
-  <div class="panel padcard">
-    <div class="muted" style="font-size:.84rem;margin:0 0 6px">
-      <strong style="color:var(--fg)">{{ wall(it.name) }}</strong>
-      <span class="pill">{{ 'token mintpad' if it.kind == 'token' else 'NFT mintpad' }}</span>
-      by {{ it.creator|who }} &middot; {{ when(it.time) if it.time else 'just now' }}
-      {%- if it.lot %} &middot; {{ it.lot }} per mint{% endif %}
-      {%- if it.kind != 'token' %} &middot; {{ it.trades }} sold{% endif %}
-      {%- if it.mints %} &middot; {{ '{:,}'.format(it.mints) }} {{ ('mint' if it.kind == 'token' else 'piece') ~ ('' if it.mints == 1 else 's') }} left{% endif %}</div>
-    <iframe class="inscription-frame postmedia padframe" src="{{ pad_frames.get(it.txid) or ('/content/' ~ it.txid) }}"
+  {# A launch as a card (the Exchange redesign, 2026-10-09): what it is, who made it,
+     how far it has got, and Mint, which opens the pad's own page right here -- the
+     page inscribed with it is what mints, so it is the thing the button shows. A pad
+     that has minted out has already left this list (2026-09-28), so every card here
+     is live. #}
+  {% set total = (it.trades or 0) + (it.mints or 0) %}
+  <div class="ex-card padcard">
+    <div class="ex-hero" style="margin:0 0 8px">
+      <span class="ex-tic" style="width:44px;height:44px;border-radius:12px;background:hsl({{ (it.number or 0) * 47 % 360 }} 45% 42%)">{{ (wall_text(it.name, '?') or '?')[:1]|upper }}</span>
+      <div class="ex-mid" style="white-space:normal">
+        <b>{{ wall(it.name) }}</b>
+        <small><span class="ex-pill done">Live</span>
+          <span class="ex-pill off">{{ 'Token' if it.kind == 'token' else 'NFT collection' }}</span>
+          by {{ it.creator|who }} &middot; &#9829; {{ it.likes }} &middot; {{ when(it.time) if it.time else 'just now' }}</small>
+      </div>
+    </div>
+    <div class="ex-stats" style="margin:0 0 4px">
+      {%- if it.lot %}<span><b>{{ it.lot }}</b> per mint</span>{% endif %}
+      {%- if it.kind != 'token' %}<span><b>{{ '{:,}'.format(it.trades) }}</b> minted</span>{% endif %}
+      {%- if it.mints %}<span><b>{{ '{:,}'.format(it.mints) }}</b> {{ ('mint' if it.kind == 'token' else 'piece') ~ ('' if it.mints == 1 else 's') }} left</span>{% endif %}
+    </div>
+    {% if it.kind != 'token' and it.mints is not none and total %}
+    <div class="ex-bar" role="progressbar" aria-label="Minted" aria-valuemin="0" aria-valuemax="{{ total }}" aria-valuenow="{{ it.trades }}">
+      <i style="width:{{ (it.trades / total * 100)|round(1) }}%"></i></div>
+    {% endif %}
+    <div class="row" style="gap:8px;margin-top:12px">
+      <button type="button" class="ex-cta" style="margin:0;flex:1" data-pad-open="{{ it.txid }}"
+              data-pad-src="{{ pad_frames.get(it.txid) or ('/content/' ~ it.txid) }}" aria-expanded="false">Mint</button>
+      <a class="btn ghost" href="/inscriptions/{{ it.txid }}/view" style="flex:0 0 auto">Open</a>
+    </div>
+    <iframe class="inscription-frame postmedia padframe" id="pad-{{ it.txid }}" hidden title="{{ wall_text(it.name, 'mintpad') }}"
             loading="lazy" sandbox="allow-scripts allow-pointer-lock"></iframe>
-    <div class="row lacts" style="gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
+    <div class="row lacts" style="gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
       {% if acts %}
       <form method="post" action="/feed/{{ it.txid }}/{{ 'unlike' if it.liked else 'like' }}" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{ csrf }}">
@@ -350,7 +377,6 @@
       <span class="pill">&#128172; {{ it.comments }}</span>
       <a class="muted" style="font-size:.84rem" href="/me">Sign in to react</a>
       {% endif %}
-      <a class="small" style="margin-left:auto" href="/inscriptions/{{ it.txid }}/view">Open</a>
     </div>
     {% for c in it.comment_rows %}
     <div class="muted" style="font-size:.86rem;margin-top:6px"><strong>{{ c.author|who }}</strong> {{ c.text }}</div>
@@ -369,9 +395,22 @@
     {% endif %}
   </div>
   {% endfor %}
+  <script>
+  // Mint opens the pad's own page in the card; it loads only when asked for.
+  document.querySelectorAll("[data-pad-open]").forEach(function (b) {
+    b.onclick = function () {
+      var f = document.getElementById("pad-" + b.dataset.padOpen);
+      if (!f.getAttribute("src")) f.setAttribute("src", b.dataset.padSrc);
+      f.hidden = !f.hidden;
+      b.setAttribute("aria-expanded", String(!f.hidden));
+      b.textContent = f.hidden ? "Mint" : "Close";
+      if (!f.hidden) f.scrollIntoView({behavior: "smooth", block: "nearest"});
+    };
+  });
+  </script>
   <style>
     .padcard{margin:0 0 14px;min-width:0}
-    .padframe{display:block;width:100%;max-width:100%;border:0;border-radius:10px;height:min(78vh,640px)}
+    .padframe{display:block;width:100%;max-width:100%;border:0;border-radius:10px;height:min(78vh,640px);margin-top:10px}
     .lacts button.on{background:var(--accent,#c9a227);color:#fff}
   </style>
   {% if viewer == 'account' and mine_tag %}
@@ -532,13 +571,28 @@
     </a>
   {%- endmacro %}
 
+  {% if collections %}
+  <input autocomplete="off" id="collfind" class="ex-find" type="search" placeholder="Search {{ collections|length }} collection{{ '' if collections|length == 1 else 's' }}"
+         aria-label="Search collections" oninput="findColl(this.value)">
+  <script>
+  // Search every collection by name; the sections above the grid step aside meanwhile.
+  function findColl(text) {
+    var q = (text || "").trim().toLowerCase();
+    document.querySelectorAll(".collrow").forEach(function (c) {
+      c.hidden = q ? c.textContent.toLowerCase().indexOf(q) < 0 : c.dataset.page === "later";
+    });
+    document.querySelectorAll("[data-browse]").forEach(function (x) { x.hidden = !!q; });
+    var more = document.getElementById("collmore"); if (more) more.hidden = !!q;
+  }
+  </script>
+  {% endif %}
   {% if popular %}
-  <div class="ex-h">Popular collections</div>
-  <div class="ex-strip">{% for c in popular %}{{ collcard(c) }}{% endfor %}</div>
+  <div data-browse><div class="ex-h">Popular collections</div>
+  <div class="ex-strip">{% for c in popular %}{{ collcard(c) }}{% endfor %}</div></div>
   {% endif %}
 
   {% if sales %}
-  <div class="ex-h">Recently sold</div>
+  <div data-browse><div class="ex-h">Recently sold</div>
   <table class="ex-table">
     {% for t in sales %}
     <tr><td style="width:48px"><a href="/inscriptions/{{ t.txid }}/view">
@@ -550,13 +604,13 @@
           &middot; from {{ t.seller|who }}</small></td>
       <td class="ex-px">{{ t.price }}</td></tr>
     {% endfor %}
-  </table>
+  </table></div>
   {% endif %}
 
   {% if collections %}
   <div class="ex-h">All collections &middot; prices in {{ coin_name }}</div>
   <div class="ex-colls" id="colls">
-    {% for c in collections %}<div class="collrow"{% if loop.index > 24 %} hidden{% endif %}>{{ collcard(c) }}</div>{% endfor %}
+    {% for c in collections %}<div class="collrow"{% if loop.index > 24 %} hidden data-page="later"{% endif %}>{{ collcard(c) }}</div>{% endfor %}
   </div>
   {% if collections|length > 24 %}
   <div id="collmore" style="text-align:center;padding:12px">
@@ -567,7 +621,7 @@
     var more = document.getElementById('collmore');
     function next() {
       var cards = document.querySelectorAll('.collrow[hidden]');
-      for (var i = 0; i < cards.length && i < 24; i++) cards[i].hidden = false;
+      for (var i = 0; i < cards.length && i < 24; i++) { cards[i].hidden = false; cards[i].dataset.page = ""; }
       if (cards.length <= 24) more.remove();
     }
     more.querySelector('button').addEventListener('click', next);
