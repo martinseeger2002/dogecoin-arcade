@@ -182,12 +182,19 @@ const CHAIN = {network: "{{ chain.network }}",
  * do not ask a second time; anything of many transactions -- a big picture, a run --
  * is shown its whole estimated total once and then goes without asking again. */
 const MAINNET = {{ (chain.is_mainnet or false)|tojson }};
-async function approveRun(label, count, perPieceSats, feeSaid) {
+/** arcadeFileCost's estimate, split the way the prompt says it, in satoshis. */
+function fileCostSats(bytes) {
+  const c = arcadeFileCost(bytes);
+  return {network: Math.round(c.chunks * 0.09 * 1e8), data: Math.round(c.outputs * 0.01 * 1e8)};
+}
+async function approveRun(label, count, per, feeSaid) {
+  // `per`: one piece's {network, data} in satoshis -- off the first piece's own
+  // transaction where there is one, else arcadeFileCost's estimate.
   const permille = (feeSaid && feeSaid.permille) || 5, floor = (feeSaid && feeSaid.minimum) || 1000000;
-  const operator = Math.max(floor, Math.ceil(perPieceSats * permille / 1000));
-  const total = Math.ceil((perPieceSats + operator) * count);
-  const ok = await arcadeMainnetReview({label, count, estimate: true, network: 0, data: perPieceSats * count,
-    others: 0, operator: operator * count, total, fee: {permille, minimum: floor}});
+  const operator = Math.max(floor, Math.ceil((per.network + per.data) * permille / 1000));
+  const total = Math.ceil((per.network + per.data + operator) * count);
+  const ok = await arcadeMainnetReview({label, count, estimate: true, network: per.network * count,
+    data: per.data * count, others: 0, operator: operator * count, total, fee: {permille, minimum: floor}});
   if (ok) wallet.approveMainnet(Math.ceil(total * 1.5), label);
   return ok;
 }
@@ -552,7 +559,7 @@ async function inscribeBytes(bytes, name, type, jsonGiven = "", {quiet = false, 
     } else if (MAINNET) {
       if (!(await approveRun(`Inscribe ${file.name}: ${commas(start.bytes)} bytes in `
           + `${commas(pieces - already)} transactions, signed here without asking again.`,
-          1, Math.round(arcadeFileCost(bytes.length).coins * 1e8), start.operator_fee))) return;
+          1, fileCostSats(bytes.length), start.operator_fee))) return;
     } else if (!(await askYes(`Inscribe ${file.name}?`,
         `${commas(start.bytes)} bytes go on the chain for ever, as `
         + `${commas(pieces)} transactions, for about ${total} in dust and fees. `
@@ -1382,10 +1389,10 @@ $("run-piece").onclick = async () => {
     const setName = (shownRun && shownRun.name) || first.name;
     if (MAINNET) {
       // The whole run's estimate, from the first piece's own transaction, once.
-      const per = shown ? wallet.mainnetCosts(first, shown)
-                        : {total: Math.round(arcadeFileCost(Number(first.bytes || 0)).coins * 1e8), operator: 0};
+      const per = shown ? wallet.mainnetCosts(first, shown) : fileCostSats(Number(first.bytes || 0));
       if (!(await approveRun(`Inscribe all ${commas(left)} of ${setName}, one after another, `
-          + "signed here without asking again.", left, per.total - per.operator, first.operator_fee))) return;
+          + "signed here without asking again.", left, {network: per.network, data: per.data},
+          first.operator_fee))) return;
       autoSet(run, {approved: Date.now(), paused: false});
       autoRun(run);
       return;

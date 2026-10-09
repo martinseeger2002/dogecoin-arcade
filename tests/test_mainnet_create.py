@@ -128,3 +128,20 @@ def test_the_pages_follow_the_browsers_choice(client):
     assert "Real PEP. Every transaction here shows its full cost" in page
     assert state.token_chain.network != "main", "and the node's own switch is where it was"
     assert "Launchpads are testnet only for now" in app.get("/mintpad/new").text
+
+
+def test_a_bigger_piece_pays_its_half_percent(client, monkeypatch):
+    """Over the minimum, the fee is 0.5% of the piece's own cost, rounded up."""
+    from arcade import inscribe as inscribelib
+    app, state = client
+    _open_both(app)
+    _fund(app, state, MAIN, value=5000 * 100_000_000)
+    _operated(state, monkeypatch)
+    content = bytes(range(256)) * 60                              # ~15 KB, three transactions
+    said = app.post("/account/inscribe", json={
+        "content": base64.b64encode(content).decode(),
+        "content_type": "application/octet-stream", "chain": "main"}).json()
+    plan = inscribelib.plan(content, "application/octet-stream", "", inscription_id=b"\0" * 8)
+    cost = int(round((plan.estimate.fee + plan.estimate.dust) * 100_000_000))
+    want = max(-(-cost * 5 // 1000), fees.DUST_LIMIT)
+    assert said["operator_fee"]["value"] == want, said

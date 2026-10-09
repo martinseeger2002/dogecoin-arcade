@@ -9918,7 +9918,8 @@ def create_app(state: AppState) -> FastAPI:
         2026-10-09: "include a inscription fee for the operator", ".5% same
         as our exchange fee". `mainnet_create_fee_permille` thousandths (default 5,
         arcade/xchain.py's FEE_PERMILLE) of what the creation costs -- its network fee
-        and the coins in its data outputs, from the plan's own estimate -- rounded up
+        and the coins in its data outputs, in satoshis (the plan's estimate is in
+        PEP, so converted where it is called) -- rounded up
         to a whole satoshi, and never below the dust limit, because an output under
         it cannot exist. Paid to the node's own mainnet address as one more output
         of the first transaction, so the review in the tab reads it off the bytes
@@ -9961,7 +9962,7 @@ def create_app(state: AppState) -> FastAPI:
         plan = inscribelib.plan(content, kind, str(said.get("json", "")),
                                 inscription_id=tag)
         fee_out, fee_said = _operator_fee(chain, address,
-                                          plan.estimate.fee + plan.estimate.dust)
+                                          int(round((plan.estimate.fee + plan.estimate.dust) * COIN)))
         if plan.chunks == 1:
             unsigned = _spend_now(
                 account, chain, address,
@@ -10772,7 +10773,7 @@ def create_app(state: AppState) -> FastAPI:
                            "and the pieces after it are still here to ask "
                            "for."}, status_code=400)
         fee_out, fee_said = _operator_fee(chain, run["address"],
-                                          plan.estimate.fee + plan.estimate.dust)
+                                          int(round((plan.estimate.fee + plan.estimate.dust) * COIN)))
         try:
             outputs = _class_c_or_b(chain, run["address"], plan.payloads[0],
                                     _coin_pubkey(account.pubkey, chain)) + fee_out
