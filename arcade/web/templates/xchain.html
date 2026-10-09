@@ -56,8 +56,8 @@
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
     <input type="hidden" name="kind" value="{{ a.kind }}"><input type="hidden" name="asset" value="{{ a.asset }}">
     <div class="ex-seg" role="radiogroup" aria-label="Buy or sell" style="margin-bottom:12px">
-      <label><input type="radio" name="side" value="buy" checked><span>Buy {{ aname }}</span></label>
-      <label><input type="radio" name="side" value="sell"><span>Sell {{ aname }}</span></label>
+      <label><input type="radio" name="side" value="buy" checked><span>{{ 'Make offer' if a.kind == 'nft' else 'Buy ' ~ aname }}</span></label>
+      <label><input type="radio" name="side" value="sell"><span>{{ 'Sell it' if a.kind == 'nft' else 'Sell ' ~ aname }}</span></label>
     </div>
     <div class="ex-modes"><button type="button" data-mode="best">Best price now</button><button type="button" data-mode="limit">Set my price</button></div>
     {% if a.kind != 'nft' %}
