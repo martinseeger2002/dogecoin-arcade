@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "_chart.html" as chart %}
+{% import "_exui.html" as ex %}
 {% set bname = wall_text(base.name, 'a token') %}{% set qname = wall_text(quote.name, 'a token') %}
 {% block title %}{{ bname }}/{{ qname }} · Exchange · DogecoinArcade{% endblock %}
 {% block body %}
@@ -9,17 +10,23 @@
    to fill it, and a buy holds its QUOTE back exactly as a sell holds its BASE. #}
 <a class="back-link" href="/exchange?tab=tokens">&#8592; All markets</a>
 
-<div class="markethead">
-  <div style="min-width:0;overflow-wrap:anywhere">
-    <h1 style="margin:0;font-size:1.3rem">{{ wall(base.name, 'token name') }}<span class="muted">/{{ wall(quote.name, 'token name') }}</span>
+{{ ex.style() }}
+<div class="ex-hero">
+  <span class="ex-tic" style="width:46px;height:46px">{{ (bname or '?')[:1]|upper }}</span>
+  <div style="min-width:0">
+    <h1>{{ wall(base.name, 'token name') }}<span class="muted" style="font-weight:600"> / {{ wall(quote.name, 'token name') }}</span>
       {{ net_badge(chain) }}</h1>
-    <div style="font-size:.78rem;margin:2px 0">{{ bname }} {{ supply_badge(base) }} &middot; {{ qname }} {{ supply_badge(quote) }}</div>
-    <div class="muted" style="font-size:.78rem">#{{ base.property_id }} priced in #{{ quote.property_id }}
-      &middot; <a href="/exchange/pairs/{{ quote.property_id }}/{{ base.property_id }}">flip to {{ qname }}/{{ bname }}</a>
-      &middot; <a href="/tokens/{{ base.property_id }}">{{ bname }}</a>
-      &middot; <a href="/tokens/{{ quote.property_id }}">{{ qname }}</a></div>
+    <div class="muted" style="font-size:.78rem">{{ supply_badge(base) }} {{ supply_badge(quote) }}
+      #{{ base.property_id }} priced in #{{ quote.property_id }}
+      &middot; <a href="/exchange/pairs/{{ quote.property_id }}/{{ base.property_id }}">flip to {{ qname }}/{{ bname }}</a></div>
   </div>
 </div>
+<div class="ex-price">
+  {%- if stats.last is not none %}<b>{{ ex.px(stats.last) }}</b><span class="unit">{{ qname }}</span>{{ ex.chg(stats.change) }}
+  {%- else %}<b>&mdash;</b><span class="unit">no trades yet</span>{% endif %}
+</div>
+<p class="ex-note" style="margin:0 0 12px">Settles on {{ chain.label|lower }} in the block an order lands in: the chain
+  matches it, nobody has to be online to fill it, and nobody holds your tokens.</p>
 
 {% if not live %}
 <div class="panel"><p class="msg err" style="margin:0">Token-for-token pairs are
@@ -28,8 +35,7 @@
   The book below fills in once they are.</p></div>
 {% endif %}
 
-<div class="panel">
-  {{ chart.headline(stats, qname ~ ' per ' ~ bname) }}
+<div class="ex-card" style="padding:10px 10px 6px">
   {% set periods = {'15m': '15-minute period', '1h': 'hour', '4h': '4-hour period', '1d': 'day'} %}
   <div class="row tfs" style="gap:4px;margin:6px 0 8px" role="group" aria-label="Candle size">
     {% for t in timeframes %}
@@ -40,69 +46,47 @@
   {{ chart.candles(slots, qname ~ ' each', period=periods[tf]) }}
 </div>
 
-<div class="grid2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">
-  <div class="panel">
-    <h3 style="margin:0 0 8px">Book</h3>
-    <table class="book" style="width:100%;font-size:.86rem">
-      <tr class="muted"><th style="text-align:left">Price ({{ qname }})</th><th style="text-align:right">{{ bname }}</th><th style="text-align:right">{{ qname }}</th></tr>
-      {% for o in book.asks|reverse %}
-      <tr><td style="color:var(--bad)">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}{% if o.mine %} <span class="muted">(yours)</span>{% endif %}{% if o.pending %} <span class="muted" title="Broadcast, not in a block yet{{ ': it meets the book and trades when its block lands' if o.crosses }}">{{ '(trades when its block lands)' if o.crosses else '(pending)' }}</span>{% endif %}</td>
-          <td style="text-align:right">{{ o.base_shown }}</td><td style="text-align:right">{{ o.quote_shown }}</td></tr>
-      {% endfor %}
-      <tr><td colspan="3" class="muted" style="text-align:center;font-size:.76rem;padding:4px 0">
-        {% if not book.asks and not book.bids %}No orders yet{% else %}asks above, bids below{% endif %}</td></tr>
-      {% for o in book.bids %}
-      <tr><td style="color:var(--ok)">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}{% if o.mine %} <span class="muted">(yours)</span>{% endif %}{% if o.pending %} <span class="muted" title="Broadcast, not in a block yet{{ ': it meets the book and trades when its block lands' if o.crosses }}">{{ '(trades when its block lands)' if o.crosses else '(pending)' }}</span>{% endif %}</td>
-          <td style="text-align:right">{{ o.base_shown }}</td><td style="text-align:right">{{ o.quote_shown }}</td></tr>
-      {% endfor %}
-    </table>
-  </div>
-
-  <div class="panel">
-    <h3 style="margin:0 0 8px">Recent trades</h3>
-    {% if trades %}
-    <table style="width:100%;font-size:.86rem">
-      <tr class="muted"><th style="text-align:left">Price</th><th style="text-align:right">{{ bname }}</th><th style="text-align:right">Block</th></tr>
-      {% for t in trades %}
-      <tr><td style="color:{{ 'var(--ok)' if t.side == 'buy' else 'var(--bad)' }}">{{ "%.8f"|format(t.each)|trim('0')|trim('.') if t.each is not none else '—' }}</td>
-          <td style="text-align:right">{{ t.base_shown }}</td><td style="text-align:right">{{ "{:,}".format(t.height) }}</td></tr>
-      {% endfor %}
-    </table>
-    {% else %}<p class="muted" style="margin:0">Nothing has traded on this pair yet.</p>{% endif %}
-  </div>
-</div>
-
-<div class="panel">
-  <h3 style="margin:0 0 10px">Trade {{ bname }} for {{ qname }}</h3>
+<div class="ex-card">
   {% if viewer == 'nobody' %}
+    <h3>Trade {{ bname }} for {{ qname }}</h3>
     <p class="muted" style="margin:0">Sign in to put an order on this pair.</p>
   {% elif viewer == 'account' and not account_address %}
+    <h3>Trade {{ bname }} for {{ qname }}</h3>
     <p class="muted" style="margin:0">This account has no {{ chain.label|lower }} address yet.</p>
   {% else %}
   <form method="post" action="/exchange/pair-order" id="pair-form">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
     <input type="hidden" name="base" value="{{ base.property_id }}">
     <input type="hidden" name="quote" value="{{ quote.property_id }}">
-    <div class="sides">
+    <div class="ex-seg" role="radiogroup" aria-label="Buy or sell" style="margin-bottom:12px">
       <label><input type="radio" name="side" value="buy" checked><span>Buy {{ bname }}</span></label>
       <label><input type="radio" name="side" value="sell"><span>Sell {{ bname }}</span></label>
     </div>
-    <div class="row" style="gap:10px;align-items:flex-end">
-      <div class="field" style="flex:1 1 150px;margin:0"><label>Amount of {{ bname }}</label>
-        <input autocomplete="off" name="amount" id="pair-amount" inputmode="decimal" placeholder="0"></div>
-      <div class="field" style="flex:1 1 150px;margin:0"><label>Price, {{ qname }} each</label>
-        <input autocomplete="off" name="price" id="pair-price" inputmode="decimal" placeholder="0"></div>
-      <button {% if viewer == 'account' %}type="button" id="pair-order"{% else %}type="submit"{% endif %}
-              class="{{ 'danger' if chain.is_mainnet }}" style="flex:0 0 auto" {% if not live %}disabled{% endif %}>Place order</button>
-    </div>
+    <div class="ex-modes"><button type="button" data-mode="best">Best price now</button><button type="button" data-mode="limit">Set my price</button></div>
+    <div class="ex-box"><label for="pair-amount"><span>Amount</span><span>You hold {{ held_base }}</span></label>
+      <div class="line"><input autocomplete="off" name="amount" id="pair-amount" inputmode="decimal" placeholder="0">
+        <span class="unit">{{ bname }}</span></div></div>
+    <div class="ex-box"><label for="pair-price"><span>Price each</span><span>Total <b data-ex-total>0</b> {{ qname }}</span></label>
+      <div class="line"><input autocomplete="off" name="price" id="pair-price" inputmode="decimal" placeholder="0">
+        <span class="unit">{{ qname }}</span></div></div>
+    <div class="ex-quote"></div>
+    <button {% if viewer == 'account' %}type="button"{% else %}type="submit"{% endif %} id="pair-order"
+            class="ex-cta" {% if not live %}disabled{% endif %}>Enter an amount</button>
   </form>
   <p class="msg err" id="pair-trouble" hidden></p>
   <p class="msg ok" id="pair-news" hidden></p>
-  <p class="muted" style="font-size:.78rem;margin:10px 0 0">You hold {{ held_base }} {{ bname }} and
-    {{ held_quote }} {{ qname }}. An order that meets the book trades in the block it lands in, at the
-    resting orders' prices, best first; whatever is not matched stands at your price, its tokens held
-    back, until it fills or you cancel it.</p>
-  <div class="row" style="gap:8px;margin-top:10px">
+  <p class="ex-note">You hold {{ held_base }} {{ bname }} and {{ held_quote }} {{ qname }}. Whatever is not
+    matched in its block stands at your price, its tokens held back, until it fills or you cancel it.</p>
+  <script>
+  exTrade(document.getElementById("pair-form"), {sideName: "side", buyValue: "buy",
+    amount: "pair-amount", price: "pair-price", button: "pair-order",
+    asks: [{% for o in book.asks if not o.mine and not o.pending %}[{{ o.each|tojson }}, {{ o.base_shown|tojson }}],{% endfor %}]
+      .map(function (l) { return [Number(l[0]), Number(String(l[1]).replace(/,/g, ""))]; }),
+    bids: [{% for o in book.bids if not o.mine and not o.pending %}[{{ o.each|tojson }}, {{ o.base_shown|tojson }}],{% endfor %}]
+      .map(function (l) { return [Number(l[0]), Number(String(l[1]).replace(/,/g, ""))]; }),
+    coin: {{ qname|tojson }}, token: {{ bname|tojson }}});
+  </script>
+  <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
     {% for which in ('buy', 'sell') %}
     <form method="post" action="/exchange/pair-order/cancel" style="margin:0">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
@@ -110,7 +94,7 @@
       <input type="hidden" name="quote" value="{{ quote.property_id }}">
       <input type="hidden" name="side" value="{{ which }}">
       <button {% if viewer == 'account' %}type="button" data-cancel="{{ which }}"{% else %}type="submit"{% endif %}
-              class="secondary">Cancel my {{ which }} orders</button>
+              class="secondary small">Cancel my {{ which }} orders</button>
     </form>
     {% endfor %}
   </div>
@@ -155,6 +139,59 @@
   {% endif %}
   {% endif %}
 </div>
+
+<div class="grid2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">
+  <div class="panel">
+    <h3 style="margin:0 0 8px">Book</h3>
+    <table class="book" style="width:100%;font-size:.86rem">
+      {% set takes = live and viewer != 'nobody' %}
+      <tr class="muted"><th style="text-align:left">Price ({{ qname }})</th><th style="text-align:right">{{ bname }}</th><th style="text-align:right">{{ qname }}</th>{% if takes %}<th></th>{% endif %}</tr>
+      {% for o in book.asks|reverse %}
+      <tr><td style="color:var(--bad)">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}{% if o.mine %} <span class="muted">(yours)</span>{% endif %}{% if o.pending %} <span class="muted" title="Broadcast, not in a block yet{{ ': it meets the book and trades when its block lands' if o.crosses }}">{{ '(trades when its block lands)' if o.crosses else '(pending)' }}</span>{% endif %}</td>
+          <td style="text-align:right">{{ o.base_shown }}</td><td style="text-align:right">{{ o.quote_shown }}</td>
+          {% if takes %}<td style="text-align:right">{% if not o.mine and not o.pending %}<button type="button" class="small" data-ex-take
+            data-side="buy" data-amount="{{ o.base_shown }}" data-price="{{ ex.px(o.each) }}">Buy</button>{% endif %}</td>{% endif %}</tr>
+      {% endfor %}
+      <tr><td colspan="{{ 4 if takes else 3 }}" class="muted" style="text-align:center;font-size:.76rem;padding:4px 0">
+        {% if not book.asks and not book.bids %}No orders yet{% else %}asks above, bids below{% endif %}</td></tr>
+      {% for o in book.bids %}
+      <tr><td style="color:var(--ok)">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}{% if o.mine %} <span class="muted">(yours)</span>{% endif %}{% if o.pending %} <span class="muted" title="Broadcast, not in a block yet{{ ': it meets the book and trades when its block lands' if o.crosses }}">{{ '(trades when its block lands)' if o.crosses else '(pending)' }}</span>{% endif %}</td>
+          <td style="text-align:right">{{ o.base_shown }}</td><td style="text-align:right">{{ o.quote_shown }}</td>
+          {% if takes %}<td style="text-align:right">{% if not o.mine and not o.pending %}<button type="button" class="small" data-ex-take
+            data-side="sell" data-amount="{{ o.base_shown }}" data-price="{{ ex.px(o.each) }}">Sell</button>{% endif %}</td>{% endif %}</tr>
+      {% endfor %}
+    </table>
+    {% if takes and (book.asks or book.bids) %}<p class="muted" style="font-size:.76rem;margin:6px 0 0">Press Buy or Sell on a row to take it.</p>{% endif %}
+  </div>
+
+  <div class="panel">
+    <h3 style="margin:0 0 8px">Recent trades</h3>
+    {% if trades %}
+    <table style="width:100%;font-size:.86rem">
+      <tr class="muted"><th style="text-align:left">Price</th><th style="text-align:right">{{ bname }}</th><th style="text-align:right">Block</th></tr>
+      {% for t in trades %}
+      <tr><td style="color:{{ 'var(--ok)' if t.side == 'buy' else 'var(--bad)' }}">{{ "%.8f"|format(t.each)|trim('0')|trim('.') if t.each is not none else '—' }}</td>
+          <td style="text-align:right">{{ t.base_shown }}</td><td style="text-align:right">{{ "{:,}".format(t.height) }}</td></tr>
+      {% endfor %}
+    </table>
+    {% else %}<p class="muted" style="margin:0">Nothing has traded on this pair yet.</p>{% endif %}
+  </div>
+</div>
+
+<script>
+// Take an order from its row: the other side of it, at its price, in the card above.
+document.querySelectorAll("[data-ex-take]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    var side = document.querySelector("input[name=side][value=" + b.dataset.side + "]");
+    if (side) side.checked = true;
+    var amount = document.getElementById("pair-amount"), price = document.getElementById("pair-price");
+    if (amount) amount.value = b.dataset.amount.replace(/,/g, "");
+    if (price) price.value = b.dataset.price;
+    var form = document.getElementById("pair-form");
+    if (form) { form.scrollIntoView({behavior: "smooth", block: "center"}); form.dispatchEvent(new Event("input")); }
+  });
+});
+</script>
 <style>
   /* the Buy/Sell choice, as the coin pair page draws it (pair.html): radios beside
      their labels, and wrapping as a pair on a phone rather than one above the other */

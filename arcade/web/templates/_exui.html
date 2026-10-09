@@ -1,0 +1,227 @@
+{#- The Exchange's one look (2026-10-09: "Rework all aspects of the entire
+    exchange tab with new improved UI", after the prototype he approved). Markets as
+    rows with a sparkline, a market as a big price over a chart, one trade card with
+    one big button, a book whose every row can be taken, and orders that say where
+    they are. The same sheet and pill shapes as the Wallet tab, so the site reads as
+    one app. Imported by exchange.html, pair.html, pair_tokens.html, xchain.html and
+    market_collection.html; `style()` once per page. -#}
+
+{% macro style() %}
+<style>
+.ex-seg{display:flex;background:var(--code);border-radius:999px;padding:3px;gap:2px;margin:0 0 16px;overflow-x:auto}
+.ex-seg a,.ex-seg button,.ex-seg label{flex:1;text-align:center;padding:7px 12px;border-radius:999px;font-size:.86rem;
+  font-weight:650;color:var(--muted);white-space:nowrap;text-decoration:none;cursor:pointer;margin:0;box-shadow:none;background:none;border:0}
+.ex-seg a.on,.ex-seg button[aria-pressed="true"],.ex-seg input:checked+span{background:var(--panel);color:var(--fg);box-shadow:var(--shadow)}
+.ex-seg label{padding:0;display:flex}
+.ex-seg label input{position:absolute;opacity:0;pointer-events:none;width:1px}
+.ex-seg label span{flex:1;padding:8px 12px;border-radius:999px}
+.ex-seg label input:focus-visible+span{outline:2px solid var(--accent)}
+.ex-find{width:100%;max-width:none!important;margin:0 0 6px}
+.ex-list{display:flex;flex-direction:column}
+.ex-mrow{display:flex;align-items:center;gap:12px;padding:11px 6px;border-bottom:1px solid var(--line);color:var(--fg);text-decoration:none;border-radius:10px}
+.ex-mrow:hover{background:var(--code);text-decoration:none}
+.ex-tic{width:38px;height:38px;border-radius:50%;flex:none;display:grid;place-items:center;font-weight:800;color:#fff;
+  background:var(--accent);object-fit:cover;font-size:.9rem;overflow:hidden}
+.ex-mid{flex:1;min-width:0}
+.ex-mid b{display:block;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ex-mid small{display:block;color:var(--muted);font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ex-px{text-align:right;font-variant-numeric:tabular-nums;font-weight:650;white-space:nowrap}
+.ex-chg{display:inline-block;font-size:.76rem;font-weight:750;padding:1px 7px;border-radius:6px}
+.ex-chg.up{color:var(--ok);background:color-mix(in srgb,var(--ok) 13%,transparent)}
+.ex-chg.down{color:var(--bad);background:color-mix(in srgb,var(--bad) 13%,transparent)}
+.ex-chg.flat{color:var(--muted);background:color-mix(in srgb,var(--muted) 12%,transparent)}
+.ex-spark{width:64px;height:26px;flex:none}
+@media (max-width:380px){.ex-spark{display:none}}
+.ex-hero{display:flex;align-items:center;gap:12px;margin:4px 0 6px;min-width:0}
+.ex-hero h1{margin:0;font-size:1.25rem;overflow-wrap:anywhere}
+.ex-price{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin:2px 0 4px}
+.ex-price b{font-size:2.2rem;font-weight:780;letter-spacing:-.03em;font-variant-numeric:tabular-nums;line-height:1.1}
+.ex-price .unit{font-weight:650;color:var(--muted)}
+.ex-stats{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:.82rem;color:var(--muted);margin:0 0 12px}
+.ex-stats b{color:var(--fg);font-variant-numeric:tabular-nums;font-weight:650}
+.ex-card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:var(--shadow);margin:0 0 14px}
+.ex-card h3{margin:0 0 12px}
+.ex-modes{display:flex;gap:6px;margin:0 0 12px;flex-wrap:wrap}
+.ex-modes button{font-size:.8rem;font-weight:700;padding:5px 12px;border-radius:999px;border:1px solid var(--line);color:var(--muted);background:none;box-shadow:none}
+.ex-modes button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.ex-box{background:var(--code);border-radius:14px;padding:10px 12px;margin:0 0 8px}
+.ex-box label{font-size:.76rem;font-weight:650;color:var(--muted);display:flex;justify-content:space-between;gap:8px;margin:0}
+.ex-box input{border:0!important;background:none!important;box-shadow:none!important;font-size:1.45rem;font-weight:700;padding:2px 0!important;
+  width:100%;font-variant-numeric:tabular-nums;color:var(--fg)}
+.ex-box .unit{font-weight:700;font-size:.9rem;white-space:nowrap}
+.ex-box .line{display:flex;align-items:center;gap:8px}
+.ex-quote{font-size:.84rem;color:var(--muted);margin:6px 2px 0;display:grid;gap:3px}
+.ex-quote div{display:flex;justify-content:space-between;gap:8px}
+.ex-quote b{color:var(--fg);font-weight:600;text-align:right}
+.ex-quote .bad{color:var(--bad)}
+.ex-cta{width:100%;margin-top:12px;padding:14px;border-radius:14px;font-weight:750;font-size:1rem}
+.ex-cta.sell{background:var(--bad);color:#fff}
+.ex-note{font-size:.78rem;color:var(--muted);margin:10px 2px 0}
+.ex-h{font-size:.74rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:22px 2px 8px}
+.ex-pill{display:inline-block;font-size:.7rem;font-weight:800;padding:1px 8px;border-radius:999px;white-space:nowrap}
+.ex-pill.wait{color:var(--warn);background:color-mix(in srgb,var(--warn) 13%,transparent)}
+.ex-pill.open{color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.ex-pill.done{color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent)}
+.ex-pill.off{color:var(--muted);background:var(--code)}
+.ex-pill.bad{color:var(--bad);background:color-mix(in srgb,var(--bad) 12%,transparent)}
+.ex-bar{height:6px;border-radius:3px;background:var(--code);margin-top:6px;overflow:hidden}
+.ex-bar i{display:block;height:100%;background:var(--accent)}
+.ex-ord{display:flex;gap:12px;align-items:center;padding:12px;border-radius:14px;background:var(--panel);border:1px solid var(--line);margin-bottom:8px}
+.ex-colls{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.ex-coll{display:flex;flex-direction:column;gap:2px;padding:8px;border-radius:16px;background:var(--panel);border:1px solid var(--line);
+  box-shadow:var(--shadow);color:var(--fg);text-decoration:none;min-width:0}
+.ex-coll:hover{text-decoration:none;border-color:var(--accent)}
+.ex-coll .art{aspect-ratio:1;border-radius:11px;background:var(--code) center/cover no-repeat;display:grid;place-items:center;
+  color:var(--muted);font-size:.72rem;margin-bottom:6px;max-width:100%}
+.ex-coll b{font-size:.92rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ex-coll small{color:var(--muted);font-size:.76rem}
+.ex-coll .nums{display:flex;justify-content:space-between;gap:6px;font-size:.78rem;margin-top:4px;font-variant-numeric:tabular-nums}
+.ex-coll .nums span{color:var(--muted)}
+.ex-strip{display:flex;gap:12px;overflow-x:auto;padding:2px 2px 8px;scroll-snap-type:x mandatory}
+.ex-strip .ex-coll{flex:0 0 160px;scroll-snap-align:start}
+/* the books that already exist, in this look: depth bars behind each row */
+.obrow{border-radius:8px}
+/* a sheet from the bottom, like the Wallet's */
+.ex-scrim{position:fixed;inset:0;background:rgba(20,18,14,.45);z-index:60;display:flex;align-items:flex-end;justify-content:center}
+.ex-sheet{background:var(--panel);width:100%;max-width:480px;border-radius:22px 22px 0 0;padding:10px 18px calc(22px + env(safe-area-inset-bottom,0px));
+  max-height:92vh;overflow:auto;animation:exup .2s ease}
+@keyframes exup{from{transform:translateY(30px);opacity:.4}}
+@media (prefers-reduced-motion:reduce){.ex-sheet{animation:none}.ex-steps li.now .dot{animation:none}}
+.ex-sheet .grab{width:40px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 12px}
+.ex-sheet h2{margin:0 0 12px;font-size:1.1rem;display:flex;align-items:center;text-transform:none;letter-spacing:0;color:var(--fg)}
+.ex-sheet h2 button{margin-left:auto;font-size:1.3rem;color:var(--muted);background:none;box-shadow:none;padding:0 4px}
+.ex-kv{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:.9rem}
+.ex-kv span:first-child{color:var(--muted)}
+.ex-kv span:last-child{text-align:right;min-width:0;overflow-wrap:anywhere}
+.ex-steps{list-style:none;padding:0;margin:8px 0 0;display:grid;gap:14px}
+.ex-steps li{display:flex;gap:12px;align-items:flex-start;color:var(--muted)}
+.ex-steps li.now{color:var(--fg);font-weight:600}
+.ex-steps li.done{color:var(--ok)}
+.ex-steps .dot{width:22px;height:22px;border-radius:50%;border:2px solid var(--line);display:grid;place-items:center;font-size:.72rem;flex:none}
+.ex-steps li.now .dot{border-color:var(--accent);border-right-color:transparent;animation:exsp .8s linear infinite}
+.ex-steps li.done .dot{border-color:var(--ok);background:var(--ok);color:#fff}
+.ex-steps small{display:block;font-weight:400;color:var(--muted);font-size:.8rem}
+@keyframes exsp{to{transform:rotate(360deg)}}
+@media (prefers-color-scheme:dark){.ex-scrim{background:rgba(0,0,0,.6)}}
+</style>
+<script>
+/* A bottom sheet: exSheet(title) -> {body, close}. Escape and a tap outside close it. */
+window.exSheet = window.exSheet || function (title) {
+  var scrim = document.createElement("div"); scrim.className = "ex-scrim";
+  var s = document.createElement("div"); s.className = "ex-sheet";
+  s.setAttribute("role", "dialog"); s.setAttribute("aria-modal", "true");
+  var grab = document.createElement("div"); grab.className = "grab";
+  var h = document.createElement("h2"); h.textContent = title;
+  var x = document.createElement("button"); x.type = "button"; x.setAttribute("aria-label", "Close"); x.textContent = "×";
+  h.append(x);
+  var body = document.createElement("div");
+  s.append(grab, h, body); scrim.append(s); document.body.append(scrim);
+  function close() { scrim.remove(); document.removeEventListener("keydown", key); }
+  function key(e) { if (e.key === "Escape") close(); }
+  document.addEventListener("keydown", key);
+  x.onclick = close;
+  scrim.addEventListener("click", function (e) { if (e.target === scrim) close(); });
+  return {body: body, close: close, sheet: s};
+};
+</script>
+<script>
+/* The trade card (2026-10-09), laid over a page's own order form without touching how
+ * an order is placed: the page's button still reads the same two boxes when pressed.
+ *   "Best price now" walks the real book on the other side for the amount typed and
+ *   puts the price that takes it into the price box, saying exactly what it fills;
+ *   "Set my price" leaves the price to the reader and says whether it trades now or
+ *   waits in the book.
+ * exTrade(root, {sideName, buyValue, amount, price, button, asks, bids, coin, token, feePermille})
+ *   asks/bids: [[price, amount], ...] from the page's book, as numbers. */
+window.exTrade = window.exTrade || function (root, o) {
+  if (!root) return null;
+  var $ = function (id) { return document.getElementById(id); };
+  var amount = $(o.amount), price = $(o.price), button = $(o.button);
+  var quote = root.querySelector(".ex-quote"), modes = root.querySelectorAll(".ex-modes button");
+  var total = root.querySelector("[data-ex-total]");
+  var mode = (o.asks.length || o.bids.length) ? "best" : "limit";
+  var num = function (t) { var n = Number(String(t || "").replace(/,/g, "").trim()); return isFinite(n) ? n : 0; };
+  var fmt = function (n) { return Number(n).toLocaleString(undefined, {maximumFractionDigits: 8}); };
+  var side = function () { var r = root.querySelector("input[name=" + o.sideName + "]:checked"); return r ? r.value : o.buyValue; };
+  var buying = function () { return side() === o.buyValue; };
+  function walk(qty) {
+    var lv = buying() ? o.asks.slice().sort(function (a, b) { return a[0] - b[0]; })
+                      : o.bids.slice().sort(function (a, b) { return b[0] - a[0]; });
+    var left = qty, cost = 0, took = 0, n = 0, worst = null;
+    for (var i = 0; i < lv.length && left > 1e-12; i++) {
+      var t = Math.min(left, lv[i][1]); cost += t * lv[i][0]; took += t; left -= t; n++; worst = lv[i][0];
+    }
+    return {took: took, cost: cost, left: left, n: n, worst: worst};
+  }
+  function line(a, b, cls) { return "<div" + (cls ? " class=\"" + cls + "\"" : "") + "><span>" + a + "</span><b>" + b + "</b></div>"; }
+  function update() {
+    modes.forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.mode === mode)); });
+    var qty = num(amount.value), rows = [], word = buying() ? "Buy" : "Sell";
+    price.readOnly = mode === "best";
+    if (mode === "best") {
+      var w = walk(qty), other = buying() ? o.asks : o.bids;
+      if (!other.length) {
+        rows.push(line("Nothing to take right now", "set your price instead", "bad"));
+      } else if (qty) {
+        price.value = w.worst != null ? String(+w.worst.toFixed(8)) : "";
+        rows.push(line("Average price", fmt(w.took ? w.cost / w.took : 0) + " " + o.coin));
+        rows.push(line("Takes", w.n + (w.n === 1 ? " order" : " orders") + " in the book"));
+        if (w.left > 1e-12) rows.push(line("Only " + fmt(w.took) + " " + o.token + " is offered", "the rest waits at " + fmt(w.worst), "bad"));
+      } else {
+        rows.push(line("Best " + (buying() ? "ask" : "bid"), fmt(buying() ? Math.min.apply(null, o.asks.map(function (l) { return l[0]; }))
+                                                             : Math.max.apply(null, o.bids.map(function (l) { return l[0]; }))) + " " + o.coin));
+      }
+    } else if (qty && num(price.value)) {
+      var p = num(price.value), other2 = buying() ? o.asks : o.bids;
+      var crosses = other2.some(function (l) { return buying() ? l[0] <= p : l[0] >= p; });
+      rows.push(line(crosses ? "Trades now" : "Waits in the book",
+                     crosses ? "with the orders at your price or better" : "until someone " + (buying() ? "sells" : "buys") + " at " + fmt(p)));
+    }
+    var each = num(price.value), sum = qty * each;
+    if (total) total.textContent = qty && each ? fmt(sum) : "0";
+    if (o.feePermille && qty && each) rows.push(line("Node fee (" + (o.feePermille / 10) + "%)", fmt(sum * o.feePermille / 1000) + " " + o.coin));
+    if (qty && each) rows.push(line("Network fee", "shown before you sign"));
+    quote.innerHTML = rows.join("");
+    button.textContent = qty ? word + " " + fmt(qty) + " " + o.token : "Enter an amount";
+    button.classList.toggle("sell", !buying());
+  }
+  modes.forEach(function (b) { b.onclick = function () { mode = b.dataset.mode; update(); }; });
+  root.addEventListener("input", update);
+  root.addEventListener("change", update);
+  // A row of the book filled the boxes in: its price is the reader's now.
+  document.addEventListener("click", function (e) {
+    if (e.target.closest && e.target.closest("[data-sell-into],.x-take,[data-ex-take]")) {
+      mode = "limit"; setTimeout(update, 0);
+    }
+  });
+  update();
+  return {update: update, setMode: function (m) { mode = m; update(); }};
+};
+</script>
+{% endmacro %}
+
+{#- A sparkline of real trade prices, oldest first; nothing at all for fewer than two. -#}
+{% macro spark(values) -%}
+{%- if values and values|length >= 2 -%}
+{%- set lo = values|min -%}{%- set hi = values|max -%}{%- set span = (hi - lo) or 1 -%}
+{%- set up = values[-1] >= values[0] -%}
+<svg class="ex-spark" viewBox="0 0 64 26" preserveAspectRatio="none" aria-hidden="true"><polyline fill="none"
+  stroke="{{ 'var(--ok)' if up else 'var(--bad)' }}" stroke-width="1.6" stroke-linejoin="round"
+  points="{% for v in values %}{{ '%.1f'|format(loop.index0 / (values|length - 1) * 64) }},{{ '%.1f'|format(24 - (v - lo) / span * 22) }} {% endfor %}"/></svg>
+{%- endif -%}
+{%- endmacro %}
+
+{#- The day's move as a chip, or a dash. -#}
+{% macro chg(change, new=false) -%}
+{%- if change is not none -%}
+<span class="ex-chg {{ 'up' if change > 0 else ('down' if change < 0 else 'flat') }}"
+  {%- if new %} title="Traded for less than a day: the move since its first trade"{% endif %}>
+  {{- '+' if change > 0 }}{{ "%.1f"|format(change) }}%</span>
+{%- else -%}<span class="muted">&mdash;</span>{%- endif -%}
+{%- endmacro %}
+
+{#- A price with its trailing zeros gone. -#}
+{% macro px(v) -%}
+{%- set t = "%.8f"|format(v|float) -%}{%- set t = t.rstrip('0') -%}
+{{- t ~ '0' if t.endswith('.') else t -}}
+{%- endmacro %}

@@ -1,9 +1,13 @@
 {% extends "base.html" %}
 {% import "_chart.html" as chart %}
+{% import "_exui.html" as ex %}
 {% block title %}{{ wall_text(summary.collection, 'A collection') }} · DogecoinArcade{% endblock %}
 {% block body %}
 {% import "_share_nft.html" as share %}
 <div id="live" data-generation="{{ state.generation }}" class="live"></div>
+{{ ex.style() }}
+{% set coin_name = 'PEP' if chain.is_mainnet else 'PEP TEST' %}
+<a class="back-link" href="/exchange?tab=market">&#8592; All collections</a>
 
 {% macro coins(sats) %}{{ "%.4f"|format(sats / 100000000) }}{% endmacro %}
 
@@ -34,7 +38,7 @@
 
 <div class="statbar">
   <div class="stat"><b>{% if floor %}{{ coins(floor) }}{% else %}&mdash;{% endif %}</b>
-    <span>Floor &middot; coins</span></div>
+    <span>Floor &middot; {{ coin_name }}</span></div>
   <div class="stat"><b>{{ for_sale }}</b><span>For sale</span></div>
   <div class="stat"><b>{{ offered }}</b><span>Offers</span></div>
   <div class="stat"><b>{{ "{:,}".format(owners) }}</b><span>Owners</span></div>
@@ -48,7 +52,7 @@
     <span>{% if about.supply and summary.count >= about.supply %}Pieces &middot; complete
           {% elif about.supply %}Pieces{% else %}Pieces &middot; no limit{% endif %}</span></div>
   <div class="stat"><b>{% if traded %}{{ "%.2f"|format(volume) }}{% else %}&mdash;{% endif %}</b>
-    <span>Volume &middot; {{ traded }} sold</span></div>
+    <span>Volume &middot; {{ coin_name }} &middot; {{ traded }} sold</span></div>
 </div>
 
 {% if node_error %}<div class="msg err">{{ node_error }}</div>{% endif %}
@@ -63,7 +67,7 @@
 {% set hc_kind, hc_id, hc_name, hc_label, hc_creator = 'collection', 0, summary.collection, summary.collection, summary.creator %}
 {% include "_holders_chat.html" %}
 {% if yours %}
-<h2>Yours in this collection &mdash; {{ yours|length }}</h2>
+<div class="ex-h">Yours in this collection &mdash; {{ yours|length }}</div>
 <div class="panel" style="margin-bottom:18px">
   <table>
     {% for row in yours %}
@@ -105,7 +109,7 @@
 </div>
 {% endif %}
 
-<h2>The collection &mdash; for sale first, then by edition</h2>
+<div class="ex-h">The collection &mdash; for sale first, then by edition</div>
 <div class="tiles">
   {% for row in rows %}
   {% set data = row.json|fromjson %}

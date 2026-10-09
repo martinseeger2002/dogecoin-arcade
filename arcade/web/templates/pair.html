@@ -1,50 +1,37 @@
 {% extends "base.html" %}
 {% import "_chart.html" as chart %}
-{% block title %}{{ wall_text(prop.name, 'A token') }}/{{ chain.label|upper }} · Exchange · DogecoinArcade{% endblock %}
+{% import "_exui.html" as ex %}
+{% block title %}{{ wall_text(prop.name, 'A token') }}/{{ 'PEP' if chain.is_mainnet else 'PEP TEST' }} · Exchange · DogecoinArcade{% endblock %}
 {% block body %}
 <div id="live" data-generation="{{ state.generation }}" class="live"></div>
 <a class="back-link" href="/exchange?tab=tokens">&#8592; All markets</a>
 
-<div class="markethead">
-  {# Shrinks and wraps: a long description used to run off a phone (2026-09-28). #}
-  <div class="row" style="gap:12px;align-items:center;flex:1 1 280px;min-width:0;flex-wrap:nowrap">
-    {% if face.icon %}
-      <img src="/content/{{ face.icon }}" alt="{{ wall_text(prop.name) }}" loading="lazy"
-           style="width:42px;height:42px;object-fit:cover;border-radius:50%">
-    {% else %}
-      <span class="coinface" style="width:42px;height:42px"></span>
-    {% endif %}
-    <div style="min-width:0;overflow-wrap:anywhere">
-      <h1 style="margin:0;font-size:1.3rem">{{ wall(prop.name, 'token name') }}<span class="muted">/{{ chain.label|upper }}</span>
-        {{ net_badge(chain) }}{{ supply_badge(prop) }}</h1>
-      <div class="muted" style="font-size:.78rem">#{{ prop.property_id }}
-        {%- if face.about %} &middot; {{ wall(face.about, 'description') }}{% endif %}
-        {%- if face.url %} &middot; <a href="{{ face.url }}" rel="noopener noreferrer nofollow"
-          target="_blank">link</a>{% endif %}</div>
-    </div>
+{{ ex.style() }}
+{% set coin_name = 'PEP' if chain.is_mainnet else 'PEP TEST' %}
+{# The market's face, its price big, and the day's move (the Exchange redesign,
+   2026-10-09); the rest of the day's numbers in one quiet line under it. #}
+<div class="ex-hero">
+  {% if face.icon %}<img class="ex-tic" src="/content/{{ face.icon }}" alt="" loading="lazy" style="width:46px;height:46px">
+  {% else %}<span class="ex-tic" style="width:46px;height:46px">{{ (wall_text(prop.name, '?') or '?')[:1]|upper }}</span>{% endif %}
+  <div style="min-width:0">
+    <h1>{{ wall(prop.name, 'token name') }}<span class="muted" style="font-weight:600"> / {{ coin_name }}</span>
+      {{ net_badge(chain) }}{{ supply_badge(prop) }}</h1>
+    <div class="muted" style="font-size:.78rem;overflow-wrap:anywhere">#{{ prop.property_id }}
+      {%- if face.about %} &middot; {{ wall(face.about, 'description') }}{% endif %}
+      {%- if face.url %} &middot; <a href="{{ face.url }}" rel="noopener noreferrer nofollow" target="_blank">link</a>{% endif %}</div>
   </div>
-  <div class="ticks">
-    <div class="tick"><b class="{{ 'up' if (day.change or 0) >= 0 else 'down' }}">
-      {%- if day.last is not none %}{{ "%.8f"|format(day.last) }}{% else %}&mdash;{% endif %}</b>
-      <span>Last &middot; coins</span></div>
-    <div class="tick"><b>
-      {%- if day.change is not none %}<span class="{{ 'up' if day.change >= 0 else 'down' }}">
-        {{ '+' if day.change >= 0 }}{{ "%.1f"|format(day.change) }}%</span>
-      {%- else %}&mdash;{% endif %}</b><span>24h change{% if day.new %} &middot; new{% endif %}</span></div>
-    <div class="tick"><b>{% if day.high is not none %}{{ "%.8f"|format(day.high) }}{% else %}&mdash;{% endif %}</b>
-      <span>24h high</span></div>
-    <div class="tick"><b>{% if day.low is not none %}{{ "%.8f"|format(day.low) }}{% else %}&mdash;{% endif %}</b>
-      <span>24h low</span></div>
-    <div class="tick"><b>{{ "%.4f"|format(day.coins) }}</b><span>24h volume &middot; coins</span></div>
-    {# Whose holdings that is, and who may be told: it belongs to the reader,
-       not to the market, so a stranger looking at a public copy gets no number
-       about a reader this page cannot see. An account whose key has no address
-       on this chain gets none either -- its figure would be a zero standing
-       for "nothing was looked up", which is not the same claim. #}
-    {% if viewer == 'wallet' or account_address %}
-    <div class="tick"><b>{{ held }}</b><span>You hold</span></div>
-    {% endif %}
-  </div>
+</div>
+<div class="ex-price">
+  {%- if day.last is not none %}<b>{{ ex.px(day.last) }}</b><span class="unit">{{ coin_name }}</span>{{ ex.chg(day.change, day.new) }}
+  {%- else %}<b>&mdash;</b><span class="unit">no trades yet</span>{% endif %}
+</div>
+<div class="ex-stats">
+  <span>24h high <b>{% if day.high is not none %}{{ ex.px(day.high) }}{% else %}&mdash;{% endif %}</b></span>
+  <span>24h low <b>{% if day.low is not none %}{{ ex.px(day.low) }}{% else %}&mdash;{% endif %}</b></span>
+  <span>24h volume <b>{{ "%.4f"|format(day.coins) }}</b> {{ coin_name }}</span>
+  {# Whose holdings that is: the reader's, so a stranger looking at a public copy
+     gets no number about somebody this page cannot see. #}
+  {% if viewer == 'wallet' or account_address %}<span>You hold <b>{{ held }}</b></span>{% endif %}
 </div>
 
 <div class="pairgrid">
@@ -61,23 +48,27 @@
     </div>
 
     <div class="panel">
-      <h3 style="margin:0 0 10px">Buy and sell {{ wall_text(prop.name, 'this token') }}</h3>
-      {% if viewer == 'account' %}
-      {% if account_address %}
-      <div class="trade">
-        <div class="sides">
+      {% if viewer == 'account' and account_address %}
+      <div class="ex-trade" id="ex-trade">
+        <div class="ex-seg" role="radiogroup" aria-label="Buy or sell" style="margin-bottom:12px">
           <label><input type="radio" name="book-side" value="bid" checked><span>Buy</span></label>
           <label><input type="radio" name="book-side" value="ask"><span>Sell</span></label>
         </div>
-        <div class="row" style="gap:10px;align-items:flex-end">
-          <div class="field" style="flex:1 1 150px;margin:0"><label>Amount of {{ wall_text(prop.name, 'this token') }}</label>
-            <input autocomplete="off" id="book-amount" inputmode="decimal" placeholder="0"></div>
-          <div class="field" style="flex:1 1 150px;margin:0"><label>Price, coins each</label>
-            <input autocomplete="off" id="book-price" inputmode="decimal" placeholder="0.00000000"></div>
-          <button type="button" id="book-order" class="{{ 'danger' if chain.is_mainnet }}"
-                  style="flex:0 0 auto">Put it on the book</button>
-        </div>
+        <div class="ex-modes"><button type="button" data-mode="best">Best price now</button><button type="button" data-mode="limit">Set my price</button></div>
+        <div class="ex-box"><label for="book-amount"><span>Amount</span><span>You hold {{ held }}</span></label>
+          <div class="line"><input autocomplete="off" id="book-amount" inputmode="decimal" placeholder="0">
+            <span class="unit">{{ wall(prop.name, 'token name') }}</span></div></div>
+        <div class="ex-box"><label for="book-price"><span>Price each</span><span>Total <b data-ex-total>0</b> {{ coin_name }}</span></label>
+          <div class="line"><input autocomplete="off" id="book-price" inputmode="decimal" placeholder="0.00000000">
+            <span class="unit">{{ coin_name }}</span></div></div>
+        <div class="ex-quote"></div>
+        <button type="button" id="book-order" class="ex-cta">Enter an amount</button>
       </div>
+      {% else %}
+      <h3 style="margin:0 0 10px">Buy and sell {{ wall_text(prop.name, 'this token') }}</h3>
+      {% endif %}
+      {% if viewer == 'account' %}
+      {% if account_address %}
       <label id="book-away-row" class="muted" style="display:flex;gap:8px;align-items:flex-start;font-size:.84rem;margin:10px 0 0">
         <input type="checkbox" id="book-away" checked style="width:auto;margin:3px 0 0">
         <span>Let this server fill it while I'm away. It holds a signature for each small lot,
@@ -85,12 +76,20 @@
           is told when it can fill, and the app does it the next time you open it.</span></label>
       <p class="msg err" id="book-trouble" hidden></p>
       <p class="msg ok" id="book-news" hidden></p>
-      <p class="muted" style="font-size:.78rem;margin:10px 0 0">You hold {{ held }}
-        {{ wall_text(prop.name, 'this token') }} and {{ "%.4f"|format(coins) }} coins in the wallet that
-        signs this &mdash; not in this node, which is not holding your key. The
-        order goes on the chain and stands until you cancel it. Selling holds the
-        tokens back until then; a bid holds nothing, because nothing on this
-        chain can reserve coins and still let a wallet spend.</p>
+      <p class="ex-note">Settles on {{ chain.label|lower }} in the block your order lands in: no deposit, nobody
+        holding your coins. You hold {{ held }} {{ wall_text(prop.name, 'this token') }} and
+        {{ "%.4f"|format(coins) }} {{ coin_name }}. A sell holds its tokens back until it trades or you cancel it.</p>
+      <script>
+      exTrade(document.getElementById("ex-trade"), {sideName: "book-side", buyValue: "bid",
+        amount: "book-amount", price: "book-price", button: "book-order",
+        // What can be taken: not your own orders, not ones still waiting for their block.
+        asks: [{% for o in book.asks if not o.mine and not o.pending %}[{{ o.price_shown|tojson }}, {{ o.free_shown|tojson }}],{% endfor %}]
+          .map(function (l) { return [Number(String(l[0]).replace(/,/g, "")), Number(String(l[1]).replace(/,/g, ""))]; })
+          .filter(function (l) { return l[1] > 0; }),
+        bids: [{% for o in book.bids if not o.mine and not o.pending %}[{{ o.price_shown|tojson }}, {{ o.tokens_shown|tojson }}],{% endfor %}]
+          .map(function (l) { return [Number(String(l[0]).replace(/,/g, "")), Number(String(l[1]).replace(/,/g, ""))]; }),
+        coin: {{ coin_name|tojson }}, token: {{ wall_text(prop.name, 'token')|tojson }}});
+      </script>
       <script type="module">
       /* An order on the book, from the account's side of it.
 
@@ -588,7 +587,9 @@
     {% endif %}
 
     <div class="panel">
-      <h3 style="margin:0 0 8px">Order book</h3>
+      <h3 style="margin:0 0 4px">Order book</h3>
+      {% if viewer != 'nobody' and fills_ready and (book.asks or book.bids) %}
+      <p class="muted" style="font-size:.78rem;margin:0 0 8px">Press Buy or Sell on a row to take it.</p>{% endif %}
       {% if not book.asks and not book.bids %}
         <p class="muted" style="margin:0">Nothing on either side yet.</p>
       {% endif %}

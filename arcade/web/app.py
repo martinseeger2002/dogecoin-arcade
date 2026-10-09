@@ -20325,6 +20325,14 @@ def create_app(state: AppState) -> FastAPI:
         """
         return float(price) if divisible else float(price) / COIN
 
+    def _spark(points: list) -> list[float]:
+        """The last two dozen trade prices, oldest first, for a market row's
+        sparkline (the Exchange redesign, 2026-10-09). Real trades only: a market
+        with fewer than two has no line to draw, and the row draws none."""
+        rows = sorted(points, key=lambda p: (p.get("when") or 0, p.get("height") or 0))[-24:]
+        prices = [float(p["price"]) for p in rows if p.get("price")]
+        return prices if len(prices) >= 2 else []
+
     def _pairs(index, trades) -> list[dict[str, Any]]:
         """Tokens against the coin, most traded first."""
         wanted = {p["property_id"]: p for p in _token_props(index)}
@@ -20352,7 +20360,7 @@ def create_app(state: AppState) -> FastAPI:
                 "last": stats["last"], "change": change, "new": new,
                 "high": stats["high"], "low": stats["low"],
                 "trades": stats["trades"], "volume": stats["volume"],
-                "coins": stats["coins"],
+                "coins": stats["coins"], "spark": _spark(points),
                 # In coins, like every other price in this row: the table prints
                 # the last price and the day's range beside these two, and one
                 # row cannot speak two units.
@@ -20405,6 +20413,7 @@ def create_app(state: AppState) -> FastAPI:
                 "last": stats["last"], "change": change, "new": new, "high": stats["high"], "low": stats["low"],
                 "trades": sum(1 for f in fills if f["created"] >= day_ago), "volume": stats["volume"],
                 "coins": stats["coins"], "all_trades": len(fills), "orders": m["orders"],
+                "spark": _spark(points),
                 "ask": float(book["sells"][0]["price"]) * scale if book["sells"] else None,
                 "bid": float(book["buys"][0]["price"]) * scale if book["buys"] else None,
             })
@@ -20432,6 +20441,7 @@ def create_app(state: AppState) -> FastAPI:
                 "last": stats["last"], "change": change, "new": new,
                 "high": stats["high"], "low": stats["low"],
                 "trades": stats["trades"], "volume": stats["volume"], "coins": stats["coins"],
+                "spark": _spark(points),
                 "all_trades": len(points), "orders": len(book["asks"]) + len(book["bids"]),
                 "ask": float(book["asks"][0]["price"]) * scale if book["asks"] else None,
                 "bid": float(book["bids"][0]["price"]) * scale if book["bids"] else None,
@@ -21402,7 +21412,7 @@ def create_app(state: AppState) -> FastAPI:
                       stats=chartlib.last_and_change(points),
                       slots=chartlib.candles(points, buckets=frame[2], span=frame[1]),
                       tf=frame[0], timeframes=[t[0] for t in chartlib.TIMEFRAMES],
-                      viewer=viewer, mine=mine, trust=XCHAIN_TRUST, live=_x_open(),
+                      viewer=viewer, mine=mine, trust=XCHAIN_TRUST, live=_x_open(), owner=owner,
                       account_test=held, account_main=holds_main,
                       fee_permille=__import__("arcade.xchain", fromlist=["FEE_PERMILLE"]).FEE_PERMILLE,
                       addresses=({"testnet": state.xchain.address("testnet"),
