@@ -488,8 +488,8 @@
       <span class="ex-mid"><b>{{ wall(p.name, 'token name') }}<span class="muted" style="font-weight:500">/{% if p.quote_label %}{{ wall(p.quote_label, 'token name') }}{% else %}{{ coin_name }}{% endif %}</span></b>
         <small>{{ net_badge(chain) }}{% if p.quote_main %}<span class="muted">/</span>{{ net_badge(true) }}{% endif %}{% if p.property_id %}{{ supply_badge(p) }}{% endif %}
           {#- The whole description, behind its wall (a verdict is kept per text): CSS cuts it short. -#}
-          {%- if p.about %}<span class="about" style="display:block;width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ wall(p.about, 'description') }}</span>{% endif %}
-          {%- if p.coins %} &middot; {{ p.trades }} trade{{ '' if p.trades == 1 else 's' }} today{% elif p.bid or p.ask %} &middot; {{ p.orders }} order{{ '' if p.orders == 1 else 's' }}{% endif %}</small></span>
+          {%- if p.coins %} {{ p.trades }} trade{{ '' if p.trades == 1 else 's' }} today{% elif p.bid or p.ask %} {{ p.orders }} order{{ '' if p.orders == 1 else 's' }}{% endif %}
+          {%- if p.about %}<span class="about" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ wall(p.about, 'description') }}</span>{% endif %}</small></span>
       {{ ex.spark(p.spark) }}
       <span class="ex-px">
         {%- if p.last is not none %}{{ ex.px(p.last) }}
