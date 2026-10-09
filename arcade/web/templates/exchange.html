@@ -78,7 +78,7 @@
     @media(max-width:560px){.offerrow{flex-wrap:wrap}.ofdo{width:100%;justify-content:flex-start;padding-left:60px}}
   </style>
 
-  {% if offers_in or not x_in %}<div class="ex-h">Offers for your things {{ net_badge(chain) }}</div>{% endif %}
+  {% if offers_in or not x_in %}<div class="ex-h">Offers for your things</div>{% endif %}
   {% if not offers_in and not x_in %}
     <div class="panel empty"><p>No offers yet. When somebody offers for one of your
       NFTs, it shows up here.</p></div>
@@ -87,8 +87,8 @@
     {% for b in offers_in %}
     <div class="offerrow">
       {{ thumb(b) }}
-      <div class="oftext"><strong>{{ b.buyer|who }}</strong> offers <strong>{{ b.price|replace(' coins', ' ' ~ ('PEP' if chain.is_mainnet else 'PEP TEST')) }}</strong>
-        for {{ piece(b) }}</div>
+      <div class="oftext"><strong>{{ b.buyer|who }}</strong> offers <strong>{{ b.price|replace(' coins', ' ' ~ ('PEP' if chain.is_mainnet else 'PEP TEST')) }}</strong> {{ net_badge(chain) }}
+        for {{ piece(b) }} {{ net_badge(chain) }}</div>
       <div class="ofdo">
         {% if b.settled %}<span class="ex-pill done">Sold</span>
         {% elif b.busy %}<span class="ex-pill wait">Selling, waiting for its block</span>
@@ -215,7 +215,7 @@
        alt="{{ b.name }}" loading="lazy" onerror="this.remove()">{% else %}<span class="muted" style="display:grid;place-items:center;height:100%;font-size:.7rem">{{ (b.content_type.split('/')[-1] or 'file')[:6] }}</span>{% endif %}</a>
   {%- endmacro %}
   {% if x_in %}
-  <div class="ex-h">Offers in mainnet PEP for your things {{ net_badge(true) }}</div>
+  <div class="ex-h">Offers in mainnet PEP for your things</div>
   <div class="ex-card" style="padding:4px 14px">
     {% for b in x_in %}
     <div class="offerrow">
@@ -228,7 +228,7 @@
   </div>
   {% endif %}
 
-  <div class="ex-h">Your offers {{ net_badge(chain) }}</div>
+  <div class="ex-h">Your offers</div>
   {% if x_out %}
   <div class="ex-card" style="padding:4px 14px;margin-bottom:10px">
     {% for b in x_out %}
@@ -250,7 +250,7 @@
     {% for b in offers_out %}
     <div class="offerrow">
       {{ thumb(b) }}
-      <div class="oftext">You offered <strong>{{ b.price|replace(' coins', ' ' ~ ('PEP' if chain.is_mainnet else 'PEP TEST')) }}</strong> for {{ piece(b) }}
+      <div class="oftext">You offered <strong>{{ b.price|replace(' coins', ' ' ~ ('PEP' if chain.is_mainnet else 'PEP TEST')) }}</strong> {{ net_badge(chain) }} for {{ piece(b) }} {{ net_badge(chain) }}
         <span class="muted" style="font-size:.84rem">&middot; owned by {{ b.owner|who }}</span></div>
       <div class="ofdo">
         {% if viewer == 'account' and b.presigned %}
