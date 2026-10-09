@@ -346,3 +346,33 @@ def test_a_guest_coming_back_keeps_its_name_unless_somebody_holds_it(two_nodes):
     back = again(held)
     assert back["me"]["id"] == held, "the name is free again, so it comes back"
     assert again("not-a-guest-name")["me"]["id"].startswith("guest-")
+
+
+def test_one_player_in_two_tabs_gets_two_sessions_that_both_hear_and_outlive_each_other(two_nodes):
+    """ASHVALE and Ziibiing open in two tabs as the same account (2026-10-09): the
+    tabs shared one session, so each heard half of the room and either one leaving
+    took the other out with it -- they kicked each other off over and over and their
+    saves failed meanwhile. Each tab now has its own session and its own copy of every
+    event, and the player leaves the room only with its last tab."""
+    (ca, sa), (cb, sb) = two_nodes
+    svc = sa.mesh
+    one = svc.join("g1/town", "nTabPlayer", None)
+    two = svc.join("g1/town", "nTabPlayer", None)
+    assert one.token != two.token and one.queue is not two.queue
+    s1, s2 = Stream(ca, one.token), Stream(ca, two.token)
+    jb = join(cb, sb, room="town")
+    other = Stream(cb, jb["token"])
+    try:
+        cb.post("/realtime/send", json={"csrf_token": sb.csrf_token, "token": jb["token"], "data": "hello"})
+        for s in (s1, s2):
+            s.wait(lambda e: e["type"] == "message" and e.get("data") == "hello")
+        # The first tab closes: the second is still in the room and still hears.
+        svc.leave(one.token)
+        cb.post("/realtime/send", json={"csrf_token": sb.csrf_token, "token": jb["token"], "data": "still there"})
+        s2.wait(lambda e: e["type"] == "message" and e.get("data") == "still there")
+        assert svc.present("g1/town", "nTabPlayer")
+        # The last tab closes: now the player leaves the room.
+        svc.leave(two.token)
+        assert not svc.present("g1/town", "nTabPlayer")
+    finally:
+        s1.close(); s2.close(); other.close()

@@ -155,6 +155,14 @@ class MeshService:
         self.loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._sessions: dict[str, Session] = {}
+        # Several pages of one member in one room (2026-10-09: ASHVALE and Ziibiing open
+        # in two tabs as the same account shared ONE session -- one queue read by both
+        # pages, and either page leaving took the other out of the room, so the two
+        # kicked each other off and their saves failed meanwhile). The node still has
+        # the member once; each page gets its own session and its own copy of every
+        # event, fanned out from the member's queue, and the member leaves the room
+        # only with its last page.
+        self._fans: dict[tuple[str, str], dict] = {}
         self._lock = threading.Lock()
 
     # ---------------------------------------------------------------- lifecycle
@@ -316,15 +324,48 @@ class MeshService:
                 if self.last_announced else None}
 
     def join(self, room: str, member: str, cred: dict | None) -> Session:
-        with self._lock:
-            for s in self._sessions.values():
-                if s.room == room and s.member == member:
-                    return s
-        queue = self._call(self.node.join(room, member, cred))
+        key = (room, member)
+
+        async def attach() -> asyncio.Queue:
+            # On the mesh loop, so the fan and the node never race each other.
+            fan = self._fans.get(key)
+            if fan is None or key not in self.node.local:
+                if fan is not None:
+                    fan["task"].cancel()
+                base = await self.node.join(room, member, cred)
+                fan = {"base": base, "outs": [], "task": None}
+                self._fans[key] = fan
+
+                async def pump(f=fan):
+                    while True:
+                        ev = await f["base"].get()
+                        for out in list(f["outs"]):
+                            try:
+                                out.put_nowait(ev)
+                            except asyncio.QueueFull:   # a page not reading: it rejoins
+                                pass
+                fan["task"] = self.node._spawn(pump())   # the node cancels it when it stops
+            out: asyncio.Queue = asyncio.Queue(maxsize=1000)
+            fan["outs"].append(out)
+            return out
+
+        queue = self._call(attach())
         session = Session(secrets.token_urlsafe(18), room, member, cred, queue)
         with self._lock:
             self._sessions[session.token] = session
         return session
+
+    async def _detach(self, s: Session) -> None:
+        """One page gone; the member leaves the room only when it was the last."""
+        key = (s.room, s.member)
+        fan = self._fans.get(key)
+        if fan is not None:
+            fan["outs"] = [q for q in fan["outs"] if q is not s.queue]
+            if fan["outs"]:
+                return
+            fan["task"].cancel()
+            self._fans.pop(key, None)
+        await self.node.leave(s.room, s.member)
 
     def present(self, room: str, member: str) -> bool:
         """Is `member` in `room` on this node right now?"""
@@ -347,7 +388,7 @@ class MeshService:
         with self._lock:
             s = self._sessions.pop(str(token or ""), None)
         if s is not None and self.loop is not None:
-            self._call(self.node.leave(s.room, s.member))
+            self._call(self._detach(s))
 
     def touch(self, token: str) -> None:
         with self._lock:
