@@ -643,7 +643,7 @@ def test_two_sets_of_the_same_name_do_not_share_a_price(client):
     rows = body[body.index("All collections"):]
     # Nine coins is their sale; it must not appear on the other creator's row.
     ours = rows[rows.index("nMe/Doge%20Punks"):]
-    ours = ours[:ours.index("</tr>")]
+    ours = ours[:ours.index("</a>")]          # one card (the Exchange redesign, 2026-10-09)
     assert "9.0000" not in ours, "one set's trade is not the other's last price"
 
 

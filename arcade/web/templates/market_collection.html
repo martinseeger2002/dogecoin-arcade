@@ -67,7 +67,7 @@
 {% set hc_kind, hc_id, hc_name, hc_label, hc_creator = 'collection', 0, summary.collection, summary.collection, summary.creator %}
 {% include "_holders_chat.html" %}
 {% if yours %}
-<div class="ex-h">Yours in this collection &mdash; {{ yours|length }}</div>
+<h2>Yours in this collection &mdash; {{ yours|length }}</h2>
 <div class="panel" style="margin-bottom:18px">
   <table>
     {% for row in yours %}
@@ -109,7 +109,7 @@
 </div>
 {% endif %}
 
-<div class="ex-h">The collection &mdash; for sale first, then by edition</div>
+<h2>The collection &mdash; for sale first, then by edition</h2>
 <div class="tiles">
   {% for row in rows %}
   {% set data = row.json|fromjson %}

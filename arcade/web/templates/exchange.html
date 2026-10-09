@@ -444,9 +444,9 @@
     <a class="ex-mrow" href="{{ p.href }}" data-market="{{ wall_text(p.name, '')|lower }}/{{ quote_text|lower }} #{{ p.property_id }}">
       {%- if p.icon %}<img class="ex-tic" src="/content/{{ p.icon }}" alt="" loading="lazy">
       {%- else %}<span class="ex-tic" style="background:hsl({{ ((p.property_id|string|length * 97 + (p.name|length) * 31) % 360) }} 45% 42%)">{{ (wall_text(p.name, '?') or '?')[:1]|upper }}</span>{% endif %}
-      <span class="ex-mid"><b>{{ wall(p.name, 'token name') }}</b>
-        <small>{{ wall_text(p.name, 'token') }} / {% if p.quote_label %}{{ wall(p.quote_label, 'token name') }}{% else %}{{ coin_name }}{% endif %}
-          {%- if p.quote_main %} &middot; mainnet{% endif %}
+      {# Each row still says which chain and what supply (2026-10-06): the badges, small. #}
+      <span class="ex-mid"><b>{{ wall(p.name, 'token name') }}<span class="muted" style="font-weight:500">/{% if p.quote_label %}{{ wall(p.quote_label, 'token name') }}{% else %}{{ coin_name }}{% endif %}</span></b>
+        <small>{{ net_badge(chain) }}{% if p.quote_main %}<span class="muted">/</span>{{ net_badge(true) }}{% endif %}{% if p.property_id %}{{ supply_badge(p) }}{% endif %}
           {%- if p.coins %} &middot; {{ p.trades }} trade{{ '' if p.trades == 1 else 's' }} today{% elif p.bid or p.ask %} &middot; {{ p.orders }} order{{ '' if p.orders == 1 else 's' }}{% endif %}</small></span>
       {{ ex.spark(p.spark) }}
       <span class="ex-px">
@@ -518,28 +518,45 @@
      name, how many, and the two numbers a buyer looks for, the floor and how many are
      for sale. Prices in {{ coin }}. #}
   {% set coin_name = 'PEP' if chain.is_mainnet else 'PEP TEST' %}
-  {% macro collcard(c, cls='') -%}
+  {% macro collcard(c) -%}
     {% set where = '/exchange/collection/' ~ c.creator ~ '/' ~ c.name|urlencode %}
-    <a class="ex-coll {{ cls }}" href="{{ where }}"{% if cls == 'collrow' and c._hide %} hidden{% endif %}>
+    <a class="ex-coll" href="{{ where }}">
       <span class="art" {% if c.cover %}style="background-image:url(/content/{{ c.cover }})"{% endif %}
             role="img" aria-label="{{ wall_text(c.name, 'collection') }}">{% if not c.cover %}no art{% endif %}</span>
       <b>{{ wall(c.name, 'collection name') }}</b>
       <small>{{ "{:,}".format(c.count) }} pieces &middot; {{ c.creator|who_text }}</small>
-      <span class="nums"><span>Floor</span><strong>{% if c.floor %}{{ ex.px(c.floor / 100000000) }}{% else %}&mdash;{% endif %}</strong></span>
-      <span class="nums"><span>For sale</span><strong>{{ c.for_sale or '—' }}</strong></span>
-      {%- if c.change is defined and c.change is not none %}<span class="nums"><span>24h</span>{{ ex.chg(c.change) }}</span>{% endif %}
+      <span class="nums"><span>Floor</span><strong>{% if c.floor %}{{ "%.4f"|format(c.floor / 100000000) }}{% else %}&mdash;{% endif %}</strong></span>
+      <span class="nums"><span>24h</span>{% if c.change is defined and c.change is not none %}{{ ex.chg(c.change) }}{% else %}<span>&mdash;</span>{% endif %}</span>
+      <span class="nums"><span>For sale</span><strong>{{ c.for_sale or 0 }}</strong></span>
+      {%- if c.day_coins %}<span class="nums"><span>Volume today</span><span>{{ "%.2f"|format(c.day_coins) }}</span></span>{% endif %}
     </a>
   {%- endmacro %}
 
   {% if popular %}
-  <div class="ex-h">Popular</div>
+  <div class="ex-h">Popular collections</div>
   <div class="ex-strip">{% for c in popular %}{{ collcard(c) }}{% endfor %}</div>
+  {% endif %}
+
+  {% if sales %}
+  <div class="ex-h">Recently sold</div>
+  <table class="ex-table">
+    {% for t in sales %}
+    <tr><td style="width:48px"><a href="/inscriptions/{{ t.txid }}/view">
+      {%- if t.held and t.content_type.startswith('image/') %}
+      <img class="ex-tic" style="border-radius:10px" src="/content/{{ t.txid }}" alt="" loading="lazy">
+      {%- else %}<span class="ex-tic" style="border-radius:10px;background:var(--code);color:var(--muted);font-size:.66rem">#{{ t.number }}</span>{% endif %}</a></td>
+      <td><a href="/inscriptions/{{ t.txid }}/view"><b>{{ wall(t.name) }}</b></a>
+        <small>{% if t.collection %}{{ t.collection }}{% if t.edition is not none %} #{{ t.edition }}{% endif %} &middot; {% endif %}{{ t.when|ago }}
+          &middot; from {{ t.seller|who }}</small></td>
+      <td class="ex-px">{{ t.price }}</td></tr>
+    {% endfor %}
+  </table>
   {% endif %}
 
   {% if collections %}
   <div class="ex-h">All collections &middot; prices in {{ coin_name }}</div>
   <div class="ex-colls" id="colls">
-    {% for c in collections %}{{ collcard(dict(c, _hide=loop.index > 24), 'collrow') }}{% endfor %}
+    {% for c in collections %}<div class="collrow"{% if loop.index > 24 %} hidden{% endif %}>{{ collcard(c) }}</div>{% endfor %}
   </div>
   {% if collections|length > 24 %}
   <div id="collmore" style="text-align:center;padding:12px">
@@ -561,23 +578,6 @@
   })();
   </script>
   {% endif %}
-  {% endif %}
-
-  {% if sales %}
-  <div class="ex-h">Recently sold</div>
-  <div class="ex-list">
-    {% for t in sales %}
-    <a class="ex-mrow" href="/inscriptions/{{ t.txid }}/view">
-      {%- if t.held and t.content_type.startswith('image/') %}
-      <img class="ex-tic" style="border-radius:10px" src="/content/{{ t.txid }}" alt="" loading="lazy">
-      {%- else %}<span class="ex-tic" style="border-radius:10px;background:var(--code);color:var(--muted);font-size:.66rem">#{{ t.number }}</span>{% endif %}
-      <span class="ex-mid"><b>{{ wall(t.name) }}</b>
-        <small>{% if t.collection %}{{ t.collection }}{% if t.edition is not none %} #{{ t.edition }}{% endif %} &middot; {% endif %}{{ t.when|ago }}
-          &middot; from {{ t.seller|who_text }}</small></span>
-      <span class="ex-px">{{ t.price }}</span>
-    </a>
-    {% endfor %}
-  </div>
   {% endif %}
 
   {% if not collections %}
