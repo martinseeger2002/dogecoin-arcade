@@ -21381,6 +21381,15 @@ def create_app(state: AppState) -> FastAPI:
         for o in mine:
             o["units_shown"] = shown(o["left_amount"] if o["status"] == "open" else o["amount"])
             o["each"] = (o["pepe"] / COIN) / ((o["amount"] / COIN) if a["divisible"] else o["amount"])
+            # Where its deposit is, said on the order (2026-10-09: a sell that met a
+            # buy was cancelled at 4 of 6 confirmations because nothing said it was
+            # still on its way). Asked the same way the watcher asks.
+            o["waiting"] = ""
+            if o["status"] == "awaiting" and o.get("deposit_txid"):
+                try:
+                    o["waiting"] = state.xchain.check_deposit(o)[1]
+                except Exception:
+                    o["waiting"] = ""
         held, holds_main = "", ""
         if viewer == "account":
             acct = signed_in(request)

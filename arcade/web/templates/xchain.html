@@ -49,14 +49,21 @@
   <div class="panel">
     <h3 style="margin:0 0 8px">Book</h3>
     <table style="width:100%;font-size:.86rem">
-      <tr class="muted"><th style="text-align:left">PEP each</th><th style="text-align:right">{{ aname }}</th></tr>
+      {# Every order in the book can be taken from its own row (2026-10-09: "you can't
+         fill a buy order"): the button fills the form below with the other side of it. #}
+      {% set takes = live and viewer != 'nobody' %}
+      <tr class="muted"><th style="text-align:left">PEP each</th><th style="text-align:right">{{ aname }}</th>{% if takes %}<th></th>{% endif %}</tr>
       {% for o in book.sells|reverse %}
-      <tr><td style="color:var(--bad)">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}</td><td style="text-align:right">{{ o.units_shown }}</td></tr>
+      <tr><td style="color:var(--bad)">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}</td><td style="text-align:right">{{ o.units_shown }}</td>
+        {% if takes %}<td style="text-align:right"><button type="button" class="small x-take" data-side="buy"
+          data-amount="{{ o.units_shown }}" data-price="{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}">Buy it</button></td>{% endif %}</tr>
       {% endfor %}
-      <tr><td colspan="2" class="muted" style="text-align:center;font-size:.76rem;padding:4px 0">
+      <tr><td colspan="{{ 3 if takes else 2 }}" class="muted" style="text-align:center;font-size:.76rem;padding:4px 0">
         {% if not book.sells and not book.buys %}No orders yet{% else %}sells above, buys below{% endif %}</td></tr>
       {% for o in book.buys %}
-      <tr><td style="color:var(--ok)">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}</td><td style="text-align:right">{{ o.units_shown }}</td></tr>
+      <tr><td style="color:var(--ok)">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}</td><td style="text-align:right">{{ o.units_shown }}</td>
+        {% if takes %}<td style="text-align:right"><button type="button" class="small x-take" data-side="sell"
+          data-amount="{{ o.units_shown }}" data-price="{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}">Sell to them</button></td>{% endif %}</tr>
       {% endfor %}
     </table>
   </div>
@@ -95,6 +102,10 @@
       <button {% if viewer == 'account' %}type="button" id="x-order"{% else %}type="submit"{% endif %} class="danger" style="flex:0 0 auto">Place order</button>
     </div>
   </form>
+  <p class="muted" style="font-size:.82rem;margin:10px 0 0">To take an order in the book, press its
+    <em>Buy it</em> or <em>Sell to them</em>: the form fills in, and placing it deposits your side. It trades
+    once your deposit has its confirmations: 6 on testnet (a {{ aname }} sell), 2 on mainnet (a PEP buy),
+    usually 5 to 15 minutes. You can close the page meanwhile; <em>Your orders</em> below says where it is.</p>
   <p class="msg err" id="x-trouble" hidden></p><p class="msg ok" id="x-news" hidden></p>
   {% endif %}
 </div>
@@ -107,9 +118,9 @@
     {% for o in mine %}
     <tr><td>{{ o.side }}</td><td style="text-align:right">{{ o.units_shown }}</td>
       <td style="text-align:right">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}</td>
-      <td style="text-align:right" title="{{ o.note }}">{{ 'waiting for its deposit' if o.status == 'awaiting' else o.status }}</td>
+      <td style="text-align:right" title="{{ o.note }}">{% if o.status == 'awaiting' %}deposit: {{ o.waiting or 'on its way' }}{% else %}{{ o.status }}{% endif %}</td>
       <td style="text-align:right">{% if o.status in ('open', 'awaiting') %}
-        {% if viewer == 'account' %}<button type="button" class="secondary small" data-x-cancel="{{ o.id }}">Cancel</button>
+        {% if viewer == 'account' %}<button type="button" class="secondary small" data-x-cancel="{{ o.id }}" data-x-waiting="{{ 'yes' if o.status == 'awaiting' else '' }}">Cancel</button>
         {% else %}<form method="post" action="/exchange/x/cancel" style="margin:0">
           <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="order" value="{{ o.id }}">
           <input type="hidden" name="back" value="/exchange/x/{{ a.kind }}/{{ a.asset }}">
@@ -151,6 +162,10 @@ if (btn) btn.onclick = async () => {
   } catch (e) { say(String(e.message || e)); } finally { btn.disabled = false; }
 };
 document.querySelectorAll("[data-x-cancel]").forEach((b) => b.onclick = async () => {
+  if (b.dataset.xWaiting && !(await arcadeAsk("Cancel while the deposit confirms?",
+      "Your deposit is still collecting confirmations, and this order trades the moment it has them. "
+      + "If you cancel now, the deposit comes back to you once it is confirmed, less nothing but the "
+      + "network fee you already paid.", "Cancel the order"))) return;
   b.disabled = true;
   try {
     const r = await fetch("/account/x/cancel", {method: "POST", headers: {"Content-Type": "application/json"},
@@ -163,7 +178,24 @@ document.querySelectorAll("[data-x-cancel]").forEach((b) => b.onclick = async ()
 });
 </script>
 {% endif %}
+{% if live and viewer != 'nobody' %}
+<script>
+// Take an order from its row: the other side of it, at its price, in the form below.
+document.querySelectorAll(".x-take").forEach(function (b) {
+  b.onclick = function () {
+    var side = document.querySelector("input[name=side][value=" + b.dataset.side + "]");
+    if (side) side.checked = true;
+    var amount = document.getElementById("x-amount"), price = document.getElementById("x-price");
+    if (amount && amount.type !== "hidden") amount.value = b.dataset.amount.replace(/,/g, "");
+    if (price) price.value = b.dataset.price;
+    var form = document.getElementById("x-form");
+    if (form) { form.scrollIntoView({behavior: "smooth", block: "center"}); (price || form).focus(); }
+  };
+});
+</script>
+{% endif %}
 <style>
+  .x-take{padding:3px 9px;font-size:.78rem;box-shadow:none}
   .sides{display:flex;flex-wrap:wrap;gap:8px 16px;margin-bottom:12px}
   .sides label{display:inline-flex;align-items:center;gap:6px;margin:0;font-size:.95rem;color:var(--fg);cursor:pointer}
   .sides input{width:auto;margin:0}
