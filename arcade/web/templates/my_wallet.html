@@ -19,6 +19,13 @@
 <div class="msg err" id="trouble" hidden></div>
 <div class="msg ok" id="news" hidden></div>
 
+{# Not backed up: said, not enforced (2026-10-08: "If they don't back them up,
+   that's on them give them a notice"). Shown once the wallet state says so. #}
+<div class="msg err" id="not-backed-up" hidden>
+  <strong>Your twelve words are not backed up.</strong> You can spend your
+  coins, but if you lose your password without the words written down, they
+  are gone for good and nobody can get them back.
+  <a href="/me/backup">Show my twelve words</a></div>
 {{ notord.receiving() }}
 <div class="grid" id="wallets" style="margin-bottom:18px"></div>
 {# Coins in the small outputs this account's messages, posts and files left on
@@ -45,9 +52,9 @@
   <p class="muted" id="which-note" style="font-size:.82rem;margin:4px 0 0"></p>
   <p class="muted" id="which-lock" hidden
      style="font-size:.82rem;margin:4px 0 0">
-    This account cannot spend real coins yet. Typing your twelve words back
-    on <a href="/me/backup">Backup</a> switches them on &mdash; and until you
-    have them written down, that is the honest reason to wait.</p>
+    These are real coins and your twelve words are not backed up. If you lose
+    your password, nobody can bring them back.
+    <a href="/me/backup">See your words on Backup</a>.</p>
   <div id="confirm" class="confirm" hidden>
     <p id="confirm-says"></p>
     <button class="btn primary" id="confirm-yes">Send it</button>
@@ -130,6 +137,7 @@ const coinsOf = (n) => (n / 100000000).toLocaleString(undefined,
 
 function drawWallets(said) {
   const chains = said.chains || [];
+  $("not-backed-up").hidden = !chains.some((c) => c.backed_up === false);
   $("wallets").innerHTML = "";
   for (const chain of chains) {
     const card = document.createElement("div");
@@ -282,7 +290,7 @@ function sayWhich() {
       ? `Real ${chain.label.toLowerCase()} coins, from `
         + `${coinsOf(chain.spendable ?? chain.balance)} in your wallet. Permanent once sent.`
       : `${chain.label} coins, from ${coinsOf(chain.spendable ?? chain.balance)} in your wallet.`;
-  $("which-lock").hidden = !(chain && chain.locked);
+  $("which-lock").hidden = !(chain && chain.mainnet && chain.backed_up === false);
 }
 
 async function draw() {

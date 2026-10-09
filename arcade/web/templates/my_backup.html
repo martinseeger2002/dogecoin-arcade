@@ -6,56 +6,78 @@
   is how you keep them safe.</p>
 
 <div class="note" style="margin-bottom:20px">
-  <strong>There is nothing else.</strong> No password reset, no key file, no
-  <code>wallet.dat</code>. Your twelve words were shown once, at signup, and
-  are not stored anywhere by this application &mdash; not on this node, not
-  in this browser. If you did not write them down, there is no way to see
-  them again, and nobody here can get them back for you.
+  <strong>The words are the wallet.</strong> No password reset, no key file,
+  no <code>wallet.dat</code>. This node keeps only your wallet sealed with
+  your password, which it cannot open. Your password opens it here, in this
+  browser, so <strong>while you still have your password you can see your
+  words below</strong>. Lose the password without the words written down and
+  nobody, not this node and not anybody else, can get them back for you.
 </div>
 
-{% if real_chains %}
-<div class="panel" style="margin-bottom:18px;border-color:var(--warn)"
-     id="real-coins">
-  <h2 style="margin-top:0">Coins that are money</h2>
+{# Your twelve words, shown again from the sealed copy with the password asked
+   for a second time, and backed up whenever the owner gets round to it (the operator,
+   2026-10-08). Real coins no longer wait for this: "If they don't back them up,
+   that's on them give them a notice." #}
+<div class="panel" style="margin-bottom:18px;border-color:var(--warn)" id="my-words">
+  <h2 style="margin-top:0">Your twelve words</h2>
   {% if real_on %}
-  <p>This account is allowed to spend
-     {%- for chain in real_chains %} {{ chain.label }}{% if not loop.last %}
-     and{% endif %}{% endfor %} coins &mdash; the ones worth money. It was
-     switched on here, by typing the twelve words back and watching them make
-     the right address.</p>
-  <p class="muted" style="font-size:.86rem;margin:8px 0 0">Nothing else about
-     your account changed, and there is nothing to switch back off: this only
-     says that this account may touch those coins.</p>
+  <p id="backed-up">Backed up: you typed your words back here and they made
+    this account's own address.</p>
   {% else %}
-  <p>This account cannot spend
-     {%- for chain in real_chains %} {{ chain.label }}{% if not loop.last %}
-     and{% endif %}{% endfor %} coins yet &mdash; the ones that are worth
-     money rather than the ones for trying things out. Pressing a button will
-     not change that. <strong>Typing your twelve words in below
-     will</strong>, and that is the whole point: money you can move from a
-     browser you can never come back to is money you will lose, and the words
-     are the only thing that brings the account back.</p>
-  <p class="muted" style="font-size:.86rem;margin:8px 0 12px">
-    The words are checked <em>here</em>, in this browser, against the address
-    this account already has &mdash; which only the right words can make. This
-    node is told the answer and nothing else, because a node that could check
-    your words is a node that knows them. So this stops the person who never
-    wrote them down; it is a speed bump with a sentence on it, not a lock, and
-    it would be dishonest to call it anything else.</p>
+  <div class="msg err" id="not-backed-up" style="margin:0 0 12px">
+    <strong>You have not backed up your twelve words.</strong> Your coins,
+    the real ones included, can be spent anyway. But if you lose your password
+    and never wrote the words down, the account and everything in it is gone
+    for good, and that is on you: nobody here can bring it back.</div>
+  {% endif %}
+  <p>Type your password again to see them. Write them down on paper, in
+    order, and keep that somewhere safe. Anyone who sees them owns everything
+    in this account.</p>
+  {% if my_name %}
+  <input type="password" id="words-pw" autocomplete="current-password"
+         placeholder="your password, again" aria-label="Your password"
+         style="width:100%;box-sizing:border-box">
+  {% else %}
+  <p class="muted" style="font-size:.86rem">This node did not make your wallet,
+    so it has no sealed copy of it. Pick the backup file you opened it from,
+    then type its password.</p>
+  <input type="file" id="words-file" accept=".json,application/json"
+         style="margin-bottom:8px">
+  <input type="password" id="words-pw" autocomplete="current-password"
+         placeholder="the password for that file" aria-label="Your password"
+         style="width:100%;box-sizing:border-box">
+  {% endif %}
+  <p style="margin:10px 0 0">
+    <button type="button" class="btn" id="show-words">Show my twelve words</button></p>
+  <div class="msg err" id="words-trouble" hidden style="margin-top:10px"></div>
+  <div id="words-shown" hidden style="margin-top:12px">
+    <ol class="words phrase" id="words-list" style="margin:0;padding-left:2.2em"></ol>
+    <p style="margin:10px 0 0">
+      <button type="button" class="btn ghost small" id="hide-words">Hide them</button></p>
+  </div>
+
+  {% if real_chains %}
+  <h3 style="margin:22px 0 6px;font-size:1rem">Mark them as backed up</h3>
+  <p class="muted" style="font-size:.86rem;margin:0 0 10px">
+    {% if real_on %}Done already; typing them again changes nothing.{% else %}
+    Whenever you like: type the words back from your paper. They are checked
+    <em>here</em>, in this browser, against the address this account already
+    has, which only the right words can make. This node is told the answer and
+    nothing else, because a node that could check your words is a node that
+    knows them. It takes the notice above away; it does not change what you
+    can spend.{% endif %}</p>
   <textarea id="words" rows="3" style="width:100%;box-sizing:border-box"
             spellcheck="false" autocapitalize="off" autocorrect="off"
             autocomplete="off"
             placeholder="your twelve words, in order, separated by spaces"
             aria-label="Your twelve words"></textarea>
   <p style="margin:10px 0 0">
-    <button type="button" class="btn" id="turn-on">Check them and switch
-      real coins on</button></p>
+    <button type="button" class="btn" id="turn-on">Check them</button></p>
   <div class="msg err" id="not-them" hidden style="margin-top:10px"></div>
   <p class="muted" style="font-size:.84rem;margin:10px 0 0">Nothing is sent
      anywhere until they match, and nothing is spent by doing this.</p>
   {% endif %}
 </div>
-{% endif %}
 
 <div class="panel" style="margin-bottom:18px">
   <h2 style="margin-top:0">What the words bring back</h2>
@@ -153,16 +175,75 @@ if (turn) turn.onclick = async () => {
       const made = await coins.address(key.pubkey, chain.version);
       if (made !== chain.address) throw new Error(
         `those words make ${made}, and this account is ${chain.address}.`
-        + ` Those are not the same account, so nothing was switched on.`);
+        + ` Those are not the same account, so they were not marked as backed up.`);
     }
     const answer = await fetch("/account/mainnet", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({words_match: true})});
     const back = await answer.json();
     if (!answer.ok) throw new Error(back.detail || "the node would not take it");
-    location.reload();            // the panel says which chains are open now
+    location.reload();            // the notice goes, the panel says so
   } catch (e) {
     say(String(e.message || e));
+  }
+};
+
+/* Show the words: the sealed copy, opened here with the password typed again
+ * on this page -- even with the wallet already open in this tab, so somebody
+ * at an unlocked browser cannot read them off (2026-10-08: "Make sure you have
+ * to enter the password a second time to view the 12 words"). The words are
+ * never sent anywhere; they go into the page and out again with Hide. */
+const shown = $("words-shown"), list = $("words-list");
+const hideWords = () => { list.replaceChildren(); shown.hidden = true; };
+$("hide-words").onclick = hideWords;
+addEventListener("pagehide", hideWords);
+$("show-words").onclick = async () => {
+  const box = $("words-trouble");
+  box.hidden = true;
+  hideWords();
+  const button = $("show-words");
+  button.disabled = true;
+  try {
+    const password = $("words-pw").value;
+    if (!password) throw new Error("type your password first.");
+    let sealed;
+    if (name) {
+      const answer = await fetch(`/signin/${encodeURIComponent(name)}`, {cache: "no-store"});
+      const said = await answer.json();
+      if (!answer.ok) throw new Error(said.detail || "the node would not hand back your sealed wallet");
+      sealed = said.blob;
+    } else {
+      const file = $("words-file").files[0];
+      if (!file) throw new Error("pick your backup file first.");
+      let said;
+      try { said = JSON.parse(await file.text()); } catch (e) { throw new Error("that file is not a wallet backup."); }
+      sealed = said.blob || said;
+    }
+    button.textContent = "Opening…";
+    const wallet = await import("/wallet.js");
+    const phrase = await wallet.open(sealed, password);
+    // Words that open with this password but make another account are said,
+    // not shown as if they were this one's.
+    if (REAL.length && REAL[0].address) {
+      const signin = await import("/signin.js");
+      const coins = await import("/coins.js");
+      const key = await coins.coinKey(await signin.toSeed(phrase), REAL[0].network);
+      if (await coins.address(key.pubkey, REAL[0].version) !== REAL[0].address)
+        throw new Error("that wallet opened, but its words are not this account's.");
+    }
+    $("words-pw").value = "";
+    for (const word of phrase.trim().split(/\s+/)) {
+      const li = document.createElement("li");
+      li.textContent = word;
+      list.append(li);
+    }
+    shown.hidden = false;
+  } catch (e) {
+    box.textContent = String(e.message || e);
+    box.hidden = false;
+  } finally {
+    button.disabled = false;
+    button.textContent = "Show my twelve words";
   }
 };
 
