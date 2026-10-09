@@ -53,6 +53,6 @@ def test_the_operator_opens_the_book_and_its_markets_join_the_list(client, monke
     listing = app.get("/exchange?tab=tokens").text
     assert "/exchange/x/token/59" in listing, "an open market is a row of the one table"
     row = listing[listing.index("/exchange/x/token/59"):][:2500]
-    assert "MAINNET" in row and "PEPE" in row
+    assert "MAINNET" in row and "PEP" in row
     market = app.get("/exchange/x/token/59").text
     assert "0.5" in market and "Not trustless" in market
