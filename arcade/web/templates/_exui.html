@@ -180,15 +180,23 @@ window.exTrade = window.exTrade || function (root, o) {
     } else if (qty && num(price.value)) {
       var p = num(price.value), other2 = buying() ? o.asks : o.bids;
       var crosses = other2.some(function (l) { return buying() ? l[0] <= p : l[0] >= p; });
-      rows.push(line(crosses ? "Trades now" : "Waits in the book",
-                     crosses ? "with the orders at your price or better" : "until someone " + (buying() ? "sells" : "buys") + " at " + fmt(p)));
+      rows.push(line(crosses ? "Trades now" : (o.piece && buying() ? "Your offer" : "Waits in the book"),
+                     crosses ? "with the orders at your price or better"
+                       : o.piece && buying() ? "stands until the owner accepts it or you cancel"
+                       : "until someone " + (buying() ? "sells" : "buys") + " at " + fmt(p)));
     }
     var each = num(price.value), sum = qty * each;
     if (total) total.textContent = qty && each ? fmt(sum) : "0";
     if (o.feePermille && qty && each) rows.push(line("Node fee (" + (o.feePermille / 10) + "%)", fmt(sum * o.feePermille / 1000) + " " + o.coin));
     if (qty && each) rows.push(line("Network fee", "shown before you sign"));
     quote.innerHTML = rows.join("");
-    button.textContent = qty ? word + " " + fmt(qty) + " " + o.token : "Enter an amount";
+    // A single piece is offered for, not bought, unless the price takes a sale
+    // standing in the book (2026-10-09: "it should say make offer not buy").
+    if (o.piece) button.textContent = !each ? "Enter your price"
+      : buying() ? (o.asks && o.asks.length && each >= Math.min.apply(null, o.asks.map(function (l) { return l[0]; }))
+                    ? "Buy it for " + fmt(each) + " " + o.coin : "Make offer of " + fmt(each) + " " + o.coin)
+      : "Sell it for " + fmt(each) + " " + o.coin;
+    else button.textContent = qty ? word + " " + fmt(qty) + " " + o.token : "Enter an amount";
     button.classList.toggle("sell", !buying());
   }
   modes.forEach(function (b) { b.onclick = function () { mode = b.dataset.mode; update(); }; });

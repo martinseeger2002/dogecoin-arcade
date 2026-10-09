@@ -218,3 +218,31 @@ def test_an_order_whose_deposit_was_never_signed_is_closed_after_an_hour(book):
     assert book.sweep_unsigned(now=o["created"] + 3601) == 1
     assert book.get(o["id"])["status"] == CANCELLED and book.payouts() == [], "nothing was deposited, nothing owed"
     assert book.orders_of("a") == []
+
+
+def test_a_deposit_in_the_mempool_counts_when_its_sender_holds_it():
+    """Instant from the mempool (2026-10-09): a token deposit counts before its
+    block when it is exactly the order and its sender holds what it sends; one
+    its sender cannot cover waits for the block that would refuse it."""
+    from arcade.xchain_node import Clerk
+
+    class Index:
+        def __init__(self, held):
+            self.held = held
+
+        def pending_moves(self):
+            return [{"txid": "dep", "kind": "token", "property_id": 26, "units": 5,
+                     "from": "nSeller", "to": "nExchange", "why": "send"}]
+
+        def balance(self, address, pid):
+            return self.held
+
+        def pending_out(self, address, pid):
+            return 5
+
+    order = {"kind": "token", "asset": "26", "amount": 5, "deposit_txid": "dep", "side": "sell"}
+    assert Clerk._pool_deposit(None, order, Index(8), "nExchange") == ("ok", "", 5)
+    state, why, _ = Clerk._pool_deposit(None, order, Index(3), "nExchange")
+    assert state == "wait" and "does not hold enough" in why
+    assert Clerk._pool_deposit(None, dict(order, amount=6), Index(8), "nExchange")[0] == "wait"
+    assert Clerk._pool_deposit(None, order, Index(8), "nSomewhereElse")[0] == "wait"

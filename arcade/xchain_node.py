@@ -99,7 +99,7 @@ class Clerk:
         if kind == "token":
             tx = index.transaction(txid)
             if tx is None:
-                return "wait", "not in a block yet", 0
+                return self._pool_deposit(order, index, to)
             confs = height - tx["block_height"] + 1
             if confs < CONFIRMATIONS["testnet"]:
                 return "wait", f"{confs} of {CONFIRMATIONS['testnet']} confirmations", 0
@@ -118,13 +118,47 @@ class Clerk:
                 "SELECT * FROM inscription_move WHERE txid=? AND inscription=?",
                 (txid, order["asset"])).fetchone()
         if moved is None:
-            return "wait", "not in a block yet", 0
+            return self._pool_deposit(order, index, to)
         confs = height - moved["block_height"] + 1
         if confs < CONFIRMATIONS["testnet"]:
             return "wait", f"{confs} of {CONFIRMATIONS['testnet']} confirmations", 0
         if moved["to_address"] != to:
             return "wrong", "it moved the NFT somewhere other than the exchange address", 0
         return "ok", "", 1
+
+    def _pool_deposit(self, order: dict, index, to: str) -> tuple[str, str, int]:
+        """A token or NFT deposit still in the mempool: counted now, when it is
+        exactly what the order says and its sender holds what it sends
+        (2026-10-09, instant from the mempool). Anything less waits for its block."""
+        if CONFIRMATIONS["testnet"] > 0:
+            return "wait", "not in a block yet", 0
+        try:
+            moves = [m for m in index.pending_moves() if m["txid"] == order["deposit_txid"]]
+        except Exception:
+            moves = []
+        if not moves:
+            return "wait", "not seen on the chain yet", 0
+        if order["kind"] == "token":
+            got = sum(int(m["units"]) for m in moves if m["kind"] == "token" and m["to"] == to
+                      and str(m["property_id"]) == str(order["asset"]))
+            if got != order["amount"]:
+                return "wait", "in the mempool, not yet what the order says", 0
+            sender = moves[0]["from"]
+            try:
+                # What the sender holds must cover everything it is sending in the
+                # pool, this deposit included, or the block would refuse it.
+                held = index.balance(sender, int(order["asset"]))
+                leaving = index.pending_out(sender, int(order["asset"]))
+            except Exception:
+                return "wait", "in the mempool; its sender's balance is not readable yet", 0
+            if held < leaving:
+                return "wait", "in the mempool; its sender does not hold enough yet", 0
+            return "ok", "", got
+        # an NFT: pending_moves only lists a transfer of a piece its sender holds now
+        if any(m["kind"] == "inscription" and m["inscription"] == order["asset"] and m["to"] == to
+               for m in moves):
+            return "ok", "", 1
+        return "wait", "in the mempool, not yet what the order says", 0
 
     def watch_deposits(self) -> int:
         opened = 0

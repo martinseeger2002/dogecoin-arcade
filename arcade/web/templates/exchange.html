@@ -226,7 +226,7 @@
     <div class="offerrow">
       {{ thumb(b) }}
       <div class="oftext">You offer <strong>{{ b.pep }} PEP</strong> {{ net_badge(true) }} for {{ piece(b) }}
-        <div style="margin-top:3px">{% if b.status == 'awaiting' %}<span class="ex-pill wait">Deposit confirming</span>
+        <div style="margin-top:3px">{% if b.status == 'awaiting' %}<span class="ex-pill wait">Checking deposit</span>
           {% else %}<span class="ex-pill open">Waiting for the owner</span>{% endif %}</div></div>
       <div class="ofdo"><a class="btn ghost small" href="/exchange/x/nft/{{ b.inscription }}">Manage</a></div>
     </div>

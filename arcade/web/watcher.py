@@ -193,12 +193,13 @@ class BlockWatcher:
 
     def _run_xchain(self) -> None:
         """The cross-chain book (arcade/xchain_node.py): deposits that have their
-        confirmations open their orders, and what is owed is paid. Every 20 s;
+        confirmations open their orders, and what is owed is paid. Every 5 s (2026-10-09: a
+        deposit counts from the mempool, so a trade should not then wait 20 s);
         only when this node has opened the book (a setting the operator turns on)."""
         if not self.state.setting("xchain:enabled"):
             return
         now = time.monotonic()
-        if now - getattr(self, "_xchain_at", 0.0) < 20.0:
+        if now - getattr(self, "_xchain_at", 0.0) < 5.0:
             return
         self._xchain_at = now
         self.state.xchain.tick()

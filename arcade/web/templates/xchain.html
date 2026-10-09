@@ -72,8 +72,8 @@
     <button {% if viewer == 'account' %}type="button"{% else %}type="submit"{% endif %} id="x-order" class="ex-cta">Enter an amount</button>
   </form>
   <p class="ex-note">Your side is deposited to this node: a buy sends PEP on mainnet, a sell sends the
-    {{ 'NFT' if a.kind == 'nft' else 'asset' }} on testnet. It trades once the deposit has its confirmations,
-    2 on mainnet or 6 on testnet, usually 5 to 15 minutes. You can close the page; <em>Your orders</em> says where it is.</p>
+    {{ 'NFT' if a.kind == 'nft' else 'asset' }} on testnet. It counts within seconds, as soon as the deposit is
+    in the mempool, and trades with any order at your price. You can close the page; <em>Your orders</em> says where it is.</p>
   <p class="msg err" id="x-trouble" hidden></p><p class="msg ok" id="x-news" hidden></p>
   <script>
   exTrade(document.getElementById("x-form"), {sideName: "side", buyValue: "buy",
@@ -83,7 +83,7 @@
       .map(function (l) { return [Number(l[0]), Number(String(l[1]).replace(/,/g, ""))]; }),
     bids: [{% for o in book.buys if o.owner != owner %}[{{ o.each|tojson }}, {{ o.units_shown|tojson }}],{% endfor %}]
       .map(function (l) { return [Number(l[0]), Number(String(l[1]).replace(/,/g, ""))]; }),
-    coin: "PEP", token: {{ aname|tojson }}, feePermille: {{ fee_permille }}});
+    coin: "PEP", token: {{ aname|tojson }}, feePermille: {{ fee_permille }}, piece: {{ (a.kind == 'nft')|tojson }}});
   </script>
   {% endif %}
 </div>
@@ -124,9 +124,9 @@
 {% set parts = waiting.split(' of ') if ' of ' in waiting else [] %}
 <div class="ex-ord">
   <span class="ex-mid" style="white-space:normal">
-    <b>{{ 'Buy' if o.side == 'buy' else 'Sell' }} {{ o.units_shown }} {{ aname }} {{ net_badge(chain) }}
-      {% if o.status == 'awaiting' %}<span class="ex-pill wait">Confirming</span>
-      {% elif o.status == 'open' %}<span class="ex-pill open">In the book</span>
+    <b>{% if a.kind == 'nft' and o.side == 'buy' %}Offer for {{ aname }}{% else %}{{ 'Buy' if o.side == 'buy' else 'Sell' }} {{ o.units_shown }} {{ aname }}{% endif %} {{ net_badge(chain) }}
+      {% if o.status == 'awaiting' %}<span class="ex-pill wait">Checking deposit</span>
+      {% elif o.status == 'open' %}<span class="ex-pill open">{{ 'Offer standing' if a.kind == 'nft' and o.side == 'buy' else 'In the book' }}</span>
       {% elif o.status in ('filled', 'done') %}<span class="ex-pill done">Traded</span>
       {% elif o.status == 'cancelled' %}<span class="ex-pill off">Cancelled</span>
       {% else %}<span class="ex-pill bad" title="{{ o.note }}">{{ o.status }}</span>{% endif %}</b>
@@ -172,22 +172,25 @@ const btn = $("x-order");
 // Names come as JSON and go into the sheet escaped: a token's name is anybody's text.
 const ASSET = {{ aname|tojson }};
 const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const PIECE = {{ (a.kind == 'nft')|tojson }};
 function progress(side, what) {
-  const s = exSheet("Order placed");
+  const s = exSheet(PIECE && side === "buy" ? "Offer made" : "Order placed");
   const nets = document.createElement("p"); nets.className = "ex-note"; nets.style.margin = "0 0 8px";
   nets.textContent = ASSET + " ";
   nets.insertAdjacentHTML("beforeend", {{ net_badge(chain)|string|tojson }} + " for PEP " + {{ net_badge(main)|string|tojson }});
-  const need = side === "sell" ? 6 : 2;
+  // Counted from the mempool (2026-10-09): no confirmations to wait for.
   const li = (cls, dot, head, sub) => `<li class="${cls}"><span class="dot">${dot}</span><span>${head}<small>${sub}</small></span></li>`;
   s.body.innerHTML = `<ul class="ex-steps">`
     + li("done", "&#10003;", "Deposit sent", `${esc(what)} is on its way to this node.`)
-    + li("now", "", `Confirming, 0 of ${need}`, `It can trade once the deposit has ${need} confirmations, usually 5 to 15 minutes.`)
-    + li("", "", "Matched", "It trades with any order at your price or better, or waits in the book.")
+    + li("now", "", "Checking the deposit", "Seconds: the node counts it as soon as it is in the mempool.")
+    + li("", "", PIECE && side === "buy" ? "Offer standing" : "Matched",
+         PIECE && side === "buy" ? "The owner sees it under Offers and can sell to you; a sale already at your price trades at once."
+                                 : "It trades with any order at your price or better, or waits in the book.")
     + li("", "", "Paid out", "This node pays your side out to your wallet.")
     + `</ul><button type="button" class="ex-cta" id="x-see">See it under Your orders</button>`;
   s.body.prepend(nets);
   s.body.insertAdjacentHTML("beforeend", `
-    <p class="ex-note">You can close this page. Cancelling while it confirms gives the deposit back once it has confirmed.</p>`);
+    <p class="ex-note">You can close this page. Cancel any time before it trades and your deposit comes back.</p>`);
   s.body.querySelector("#x-see").onclick = () => location.reload();
 }
 if (btn) btn.onclick = async () => {
@@ -214,10 +217,10 @@ if (btn) btn.onclick = async () => {
   } catch (e) { say(String(e.message || e)); } finally { btn.disabled = false; }
 };
 document.querySelectorAll("[data-x-cancel]").forEach((b) => b.onclick = async () => {
-  if (b.dataset.xWaiting && !(await arcadeAsk("Cancel while the deposit confirms?",
-      "Your deposit is still collecting confirmations, and this order trades the moment it has them. "
-      + "If you cancel now, the deposit comes back to you once it is confirmed, less nothing but the "
-      + "network fee you already paid.", "Cancel the order"))) return;
+  if (b.dataset.xWaiting && !(await arcadeAsk("Cancel before the deposit counts?",
+      "The node is still checking your deposit, and this order can trade the moment it counts. "
+      + "If you cancel now, the deposit comes back to you, less nothing but the network fee you "
+      + "already paid.", "Cancel it"))) return;
   b.disabled = true;
   try {
     const r = await fetch("/account/x/cancel", {method: "POST", headers: {"Content-Type": "application/json"},

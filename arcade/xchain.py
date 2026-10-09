@@ -43,7 +43,12 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 FEE_PERMILLE = 5                     # 0.5% of the PEPE of a trade
-CONFIRMATIONS = {"testnet": 6, "main": 2}
+# 0: a deposit counts the moment it is in the mempool and checks out (the operator,
+# 2026-10-09: "This should be instant from the mempool"). Was 6 and 2. The
+# operator carries the risk of a deposit that never confirms (a double spend),
+# which is why a token or NFT deposit is also checked against what its sender
+# holds before it counts (xchain_node.check_deposit).
+CONFIRMATIONS = {"testnet": 0, "main": 0}
 KINDS = ("token", "coin", "nft")
 SIDES = ("sell", "buy")
 
