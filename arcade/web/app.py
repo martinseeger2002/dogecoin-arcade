@@ -3890,9 +3890,12 @@ def create_app(state: AppState) -> FastAPI:
                 own = _ledger_addresses(rpc)
                 home = state.home_address(chain)
                 coins, token, piece = _gather_senders(chain, rpc)
+                # The cross-chain book's exchange addresses hold deposits for
+                # other people and are never gathered (arcade/xchain_node.py).
+                keep = [state.setting(f"xchain:address:{which}") for which in ("testnet", "main")]
                 return gatherlib.walk_home(rpc, index, home, own, send_coins=coins,
                                            send_token=token, send_piece=piece,
-                                           limit=limit)
+                                           limit=limit, keep=[a for a in keep if a])
         finally:
             state.end_send()
 

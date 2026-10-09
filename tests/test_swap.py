@@ -1067,3 +1067,35 @@ def test_a_percentage_becomes_basis_points_once():
     for nonsense in ("", "  ", "two", None, "nan", "inf", -3):
         assert S.cut_bps(nonsense) == 0
     assert S.cut_bps("400") == S.CUT_CEILING, "clamped, not believed"
+
+
+def test_the_exchange_address_is_never_walked_home():
+    """The cross-chain book's exchange address holds other people's deposits
+    until their order trades or is cancelled; the gather must leave it alone
+    (2026-10-09: a seller's 5 ASHVALE GOLD was gathered home four blocks after
+    it arrived, and its refund found the exchange address empty)."""
+    from arcade import gather
+
+    class Index:
+        def balances(self, addresses):
+            return [r for r in [{"address": "nExchange", "property_id": 26, "name": "ASHVALE GOLD",
+                                 "balance": 5, "display": "5"}] if r["address"] in addresses]
+
+        def inscriptions(self, owner=None, limit=50):
+            return []
+
+    class Node:
+        def call(self, method, *args):
+            assert method == "listunspent"
+            return [{"address": "nExchange", "txid": "11" * 32, "vout": 0, "amount": 3.0,
+                     "spendable": True}]
+
+    own = ["nHome", "nExchange"]
+    assert gather.stray(Node(), Index(), "nHome", own)["tokens"], "without keep it would go"
+    found = gather.stray(Node(), Index(), "nHome", own, keep=["nExchange"])
+    assert found == {"coins": [], "tokens": [], "pieces": [], "needs_coins": []}
+    sent = []
+    gather.walk_home(Node(), Index(), "nHome", own, keep=["nExchange"],
+                     send_coins=lambda *a, **k: sent.append(a),
+                     send_token=lambda *a: sent.append(a), send_piece=lambda *a: sent.append(a))
+    assert sent == [], "nothing leaves the exchange address"
