@@ -22555,6 +22555,33 @@ def create_app(state: AppState) -> FastAPI:
             data["offers_in"] = [o for o in data["offers_in"] if o["txid"] not in ended]
             data["offers_out"] = [o for o in data["offers_out"] if o["txid"] not in ended]
             data["offer_history"] = []
+            # Offers in mainnet PEP on the cross-chain book (2026-10-09: "fix that
+            # offers bug" -- they showed on the piece page and nowhere here): bids
+            # on the pieces this wallet holds, and this wallet's own bids.
+            data["x_in"], data["x_out"] = [], []
+            if tab == "offers" and _x_open() and not chain.is_mainnet:
+                xbook = state.xchain.book
+                for m in xbook.markets():
+                    if m["kind"] != "nft" or not m["orders"]:
+                        continue
+                    piece = index.inscription(m["asset"]) or {}
+                    if piece.get("owner") not in data["owned"]:
+                        continue
+                    for b in xbook.book("nft", m["asset"])["buys"]:
+                        data["x_in"].append({"inscription": m["asset"], "number": piece.get("number"),
+                                             "collection": piece.get("collection"),
+                                             "edition": piece.get("edition"),
+                                             "pep": f"{b['left_pepe'] / COIN:.8f}".rstrip("0").rstrip(".")})
+                x_owner = ("node" if data["viewer"] == "wallet" else
+                           signed_in(request).pubkey.lower() if data["viewer"] == "account" else "")
+                for o in (xbook.orders_of(x_owner) if x_owner else []):
+                    if o["kind"] != "nft" or o["side"] != "buy" or o["status"] not in ("open", "awaiting"):
+                        continue
+                    piece = index.inscription(o["asset"]) or {}
+                    data["x_out"].append({"inscription": o["asset"], "number": piece.get("number"),
+                                          "collection": piece.get("collection"),
+                                          "edition": piece.get("edition"), "status": o["status"],
+                                          "pep": f"{o['pepe'] / COIN:.8f}".rstrip("0").rstrip(".")})
             # Buy orders on the tokens this account made (2026-09-28:
             # "where does the creator of a token see if someone puts in an order
             # to buy? ... on exchange>offers"): the chain's bids and the ones this

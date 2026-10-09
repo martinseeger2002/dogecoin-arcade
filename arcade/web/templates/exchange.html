@@ -9,7 +9,7 @@
 {# The markets first, then what is yours (the Exchange redesign, 2026-10-09). #}
 {# Tokens, NFTs, Launchpad (the mintpads, by the name people know them by), and
    Offers with a count of what waits for an answer (the Exchange redesign, 2026-10-09). #}
-{% set waiting_offers = offers_in | rejectattr('settled') | list | length %}
+{% set waiting_offers = (offers_in | rejectattr('settled') | list | length) + ((x_in or []) | length) %}
 <nav class="ex-seg" aria-label="Exchange">
   <a class="{{ 'on' if current == 'tokens' }}" href="/exchange?tab=tokens"{% if current == 'tokens' %} aria-current="page"{% endif %}>Tokens</a>
   <a class="{{ 'on' if current == 'market' }}" href="/exchange?tab=market"{% if current == 'market' %} aria-current="page"{% endif %}>NFTs</a>
@@ -205,11 +205,38 @@
   </div>
   {% endif %}
 
+  {% if x_in %}
+  <div class="ex-h">Offers in mainnet PEP for your things {{ net_badge(true) }}</div>
+  <div class="ex-card" style="padding:4px 14px">
+    {% for b in x_in %}
+    <div class="offerrow">
+      {{ thumb(b) }}
+      <div class="oftext">Somebody offers <strong>{{ b.pep }} PEP</strong> {{ net_badge(true) }} for {{ piece(b) }}
+        <div class="muted" style="font-size:.8rem">Real coins, held by this node until you sell. It takes 0.5%.</div></div>
+      <div class="ofdo"><a class="btn small" href="/exchange/x/nft/{{ b.inscription }}#x-form">Sell for {{ b.pep }} PEP</a></div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   <div class="ex-h">Your offers {{ net_badge(chain) }}</div>
-  {% if not offers_out %}
+  {% if x_out %}
+  <div class="ex-card" style="padding:4px 14px;margin-bottom:10px">
+    {% for b in x_out %}
+    <div class="offerrow">
+      {{ thumb(b) }}
+      <div class="oftext">You offer <strong>{{ b.pep }} PEP</strong> {{ net_badge(true) }} for {{ piece(b) }}
+        <div style="margin-top:3px">{% if b.status == 'awaiting' %}<span class="ex-pill wait">Deposit confirming</span>
+          {% else %}<span class="ex-pill open">Waiting for the owner</span>{% endif %}</div></div>
+      <div class="ofdo"><a class="btn ghost small" href="/exchange/x/nft/{{ b.inscription }}">Manage</a></div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if not offers_out and not x_out %}
     <div class="panel empty"><p>You haven't made any offers. Open any NFT and press
       <strong>Make offer</strong>.</p></div>
-  {% else %}
+  {% elif offers_out %}
   <div class="ex-card" style="padding:4px 14px">
     {% for b in offers_out %}
     <div class="offerrow">
