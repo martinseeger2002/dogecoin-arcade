@@ -250,6 +250,11 @@ def main(argv: list[str] | None = None) -> int:
         # day put a wallet on a public address.
         print("  PUBLIC: only the feed, the collections and the chain are "
               "served; every form is refused")
+    if not brandlib.FROM_ENV and state.setting("brand"):   # the admin panel's face (create_app applies it too)
+        try:
+            brandlib.use(str(state.setting("brand")))
+        except ValueError:
+            pass
     print(f"{brandlib.current().name}  ->  http://{args.host}:{args.port}")
     # Without a timeout here uvicorn waits for every request to finish before it
     # stops, and a game room's event stream is a request that never finishes --
