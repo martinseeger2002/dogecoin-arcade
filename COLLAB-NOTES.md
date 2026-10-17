@@ -88,6 +88,47 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-17 (evening) · SadFrog's side (Claude) · branch `sadfrog/litecoin` (rebased on `main` efae00f)
+- **Litecoin is now a full add-on network** behind the chain switch (`chains:ltc`), following
+  Dogecoin's pattern. Three self-contained commits:
+  - **Network:**
+    - `config.LITECOIN` joins `NETWORKS` with **floor 3,198,000** (the tip at 16:20 UTC was
+      3,196,698, rounded up about two days ahead, the D-004 margin); `CHAIN_NAMES` ltc→main.
+    - `ChainContext.is_ltc` / `is_addon` (`ADDON_NETWORKS = doge, ltc`), letter **L**, net
+      `litecoin`, title `L main`.
+    - The launcher's `_ltc_context` attaches it only when hosted. It's grayed until synced, and the
+      Overview card and `L MAIN` badge are in.
+    - **The inscription guard** covers L/M/3 addresses, through the Litecoin node.
+  - **Wallet:**
+    - SadFrog's choice: **one key for PEP, DOGE and LTC** (`coins.js COIN_TYPE ltc: 3`; server
+      `_ltc_twin`, the same hash with version 48). Tips, profiles and @tags on Litecoin go to the
+      twin.
+    - The backup page shows the **Litecoin key as WIF** (0xB0) after the password is typed again,
+      with a short note on derivation paths (m/44'/3' here, m/44'/2' in most Litecoin wallets).
+    - Verified by running the real `coins.js` in Node and checking it in Python
+      (`tests/test_litecoin_network.py`).
+  - **Exchange:**
+    - Litecoin legs are mainnet tier, and `trade.BIG['ltc']` = 2 LTC (`swap_big:ltc` moves it).
+    - `RANK` makes pairs read PEP/LTC and DOGE/LTC; these coin pairs appear when both chains are
+      present.
+    - The `L main` chip, and the `litecoin` show.
+  - `tests/test_account_mainnet.py` expects `ltc: 3` in `COIN_TYPE` now.
+- **On a real node:** Litecoin Core **0.21.5.8** (latest) synced to the tip. All Litecoin tests pass
+  on it.
+  - Note: 0.21.5 seems to turn `peerblockfilters` on by default, which needs `blockfilterindex`.
+    The arcade needs neither; set both to 0, or the node rebuilds a BIP157 index over the whole
+    chain.
+- **Tests:** 559 pass in our combined set.
+- **FYI, a test problem that already exists on `main` (not ours):** three
+  `tests/test_account_take.py` tests fail when the file runs after the other suites in one session,
+  and pass alone. Same on `main` efae00f with the same file list:
+  `test_the_maker_answers_what_a_take_would_ask`, `test_an_answer_meant_for_another_key_builds_nothing`
+  and `test_a_signed_answer_that_no_longer_fits_is_refused`. Looks like order-dependent state.
+- **Asked of your side:**
+  1. Review the Litecoin floor and the one-key choice.
+  2. Say whether the add-on network work (`is_addon`, `ADDON_NETWORKS`, the guard list) should go
+     upstream before Litecoin itself.
+
 ### 2026-10-17 (later) · SadFrog's side (Claude) · branch `sadfrog/litecoin` (rebased on `main` 54e2c3e)
 - **Phase 2: Litecoin on a real chain.** It's proven on a regtest litecoind 0.21.3 with
   `-acceptnonstdtxn=0`, so mainnet relay rules apply. `tests/test_litecoin_chain.py` (7):
