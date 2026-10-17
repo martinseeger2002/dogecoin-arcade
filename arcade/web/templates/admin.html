@@ -12,6 +12,21 @@
 
 <div class="cards" id="cards"></div>
 
+{# 2026-10-17 (SadFrog's side): this node's face, and the Litecoin node's switch (arcade/litecoin.py). #}
+<section class="panel" id="face">
+  <h2>Face and Litecoin</h2>
+  <p class="muted" style="margin-top:0">The name, colours and icons this arcade shows. Only the look changes: every face
+    is the same network.</p>
+  <div id="facechoices" style="display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 10px"></div>
+  <p class="muted" id="facesaid" hidden></p>
+  <button type="button" class="small" id="saveface">Use this face</button>
+  <h3 style="margin:20px 0 6px;font-size:1rem">Litecoin node</h3>
+  <p class="muted" style="margin:0 0 8px">Litecoin is being added to this arcade. For now this is the node that will
+    carry it: watch it sync, and start or stop it.</p>
+  <p id="ltcline">Checking&hellip;</p>
+  <button type="button" class="small" id="ltcrun" hidden></button>
+</section>
+
 <section class="panel">
   <h2>Seats</h2>
   <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
@@ -417,9 +432,57 @@ section.panel h2{margin-top:0}
   function load() {
     return fetch('/admin/api/state', {credentials: 'same-origin', cache: 'no-store'})
       .then(function (r) { if (r.status === 401) location.href = '/admin/login'; return r.json(); })
-      .then(function (j) { data = j; draw(); })
+      .then(function (j) { data = j; draw(); drawFace(); })
       .catch(function (e) { say('Could not load: ' + e.message, 'err'); });
   }
+
+  // Face and Litecoin (2026-10-17, SadFrog's side)
+  function drawFace() {
+    var b = (data && data.brand) || null, box = $('facechoices');
+    if (!b) return;
+    box.textContent = '';
+    b.choices.forEach(function (c) {
+      var l = document.createElement('label'); l.className = 'switch';
+      var i = document.createElement('input'); i.type = 'radio'; i.name = 'face'; i.value = c[0];
+      i.checked = c[0] === b.current; i.disabled = b.locked;
+      l.appendChild(i); l.appendChild(document.createTextNode(' ' + c[1])); box.appendChild(l);
+    });
+    $('saveface').hidden = b.locked;
+    $('facesaid').hidden = !b.locked;
+    $('facesaid').textContent = b.locked ? 'Set by --brand / ARCADE_BRAND in this node\u2019s service; change it there.' : '';
+  }
+  $('saveface').onclick = function () {
+    var on = document.querySelector('#facechoices input:checked');
+    if (!on) return;
+    call('/admin/api/settings', {brand: on.value})
+      .then(function () { location.reload(); }).catch(function (e) { say(e.message, 'err'); });
+  };
+  function drawLtc(s) {
+    var line = $('ltcline'), btn = $('ltcrun');
+    if (!s.installed) { line.textContent = 'Not hosted on this node. Litecoin is optional: a node hosts it by installing the ' + s.unit + ' service.'; btn.hidden = true; return; }
+    var up = s.service === 'active' || s.service === 'activating';
+    var text = 'Service ' + s.service;
+    if (s.answering) {
+      text += ' \u00b7 ' + (s.synced ? 'synced' : 'syncing ' + s.progress + '%') + ' \u00b7 block '
+        + Number(s.blocks).toLocaleString() + ' of ' + Number(s.headers).toLocaleString()
+        + ' \u00b7 ' + s.peers + ' peers \u00b7 ' + s.version;
+    } else if (up) { text += ' \u00b7 ' + (s.note || 'starting'); }
+    line.textContent = text;
+    btn.hidden = false; btn.disabled = s.service === 'deactivating';
+    btn.textContent = up ? 'Stop the Litecoin node' : 'Start the Litecoin node';
+    btn.dataset.run = up ? '' : '1';
+  }
+  function loadLtc() {
+    fetch('/admin/api/litecoin', {credentials: 'same-origin', cache: 'no-store'})
+      .then(function (r) { return r.json(); }).then(drawLtc)
+      .catch(function () { $('ltcline').textContent = 'Could not ask about the Litecoin node.'; });
+  }
+  $('ltcrun').onclick = function () {
+    var run = !!this.dataset.run; this.disabled = true;
+    call('/admin/api/litecoin', {run: run}).then(drawLtc)
+      .catch(function (e) { say(e.message, 'err'); }).then(function () { setTimeout(loadLtc, 2000); });
+  };
+  loadLtc(); setInterval(loadLtc, 10000);
 
   $('saveseats').onclick = function () {
     call('/admin/api/seats', {seats: Number($('seats').value)})
