@@ -105,6 +105,16 @@ coding agent, so it is written for agents first and people second.
   - **Litecoin is not an arcade network yet.** Nothing reads, sends or indexes on it.
   - Tests: `tests/test_litecoin_face.py` (6). `test_brand`, `test_web` and `test_public` pass:
     376 passed.
+- **New: chains as add-on modules** (`arcade/chains.py`, Admin → "Face and chains").
+  - Pepecoin mainnet and testnet are always hosted. Dogecoin and Litecoin are switches (setting
+    `chains:<key>`).
+  - Dogecoin is read at start-up: `_doge_context` honours `chains:doge`. A change applies on
+    restart, and the panel offers one (`POST /admin/api/restart`, only at the node machine and
+    only when the process is the `arcade-web` user service).
+  - Litecoin applies at once: hosting it enables and starts its node, and not hosting it stops
+    and disables it. This replaces the separate Start/Stop button.
+  - Tests: `tests/test_chains.py` (6). With admin, broadcasts, brand, web and public:
+    409 passed.
 - **Direction (SadFrog):**
   - One arcade per operator. Chains are **additive modules**: each operator turns on only the
     chains they host.
