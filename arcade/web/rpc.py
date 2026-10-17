@@ -451,6 +451,36 @@ class OmniRpc:
         """da_broadcast "txid" -- send a message da_send prepared; returns the txid."""
         return self.omni_broadcast(txid)
 
+    def da_publish(self, topic: Any, body: Any, fromaddress: Any = "") -> dict[str, Any]:
+        """da_publish "topic" body ( "fromaddress" ) -- prepare a public machine-talk broadcast every node reads; NOT sent until da_broadcast."""
+        from ..messaging import broadcast as broadcastlib
+        if self.chain.is_mainnet:
+            raise RpcError(MISC_ERROR, "broadcasts are on the messaging chain: use /rpc/test")
+        if not isinstance(body, (dict, list, str, int, float, bool)) and body is not None:
+            raise RpcError(TYPE_ERROR, "body must be JSON")
+        try:
+            payload = broadcastlib.build(_str(topic, "topic"), body)
+        except broadcastlib.BroadcastError as exc:
+            raise RpcError(INVALID_PARAMETER, str(exc))
+        sender = (self._own_address(fromaddress) if fromaddress
+                  else self._sending_address())
+        return self._prepare_message("broadcast", sender, payload, public_only=True)
+
+    def da_broadcasts(self, topic: Any = "", after: Any = 0, count: Any = 20,
+                      senders: Any = None) -> list[dict[str, Any]]:
+        """da_broadcasts ( "topic" after count [sender,...] ) -- confirmed public broadcasts from any node, oldest first; pass the last id as after."""
+        if senders is not None and not (isinstance(senders, list)
+                                        and all(isinstance(x, str) for x in senders)):
+            raise RpcError(TYPE_ERROR, "senders must be a list of addresses")
+        with self.state.store() as store:
+            rows = store.node_broadcasts(self.state.messaging.network, str(topic or ""),
+                                         after=_int(after, "after"),
+                                         limit=_int(count, "count"), senders=senders)
+        return [{"id": r["id"], "txid": r["txid"], "sender": r["sender"],
+                 "topic": r["topic"], "body": json.loads(r["body"]),
+                 "height": r["height"], "blocktime": r["block_time"]}
+                for r in rows if int(r["height"] or 0) > 0]
+
     def da_inbox(self, after: Any = 0, count: Any = 20,
                  unreadonly: Any = False) -> list[dict[str, Any]]:
         """da_inbox ( after count unreadonly ) -- messages addressed to this node, oldest first."""
@@ -585,11 +615,13 @@ class OmniRpc:
             from ..web.app import funded_address
             return funded_address(rpc, prefer=self.state.derived_address)
 
-    def _prepare_message(self, what: str, sender: str, payload: bytes) -> dict[str, Any]:
+    def _prepare_message(self, what: str, sender: str, payload: bytes,
+                         public_only: bool = False) -> dict[str, Any]:
         """Build the transaction and hold it, exactly as a token send is held."""
         from ..messaging.sender import MessageSender
         with self._rpc() as rpc:
-            prepared = MessageSender(rpc, self.chain.params).prepare(sender, payload)
+            prepared = MessageSender(rpc, self.chain.params,
+                                     public_only=public_only).prepare(sender, payload)
         prepared.what = what
         cache = self.state.prepared_tokens
         cache[(self.chain.network, prepared.txid)] = prepared

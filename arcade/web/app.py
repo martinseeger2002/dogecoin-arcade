@@ -21429,6 +21429,33 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:                               # noqa: BLE001
             return ""
 
+    def _admin_flags() -> dict:
+        """Content flags shared between arcades (arcade/flags.py): this arcade's switch,
+        who it follows, and every arcade that broadcasts flags, by @name or domain."""
+        from .. import flags as flagslib
+        follow = [a for a in (state.setting("flags:follow") or []) if isinstance(a, str)]
+        me = state.derived_address or ""
+        out = {"broadcast": bool(state.setting("flags:broadcast", False)),
+               "follow": follow, "address": me, "name": _name_of(me) if me else "",
+               "status": state.flags().status() if hasattr(state, "flags") else {},
+               "broadcasters": []}
+        try:
+            network = state.messaging.network
+            with state.store() as store:
+                found = flagslib.broadcasters(store, network)
+                domains = {r["address"]: r["domain"] for r in store.instances(network)}
+            listed = {b["address"] for b in found}
+            # Someone followed who has not flagged anything (yet) still has a row to switch off.
+            found += [{"address": a, "broadcasts": 0, "sensitive": 0, "illegal": 0,
+                       "retracted": 0, "last": 0} for a in follow if a not in listed]
+            for b in found:
+                b.update(name=_name_of(b["address"]), domain=domains.get(b["address"], ""),
+                         followed=b["address"] in follow, me=b["address"] == me)
+            out["broadcasters"] = found
+        except Exception as exc:                          # noqa: BLE001 -- the switch still shows
+            out["error"] = str(exc)[:200]
+        return out
+
     @app.get("/admin/api/state")
     def admin_state(request: Request):
         who = _admin_check(request)
@@ -21470,6 +21497,7 @@ def create_app(state: AppState) -> FastAPI:
                      "public_hosts": list(state.public_hosts)},
             "xchain": _admin_xchain(),
             "swap_big": {k: v / COIN for k, v in _swap_big_lines().items()},
+            "flags": _admin_flags(),
         }, headers={"Cache-Control": "no-store"})
 
     @app.get("/admin/api/swaps")
@@ -21621,6 +21649,15 @@ def create_app(state: AppState) -> FastAPI:
                         if sats <= 0:
                             raise ValueError("a big-swap line is more than nothing")
                         state.set_setting(f"swap_big:{network}", int(sats))
+            if "flags_broadcast" in said:     # content flags to every arcade (arcade/flags.py)
+                state.set_setting("flags:broadcast", bool(said["flags_broadcast"]))
+            if "flags_follow" in said:        # whose content flags this arcade uses
+                follow = said["flags_follow"]
+                if not isinstance(follow, list) or not all(
+                        isinstance(a, str) and re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{25,40}", a)
+                        for a in follow):
+                    raise ValueError("follow a list of addresses")
+                state.set_setting("flags:follow", sorted(set(follow))[:500])
             if "xchain_enabled" in said:      # the mainnet PEPE swap (arcade/xchain.py)
                 state.set_setting("xchain:enabled", bool(said["xchain_enabled"]))
             if "moderation" in said:

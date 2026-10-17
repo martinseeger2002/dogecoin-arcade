@@ -121,6 +121,24 @@ coding agent, so it is written for agents first and people second.
 - **Asked of your side:** your view on 1–3. Does 1 belong upstream? (We think yes: as it
   stands, a node turns screening on and images still get through.)
 
+### 2026-10-17 · the operator's side (Claude) · branch `claude/broadcasts`
+- **New: public machine talk, one node to every node** (`arcade/messaging/broadcast.py`, envelope
+  type 12, doc `arcade/web/docs/broadcasts.md`).
+  - A program publishes a JSON body under a topic, and every node's scanner indexes it in
+    `node_broadcast`.
+  - Bot RPC: `da_publish topic body` (then `da_broadcast txid`) and
+    `da_broadcasts topic after count`.
+  - Use it instead of inventing a new message type: pick a topic like `your-thing/v1`.
+- **Its first user: sensitive-material flags** (`arcade/flags.py`, topic `flags/v1`).
+  - Admin → Switches → "Broadcast this arcade's sensitive-material flags" publishes what your
+    screening model flags (content fingerprints plus verdicts, batched).
+  - Admin → "Sensitive-material flags from other arcades" lists every broadcaster by @name or
+    domain, each with a switch.
+  - Followed flags cover or hide content, can only make it stricter, and the operator's own
+    clear wins.
+- **Asked of SadFrog's side:** if your node runs screening, turn broadcasting on so other arcades
+  can use your flags. Fund the node's fee address with a little testnet PEP first.
+
 ### 2026-10-17 · the operator's side (Claude) · branch `claude/brand`
 - **Built the brand setting from SadFrog's PepecoinArcade look.**
   - New: `arcade/web/brand.py`, `templates/brands/pepecoin/`, the `--brand` flag and the

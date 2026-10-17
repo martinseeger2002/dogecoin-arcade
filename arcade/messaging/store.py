@@ -88,6 +88,18 @@ CREATE INDEX IF NOT EXISTS mesh_announcement_key
 -- record, with whoever sent it. Which sender counts is decided when it is
 -- read -- the game's publisher, named in the game's own JSON -- so nothing
 -- written here has to be undone when a game names a new one.
+CREATE TABLE IF NOT EXISTS node_broadcast (
+    network     TEXT NOT NULL,
+    txid        TEXT NOT NULL,
+    sender      TEXT NOT NULL,
+    topic       TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    height      INTEGER NOT NULL,
+    block_time  INTEGER NOT NULL,
+    seen_at     INTEGER NOT NULL,
+    PRIMARY KEY (network, txid)
+);
+CREATE INDEX IF NOT EXISTS node_broadcast_topic ON node_broadcast(network, topic, sender);
 CREATE TABLE IF NOT EXISTS game_state (
     txid        TEXT NOT NULL,
     network     TEXT NOT NULL,
@@ -658,6 +670,44 @@ class MessageStore:
         return self.conn.execute("SELECT * FROM game_state WHERE network=? AND piece=?",
                                  (network, piece)).fetchall()
 
+    def add_node_broadcast(self, network: str, txid: str, sender: str, topic: str,
+                           body: Any, height: int, block_time: int) -> None:
+        """One public machine-talk message (messaging/broadcast.py). A row written at
+        publish (height 0) is promoted in place when the scan sees its block."""
+        import json as _json
+        import time as _time
+        self.conn.execute(
+            "INSERT INTO node_broadcast (network, txid, sender, topic, body, height,"
+            " block_time, seen_at) VALUES (?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(network, txid) DO UPDATE SET"
+            "  height = CASE WHEN excluded.height > 0 THEN excluded.height"
+            "                ELSE node_broadcast.height END,"
+            "  block_time = CASE WHEN excluded.height > 0 THEN excluded.block_time"
+            "                ELSE node_broadcast.block_time END",
+            (network, txid, sender, topic,
+             _json.dumps(body, separators=(",", ":"), sort_keys=True),
+             int(height), int(block_time), int(_time.time())))
+        self.conn.commit()
+
+    def node_broadcasts(self, network: str, topic: str = "", after: int = 0,
+                        limit: int = 100, senders: list[str] | None = None) -> list[sqlite3.Row]:
+        """Broadcasts oldest first, from row id `after` on (each row's `id` is its cursor),
+        optionally one topic and only some senders."""
+        where, args = ["network = ?", "rowid > ?"], [network, int(after)]
+        if topic:
+            where.append("topic = ?")
+            args.append(topic)
+        if senders is not None:
+            senders = [x for x in senders if x]
+            if not senders:
+                return []
+            where.append(f"sender IN ({','.join('?' * len(senders))})")
+            args += senders
+        return self.conn.execute(
+            "SELECT rowid AS id, network, txid, sender, topic, body, height, block_time "
+            f"FROM node_broadcast WHERE {' AND '.join(where)} ORDER BY rowid LIMIT ?",
+            (*args, max(1, min(int(limit), 1000)))).fetchall()
+
     def mesh_peers(self, network: str, since: int = 0) -> list[sqlite3.Row]:
         """The latest announcement per mesh key and kind (an IP address, or a wss://
         tunnel address -- a node may have both) seen since `since` (unix time), newest first."""
@@ -791,6 +841,10 @@ class MessageStore:
             self.conn.executemany(f"DELETE FROM {table} WHERE {key} = ?", gone)
             if table == "candidate":
                 removed = len(gone)
+        # Machine talk carries its chain by name; a row written at publish (height 0)
+        # is not in any block yet and waits for one.
+        self.conn.execute("DELETE FROM node_broadcast WHERE network = ? AND height >= ?",
+                          (network, max(1, int(height))))
         self.conn.execute(
             "UPDATE scan_state SET last_height=? WHERE network=? AND last_height >= ?",
             (height - 1, network, height),

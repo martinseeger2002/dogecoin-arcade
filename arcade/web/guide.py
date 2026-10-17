@@ -65,6 +65,8 @@ ORDER = (
      "Put a player's NFTs and tokens at stake: your judge decides who gets them, the player can always take them back after the unlock time."),
     ("game-state.md", "Game state: a game's own record on each NFT",
      "Conditions, charges and counts that travel with a piece, written only by its game: arcade.state."),
+    ("broadcasts.md", "Broadcasts: one node telling every node",
+     "Public machine talk under a topic, and the sensitive-material flags it carries."),
     ("inscription-api.md", "The inscription API",
      "What an inscribed page may ask the wallet, and what it is refused."),
     ("bot-rpc.md", "The bot RPC",

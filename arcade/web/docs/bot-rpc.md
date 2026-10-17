@@ -91,6 +91,13 @@ A program that is *not* trusted to spend on its own asks instead:
 | `da_request id` | the answer: `pending`, `sent` (with `txid`), `denied`, `failed` (with `error`) or `expired` |
 | `da_requests [count]` | the ones waiting, then the newest decided |
 
+Public machine talk, one node to every node ([Broadcasts](broadcasts.md)):
+
+| Method | |
+|---|---|
+| `da_publish topic body [from]` | prepares a public broadcast under a topic; send it with `da_broadcast txid` |
+| `da_broadcasts [topic after count [senders]]` | confirmed broadcasts from every node, oldest first; pass the last `id` as `after` |
+
 ### Sending is two calls
 
 This is the one place the RPC is deliberately not Omni's. In Omni Core

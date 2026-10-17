@@ -606,8 +606,75 @@ class AppState:
                 screen.ledgers = [self.ledger_index_path(c) for c in self.token_chains]
             except Exception:                     # noqa: BLE001 -- no chains yet: no names
                 pass
+            # Content flags shared between arcades (arcade/flags.py): read live from the
+            # settings, so turning either on or off needs no restart.
+            screen.flags_source = self.followed_flags
+            screen.on_verdict = self._offer_flag
             self._screen = (said, screen)
         return self._screen[1]
+
+    # --- machine talk, public (messaging/broadcast.py) --------------------------------
+
+    def send_broadcast(self, topic: str, body) -> str:
+        """Publish one public machine-talk message from this node's fee address -- the
+        address its instance and mesh announcements come from, so every reader knows
+        which arcade said it. Written down at once (height 0); the scan confirms it."""
+        from ..messaging import broadcast as broadcastlib
+        from ..messaging.sender import MessageSender, funded_address
+
+        chain = self.messaging
+        fee_address = self.derived_address
+        if not fee_address:
+            raise ValueError("this node has no fee address yet")
+        payload = broadcastlib.build(topic, body)
+        with chain.rpc() as rpc:
+            sender = MessageSender(rpc, chain.params, public_only=True)
+            address = funded_address(rpc, prefer=fee_address, mainnet=chain.is_mainnet)
+            if address != fee_address:
+                raise ValueError(f"the fee address {fee_address} has no coins to broadcast "
+                                 "with: send it some testnet PEP")
+            txid = sender.broadcast(sender.prepare(address, payload, change_address=address))
+        with self.store() as store:
+            store.add_node_broadcast(chain.network, txid, fee_address, topic, body, 0,
+                                     int(time.time()))
+        return txid
+
+    # --- content flags shared between arcades (arcade/flags.py) -----------------------
+
+    def flags(self):
+        """This node's flag broadcaster, made once."""
+        from .. import flags as flagslib
+        held = getattr(self, "_flags_out", None)
+        if held is None:
+            held = flagslib.Broadcaster(
+                publish=lambda entries: self.send_broadcast(flagslib.TOPIC,
+                                                            flagslib.body(entries)),
+                said=self.own_flags)
+            self._flags_out = held
+        return held
+
+    def own_flags(self) -> dict[str, str]:
+        """digest -> the verdict this node's fee address last broadcast for it."""
+        from .. import flags as flagslib
+        me = self.derived_address
+        if not me:
+            return {}
+        with self.store() as store:
+            said = flagslib.latest_by(store, self.messaging.network, [me])
+        return {digest: verdict for (_sender, digest), verdict in said.items()}
+
+    def followed_flags(self) -> dict[str, str]:
+        """digest -> the strictest flag among the arcades this operator follows."""
+        from .. import flags as flagslib
+        follow = [a for a in (self.setting("flags:follow") or []) if isinstance(a, str)]
+        if not follow:
+            return {}
+        with self.store() as store:
+            return flagslib.followed_verdicts(store, self.messaging.network, follow)
+
+    def _offer_flag(self, digest: str, verdict: str) -> None:
+        if self.setting("flags:broadcast", False):
+            self.flags().offer(digest, verdict)
 
     def push(self):
         """Push notifications for the Messenger (arcade/push.py), or None when this

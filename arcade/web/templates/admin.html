@@ -101,8 +101,26 @@
   <label class="switch" id="modclearrow" hidden><input type="checkbox" id="modclear">
     Remove the saved access token</label>
   <p class="muted" id="modsaid"></p>
+  {# 2026-10-17: what this arcade's model flags, told to every arcade (arcade/flags.py). #}
+  <label class="switch"><input type="checkbox" id="flags_broadcast"> Broadcast this arcade&rsquo;s
+    sensitive-material flags to every arcade</label>
+  <p class="muted" style="margin:-4px 0 10px 28px;font-size:.84rem" id="flagsline">
+    Each picture or post your model flags goes out as a public message every arcade reads: only
+    its fingerprint and the verdict, never the content. Flags are gathered and sent together, a
+    testnet transaction at a time, from this node&rsquo;s fee address. Other operators choose
+    whether to use them.</p>
   <p class="muted" id="pushline"></p>
   <button type="button" class="small" id="saveswitches">Save switches</button>
+</section>
+
+<section class="panel" id="flags">
+  <h2>Sensitive-material flags from other arcades</h2>
+  <p class="muted" style="margin-top:0">Arcades that broadcast what their own screening flagged.
+    Turn one on and what it flags is covered here too (sensitive) or hidden (illegal), even with
+    your own screening off. Their flags can only make this arcade stricter, and anything you
+    clear yourself stays cleared.</p>
+  <div id="flaglist"><p class="muted">No arcade has broadcast flags yet.</p></div>
+  <button type="button" class="small" id="saveflags">Save</button>
 </section>
 
 <section class="panel" id="xchain">
@@ -361,6 +379,30 @@ section.panel h2{margin-top:0}
     $('modclear').checked = false;
     $('modsaid').textContent = (d.moderation && d.moderation.url)
       ? 'Screening is on.' : 'Screening is off: nothing is screened.';
+    // content flags (arcade/flags.py): this arcade's switch, then everyone who broadcasts
+    var f = d.flags || {}, fs = f.status || {};
+    $('flags_broadcast').checked = !!f.broadcast;
+    if (f.broadcast) {
+      $('flagsline').textContent = 'Broadcasting from ' + (f.name ? '@' + f.name + ' (' + f.address + ')' : f.address)
+        + ': ' + (fs.flags_sent || 0) + ' flags sent since the node started, ' + (fs.queued || 0) + ' waiting'
+        + (fs.last_error ? '. Last problem: ' + fs.last_error : '.');
+    }
+    var fl = $('flaglist'); fl.textContent = '';
+    (f.broadcasters || []).forEach(function (b) {
+      var row = document.createElement('label'); row.className = 'switch';
+      var box = document.createElement('input'); box.type = 'checkbox'; box.dataset.address = b.address;
+      box.checked = !!b.followed; box.disabled = !!b.me;
+      row.appendChild(box);
+      var who = b.name ? '@' + b.name : (b.domain || b.address.slice(0, 12) + '\u2026');
+      var bits = [b.sensitive + ' sensitive', b.illegal + ' illegal'];
+      if (b.retracted) bits.push(b.retracted + ' taken back');
+      row.appendChild(document.createTextNode(' ' + who + (b.domain && b.name ? ' \u00b7 ' + b.domain : '')
+        + (b.me ? ' (this arcade)' : '') + ' \u2014 ' + bits.join(', ')
+        + (b.last ? ', last ' + new Date(b.last * 1000).toLocaleDateString() : '')));
+      row.title = b.address;
+      fl.appendChild(row);
+    });
+    if (!fl.childNodes.length) fl.innerHTML = '<p class="muted">No arcade has broadcast flags yet.</p>';
     $('pushline').textContent = d.push.available
       ? 'Message notifications are available here (' + d.push.devices + ' accounts use them).'
       : 'Message notifications are off: this node needs `pip install .[push]`.';
@@ -428,9 +470,19 @@ section.panel h2{margin-top:0}
     call('/admin/api/settings', {auto_update: $('auto_update').checked, auto_sell: $('auto_sell').checked,
       auto_fill: $('auto_fill').checked, node_trades: $('node_trades').checked,
       xchain_enabled: $('xchain_enabled').checked,
+      flags_broadcast: $('flags_broadcast').checked,
       moderation: {url: $('modurl').value.trim(), model: $('modmodel').value.trim(),
                    key: $('modkey').value.trim(), clear_key: $('modclear').checked}})
       .then(function () { say('Switches saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
+  };
+
+  $('saveflags').onclick = function () {
+    var follow = [];
+    document.querySelectorAll('#flaglist input[data-address]').forEach(function (i) {
+      if (i.checked && !i.disabled) follow.push(i.dataset.address);
+    });
+    call('/admin/api/settings', {flags_follow: follow})
+      .then(function () { say('Flag sources saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
   };
 
   $('modtest').onclick = function () {

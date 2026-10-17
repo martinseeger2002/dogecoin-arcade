@@ -46,6 +46,9 @@ log = logging.getLogger(__name__)
 
 OK, SENSITIVE, ILLEGAL = "ok", "sensitive", "illegal"
 VERDICTS = (OK, SENSITIVE, ILLEGAL)
+SEVERITY = {OK: 0, SENSITIVE: 1, ILLEGAL: 2}
+#: How long the followed operators' flags are kept before they are read again (seconds).
+FLAGS_FOR = 30
 
 PROMPT = (
     'You review content for a public website before it is shown. Classify it into exactly '
@@ -135,6 +138,13 @@ class Screen:
         #: (2026-09-30: "cloud services ... for screening"), so the first refusal
         #: of one turns them off for this endpoint.
         self._vllm_fields = True
+        #: Content flags shared between arcades (arcade/flags.py; state.screen() sets both).
+        #: `flags_source()` -> {digest: verdict} from the operators this arcade follows;
+        #: `on_verdict(digest, verdict)` hears every verdict THIS arcade's model or operator
+        #: reaches, so it can be broadcast. None = no flags either way.
+        self.flags_source = None
+        self.on_verdict = None
+        self._flags: tuple[float, dict[str, str]] = (0.0, {})
 
     # --- what is already known -------------------------------------------------
 
@@ -142,13 +152,39 @@ class Screen:
         with self._lock:
             row = self.conn.execute("SELECT verdict, prompt FROM verdict WHERE digest = ?",
                                     (digest,)).fetchone()
-        if not row:
+        own = None
+        if row:
+            # An "illegal" verdict stands whatever the prompt: it is never shown while
+            # a newer question is being asked. Anything else is asked again.
+            if row["prompt"] in (PROMPT_VERSION, OPERATOR) or row["verdict"] == ILLEGAL:
+                own = row["verdict"]
+            if row["prompt"] == OPERATOR:
+                return own                        # this arcade's operator has the last word
+        flagged = self.flagged(digest)
+        if flagged is None:
+            return own
+        return flagged if own is None or SEVERITY[flagged] > SEVERITY[own] else own
+
+    def flagged(self, digest: str) -> str | None:
+        """The strictest flag a followed operator holds on this content, or None."""
+        if self.flags_source is None:
             return None
-        # An "illegal" verdict stands whatever the prompt: it is never shown while
-        # a newer question is being asked. Anything else is asked again.
-        if row["prompt"] not in (PROMPT_VERSION, OPERATOR) and row["verdict"] != ILLEGAL:
-            return None
-        return row["verdict"]
+        at, held = self._flags
+        if time.time() - at > FLAGS_FOR:
+            try:
+                held = dict(self.flags_source() or {})
+            except Exception as exc:                   # noqa: BLE001 -- the last list stands
+                log.warning("followed content flags not read: %s", exc)
+            self._flags = (time.time(), held)
+        verdict = held.get(digest)
+        return verdict if verdict in (SENSITIVE, ILLEGAL) else None
+
+    def _heard(self, digest: str, verdict: str) -> None:
+        if self.on_verdict is not None:
+            try:
+                self.on_verdict(digest, verdict)
+            except Exception as exc:                   # noqa: BLE001 -- screening goes on
+                log.warning("content flag not offered: %s", exc)
 
     def _keep(self, digest: str, kind: str, verdict: str, reason: str) -> None:
         with self._lock:
@@ -166,6 +202,8 @@ class Screen:
                 pass
             log.warning("content %s judged illegal (%s): hidden, logged for the operator",
                         digest[:16], reason)
+        if verdict in (SENSITIVE, ILLEGAL):
+            self._heard(digest, verdict)
 
     def overrule(self, words: str) -> None:
         """The operator says these words are fine. Kept per content like any
@@ -185,6 +223,7 @@ class Screen:
                  OPERATOR))
             self.conn.commit()
             self._queue.pop(digest, None)
+        self._heard(digest, OK)                       # takes back a flag this arcade gave
 
     # --- the names on this arcade ----------------------------------------------
 

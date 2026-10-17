@@ -28,6 +28,7 @@ from .. import release as releaselib
 from .. import instance as instancelib
 from ..mesh import announce as meshannounce
 from .. import gamestate as gamestatelib
+from . import broadcast as broadcastlib
 from . import content, feed, group
 from ..script import b58check_encode
 from .envelope import (
@@ -41,6 +42,7 @@ from .envelope import (
     TYPE_INSTANCE,
     TYPE_MESH,
     TYPE_GAMESTATE,
+    TYPE_BROADCAST,
     TYPE_SINGLE,
     is_message_payload,
     open_message,
@@ -385,6 +387,18 @@ class Scanner:
                     self.store.add_mesh_announcement(
                         atx.txid, self.params.name, atx.sender, said["host"],
                         said["port"], said["key"], height, block_time)
+                    result.announcements += 1
+                continue
+
+            # Machine talk, public (broadcast.py): one node to every node, under a
+            # topic, read by programs and never drawn. Confirmed only: a pool row
+            # for a transaction that is then dropped would be read for ever.
+            if len(body) >= 6 and body[5] == TYPE_BROADCAST:
+                said = broadcastlib.parse(body)
+                if said and atx.sender and height > 0:
+                    self.store.add_node_broadcast(self.params.name, atx.txid, atx.sender,
+                                                  said["topic"], said["body"], height,
+                                                  block_time)
                     result.announcements += 1
                 continue
 
