@@ -25,6 +25,13 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+#: Said wherever Litecoin trades or inscriptions are offered (docs/litecoin.md says it in full).
+CROSS_CHAIN_NOTE = (
+    "A swap across chains is two lock-script trades tied by one secret: you pay a network fee on "
+    "each chain you lock on, a lock refunds only after its time has passed (Litecoin's 2.5-minute "
+    "blocks can add about 15 minutes), and a trade is done when both claims are in blocks on both "
+    "chains. Never send to an ltcmweb1... address.")
+
 UNIT = "litecoind-mainnet"
 RPC_URL = "http://127.0.0.1:9332/"
 DATADIR = Path.home() / ".litecoin"

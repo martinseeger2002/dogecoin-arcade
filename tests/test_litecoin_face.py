@@ -90,3 +90,18 @@ def test_starting_and_stopping_queue_the_service(monkeypatch, tmp_path):
     ltclib.set_running(False)
     assert ("--no-block", "enable", "--now", ltclib.UNIT) in calls, "hosting survives a reboot"
     assert ("--no-block", "disable", "--now", ltclib.UNIT) in calls
+
+
+def test_the_litecoin_page_says_what_to_know_about_taproot_and_cross_chain(app_state, monkeypatch):
+    """The disclaimers ship as a Docs page, are linked from the admin panel, and are kept as
+    constants for the wallet and Exchange screens that come next (2026-10-17)."""
+    from arcade import litecoin as ltc, ltc_ord
+    monkeypatch.setenv("ARCADE_BRAND", "pepecoin")
+    app = TestClient(create_app(app_state))
+    page = app.get("/docs/litecoin.md")
+    assert page.status_code == 200
+    for said in ("Taproot", "ltc1p", "Doginals format", "refunds its owner", "ltcmweb1",
+                 "a network fee on each chain"):
+        assert said in page.text, said
+    assert "/docs/litecoin.md" in app.get("/docs").text, "offered on the Docs tab"
+    assert "Taproot" in ltc_ord.TAPROOT_NOTE and "ltcmweb1" in ltc.CROSS_CHAIN_NOTE

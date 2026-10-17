@@ -61,6 +61,8 @@ ORDER = (
      "Rooms where players meet in your game, and trades between them: arcade.realtime and arcade.swap.trade."),
     ("swaps.md", "Swaps between chains: how a trade works here",
      "Trade PEP for DOGE and more with anyone, trustlessly: lock scripts, two minutes, nothing held."),
+    ("litecoin.md", "Litecoin on this arcade",
+     "What works on Litecoin, inscriptions and Taproot, and what to know before exchanging across chains."),
     ("escrow.md", "Escrow: holding players' items for your game",
      "Put a player's NFTs and tokens at stake: your judge decides who gets them, the player can always take them back after the unlock time."),
     ("game-state.md", "Game state: a game's own record on each NFT",
