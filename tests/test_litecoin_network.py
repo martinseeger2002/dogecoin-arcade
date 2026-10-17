@@ -169,3 +169,31 @@ console.log(JSON.stringify({same: hex(ltc.key) === hex(pep.key), key: hex(ltc.ke
     assert version == 0xB0 and body[32:] == b"\x01" and said["wif"].startswith("T")
     assert body[:32].hex() == said["key"]
     assert b58check_encode(48, hash160(_pubkey(int.from_bytes(body[:32], "big")))) == said["ltc"]
+
+
+# --- the Exchange (2026-10-17) ---------------------------------------------------------------------
+
+def test_litecoin_trades_are_mainnet_with_their_own_big_line():
+    from arcade import trade, trade_orders
+    from arcade.node_trader import swap_big
+    leg = trade.Leg("ltc", "coin", "", 1, "", "")
+    assert leg.tier() == "mainnet", "real coins: the second confirmation, no faucet"
+    assert trade.BIG["ltc"] == 2 * 100_000_000
+    assert trade_orders.RANK["main"] < trade_orders.RANK["doge"] < trade_orders.RANK["ltc"], \
+        "pairs read PEP/LTC and DOGE/LTC"
+
+    class S:
+        def setting(self, key, default=None):
+            return default
+    assert swap_big(S())["ltc"] == 2 * 100_000_000, "the operator's line, defaulting to trade.BIG"
+
+
+def test_the_exchange_offers_an_l_main_chip(client, monkeypatch):
+    app, state = client
+    _with_ltc(state, monkeypatch, ready=False)
+    page = app.get("/exchange").text
+    assert 'title="L main opens when its node has synced (91.2% so far)"' in page, "grayed while syncing"
+    _with_ltc(state, monkeypatch, ready=True)
+    page = app.get("/exchange").text
+    assert "show=litecoin" in page and '<b class="netl litecoin">L</b> main' in page
+    assert app.get("/exchange?show=litecoin").status_code == 200

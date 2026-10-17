@@ -305,7 +305,7 @@ def coin_book(orders: list[dict], base: str, quote: str) -> dict:
 
 #: The order coins go in a coin pair's name: the lower rank is the base (PEP TEST/PEP,
 #: PEP TEST/DOGE, PEP/DOGE), so each pair of chains has one market, not two.
-RANK = {"regtest": 0, "test": 0, "main": 1, "doge": 2}
+RANK = {"regtest": 0, "test": 0, "main": 1, "doge": 2, "ltc": 3}   # ltc: PEP/LTC, DOGE/LTC
 
 
 def one_chain_offer(a: dict, b: dict) -> bool:

@@ -4461,6 +4461,8 @@ def create_app(state: AppState) -> FastAPI:
         answer = RedirectResponse(where, status_code=303)
         if chosen is None and state.doge is not None and to in ("doge", "dogecoin"):
             state.flash("Dogecoin is not open yet: its node is still syncing.", "err")
+        if chosen is None and getattr(state, "ltc", None) is not None and to in ("ltc", "litecoin"):
+            state.flash("Litecoin is not open yet: its node is still syncing.", "err")
         if chosen is not None:
             answer.set_cookie(CHAIN_COOKIE, chosen.network, max_age=365 * 86400,
                               samesite="lax", secure=_over_https(request), path="/")
@@ -9505,6 +9507,8 @@ def create_app(state: AppState) -> FastAPI:
                 return chain
         if state.doge is not None and wanted in ("doge", "dogecoin"):
             raise ValueError("Dogecoin is not open here yet: its node is still syncing")
+        if getattr(state, "ltc", None) is not None and wanted in ("ltc", "litecoin"):
+            raise ValueError("Litecoin is not open here yet: its node is still syncing")
         raise ValueError(f"this node does not run {wanted}")
 
     def _chain_on(network: str):
@@ -22487,7 +22491,7 @@ def create_app(state: AppState) -> FastAPI:
 
     #: The Tokens tab's chips (2026-10-13: "Add a mix, testnet only,
     #: mainnet only, and cross chain only Sort buttons to the token exchange").
-    PAIR_SHOWS = ("mix", "testnet", "mainnet", "dogecoin", "cross")
+    PAIR_SHOWS = ("mix", "testnet", "mainnet", "dogecoin", "litecoin", "cross")
 
     def _side_face(net: str, kind: str, asset: str, cache: dict) -> dict:
         """One side of a market as its icon says it: {"coin": network} for a coin, {"icon", "letter"} for a token."""
@@ -22747,7 +22751,7 @@ def create_app(state: AppState) -> FastAPI:
         return colls, sales[:8], tags
 
     #: Launchpads have no cross-chain kind: each pad sells on its own chain.
-    PAD_SHOWS = ("mix", "testnet", "mainnet", "dogecoin")
+    PAD_SHOWS = ("mix", "testnet", "mainnet", "dogecoin", "litecoin")
 
     def _market_points(b: dict, q: dict) -> list[dict[str, Any]]:
         """Every trade a market has had, newest first, from both places they are kept (2026-10-17: "Why the pair
@@ -25589,6 +25593,11 @@ def create_app(state: AppState) -> FastAPI:
             nets = [c.network for c in state.all_chains]
             if "doge" in nets and "main" in nets:
                 out["coin_pairs"] = [{"base": "main", "quote": "doge", "name": "PEP/DOGE"}]
+            # Litecoin (2026-10-17): PEP/LTC and DOGE/LTC, real coin for real coin, the same way.
+            if "ltc" in nets and "main" in nets:
+                out.setdefault("coin_pairs", []).append({"base": "main", "quote": "ltc", "name": "PEP/LTC"})
+            if "ltc" in nets and "doge" in nets:
+                out.setdefault("coin_pairs", []).append({"base": "doge", "quote": "ltc", "name": "DOGE/LTC"})
         except Exception:
             log.debug("trade orders unavailable", exc_info=True)
         return out

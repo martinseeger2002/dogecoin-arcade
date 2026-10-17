@@ -104,6 +104,7 @@ document.querySelectorAll('.ex-seg a').forEach(function (a) {
 {# Dogecoin's chip comes after Mainnet's whenever this node has a Dogecoin node,
    grayed out with how far it has got until it has synced (2026-10-13). #}
 {%- set doge = (chain_menu()|selectattr('doge')|list or [none])[0] %}
+{%- set ltc = (chain_menu()|selectattr('ltc')|list or [none])[0] %}
 <span class="ex-modes" style="margin:0" id="netshow">
   {%- for key in keys %}
   <a class="ex-chip{{ ' on' if show == key }}" href="/exchange?tab={{ tab_name }}{{ extra }}{{ '' if key == 'mix' else '&show=' ~ key }}"{% if show == key %} aria-current="true"{% endif %}>{% if key in ('testnet', 'mainnet') %}<b class="netl {{ key }}">P</b> {% endif %}{{ {'mix': 'Mix', 'testnet': 'test', 'mainnet': 'main', 'cross': 'Cross chain only'}[key] }}</a>
@@ -112,6 +113,13 @@ document.querySelectorAll('.ex-seg a').forEach(function (a) {
   <a class="ex-chip{{ ' on' if show == 'dogecoin' }}" href="/exchange?tab={{ tab_name }}{{ extra }}&show=dogecoin"{% if show == 'dogecoin' %} aria-current="true"{% endif %}><b class="netl dogecoin">D</b> main</a>
   {%- else %}
   <span class="ex-chip chain-off" aria-disabled="true" title="D main opens when its node has synced ({{ doge.progress }}% so far)"><b class="netl dogecoin">D</b> main</span>
+  {%- endif %}
+  {%- endif %}
+  {%- if key == 'mainnet' and ltc %}
+  {%- if ltc.ready %}
+  <a class="ex-chip{{ ' on' if show == 'litecoin' }}" href="/exchange?tab={{ tab_name }}{{ extra }}&show=litecoin"{% if show == 'litecoin' %} aria-current="true"{% endif %}><b class="netl litecoin">L</b> main</a>
+  {%- else %}
+  <span class="ex-chip chain-off" aria-disabled="true" title="L main opens when its node has synced ({{ ltc.progress }}% so far)"><b class="netl litecoin">L</b> main</span>
   {%- endif %}
   {%- endif %}
   {%- endfor %}</span>

@@ -50,7 +50,10 @@ LOCK_SECONDS = {"mainnet": 2 * 3600, "testnet": 2 * 3600}
 CONFIRMATIONS = 0
 #: At or above the line, one confirmation (2026-10-17: "1 conf above the threshold").
 CONFIRMATIONS_BIG = 1
-BIG = {"main": 1_000_000 * 100_000_000, "doge": 1_000 * 100_000_000}
+BIG = {"main": 1_000_000 * 100_000_000, "doge": 1_000 * 100_000_000,
+       # Litecoin (2026-10-17, SadFrog's side): 2 LTC, about the value of the Dogecoin line;
+       # the operator moves it with swap_big:ltc like the others.
+       "ltc": 2 * 100_000_000}
 #: Never claim the responder's lock when less than this is left on it: the responder
 #: must still have time to see the secret and claim the initiator's lock before T1.
 CLAIM_MARGIN = 20 * 60
@@ -82,7 +85,7 @@ class Leg:
     taker_key: str               # hex pubkey of whoever claims it
 
     def tier(self) -> str:
-        return "mainnet" if self.network in ("main", "doge") else "testnet"
+        return "mainnet" if self.network in ("main", "doge", "ltc") else "testnet"
 
 
 @dataclasses.dataclass

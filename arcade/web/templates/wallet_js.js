@@ -2518,11 +2518,11 @@ function legWhat(leg) {
 export const TRADE = {
   LOCK_SECONDS: {mainnet: 2 * 3600, testnet: 2 * 3600},
   CONFIRMATIONS: 0, CONFIRMATIONS_BIG: 1,       // 0 below the big line, 1 at or above it (2026-10-17; trade.py)
-  BIG: {main: 1_000_000 * 100_000_000, doge: 1_000 * 100_000_000},
+  BIG: {main: 1_000_000 * 100_000_000, doge: 1_000 * 100_000_000, ltc: 2 * 100_000_000},
   CLAIM_MARGIN: 20 * 60, LOCK_MARGIN: 30 * 60,
   LOCK_RESERVE: 2_000_000,          // htlc.SPEND_FEE + htlc.DUST (trade.LOCK_RESERVE)
 };
-const tierOf = (leg) => (leg.network === "main" || leg.network === "doge") ? "mainnet" : "testnet";
+const tierOf = (leg) => (leg.network === "main" || leg.network === "doge" || leg.network === "ltc") ? "mainnet" : "testnet";
 
 /** 0, or 1 when a mainnet coin leg is at or above its line (trade.confirmations_for). */
 export function confirmationsFor(give, get, big = TRADE.BIG) {
