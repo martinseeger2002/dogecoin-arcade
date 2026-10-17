@@ -8,25 +8,35 @@
    of BASE at a price in QUOTE per whole BASE. Both sides are ledger balances, so
    the chain matches a crossing order in its own block -- nobody has to be online
    to fill it, and a buy holds its QUOTE back exactly as a sell holds its BASE. #}
+<div id="live" data-generation="{{ state.generation }}" class="live" data-live-fast></div>
 <a class="back-link" href="/exchange?tab=tokens">&#8592; All markets</a>
-
-{{ ex.style() }}
+{# Laid out like the token/coin page, pair.html (2026-10-17: "All pairings should look like
+   it looks ... from top to bottom"). #}
+{{ ex.style() }}{{ ex.fav_script() }}{{ ex.market_css() }}
 <div class="ex-hero">
-  <span class="ex-tic" style="width:46px;height:46px">{{ (bname or '?')[:1]|upper }}</span>
+  {% if face.icon %}<img class="ex-tic" src="/content/{{ face.icon }}" alt="" loading="lazy" style="width:46px;height:46px">
+  {% else %}<span class="ex-tic" style="width:46px;height:46px">{{ (bname or '?')[:1]|upper }}</span>{% endif %}
   <div style="min-width:0">
     <h1>{{ wall(base.name, 'token name') }}<span class="muted" style="font-weight:600"> / {{ wall(quote.name, 'token name') }}</span>
-      {{ net_badge(chain) }}</h1>
-    <div class="muted" style="font-size:.78rem">{{ supply_badge(base) }} {{ supply_badge(quote) }}
-      #{{ base.property_id }} priced in #{{ quote.property_id }}
-      &middot; <a href="/exchange/pairs/{{ quote.property_id }}/{{ base.property_id }}">flip to {{ qname }}/{{ bname }}</a></div>
+      {{ net_badge(chain) }}{{ supply_badge(base) }}{{ supply_badge(quote) }}</h1>
+    <div class="muted" style="font-size:.78rem;overflow-wrap:anywhere">#{{ base.property_id }}
+      {%- if face.about %} &middot; {{ wall(face.about, 'description') }}{% endif %}
+      {%- if face.url %} &middot; <a href="{{ face.url }}" rel="noopener noreferrer nofollow" target="_blank">link</a>{% endif %}
+      &middot; priced in #{{ quote.property_id }} &middot; <a href="/exchange/pairs/{{ quote.property_id }}/{{ base.property_id }}">flip to {{ qname }}/{{ bname }}</a></div>
   </div>
+  {{ ex.fav_button(fav_key('/exchange/pairs/' ~ base.property_id ~ '/' ~ quote.property_id, chain.network)) }}
 </div>
 <div class="ex-price">
-  {%- if stats.last is not none %}<b>{{ ex.px(stats.last) }}</b><span class="unit">{{ qname }}</span>{{ ex.chg(stats.change) }}
+  {%- if day.last is not none %}<b>{{ ex.px(day.last) }}</b><span class="unit">{{ qname }}</span>{{ ex.chg(day.change, day.new) }}
   {%- else %}<b>&mdash;</b><span class="unit">no trades yet</span>{% endif %}
 </div>
-<p class="ex-note" style="margin:0 0 12px">Settles on {{ chain.label|lower }} in the block an order lands in: the chain
-  matches it, nobody has to be online to fill it, and nobody holds your tokens.</p>
+<div class="ex-stats">
+  <span>24h high <b>{% if day.high is not none %}{{ ex.px(day.high) }}{% else %}&mdash;{% endif %}</b></span>
+  <span>24h low <b>{% if day.low is not none %}{{ ex.px(day.low) }}{% else %}&mdash;{% endif %}</b></span>
+  <span>24h volume <b>{{ "%.4f"|format(day.coins) }}</b> {{ qname }}</span>
+  {% if viewer == 'wallet' or account_address %}<span>You hold <b>{{ held_base }}</b></span>{% endif %}
+</div>
+{% if viewer != 'nobody' %}<p style="margin:-6px 0 12px;font-size:.84rem"><a href="/exchange/history">Your trade history &rarr;</a></p>{% endif %}
 
 {% if not live %}
 <div class="panel"><p class="msg err" style="margin:0">Token-for-token pairs are
@@ -35,7 +45,9 @@
   The book below fills in once they are.</p></div>
 {% endif %}
 
-<div class="ex-card" style="padding:10px 10px 6px">
+<div class="pairgrid">
+  <div>
+<div class="panel">
   {% set periods = {'15m': '15-minute period', '1h': 'hour', '4h': '4-hour period', '1d': 'day'} %}
   <div class="row tfs" style="gap:4px;margin:6px 0 8px" role="group" aria-label="Candle size">
     {% for t in timeframes %}
@@ -46,7 +58,7 @@
   {{ chart.candles(slots, qname ~ ' each', period=periods[tf]) }}
 </div>
 
-<div class="ex-card">
+<div class="panel">
   {% if viewer == 'nobody' %}
     <h3>Trade {{ bname }} for {{ qname }}</h3>
     <p class="muted" style="margin:0">Sign in to put an order on this pair.</p>
@@ -75,8 +87,10 @@
   </form>
   <p class="msg err" id="pair-trouble" hidden></p>
   <p class="msg ok" id="pair-news" hidden></p>
-  <p class="ex-note">You hold {{ held_base }} {{ bname }} and {{ held_quote }} {{ qname }}. Whatever is not
-    matched in its block stands at your price, its tokens held back, until it fills or you cancel it.</p>
+  <p class="ex-note">Settles on {{ chain.label|lower }} in the block an order lands in: the chain matches it, nobody
+    has to be online to fill it, and nobody holds your tokens. You hold {{ held_base }} {{ bname }} and
+    {{ held_quote }} {{ qname }}. Whatever is not matched in its block stands at your price, its tokens held back,
+    until it fills or you cancel it.</p>
   <script>
   exTrade(document.getElementById("pair-form"), {sideName: "side", buyValue: "buy",
     amount: "pair-amount", price: "pair-price", button: "pair-order",
@@ -140,42 +154,56 @@
   {% endif %}
 </div>
 
-<div class="grid2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">
+  </div>
+
+  <div>
   <div class="panel">
-    <h3 style="margin:0 0 2px">Book</h3>
-    <p class="muted" style="font-size:.78rem;margin:0 0 6px">Prices in {{ qname }} {{ net_badge(chain) }}</p>
-    <table class="book" style="width:100%;font-size:.86rem">
-      {% set takes = live and viewer != 'nobody' %}
-      <tr class="muted"><th style="text-align:left">Price ({{ qname }})</th><th style="text-align:right">{{ bname }}</th><th style="text-align:right">{{ qname }}</th>{% if takes %}<th></th>{% endif %}</tr>
-      {% for o in book.asks|reverse %}
-      <tr><td style="color:var(--bad)">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}{% if o.mine %} <span class="muted">(yours)</span>{% endif %}{% if o.pending %} <span class="muted" title="Broadcast, not in a block yet{{ ': it meets the book and trades when its block lands' if o.crosses }}">{{ '(trades when its block lands)' if o.crosses else '(pending)' }}</span>{% endif %}</td>
-          <td style="text-align:right">{{ o.base_shown }}</td><td style="text-align:right">{{ o.quote_shown }}</td>
-          {% if takes %}<td style="text-align:right">{% if not o.mine and not o.pending %}<button type="button" class="small" data-ex-take
-            data-side="buy" data-amount="{{ o.base_shown }}" data-price="{{ ex.px(o.each) }}">Buy</button>{% endif %}</td>{% endif %}</tr>
-      {% endfor %}
-      <tr><td colspan="{{ 4 if takes else 3 }}" class="muted" style="text-align:center;font-size:.76rem;padding:4px 0">
-        {% if not book.asks and not book.bids %}No orders yet{% else %}asks above, bids below{% endif %}</td></tr>
-      {% for o in book.bids %}
-      <tr><td style="color:var(--ok)">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}{% if o.mine %} <span class="muted">(yours)</span>{% endif %}{% if o.pending %} <span class="muted" title="Broadcast, not in a block yet{{ ': it meets the book and trades when its block lands' if o.crosses }}">{{ '(trades when its block lands)' if o.crosses else '(pending)' }}</span>{% endif %}</td>
-          <td style="text-align:right">{{ o.base_shown }}</td><td style="text-align:right">{{ o.quote_shown }}</td>
-          {% if takes %}<td style="text-align:right">{% if not o.mine and not o.pending %}<button type="button" class="small" data-ex-take
-            data-side="sell" data-amount="{{ o.base_shown }}" data-price="{{ ex.px(o.each) }}">Sell</button>{% endif %}</td>{% endif %}</tr>
-      {% endfor %}
-    </table>
-    {% if takes and (book.asks or book.bids) %}<p class="muted" style="font-size:.76rem;margin:6px 0 0">Press Buy or Sell on a row to take it.</p>{% endif %}
+    <h3 style="margin:0 0 2px">Order book</h3>
+    <p class="muted" style="font-size:.78rem;margin:0 0 4px">Prices in {{ qname }} {{ net_badge(chain) }}</p>
+    {% set takes = live and viewer != 'nobody' %}
+    {% if takes and (book.asks or book.bids) %}<p class="muted" style="font-size:.78rem;margin:0 0 8px">Press Buy or Sell on a row to take it.</p>{% endif %}
+    {% if not book.asks and not book.bids %}<p class="muted" style="margin:0">Nothing on either side yet.</p>{% endif %}
+    {% for side_, rows, word in (('ask', book.asks, 'Selling'), ('bid', book.bids, 'Buying')) %}
+    {% if rows %}
+    <div class="obhead">{{ word }}</div>
+    {% for o in rows %}
+    <div class="obrow {{ side_ }}{{ ' mine' if o.mine }}" style="--depth:{{ o.depth }}%">
+      <span class="obprice mono">{{ "%.8f"|format(o.each)|trim('0')|trim('.') }}</span>
+      <span class="obamt"><span class="mono">{{ o.base_shown }}</span>
+        <small class="muted">{% if o.mine %}yours{% else %}{{ o.address|who }}{% endif %}
+          {%- if o.pending %} &middot; {{ 'trades when its block lands' if o.crosses else 'waiting for its block' }}{% endif %}</small></span>
+      <span class="obdo">{% if takes and not o.mine and not o.pending %}<button type="button" class="small{{ '' if side_ == 'ask' else ' ghost' }}" data-ex-take
+          data-side="{{ 'buy' if side_ == 'ask' else 'sell' }}" data-amount="{{ o.base_shown }}" data-price="{{ ex.px(o.each) }}">{{ 'Buy' if side_ == 'ask' else 'Sell' }}</button>{% endif %}</span>
+    </div>
+    {% endfor %}
+    {% endif %}
+    {% if side_ == 'ask' %}
+    <div class="obmid">
+      {%- if book.asks and book.bids %}Best ask <strong class="mono">{{ ex.px(book.asks[0].each) }}</strong> &middot;
+        best bid <strong class="mono">{{ ex.px(book.bids[0].each) }}</strong>
+      {%- elif day.last is not none %}Last traded at <strong class="mono">{{ ex.px(day.last) }}</strong>
+      {%- elif book.asks or book.bids %}<span class="muted">Only one side has orders so far.</span>{% endif %}</div>
+    {% endif %}
+    {% endfor %}
   </div>
 
   <div class="panel">
-    <h3 style="margin:0 0 8px">Recent trades</h3>
+    <h3 style="margin:0 0 2px">Recent trades</h3>
+    <p class="muted" style="font-size:.78rem;margin:0 0 6px">In {{ qname }}</p>
     {% if trades %}
-    <table style="width:100%;font-size:.86rem">
-      <tr class="muted"><th style="text-align:left">Price</th><th style="text-align:right">{{ bname }}</th><th style="text-align:right">Block</th></tr>
+    <table>
+      <tr class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.06em">
+        <td>Price</td><td style="text-align:right">Amount</td>
+        <td style="text-align:right">{{ qname }}</td><td style="text-align:right">Block</td></tr>
       {% for t in trades %}
-      <tr><td style="color:{{ 'var(--ok)' if t.side == 'buy' else 'var(--bad)' }}">{{ "%.8f"|format(t.each)|trim('0')|trim('.') if t.each is not none else '—' }}</td>
-          <td style="text-align:right">{{ t.base_shown }}</td><td style="text-align:right">{{ "{:,}".format(t.height) }}</td></tr>
+      <tr class="tradelink" data-href="/exchange/trade/{{ t.txid }}?chain={{ chain.network }}" title="Who traded"><td class="mono"><a href="/exchange/trade/{{ t.txid }}?chain={{ chain.network }}" style="color:inherit">{{ "%.8f"|format(t.each) if t.each is not none else '—' }}</a></td>
+          <td class="mono" style="text-align:right">{{ t.base_shown }}</td>
+          <td class="mono muted" style="text-align:right">{{ t.quote_shown }}</td>
+          <td class="muted" style="text-align:right">{{ "{:,}".format(t.height) }}</td></tr>
       {% endfor %}
     </table>
     {% else %}<p class="muted" style="margin:0">Nothing has traded on this pair yet.</p>{% endif %}
+  </div>
   </div>
 </div>
 

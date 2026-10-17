@@ -503,6 +503,13 @@ class MeshService:
 
     # ---------------------------------------------------------------- the web side
 
+    def room_live(self, room: str) -> bool:
+        """Whether any node holds `room` right now (order_presence). A dict read, from the web thread."""
+        try:
+            return bool(self.node.room_live(str(room)))
+        except Exception:
+            return False
+
     def online(self, node_id: str) -> bool:
         """Whether a node is on the mesh right now (its heartbeat, or a direct link).
         Read from the web thread: a dict lookup, no call into the mesh loop."""
@@ -594,6 +601,18 @@ class MeshService:
             s = self._sessions.get(str(token or ""))
         if s is not None and self.loop is not None:
             self.loop.call_soon_threadsafe(self.node.touch, s.room, s.member)
+
+    def take(self, token: str) -> list:
+        """Every event waiting for this session, now, without waiting (talk_relay drains its
+        inboxes this way from the pool-watch thread)."""
+        s = self.session(token)
+
+        async def pull():
+            out = []
+            while not s.queue.empty():
+                out.append(s.queue.get_nowait())
+            return out
+        return self._call(pull())
 
     def members(self, room: str) -> list[dict]:
         async def read():

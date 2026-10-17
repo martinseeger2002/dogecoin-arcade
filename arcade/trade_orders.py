@@ -92,9 +92,14 @@ def check_order(said: Any, now: float | None = None) -> dict:
     now = now or time.time()
     if not isinstance(expires, int) or not now < expires <= now + MAX_EXPIRY:
         raise OrderError("an order expires in the future, within 30 days")
-    return {"id": said["id"], "give": give, "get": get, "trade_key": said["trade_key"],
-            "take_key": take_key,
-            "msg_key": said["msg_key"], "node": said["node"], "expires": expires}
+    out = {"id": said["id"], "give": give, "get": get, "trade_key": said["trade_key"],
+           "take_key": take_key,
+           "msg_key": said["msg_key"], "node": said["node"], "expires": expires}
+    if said.get("tab") is True:
+        # Listed from a browser, answered by that browser: shown only while its page is open
+        # (order_presence, 2026-10-17). Older readers ignore the field.
+        out["tab"] = True
+    return out
 
 
 def batch_json(orders: list[dict], cancels: list[str] = ()) -> bytes:
@@ -167,18 +172,36 @@ class OrderBook:
                                  (lister, oid))
         return filed
 
-    def visible(self, online: Callable[[str], bool], now: float | None = None) -> list[dict]:
-        """Orders to show: not expired, not cancelled, and their node online right now."""
+    def visible(self, online: Callable[[str], bool], now: float | None = None,
+                tab_live: Callable[[str], bool] | None = None,
+                browser: Callable[[str], bool] | None = None) -> list[dict]:
+        """Orders to show: not expired, not cancelled, and their node online right now -- and one
+        a browser listed (`tab`), only while that lister's page is open (order_presence)."""
         now = now or time.time()
         with self._open() as conn:
             rows = conn.execute("SELECT * FROM trade_order WHERE cancelled=0 AND expires>? "
                                 "ORDER BY rowid", (int(now),)).fetchall()
         out = []
         for row in rows:
-            if online(row["node"]):
+            body = json.loads(row["body"])
+            # `browser`: a lister known to list from a browser though its order predates the flag
+            # (this node's own accounts).
+            tab = body.get("tab") or (browser is not None and browser(row["lister"]))
+            if online(row["node"]) and not (tab and tab_live is not None
+                                            and not tab_live(row["lister"])):
                 out.append({**json.loads(row["body"]), "lister": row["lister"],
                             "inscription": row["inscription"], "network": row["network"]})
         return out
+
+    def tab_listers(self, now: float | None = None) -> set[str]:
+        """Who has a standing order (the pool watch redraws the markets when any of them come or go)."""
+        now = now or time.time()
+        with self._open() as conn:
+            rows = conn.execute("SELECT lister, body FROM trade_order WHERE cancelled=0 AND expires>?",
+                                (int(now),)).fetchall()
+        # Every lister, flagged or not: whether each is live is the caller's question, and asking
+        # it of a node-held order costs nothing and never changes.
+        return {r["lister"] for r in rows}
 
     def cursor(self, network: str) -> int:
         with self._open() as conn:

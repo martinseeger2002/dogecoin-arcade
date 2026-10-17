@@ -2385,7 +2385,10 @@ function arcadeFileCost(bytes){
   // once every 15 s however often the node moves (2026-10-05: with a game settling
   // all the time the counter moved every 15 s, and every open tab -- hidden ones
   // too -- fetched its whole page again each time).
-  var lastPage = 0, PAGE_EVERY = 15000;
+  // A market page (data-live-fast, 2026-10-17: orders and fills "near instantaneous as possible")
+  // asks every 1.5 s and patches within 2 s; every other page keeps the gentler pace.
+  var FAST = !!document.querySelector('[data-live-fast]');
+  var lastPage = 0, PAGE_EVERY = FAST ? 2000 : 15000;
   function poll() {
     if (fetching || document.hidden) return;
     fetch('/events', {cache: 'no-store'})
@@ -2431,7 +2434,7 @@ function arcadeFileCost(bytes){
       })
       .catch(function () { /* node or server momentarily away; try again */ });
   }
-  setInterval(poll, 5000);
+  setInterval(poll, FAST ? 1500 : 5000);
   setTimeout(poll, 300);   // the baseline, as soon as the page is up
   document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); });
   // For a page that used to reload itself to show new state: ask for the same update.

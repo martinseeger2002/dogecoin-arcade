@@ -176,10 +176,10 @@ def test_a_doginal_can_be_priced_in_any_coin_or_held_token(client, monkeypatch, 
     app, state = client
     _doge_account(app, state, monkeypatch, tmp_path)
     key = f"doge-doginal-{INS}"
+    # The market page no longer lists every other pairing at its top (2026-10-17: "get rid of
+    # the list of other pairings at the top of the pairing page"); any coin is still one market away.
     page = app.get(f"/exchange/swap/{key}/main-coin").text
-    assert "Price it in" in page
-    for coin in ("doge-coin", "main-coin", f"{state.messaging.network}-coin"):
-        assert f"quote={coin}" in page, coin
+    assert "Price it in" not in page
     go = lambda q: app.get(f"/exchange/pairs?base={key}&quote={q}", follow_redirects=False).headers["location"]  # noqa: E731
     assert go("doge-coin") == f"/exchange/swap/{key}/doge-coin", "for DOGE: its market of offers (lock scripts)"
     offers = app.get(f"/exchange/swap/{key}/doge-coin")

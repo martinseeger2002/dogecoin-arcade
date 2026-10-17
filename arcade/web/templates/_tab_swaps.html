@@ -23,8 +23,64 @@
       : leg.kind === "token" ? `${leg.amount} of token #${leg.asset}`
       : leg.kind === "nft" ? `NFT ${String(leg.asset).slice(0, 10)}\u2026` : `${(leg.amount / 1e8).toString()} ${coinName(leg.network)}`);
     const obox = document.getElementById("tab-orders"), olist = document.getElementById("tab-orders-list");
+    // The reader's own swap is a row of the market's own book where that book is on the page
+    // (2026-10-17: "the user's order should go into the order book and instead of a buy or
+    // take button it should have a cancel button"): marked yours, Cancel withdraws it. Only the
+    // ones on no book here are listed below.
+    function markBook(w, o) {
+      const take = document.querySelector(`[data-take-id="${CSS.escape(o.id)}"]`);
+      if (!take) return false;
+      const row = take.closest(".obrow");
+      if (row) {
+        row.classList.add("mine");
+        const who = row.querySelector(".obamt small");
+        if (who && !who.dataset.yours) { who.dataset.yours = "1"; who.textContent = who.textContent.replace(/\u00b7[^\u00b7]*$/, "\u00b7 yours"); }
+      }
+      const cancel = document.createElement("button");
+      cancel.type = "button"; cancel.className = "ghost small"; cancel.textContent = "Cancel";
+      cancel.dataset.mineId = o.id;
+      cancel.addEventListener("click", async () => {
+        cancel.disabled = true;
+        try { await wallet.withdrawOrder(w, o.id); if (row) row.remove(); else cancel.remove(); drawOrders(w); }
+        catch (e) { cancel.disabled = false; alert(String(e.message || e)); }
+      });
+      take.replaceWith(cancel);
+      return true;
+    }
+    // A listing of the reader's own for THIS market that the book does not show yet (the node reads
+    // order batches once they are in a block): drawn into the book at once, yours, with Cancel.
+    const legKey = (l) => l.kind === "coin" ? `${l.network}-coin` : `${l.network}-${l.kind}-${l.asset}`;
+    function addToBook(w, o) {
+      const book = document.getElementById("swap-pair");
+      if (!book || !o.give || !o.get) return false;
+      const B = book.dataset.base, Q = book.dataset.quote, gk = legKey(o.give), tk = legKey(o.get);
+      const sell = gk === B && tk === Q, buy = gk === Q && tk === B;
+      if (!sell && !buy) return false;
+      const scale = (div) => div === "1" ? 1e8 : 1;
+      const base = sell ? o.give : o.get, quote = sell ? o.get : o.give;
+      const units = Number(base.amount) / scale(book.dataset.baseDiv), paid = Number(quote.amount) / scale(book.dataset.quoteDiv);
+      const fmt = (n) => Number(n).toLocaleString(undefined, {maximumFractionDigits: 8});
+      const row = document.createElement("div");
+      row.className = `obrow ${sell ? "ask" : "bid"} mine`; row.style.setProperty("--depth", "100%");
+      const px = document.createElement("span"); px.className = "obprice mono"; px.textContent = fmt(units ? paid / units : 0);
+      const amt = document.createElement("span"); amt.className = "obamt";
+      const n = document.createElement("span"); n.className = "mono"; n.textContent = book.dataset.whole === "1" ? "1" : fmt(units);
+      const who = document.createElement("small"); who.className = "muted"; who.textContent = "yours \u00b7 listed just now";
+      amt.append(n, who);
+      const take = document.createElement("span"); take.className = "obdo";
+      const btn = document.createElement("button"); btn.dataset.takeId = o.id; take.append(btn);
+      row.append(px, amt, take);
+      document.getElementById("book-empty")?.remove();
+      const mid = book.querySelector(".obmid");
+      if (sell && mid) mid.before(row); else book.append(row);
+      return markBook(w, o);
+    }
     function drawOrders(w) {
-      const all = wallet.myOrders(w);
+      const every = wallet.myOrders(w);
+      globalThis.myOrderIds = new Set(every.map((o) => o.id));
+      const all = every.filter((o) => !markBook(w, o) && !document.querySelector(`[data-mine-id="${CSS.escape(o.id)}"]`)
+                                      && !addToBook(w, o));
+      if (globalThis.swapBoxDraw) globalThis.swapBoxDraw();
       obox.hidden = !all.length;
       olist.replaceChildren(...all.map((o) => {
         const row = document.createElement("div");
@@ -85,13 +141,53 @@
         const w = await keys();
         if (!w) throw new Error("Unlock your wallet to trade.");
         await wallet.listOrder(w, give, get, {approved: true});
+        if (globalThis.arcadeToast) arcadeToast("Listed. Keep an arcade page open with your wallet unlocked: every arcade shows your swap only while one is.");
         f.reset(); drawOrders(w);
       } catch (e) { alert(String(e.message || e)); }
       finally { button.disabled = false; }
     });
+    // What happened to the reader's swaps, said as it happens (2026-10-17: "there needs
+    // to be some kind of notification that it happened"): a toast at each step, and on a market
+    // page (#swap-progress) a card with the swaps still running or just finished.
+    const SAID = {proposed: "Swap asked: waiting for the seller's page to accept",
+                  accepted: "Swap accepted: locking your side", locked: "Your side is locked: waiting for theirs, then it settles",
+                  done: "Swap done", aborted: "Swap called off"};
+    const seenStates = (() => { try { return JSON.parse(sessionStorage.getItem("arcade-swap-states") || "{}"); } catch (e) { return {}; } })();
+    function tell(all) {
+      let changed = false;
+      for (const t of all) {
+        if (seenStates[t.id] === t.state) continue;
+        const first = !(t.id in seenStates);
+        seenStates[t.id] = t.state; changed = true;
+        // A swap already finished before this page opened is history, not news.
+        if (first && (t.state === "done" || t.state === "aborted") && Date.now() - (t.created || 0) > 10 * 60 * 1000) continue;
+        if (globalThis.arcadeToast) arcadeToast(`${SAID[t.state] || t.state}: ${amt(t.give)} for ${amt(t.get)}`
+                                                + (t.state === "aborted" && t.note ? ` (${t.note})` : ""));
+      }
+      if (changed) try { sessionStorage.setItem("arcade-swap-states", JSON.stringify(seenStates)); } catch (e) {}
+    }
+    function progress(all) {
+      const card = document.getElementById("swap-progress");
+      if (!card) return;
+      const shown = all.filter((t) => !["done", "aborted"].includes(t.state) || Date.now() - (t.created || 0) < 30 * 60 * 1000).slice(0, 5);
+      card.hidden = !shown.length;
+      card.querySelector("[data-list]").replaceChildren(...shown.map((t) => {
+        const p = document.createElement("div");
+        p.style.cssText = "display:flex;gap:8px;align-items:baseline;padding:4px 0;font-size:.88rem";
+        const pill = document.createElement("span");
+        pill.className = "ex-pill" + (t.state === "done" ? " done" : "");
+        pill.textContent = t.state === "proposed" ? "asked" : t.state === "aborted" ? "called off" : t.state;
+        const what = document.createElement("span");
+        what.textContent = `${amt(t.give)} for ${amt(t.get)}${t.note ? " \u00b7 " + t.note : ""}`;
+        p.append(pill, what);
+        return p;
+      }));
+    }
     function draw(w) {
       drawOrders(w);
-      const all = wallet.myTrades(w).sort((a, b) => b.created - a.created).slice(0, 10);
+      const every = wallet.myTrades(w).sort((a, b) => b.created - a.created);
+      tell(every); progress(every);
+      const all = every.slice(0, 10);
       box.hidden = !all.length;
       list.replaceChildren(...all.map((t) => {
         const p = document.createElement("p");
@@ -104,6 +200,7 @@
     // this only shows them, whenever a pass ends here or another tab changes them.
     async function redraw() { const w = await wallet.opened(CHAIN); if (w) draw(w); }
     globalThis.addEventListener("arcade:trades", redraw);
+    document.addEventListener("arcade:changed", redraw);   // a live update redrew the book: mark it again
     globalThis.addEventListener("storage", (e) => { if (!e.key || e.key.startsWith("arcade-trades") || e.key.startsWith("arcade-my-orders")) redraw(); });
     // A coin pair's own forms (the PEP/DOGE market, 2026-10-13): sell or buy `amount` of the
     // base coin at `price` of the quote coin each.
@@ -143,6 +240,7 @@
         const w = await keys();
         if (!w) throw new Error("Unlock your wallet to trade.");
         await wallet.listOrder(w, give, get, {approved: true});
+        if (globalThis.arcadeToast) arcadeToast("Listed. Keep an arcade page open with your wallet unlocked: every arcade shows your swap only while one is.");
         f.reset(); drawOrders(w);
       } catch (e) { alert(String(e.message || e)); }
       finally { button.disabled = false; }
@@ -179,6 +277,7 @@
         const w = await keys();
         if (!w) throw new Error("Unlock your wallet to trade.");
         await wallet.listOrder(w, give, get, {approved: true});
+        if (globalThis.arcadeToast) arcadeToast("Listed. Keep an arcade page open with your wallet unlocked: every arcade shows your swap only while one is.");
         location.href = `/exchange/pairs?base=${encodeURIComponent(box2.base.value)}&quote=${encodeURIComponent(box2.quote.value)}`;
       } catch (e) { go.disabled = false; alert(String(e.message || e)); }
     });

@@ -83,7 +83,9 @@ def test_the_market_page_is_lock_scripts_and_lists_the_swaps(client, monkeypatch
     page = app.get("/exchange/x/token/59").text
     assert "Lock scripts" in page and "Held by this node" not in page and "Not trustless" not in page
     assert "Selling LOGS" in page and "Buying LOGS" in page
-    assert re.search(r'cp-ask">2(\.0+)?<', page) and re.search(r'cp-bid">1\.5', page), "PEP per LOGS"
+    # The order book in the token/coin page's rows (2026-10-17): an ask at 2, a bid at 1.5.
+    assert re.search(r'obrow ask[^>]*>\s*<span class="obprice mono">2(\.0+)?<', page) \
+        and re.search(r'obrow bid[^>]*>\s*<span class="obprice mono">1\.5', page), "PEP per LOGS"
     assert "not open on this node" not in page
     held = app.get("/exchange/x/token/59?held=1").text
     assert "Held by this node" in held, "the old book is still there for what stands on it"

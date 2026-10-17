@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% import "_exui.html" as ex %}
+{% block title %}Trade · Exchange · {{ brand.name }}{% endblock %}
+{% block body %}
+{# One trade (2026-10-17: "The recent trades should be clickable and show more information
+   like who was on both sides of the trade"): what moved, who sold, who bought, when, and the
+   transaction itself. #}
+<a class="back-link" href="{{ back }}">&#8592; Back to the market</a>
+{{ ex.style() }}
+<h1 style="margin:6px 0 4px">Trade {{ net_badge(chain) }}</h1>
+<p class="muted" style="margin:0 0 14px;font-size:.86rem">
+  {%- if when %}<span data-when="{{ when }}"></span>{% endif %}
+  {%- if height %}Block {{ "{:,}".format(height) }}{% endif %}
+  {%- if confirmations %} &middot; {{ "{:,}".format(confirmations) }} confirmation{{ '' if confirmations == 1 else 's' }}
+  {%- elif not height %}Waiting for its block{% endif %}</p>
+
+{% for f in fills %}
+<div class="panel">
+  <div class="ex-stats" style="margin:0 0 10px"><span>{{ f.how }}</span></div>
+  <table style="width:100%">
+    <tr><td class="muted" style="width:6.5em">Seller</td><td>{{ f.seller|who(20) if f.seller else '—' }}</td>
+        <td class="mono" style="text-align:right">gave {{ f.sold }}</td></tr>
+    <tr><td class="muted">Buyer</td><td>{{ f.buyer|who(20) if f.buyer else '—' }}</td>
+        <td class="mono" style="text-align:right">gave {{ f.paid }}</td></tr>
+  </table>
+</div>
+{% else %}
+<div class="panel"><p class="muted" style="margin:0">This transaction is not a trade this node has read.</p></div>
+{% endfor %}
+
+<div class="panel">
+  <h3 style="margin:0 0 6px">The transaction</h3>
+  <p class="mono" style="overflow-wrap:anywhere;margin:0 0 8px;font-size:.84rem">{{ txid }}</p>
+  {% if inputs %}<p class="muted" style="font-size:.82rem;margin:0">Signed by
+    {% for a in inputs|unique %}{{ a|who(20) }}{% if not loop.last %}, {% endif %}{% endfor %}.</p>{% endif %}
+</div>
+<script>
+document.querySelectorAll("[data-when]").forEach(function (e) {
+  e.textContent = new Date(Number(e.dataset.when) * 1000).toLocaleString() + " · ";
+});
+</script>
+{% endblock %}

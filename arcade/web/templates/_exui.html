@@ -215,6 +215,90 @@ window.exTrade = window.exTrade || function (root, o) {
 {% endmacro %}
 
 {#- A sparkline of real trade prices, oldest first; nothing at all for fewer than two. -#}
+{# One market's layout (2026-10-17: every pairing should look like the token/coin page,
+   pair.html, "from top to bottom"): its two columns and its order book rows, for every market page. #}
+{% macro market_css() %}
+<style>
+.pairgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,360px);gap:16px}
+@media (max-width:880px){.pairgrid{grid-template-columns:minmax(0,1fr)}}
+.obhead{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:10px 0 4px}
+.obrow{position:relative;display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;min-width:0}
+.obrow::before{content:"";position:absolute;inset:0 auto 0 0;width:var(--depth);border-radius:8px}
+.obrow.ask::before{background:rgba(224,112,112,.12)}.obrow.bid::before{background:rgba(91,189,133,.12)}
+.obrow>*{position:relative}
+.obrow.mine{box-shadow:inset 0 0 0 1px var(--line)}
+.obprice{font-weight:700;min-width:5em}.obrow.ask .obprice{color:var(--bad)}.obrow.bid .obprice{color:var(--ok)}
+.obamt{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}.obamt small{display:block;font-size:.72rem}
+.obdo{flex:none;display:flex;gap:6px;align-items:center;justify-content:flex-end}
+.obdo input{width:5.5em;padding:4px 6px;font-size:.84rem}
+.obmid{text-align:center;padding:8px 4px;margin:6px 0;border-top:1px solid var(--line);
+  border-bottom:1px solid var(--line);font-size:.86rem}
+.obmid:empty{display:none}
+tr.tradelink{cursor:pointer}tr.tradelink:hover td{background:var(--code)}
+</style>
+<script>
+// A recent trade opens its own page (who sold, who bought) wherever the row is pressed.
+document.addEventListener("click", function (e) {
+  var row = e.target.closest && e.target.closest("tr.tradelink");
+  if (row && !e.target.closest("a")) location.href = row.dataset.href;
+});
+</script>
+{% endmacro %}
+
+{# A market's star (2026-10-17: "a star that they can check just like when they follow a
+   user profile"): ☆ Favorite / ★ Favorited on a market page; `small` is the list row's bare star.
+   Saved per account on this node (/account/favorites); a visitor who is not signed in keeps them
+   in this browser. fav_script() once per page wires every [data-fav] on it. #}
+{% macro fav_button(key, small=false) -%}
+<button type="button" class="{{ 'ex-star' if small else 'ex-fav' }}" data-fav="{{ key }}" aria-pressed="false"
+        aria-label="Favorite this market" title="Favorite">{{ '☆' if small else '☆ Favorite' }}</button>
+{%- endmacro %}
+{% macro fav_script() %}
+<style>
+.ex-fav{margin-left:auto;border:1px solid var(--accent);color:var(--accent);background:none;border-radius:999px;
+  padding:6px 12px;font-weight:700;font-size:.86rem;white-space:nowrap;box-shadow:none;flex:none}
+.ex-fav[aria-pressed="true"]{background:var(--accent);color:var(--accent-fg)}
+.ex-star{background:none;border:0;box-shadow:none;padding:4px 6px;font-size:1.3rem;line-height:1;color:var(--muted);flex:none}
+.ex-star[aria-pressed="true"]{color:var(--accent)}
+</style>
+<script>
+window.arcadeFavs = window.arcadeFavs || (function () {
+  var LS = "arcade-favorites", set = null, saved = false, listeners = [];
+  function local() { try { return JSON.parse(localStorage.getItem(LS) || "[]"); } catch (e) { return []; } }
+  function paint() {
+    document.querySelectorAll("[data-fav]").forEach(function (b) {
+      var on = set.indexOf(b.dataset.fav) >= 0;
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+      b.textContent = b.classList.contains("ex-star") ? (on ? "\u2605" : "\u2606") : (on ? "\u2605 Favorited" : "\u2606 Favorite");
+    });
+    listeners.forEach(function (f) { f(set); });
+  }
+  var ready = fetch("/account/favorites", {cache: "no-store", credentials: "same-origin"})
+    .then(function (r) { return r.ok ? r.json() : {favorites: [], saved: false}; })
+    .catch(function () { return {favorites: [], saved: false}; })
+    .then(function (d) { saved = !!d.saved; set = saved ? (d.favorites || []) : local(); paint(); return set; });
+  function toggle(key) {
+    var on = set.indexOf(key) < 0;
+    set = on ? [key].concat(set) : set.filter(function (k) { return k !== key; });
+    paint();
+    if (!saved) { try { localStorage.setItem(LS, JSON.stringify(set)); } catch (e) {} return; }
+    fetch("/account/favorites", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"},
+                                 body: JSON.stringify({key: key, on: on})})
+      .then(function (r) { return r.json(); }).then(function (d) { if (d.favorites) { set = d.favorites; paint(); } })
+      .catch(function () {});
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest("[data-fav]");
+    if (!b) return;
+    e.preventDefault(); e.stopPropagation();
+    if (set) toggle(b.dataset.fav);
+  }, true);
+  return {ready: ready, has: function (k) { return !!set && set.indexOf(k) >= 0; },
+          onChange: function (f) { listeners.push(f); if (set) f(set); }, paint: function () { if (set) paint(); }};
+})();
+</script>
+{% endmacro %}
+
 {% macro spark(values) -%}
 {%- if values and values|length >= 2 -%}
 {%- set lo = values|min -%}{%- set hi = values|max -%}{%- set span = (hi - lo) or 1 -%}

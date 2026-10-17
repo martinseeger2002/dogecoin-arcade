@@ -560,6 +560,13 @@ class MeshNode:
             return time.time()
         return self._heard.get(node_id)
 
+    def room_live(self, room: str) -> bool:
+        """Is anybody in `room` right now: here, or on a node whose SUB still stands?"""
+        if any(r == room for (r, _m) in list(self.local)):
+            return True
+        now = time.monotonic()
+        return any(v.get("until", 0) > now for v in list(self.routes.get(room_id(room), {}).values()))
+
     def online(self, node_id: str, now: float | None = None) -> bool:
         seen = self.last_seen(node_id)
         return seen is not None and (now or time.time()) - seen <= 3.5 * SUB_EVERY

@@ -5654,6 +5654,18 @@ def create_app(state: AppState) -> FastAPI:
     TEMPLATES.env.filters["who_text"] = _who_text
     TEMPLATES.env.globals["name_of"] = _name_of
 
+    def _fav_key(href: str, net: str = "") -> str:
+        """A market's favorite key: its address, and for a one-chain market its chain too
+        (a token's page is the same address on every chain). Swaps name both chains already."""
+        href = str(href or "").split("?")[0]
+        held = re.fullmatch(r"/exchange/x/(\w+)/([\w.-]+)", href)
+        if held:                       # the held book's row opens the swap market (exchange_xchain)
+            test, main = state.messaging.network, state.ledger.network
+            left = f"{test}-coin" if held[1] == "coin" else f"{test}-{held[1]}-{held[2]}"
+            return f"/exchange/swap/{left}/{main}-coin"
+        return href if "/exchange/swap/" in href or not net else f"{href}@{net}"
+    TEMPLATES.env.globals["fav_key"] = _fav_key
+
     def _to_join(request: Request):
         """To sign in, and back to where they were going afterwards (a tester,
         2026-09-26: after /me/wallet -> /join you landed on /me)."""
@@ -8673,6 +8685,47 @@ def create_app(state: AppState) -> FastAPI:
         if push is None:
             return JSONResponse({"enabled": False})
         return JSONResponse({"enabled": True, "key": push.public_key()})
+
+    # --- favorite markets (2026-10-17: "The token pairs page should load to the user's
+    # favorites ... a star that they can check just like when they follow a user profile") ---
+    #
+    # Kept on this node per account, like everything else an account chose here, so a star
+    # set on the phone is there on the laptop. The operator's own machine keeps the node's.
+    # A key is a market's address and, for a one-chain market, its chain (`fav_key`).
+
+    FAVORITES_MOST = 200
+
+    def _favorites_owner(request: Request) -> str | None:
+        if not _account_view(request):
+            return "node"
+        account = signed_in(request)
+        return account.pubkey.lower() if account is not None else None
+
+    def _favorites(owner: str) -> list[str]:
+        return [k for k in (state.setting(f"favorites:{owner}") or []) if isinstance(k, str)]
+
+    @app.get("/account/favorites")
+    def favorites_get(request: Request):
+        owner = _favorites_owner(request)
+        return JSONResponse({"favorites": _favorites(owner) if owner else [], "saved": owner is not None},
+                            headers={"Cache-Control": "no-store"})
+
+    @app.post("/account/favorites")
+    def favorites_set(request: Request, payload: Any = Body(None)):
+        owner = _favorites_owner(request)
+        if owner is None:
+            raise HTTPException(403, "sign in first")
+        said = payload if isinstance(payload, dict) else {}
+        key = str(said.get("key", "")).strip()
+        if not re.fullmatch(r"/exchange/[A-Za-z0-9/_.@?=&-]{1,200}", key):
+            return JSONResponse({"detail": "that is not a market"}, status_code=400)
+        now = [k for k in _favorites(owner) if k != key]
+        if said.get("on", True):
+            if len(now) >= FAVORITES_MOST:
+                return JSONResponse({"detail": f"{FAVORITES_MOST} favorites is the most"}, status_code=400)
+            now.insert(0, key)
+        state.set_setting(f"favorites:{owner}", now)
+        return JSONResponse({"favorites": now, "saved": True})
 
     @app.post("/account/push/subscribe")
     def push_subscribe(request: Request, payload: Any = Body(None)):
@@ -22378,7 +22431,7 @@ def create_app(state: AppState) -> FastAPI:
         Asks, bids and orders are the swaps every arcade lists; `rows` are the node-held book's
         markets (a testnet asset for mainnet PEP), whose past trades still draw the history."""
         try:
-            orders = state.trade_orders.visible(_online)
+            orders = state.trade_orders.visible(_online, tab_live=_tab_live, browser=_browser_lister)
             standing = trade_orders.swap_markets(orders)
         except Exception:
             log.debug("the swap markets could not be read", exc_info=True)
@@ -23333,6 +23386,145 @@ def create_app(state: AppState) -> FastAPI:
             return back
         return RedirectResponse(where, status_code=303)
 
+    @app.get("/exchange/trade/{txid}", response_class=HTMLResponse)
+    def exchange_trade(request: Request, txid: str):
+        """One trade, opened from a market's Recent trades (2026-10-17: "The recent trades
+        should be clickable and show more information like who was on both sides of the trade").
+
+        Who is the chain's to say: a take (type 29) is its sender buying from the resting
+        order's maker; a token-for-token match names its taker and each maker it met; a
+        one-transaction swap's seller is its sender and its buyer the first input that is not
+        the seller's (inscriptions.Swap)."""
+        from .. import inscriptions as I
+        from ..indexer import PrevOutCache
+        txid = txid.strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", txid):
+            raise HTTPException(404, "a trade is named by its txid")
+        asked = request.query_params.get("chain", "")
+        chain = next((c for c in state.token_chains if c.network == asked), None) or _token_chain()[0]
+        index = state.token_index(chain)
+        coin = chain.params.coin
+
+        def leg_text(kind: int, pid: int, amount: int, ins: str = "") -> tuple[str, str]:
+            if kind == I.LEG_COINS:
+                return f"{amount / COIN:,.8f}".rstrip("0").rstrip("."), coin
+            if kind == I.LEG_TOKEN:
+                prop = index.property(pid) or {}
+                return format_amount(amount, bool(prop.get("divisible", True))), str(prop.get("name") or f"token #{pid}")
+            return "1", f"inscription {ins[:12]}…"
+
+        fills: list[dict] = []
+        with contextlib.closing(index.open()) as db:
+            sender = db.conn.execute("SELECT sender, block_height FROM arcade_tx WHERE txid = ?", (txid,)).fetchone()
+            take = db.conn.execute("SELECT * FROM take_trade WHERE txid = ?", (txid,)).fetchone()
+            pairs = db.conn.execute("SELECT * FROM pair_trade WHERE txid = ? ORDER BY seq", (txid,)).fetchall()
+        if take is not None:
+            n, what = leg_text(I.LEG_TOKEN, take["property_id"], take["tokens"])
+            c, cn = leg_text(I.LEG_COINS, 0, take["coins"])
+            fills.append({"seller": take["maker"], "buyer": sender["sender"] if sender else "",
+                          "sold": f"{n} {what}", "paid": f"{c} {cn}", "how": "Taken from the book"})
+        for r in pairs:
+            g, gn = leg_text(I.LEG_TOKEN, r["gave_property"], r["gave"])
+            t, tn = leg_text(I.LEG_TOKEN, r["got_property"], r["got"])
+            fills.append({"seller": r["maker"], "buyer": r["taker"], "sold": f"{t} {tn}", "paid": f"{g} {gn}",
+                          "how": "Matched by the chain: a crossing order met one standing on the book"})
+        tx, inputs, confirmations, when = None, [], 0, 0
+        try:
+            with chain.rpc() as rpc:
+                tx = rpc.call("getrawtransaction", txid, 1)
+                prev = PrevOutCache(rpc, chain.params)
+                inputs = [prev.lookup(v["txid"], int(v["vout"])).address for v in tx.get("vin", []) if v.get("txid")]
+            confirmations, when = int(tx.get("confirmations") or 0), int(tx.get("blocktime") or tx.get("time") or 0)
+        except Exception:
+            log.debug("the trade's transaction could not be read", exc_info=True)
+        if not fills:
+            swap = next((t for t in index.trades(limit=5000) if t["txid"] == txid), None)
+            if swap is not None:
+                seller = swap["seller"]
+                buyer = next((a for a in inputs if a and a != seller), "")
+                g = swap["give"]; k = swap["take"]
+                n, what = leg_text(g.kind, g.property_id, g.amount, g.txid.hex() if g.txid else "")
+                c, cn = leg_text(k.kind, k.property_id, k.amount, k.txid.hex() if k.txid else "")
+                fills.append({"seller": seller, "buyer": buyer, "sold": f"{n} {what}", "paid": f"{c} {cn}",
+                              "how": "One transaction both of them signed: both sides moved, or neither"})
+        if not fills and tx is None:
+            raise HTTPException(404, "this node does not know that trade")
+        said = urllib.parse.urlsplit(request.headers.get("referer") or "")
+        back = (said.path + (f"?{said.query}" if said.query else "")) if said.path.startswith("/exchange") else "/exchange?tab=tokens"
+        return render(request, "trade.html", txid=txid, chain=chain, fills=fills, inputs=inputs,
+                      confirmations=confirmations, when=when,
+                      height=(sender["block_height"] if sender else None), back=back)
+
+    @app.get("/exchange/history", response_class=HTMLResponse)
+    def exchange_history(request: Request):
+        """The reader's own trade history (2026-10-17: "a trade history button on the main
+        token exchange page"): every trade the chain says this account (or, on the operator's
+        machine, this node's wallet) was a side of -- takes, token-for-token matches, one-transaction
+        swaps it sold in -- each opening its own page; and, drawn by the tab from this browser, the
+        lock-script swaps it made (_tab_swaps.html)."""
+        from .. import inscriptions as I
+        public = _account_view(request)
+        viewer = "wallet" if not public else ("account" if signed_in(request) is not None else "nobody")
+        rows: list[dict] = []
+        for chain in state.token_chains:
+            try:
+                if viewer == "wallet":
+                    with chain.rpc() as rpc:
+                        mine = set(_ledger_addresses(rpc))
+                elif viewer == "account":
+                    a = _account_address(signed_in(request).pubkey, chain)
+                    mine = {a} if a else set()
+                else:
+                    mine = set()
+            except Exception:
+                mine = set()
+            if not mine:
+                continue
+            index = state.token_index(chain)
+            coin = chain.params.coin
+
+            def token(pid: int, amount: int) -> str:
+                prop = index.property(pid) or {}
+                return f"{format_amount(amount, bool(prop.get('divisible', True)))} {prop.get('name') or f'token #{pid}'}"
+            marks = ",".join("?" * len(mine))
+            try:
+                with contextlib.closing(index.open()) as db:
+                    takes = db.conn.execute(
+                        "SELECT t.txid, t.property_id, t.tokens, t.coins, t.maker, a.sender, a.block_height, b.time "
+                        "FROM take_trade t JOIN arcade_tx a ON a.txid = t.txid LEFT JOIN block b ON b.height = a.block_height "
+                        f"WHERE a.valid = 1 AND (t.maker IN ({marks}) OR a.sender IN ({marks}))", (*mine, *mine)).fetchall()
+                    matches = db.conn.execute(
+                        "SELECT p.*, b.time FROM pair_trade p LEFT JOIN block b ON b.height = p.block_height "
+                        f"WHERE p.maker IN ({marks}) OR p.taker IN ({marks})", (*mine, *mine)).fetchall()
+            except Exception:
+                takes, matches = [], []
+            for t in takes:
+                sold = t["maker"] in mine
+                rows.append({"txid": t["txid"], "net": chain.network, "chain": chain, "when": t["time"],
+                             "side": "sold" if sold else "bought", "what": token(t["property_id"], t["tokens"]),
+                             "for": f"{t['coins'] / COIN:,.8f}".rstrip("0").rstrip(".") + f" {coin}",
+                             "who": t["sender"] if sold else t["maker"]})
+            for m in matches:
+                took = m["taker"] in mine
+                rows.append({"txid": m["txid"], "net": chain.network, "chain": chain, "when": m["time"],
+                             "side": "traded", "what": token(m["gave_property"] if took else m["got_property"],
+                                                             m["gave"] if took else m["got"]),
+                             "for": token(m["got_property"] if took else m["gave_property"], m["got"] if took else m["gave"]),
+                             "who": m["maker"] if took else m["taker"]})
+            try:
+                for t in index.trades(limit=2000):
+                    if t["seller"] in mine and t["txid"] not in {r["txid"] for r in rows}:
+                        g, k = t["give"], t["take"]
+                        label = lambda leg: (f"{leg.amount / COIN:,.8f}".rstrip("0").rstrip(".") + f" {coin}"
+                                             if leg.kind == I.LEG_COINS else token(leg.property_id, leg.amount)
+                                             if leg.kind == I.LEG_TOKEN else "a piece")
+                        rows.append({"txid": t["txid"], "net": chain.network, "chain": chain, "when": t["when"],
+                                     "side": "sold", "what": label(g), "for": label(k), "who": ""})
+            except Exception:
+                pass
+        rows.sort(key=lambda r: -(r["when"] or 0))
+        return render(request, "trade_history.html", rows=rows[:300], viewer=viewer)
+
     @app.get("/exchange/pairs/{base}/{quote}", response_class=HTMLResponse)
     def exchange_token_pair(request: Request, base: int, quote: int):
         """BASE/QUOTE: its book, what traded, the chart, and the order form."""
@@ -23374,7 +23566,18 @@ def create_app(state: AppState) -> FastAPI:
         held_base = sum(index.balance(a, base) for a in owned)
         held_quote = sum(index.balance(a, quote) for a in owned)
         since = getattr(chain.params, "token_pairs_from", None)
+        # The token/coin page's face, day line and book rows (2026-10-17: every pairing
+        # looks like it): the base's icon and words, the day's range and volume, and each row's
+        # depth against the biggest on the book.
+        try:
+            face = _faces_for(index, [base_prop]).get(base, {})
+        except Exception:
+            face = {}
+        most = max([r["base"] for r in book["asks"] + book["bids"]] or [1]) or 1
+        for row in book["asks"] + book["bids"]:
+            row["depth"] = round(100 * row["base"] / most)
         return render(request, "pair_tokens.html", chain=chain, base=base_prop, quote=quote_prop,
+                      face=face, day=chartlib.day(points),
                       book=book, trades=[dict(t, base_shown=format_amount(t["base"], base_prop["divisible"]),
                                               quote_shown=format_amount(t["quote"], quote_prop["divisible"]),
                                               each=(t["quote"] / t["base"]) * scale if t["base"] else None)
@@ -23654,7 +23857,38 @@ def create_app(state: AppState) -> FastAPI:
         quotes = [{"key": c["key"], "label": c["label"], "on": c["key"] == q["key"]}
                   for c in _pair_choices(request, "account" if viewer == "account" else viewer)
                   if c["kind"] in ("coin", "token") and c["key"] != b["key"]]
+        # The token/coin page's face, numbers and chart (2026-10-17: every pairing looks like
+        # it "from top to bottom"): the base's icon and words, what the reader holds of it, and the
+        # chart frame. Swaps keep no trade history yet, so the chart says so and the day is empty.
+        face: dict = {}
+        if b["kind"] == "token":
+            try:
+                face = _faces_for(state.token_index(b["chain"]), [b["prop"]]).get(int(b["asset"]), {})
+            except Exception:
+                face = {}
+        elif b["kind"] == "nft":
+            face = {"icon": b["asset"]}
+        held_shown = None
+        if viewer == "account" and b["kind"] in ("token", "coin") and b.get("chain") is not None and b["ready"]:
+            try:
+                address = _account_address(signed_in(request).pubkey, b["chain"])
+                if address:
+                    index = state.token_index(b["chain"])
+                    if b["kind"] == "token":
+                        held_shown = format_amount(index.balance(address, int(b["asset"])), b["divisible"])
+                    else:
+                        with contextlib.closing(index.open()) as db:
+                            held_shown = f"{utxoslib.balance(db, address) / COIN:,.8f}".rstrip("0").rstrip(".")
+            except Exception:
+                held_shown = None
+        frame = chartlib.timeframe(request.query_params.get("tf", "1d"))
+        best = asks[0]["price"] if (asks := book["asks"]) else (book["bids"][0]["price"] if book["bids"] else None)
+        most = max([o["base_amount"] for o in book["asks"] + book["bids"]] or [1]) or 1
+        for o in book["asks"] + book["bids"]:
+            o["depth"] = round(100 * o["base_amount"] / most)
         return render(request, "swap_pair.html", b=b, q=q, here=here, quotes=quotes,
+                      face=face, held=held_shown, best=best, slots=[],
+                      tf=frame[0], timeframes=[t[0] for t in chartlib.TIMEFRAMES],
                       held_url=f"/exchange/x/{b['kind']}/{b['asset']}?held=1",
                       b_form=_leg_form(b), q_form=_leg_form(q),
                       asks=book["asks"], bids=book["bids"], spread=book["spread"],
@@ -24557,6 +24791,85 @@ def create_app(state: AppState) -> FastAPI:
         mesh = getattr(state, "mesh", None)
         return bool(mesh is not None and mesh.online(node_id))
 
+    _local_listers: list = [0.0, set()]
+
+    def _browser_lister(address: str) -> bool:
+        """One of this node's own accounts: everything it lists comes from a browser (kept a minute)."""
+        if time.time() - _local_listers[0] > 60:
+            found = set()
+            try:
+                for a in state.accounts().seated():
+                    for chain in _account_chains():
+                        try:
+                            got = _account_address(a.pubkey, chain)
+                        except Exception:
+                            got = None
+                        if got:
+                            found.add(got)
+            except Exception:
+                pass
+            _local_listers[:] = [time.time(), found]
+        return address in _local_listers[1]
+
+    def _tab_live(lister: str) -> bool:
+        """A browser's listing stands only while its lister's page is open (order_presence)."""
+        return state.order_presence().live(lister)
+
+    @app.post("/account/talk/relay")
+    def talk_relay_send(request: Request, payload: Any = Body(None)):
+        """A sealed swap message for another page, over the mesh when that page is reachable
+        there (arcade/talk_relay.py). {"mesh": false} tells the page to use the chain instead."""
+        _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        to, sealed = str(said.get("to", "")).lower(), str(said.get("sealed", ""))
+        if not re.fullmatch(r"[0-9a-f]{64}", to) or not re.fullmatch(r"(?:[0-9a-f]{2}){8,4000}", sealed):
+            return JSONResponse({"detail": "a key and a sealed message"}, status_code=400)
+        try:
+            sent = state.talk_relay().send(to, bytes.fromhex(sealed))
+        except Exception:                                  # noqa: BLE001 -- the chain carries it
+            sent = False
+        return JSONResponse({"mesh": bool(sent)})
+
+    @app.get("/account/talk/inbox")
+    def talk_relay_inbox(request: Request, key: str = "", after: int = 0):
+        """Sealed messages the mesh brought for this page's key since `after` (only that page can
+        open them)."""
+        _signed_in_account(request)
+        key = key.lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", key):
+            return JSONResponse({"detail": "a key"}, status_code=400)
+        from ..messaging.envelope import Header, TYPE_API
+        got, cursor = state.talk_relay().read(key, int(after))
+        # The same bytes a chain row carries: the cleartext program header the node adds when it
+        # builds a carrier (api.seal), so the page opens both with one openProgram.
+        wrap = lambda h: (Header(type=TYPE_API, clen=len(bytes.fromhex(h))).encode() + bytes.fromhex(h)).hex()  # noqa: E731
+        return JSONResponse({"messages": [{"seq": s, "payload": wrap(p)} for s, p in got], "cursor": cursor},
+                            headers={"Cache-Control": "no-store"})
+
+    @app.post("/account/orders/alive")
+    def orders_alive(request: Request, payload: Any = Body(None)):
+        """The page holding this account's listed swaps is open, its wallet unlocked: keep them
+        on every arcade's book (order_presence). Said every few seconds by wallet.js."""
+        account = _signed_in_account(request)
+        addresses = []
+        for chain in _account_chains():
+            try:
+                a = _account_address(account.pubkey, chain)
+            except Exception:
+                a = None
+            if a:
+                addresses.append(a)
+        said = payload if isinstance(payload, dict) else {}
+        key = str(said.get("talk", "")).lower()
+        try:
+            if re.fullmatch(r"[0-9a-f]{64}", key):
+                state.talk_relay().hold(key)         # this page hears swap messages over the mesh
+            if said.get("orders", True):
+                state.order_presence().alive(addresses)
+        except Exception as exc:                     # noqa: BLE001 -- no mesh: nothing to keep
+            return JSONResponse({"ok": False, "detail": str(exc)[:200]})
+        return JSONResponse({"ok": True})
+
     def _trade_order_view(request: Request) -> dict:
         """Orders inscribed by every arcade, shown while their node is online; and, for the
         operator, this node's own standing orders and trades."""
@@ -24571,10 +24884,10 @@ def create_app(state: AppState) -> FastAPI:
                 # order but their own -- other accounts' on this very arcade included.
                 out["can_list_orders"] = bool(mine)
                 own = {_account_address(account.pubkey, c) for c in _account_chains()} if account else set()
-                out["trade_orders"] = [o for o in state.trade_orders.visible(_online)
+                out["trade_orders"] = [o for o in state.trade_orders.visible(_online, tab_live=_tab_live, browser=_browser_lister)
                                        if o["lister"] not in own]
             else:
-                out["trade_orders"] = [o for o in state.trade_orders.visible(_online)
+                out["trade_orders"] = [o for o in state.trade_orders.visible(_online, tab_live=_tab_live, browser=_browser_lister)
                                        if o["node"] != mine]
             if not _account_view(request) and _node_trades():
                 trader = state.node_trader
@@ -24827,7 +25140,7 @@ def create_app(state: AppState) -> FastAPI:
         try:
             if not _node_trades():
                 raise ValueError(NODE_TRADES_OFF)
-            found = next((o for o in state.trade_orders.visible(_online)
+            found = next((o for o in state.trade_orders.visible(_online, tab_live=_tab_live, browser=_browser_lister)
                           if o["id"] == order and o["lister"] == lister), None)
             if found is None:
                 raise ValueError("that order is gone, or its arcade is offline right now")

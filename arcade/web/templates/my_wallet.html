@@ -137,11 +137,18 @@ a.wl-act:hover{text-decoration:none}
 .wl-empty{color:var(--muted);text-align:center;padding:26px 10px;font-size:.9rem}
 .wl-since{color:var(--muted);font-size:.78rem;text-align:center;margin:14px 0 0}
 .wl-more{width:100%;margin-top:10px}
-.wl-tok{display:flex;align-items:center;gap:12px;padding:12px 6px;border-bottom:1px solid var(--line);width:100%;text-align:left;border-radius:10px}
-.wl-tok:hover{background:var(--code)}
+.wl-tok{display:flex;align-items:center;gap:12px;padding:12px 6px;border-bottom:1px solid var(--line);width:100%;text-align:left;border-radius:10px;
+  background:var(--accent);color:var(--accent-fg)}
+/* A row is a button, and on a phone a tapped button keeps :hover and :focus: the row went
+   dark with its dark text on it, as if blacked out (2026-10-17: "I don't like that it
+   selects it all dark"). The colours stay; only a real mouse gets the hover. */
+.wl-tok:focus{outline:none}
+.wl-tok:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+@media (hover:hover){.wl-tok:hover{filter:brightness(1.06)}}
+.wl-tok .wl-mid small{color:color-mix(in srgb,var(--accent-fg) 62%,transparent)}
 .wl-tokrow{display:flex;align-items:center;gap:6px}
 .wl-tokrow .wl-tok{flex:1;min-width:0}
-.wl-tok.on{background:color-mix(in srgb,var(--accent) 12%,transparent);box-shadow:inset 3px 0 0 var(--accent)}
+.wl-tok.on{background:var(--accent);box-shadow:inset 0 0 0 3px var(--fg)}
 .wl-backcoin{margin-left:4px;font-size:.8rem;font-weight:700;color:var(--accent);padding:2px 8px;border-radius:999px;background:var(--code);box-shadow:none}
 .wl-piececard{display:flex;flex-direction:column;gap:5px;min-width:0}
 .wl-piecesend{padding:6px 0;border-radius:9px;font-size:.8rem;font-weight:700;background:var(--code);color:var(--accent);box-shadow:none}

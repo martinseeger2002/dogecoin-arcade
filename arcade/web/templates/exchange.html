@@ -610,15 +610,30 @@ document.addEventListener('click', function (ev) {
   {# One row per market, as a phone wants it (2026-10-09): its face, its name and
      what it is priced in, a line of its real recent trades, the last price and the
      day's move. Everything else is one tap away on the market itself. #}
-  <input autocomplete="off" id="marketfind" class="ex-find" type="search" placeholder="Search {{ pairs|length }} market{{ '' if pairs|length == 1 else 's' }}"
+  {# Favorites first (2026-10-17, layout A): the page opens on the markets this reader
+     starred, with All markets and + New pair beside it; search always looks through every
+     market. Stars are kept per account (/account/favorites, _exui.fav_script). #}
+  {{ ex.fav_script() }}
+  <div class="row" style="justify-content:flex-end;margin:-4px 0 8px"><a class="btn small ghost" href="/exchange/history">Trade history</a></div>
+  <div class="ex-seg" id="mktmode" role="group" aria-label="Which markets">
+    <button type="button" data-mode="fav" aria-pressed="false">&#9733; Favorites</button>
+    <button type="button" data-mode="all" aria-pressed="true">All markets</button>
+    <button type="button" data-mode="new" aria-pressed="false">+ New pair</button>
+  </div>
+  <input autocomplete="off" id="marketfind" class="ex-find" type="search" placeholder="Search all {{ pairs|length }} market{{ '' if pairs|length == 1 else 's' }}"
          oninput="findMarket(this.value)" aria-label="Search markets">
   <div class="ex-list" id="markets">
+    <p class="ex-note" id="fav-empty" hidden style="margin:6px 4px 10px">Tap &#9734; on any market to keep it here.
+      The Exchange opens on your favorites, and searching always looks through every market.</p>
+    <div id="sugg-head" hidden style="display:flex;justify-content:space-between;font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin:14px 4px 4px">
+      <span>Suggested</span><span>most traded today</span></div>
     {% for p in pairs %}
     {% set coin_name = coin_of(p.chain_net or p.mainnet) %}
     {% set quote_text = wall_text(p.quote_label, 'a token') if p.quote_label else coin_name %}
     {# The row's own search key. A judged name contributes nothing to it, because the
        name is exactly what the cover hides; such a token is found by its number. #}
-    <a class="ex-mrow" {{ go(p.href, p.switch) }} data-net="{{ p.net }}" data-market="{{ wall_text(p.name, '')|lower }}/{{ quote_text|lower }} #{{ p.property_id }}">
+    <a class="ex-mrow" {{ go(p.href, p.switch) }} data-net="{{ p.net }}" data-market="{{ wall_text(p.name, '')|lower }}/{{ quote_text|lower }} #{{ p.property_id }}"
+       data-fav-key="{{ fav_key(p.href, p.chain_net) }}" data-vol="{{ p.coins or 0 }}" data-orders="{{ p.orders or 0 }}">
       {%- if p.icon %}<img class="ex-tic" src="/content/{{ p.icon }}" alt="" loading="lazy">
       {%- else %}<span class="ex-tic" style="background:hsl({{ ((p.property_id|string|length * 97 + (p.name|length) * 31) % 360) }} 45% 42%)">{{ (wall_text(p.name, '?') or '?')[:1]|upper }}</span>{% endif %}
       {# Each row still says which chain and what supply (2026-10-06): the badges, small. #}
@@ -636,21 +651,59 @@ document.addEventListener('click', function (ev) {
         {%- else %}<span class="muted">&mdash;</span>{% endif %}
         <div class="muted" style="font-size:.66rem;font-weight:600">{% if p.quote_label %}{{ wall_text(p.quote_label, 'token') }}{% else %}{{ coin_name }}{% endif %}</div>
         {%- if p.last is not none %}<div>{{ ex.chg(p.change, p.new) }}</div>{% endif %}</span>
+      {{ ex.fav_button(fav_key(p.href, p.chain_net), small=true) }}
     </a>
     {% endfor %}
   </div>
   <p class="muted" id="marketcount" style="font-size:.8rem;margin:6px 2px 0"></p>
   <script>
-  function findMarket(text) {
-    var wanted = (text || '').trim().toLowerCase(), shown = 0;
-    document.querySelectorAll('#markets [data-market]').forEach(function (row) {
-      var hit = !wanted || row.dataset.market.indexOf(wanted) >= 0;
-      row.hidden = !hit;
-      if (hit) shown++;
+  (function () {
+    var list = document.getElementById('markets'), find = document.getElementById('marketfind');
+    var rows = Array.prototype.slice.call(list.querySelectorAll('[data-market]'));
+    var head = document.getElementById('sugg-head'), empty = document.getElementById('fav-empty');
+    var count = document.getElementById('marketcount'), mode = 'all';
+    var fav = function (r) { return window.arcadeFavs.has(r.dataset.favKey); };
+    function apply() {
+      var wanted = (find.value || '').trim().toLowerCase(), shown = 0;
+      rows.forEach(function (r) { r.style.order = ''; });
+      head.hidden = true; empty.hidden = true;
+      if (wanted) {                                   // search: every market, whatever the tab
+        rows.forEach(function (r) { var hit = r.dataset.market.indexOf(wanted) >= 0; r.hidden = !hit; if (hit) shown++; });
+        count.textContent = shown ? shown + (shown === 1 ? ' market matches' : ' markets match') : 'No market matches.';
+        return;
+      }
+      count.textContent = '';
+      if (mode !== 'fav') { rows.forEach(function (r) { r.hidden = false; }); return; }
+      var mine = rows.filter(fav);
+      var rest = rows.filter(function (r) { return !fav(r); }).sort(function (a, b) {
+        return (Number(b.dataset.vol) - Number(a.dataset.vol)) || (Number(b.dataset.orders) - Number(a.dataset.orders));
+      }).slice(0, mine.length ? 3 : 5);
+      rows.forEach(function (r) { r.hidden = true; });
+      mine.forEach(function (r, i) { r.hidden = false; r.style.order = i; });
+      empty.hidden = mine.length > 0; empty.style.order = 900;
+      head.hidden = !rest.length; head.style.order = 1000;
+      rest.forEach(function (r, i) { r.hidden = false; r.style.order = 1001 + i; });
+    }
+    function setMode(m) {
+      mode = m;
+      document.querySelectorAll('#mktmode [data-mode]').forEach(function (b) {
+        b.setAttribute('aria-pressed', b.dataset.mode === m ? 'true' : 'false');
+      });
+      apply();
+    }
+    document.querySelectorAll('#mktmode [data-mode]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (b.dataset.mode !== 'new') return setMode(b.dataset.mode);
+        var box = document.getElementById('trade-orders');
+        if (box) { box.scrollIntoView({behavior: 'smooth', block: 'start'});
+                   var first = box.querySelector('input:not([type=hidden]), select'); if (first) setTimeout(function () { first.focus(); }, 400); }
+      });
     });
-    document.getElementById('marketcount').textContent = wanted
-      ? (shown ? shown + (shown === 1 ? ' market matches' : ' markets match') : 'No market matches.') : '';
-  }
+    window.findMarket = apply;
+    // Opens on the favorites when there are any here, else on every market.
+    window.arcadeFavs.ready.then(function () { setMode(rows.some(fav) ? 'fav' : 'all'); });
+    window.arcadeFavs.onChange(function () { apply(); });
+  })();
   </script>
   {% else %}
   <div class="panel empty"><p>No market has an order or a trade yet
@@ -683,7 +736,8 @@ document.addEventListener('click', function (ev) {
       <div class="row" style="gap:6px;flex-wrap:wrap;align-items:center">
         <input name="amount" inputmode="decimal" placeholder="1000" autocomplete="off" style="width:96px;flex:0 0 auto" aria-label="How many">
         <select id="pair-base" name="base" style="flex:1 1 150px;min-width:0" aria-label="Of what">
-          {%- for o in pair_choices or [] %}<option value="{{ o.key }}" data-net="{{ o.net }}" data-kind="{{ o.kind }}" data-div="{{ 1 if o.divisible else 0 }}" data-name="{{ o.name }}"{% if loop.first and o.kind != 'coin' %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+          {#- Coins and tokens only (2026-10-17: "NFT's should not be in the coin and token pair list"): a piece is sold from its own page. #}
+          {%- for o in pair_choices or [] if o.kind not in ('nft', 'doginal') %}<option value="{{ o.key }}" data-net="{{ o.net }}" data-kind="{{ o.kind }}" data-div="{{ 1 if o.divisible else 0 }}" data-name="{{ o.name }}"{% if loop.first and o.kind != 'coin' %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
         </select>
         <input name="token" inputmode="numeric" placeholder="token #" autocomplete="off" hidden style="width:96px;flex:0 0 auto" aria-label="Token number">
       </div>
@@ -744,8 +798,10 @@ document.addEventListener('click', function (ev) {
     {% endfor %}
     {% if not trade_orders %}<p class="muted" style="margin:0 0 8px">No arcade is offering a swap right now.</p>{% endif %}
     {% if viewer == 'account' %}
-    {# A tab's own swaps (2026-10-13): run here while this tab is open, settled by the locks. #}
-    {% include "_tab_swaps.html" %}
+    {# A tab's own swaps (2026-10-13): run here while this tab is open, settled by the locks; shown on
+       Trade history (2026-10-17), so only their machinery is here. #}
+    <div hidden>{% include "_tab_swaps.html" %}</div>
+    <p style="margin:6px 0 0;font-size:.84rem"><a href="/exchange/history">Your swaps and trade history &rarr;</a></p>
     {% endif %}
     {% if can_trade_orders %}
     {% if my_trade_orders %}

@@ -120,6 +120,8 @@ PUBLIC_PAGES = frozenset({
     "/account/inscribe/unfinished",
     "/account/dust",                  # coins in this account's own payload outputs
     "/account/coins",                 # this account's own coins on one chain (the Doginals check)
+    "/account/favorites",             # the markets this account starred (Exchange, 2026-10-17)
+    "/account/talk/inbox",            # sealed swap messages the mesh brought this page (talk_relay)
     "/account/activity",              # this account's own coin history (signed in)
     "/account/standing/fillable",     # this account's buy orders a sell order meets
     "/account/claimpools",            # this account's own prize pools, to withdraw
@@ -150,6 +152,8 @@ PUBLIC_TREES = (
     "/exchange/x/",           # a cross-chain market: a testnet asset for mainnet PEPE (2026-10-06)
     "/account/doginal-tx/",   # the Wallet's Doginals check, asked by the node for the account's own coins (2026-10-15)
     "/exchange/swap/",        # every cross-chain market, through lock scripts (2026-10-15)
+    "/exchange/trade/",       # one trade: who sold, who bought (2026-10-17)
+    "/exchange/history",      # the reader's own trades (2026-10-17)
     "/exchange/coins/",       # a coin pair: redirects to its swap market
 )
 
@@ -411,6 +415,12 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/token/send", "/account/token/create",
                "/account/token/manage",
                "/account/sign",
+               # starring a market: the caller's own list of favorites, nothing else
+               "/account/favorites",
+               # the page holding this account's listed swaps is open (order_presence)
+               "/account/orders/alive",
+               # swap messages over the mesh (talk_relay): sealed to another page's key
+               "/account/talk/relay",
                "/signup")
 
 #: What an inscribed page's own hostname may reach, and nothing else. A page

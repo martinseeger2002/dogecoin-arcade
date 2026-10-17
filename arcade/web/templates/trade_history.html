@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% import "_exui.html" as ex %}
+{% block title %}Trade history · Exchange · {{ brand.name }}{% endblock %}
+{% block body %}
+{# The reader's own trades (2026-10-17): what the chain says they were a side of, newest
+   first, each opening its own page; then their lock-script swaps, kept in this browser. #}
+<div id="live" data-generation="{{ state.generation }}" class="live"></div>
+<a class="back-link" href="/exchange?tab=tokens">&#8592; All markets</a>
+{{ ex.style() }}{{ ex.market_css() }}
+<h1 style="margin:6px 0 12px">Trade history</h1>
+{% if viewer == 'nobody' %}
+<div class="panel"><p class="muted" style="margin:0">Sign in to see your trades.</p></div>
+{% else %}
+<div class="panel">
+  <h3 style="margin:0 0 6px">On the book</h3>
+  {% if rows %}
+  <table style="width:100%">
+    <tr class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.06em">
+      <td>When</td><td>You</td><td style="text-align:right">For</td></tr>
+    {% for r in rows %}
+    <tr class="tradelink" data-href="/exchange/trade/{{ r.txid }}?chain={{ r.net }}">
+      <td class="muted" style="font-size:.8rem;white-space:nowrap"><span data-when="{{ r.when }}"></span><br>{{ net_badge(r.chain) }}</td>
+      <td><a href="/exchange/trade/{{ r.txid }}?chain={{ r.net }}" style="color:inherit"><b>{{ r.side }}</b> {{ r.what }}</a>
+        {% if r.who %}<br><small class="muted">with {{ r.who|who }}</small>{% endif %}</td>
+      <td class="mono" style="text-align:right">{{ r.for }}</td></tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="muted" style="margin:0">No trades yet.</p>{% endif %}
+</div>
+{% if viewer == 'account' %}
+<div class="panel">
+  <h3 style="margin:0 0 6px">Swaps between chains</h3>
+  {% include "_tab_swaps.html" %}
+  <p class="muted" style="font-size:.8rem;margin:8px 0 0" id="no-swaps">Your lock-script swaps show here; this
+    browser keeps them. A swap you listed stays on the book only while an arcade page is open here with your wallet
+    unlocked. <a href="/docs/swaps.md">How a swap works</a></p>
+</div>
+{% endif %}
+{% endif %}
+<script>
+document.querySelectorAll("[data-when]").forEach(function (e) {
+  var d = new Date(Number(e.dataset.when) * 1000);
+  e.textContent = d.toLocaleDateString() + " " + d.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+});
+</script>
+{% endblock %}

@@ -149,7 +149,9 @@ def test_the_operator_posts_an_nft_from_its_home_address(client, monkeypatch):
     sword = "b7" * 32
     _piece(state, sword, home)
     page = app.get("/exchange?tab=tokens").text
-    assert f'value="regtest-nft-{sword}"' in page, "the node's NFT is offered in Start a market"
+    # Coins and tokens only in the pair list (2026-10-17: "NFT's should not be in the coin and
+    # token pair list"); a piece is still listed for a swap, from its own form below.
+    assert f'value="regtest-nft-{sword}"' not in page, "no NFT in the coin and token pair list"
     app.post("/exchange/trade-orders/stand", data=dict(
         give_network=f"nft:regtest:{sword}", give_amount="1", get_network="main", get_amount="20",
         csrf_token=state.csrf_token), follow_redirects=False)

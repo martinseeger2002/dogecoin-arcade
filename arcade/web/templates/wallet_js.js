@@ -2635,10 +2635,22 @@ async function _tradeSay(wallet, toKey, body) {
   });
   const said = await asked.json();
   if (!asked.ok) throw new Error(said.detail || "the node could not address that");
+  const sealed = mail.sealForProgram(me, said.seal_to, said.stamp, body);
+  // Over the mesh first (2026-10-17: swap messages "through the game server rather than
+  // the blockchain"): instant and free when the other page is reachable there; else the chain.
+  try {
+    const relayed = await fetch("/account/talk/relay", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({to: String(toKey).toLowerCase(), sealed}),
+    });
+    // Talk (propose, accept, cancel) goes by the mesh alone; a step that says coins moved
+    // (locked, claimed, refunded) goes on the chain as well, where it cannot be lost.
+    const moved = ["locked", "claimed", "refunded"].includes(body && body.step);
+    if (relayed.ok && (await relayed.json()).mesh && !moved) return {mesh: true};
+  } catch (e) { /* the chain carries it */ }
   const talked = await fetch("/account/talk", {
     method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({op: "send", to: said.seal_to,
-                          sealed: mail.sealForProgram(me, said.seal_to, said.stamp, body)}),
+    body: JSON.stringify({op: "send", to: said.seal_to, sealed}),
   });
   const carrier = await talked.json();
   if (!talked.ok) throw new Error(carrier.detail || "the node could not carry it");
@@ -2646,11 +2658,26 @@ async function _tradeSay(wallet, toKey, body) {
 }
 
 /** Trade steps sealed to this tab since `after`: {answers: [{json, sender}], cursor}. */
-export async function tradeHeard(wallet, after) {
+export async function tradeHeard(wallet, after, meshAfter = 0) {
   const {mail, me} = await messenger(wallet);
   const got = await mail.programAnswers(me, after);
-  return {cursor: got.cursor,
-          answers: got.answers.filter((a) => a.json && a.json.t === "trade" && a.json.v === 1)};
+  // And what the mesh brought (talk_relay): the same sealed messages, opened the same way.
+  let meshCursor = Number(meshAfter || 0);
+  const mesh = [];
+  try {
+    const key = coinsHex(me.publicKey || me.public || me.pub);
+    const r = await fetch(`/account/talk/inbox?key=${key}&after=${meshCursor}`, {cache: "no-store"});
+    if (r.ok) {
+      const said = await r.json();
+      for (const m of said.messages || []) {
+        const opened = mail.openProgram(m.payload, me);
+        if (opened) mesh.push({json: opened.json, sender: opened.sender, stamp: opened.stamp, via: "mesh"});
+      }
+      meshCursor = Math.max(meshCursor, Number(said.cursor || 0));
+    }
+  } catch (e) { /* the chain still carries everything the mesh could not */ }
+  return {cursor: got.cursor, meshCursor,
+          answers: [...mesh, ...got.answers].filter((a) => a.json && a.json.t === "trade" && a.json.v === 1)};
 }
 
 const coinsText = (sats) => (Number(sats) / 1e8).toFixed(8).replace(/\.?0+$/, "");
@@ -2689,6 +2716,7 @@ export async function takeOrder(wallet, order, options = {}) {
                  // not asked about again (real coins included -- 2026-10-13).
                  approved: !!options.approved};
   keepTrade(wallet, trade);
+  await sayAlive();          // reachable over the mesh before the seller answers (talk_relay)
   try {
     await tradeSay(wallet, order.msg_key, {t: "trade", v: 1, id, step: "propose", order: order.id,
                                            give, get, secret_hash: trade.secretHash, t1, t2});
@@ -2737,8 +2765,9 @@ export async function tradeTick(wallet, id) {
     await sayAccept(wallet, trade);
     trade = tradesOf(wallet)[id];
   }
-  const heard = await tradeHeard(wallet, trade.cursor);
+  const heard = await tradeHeard(wallet, trade.cursor, trade.meshCursor);
   trade.cursor = heard.cursor;
+  trade.meshCursor = heard.meshCursor;
   for (const a of heard.answers) {
     if (a.json.id !== trade.id || a.sender !== trade.peer) continue;
     if (a.json.step === "accept") trade.agreed = true;
@@ -2748,6 +2777,16 @@ export async function tradeTick(wallet, id) {
   if (trade.cancelled && !trade.myLock) {
     trade.state = "aborted"; trade.note = "the other side walked away; nothing was locked";
     keepTrade(wallet, trade); return trade;
+  }
+  // Nobody answered: the lister's page is closed (or its wallet locked), and only it can accept.
+  // Called off with nothing locked, rather than "proposed" for ever (2026-10-17: the Buy
+  // button "is not working ... the lock script is not being sent").
+  if (!trade.agreed && trade.role === "initiator" && Date.now() - (trade.created || 0) > PROPOSE_WAIT) {
+    trade.state = "aborted";
+    trade.note = "no answer: the seller's arcade page is not open, so nothing was locked. Try again when it is";
+    keepTrade(wallet, trade);
+    tradeSay(wallet, trade.peer, {t: "trade", v: 1, id: trade.id, step: "cancel"}).catch(() => {});
+    return trade;
   }
   if (!trade.agreed) { keepTrade(wallet, trade); return trade; }
   const {myRedeem, theirRedeem} = await redeemsOf(trade);
@@ -2889,7 +2928,7 @@ async function postNow(wallet) {
   const now = Math.floor(Date.now() / 1000);
   const orders = Object.values(book.orders).map((o) => ({
     id: o.id, give: o.give, get: o.get, trade_key: o.trade_key, take_key: o.take_key,
-    msg_key: coinsHex(me.publicKey || me.public || me.pub), node: acct.mesh_node,
+    msg_key: coinsHex(me.publicKey || me.public || me.pub), node: acct.mesh_node, tab: true,
     expires: now + TAB_ORDER_LIFE}));
   const body = new TextEncoder().encode(JSON.stringify({arcade: "orders", v: 1, orders, cancels: book.cancels || []}));
   let b64 = "";
@@ -2923,6 +2962,7 @@ export async function listOrder(wallet, give, get, options = {}) {
                      take_key: coinsHex(keysOn(wallet, get.network).pubkey)};
   keepMyOrders(wallet, book);
   await postMyOrders(wallet);
+  sayAlive();
   return book.orders[id];
 }
 
@@ -2938,8 +2978,9 @@ export async function withdrawOrder(wallet, id) {
  *  traded as the responder), anything else is cancelled. Re-posts the orders when due. */
 export async function answerProposals(wallet) {
   const book = myOrdersOf(wallet);
-  const heard = await tradeHeard(wallet, book.cursor);
+  const heard = await tradeHeard(wallet, book.cursor, book.meshCursor);
   book.cursor = heard.cursor;
+  book.meshCursor = heard.meshCursor;
   keepMyOrders(wallet, book);
   const trades = tradesOf(wallet);
   const now = Math.floor(Date.now() / 1000);
@@ -2964,7 +3005,8 @@ export async function answerProposals(wallet) {
     const trade = {id: p.id, role: "responder", order: p.order, peer: a.sender, give: p.get, get: p.give,
                    secret: "", secretHash: p.secret_hash, t1: p.t1, t2: p.t2, myLock: null, theirLock: null,
                    agreed: true, acceptSent: false, cancelled: false, state: "accepted",
-                   note: "accepted; waiting for their lock", cursor: book.cursor, created: Date.now(),
+                   note: "accepted; waiting for their lock", cursor: book.cursor, meshCursor: book.meshCursor,
+                   created: Date.now(),
                    need: confirmationsFor(p.get, p.give, await swapBig()),
                    approved: !!mine.approved};      // approved when it was listed
     keepTrade(wallet, trade);
@@ -3016,6 +3058,30 @@ async function tradePass() {
   } finally { runnerBusy = false; }
 }
 
+//: How long a take waits for the lister's page to accept before it is called off (nothing locked).
+export const PROPOSE_WAIT = 120 * 1000;
+
+//: How often an open page with listed swaps says it is here (order_presence.ALIVE_FOR is 12 s).
+export const ALIVE_BEAT = 3000;
+
+/** Tell this node the page holding the account's listed swaps, or a swap in progress, is open
+ *  with its wallet unlocked: its listings stand (order_presence) and the mesh can reach it with
+ *  swap messages (talk_relay). */
+export async function sayAlive() {
+  if (!runnerChain) return;
+  try {
+    const w = await opened(runnerChain);
+    if (!w) return;
+    const listed = myOrders(w).length > 0;
+    const running = myTrades(w).some((t) => t.state !== "done" && t.state !== "aborted");
+    if (!listed && !running) return;
+    const {me} = await messenger(w);
+    await fetch("/account/orders/alive", {method: "POST", credentials: "same-origin",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({orders: listed, talk: coinsHex(me.publicKey || me.public || me.pub)})});
+  } catch (e) { /* the next beat tries again */ }
+}
+
 /** Start the runner in this tab (it waits its turn behind any other arcade tab running it). */
 export function startTradeRunner(chain, beat = TRADE_BEAT) {
   if (runnerStarted) return;
@@ -3029,6 +3095,9 @@ export function startTradeRunner(chain, beat = TRADE_BEAT) {
       worker.onmessage = () => { tradePass(); };
     } catch (e) { setInterval(tradePass, beat); }
     if (kicks) kicks.onmessage = () => { tradePass(); };
+    // This page answers its listed swaps, so it tells its node it is here (order_presence):
+    // every arcade shows them only while it does (2026-10-17).
+    setInterval(sayAlive, ALIVE_BEAT);
     globalThis.__arcadeTradeRunner = true;
     tradePass();
     await new Promise(() => {});          // the lock is this tab's until it closes

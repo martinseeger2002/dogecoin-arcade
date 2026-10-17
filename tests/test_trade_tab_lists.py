@@ -70,9 +70,12 @@ def test_a_tab_lists_a_swap_and_another_node_takes_it(world, monkeypatch):
 
         # The account's Exchange shows its listed swap, with Withdraw, and the one way to list
         # another (Start a market, 2026-10-15).
-        tab.goto(f"{base}/exchange?tab=tokens")
+        # (Its swaps show on Trade history since 2026-10-17; the Exchange keeps Start a market.)
+        tab.goto(f"{base}/exchange/history")
         tab.wait_for_selector("#tab-orders:not([hidden])", timeout=15000)
-        assert "for 2 DOGE" in tab.inner_text("#tab-orders-list") and tab.is_visible("#start-market")
+        assert "for 2 DOGE" in tab.inner_text("#tab-orders-list")
+        tab.goto(f"{base}/exchange?tab=tokens")
+        assert tab.is_visible("#start-market")
         if os.environ.get("ARCADE_SHOT"):
             # A still picture of the card (the live page never settles for a screenshot).
             pathlib.Path(os.environ["ARCADE_SHOT"]).write_text(tab.evaluate("""() => {
@@ -272,7 +275,7 @@ def test_the_list_form_offers_a_token_the_account_holds(world, monkeypatch):
         tab.goto(f"{base}/exchange?tab=tokens")
         tab.wait_for_selector("#start-market")
         nft = tab.locator(f'#pair-base option[value="regtest-nft-{"c9" * 32}"]')
-        assert nft.count() == 1 and nft.inner_text().startswith("NFT #"), "the account's NFT can be listed"
+        assert nft.count() == 0, "no NFT in the coin and token pair list (2026-10-17)"
         option = tab.locator('#pair-base option[value="regtest-token-150"]')
         assert option.count() == 1 and "Gold" in option.inner_text()
         tab.select_option("#pair-base", "regtest-token-150")
@@ -287,12 +290,16 @@ def test_the_list_form_offers_a_token_the_account_holds(world, monkeypatch):
         tab.on("dialog", lambda d: (said.append(d.message), d.dismiss()))
         tab.evaluate("() => document.querySelector('#start-market').requestSubmit()")
         tab.wait_for_url("**/exchange/swap/regtest-token-150/doge-coin", timeout=30000)
+        # The listing is a row of this market's own book at once, yours, with Cancel (2026-10-17:
+        # "the users order should go into the order book").
+        mine = tab.locator("#swap-pair .obrow.ask.mine")
         for _ in range(40):
-            if said or "Gold" in tab.inner_text("#tab-orders-list"):
+            if said or mine.count():
                 break
             tab.wait_for_timeout(500)
         assert not said, said
-        assert "40 Gold for 2 DOGE" in tab.inner_text("#tab-orders-list")
+        row = mine.first.inner_text()
+        assert "40" in row and "0.05" in row and "yours" in row and "Cancel" in row, row
         if os.environ.get("ARCADE_SHOT"):
             pathlib.Path(os.environ["ARCADE_SHOT"]).write_text(tab.evaluate("""() => {
                 let css = "";

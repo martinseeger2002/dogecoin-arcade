@@ -32,7 +32,8 @@ def test_two_accounts_trade_one_token_for_another_through_the_book(node):
     assert held[1] == 20 * COIN, f"the sell holds its 20 back: {held}"
 
     page = seller["client"].get(f"/exchange/pairs/{A}/{B}")
-    assert page.status_code == 200 and "(yours)" in page.text
+    # The seller's own order, marked in the book (the token/coin page's rows, 2026-10-17).
+    assert page.status_code == 200 and 'obrow ask mine' in page.text
 
     # More than the buyer holds is refused before it costs a fee.
     too_much = buyer["client"].post("/account/pair-order", json={
