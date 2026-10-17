@@ -77,8 +77,48 @@ PEPECOIN = Brand(
 .tile:hover{box-shadow:0 2px 4px rgba(12,40,16,.06),0 10px 24px rgba(12,40,16,.1)}
 """)
 
-BRANDS = {b.key: b for b in (DOGECOIN, PEPECOIN)}
+#: SadFrog's LitecoinArcade (2026-10-17): Litecoin's own blue (#345d9d) on a cool,
+#: silver-tinted ground; a lighter blue in dark mode so the accent keeps its contrast.
+LITECOIN = Brand(
+    key="litecoin", name="LitecoinArcade",
+    light_bg="#f3f5f9", dark_bg="#0d1118", light_fg="#141a26",
+    accent="#345d9d", dark_accent="#7fa3dc", muted="#5b6475", dark_muted="#8b95a8",
+    dark_fg="#e3e8f1",
+    css="""
+:root{
+  --bg:#f3f5f9; --panel:#fbfcfe; --fg:#141a26; --muted:#5b6475; --line:#d5dbe6;
+  --accent:#345d9d; --accent-fg:#fff; --ok:#1f7a5c; --code:#e8edf5;
+  --shadow:0 1px 2px rgba(16,28,52,.05),0 4px 14px rgba(16,28,52,.06);
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0d1118; --panel:#131924; --fg:#e3e8f1; --muted:#8b95a8; --line:#222b3a;
+    --accent:#7fa3dc; --accent-fg:#0d1118; --ok:#4cc29a; --code:#161d2a;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 14px rgba(0,0,0,.22);
+  }
+}
+.tile:hover{box-shadow:0 2px 4px rgba(16,28,52,.06),0 10px 24px rgba(16,28,52,.1)}
+""")
+
+BRANDS = {b.key: b for b in (DOGECOIN, PEPECOIN, LITECOIN)}
 DEFAULT = DOGECOIN
+
+#: Whether the face was fixed from outside (--brand or ARCADE_BRAND in the service)
+#: when the process started. Then the admin panel shows it and cannot change it;
+#: otherwise the operator's choice (the `brand` setting) is applied with `use`.
+FROM_ENV = bool((os.environ.get("ARCADE_BRAND") or "").strip())
+
+
+def use(key: str) -> Brand:
+    """Show `key`'s face from now on, in this process (the admin panel's choice).
+
+    The process environment is what `current()` reads, so every later page,
+    icon and manifest follows at once; nothing needs a restart."""
+    key = (key or "").strip().lower()
+    if key not in BRANDS:
+        raise ValueError(f"no such face: {key!r} (one of {sorted(BRANDS)})")
+    os.environ["ARCADE_BRAND"] = key
+    return BRANDS[key]
 
 
 def current() -> Brand:

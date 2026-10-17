@@ -734,6 +734,13 @@ _ORDER_POSTS: dict[str, float] = {}
 
 def create_app(state: AppState) -> FastAPI:
     TEMPLATES._screen_of = state.screen          # the feed card's screen_text()
+    # The operator's own choice of face (admin panel, `brand` setting) when the service did not
+    # fix one with --brand / ARCADE_BRAND, which always wins (2026-10-17, SadFrog's side).
+    if not brandlib.FROM_ENV and state.setting("brand"):
+        try:
+            brandlib.use(str(state.setting("brand")))
+        except ValueError:
+            pass
     TEMPLATES.env.globals["brand"] = brandlib.current()   # this node's name, colours, icons (brand.py)
     # [Claude 2026-10-14] Inscriptions stay put: a wallet's ordinary sends never spend a coin carrying one (arcade/doginals.py).
     # Read from each chain by its own node (2026-10-15, "Remove Doge Soft API"): Doginals on Dogecoin, and the same ord
@@ -21658,6 +21665,8 @@ def create_app(state: AppState) -> FastAPI:
             "xchain": _admin_xchain(),
             "swap_big": {k: v / COIN for k, v in _swap_big_lines().items()},
             "flags": _admin_flags(),
+            "brand": {"current": brandlib.current().key, "locked": brandlib.FROM_ENV,
+                      "choices": [[b.key, b.name] for b in brandlib.BRANDS.values()]},
         }, headers={"Cache-Control": "no-store"})
 
     @app.get("/admin/api/swaps")
@@ -21809,6 +21818,14 @@ def create_app(state: AppState) -> FastAPI:
                         if sats <= 0:
                             raise ValueError("a big-swap line is more than nothing")
                         state.set_setting(f"swap_big:{network}", int(sats))
+            if "brand" in said and said["brand"] != brandlib.current().key:
+                # The face, at once and kept (brand.py). A face fixed by the service stays fixed.
+                if brandlib.FROM_ENV:
+                    raise ValueError("this node's face is set by --brand / ARCADE_BRAND in its "
+                                     "service; change it there")
+                chosen = brandlib.use(str(said["brand"]))
+                state.set_setting("brand", chosen.key)
+                TEMPLATES.env.globals["brand"] = chosen
             if "flags_broadcast" in said:     # content flags to every arcade (arcade/flags.py)
                 state.set_setting("flags:broadcast", bool(said["flags_broadcast"]))
             if "flags_follow" in said:        # whose content flags this arcade uses
@@ -21927,6 +21944,28 @@ def create_app(state: AppState) -> FastAPI:
         if "w" not in _tunnel_wizard:
             _tunnel_wizard["w"] = tunnellib.Wizard()
         return _tunnel_wizard["w"]
+
+    @app.get("/admin/api/litecoin")
+    def admin_litecoin(request: Request):
+        """The Litecoin node: installed, running, how far synced (arcade/litecoin.py)."""
+        _admin_check(request)
+        from .. import litecoin as ltclib
+        return JSONResponse(ltclib.status(), headers={"Cache-Control": "no-store"})
+
+    @app.post("/admin/api/litecoin")
+    def admin_litecoin_run(request: Request, payload: Any = Body(None)):
+        """Start or stop the Litecoin node's user service. Only at the node machine itself,
+        like the tunnel: it starts and stops a process there."""
+        who = _admin_check(request, write=True)
+        if not who["local"]:
+            return JSONResponse({"detail": "the Litecoin node is started at the node machine"},
+                                status_code=403)
+        from .. import litecoin as ltclib
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            return JSONResponse(ltclib.set_running(bool(said.get("run"))))
+        except RuntimeError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=409)
 
     @app.get("/admin/api/tunnel")
     def admin_tunnel_status(request: Request):
